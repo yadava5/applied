@@ -1,0 +1,52 @@
+## Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+## Environment & Secrets
+.env
+.env.local
+credentials/
+*.key
+*.pem
+
+## Database
+*.db
+*.sqlite
+*.sqlite3
+
+## ML Models (downloaded at runtime)
+models/
+
+## macOS
+.DS_Store
+xcuserdata/
+DerivedData/
+*.xcworkspace
+!*.xcodeproj/project.pbxproj
+
+## IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## Logs
+logs/
+*.log
+
+## OS
+Thumbs.db
+Desktop.ini
+
+## Tauri (future)
+tacos/target/
