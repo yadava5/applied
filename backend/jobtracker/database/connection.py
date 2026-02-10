@@ -95,6 +95,10 @@ async def init_db() -> None:
 
     This should be called on application startup.
     """
+    # Import models to register them with SQLModel metadata
+    # This MUST happen before create_all() is called
+    from jobtracker.database import models  # noqa: F401
+
     engine = get_engine()
 
     logger.info("Initializing database...")
