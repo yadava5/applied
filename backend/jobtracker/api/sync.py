@@ -32,6 +32,15 @@ class SyncRequest(BaseModel):
         description="Accounts to sync. None = all connected accounts.",
         examples=[["gmail", "icloud"], ["gmail"], None],
     )
+    since_date: Optional[datetime] = Field(
+        default=None,
+        description="Only fetch emails received after this date. Format: YYYY-MM-DD or ISO datetime.",
+        examples=["2026-01-01", "2026-01-01T00:00:00"],
+    )
+    full_sync: bool = Field(
+        default=False,
+        description="If true, ignores last sync position and fetches from since_date (or last 30 days).",
+    )
 
 
 class SyncResultResponse(BaseModel):
@@ -100,9 +109,15 @@ async def trigger_sync(request: SyncRequest = SyncRequest()) -> SyncResultRespon
         if request.accounts and len(request.accounts) == 1:
             # Sync specific account
             if request.accounts[0] == "gmail":
-                result = await service.sync_gmail()
+                result = await service.sync_gmail(
+                    since_date=request.since_date,
+                    full_sync=request.full_sync,
+                )
             elif request.accounts[0] == "icloud":
-                result = await service.sync_icloud()
+                result = await service.sync_icloud(
+                    since_date=request.since_date,
+                    full_sync=request.full_sync,
+                )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -110,7 +125,10 @@ async def trigger_sync(request: SyncRequest = SyncRequest()) -> SyncResultRespon
                 )
         else:
             # Sync all
-            result = await service.sync_all()
+            result = await service.sync_all(
+                since_date=request.since_date,
+                full_sync=request.full_sync,
+            )
 
         return SyncResultResponse(
             success=result.success,
@@ -146,30 +164,34 @@ async def get_sync_status() -> SyncStatusResponse:
     last_sync = None
 
     async with get_session() as session:
-        # Get Gmail sync state
+        # Get Gmail sync state (use .value for enum comparison)
         result = await session.exec(
-            select(SyncState).where(SyncState.account_type == EmailSource.GMAIL)
+            select(SyncState).where(SyncState.account_type == EmailSource.GMAIL.value)
         )
-        gmail_state = result.first()
-        if gmail_state:
+        row = result.first()
+        if row:
+            # Extract model from Row if needed
+            gmail_state = row[0] if hasattr(row, '__getitem__') else row
             gmail_status = {
                 "email": gmail_state.account_email,
-                "status": gmail_state.status.value,
+                "status": gmail_state.status,  # Now stored as string
                 "last_sync": gmail_state.last_sync_at.isoformat() if gmail_state.last_sync_at else None,
                 "error": gmail_state.error_message,
             }
             if gmail_state.last_sync_at:
                 last_sync = gmail_state.last_sync_at
 
-        # Get iCloud sync state
+        # Get iCloud sync state (use .value for enum comparison)
         result = await session.exec(
-            select(SyncState).where(SyncState.account_type == EmailSource.ICLOUD)
+            select(SyncState).where(SyncState.account_type == EmailSource.ICLOUD.value)
         )
-        icloud_state = result.first()
-        if icloud_state:
+        row = result.first()
+        if row:
+            # Extract model from Row if needed
+            icloud_state = row[0] if hasattr(row, '__getitem__') else row
             icloud_status = {
                 "email": icloud_state.account_email,
-                "status": icloud_state.status.value,
+                "status": icloud_state.status,  # Now stored as string
                 "last_sync": icloud_state.last_sync_at.isoformat() if icloud_state.last_sync_at else None,
                 "error": icloud_state.error_message,
             }

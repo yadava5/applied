@@ -125,11 +125,19 @@ app.add_middleware(
 # API Routers
 # =============================================================================
 
-from jobtracker.api import auth_router, emails_router, sync_router
+from jobtracker.api import (
+    applications_router,
+    auth_router,
+    classification_router,
+    emails_router,
+    sync_router,
+)
 
 app.include_router(auth_router)
 app.include_router(sync_router)
 app.include_router(emails_router)
+app.include_router(classification_router)
+app.include_router(applications_router)
 
 
 # =============================================================================
@@ -202,6 +210,7 @@ async def health_check() -> HealthResponse:
     try:
         from sqlalchemy import select
 
+        from jobtracker.database import get_session
         from jobtracker.database.models import SyncState
 
         async with get_session() as session:
@@ -215,11 +224,28 @@ async def health_check() -> HealthResponse:
     except Exception:
         pass  # No sync state yet
 
-    # TODO: Get classifier status (Phase 3)
-    classifier_status = ClassifierStatus(
-        active_layers=["rules"],  # Rules always available
-        setfit_trained=False,
-    )
+    # Get classifier status
+    try:
+        from jobtracker.classifier import get_classifier
+
+        classifier = get_classifier()
+        status_info = await classifier.get_status()
+
+        active_layers = ["rules"]  # Rules always available
+        if status_info["embeddings"]["available"]:
+            active_layers.append("embeddings")
+        if status_info["setfit"]["available"]:
+            active_layers.append("setfit")
+
+        classifier_status = ClassifierStatus(
+            active_layers=active_layers,
+            setfit_trained=status_info["setfit"]["available"],
+        )
+    except Exception:
+        classifier_status = ClassifierStatus(
+            active_layers=["rules"],
+            setfit_trained=False,
+        )
 
     return HealthResponse(
         status="ok" if db_connected else "degraded",

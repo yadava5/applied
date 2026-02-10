@@ -9,6 +9,7 @@ Routers:
 - auth_router: Gmail OAuth and iCloud credential management
 - sync_router: Email synchronization
 - emails_router: Email listing and details
+- classification_router: Email classification and user corrections (Phase 3)
 - application_routes: Job application CRUD (Phase 4)
 - analytics_routes: Statistics and trends (Phase 7)
 - websocket: Real-time sync status via WebSocket (Phase 7)
@@ -22,19 +23,24 @@ API documentation is auto-generated at:
 
 Usage:
 ------
-    from jobtracker.api import auth_router, sync_router, emails_router
+    from jobtracker.api import auth_router, sync_router, emails_router, classification_router
 
     app.include_router(auth_router)
     app.include_router(sync_router)
     app.include_router(emails_router)
+    app.include_router(classification_router)
 """
 
+from jobtracker.api.applications import router as applications_router
 from jobtracker.api.auth import router as auth_router
+from jobtracker.api.classification import router as classification_router
 from jobtracker.api.emails import router as emails_router
 from jobtracker.api.sync import router as sync_router
 
 __all__ = [
+    "applications_router",
     "auth_router",
     "sync_router",
     "emails_router",
+    "classification_router",
 ]

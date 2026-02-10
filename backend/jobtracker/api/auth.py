@@ -200,17 +200,43 @@ async def authenticate_gmail() -> GmailAuthResponse:
 
 
 @router.delete("/gmail")
-async def disconnect_gmail() -> dict:
+async def disconnect_gmail(delete_emails: bool = False) -> dict:
     """
     Disconnect Gmail account.
 
     Removes stored OAuth credentials from keychain.
+
+    Args:
+        delete_emails: If True, also deletes all emails from this account.
     """
     if not has_gmail_credentials():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Gmail account not connected",
         )
+
+    emails_deleted = 0
+    if delete_emails:
+        # Import here to avoid circular imports
+        from sqlalchemy import delete
+
+        from jobtracker.database import get_session
+        from jobtracker.database.models import Email, EmailSource, SyncState
+
+        async with get_session() as session:
+            # Delete emails from Gmail
+            result = await session.exec(
+                delete(Email).where(Email.source_account == EmailSource.GMAIL)
+            )
+            emails_deleted = result.rowcount if hasattr(result, "rowcount") else 0
+
+            # Delete sync state for Gmail
+            await session.exec(
+                delete(SyncState).where(
+                    SyncState.account_type == EmailSource.GMAIL.value
+                )
+            )
+            await session.commit()
 
     success = delete_gmail_credentials()
 
@@ -220,7 +246,11 @@ async def disconnect_gmail() -> dict:
             detail="Failed to delete Gmail credentials",
         )
 
-    return {"success": True, "message": "Gmail account disconnected"}
+    message = "Gmail account disconnected"
+    if delete_emails:
+        message += f" and {emails_deleted} emails deleted"
+
+    return {"success": True, "message": message, "emails_deleted": emails_deleted}
 
 
 # -------------------------------------------------------------------------
@@ -284,17 +314,43 @@ async def authenticate_icloud(request: ICloudAuthRequest) -> ICloudAuthResponse:
 
 
 @router.delete("/icloud")
-async def disconnect_icloud() -> dict:
+async def disconnect_icloud(delete_emails: bool = False) -> dict:
     """
     Disconnect iCloud Mail account.
 
     Removes stored credentials from keychain.
+
+    Args:
+        delete_emails: If True, also deletes all emails from this account.
     """
     if not has_icloud_credentials():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="iCloud account not connected",
         )
+
+    emails_deleted = 0
+    if delete_emails:
+        # Import here to avoid circular imports
+        from sqlalchemy import delete
+
+        from jobtracker.database import get_session
+        from jobtracker.database.models import Email, EmailSource, SyncState
+
+        async with get_session() as session:
+            # Delete emails from iCloud
+            result = await session.exec(
+                delete(Email).where(Email.source_account == EmailSource.ICLOUD)
+            )
+            emails_deleted = result.rowcount if hasattr(result, "rowcount") else 0
+
+            # Delete sync state for iCloud
+            await session.exec(
+                delete(SyncState).where(
+                    SyncState.account_type == EmailSource.ICLOUD.value
+                )
+            )
+            await session.commit()
 
     success = delete_icloud_credentials()
 
@@ -304,4 +360,8 @@ async def disconnect_icloud() -> dict:
             detail="Failed to delete iCloud credentials",
         )
 
-    return {"success": True, "message": "iCloud account disconnected"}
+    message = "iCloud account disconnected"
+    if delete_emails:
+        message += f" and {emails_deleted} emails deleted"
+
+    return {"success": True, "message": message, "emails_deleted": emails_deleted}

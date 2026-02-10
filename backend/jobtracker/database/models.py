@@ -30,6 +30,8 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy import Column
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -59,6 +61,7 @@ class EmailCategory(str, Enum):
     OFFER = "offer"
     ASSESSMENT = "assessment"
     FOLLOW_UP = "follow_up"
+    NEEDS_REVIEW = "needs_review"  # Uncertain - human should review
     OTHER = "other"
 
 
@@ -227,9 +230,9 @@ class Email(TimestampMixin, table=True):
         le=1.0,
         description="Classification confidence (0.0-1.0)",
     )
-    classification_method: Optional[ClassificationMethod] = Field(
+    classification_method: Optional[str] = Field(
         default=None,
-        description="Method used for classification",
+        description="Method used for classification (rules, embeddings, setfit, fallback, user_correction)",
     )
 
     # User interaction
@@ -337,9 +340,23 @@ class TrainingData(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    # Training example
-    email_text: str = Field(description="Email text content")
-    label: EmailCategory = Field(index=True, description="Correct classification label")
+    # Link to original email (optional)
+    email_id: Optional[int] = Field(
+        default=None,
+        index=True,
+        unique=True,
+        description="Associated email ID (if from user correction)",
+    )
+
+    # Training example content
+    subject: Optional[str] = Field(default=None, description="Email subject")
+    body_text: Optional[str] = Field(default=None, description="Email body text")
+
+    # Legacy field - combined text (for backwards compatibility)
+    email_text: Optional[str] = Field(default=None, description="Combined email text (legacy)")
+
+    # Label (stored as string for flexibility)
+    label: str = Field(index=True, description="Correct classification label")
     source: str = Field(
         default="user_correction",
         description="Source of training data",
@@ -377,9 +394,9 @@ class EmailEmbedding(SQLModel, table=True):
         description="Associated email ID",
     )
 
-    # Embedding data
-    label: EmailCategory = Field(index=True, description="Classification label")
-    embedding: bytes = Field(description="Serialized numpy array (384 floats)")
+    # Embedding data (label stored as string for flexibility)
+    label: str = Field(index=True, description="Classification label")
+    embedding: Optional[bytes] = Field(default=None, description="Serialized numpy array (384 floats)")
     model_version: str = Field(
         default="e5-small-v2",
         description="Embedding model version",
@@ -412,8 +429,8 @@ class SyncState(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    # Account info
-    account_type: EmailSource = Field(description="Gmail or iCloud")
+    # Account info - use string column to store enum values (not names)
+    account_type: str = Field(description="Gmail or iCloud")
     account_email: str = Field(unique=True, description="Account email address")
 
     # Sync state
@@ -427,6 +444,6 @@ class SyncState(SQLModel, table=True):
         description="IMAP last UID for incremental sync",
     )
 
-    # Status
-    status: SyncStatus = Field(default=SyncStatus.IDLE, description="Current sync status")
+    # Status - use string column to store enum values
+    status: str = Field(default="idle", description="Current sync status")
     error_message: Optional[str] = Field(default=None, description="Last error message")

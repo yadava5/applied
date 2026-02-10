@@ -58,7 +58,7 @@ Track progress by checking off completed items. Each phase builds on the previou
 
 ---
 
-## Phase 3: Email Classification (ML)
+## Phase 3: Email Classification (ML) ✅
 
 > Classify job-related emails into categories automatically.
 
@@ -76,48 +76,48 @@ other        — Not job-related or uncategorizable
 
 ### Layer 1: Rule-Based
 
-- [ ] Build regex pattern sets for each category (strong patterns, weak patterns, negative patterns)
-- [ ] Implement weighted scoring: strong match (+3), weak match (+1), negative (−5)
-- [ ] Add sender domain rules (`greenhouse.io`, `lever.co`, `workday.com` → ATS email)
-- [ ] Add subject line analysis (subject patterns weighted 2× vs body patterns)
-- [ ] Implement confidence scoring for rules
-- [ ] Test against 20-30 sample emails (manually verify accuracy ≥ 70%)
+- [x] Build regex pattern sets for each category (strong patterns, weak patterns, negative patterns)
+- [x] Implement weighted scoring: strong match (+3), weak match (+1), negative (−5)
+- [x] Add sender domain rules (`greenhouse.io`, `lever.co`, `workday.com` → ATS email)
+- [x] Add subject line analysis (subject patterns weighted 2× vs body patterns)
+- [x] Implement confidence scoring for rules
+- [x] Test against 20-30 sample emails (manually verify accuracy ≥ 70%)
 
 ### Layer 2: Sentence Embeddings
 
-- [ ] Download `intfloat/e5-small-v2` model (~80MB, one-time via sentence-transformers)
-- [ ] Build embedding store using **SQLite `email_embeddings` table** (not pickle files)
-- [ ] Implement cosine similarity matching against known examples
-- [ ] Set similarity threshold (0.85+ = confident match)
-- [ ] Implement efficient embedding serialization (numpy → bytes → SQLite BLOB)
-- [ ] Add model version tracking for future upgrades
+- [x] Download `intfloat/e5-small-v2` model (~80MB, one-time via sentence-transformers)
+- [x] Build embedding store using **SQLite `email_embeddings` table** (not pickle files)
+- [x] Implement cosine similarity matching against known examples
+- [x] Set similarity threshold (0.85+ = confident match)
+- [x] Implement efficient embedding serialization (numpy → bytes → SQLite BLOB)
+- [x] Add model version tracking for future upgrades
 
 ### Layer 3: SetFit (Few-Shot ML)
 
-- [ ] Implement SetFit model wrapper (train, predict, save, load)
-- [ ] Build training trigger: auto-retrain when 5+ new corrections per category exist
-- [ ] Background retraining (2-5 min on CPU, non-blocking)
-- [ ] Model versioning: save models with timestamps, keep last 3 versions
-- [ ] Implement confidence scoring from SetFit's `predict_proba`
+- [x] Implement SetFit model wrapper (train, predict, save, load)
+- [x] Build training trigger: auto-retrain when 5+ new corrections per category exist
+- [x] Background retraining (2-5 min on CPU, non-blocking)
+- [x] Model versioning: save models with timestamps, keep last 3 versions
+- [x] Implement confidence scoring from SetFit's `predict_proba`
 
 ### Hybrid Classifier
 
-- [ ] Combine all 3 layers: rules → embeddings → SetFit → fallback
-- [ ] Route high-confidence results automatically (> 0.85)
-- [ ] Flag low-confidence results (< 0.7) for user review
-- [ ] Create API endpoint: `PUT /emails/{id}/classify` (user correction)
-- [ ] Store corrections in `training_data` table
-- [ ] Verify: classify 50 sample emails, expect ≥ 70% accuracy on Day 1
+- [x] Combine all 3 layers: rules → embeddings → SetFit → fallback
+- [x] Route high-confidence results automatically (> 0.85)
+- [x] Flag low-confidence results (< 0.7) for user review
+- [x] Create API endpoint: `PUT /emails/{id}/correct` (user correction)
+- [x] Store corrections in `training_data` table
+- [x] Verify: classify 50 sample emails, expect ≥ 70% accuracy on Day 1
 
 ---
 
-## Phase 4: Application Tracking Logic
+## Phase 4: Application Tracking Logic ✅
 
 > Link emails to applications, track status changes, detect companies.
 
-- [ ] Implement company name extraction from emails (sender domain → company name mapping)
-- [ ] Build application auto-creation: new company detected in email → create application record
-- [ ] Implement application status state machine:
+- [x] Implement company name extraction from emails (sender domain → company name mapping)
+- [x] Build application auto-creation: new company detected in email → create application record
+- [x] Implement application status state machine:
   ```
   applied → interviewing → offered → accepted
                                    → rejected
@@ -126,12 +126,12 @@ other        — Not job-related or uncategorizable
            → ghosted (no response in 30+ days)
            → withdrawn (by user)
   ```
-- [ ] Auto-update application status when new classified email arrives
-- [ ] Link multiple emails to same application (by sender domain + position keyword matching)
-- [ ] Detect contacts from email signatures (recruiter name, title)
-- [ ] Parse interview details from calendar invites / email body
-- [ ] Create API endpoints: `GET /applications`, `GET /applications/{id}`, `PUT /applications/{id}`, `POST /applications`, `DELETE /applications/{id}`
-- [ ] Verify: synced emails correctly grouped into applications with accurate statuses
+- [x] Auto-update application status when new classified email arrives
+- [x] Link multiple emails to same application (by sender domain + position keyword matching)
+- [ ] Detect contacts from email signatures (recruiter name, title) — *deferred to Phase 7*
+- [ ] Parse interview details from calendar invites / email body — *deferred to Phase 7*
+- [x] Create API endpoints: `GET /applications`, `GET /applications/{id}`, `PUT /applications/{id}`, `POST /applications`, `DELETE /applications/{id}`
+- [x] Verify: synced emails correctly grouped into applications with accurate statuses
 
 ---
 
@@ -310,8 +310,8 @@ func unregisterBackendService() throws {
 |-------|--------|-------------|
 | Phase 1 | ✅ Complete | Project Foundation |
 | Phase 2 | ✅ Complete | Email Integration (Gmail + iCloud) |
-| Phase 3 | ⬜ Not Started | Email Classification (ML) |
-| Phase 4 | ⬜ Not Started | Application Tracking Logic |
+| Phase 3 | ✅ Complete | Email Classification (ML) |
+| Phase 4 | ✅ Complete | Application Tracking Logic |
 | Phase 5 | ⬜ Not Started | macOS SwiftUI Frontend |
 | Phase 6 | ⬜ Not Started | Background Service (launchd) |
 | Phase 7 | ⬜ Not Started | Analytics & Smart Features |
