@@ -1,0 +1,25 @@
+# JobTracker Development Dependencies
+# ====================================
+# Install with: pip install -r requirements-dev.txt
+
+# Include base requirements
+-r requirements.txt
+
+# -----------------------------------------------------------------------------
+# Testing
+# -----------------------------------------------------------------------------
+pytest>=7.4.0                 # Testing framework
+pytest-asyncio>=0.23.0        # Async test support
+pytest-cov>=4.1.0             # Code coverage
+httpx>=0.26.0                 # Async HTTP client for API testing
+
+# -----------------------------------------------------------------------------
+# Code Quality
+# -----------------------------------------------------------------------------
+ruff>=0.1.0                   # Fast Python linter and formatter
+mypy>=1.8.0                   # Static type checker
+
+# -----------------------------------------------------------------------------
+# Distribution
+# -----------------------------------------------------------------------------
+pyinstaller>=6.3.0            # Bundle Python as standalone executable

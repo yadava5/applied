@@ -4,59 +4,72 @@
 
 JobTracker is a two-process desktop application:
 
-1. **Python Backend** — a FastAPI server running on `localhost:8000` that handles all data operations
-2. **SwiftUI Frontend** — a native macOS app that provides the user interface
+1. **Python Backend** — an async FastAPI server running on `localhost:8000` that handles all data operations
+2. **SwiftUI Frontend** — a native macOS app (15+) with Liquid Glass UI that provides the user interface
 
-They communicate via REST API over localhost. Both read/write to a shared SQLite database.
+They communicate via REST API (+ WebSocket for real-time updates) over localhost. Both access a shared SQLite database (backend writes, frontend reads).
 
 ## Why This Architecture?
 
 | Decision | Reason |
 |----------|--------|
-| Python for backend | Best email libraries (google-api-python-client, imaplib), best ML ecosystem (scikit-learn, SetFit), cross-platform |
-| SwiftUI for macOS | Native look and feel, Apple ecosystem integration, Keychain access |
-| REST API between them | Language-agnostic, debuggable, testable, portable to other frontends later |
-| SQLite | No server to manage, file-based, WAL mode allows concurrent read/write, perfect for desktop apps |
-| Separate processes | Backend can run in background (launchd) even when the UI is closed |
+| Python for backend | Best email libraries (google-api-python-client, aioimaplib), best ML ecosystem (sentence-transformers, SetFit), cross-platform |
+| **Async FastAPI** | Non-blocking I/O for concurrent email fetching, DB access, and ML inference |
+| **aiosqlite + SQLModel** | Async database access that doesn't block the FastAPI event loop |
+| SwiftUI for macOS | Native Liquid Glass look and feel, Apple ecosystem integration, Keychain access |
+| **macOS 15+ minimum** | Enables Swift Charts, modern SwiftUI APIs, and Liquid Glass on Tahoe |
+| REST + WebSocket | REST for CRUD, WebSocket for real-time sync progress updates |
+| SQLite (WAL mode) | No server to manage, file-based, WAL allows concurrent read/write |
+| Separate processes | Backend can run in background (via SMAppService + launchd) even when UI is closed |
+| **SMAppService** | Modern macOS API for managing launch agents (replaces manual launchctl) |
 
 ## Component Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         macOS System                            │
-│                                                                 │
-│  ┌─────────────────────┐  REST API  ┌────────────────────────┐  │
-│  │    SwiftUI App      │◄──────────►│    Python Backend      │  │
-│  │                     │ :8000      │    (FastAPI + Uvicorn)  │  │
-│  │  ┌───────────────┐  │           │                        │  │
-│  │  │ Dashboard     │  │           │  ┌──────────────────┐  │  │
-│  │  │ Applications  │  │           │  │ Gmail Client     │──┼──┼──► Gmail API
-│  │  │ Email Viewer  │  │           │  │ (OAuth2)         │  │  │
-│  │  │ Analytics     │  │           │  └──────────────────┘  │  │
-│  │  │ Settings      │  │           │                        │  │
-│  │  └───────────────┘  │           │  ┌──────────────────┐  │  │
-│  │                     │           │  │ iCloud Client    │──┼──┼──► imap.mail.me.com
-│  │  ┌───────────────┐  │           │  │ (IMAP + AppPass) │  │  │
-│  │  │ GRDB.swift    │  │           │  └──────────────────┘  │  │
-│  │  │ (DB reader)   │  │           │                        │  │
-│  │  └───────┬───────┘  │           │  ┌──────────────────┐  │  │
-│  └──────────┼──────────┘           │  │ Hybrid Classifier│  │  │
-│             │                      │  │ Rules+Embed+ML   │  │  │
-│             │ READ                 │  └──────────────────┘  │  │
-│             │                      │                        │  │
-│             │              WRITE   │  ┌──────────────────┐  │  │
-│             └──────► SQLite ◄──────┼──│ SQLAlchemy       │  │  │
-│                     (WAL mode)     │  └──────────────────┘  │  │
-│                    ~/Library/      │                        │  │
-│                    Application     └────────────────────────┘  │
-│                    Support/                                     │
-│                    JobTracker/     ┌────────────────────────┐  │
-│                                   │       launchd          │  │
-│                                   │  (Launch Agent)        │  │
-│                                   │  - starts backend      │  │
-│                                   │  - scheduled sync      │  │
-│                                   └────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         macOS 15+ (Sequoia / Tahoe)                      │
+│                                                                          │
+│  ┌───────────────────────────┐  REST + WS  ┌───────────────────────────┐ │
+│  │      SwiftUI App          │◄───────────►│     Python Backend        │ │
+│  │    (Liquid Glass UI)      │   :8000     │   (Async FastAPI)         │ │
+│  │                           │             │                           │ │
+│  │  ┌─────────────────────┐  │             │  ┌─────────────────────┐  │ │
+│  │  │ MenuBarExtra        │  │  WebSocket  │  │ Gmail Client        │──┼─┼─► Gmail API
+│  │  │ (status + quick     │  │  (sync      │  │ (OAuth2, async)     │  │ │
+│  │  │  stats)             │  │   progress) │  └─────────────────────┘  │ │
+│  │  └─────────────────────┘  │             │                           │ │
+│  │                           │             │  ┌─────────────────────┐  │ │
+│  │  ┌─────────────────────┐  │             │  │ iCloud Client       │──┼─┼─► imap.mail.me.com
+│  │  │ Dashboard           │  │             │  │ (aioimaplib, async) │  │ │
+│  │  │ Applications        │  │             │  └─────────────────────┘  │ │
+│  │  │ Emails + Review     │  │             │                           │ │
+│  │  │ Analytics (Charts)  │  │             │  ┌─────────────────────┐  │ │
+│  │  │ Settings            │  │             │  │ Hybrid Classifier   │  │ │
+│  │  │ (SF Symbols 7)      │  │             │  │ Rules → Embed → ML  │  │ │
+│  │  └─────────────────────┘  │             │  └─────────────────────┘  │ │
+│  │                           │             │                           │ │
+│  │  ┌─────────────────────┐  │             │  ┌─────────────────────┐  │ │
+│  │  │ GRDB.swift          │  │             │  │ aiosqlite + SQLModel│  │ │
+│  │  │ + GRDBQuery         │  │             │  │ (async ORM)         │  │ │
+│  │  │ (reactive reads)    │  │             │  └──────────┬──────────┘  │ │
+│  │  └──────────┬──────────┘  │             │             │             │ │
+│  │             │             │             │             │             │ │
+│  └─────────────┼─────────────┘             └─────────────┼─────────────┘ │
+│                │                                         │               │
+│                │ READ                             WRITE  │               │
+│                │                                         │               │
+│                └─────────────► SQLite (WAL) ◄────────────┘               │
+│                           ~/Library/Application Support/                 │
+│                                  JobTracker/                             │
+│                                     │                                    │
+│                    ┌────────────────┴────────────────┐                   │
+│                    │         SMAppService            │                   │
+│                    │    (Launch Agent management)    │                   │
+│                    │    - registers/unregisters      │                   │
+│                    │    - backend auto-start         │                   │
+│                    │    - periodic sync trigger      │                   │
+│                    └─────────────────────────────────┘                   │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow
@@ -204,6 +217,27 @@ CREATE TABLE training_data (
 );
 ```
 
+**email_embeddings** — stored embeddings for similarity matching (Layer 2)
+
+```sql
+CREATE TABLE email_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id INTEGER REFERENCES emails(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,                     -- Classification label for this embedding
+    embedding BLOB NOT NULL,                 -- numpy array serialized (384 floats = 1536 bytes)
+    model_version TEXT DEFAULT 'e5-small-v2', -- Track which model generated this
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(email_id)
+);
+CREATE INDEX idx_embeddings_label ON email_embeddings(label);
+```
+
+> **Why SQLite for embeddings instead of pickle files?**
+> - Survives crashes (transactional)
+> - Backups include embeddings automatically
+> - Can query by label for faster similarity search
+> - Migrations are straightforward
+
 **sync_state** — tracks last sync position per email account
 
 ```sql
@@ -237,17 +271,59 @@ CREATE INDEX idx_training_label ON training_data(label);
 Both Python (writer) and Swift (reader) access the same SQLite file safely using WAL mode:
 
 ```python
-# Python side — enable WAL mode on connection
-conn = sqlite3.connect('jobtracker.db')
-conn.execute("PRAGMA journal_mode=WAL")
-conn.execute("PRAGMA busy_timeout=5000")  # Wait up to 5s for locks
+# Python side — async connection with aiosqlite + SQLModel
+from sqlmodel import SQLModel, create_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+DATABASE_URL = "sqlite+aiosqlite:///~/Library/Application Support/JobTracker/jobtracker.db"
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False}
+)
+
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+# Enable WAL mode on startup
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA busy_timeout=5000"))
+        await conn.run_sync(SQLModel.metadata.create_all)
 ```
 
 ```swift
-// Swift side — GRDB.swift handles WAL automatically
+// Swift side — GRDB.swift with GRDBQuery for reactive SwiftUI updates
+import GRDB
+import GRDBQuery
+
+// Database connection
+let dbPath = "~/Library/Application Support/JobTracker/jobtracker.db"
 let dbQueue = try DatabaseQueue(path: dbPath)
-let emails = try dbQueue.read { db in
-    try Email.fetchAll(db)
+
+// Reactive query in SwiftUI view
+struct EmailListView: View {
+    @Query(EmailRequest()) var emails: [Email]
+    
+    var body: some View {
+        List(emails) { email in
+            EmailRow(email: email)
+        }
+    }
+}
+
+// GRDBQuery request
+struct EmailRequest: Queryable {
+    static var defaultValue: [Email] { [] }
+    
+    func publisher(in dbQueue: DatabaseQueue) -> AnyPublisher<[Email], Error> {
+        ValueObservation
+            .tracking { db in try Email.fetchAll(db) }
+            .publisher(in: dbQueue, scheduling: .immediate)
+            .eraseToAnyPublisher()
+    }
 }
 ```
 

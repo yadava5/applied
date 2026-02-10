@@ -49,4 +49,16 @@ Thumbs.db
 Desktop.ini
 
 ## Tauri (future)
-tacos/target/
+tauri/target/
+
+## Distribution artifacts
+dist/
+*.dmg
+*.app
+*.pkg
+build/
+*.spec
+
+## PyInstaller
+*.manifest
+*.spec
