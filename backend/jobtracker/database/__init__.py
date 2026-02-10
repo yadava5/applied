@@ -17,10 +17,31 @@ Usage:
     from jobtracker.database import get_session, init_db
     from jobtracker.database.models import Application, Email
 
+    # Initialize database on startup
+    await init_db()
+
+    # Use session for database operations
     async with get_session() as session:
-        apps = await session.exec(select(Application))
+        result = await session.exec(select(Application))
+        apps = result.all()
 """
 
-from jobtracker.database.connection import get_session, init_db
+from jobtracker.database.connection import (
+    close_db,
+    get_db_stats,
+    get_engine,
+    get_session,
+    get_session_dependency,
+    init_db,
+    vacuum_db,
+)
 
-__all__ = ["get_session", "init_db"]
+__all__ = [
+    "close_db",
+    "get_db_stats",
+    "get_engine",
+    "get_session",
+    "get_session_dependency",
+    "init_db",
+    "vacuum_db",
+]
