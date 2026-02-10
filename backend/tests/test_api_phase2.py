@@ -8,17 +8,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from jobtracker.main import app
-
-
-@pytest.fixture
-async def test_client():
-    """Create test client for API testing."""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+from httpx import AsyncClient
 
 
 # =============================================================================

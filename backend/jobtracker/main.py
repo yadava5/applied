@@ -206,7 +206,7 @@ async def health_check() -> HealthResponse:
     icloud_connected = has_icloud_credentials()
 
     # Get last sync time
-    last_sync = None
+    last_sync: datetime | None = None
     try:
         from sqlalchemy import select
 
@@ -220,9 +220,15 @@ async def health_check() -> HealthResponse:
                 .order_by(SyncState.last_sync_at.desc())
                 .limit(1)
             )
-            last_sync = result.first()
+            row = result.first()
+
+            # SQLModel/SQLAlchemy returns a Row when selecting a single column;
+            # extract the scalar datetime value if present.
+            if row is not None:
+                last_sync = row[0] if hasattr(row, "__getitem__") else row
     except Exception:
-        pass  # No sync state yet
+        # In tests or on first run there may be no sync_state table yet.
+        last_sync = None
 
     # Get classifier status
     try:

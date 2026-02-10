@@ -51,7 +51,11 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     app_name: str = "JobTracker"
     app_version: str = "0.1.0"
-    environment: Literal["development", "production"] = "development"
+    # Environment:
+    # - development: normal local runs (uses on-disk SQLite DB)
+    # - production: same as development for now, but reserved for future tuning
+    # - test: in-memory SQLite DB for pytest (never touches real data)
+    environment: Literal["development", "production", "test"] = "development"
 
     # -------------------------------------------------------------------------
     # API Server
@@ -79,6 +83,11 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """SQLAlchemy async database URL."""
+        # During tests we want a completely isolated, in-memory database that
+        # does not touch the real on-disk JobTracker DB.
+        if self.environment == "test":
+            return "sqlite+aiosqlite:///:memory:"
+
         return f"sqlite+aiosqlite:///{self.database_path}"
 
     # -------------------------------------------------------------------------
