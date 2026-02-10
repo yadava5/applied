@@ -4,11 +4,14 @@
 
 | Requirement | Version | Check Command |
 |-------------|---------|---------------|
-| macOS | 13+ (Ventura or later) | Apple menu → About This Mac |
+| macOS | **15+** (Sequoia or Tahoe) | Apple menu → About This Mac |
 | Python | 3.11+ | `python3 --version` |
-| Xcode | 15+ | `xcode-select --version` |
+| Xcode | 16+ | `xcode-select --version` |
 | Git | any | `git --version` |
 | Homebrew | any (recommended) | `brew --version` |
+| RAM | 8GB minimum, 16GB recommended | Apple menu → About This Mac |
+
+> **Note:** macOS 15+ is required for Swift Charts, modern SwiftUI APIs, and Liquid Glass design on Tahoe.
 
 ## Step 1: Clone the Repository
 
@@ -33,12 +36,12 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
 # Download ML models (one-time, ~80MB)
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/e5-small-v2')"
 
-# Initialize database
+# Initialize database (creates tables, enables WAL mode)
 python -m jobtracker.database.init
 
-# Start backend server
+# Start backend server (async)
 uvicorn jobtracker.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
@@ -154,10 +157,16 @@ open JobTracker.xcodeproj
 ```
 
 In Xcode:
-1. Select your **Development Team** in Signing & Capabilities
-2. Build target: **My Mac**
-3. Build and run: **⌘R**
-4. The app connects to the Python backend at `localhost:8000`
+1. Set **Minimum Deployment Target** to **macOS 15.0** (or 26.0 for full Liquid Glass)
+2. Select your **Development Team** in Signing & Capabilities
+3. Add Swift Package dependencies:
+   - GRDB.swift: `https://github.com/groue/GRDB.swift.git`
+   - GRDBQuery: `https://github.com/groue/GRDBQuery.git`
+4. Build target: **My Mac**
+5. Build and run: **⌘R**
+6. The app connects to the Python backend at `localhost:8000`
+
+> **Tip:** For Liquid Glass development, run on macOS 26 (Tahoe) to see the full design system.
 
 ## Step 7: Background Service (Optional)
 
@@ -193,22 +202,31 @@ launchctl unload ~/Library/LaunchAgents/com.jobtracker.backend.plist
 ### Python Backend (`backend/requirements.txt`)
 
 ```
-# Web framework
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
+# Web framework (async)
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
 pydantic>=2.5.0
+websockets>=12.0               # WebSocket support for real-time updates
+
+# Async database
+aiosqlite>=0.19.0              # Async SQLite driver
+sqlmodel>=0.0.14               # SQLAlchemy + Pydantic ORM
+sqlalchemy[asyncio]>=2.0.25    # Async SQLAlchemy core
 
 # Gmail API
 google-api-python-client>=2.100.0
 google-auth-httplib2>=0.1.1
 google-auth-oauthlib>=1.1.0
 
+# Async IMAP
+aioimaplib>=2.0.0              # Async IMAP client for iCloud
+
 # Credential storage
-keyring>=24.3.0
+keyring>=24.3.0                # macOS Keychain integration
 
 # ML & NLP
-sentence-transformers>=2.2.0
-setfit>=1.0.0
+sentence-transformers>=2.2.0   # Loads e5-small-v2 model
+setfit>=1.0.0                  # Few-shot classification
 scikit-learn>=1.3.0
 numpy>=1.24.0
 
@@ -218,20 +236,28 @@ numpy>=1.24.0
 # Email parsing
 beautifulsoup4>=4.12.0
 python-dateutil>=2.8.0
+lxml>=5.0.0                    # Faster HTML parsing
 
 # Testing
 pytest>=7.4.0
-httpx>=0.25.0
+pytest-asyncio>=0.23.0         # Async test support
+httpx>=0.26.0                  # Async HTTP client for testing
+
+# Distribution (optional, for bundling)
+pyinstaller>=6.3.0             # Bundle Python as standalone app
 ```
 
 ### Swift macOS App
 
-```
+```swift
 // Package.swift dependencies (via SPM)
-GRDB.swift >= 6.0       // SQLite reader
+dependencies: [
+    .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.24.0"),
+    .package(url: "https://github.com/groue/GRDBQuery.git", from: "0.8.0"),
+]
 ```
 
-Charts are built into SwiftUI on macOS 14+ (Sonoma). For macOS 13 support, we can use a third-party charting library or defer charts to macOS 14+.
+Swift Charts is built into SwiftUI on macOS 14+ — no third-party library needed.
 
 ---
 
@@ -278,6 +304,67 @@ curl http://127.0.0.1:8000/ml/status
 | SwiftUI "Connection refused" | Backend must be running first: `curl localhost:8000/health` |
 | Database locked errors | Shouldn't happen with WAL mode. If it does: stop all processes, delete `.db-wal` and `.db-shm` files, restart |
 | `launchd` service not starting | Check logs: `cat ~/Library/Logs/JobTracker/backend-error.log` |
+
+---
+
+## Distribution (For Sharing With Others)
+
+### Bundling the Python Backend
+
+Use PyInstaller to create a standalone executable:
+
+```bash
+cd backend
+source .venv/bin/activate
+
+# Create spec file (first time)
+pyinstaller --name jobtracker-backend \
+  --onedir \
+  --hidden-import=aiosqlite \
+  --hidden-import=sqlmodel \
+  jobtracker/main.py
+
+# Build
+pyinstaller jobtracker-backend.spec
+
+# Output: dist/jobtracker-backend/
+```
+
+### Code Signing & Notarization
+
+Requires Apple Developer account ($99/year):
+
+```bash
+# Sign the app
+codesign --deep --force --verify --verbose \
+  --sign "Developer ID Application: Your Name (TEAMID)" \
+  dist/JobTracker.app
+
+# Notarize (submit to Apple)
+xcrun notarytool submit dist/JobTracker.dmg \
+  --apple-id "your@email.com" \
+  --team-id "TEAMID" \
+  --password "@keychain:AC_PASSWORD" \
+  --wait
+
+# Staple the ticket
+xcrun stapler staple dist/JobTracker.dmg
+```
+
+### Creating DMG
+
+```bash
+# Use create-dmg (install via: brew install create-dmg)
+create-dmg \
+  --volname "JobTracker" \
+  --window-pos 200 120 \
+  --window-size 600 400 \
+  --icon-size 100 \
+  --icon "JobTracker.app" 150 190 \
+  --app-drop-link 450 185 \
+  "dist/JobTracker.dmg" \
+  "dist/JobTracker.app"
+```
 
 ---
 

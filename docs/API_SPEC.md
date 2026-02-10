@@ -575,6 +575,87 @@ Manually trigger model retraining.
 
 ---
 
+---
+
+## WebSocket: Real-Time Sync Status
+
+### `WS /ws/sync`
+
+Connect for live sync progress updates. No polling needed.
+
+**Connection:**
+
+```javascript
+const ws = new WebSocket('ws://127.0.0.1:8000/ws/sync');
+```
+
+**Server Messages:**
+
+```json
+// Sync started
+{
+  "event": "sync_started",
+  "accounts": ["gmail", "icloud"],
+  "timestamp": "2026-02-09T10:30:00Z"
+}
+
+// Progress update (sent every ~1 second during sync)
+{
+  "event": "sync_progress",
+  "account": "gmail",
+  "emails_fetched": 15,
+  "emails_total": 50,
+  "emails_classified": 10
+}
+
+// Sync completed
+{
+  "event": "sync_completed",
+  "emails_fetched": 50,
+  "emails_new": 12,
+  "emails_classified": 12,
+  "flagged_for_review": 3,
+  "duration_seconds": 8.5
+}
+
+// Error during sync
+{
+  "event": "sync_error",
+  "account": "gmail",
+  "error": "rate_limited",
+  "message": "Gmail API rate limit exceeded. Retry in 60 seconds."
+}
+
+// ML model retraining status
+{
+  "event": "ml_retrain_started",
+  "training_examples": 65
+}
+
+{
+  "event": "ml_retrain_completed",
+  "duration_seconds": 180,
+  "new_model_version": "20260209_103000"
+}
+```
+
+**Client Messages:**
+
+```json
+// Request immediate sync (alternative to POST /sync)
+{
+  "action": "sync",
+  "accounts": ["gmail"]
+}
+
+// Ping to keep connection alive
+{
+  "action": "ping"
+}
+```
+
+---
+
 ## Error Responses
 
 All errors follow this format:

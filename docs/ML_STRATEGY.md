@@ -123,24 +123,49 @@ Negative: "unfortunately", "offer", "interview"
 
 ## Layer 2: Sentence Embeddings (Week 1 — after first user corrections)
 
-Uses `all-MiniLM-L6-v2` to create vector representations of emails, then matches new emails against previously labeled ones using cosine similarity.
+Uses `intfloat/e5-small-v2` to create vector representations of emails, then matches new emails against previously labeled ones using cosine similarity.
+
+> **Why e5-small-v2 instead of all-MiniLM-L6-v2?**
+> - Same embedding dimensions (384) and similar size
+> - Significantly better accuracy on modern benchmarks (MTEB 2024)
+> - Designed for retrieval and classification tasks
+> - Drop-in replacement via sentence-transformers
 
 ### How It Works
 
 1. When the user corrects a misclassified email, compute its embedding (384-dimensional vector)
-2. Store the embedding + correct label in the known examples store
+2. Store the embedding + correct label in SQLite (`email_embeddings` table)
 3. For new emails: compute embedding → find most similar known example → use its label if similarity > 0.85
 
 ### Model Details
 
 | Property | Value |
 |----------|-------|
-| Model | `sentence-transformers/all-MiniLM-L6-v2` |
-| Size on disk | 80MB (downloaded once) |
+| Model | `intfloat/e5-small-v2` |
+| Size on disk | ~80MB (downloaded once) |
 | Embedding dimensions | 384 |
 | Runtime RAM | ~200MB |
 | Inference speed | ~50ms per email |
 | Internet needed | Only once for download |
+
+### Embedding Storage
+
+Embeddings are stored in SQLite (not pickle files) for reliability:
+
+```sql
+-- Each labeled email gets its embedding stored
+INSERT INTO email_embeddings (email_id, label, embedding, model_version)
+VALUES (?, ?, ?, 'e5-small-v2');
+
+-- Similarity search: load embeddings by label, compute cosine similarity in Python
+SELECT embedding, label FROM email_embeddings;
+```
+
+**Benefits of SQLite storage:**
+- Transactional (survives crashes)
+- Included in database backups automatically
+- Can index by label for faster category-specific searches
+- Easy to migrate when upgrading embedding models
 
 ### When It Activates
 
@@ -302,13 +327,39 @@ App sends PUT /emails/{id}/classify { "classified_as": "interview" }
 
 ```
 # ML & NLP
-sentence-transformers>=2.2.0    # Sentence embeddings (MiniLM)
+sentence-transformers>=2.2.0    # Sentence embeddings (loads e5-small-v2)
 setfit>=1.0.0                   # Few-shot classification
-scikit-learn>=1.3.0             # TF-IDF, LogisticRegression utilities
-numpy>=1.24.0                   # Numerical operations
+scikit-learn>=1.3.0             # Utilities for cosine similarity, etc.
+numpy>=1.24.0                   # Numerical operations, embedding serialization
 
 # PyTorch (CPU-only — no GPU bloat)
 torch>=2.0.0                    # Install via: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Note: e5-small-v2 is loaded via sentence-transformers:
+# model = SentenceTransformer('intfloat/e5-small-v2')
+```
+
+## Embedding Model Usage
+
+```python
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+# Load model (downloads ~80MB on first run)
+model = SentenceTransformer('intfloat/e5-small-v2')
+
+# e5 models expect a prefix for best results
+def get_embedding(text: str) -> np.ndarray:
+    # For classification/similarity, use "query: " prefix
+    prefixed = f"query: {text}"
+    return model.encode(prefixed, convert_to_numpy=True)
+
+# Serialize for SQLite storage
+def embedding_to_bytes(embedding: np.ndarray) -> bytes:
+    return embedding.astype(np.float32).tobytes()
+
+def bytes_to_embedding(data: bytes) -> np.ndarray:
+    return np.frombuffer(data, dtype=np.float32)
 ```
 
 ## What We Explicitly Chose NOT to Use
