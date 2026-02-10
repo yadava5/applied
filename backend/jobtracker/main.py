@@ -122,6 +122,17 @@ app.add_middleware(
 
 
 # =============================================================================
+# API Routers
+# =============================================================================
+
+from jobtracker.api import auth_router, emails_router, sync_router
+
+app.include_router(auth_router)
+app.include_router(sync_router)
+app.include_router(emails_router)
+
+
+# =============================================================================
 # Health Check Endpoint
 # =============================================================================
 
@@ -178,14 +189,31 @@ async def health_check() -> HealthResponse:
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
 
-    # TODO: Check Gmail connection (Phase 2)
-    gmail_connected = False
+    # Check Gmail connection
+    from jobtracker.credentials import has_gmail_credentials, has_icloud_credentials
 
-    # TODO: Check iCloud connection (Phase 2)
-    icloud_connected = False
+    gmail_connected = has_gmail_credentials()
 
-    # TODO: Get last sync time (Phase 2)
+    # Check iCloud connection
+    icloud_connected = has_icloud_credentials()
+
+    # Get last sync time
     last_sync = None
+    try:
+        from sqlalchemy import select
+
+        from jobtracker.database.models import SyncState
+
+        async with get_session() as session:
+            result = await session.exec(
+                select(SyncState.last_sync_at)
+                .where(SyncState.last_sync_at != None)  # noqa: E711
+                .order_by(SyncState.last_sync_at.desc())
+                .limit(1)
+            )
+            last_sync = result.first()
+    except Exception:
+        pass  # No sync state yet
 
     # TODO: Get classifier status (Phase 3)
     classifier_status = ClassifierStatus(
