@@ -21,40 +21,40 @@ Track progress by checking off completed items. Each phase builds on the previou
 
 ---
 
-## Phase 2: Email Integration
+## Phase 2: Email Integration ✅
 
 > Connect to Gmail and iCloud Mail, fetch and parse emails.
 
 ### Gmail
 
-- [ ] Set up Google Cloud project and enable Gmail API
-- [ ] Implement OAuth2 authentication flow (consent screen → token)
-- [ ] Store OAuth tokens securely in macOS Keychain (`keyring`)
-- [ ] Implement Gmail email fetching (`messages.list` + `messages.get`)
-- [ ] Implement incremental sync using `historyId`
-- [ ] Parse email content: subject, sender, body (plain text + HTML fallback), date, headers
-- [ ] Handle pagination for large mailboxes
-- [ ] Add Gmail-specific error handling (rate limits, token expiry, automatic refresh)
-- [ ] Write tests with mocked Gmail API responses
+- [x] Set up Google Cloud project and enable Gmail API
+- [x] Implement OAuth2 authentication flow (consent screen → token)
+- [x] Store OAuth tokens securely in macOS Keychain (`keyring`)
+- [x] Implement Gmail email fetching (`messages.list` + `messages.get`)
+- [x] Implement incremental sync using `historyId`
+- [x] Parse email content: subject, sender, body (plain text + HTML fallback), date, headers
+- [x] Handle pagination for large mailboxes
+- [x] Add Gmail-specific error handling (rate limits, token expiry, automatic refresh)
+- [x] Write tests with mocked Gmail API responses
 
 ### iCloud Mail
 
-- [ ] Document user setup steps (enable 2FA, generate app-specific password)
-- [ ] Implement **async** IMAP connection using **aioimaplib** to `imap.mail.me.com:993` with SSL
-- [ ] Store app-specific password in macOS Keychain
-- [ ] Implement async email fetching via IMAP (`SEARCH`, `FETCH`)
-- [ ] Implement incremental sync using IMAP UIDs + `SINCE` date
-- [ ] Parse email content (shared parser with Gmail)
-- [ ] Handle IMAP-specific errors (connection drops, timeouts, async reconnection)
-- [ ] Write async tests with mocked IMAP responses
+- [x] Document user setup steps (enable 2FA, generate app-specific password)
+- [x] Implement **async** IMAP connection using **aioimaplib** to `imap.mail.me.com:993` with SSL
+- [x] Store app-specific password in macOS Keychain
+- [x] Implement async email fetching via IMAP (`SEARCH`, `FETCH`)
+- [x] Implement incremental sync using IMAP UIDs + `SINCE` date
+- [x] Parse email content (shared parser with Gmail)
+- [x] Handle IMAP-specific errors (connection drops, timeouts, async reconnection)
+- [x] Write async tests with mocked IMAP responses
 
 ### Shared
 
-- [ ] Build unified email parser (normalize Gmail API format + IMAP format into common schema)
-- [ ] Implement deduplication (via `Message-ID` header)
-- [ ] Store parsed emails in SQLite `emails` table
-- [ ] Create API endpoints: `POST /auth/gmail`, `POST /auth/icloud`, `POST /sync`, `GET /emails`
-- [ ] Verify: sync fetches real emails from both accounts and stores them in DB
+- [x] Build unified email parser (normalize Gmail API format + IMAP format into common schema)
+- [x] Implement deduplication (via `Message-ID` header)
+- [x] Store parsed emails in SQLite `emails` table
+- [x] Create API endpoints: `POST /auth/gmail`, `POST /auth/icloud`, `POST /sync`, `GET /emails`
+- [x] Verify: sync fetches real emails from both accounts and stores them in DB
 
 ---
 
@@ -309,7 +309,7 @@ func unregisterBackendService() throws {
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | ✅ Complete | Project Foundation |
-| Phase 2 | ⬜ Not Started | Email Integration (Gmail + iCloud) |
+| Phase 2 | ✅ Complete | Email Integration (Gmail + iCloud) |
 | Phase 3 | ⬜ Not Started | Email Classification (ML) |
 | Phase 4 | ⬜ Not Started | Application Tracking Logic |
 | Phase 5 | ⬜ Not Started | macOS SwiftUI Frontend |
