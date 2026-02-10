@@ -185,10 +185,10 @@ class GmailClient:
                 ),
             )
 
-            # Get user email from token info
-            service = build("oauth2", "v2", credentials=credentials)
-            user_info = service.userinfo().get().execute()
-            email = user_info.get("email", "unknown")
+            # Get user email from Gmail profile (more reliable than oauth2 userinfo)
+            service = build("gmail", "v1", credentials=credentials)
+            profile = service.users().getProfile(userId="me").execute()
+            email = profile.get("emailAddress", "unknown")
 
             # Store credentials
             gmail_creds = GmailCredentials(
@@ -271,7 +271,8 @@ class GmailClient:
     async def fetch_emails(
         self,
         since_history_id: Optional[str] = None,
-        max_results: int = 500,
+        since_date: Optional[datetime] = None,
+        max_results: int = 5000,  # Increased limit for comprehensive fetch
         query: str = DEFAULT_QUERY,
     ) -> tuple[list[GmailMessage], Optional[str]]:
         """
@@ -280,6 +281,7 @@ class GmailClient:
         Args:
             since_history_id: Only fetch changes since this historyId (incremental sync).
                             If None, fetches recent emails (full sync).
+            since_date: Only fetch emails received after this date.
             max_results: Maximum number of emails to fetch.
             query: Gmail search query (default: inbox and sent).
 
@@ -290,16 +292,24 @@ class GmailClient:
         messages: list[GmailMessage] = []
         new_history_id: Optional[str] = None
 
+        # Build query with date filter if provided
+        effective_query = query
+        if since_date:
+            # Gmail uses after:YYYY/MM/DD format
+            date_str = since_date.strftime("%Y/%m/%d")
+            effective_query = f"{query} after:{date_str}"
+            logger.info(f"Gmail query with date filter: {effective_query}")
+
         try:
-            if since_history_id:
-                # Incremental sync using history API
+            if since_history_id and not since_date:
+                # Incremental sync using history API (only if no date filter)
                 messages, new_history_id = await self._fetch_incremental(
                     service, since_history_id, max_results
                 )
             else:
-                # Full sync - fetch recent messages
+                # Full sync - fetch messages matching query
                 messages, new_history_id = await self._fetch_full(
-                    service, query, max_results
+                    service, effective_query, max_results
                 )
 
             logger.info(f"Fetched {len(messages)} emails from Gmail")
@@ -309,7 +319,7 @@ class GmailClient:
             if e.resp.status == 404 and since_history_id:
                 # History ID is too old, need full sync
                 logger.warning("Gmail history too old, performing full sync")
-                return await self._fetch_full(service, query, max_results)
+                return await self._fetch_full(service, effective_query, max_results)
             raise
 
     async def _fetch_full(

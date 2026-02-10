@@ -200,7 +200,7 @@ class ICloudClient:
         since_uid: Optional[int] = None,
         since_date: Optional[datetime] = None,
         folder: str = "INBOX",
-        max_results: int = 500,
+        max_results: int = 5000,  # Increased limit for comprehensive fetch
     ) -> tuple[list[IMAPMessage], int]:
         """
         Fetch emails from iCloud.
@@ -307,15 +307,24 @@ class ICloudClient:
     async def _fetch_message(self, msg_num: int) -> Optional[IMAPMessage]:
         """Fetch and parse a single message."""
         try:
-            # Fetch message with UID
-            response = await self._imap.fetch(
-                str(msg_num), "(UID RFC822.HEADER BODY[TEXT])"
-            )
-
-            if response.result != "OK":
+            # Fetch message with UID (with timeout)
+            try:
+                response = await asyncio.wait_for(
+                    self._imap.fetch(str(msg_num), "(UID RFC822.HEADER BODY[TEXT])"),
+                    timeout=15.0  # 15 second timeout per message
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout fetching message {msg_num}")
                 return None
 
-            return self._parse_fetch_response(response)
+            if response.result != "OK":
+                logger.warning(f"Error fetching message {msg_num}: {response.result}")
+                return None
+
+            parsed = self._parse_fetch_response(response)
+            if parsed is None:
+                logger.debug(f"Failed to parse message {msg_num}, response lines: {len(response.lines)}")
+            return parsed
 
         except Exception as e:
             logger.warning(f"Error fetching message {msg_num}: {e}")
@@ -328,23 +337,41 @@ class ICloudClient:
             headers_raw = b""
             body_raw = b""
 
-            # Parse response lines
-            for line in response.lines:
-                if isinstance(line, tuple):
-                    # (b'1 (UID 12345 ...', b'header data')
-                    if len(line) >= 2:
-                        if b"UID" in line[0]:
-                            uid = self._extract_uid(line[0])
-                        if b"RFC822.HEADER" in line[0] or b"BODY[HEADER]" in line[0]:
-                            headers_raw = line[1] if len(line) > 1 else b""
-                        if b"BODY[TEXT]" in line[0]:
-                            body_raw = line[1] if len(line) > 1 else b""
-                elif isinstance(line, bytes):
-                    # Could be continuation of header or body
-                    if not headers_raw and b":" in line:
-                        headers_raw = line
+            # Parse response lines - aioimaplib returns a mix of bytes, bytearray, and strings
+            lines = response.lines
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                
+                # Convert to bytes if needed
+                if isinstance(line, bytearray):
+                    line = bytes(line)
+                elif isinstance(line, str):
+                    line = line.encode('utf-8', errors='replace')
+                
+                # Check if this is the initial FETCH response line
+                if isinstance(line, bytes) and b"FETCH" in line:
+                    # Extract UID from the line
+                    if b"UID" in line:
+                        uid = self._extract_uid(line)
+                    
+                    # The next line should be headers
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1]
+                        if isinstance(next_line, (bytes, bytearray)):
+                            headers_raw = bytes(next_line) if isinstance(next_line, bytearray) else next_line
+                    
+                    # Look for body after headers
+                    if i + 3 < len(lines):
+                        body_line = lines[i + 3]
+                        if isinstance(body_line, (bytes, bytearray)):
+                            body_raw = bytes(body_line) if isinstance(body_line, bytearray) else body_line
+                    
+                    break
+                i += 1
 
             if not headers_raw:
+                logger.debug("No headers found in response")
                 return None
 
             # Parse headers

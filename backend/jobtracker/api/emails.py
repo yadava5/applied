@@ -153,13 +153,19 @@ async def list_emails(
 
         # Execute query
         result = await session.exec(query)
-        emails = result.all()
+        email_rows = result.all()
+        
+        # Extract Email objects from rows (SQLModel returns Row tuples)
+        emails = []
+        for row in email_rows:
+            email = row[0] if hasattr(row, '__getitem__') else row
+            emails.append(email)
 
         return EmailListResponse(
             emails=[
                 EmailResponse(
                     id=e.id,
-                    source_account=e.source_account.value,
+                    source_account=e.source_account.value if hasattr(e.source_account, 'value') else str(e.source_account),
                     message_id=e.message_id,
                     thread_id=e.thread_id,
                     subject=e.subject or "",
@@ -167,9 +173,9 @@ async def list_emails(
                     sender_email=e.sender_email or "",
                     received_at=e.received_at,
                     body_snippet=e.body_snippet or "",
-                    classified_as=e.classified_as.value if e.classified_as else None,
+                    classified_as=e.classified_as.value if hasattr(e.classified_as, 'value') else e.classified_as,
                     classification_confidence=e.classification_confidence,
-                    classification_method=e.classification_method.value if e.classification_method else None,
+                    classification_method=e.classification_method.value if hasattr(e.classification_method, 'value') else e.classification_method,
                     user_corrected=e.user_corrected,
                     is_reviewed=e.is_reviewed,
                     created_at=e.created_at,
@@ -264,17 +270,20 @@ async def get_email(email_id: int) -> EmailDetailResponse:
     """
     async with get_session() as session:
         result = await session.exec(select(Email).where(Email.id == email_id))
-        email = result.first()
+        row = result.first()
 
-        if email is None:
+        if row is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Email with id {email_id} not found",
             )
+        
+        # Extract Email from Row if needed
+        email = row[0] if hasattr(row, '__getitem__') else row
 
         return EmailDetailResponse(
             id=email.id,
-            source_account=email.source_account.value,
+            source_account=email.source_account.value if hasattr(email.source_account, 'value') else str(email.source_account),
             message_id=email.message_id,
             thread_id=email.thread_id,
             subject=email.subject or "",
@@ -283,9 +292,9 @@ async def get_email(email_id: int) -> EmailDetailResponse:
             received_at=email.received_at,
             body_text=email.body_text or "",
             body_snippet=email.body_snippet or "",
-            classified_as=email.classified_as.value if email.classified_as else None,
+            classified_as=email.classified_as.value if hasattr(email.classified_as, 'value') else email.classified_as,
             classification_confidence=email.classification_confidence,
-            classification_method=email.classification_method.value if email.classification_method else None,
+            classification_method=email.classification_method.value if hasattr(email.classification_method, 'value') else email.classification_method,
             user_corrected=email.user_corrected,
             is_reviewed=email.is_reviewed,
             created_at=email.created_at,
@@ -333,3 +342,117 @@ async def delete_email(email_id: int) -> dict:
         await session.commit()
 
         return {"success": True, "message": "Email deleted"}
+
+
+@router.delete("")
+async def delete_emails_bulk(
+    source: Optional[str] = Query(
+        default=None,
+        description="Delete emails from this source: 'gmail' or 'icloud'",
+    ),
+    sender_email: Optional[str] = Query(
+        default=None,
+        description="Delete emails from this sender email address",
+    ),
+    before_date: Optional[datetime] = Query(
+        default=None,
+        description="Delete emails received before this date",
+    ),
+    after_date: Optional[datetime] = Query(
+        default=None,
+        description="Delete emails received after this date",
+    ),
+    confirm: bool = Query(
+        default=False,
+        description="Must be True to actually delete. Safety check.",
+    ),
+) -> dict:
+    """
+    Delete emails in bulk based on filters.
+
+    IMPORTANT: You must set confirm=true to actually delete.
+    If confirm=false (default), returns count of emails that would be deleted.
+
+    Examples:
+    - Delete all Gmail emails: DELETE /emails?source=gmail&confirm=true
+    - Delete all iCloud emails: DELETE /emails?source=icloud&confirm=true
+    - Preview deletion: DELETE /emails?source=gmail (without confirm)
+    """
+    from sqlalchemy import delete as sql_delete
+
+    if not source and not sender_email and not before_date and not after_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one filter (source, sender_email, before_date, after_date) is required",
+        )
+
+    async with get_session() as session:
+        # Build count query first
+        count_query = select(func.count(Email.id))
+
+        if source:
+            if source.lower() == "gmail":
+                count_query = count_query.where(
+                    Email.source_account == EmailSource.GMAIL
+                )
+            elif source.lower() == "icloud":
+                count_query = count_query.where(
+                    Email.source_account == EmailSource.ICLOUD
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid source: {source}. Use 'gmail' or 'icloud'.",
+                )
+
+        if sender_email:
+            count_query = count_query.where(Email.sender_email == sender_email)
+
+        if before_date:
+            count_query = count_query.where(Email.received_at < before_date)
+
+        if after_date:
+            count_query = count_query.where(Email.received_at > after_date)
+
+        result = await session.exec(count_query)
+        count_row = result.one()
+        # Count query returns a Row with single value - extract it
+        count = count_row[0] if hasattr(count_row, '__getitem__') else int(count_row)
+
+        if not confirm:
+            return {
+                "preview": True,
+                "would_delete": count,
+                "message": f"Add confirm=true to delete {count} emails",
+            }
+
+        # Build delete query with same filters
+        delete_query = sql_delete(Email)
+
+        if source:
+            if source.lower() == "gmail":
+                delete_query = delete_query.where(
+                    Email.source_account == EmailSource.GMAIL
+                )
+            else:
+                delete_query = delete_query.where(
+                    Email.source_account == EmailSource.ICLOUD
+                )
+
+        if sender_email:
+            delete_query = delete_query.where(Email.sender_email == sender_email)
+
+        if before_date:
+            delete_query = delete_query.where(Email.received_at < before_date)
+
+        if after_date:
+            delete_query = delete_query.where(Email.received_at > after_date)
+
+        await session.exec(delete_query)
+        await session.commit()
+
+        return {
+            "success": True,
+            "deleted": count,
+            "message": f"Deleted {count} emails",
+        }

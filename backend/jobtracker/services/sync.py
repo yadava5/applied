@@ -113,12 +113,16 @@ class SyncService:
     async def sync_all(
         self,
         progress_callback: Optional[Callable[[SyncProgress], None]] = None,
+        since_date: Optional[datetime] = None,
+        full_sync: bool = False,
     ) -> SyncResult:
         """
         Sync emails from all connected accounts.
 
         Args:
             progress_callback: Optional callback for progress updates.
+            since_date: Only fetch emails after this date.
+            full_sync: If True, ignores last sync position.
 
         Returns:
             SyncResult with summary of sync operation.
@@ -137,7 +141,11 @@ class SyncService:
         # Sync Gmail
         if gmail_creds:
             try:
-                result = await self.sync_gmail(progress_callback)
+                result = await self.sync_gmail(
+                    progress_callback,
+                    since_date=since_date,
+                    full_sync=full_sync,
+                )
                 if result.success:
                     accounts_synced.append("gmail")
                     total_fetched += result.emails_fetched
@@ -152,7 +160,11 @@ class SyncService:
         # Sync iCloud
         if icloud_creds:
             try:
-                result = await self.sync_icloud(progress_callback)
+                result = await self.sync_icloud(
+                    progress_callback,
+                    since_date=since_date,
+                    full_sync=full_sync,
+                )
                 if result.success:
                     accounts_synced.append("icloud")
                     total_fetched += result.emails_fetched
@@ -179,8 +191,17 @@ class SyncService:
     async def sync_gmail(
         self,
         progress_callback: Optional[Callable[[SyncProgress], None]] = None,
+        since_date: Optional[datetime] = None,
+        full_sync: bool = False,
     ) -> SyncResult:
-        """Sync emails from Gmail account."""
+        """
+        Sync emails from Gmail account.
+
+        Args:
+            progress_callback: Optional callback for progress updates.
+            since_date: Only fetch emails after this date.
+            full_sync: If True, ignores last sync position.
+        """
         start_time = datetime.now()
 
         # Report start
@@ -206,21 +227,42 @@ class SyncService:
                     duration_seconds=0,
                 )
 
-            # Get sync state
+            # Get sync state (skip if full_sync)
+            since_history_id = None
+            gmail_email = await self._gmail_client.get_account_email() or ""
             async with get_session() as session:
-                sync_state = await self._get_or_create_sync_state(
-                    session, EmailSource.GMAIL, await self._gmail_client.get_account_email() or ""
+                # Query for sync state using SQLModel select
+                result = await session.exec(
+                    select(SyncState).where(
+                        SyncState.account_type == EmailSource.GMAIL.value,
+                        SyncState.account_email == gmail_email
+                    )
                 )
-                since_history_id = sync_state.gmail_history_id
+                # result.first() returns a Row tuple, get the actual object
+                row = result.first()
+                if row is not None:
+                    state = row[0] if hasattr(row, '__getitem__') else row
+                    if not full_sync:
+                        since_history_id = state.gmail_history_id
+                else:
+                    # Create new sync state if doesn't exist
+                    state = SyncState(
+                        account_type=EmailSource.GMAIL.value,
+                        account_email=gmail_email,
+                        status=SyncStatus.IDLE.value,
+                    )
+                    session.add(state)
+                    await session.commit()
 
             # Update sync state to syncing
             await self._update_sync_status(
                 EmailSource.GMAIL, SyncStatus.SYNCING
             )
 
-            # Fetch emails
+            # Fetch emails with optional date filter
             messages, new_history_id = await self._gmail_client.fetch_emails(
-                since_history_id=since_history_id
+                since_history_id=since_history_id,
+                since_date=since_date,
             )
 
             # Report progress
@@ -299,8 +341,17 @@ class SyncService:
     async def sync_icloud(
         self,
         progress_callback: Optional[Callable[[SyncProgress], None]] = None,
+        since_date: Optional[datetime] = None,
+        full_sync: bool = False,
     ) -> SyncResult:
-        """Sync emails from iCloud account."""
+        """
+        Sync emails from iCloud account.
+
+        Args:
+            progress_callback: Optional callback for progress updates.
+            since_date: Only fetch emails after this date.
+            full_sync: If True, ignores last sync position.
+        """
         start_time = datetime.now()
 
         # Report start
@@ -326,22 +377,43 @@ class SyncService:
                     duration_seconds=0,
                 )
 
-            # Get sync state
+            # Get sync state (skip if full_sync)
+            since_uid = None
+            icloud_email = self._icloud_client.get_account_email() or ""
             async with get_session() as session:
-                sync_state = await self._get_or_create_sync_state(
-                    session, EmailSource.ICLOUD, self._icloud_client.get_account_email() or ""
+                # Query for sync state using SQLModel select
+                result = await session.exec(
+                    select(SyncState).where(
+                        SyncState.account_type == EmailSource.ICLOUD.value,
+                        SyncState.account_email == icloud_email
+                    )
                 )
-                since_uid = sync_state.imap_last_uid
+                # result.first() returns a Row tuple, get the actual object
+                row = result.first()
+                if row is not None:
+                    state = row[0] if hasattr(row, '__getitem__') else row
+                    if not full_sync:
+                        since_uid = state.imap_last_uid
+                else:
+                    # Create new sync state if doesn't exist
+                    state = SyncState(
+                        account_type=EmailSource.ICLOUD.value,
+                        account_email=icloud_email,
+                        status=SyncStatus.IDLE.value,
+                    )
+                    session.add(state)
+                    await session.commit()
 
             # Update sync state to syncing
             await self._update_sync_status(
                 EmailSource.ICLOUD, SyncStatus.SYNCING
             )
 
-            # Connect and fetch emails
+            # Connect and fetch emails with optional date filter
             async with self._icloud_client:
                 messages, new_last_uid = await self._icloud_client.fetch_emails(
-                    since_uid=since_uid
+                    since_uid=since_uid,
+                    since_date=since_date,
                 )
 
             # Report progress
@@ -471,9 +543,10 @@ class SyncService:
         self, session: AsyncSession, account_type: EmailSource, account_email: str
     ) -> SyncState:
         """Get or create sync state for an account."""
+        # Use .value for enum comparison (model stores strings)
         result = await session.exec(
             select(SyncState).where(
-                SyncState.account_type == account_type,
+                SyncState.account_type == account_type.value,
                 SyncState.account_email == account_email,
             )
         )
@@ -481,9 +554,9 @@ class SyncService:
 
         if state is None:
             state = SyncState(
-                account_type=account_type,
+                account_type=account_type.value,
                 account_email=account_email,
-                status=SyncStatus.IDLE,
+                status=SyncStatus.IDLE.value,
             )
             session.add(state)
             await session.commit()
@@ -500,24 +573,29 @@ class SyncService:
         error_message: Optional[str] = None,
     ) -> None:
         """Update sync state for an account."""
+        from sqlalchemy import update
+
         async with get_session() as session:
-            result = await session.exec(
-                select(SyncState).where(SyncState.account_type == account_type)
-            )
-            state = result.first()
+            # Build update values (use .value for enums)
+            values = {}
+            if gmail_history_id is not None:
+                values["gmail_history_id"] = gmail_history_id
+            if imap_last_uid is not None:
+                values["imap_last_uid"] = imap_last_uid
+            if status is not None:
+                values["status"] = status.value  # Store enum value
+                if status == SyncStatus.IDLE:
+                    values["last_sync_at"] = datetime.now()
+            if error_message is not None or "status" in values:
+                values["error_message"] = error_message
 
-            if state:
-                if gmail_history_id is not None:
-                    state.gmail_history_id = gmail_history_id
-                if imap_last_uid is not None:
-                    state.imap_last_uid = imap_last_uid
-                if status is not None:
-                    state.status = status
-                    if status == SyncStatus.IDLE:
-                        state.last_sync_at = datetime.now()
-                state.error_message = error_message
-
-                session.add(state)
+            if values:
+                stmt = (
+                    update(SyncState)
+                    .where(SyncState.account_type == account_type.value)  # Use .value
+                    .values(**values)
+                )
+                await session.exec(stmt)
                 await session.commit()
 
     async def _update_sync_status(
