@@ -72,15 +72,22 @@ def get_engine() -> AsyncEngine:
 
         logger.info(f"Creating database engine: {settings.database_path}")
 
-        _engine = create_async_engine(
-            settings.database_url,
-            echo=settings.environment == "development",
+        engine_kwargs = {
+            "echo": settings.environment == "development",
             # SQLite-specific settings
-            connect_args={
+            "connect_args": {
                 "check_same_thread": False,  # Required for async
             },
-            # Use StaticPool for SQLite to share connection
-            poolclass=StaticPool,
+        }
+
+        # In-memory SQLite must use a single shared connection to persist state
+        # across sessions. File-based DBs should use normal pooling behavior.
+        if settings.database_url.endswith(":memory:"):
+            engine_kwargs["poolclass"] = StaticPool
+
+        _engine = create_async_engine(
+            settings.database_url,
+            **engine_kwargs,
         )
 
     return _engine
@@ -117,7 +124,189 @@ async def init_db() -> None:
         # Create all tables from SQLModel metadata
         await conn.run_sync(SQLModel.metadata.create_all)
 
+        # Apply lightweight runtime migrations for existing user databases.
+        await _apply_runtime_migrations(conn)
+
     logger.info(f"Database initialized at: {settings.database_path}")
+
+
+async def _apply_runtime_migrations(conn) -> None:
+    """
+    Apply additive schema migrations that keep existing local DBs usable.
+
+    We intentionally support only safe, additive changes here (new nullable
+    columns) because this project currently has no full migration framework.
+    """
+
+    result = await conn.execute(text("PRAGMA table_info(emails)"))
+    columns = {row[1] for row in result.fetchall()}
+
+    if "body_html" not in columns:
+        await conn.execute(text("ALTER TABLE emails ADD COLUMN body_html TEXT"))
+        logger.info("Applied migration: added emails.body_html")
+
+    await _ensure_fts_search_objects(conn)
+
+
+async def _ensure_fts_search_objects(conn) -> None:
+    """
+    Create FTS5 virtual tables + triggers for cross-entity search.
+
+    This powers full-text search across:
+    - application company/position/notes
+    - linked email subject/sender/body
+    """
+    try:
+        await conn.execute(
+            text(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS applications_fts
+                USING fts5(
+                    company,
+                    position,
+                    notes,
+                    content='applications',
+                    content_rowid='id',
+                    tokenize='porter'
+                )
+                """
+            )
+        )
+
+        await conn.execute(
+            text(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts
+                USING fts5(
+                    subject,
+                    sender_name,
+                    sender_email,
+                    body_text,
+                    body_snippet,
+                    content='emails',
+                    content_rowid='id',
+                    tokenize='porter'
+                )
+                """
+            )
+        )
+
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS applications_ai
+                AFTER INSERT ON applications BEGIN
+                  INSERT INTO applications_fts(rowid, company, position, notes)
+                  VALUES (new.id, new.company, new.position, COALESCE(new.notes, ''));
+                END
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS applications_ad
+                AFTER DELETE ON applications BEGIN
+                  INSERT INTO applications_fts(applications_fts, rowid, company, position, notes)
+                  VALUES ('delete', old.id, old.company, old.position, COALESCE(old.notes, ''));
+                END
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS applications_au
+                AFTER UPDATE ON applications BEGIN
+                  INSERT INTO applications_fts(applications_fts, rowid, company, position, notes)
+                  VALUES ('delete', old.id, old.company, old.position, COALESCE(old.notes, ''));
+                  INSERT INTO applications_fts(rowid, company, position, notes)
+                  VALUES (new.id, new.company, new.position, COALESCE(new.notes, ''));
+                END
+                """
+            )
+        )
+
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS emails_ai
+                AFTER INSERT ON emails BEGIN
+                  INSERT INTO emails_fts(rowid, subject, sender_name, sender_email, body_text, body_snippet)
+                  VALUES (
+                    new.id,
+                    COALESCE(new.subject, ''),
+                    COALESCE(new.sender_name, ''),
+                    COALESCE(new.sender_email, ''),
+                    COALESCE(new.body_text, ''),
+                    COALESCE(new.body_snippet, '')
+                  );
+                END
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS emails_ad
+                AFTER DELETE ON emails BEGIN
+                  INSERT INTO emails_fts(emails_fts, rowid, subject, sender_name, sender_email, body_text, body_snippet)
+                  VALUES (
+                    'delete',
+                    old.id,
+                    COALESCE(old.subject, ''),
+                    COALESCE(old.sender_name, ''),
+                    COALESCE(old.sender_email, ''),
+                    COALESCE(old.body_text, ''),
+                    COALESCE(old.body_snippet, '')
+                  );
+                END
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS emails_au
+                AFTER UPDATE ON emails BEGIN
+                  INSERT INTO emails_fts(emails_fts, rowid, subject, sender_name, sender_email, body_text, body_snippet)
+                  VALUES (
+                    'delete',
+                    old.id,
+                    COALESCE(old.subject, ''),
+                    COALESCE(old.sender_name, ''),
+                    COALESCE(old.sender_email, ''),
+                    COALESCE(old.body_text, ''),
+                    COALESCE(old.body_snippet, '')
+                  );
+                  INSERT INTO emails_fts(rowid, subject, sender_name, sender_email, body_text, body_snippet)
+                  VALUES (
+                    new.id,
+                    COALESCE(new.subject, ''),
+                    COALESCE(new.sender_name, ''),
+                    COALESCE(new.sender_email, ''),
+                    COALESCE(new.body_text, ''),
+                    COALESCE(new.body_snippet, '')
+                  );
+                END
+                """
+            )
+        )
+
+        app_fts_count = (
+            await conn.execute(text("SELECT COUNT(*) FROM applications_fts"))
+        ).scalar()
+        if not app_fts_count:
+            await conn.execute(text("INSERT INTO applications_fts(applications_fts) VALUES ('rebuild')"))
+
+        email_fts_count = (
+            await conn.execute(text("SELECT COUNT(*) FROM emails_fts"))
+        ).scalar()
+        if not email_fts_count:
+            await conn.execute(text("INSERT INTO emails_fts(emails_fts) VALUES ('rebuild')"))
+    except Exception as exc:
+        # Keep backend usable even if host SQLite lacks FTS5.
+        logger.warning("FTS5 setup skipped: %s", exc)
 
 
 async def close_db() -> None:

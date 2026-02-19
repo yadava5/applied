@@ -9,17 +9,28 @@ This module provides:
 - Test client for API testing
 - Common test data factories
 
+IMPORTANT: This file also ensures that tests run against an isolated,
+in-memory SQLite database by setting JOBTRACKER_ENVIRONMENT=test BEFORE
+the FastAPI app (and database engine) are imported. This guarantees that
+test runs never touch your real JobTracker database in
+~/Library/Application Support/JobTracker.
+
 Fixtures are automatically discovered by pytest.
 """
 
-import pytest
+import os
 from typing import AsyncGenerator
 
-from httpx import AsyncClient, ASGITransport
+import pytest
+
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+# Ensure the app uses the test environment (in-memory DB) for all tests.
+os.environ.setdefault("JOBTRACKER_ENVIRONMENT", "test")
 
 
 # =============================================================================
@@ -70,9 +81,14 @@ async def test_client() -> AsyncGenerator[AsyncClient, None]:
     """
     Create an async HTTP client for API testing.
 
-    Uses httpx to make requests to the FastAPI app.
+    Uses httpx to make requests to the FastAPI app, and ensures the
+    database schema is initialized against the in-memory test database.
     """
     from jobtracker.main import app
+    from jobtracker.database import init_db
+
+    # Ensure all tables exist in the test database before handling requests.
+    await init_db()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

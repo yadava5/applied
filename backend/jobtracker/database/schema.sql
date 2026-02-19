@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS emails (
     sender_email TEXT,
     received_at TIMESTAMP NOT NULL,
     body_text TEXT,
+    body_html TEXT,                         -- Raw HTML body (rich rendering)
     body_snippet TEXT,                      -- First 500 chars for preview
     classified_as TEXT                      -- ML classification result
         CHECK(classified_as IN (
@@ -79,6 +80,33 @@ CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_classified ON emails(classified_as);
 CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source_account);
 CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(message_id);
+
+-- =============================================================================
+-- Full-Text Search (FTS5) Virtual Tables
+-- =============================================================================
+-- Enables fast search across:
+-- - Application metadata: company, position, notes
+-- - Email content: subject, sender, snippets/body
+
+CREATE VIRTUAL TABLE IF NOT EXISTS applications_fts USING fts5(
+    company,
+    position,
+    notes,
+    content='applications',
+    content_rowid='id',
+    tokenize='porter'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
+    subject,
+    sender_name,
+    sender_email,
+    body_text,
+    body_snippet,
+    content='emails',
+    content_rowid='id',
+    tokenize='porter'
+);
 
 -- =============================================================================
 -- Contacts Table

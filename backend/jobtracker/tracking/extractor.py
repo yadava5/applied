@@ -12,6 +12,24 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+COMPANY_NAME_CANONICAL = {
+    "fanduel": "FanDuel",
+    "epm scientific": "EPM Scientific",
+    "rbc": "RBC",
+}
+
+GENERIC_ATS_SENDER_NAMES = {
+    "workday",
+    "greenhouse",
+    "lever",
+    "linkedin",
+    "job alerts",
+    "jobs",
+    "recruiting",
+    "careers",
+    "talent acquisition",
+}
+
 
 # =============================================================================
 # Known Company Domains (expand as needed)
@@ -123,6 +141,34 @@ COMPANY_PATTERNS = [
     r"[Yy]our (?:application|interest)(?: to| at| for| in)\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s+has\s+|\s*[,!.])",
     # "application was sent to [Company]"
     r"application was sent to\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s*[,!.]|\s*$)",
+    # "Thank You from [Company]"
+    r"[Tt]hank(?:s| you)\s+from\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s*[,!.]|\s*$)",
+    # "Your application to [Position] at [Company]"
+    r"[Yy]our application to [A-Za-z0-9\s\-/()]+?\s+at\s+([A-Z][A-Za-z0-9\s&.,()'-]+?)(?:\s*[,!.]|\s*$)",
+    # "Your application for [Position] at [Company]"
+    r"[Yy]our application for [A-Za-z0-9\s\-/()]+?\s+at\s+([A-Z][A-Za-z0-9\s&.,()'-]+?)(?:\s*[,!.]|\s*$)",
+    # "Your update from [Company]"
+    r"[Yy]our update from\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s*[,!.]|\s*$)",
+    # "Application update from [Company]"
+    r"[Aa]pplication update from\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s*[,!.]|\s*$)",
+    # "Update on your application at [Company]"
+    r"[Uu]pdate on your application (?:at|with|from)\s+([A-Z][A-Za-z0-9\s&.,()'-]+?)(?:\s*[,!.]|\s*$)",
+    # "for your application at [Company]"
+    r"for your application (?:at|with)\s+([A-Z][A-Za-z0-9\s&.,()'-]+?)(?:\s*[,!.]|\s*$)",
+    # Workday/ATS templates: "interest in working with [Company]"
+    r"interest in working with\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s+position(?:\s+of)?|\s+role(?:\s+of)?|<|\r|\n|[!.])",
+    # ATS templates: "thank you for your interest in [Company]"
+    r"thank(?:s| you) for your interest in\s+([A-Z][A-Za-z0-9\s&.,()'-]+?)(?:\s+position(?:\s+of)?|\s+role(?:\s+of)?|<|\r|\n|[!.,])",
+    # ATS templates: "interest in joining us here at [Company]"
+    r"interest in joining us(?: here)? at\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:<|\r|\n|[!.,])",
+    # ATS templates: "A career at [Company] ..."
+    r"a career at\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:\s+(?:is|offers|means)|<|\r|\n|[!.,])",
+    # ATS templates: "careers at [Company]"
+    r"careers?\s+at\s+([A-Z][A-Za-z0-9\s&.,()'-]+?)(?:<|\r|\n|[!.,])",
+    # ATS templates: "opportunities at [Company]"
+    r"opportunities at\s+([A-Z][A-Za-z0-9\s&.,'-]+?)(?:<|\r|\n|[!.,])",
+    # Workday/ATS templates: "job openings at [Company] Careers"
+    r"job openings at\s+([A-Z][A-Za-z0-9\s&.,'-]+?)\s+careers",
     # "[Company] - In response to your application" (subject line pattern)
     r"^([A-Z][A-Za-z0-9\s&.,'-]+?)\s*[-–—]\s*(?:[Ii]n response|[Rr]egarding|[Rr]e:)",
     # "We at [Company]"
@@ -143,12 +189,34 @@ COMPANY_PATTERNS = [
 # =============================================================================
 
 POSITION_PATTERNS = [
+    # Subject style: "Thank you for applying to [Company] - [Position]"
+    r"[Tt]hank(?:s| you) for applying to\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s*[-:]\s*([A-Za-z0-9][A-Za-z0-9\s\-/(),&]+?)(?:\s*[,!.]|\s*$)",
+    # "for applying to the [Position] role at [Company]"
+    r"for applying to\s+(?:the |our )?([A-Za-z0-9\s\-/(),&]+?)\s+(?:position|role|opportunity)(?:\s+at\s+[A-Z][A-Za-z0-9\s&.,()'-]+?)?",
     # "for the [Position] position"
-    r"for (?:the |our )?([A-Za-z0-9\s\-/()]+?)\s+(?:position|role|opportunity)",
+    r"for (?!applying\b)(?:the |our )?([A-Za-z0-9\s\-/(),&]+?)\s+(?:position|role|opportunity)",
+    # "application to our [Position] role"
+    r"application (?:for|to)\s+(?:the |our )?([A-Za-z0-9\s\-/(),&]+?)\s+(?:position|role|opportunity)",
     # "application for [Position]"
-    r"application (?:for|to)(?: the)?\s+([A-Za-z0-9\s\-/()]+?)(?:\s+at\s+|\s+position|\s+role|\s*[,!.]|\s*$)",
+    r"application (?:for|to)(?: the)?\s+([A-Za-z0-9\s\-/(),&]+?)(?:\s+at\s+|\s+position|\s+role|\s*[,!.]|\s*$)",
+    # "Your application to [Position] at [Company]"
+    r"[Yy]our application to\s+([A-Za-z0-9\s\-/(),&]+?)\s+at\s+[A-Z]",
+    # "Your application to [Position] at [Company] was sent/submitted/received/viewed"
+    r"[Yy]our application to\s+([A-Za-z0-9\s\-/(),&]+?)\s+at\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s+(?:was|has been)\s+(?:sent|submitted|received|viewed)",
+    # "application was sent to [Company] for [Position]"
+    r"application was sent to\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s+for\s+(?:the\s+)?([A-Za-z0-9\s\-/(),&]+?)(?:\s+position|\s+role|\s*[,!.]|\s*$)",
+    # LinkedIn one-line confirmation text:
+    # "Your application was sent to [Company] [Position] [Company] [Location] View job:"
+    r"your application was sent to\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s+([A-Za-z0-9][A-Za-z0-9\s\-/(),&]+?)\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s+(?:[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*(?:,\s*[A-Z]{2}|,\s*United States)|San Francisco Bay Area|Remote)\s+view job:",
+    # LinkedIn plain-text block:
+    # "Your application was sent to [Company]\n[Position]\n[Company]\n[Location]\nView job:"
+    r"your application was sent to\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s*\n+\s*([^\n]{3,120}?)\s*\n+\s*[A-Z][A-Za-z0-9\s&.,()'-]+?\s*\n+\s*[^\n]{2,120}\s*\n+\s*view job:",
+    # LinkedIn quoted-printable/plaintext variants where lines collapse into large spaces.
+    r"your application was sent to\s+[A-Z][A-Za-z0-9\s&.,()'-]+?\s{2,}([A-Za-z0-9][A-Za-z0-9\s\-/(),&]+?)\s{2,}[A-Z][A-Za-z0-9\s&.,()'-]+?\s{2,}[A-Za-z][^\n]{0,120}?\s+view job:",
+    # "we have received your application for the [Position] role"
+    r"we (?:have|['’]ve) received your application for\s+(?:the\s+)?([A-Za-z0-9\s\-/(),&]+?)(?:\s+\(|\s+position|\s+role|\s*[,!.]|\s*$)",
     # "as a [Position]"
-    r"as (?:a |an )?([A-Za-z0-9\s\-/()]+?)(?:\s+at\s+|\s*[,!.]|\s*$)",
+    r"as (?:a |an )([A-Za-z0-9\s\-/(),&]+?)(?:\s+at\s+|\s*[,!.]|\s*$)",
     # "[Position] at [Company]" in subject
     r"^([A-Za-z0-9\s\-/()]+?)\s+(?:at|@)\s+[A-Z]",
     # "In response to your application for [Position]"
@@ -192,6 +260,7 @@ class CompanyExtractor:
         sender_email: Optional[str],
         subject: str,
         body: str,
+        sender_name: Optional[str] = None,
     ) -> tuple[Optional[str], float, str]:
         """
         Extract company name from email.
@@ -222,15 +291,21 @@ class CompanyExtractor:
             company = self._extract_from_text(subject)
             if company:
                 cleaned = self._clean_company_name(company)
-                if len(cleaned) > 2:  # Valid company name
+                if self._is_valid_company_name(cleaned):
                     return (cleaned, 0.9, "subject_pattern")
 
             # Method 3: Parse body
             company = self._extract_from_text(body)
             if company:
                 cleaned = self._clean_company_name(company)
-                if len(cleaned) > 2:
+                if self._is_valid_company_name(cleaned):
                     return (cleaned, 0.75, "body_pattern")
+
+            # Method 3b: ATS sender display name fallback
+            if is_ats_email and sender_name:
+                sender_company = self._extract_from_sender_name(sender_name)
+                if sender_company:
+                    return (sender_company, 0.72, "sender_name")
 
         # Use direct company mapping if found
         if direct_company:
@@ -277,19 +352,111 @@ class CompanyExtractor:
             match = pattern.search(text)
             if match:
                 company = match.group(1).strip()
-                if len(company) > 2 and len(company) < 100:
-                    return company
+                if not (2 < len(company) < 100):
+                    continue
+                cleaned = self._clean_company_name(company)
+                if self._is_valid_company_name(cleaned):
+                    return cleaned
+        return None
+
+    def _extract_from_sender_name(self, sender_name: str) -> Optional[str]:
+        """Extract company candidate from ATS sender display name."""
+        cleaned = self._clean_company_name(sender_name or "")
+        lowered = cleaned.lower().strip()
+        if not lowered:
+            return None
+        if lowered in GENERIC_ATS_SENDER_NAMES:
+            return None
+        if any(
+            token in lowered
+            for token in ("workday", "greenhouse", "lever", "job alerts", "jobs")
+        ):
+            return None
+        if self._is_valid_company_name(cleaned):
+            return cleaned
         return None
 
     def _clean_company_name(self, name: str) -> str:
         """Clean up extracted company name."""
+        # Remove obvious leading determiners
+        name = re.sub(r"^(?:the|our)\s+", "", name, flags=re.IGNORECASE)
+        # Remove leading context words from ATS templates
+        name = re.sub(
+            r"^(?:a career at|working with|work with|careers at|jobs at|joining us(?: here)? at)\s+",
+            "",
+            name,
+            flags=re.IGNORECASE,
+        )
         # Remove trailing punctuation
         name = re.sub(r"[,!.]+$", "", name)
         # Remove common suffixes
         name = re.sub(r"\s+(Inc\.?|LLC|Ltd\.?|Corp\.?|Corporation|Company)$", "", name, flags=re.IGNORECASE)
+        # Remove career portal suffixes.
+        name = re.sub(
+            r"\s+(?:careers?|career site|jobs portal|portal)$",
+            "",
+            name,
+            flags=re.IGNORECASE,
+        )
+        # Drop recruiting context parentheticals often appended in subject lines
+        # (e.g. "(YC W25)") while preserving the core company name.
+        name = re.sub(r"\s+\((?:yc|w\d+|s\d+|f\d+)[^)]*\)$", "", name, flags=re.IGNORECASE)
         # Remove extra whitespace
         name = " ".join(name.split())
-        return name.strip()
+        # Trim trailing conjunction artifacts from templated ATS copy.
+        name = re.sub(r"\s+(?:and|&)\s*$", "", name, flags=re.IGNORECASE)
+        cleaned = name.strip()
+        return COMPANY_NAME_CANONICAL.get(cleaned.lower(), cleaned)
+
+    def _is_valid_company_name(self, name: str) -> bool:
+        """Reject obvious non-company phrase fragments."""
+        if len(name) < 2 or len(name) > 80:
+            return False
+
+        lowered = name.lower()
+        blocked_phrases = [
+            "future as our",
+            "as our",
+            "your application",
+            "your interest",
+            "for your application",
+            "position of",
+            "hiring team",
+            "recruiting team",
+        ]
+        if any(phrase in lowered for phrase in blocked_phrases):
+            return False
+
+        # Position-like fragments are often false positives from "application for ..."
+        # templates and should not be treated as company names.
+        if lowered.endswith((" role", " position", " opportunity")):
+            return False
+
+        blocked_tokens = {
+            "future",
+            "our",
+            "role",
+            "position",
+            "application",
+            "interest",
+            "experience",
+            "candidate",
+            "candidacy",
+            "team",
+            "career",
+            "careers",
+            "job",
+            "jobs",
+            "opening",
+            "openings",
+        }
+        tokens = [token for token in re.split(r"\s+", lowered) if token]
+        if len(tokens) >= 2:
+            blocked_count = sum(token in blocked_tokens for token in tokens)
+            if blocked_count >= max(2, len(tokens) - 1):
+                return False
+
+        return True
 
 
 # =============================================================================
@@ -309,6 +476,7 @@ class PositionExtractor:
         self,
         subject: str,
         body: str,
+        company_hint: Optional[str] = None,
     ) -> tuple[Optional[str], float, str]:
         """
         Extract position from email.
@@ -316,6 +484,14 @@ class PositionExtractor:
         Returns:
             (position, confidence, method)
         """
+        # Method 0: LinkedIn "application sent" confirmation blocks can include
+        # role text in-between repeated company names.
+        linkedin_position = self._extract_from_linkedin_confirmation(
+            body, company_hint
+        )
+        if linkedin_position and self._is_valid_position(linkedin_position):
+            return (self._clean_position(linkedin_position), 0.8, "linkedin_sent_block")
+
         # Method 1: Parse subject line (highest confidence)
         position = self._extract_from_text(subject)
         if position and self._is_valid_position(position):
@@ -327,6 +503,41 @@ class PositionExtractor:
             return (self._clean_position(position), 0.75, "body_pattern")
 
         return (None, 0.0, "none")
+
+    def _extract_from_linkedin_confirmation(
+        self,
+        text: str,
+        company_hint: Optional[str],
+    ) -> Optional[str]:
+        """Extract role from LinkedIn confirmation body using repeated company anchor."""
+        if not text:
+            return None
+
+        lowered = text.lower()
+        if "your application was sent to" not in lowered or "view job:" not in lowered:
+            return None
+
+        if not company_hint:
+            return None
+
+        company_pattern = self._company_hint_pattern(company_hint)
+        pattern = re.compile(
+            rf"your application was sent to\s+{company_pattern}\s+(.+?)\s+{company_pattern}\s+(?:.+?)\s+view job:",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        match = pattern.search(text)
+        if not match:
+            return None
+
+        candidate = " ".join(match.group(1).split()).strip(" -")
+        return candidate or None
+
+    def _company_hint_pattern(self, company_hint: str) -> str:
+        """Build tolerant regex for matching company text with optional legal suffix."""
+        escaped = re.escape(company_hint.strip())
+        escaped = escaped.replace(r"\ ", r"\s+")
+        return rf"{escaped}(?:\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Corporation|Company))?"
 
     def _extract_from_text(self, text: str) -> Optional[str]:
         """Extract position from text using patterns."""
@@ -340,6 +551,23 @@ class PositionExtractor:
 
     def _is_valid_position(self, position: str) -> bool:
         """Check if extracted text looks like a job position."""
+        position_lower = position.lower()
+        blocked_phrases = [
+            "selection process",
+            "hiring process",
+            "move through",
+            "work together",
+            "your status as",
+            "interested in joining",
+            "our team as",
+            "we appreciate",
+        ]
+        if any(phrase in position_lower for phrase in blocked_phrases):
+            return False
+
+        if len(position.split()) > 14:
+            return False
+
         # Should contain at least one job-related keyword
         job_keywords = [
             "engineer", "developer", "manager", "analyst", "designer",
@@ -347,12 +575,35 @@ class PositionExtractor:
             "consultant", "coordinator", "associate", "intern", "senior",
             "junior", "software", "data", "product", "marketing", "sales",
             "operations", "hr", "finance", "support", "qa", "devops",
+            "program", "fellowship", "apprentice",
         ]
-        position_lower = position.lower()
         return any(kw in position_lower for kw in job_keywords)
 
     def _clean_position(self, position: str) -> str:
         """Clean up extracted position."""
+        # Handle noisy over-captures seen in templated confirmation emails.
+        lower = position.lower()
+        marker = " and for your application to "
+        if marker in lower:
+            start = lower.rfind(marker) + len(marker)
+            position = position[start:]
+
+        # Remove leading context phrases and determiners.
+        position = re.sub(
+            r"^(?:your\s+application\s+to\s+|your\s+interest\s+in\s+[A-Za-z0-9\s&.,'-]+\s+and\s+for\s+your\s+application\s+to\s+)",
+            "",
+            position,
+            flags=re.IGNORECASE,
+        )
+        position = re.sub(
+            r"^(?:for\s+)?applying\s+to\s+(?:the\s+|our\s+)?",
+            "",
+            position,
+            flags=re.IGNORECASE,
+        )
+        position = re.sub(r"^(?:our|the|a|an)\s+", "", position, flags=re.IGNORECASE)
+        # If capture includes a trailing company segment, trim it.
+        position = re.sub(r"\s+at\s+[A-Z][A-Za-z0-9\s&.,'-]+$", "", position)
         # Remove extra whitespace
         position = " ".join(position.split())
         # Remove trailing punctuation
@@ -388,6 +639,7 @@ def extract_company_and_position(
     sender_email: Optional[str],
     subject: str,
     body: str,
+    sender_name: Optional[str] = None,
 ) -> ExtractionResult:
     """
     Extract company and position from email.
@@ -404,10 +656,10 @@ def extract_company_and_position(
     position_extractor = get_position_extractor()
 
     company, company_conf, company_method = company_extractor.extract(
-        sender_email, subject, body
+        sender_email, subject, body, sender_name
     )
     position, position_conf, position_method = position_extractor.extract(
-        subject, body
+        subject, body, company_hint=company
     )
 
     return ExtractionResult(

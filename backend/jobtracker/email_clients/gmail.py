@@ -81,6 +81,7 @@ class GmailMessage:
     body_text: str
     body_snippet: str
     raw_headers: dict
+    body_html: Optional[str] = None
 
 
 # =============================================================================
@@ -469,7 +470,12 @@ class GmailClient:
             received_at = self._parse_date(date_str)
 
             # Extract body
-            body_text = self._extract_body(raw.get("payload", {}))
+            body_text, body_html = self._extract_bodies(raw.get("payload", {}))
+            if not body_text and body_html:
+                body_text = self._strip_html(body_html)
+            snippet_source = raw.get("snippet", "") or body_text
+            if not snippet_source and body_html:
+                snippet_source = self._strip_html(body_html)
 
             return GmailMessage(
                 message_id=raw["id"],
@@ -479,47 +485,56 @@ class GmailClient:
                 sender_email=sender_email,
                 received_at=received_at,
                 body_text=body_text,
-                body_snippet=raw.get("snippet", "")[:500],
+                body_snippet=snippet_source[:500],
+                body_html=body_html,
                 raw_headers=headers,
             )
         except Exception as e:
             logger.warning(f"Failed to parse message: {e}")
             return None
 
-    def _extract_body(self, payload: dict) -> str:
-        """Extract plain text body from message payload."""
-        # Check for plain text part
-        if payload.get("mimeType") == "text/plain":
-            data = payload.get("body", {}).get("data", "")
-            if data:
-                return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+    def _extract_bodies(self, payload: dict) -> tuple[str, Optional[str]]:
+        """Extract plain text and HTML bodies from Gmail payload."""
+        plain_text = ""
+        html_body: Optional[str] = None
 
-        # Check multipart
+        mime_type = payload.get("mimeType", "")
+        body_data = payload.get("body", {}).get("data", "")
+
+        if mime_type == "text/plain":
+            plain_text = self._decode_body_data(body_data)
+            return plain_text, None
+
+        if mime_type == "text/html":
+            html_body = self._decode_body_data(body_data)
+            return "", html_body or None
+
         for part in payload.get("parts", []):
-            if part.get("mimeType") == "text/plain":
-                data = part.get("body", {}).get("data", "")
-                if data:
-                    return base64.urlsafe_b64decode(data).decode(
-                        "utf-8", errors="replace"
-                    )
+            part_mime = part.get("mimeType", "")
+            if part_mime.startswith("multipart/"):
+                nested_text, nested_html = self._extract_bodies(part)
+                if nested_text and not plain_text:
+                    plain_text = nested_text
+                if nested_html and not html_body:
+                    html_body = nested_html
+                continue
 
-            # Nested multipart
-            if part.get("mimeType", "").startswith("multipart/"):
-                result = self._extract_body(part)
-                if result:
-                    return result
+            if part_mime == "text/plain" and not plain_text:
+                plain_text = self._decode_body_data(part.get("body", {}).get("data", ""))
+            elif part_mime == "text/html" and not html_body:
+                decoded_html = self._decode_body_data(part.get("body", {}).get("data", ""))
+                html_body = decoded_html or html_body
 
-        # Fallback to HTML (strip tags)
-        for part in payload.get("parts", []):
-            if part.get("mimeType") == "text/html":
-                data = part.get("body", {}).get("data", "")
-                if data:
-                    html = base64.urlsafe_b64decode(data).decode(
-                        "utf-8", errors="replace"
-                    )
-                    return self._strip_html(html)
+        return plain_text, html_body
 
-        return ""
+    def _decode_body_data(self, data: str) -> str:
+        """Decode url-safe base64 body payload safely."""
+        if not data:
+            return ""
+        try:
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
 
     def _strip_html(self, html: str) -> str:
         """Strip HTML tags and return plain text."""

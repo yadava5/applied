@@ -36,6 +36,7 @@ from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import DatabaseError
 
 from jobtracker.config import settings
 from jobtracker.database import close_db, get_db_stats, init_db
@@ -127,10 +128,12 @@ app.add_middleware(
 
 from jobtracker.api import (
     applications_router,
+    analytics_router,
     auth_router,
     classification_router,
     emails_router,
     sync_router,
+    websocket_router,
 )
 
 app.include_router(auth_router)
@@ -138,6 +141,9 @@ app.include_router(sync_router)
 app.include_router(emails_router)
 app.include_router(classification_router)
 app.include_router(applications_router)
+app.include_router(websocket_router)
+if settings.analytics_enabled:
+    app.include_router(analytics_router)
 
 
 # =============================================================================
@@ -206,7 +212,7 @@ async def health_check() -> HealthResponse:
     icloud_connected = has_icloud_credentials()
 
     # Get last sync time
-    last_sync = None
+    last_sync: datetime | None = None
     try:
         from sqlalchemy import select
 
@@ -220,9 +226,15 @@ async def health_check() -> HealthResponse:
                 .order_by(SyncState.last_sync_at.desc())
                 .limit(1)
             )
-            last_sync = result.first()
+            row = result.first()
+
+            # SQLModel/SQLAlchemy returns a Row when selecting a single column;
+            # extract the scalar datetime value if present.
+            if row is not None:
+                last_sync = row[0] if hasattr(row, "__getitem__") else row
     except Exception:
-        pass  # No sync state yet
+        # In tests or on first run there may be no sync_state table yet.
+        last_sync = None
 
     # Get classifier status
     try:
@@ -288,6 +300,35 @@ async def root() -> dict[str, str]:
 # =============================================================================
 # Error Handlers
 # =============================================================================
+
+
+@app.exception_handler(DatabaseError)
+async def database_exception_handler(request, exc: DatabaseError) -> JSONResponse:
+    """
+    Handle SQLAlchemy database errors with clearer client-facing messages.
+    """
+    message = str(exc).lower()
+    if "database disk image is malformed" in message:
+        logger.exception("SQLite corruption detected: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": "database_corruption",
+                "message": (
+                    "Local database appears corrupted. "
+                    "Run the local DB repair script (scripts/repair_local_db.sh), then retry."
+                ),
+            },
+        )
+
+    logger.exception("Database error: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "database_error",
+            "message": "A database error occurred. Please try again.",
+        },
+    )
 
 
 @app.exception_handler(Exception)

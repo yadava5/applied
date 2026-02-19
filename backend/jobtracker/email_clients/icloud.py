@@ -19,8 +19,10 @@ User Setup Requirements:
 """
 
 import asyncio
+import base64
 import email
 import logging
+import re
 import ssl
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -70,6 +72,7 @@ class IMAPMessage:
     body_text: str
     body_snippet: str
     raw_headers: dict
+    body_html: Optional[str] = None
 
 
 # =============================================================================
@@ -216,7 +219,7 @@ class ICloudClient:
         """
         await self._ensure_connected()
 
-        # Select folder
+        # Select mailbox. Unread preservation is handled by BODY.PEEK in fetch.
         response = await self._imap.select(folder)
         if response.result != "OK":
             logger.error(f"Failed to select folder {folder}: {response}")
@@ -310,7 +313,8 @@ class ICloudClient:
             # Fetch message with UID (with timeout)
             try:
                 response = await asyncio.wait_for(
-                    self._imap.fetch(str(msg_num), "(UID RFC822.HEADER BODY[TEXT])"),
+                    # BODY.PEEK[] fetches the full raw message without setting \\Seen.
+                    self._imap.fetch(str(msg_num), "(UID BODY.PEEK[])"),
                     timeout=15.0  # 15 second timeout per message
                 )
             except asyncio.TimeoutError:
@@ -333,49 +337,12 @@ class ICloudClient:
     def _parse_fetch_response(self, response) -> Optional[IMAPMessage]:
         """Parse IMAP FETCH response into IMAPMessage."""
         try:
-            uid = 0
-            headers_raw = b""
-            body_raw = b""
-
-            # Parse response lines - aioimaplib returns a mix of bytes, bytearray, and strings
-            lines = response.lines
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                
-                # Convert to bytes if needed
-                if isinstance(line, bytearray):
-                    line = bytes(line)
-                elif isinstance(line, str):
-                    line = line.encode('utf-8', errors='replace')
-                
-                # Check if this is the initial FETCH response line
-                if isinstance(line, bytes) and b"FETCH" in line:
-                    # Extract UID from the line
-                    if b"UID" in line:
-                        uid = self._extract_uid(line)
-                    
-                    # The next line should be headers
-                    if i + 1 < len(lines):
-                        next_line = lines[i + 1]
-                        if isinstance(next_line, (bytes, bytearray)):
-                            headers_raw = bytes(next_line) if isinstance(next_line, bytearray) else next_line
-                    
-                    # Look for body after headers
-                    if i + 3 < len(lines):
-                        body_line = lines[i + 3]
-                        if isinstance(body_line, (bytes, bytearray)):
-                            body_raw = bytes(body_line) if isinstance(body_line, bytearray) else body_line
-                    
-                    break
-                i += 1
-
-            if not headers_raw:
-                logger.debug("No headers found in response")
+            uid, raw_message = self._extract_uid_and_raw_message(response)
+            if not raw_message:
+                logger.debug("No raw RFC822 payload found in FETCH response")
                 return None
 
-            # Parse headers
-            msg = email.message_from_bytes(headers_raw + b"\r\n\r\n" + body_raw)
+            msg = email.message_from_bytes(raw_message)
 
             # Extract header values
             headers = {key.lower(): val for key, val in msg.items()}
@@ -397,7 +364,14 @@ class ICloudClient:
             message_id = message_id.strip("<>")
 
             # Extract body
-            body_text = self._extract_body_from_email(msg, body_raw)
+            fallback_payload = b""
+            if not msg.is_multipart():
+                payload = msg.get_payload(decode=True)
+                if isinstance(payload, bytes):
+                    fallback_payload = payload
+
+            body_text, body_html = self._extract_body_from_email(msg, fallback_payload)
+            snippet_source = body_text or self._strip_html(body_html or "")
 
             return IMAPMessage(
                 uid=uid,
@@ -407,7 +381,8 @@ class ICloudClient:
                 sender_email=sender_email,
                 received_at=received_at,
                 body_text=body_text,
-                body_snippet=body_text[:500] if body_text else "",
+                body_snippet=snippet_source[:500] if snippet_source else "",
+                body_html=body_html,
                 raw_headers=headers,
             )
 
@@ -415,13 +390,59 @@ class ICloudClient:
             logger.warning(f"Failed to parse FETCH response: {e}")
             return None
 
+    def _extract_uid_and_raw_message(self, response) -> tuple[int, bytes]:
+        """Extract UID and RFC822 payload bytes from FETCH response lines."""
+        uid = 0
+        raw_message = b""
+        lines = response.lines
+
+        for idx, line in enumerate(lines):
+            line_bytes = self._line_to_bytes(line)
+            if b"FETCH" not in line_bytes:
+                continue
+
+            if b"UID" in line_bytes:
+                uid = self._extract_uid(line_bytes)
+
+            literal_size_match = re.search(rb"\{(\d+)\}", line_bytes)
+            if literal_size_match:
+                literal_size = int(literal_size_match.group(1))
+                collected = bytearray()
+                next_idx = idx + 1
+                while next_idx < len(lines) and len(collected) < literal_size:
+                    candidate = self._line_to_bytes(lines[next_idx])
+                    collected.extend(candidate)
+                    next_idx += 1
+                raw_message = bytes(collected[:literal_size])
+            else:
+                # Fallback when server does not include explicit literal size.
+                next_idx = idx + 1
+                while next_idx < len(lines):
+                    candidate = self._line_to_bytes(lines[next_idx])
+                    if candidate.startswith(b")") or b" OK " in candidate:
+                        next_idx += 1
+                        continue
+                    raw_message = candidate
+                    break
+
+            if raw_message:
+                break
+
+        return uid, raw_message
+
+    def _line_to_bytes(self, line) -> bytes:
+        """Normalize aioimaplib response line into bytes."""
+        if isinstance(line, bytes):
+            return line
+        if isinstance(line, bytearray):
+            return bytes(line)
+        return str(line).encode("utf-8", errors="replace")
+
     def _extract_uid(self, line: bytes) -> int:
         """Extract UID from FETCH response line."""
         try:
             text = line.decode("utf-8", errors="replace")
             # Look for "UID <number>"
-            import re
-
             match = re.search(r"UID\s+(\d+)", text)
             if match:
                 return int(match.group(1))
@@ -453,31 +474,93 @@ class ICloudClient:
 
     def _extract_body_from_email(
         self, msg: email.message.Message, body_raw: bytes
-    ) -> str:
-        """Extract plain text body from email message."""
+    ) -> tuple[str, Optional[str]]:
+        """Extract plain text and HTML body from email message."""
         try:
-            # If we have raw body data
-            if body_raw:
-                return body_raw.decode("utf-8", errors="replace")
+            plain_text = ""
+            html_body: Optional[str] = None
+            cid_attachments: dict[str, str] = {}
+
+            # If we have raw body data, use it as a fallback.
+            raw_decoded = body_raw.decode("utf-8", errors="replace") if body_raw else ""
 
             # Try to get payload
             if msg.is_multipart():
                 for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        payload = part.get_payload(decode=True)
+                    if part.is_multipart():
+                        continue
+
+                    content_type = part.get_content_type()
+                    payload = part.get_payload(decode=True)
+
+                    content_id = (part.get("Content-ID") or "").strip("<>")
+                    if content_id and payload:
+                        cid_attachments[content_id] = (
+                            f"data:{content_type};base64,"
+                            f"{base64.b64encode(payload).decode('ascii')}"
+                        )
+
+                    if content_type == "text/plain" and not plain_text:
                         if payload:
                             charset = part.get_content_charset() or "utf-8"
-                            return payload.decode(charset, errors="replace")
+                            plain_text = payload.decode(charset, errors="replace")
+                    elif content_type == "text/html" and html_body is None:
+                        if payload:
+                            charset = part.get_content_charset() or "utf-8"
+                            html_body = payload.decode(charset, errors="replace")
             else:
                 payload = msg.get_payload(decode=True)
                 if payload:
                     charset = msg.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
+                    decoded = payload.decode(charset, errors="replace")
+                    if msg.get_content_type() == "text/html":
+                        html_body = decoded
+                    else:
+                        plain_text = decoded
+
+            if not plain_text and raw_decoded:
+                if self._looks_like_html(raw_decoded):
+                    html_body = html_body or raw_decoded
+                    plain_text = self._strip_html(raw_decoded)
+                else:
+                    plain_text = raw_decoded
+
+            if not plain_text and html_body:
+                plain_text = self._strip_html(html_body)
+
+            if html_body and cid_attachments:
+                html_body = self._replace_cid_sources(html_body, cid_attachments)
+
+            return plain_text, html_body
 
         except Exception as e:
             logger.debug(f"Error extracting body: {e}")
 
-        return ""
+        return "", None
+
+    def _looks_like_html(self, value: str) -> bool:
+        """Heuristic to detect HTML payloads."""
+        lowered = value.lower()
+        return "<html" in lowered or "<body" in lowered or "<div" in lowered
+
+    def _strip_html(self, html: str) -> str:
+        """Convert HTML to plain text for snippet/search fallback."""
+        html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.I)
+        html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.I)
+        html = re.sub(r"<[^>]+>", " ", html)
+        html = re.sub(r"\s+", " ", html)
+        return html.strip()
+
+    def _replace_cid_sources(self, html: str, cid_attachments: dict[str, str]) -> str:
+        """Replace cid: links in HTML with data URLs when inline attachments exist."""
+        if not cid_attachments:
+            return html
+
+        def _replace(match: re.Match[str]) -> str:
+            cid = match.group(1).strip("<>")
+            return cid_attachments.get(cid, match.group(0))
+
+        return re.sub(r"cid:\s*<?([^\"'>\s]+)>?", _replace, html, flags=re.I)
 
     # -------------------------------------------------------------------------
     # Folder Operations

@@ -16,13 +16,15 @@ Decision flow:
 Confidence thresholds:
 - ≥0.85: Auto-classify (no review needed)
 - 0.70-0.84: Auto-classify but flag for review queue
-- <0.70: Manual review required
+- <0.70: Lower-confidence fallback (often `needs_review`)
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
+from jobtracker.config import settings
 from jobtracker.database.models import EmailCategory
 
 from .embeddings import get_embeddings_classifier
@@ -30,6 +32,70 @@ from .rules import get_rules_classifier
 from .setfit_model import get_setfit_classifier
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Content Guards
+# =============================================================================
+
+# Signals for digest/marketing style emails that should never become
+# application lifecycle events.
+NON_APPLICATION_PATTERNS = [
+    r"\bjob alerts?\b",
+    r"\brecommended jobs?\b",
+    r"\bjobs? you may be interested in\b",
+    r"\bnew jobs? for you\b",
+    r"\bbased on your profile\b",
+    r"\bview (all )?jobs?\b",
+    r"\bunsubscribe\b",
+    r"\bmanage preferences\b",
+    r"\bweekly digest\b",
+    r"\bdaily digest\b",
+    r"\bnewsletter\b",
+    r"\btop picks? for you\b",
+    r"\bshop now\b",
+    r"\bflash sale\b",
+    r"\blimited time offer\b",
+    r"\bcoupon\b",
+    r"\byour order\b",
+    r"\btracking number\b",
+    r"\bsecurity alert\b",
+    r"\bverification code\b",
+    r"\bconfirmation code\b",
+    r"\bone[- ]time (passcode|password|code)\b",
+    r"\botp\b",
+    r"\bsign[- ]in\b",
+    r"\blogin\b",
+    r"\baccount (alert|security|verification)\b",
+    r"\bbank alert\b",
+    r"\bstatement available\b",
+    r"\btransaction alert\b",
+    r"\breferral bonus\b",
+    r"\btalent community\b",
+]
+
+NON_APPLICATION_SENDERS = [
+    "jobalerts",
+    "jobs-noreply",
+    "alerts-noreply",
+    "newsletter",
+    "marketing",
+    "promotions",
+]
+
+LIFECYCLE_PATTERNS = [
+    r"\bthank(?:s| you) for applying\b",
+    r"\byour application\b",
+    r"\bapplication (received|submitted)\b",
+    r"\bregret to inform\b",
+    r"\bunfortunately\b",
+    r"\binterview\b",
+    r"\bphone screen\b",
+    r"\btechnical (assessment|challenge|test)\b",
+    r"\boffer letter\b",
+    r"\bcompensation package\b",
+    r"\bposition has been filled\b",
+]
 
 
 # =============================================================================
@@ -44,7 +110,7 @@ class ClassificationResult:
     category: EmailCategory
     confidence: float
     method: str  # "rules", "embeddings", "setfit", "fallback"
-    needs_review: bool  # True if confidence < 0.70
+    needs_review: bool  # True if confidence < 0.85
     details: Optional[dict] = None
 
 
@@ -53,8 +119,8 @@ class ClassificationResult:
 # =============================================================================
 
 CONFIDENCE_AUTO = 0.85  # Auto-classify without review
-CONFIDENCE_REVIEW = 0.70  # Auto-classify but add to review queue
-# Below 0.70: Flag for manual review
+CONFIDENCE_MIN_CLASSIFICATION = 0.70  # Minimum confidence to trust semantic layer output
+# Below 0.85: Add to review queue
 
 
 # =============================================================================
@@ -78,6 +144,13 @@ class HybridClassifier:
         self._rules = get_rules_classifier()
         self._embeddings = get_embeddings_classifier()
         self._setfit = get_setfit_classifier()
+        self._lite_mode = settings.lite_mode
+        self._non_application_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in NON_APPLICATION_PATTERNS
+        ]
+        self._lifecycle_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in LIFECYCLE_PATTERNS
+        ]
 
     async def classify(
         self,
@@ -96,6 +169,22 @@ class HybridClassifier:
         Returns:
             ClassificationResult with category, confidence, and metadata
         """
+        forced_other_reason = self._forced_other_reason(subject, body, sender_email)
+        if forced_other_reason:
+            logger.debug(
+                "Content guard forced OTHER classification: reason=%s sender=%s subject=%s",
+                forced_other_reason,
+                sender_email,
+                subject[:120],
+            )
+            return ClassificationResult(
+                category=EmailCategory.OTHER,
+                confidence=0.96,
+                method="content_filter",
+                needs_review=False,
+                details={"reason": forced_other_reason},
+            )
+
         # =====================================================================
         # Layer 1: Rule-Based Classification
         # =====================================================================
@@ -126,8 +215,16 @@ class HybridClassifier:
             "[NEGATIVE]" in p for p in rules_result.matched_patterns
         )
         rules_says_other = rules_result.category == EmailCategory.OTHER
-        
-        if self._embeddings.is_available() and not (has_negative_signals and rules_says_other):
+        has_lifecycle_content = any(
+            pattern.search(f"{subject}\n{body}") for pattern in self._lifecycle_patterns
+        )
+        allow_semantic_override = not rules_says_other or has_lifecycle_content
+
+        if (
+            self._embeddings.is_available()
+            and allow_semantic_override
+            and not (has_negative_signals and rules_says_other)
+        ):
             emb_result = await self._embeddings.classify(subject, body)
 
             if emb_result is not None:
@@ -135,48 +232,74 @@ class HybridClassifier:
 
                 # Only trust embeddings if rules doesn't strongly disagree
                 if emb_confidence >= 0.85 and not has_negative_signals:
-                    logger.debug(
-                        f"Embeddings classified as {emb_category.value} "
-                        f"with confidence {emb_confidence:.2f}"
-                    )
-                    return ClassificationResult(
-                        category=emb_category,
-                        confidence=emb_confidence,
-                        method="embeddings",
-                        needs_review=emb_confidence < CONFIDENCE_AUTO,
-                    )
+                    if emb_category == EmailCategory.APPLIED and not has_lifecycle_content:
+                        logger.debug(
+                            "Ignoring embeddings APPLIED prediction without lifecycle content"
+                        )
+                    elif self._forced_other_reason(subject, body, sender_email):
+                        return ClassificationResult(
+                            category=EmailCategory.OTHER,
+                            confidence=0.95,
+                            method="content_filter",
+                            needs_review=False,
+                            details={"reason": "embedding_blocked_by_content_guard"},
+                        )
+                    else:
+                        logger.debug(
+                            f"Embeddings classified as {emb_category.value} "
+                            f"with confidence {emb_confidence:.2f}"
+                        )
+                        return ClassificationResult(
+                            category=emb_category,
+                            confidence=emb_confidence,
+                            method="embeddings",
+                            needs_review=emb_confidence < CONFIDENCE_AUTO,
+                        )
 
         # =====================================================================
         # Layer 3: SetFit ML Model
         # =====================================================================
-        if self._setfit.is_available():
+        if not self._lite_mode and self._setfit.is_available() and allow_semantic_override:
             setfit_result = self._setfit.classify(subject, body)
 
             if setfit_result is not None:
                 sf_category, sf_confidence = setfit_result
 
-                if sf_confidence >= CONFIDENCE_REVIEW:
-                    logger.debug(
-                        f"SetFit classified as {sf_category.value} "
-                        f"with confidence {sf_confidence:.2f}"
-                    )
-                    return ClassificationResult(
-                        category=sf_category,
-                        confidence=sf_confidence,
-                        method="setfit",
-                        needs_review=sf_confidence < CONFIDENCE_AUTO,
-                    )
+                if sf_confidence >= CONFIDENCE_MIN_CLASSIFICATION:
+                    if sf_category == EmailCategory.APPLIED and not has_lifecycle_content:
+                        logger.debug(
+                            "Ignoring SetFit APPLIED prediction without lifecycle content"
+                        )
+                    elif self._forced_other_reason(subject, body, sender_email):
+                        return ClassificationResult(
+                            category=EmailCategory.OTHER,
+                            confidence=0.95,
+                            method="content_filter",
+                            needs_review=False,
+                            details={"reason": "setfit_blocked_by_content_guard"},
+                        )
+                    else:
+                        logger.debug(
+                            f"SetFit classified as {sf_category.value} "
+                            f"with confidence {sf_confidence:.2f}"
+                        )
+                        return ClassificationResult(
+                            category=sf_category,
+                            confidence=sf_confidence,
+                            method="setfit",
+                            needs_review=sf_confidence < CONFIDENCE_AUTO,
+                        )
 
         # =====================================================================
         # Fallback: Use best available result with NEEDS_REVIEW safety net
         # =====================================================================
         # For job tracking, we must be conservative about marking as OTHER
         # If there's a reasonable chance it's job-related, mark as NEEDS_REVIEW
-        
+
         final_category = rules_result.category
         final_confidence = rules_result.confidence
-        needs_review = final_confidence < CONFIDENCE_REVIEW
-        
+        needs_review = final_confidence < CONFIDENCE_AUTO
+
         # Safety net: If rules says OTHER but there are meaningful job signals
         if final_category == EmailCategory.OTHER:
             # Check if there were significant job-related scores (might be a borderline case)
@@ -184,7 +307,7 @@ class HybridClassifier:
             job_categories = ["applied", "interview", "rejection", "offer", "assessment"]
             job_scores = {cat: rules_result.scores.get(cat, 0) for cat in job_categories}
             max_job_score = max(job_scores.values()) if job_scores else 0
-            
+
             # Only mark for review if there are meaningful job signals
             # (score >= 2 means at least some job-related patterns matched)
             if max_job_score >= 2:
@@ -193,7 +316,19 @@ class HybridClassifier:
                 logger.debug(
                     f"Marking as NEEDS_REVIEW (was OTHER, job_scores={job_scores})"
                 )
-        
+
+        # Final protection: job-alert/newsletter/promotional content should stay OTHER.
+        if final_category != EmailCategory.OTHER:
+            late_other_reason = self._forced_other_reason(subject, body, sender_email)
+            if late_other_reason:
+                final_category = EmailCategory.OTHER
+                final_confidence = max(final_confidence, 0.90)
+                needs_review = False
+                logger.debug(
+                    "Late content guard override to OTHER: reason=%s",
+                    late_other_reason,
+                )
+
         logger.debug(
             f"Fallback to rules: {final_category.value} "
             f"with confidence {final_confidence:.2f}"
@@ -209,6 +344,48 @@ class HybridClassifier:
                 "scores": rules_result.scores,
             },
         )
+
+    def is_lite_mode(self) -> bool:
+        """Return whether SetFit is currently disabled."""
+        return self._lite_mode
+
+    def set_lite_mode(self, enabled: bool) -> None:
+        """Enable/disable Lite Mode at runtime."""
+        self._lite_mode = enabled
+        logger.info("Lite mode %s", "enabled" if enabled else "disabled")
+
+    def _forced_other_reason(
+        self,
+        subject: str,
+        body: str,
+        sender_email: Optional[str],
+    ) -> Optional[str]:
+        """
+        Return reason string when message should be force-classified as OTHER.
+
+        Uses combined content signals (subject + body), not sender alone.
+        """
+        text = f"{subject or ''}\n{body or ''}".lower()
+        lifecycle_hit = any(pattern.search(text) for pattern in self._lifecycle_patterns)
+        if lifecycle_hit:
+            return None
+
+        content_hits = sum(
+            1 for pattern in self._non_application_patterns if pattern.search(text)
+        )
+
+        sender_hit = False
+        if sender_email:
+            sender_lower = sender_email.lower()
+            sender_hit = any(token in sender_lower for token in NON_APPLICATION_SENDERS)
+
+        if content_hits >= 2:
+            return "digest_or_promotional_content"
+        if sender_hit and content_hits >= 1:
+            return "sender_plus_digest_content"
+        if "linkedin.com" in (sender_email or "").lower() and content_hits >= 1:
+            return "linkedin_job_alert_content"
+        return None
 
     async def add_correction(
         self,
@@ -307,8 +484,9 @@ class HybridClassifier:
                 "description": "Sentence similarity using e5-small-v2",
             },
             "setfit": {
-                "available": self._setfit.is_available(),
+                "available": (not self._lite_mode) and self._setfit.is_available(),
                 "is_training": self._setfit.is_training(),
+                "disabled_by_lite_mode": self._lite_mode,
                 "description": "Few-shot ML classifier",
             },
         }

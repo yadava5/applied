@@ -96,6 +96,29 @@ class TestEmailParser:
         assert parser._normalize_email("  email@test.com  ") == "email@test.com"
         assert parser._normalize_email("") == ""
 
+    def test_clean_body_decodes_qp_and_removes_mime_scaffolding(self):
+        """Quoted-printable MIME wrappers are decoded into readable text."""
+        parser = EmailParser()
+        raw_body = (
+            "------=_Part_99256_1978143042.1770834668631\n"
+            "Content-Type: text/plain;charset=UTF-8\n"
+            "Content-Transfer-Encoding: quoted-printable\n"
+            "Content-ID: text-body\n\n"
+            "Your application was sent to Emonics LLC=0A"
+            "Python Developer, Entry Level=0A"
+            "Emonics LLC=0A"
+            "New York, United States=0A"
+            "View job:=20https://www.linkedin.com/jobs/view/123=0A"
+            "We=E2=80=99ll review your profile.\n"
+        )
+
+        cleaned = parser._clean_body(raw_body)
+
+        assert "Content-Type" not in cleaned
+        assert "=_Part_" not in cleaned
+        assert "We’ll review your profile." in cleaned
+        assert "Python Developer, Entry Level" in cleaned
+
 
 class TestDeduplication:
     """Tests for email deduplication."""
@@ -261,3 +284,59 @@ class TestICloudClient:
         ):
             client = ICloudClient()
             assert client.get_account_email() == "test@icloud.com"
+
+    @pytest.mark.asyncio
+    async def test_fetch_emails_selects_inbox(self):
+        """Fetching should select the requested mailbox before searching."""
+        client = ICloudClient()
+        client._connected = True
+
+        mock_imap = MagicMock()
+        mock_imap.select = AsyncMock(return_value=MagicMock(result="OK", lines=[]))
+        mock_imap.search = AsyncMock(return_value=MagicMock(result="OK", lines=[b""]))
+        client._imap = mock_imap
+
+        messages, highest_uid = await client.fetch_emails()
+
+        assert messages == []
+        assert highest_uid == 0
+        mock_imap.select.assert_awaited_once_with("INBOX")
+
+    @pytest.mark.asyncio
+    async def test_fetch_message_uses_body_peek(self):
+        """Message fetch should use BODY.PEEK so IMAP does not mark as seen."""
+        client = ICloudClient()
+        client._connected = True
+        client._imap = MagicMock()
+        client._imap.fetch = AsyncMock(return_value=MagicMock(result="OK", lines=[]))
+
+        expected = IMAPMessage(
+            uid=42,
+            message_id="msg-42",
+            subject="Subject",
+            sender_name="Sender",
+            sender_email="sender@example.com",
+            received_at=datetime(2026, 2, 10, 12, 0, 0),
+            body_text="Body",
+            body_snippet="Body",
+            raw_headers={},
+        )
+
+        with patch.object(client, "_parse_fetch_response", return_value=expected):
+            result = await client._fetch_message(123)
+
+        assert result == expected
+        client._imap.fetch.assert_awaited_once_with(
+            "123", "(UID BODY.PEEK[])"
+        )
+
+    def test_replace_cid_sources_in_html(self):
+        """CID references in HTML should be replaced with inline data URLs."""
+        client = ICloudClient()
+        html = '<p><img src="cid:logo-1"></p>'
+        data_map = {"logo-1": "data:image/png;base64,abcd"}
+
+        rendered = client._replace_cid_sources(html, data_map)
+
+        assert "cid:logo-1" not in rendered
+        assert "data:image/png;base64,abcd" in rendered

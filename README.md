@@ -51,7 +51,7 @@ JobTracker syncs your email from Gmail and iCloud, identifies job-related messag
 - [x] ML email classification (3-layer hybrid: rules → embeddings → SetFit)
 - [x] Application pipeline dashboard (Applied → Interview → Offer → Rejected)
 - [x] Scheduled background email sync (via SMAppService + launchd)
-- [x] Analytics with Swift Charts (response rates, timelines, trends)
+- [ ] Analytics module (currently de-scoped from active app surface)
 - [x] Confidence-based review (uncertain classifications flagged for user)
 - [x] User correction feedback loop (improves ML over time)
 - [x] Menu bar status icon (MenuBarExtra)
@@ -162,7 +162,7 @@ jobtracker/
 │       │   ├── Dashboard/          # Main dashboard with status cards
 │       │   ├── Applications/       # Application list and detail
 │       │   ├── Emails/             # Email inbox and review queue
-│       │   ├── Analytics/          # Swift Charts visualizations
+│       │   ├── Analytics/          # Optional future module (currently de-scoped)
 │       │   ├── Settings/           # Account connection, preferences
 │       │   └── Components/         # Reusable Liquid Glass components
 │       ├── Services/
@@ -201,6 +201,19 @@ uvicorn jobtracker.main:app --host 127.0.0.1 --port 8000 --reload
 
 # See docs/SETUP.md for full setup including Gmail/iCloud auth
 ```
+
+## Troubleshooting
+
+If backend responses include `database disk image is malformed`, run:
+
+```bash
+./scripts/repair_local_db.sh
+```
+
+By default this repairs:
+
+- `~/Library/Application Support/JobTracker/jobtracker.db`
+- and creates a timestamped backup under `~/Library/Application Support/JobTracker/backups`
 
 ## License
 

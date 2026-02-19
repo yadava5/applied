@@ -212,6 +212,10 @@ class Email(TimestampMixin, table=True):
     sender_email: Optional[str] = Field(default=None, description="Sender email address")
     received_at: datetime = Field(index=True, description="Email receive timestamp")
     body_text: Optional[str] = Field(default=None, description="Plain text body")
+    body_html: Optional[str] = Field(
+        default=None,
+        description="Raw HTML body when available for rich rendering",
+    )
     body_snippet: Optional[str] = Field(
         default=None,
         max_length=500,
