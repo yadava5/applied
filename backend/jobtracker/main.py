@@ -36,6 +36,7 @@ from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import DatabaseError
 
 from jobtracker.config import settings
 from jobtracker.database import close_db, get_db_stats, init_db
@@ -299,6 +300,35 @@ async def root() -> dict[str, str]:
 # =============================================================================
 # Error Handlers
 # =============================================================================
+
+
+@app.exception_handler(DatabaseError)
+async def database_exception_handler(request, exc: DatabaseError) -> JSONResponse:
+    """
+    Handle SQLAlchemy database errors with clearer client-facing messages.
+    """
+    message = str(exc).lower()
+    if "database disk image is malformed" in message:
+        logger.exception("SQLite corruption detected: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": "database_corruption",
+                "message": (
+                    "Local database appears corrupted. "
+                    "Run the local DB repair script (scripts/repair_local_db.sh), then retry."
+                ),
+            },
+        )
+
+    logger.exception("Database error: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "database_error",
+            "message": "A database error occurred. Please try again.",
+        },
+    )
 
 
 @app.exception_handler(Exception)

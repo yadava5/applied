@@ -72,15 +72,22 @@ def get_engine() -> AsyncEngine:
 
         logger.info(f"Creating database engine: {settings.database_path}")
 
-        _engine = create_async_engine(
-            settings.database_url,
-            echo=settings.environment == "development",
+        engine_kwargs = {
+            "echo": settings.environment == "development",
             # SQLite-specific settings
-            connect_args={
+            "connect_args": {
                 "check_same_thread": False,  # Required for async
             },
-            # Use StaticPool for SQLite to share connection
-            poolclass=StaticPool,
+        }
+
+        # In-memory SQLite must use a single shared connection to persist state
+        # across sessions. File-based DBs should use normal pooling behavior.
+        if settings.database_url.endswith(":memory:"):
+            engine_kwargs["poolclass"] = StaticPool
+
+        _engine = create_async_engine(
+            settings.database_url,
+            **engine_kwargs,
         )
 
     return _engine

@@ -278,12 +278,22 @@ async def list_applications(
         result = await session.exec(stmt)
         applications = result.all()
 
-        # Get email counts for each application
+        app_ids = [app.id for app in applications]
+        email_counts: dict[int, int] = {}
+        if app_ids:
+            counts_result = await session.exec(
+                select(Email.application_id, func.count(Email.id))
+                .where(Email.application_id.in_(app_ids))
+                .group_by(Email.application_id)
+            )
+            for row in counts_result.all():
+                app_id = int(row[0])
+                count = int(row[1])
+                email_counts[app_id] = count
+
+        # Build response using pre-fetched per-application counts
         app_responses = []
         for app in applications:
-            email_count_stmt = select(func.count()).where(Email.application_id == app.id)
-            email_count = (await session.exec(email_count_stmt)).one()
-
             app_responses.append(
                 ApplicationResponse(
                     id=app.id,
@@ -296,7 +306,7 @@ async def list_applications(
                     notes=app.notes,
                     created_at=app.created_at.isoformat(),
                     updated_at=app.updated_at.isoformat() if app.updated_at else None,
-                    email_count=email_count,
+                    email_count=email_counts.get(app.id, 0),
                 )
             )
 
