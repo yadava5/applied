@@ -4,6 +4,7 @@ Email synchronization API endpoints.
 Handles email sync operations for connected accounts.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
@@ -11,7 +12,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from jobtracker.api.websocket import sync_ws_manager
 from jobtracker.credentials import get_gmail_credentials, get_icloud_credentials
+from jobtracker.services.application_insights import mark_ghosted_applications
 from jobtracker.services import get_sync_service
 
 logger = logging.getLogger(__name__)
@@ -81,6 +84,15 @@ async def trigger_sync(request: SyncRequest = SyncRequest()) -> SyncResultRespon
     """
     service = get_sync_service()
 
+    async def emit(event: str, payload: dict) -> None:
+        await sync_ws_manager.broadcast(
+            {
+                "event": event,
+                "timestamp": datetime.utcnow().isoformat(),
+                **payload,
+            }
+        )
+
     # Check if any accounts are connected
     gmail_creds = get_gmail_credentials()
     icloud_creds = get_icloud_credentials()
@@ -106,15 +118,47 @@ async def trigger_sync(request: SyncRequest = SyncRequest()) -> SyncResultRespon
 
     # Run sync
     try:
+        requested_accounts = request.accounts or [
+            account
+            for account, creds in (("gmail", gmail_creds), ("icloud", icloud_creds))
+            if creds is not None
+        ]
+
+        await emit(
+            "started",
+            {
+                "accounts": requested_accounts,
+                "full_sync": request.full_sync,
+                "since_date": request.since_date.isoformat() if request.since_date else None,
+            },
+        )
+
+        def progress_callback(progress) -> None:
+            asyncio.create_task(
+                emit(
+                    "progress",
+                    {
+                        "account": progress.account,
+                        "state": progress.event.value if hasattr(progress.event, "value") else str(progress.event),
+                        "emails_fetched": progress.emails_fetched,
+                        "emails_total": progress.emails_total,
+                        "emails_saved": progress.emails_saved,
+                        "error_message": progress.error_message,
+                    },
+                )
+            )
+
         if request.accounts and len(request.accounts) == 1:
             # Sync specific account
             if request.accounts[0] == "gmail":
                 result = await service.sync_gmail(
+                    progress_callback=progress_callback,
                     since_date=request.since_date,
                     full_sync=request.full_sync,
                 )
             elif request.accounts[0] == "icloud":
                 result = await service.sync_icloud(
+                    progress_callback=progress_callback,
                     since_date=request.since_date,
                     full_sync=request.full_sync,
                 )
@@ -126,9 +170,26 @@ async def trigger_sync(request: SyncRequest = SyncRequest()) -> SyncResultRespon
         else:
             # Sync all
             result = await service.sync_all(
+                progress_callback=progress_callback,
                 since_date=request.since_date,
                 full_sync=request.full_sync,
             )
+
+        ghosted_updated = await mark_ghosted_applications()
+
+        await emit(
+            "completed",
+            {
+                "success": result.success,
+                "accounts_synced": result.accounts_synced,
+                "emails_fetched": result.emails_fetched,
+                "emails_saved": result.emails_saved,
+                "emails_skipped": result.emails_skipped,
+                "errors": result.errors,
+                "duration_seconds": result.duration_seconds,
+                "ghosted_updated": ghosted_updated,
+            },
+        )
 
         return SyncResultResponse(
             success=result.success,
@@ -142,6 +203,7 @@ async def trigger_sync(request: SyncRequest = SyncRequest()) -> SyncResultRespon
 
     except Exception as e:
         logger.error(f"Sync failed: {e}")
+        await emit("error", {"message": str(e)})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),

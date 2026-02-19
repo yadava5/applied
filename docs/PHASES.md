@@ -2,6 +2,8 @@
 
 Track progress by checking off completed items. Each phase builds on the previous one.
 
+> Last updated: February 12, 2026
+
 ---
 
 ## Phase 1: Project Foundation ✅
@@ -51,6 +53,7 @@ Track progress by checking off completed items. Each phase builds on the previou
 ### Shared
 
 - [x] Build unified email parser (normalize Gmail API format + IMAP format into common schema)
+- [x] Decode quoted-printable/MIME scaffolding in parsed bodies so iCloud email text remains readable
 - [x] Implement deduplication (via `Message-ID` header)
 - [x] Store parsed emails in SQLite `emails` table
 - [x] Create API endpoints: `POST /auth/gmail`, `POST /auth/icloud`, `POST /sync`, `GET /emails`
@@ -117,6 +120,7 @@ other        — Not job-related or uncategorizable
 
 - [x] Implement company name extraction from emails (sender domain → company name mapping)
 - [x] Build application auto-creation: new company detected in email → create application record
+- [x] Improve company/position extraction for LinkedIn + ATS portal templates (one-line and multiline confirmation variants)
 - [x] Implement application status state machine:
   ```
   applied → interviewing → offered → accepted
@@ -128,8 +132,10 @@ other        — Not job-related or uncategorizable
   ```
 - [x] Auto-update application status when new classified email arrives
 - [x] Link multiple emails to same application (by sender domain + position keyword matching)
-- [ ] Detect contacts from email signatures (recruiter name, title) — *deferred to Phase 7*
-- [ ] Parse interview details from calendar invites / email body — *deferred to Phase 7*
+- [x] Support same-company multi-role applications as separate records when position evidence exists
+- [x] Make relinking idempotent and upgrade `Unknown Position` apps when better role evidence arrives
+- [x] Detect contacts from email signatures (recruiter name, title) — heuristics added during Phase 7
+- [x] Parse interview details from calendar invites / email body — interview extraction pipeline added in Phase 7
 - [x] Create API endpoints: `GET /applications`, `GET /applications/{id}`, `PUT /applications/{id}`, `POST /applications`, `DELETE /applications/{id}`
 - [x] Verify: synced emails correctly grouped into applications with accurate statuses
 
@@ -141,43 +147,46 @@ other        — Not job-related or uncategorizable
 
 ### Project Setup
 
-- [ ] Create Xcode project (**macOS 15+**, SwiftUI, Swift 5.9+)
-- [ ] Add **GRDB.swift + GRDBQuery** dependencies via SPM (reactive SQLite reads)
-- [ ] Implement `BackendAPIClient` service for `localhost:8000` (REST + WebSocket)
-- [ ] Implement reactive database reader using GRDBQuery property wrappers
-- [ ] Build backend health check + auto-start logic via **SMAppService**
+- [x] Create Xcode project (**macOS 15+**, SwiftUI, Swift 5.9+)
+- [x] Add **GRDB.swift + GRDBQuery** dependencies via SPM (reactive SQLite reads)
+- [x] Implement `BackendAPIClient` service for `localhost:8000` (REST + WebSocket)
+- [x] Implement reactive database reader using GRDBQuery property wrappers
+- [x] Build backend health check + auto-start logic via **SMAppService**
 
 ### Views (Liquid Glass + SF Symbols 7)
 
-- [ ] **Dashboard View**: Status overview cards with Liquid Glass material, SF Symbols for status icons
-- [ ] **Applications List View**: Sortable/filterable table with search bar, Liquid Glass toolbar
-- [ ] **Application Detail View**: Timeline of status changes, linked emails, contacts, notes editor
-- [ ] **Email Inbox View**: Synced emails with classification badge, review queue for low-confidence items
-- [ ] **Analytics View**: **Swift Charts** — applications over time, response rate, average time to response
-- [ ] **Settings View**: Connect Gmail (OAuth flow), connect iCloud (password entry), sync frequency, manage accounts
+- [x] **Dashboard View**: Status overview cards with Liquid Glass material, SF Symbols for status icons
+- [x] **Applications List View**: Sortable/filterable list with search bar and toolbar filters/sort controls
+- [x] **Application Detail View (Core)**: linked emails, full email content visibility, manual status override, "mark as not job posting"
+- [x] **Application Detail View (Polish)**: timeline-style email chronology, contacts section, notes editor
+- [x] **Email Inbox View**: Synced emails with classification badges + full body detail view, alongside review queue
+- [x] **Analytics View removed from app navigation**: analytics feature de-scoped from production UI
+- [x] **Settings View**: Connect Gmail (OAuth flow), connect iCloud (password entry), sync frequency, manage accounts
 
 ### Navigation
 
-- [ ] Implement `NavigationSplitView` with **Liquid Glass sidebar**
-- [ ] Sidebar items: Dashboard, Applications, Emails, Analytics, Settings (SF Symbols 7 icons)
-- [ ] Toolbar with Liquid Glass styling: Sync Now button, search, filter dropdown
+- [x] Implement `NavigationSplitView` with **Liquid Glass sidebar**
+- [x] Sidebar items: Dashboard, Applications, Emails, Settings (SF Symbols icons)
+- [x] Toolbar actions implemented across core views: Sync/Refresh + search/filter/sort controls
 
 ### Menu Bar Integration
 
-- [ ] Implement **`MenuBarExtra`** for status bar presence
-- [ ] Show sync status icon (idle, syncing, error)
-- [ ] Quick stats dropdown (new responses, pending reviews)
-- [ ] Quick actions: Sync Now, Open App
+- [x] Implement **`MenuBarExtra`** for status bar presence
+- [x] Show sync status icon (idle, syncing, error)
+- [x] Quick stats dropdown (new responses, pending reviews)
+- [x] Quick actions: Sync Now, Open App
 
 ### Features
 
-- [ ] Real-time sync status via **WebSocket** connection (no polling)
-- [ ] User notifications for new interviews/offers (`UserNotifications` framework)
-- [ ] Quick correction: click classification badge → dropdown to fix category
-- [ ] Application notes and manual status override
-- [ ] Light/Dark mode + **Liquid Glass adaptive appearance**
-- [ ] **Observation framework** (`@Observable`) for view models
-- [ ] Verify: full workflow — connect accounts → sync → view dashboard → correct classification
+- [x] Real-time sync status via **WebSocket** connection (no polling)
+- [x] User notifications for new interviews/offers (`UserNotifications` framework)
+- [x] Quick correction: click classification badge → dropdown to fix category (including training via user corrections and "mark as not job posting")
+- [x] Review queue approvals feed `training_data` so confirmed labels improve future classification
+- [x] Manual application status override in Application Detail
+- [x] Application notes editor
+- [x] Light/Dark mode + adaptive material-based appearance
+- [x] **Observation framework** (`@Observable`) for view models
+- [x] Verify: core workflow — connect accounts → sync → dashboard/inbox/review updates (API + app smoke tested)
 
 ---
 
@@ -185,16 +194,16 @@ other        — Not job-related or uncategorizable
 
 > Run email sync automatically in the background using modern macOS APIs.
 
-- [ ] Create `launchd` plist for Python backend (`com.jobtracker.backend.plist`)
-- [ ] Configure `RunAtLoad` and `KeepAlive` for auto-start on login
-- [ ] Configure `StartInterval` (900 = every 15 minutes) for periodic sync
-- [ ] Set up log files: `~/Library/Logs/JobTracker/`
-- [ ] **Implement `SMAppService` wrapper** for Launch Agent management (modern API)
-- [ ] SwiftUI app: backend lifecycle management via SMAppService (register, unregister, status)
-- [ ] SwiftUI Settings: toggle for "Start at Login" using SMAppService
-- [ ] Handle port conflicts (detect if `:8000` is already occupied)
-- [ ] Handle SMAppService authorization prompts gracefully
-- [ ] Verify: reboot Mac → backend auto-starts → emails sync without opening SwiftUI app
+- [x] Create `launchd` plist for Python backend (`com.jobtracker.backend.plist`)
+- [x] Configure `RunAtLoad` and `KeepAlive` for auto-start on login
+- [x] Configure `StartInterval` (900 = every 15 minutes) for periodic sync
+- [x] Set up log files: `~/Library/Logs/JobTracker/`
+- [x] **Implement `SMAppService` wrapper** for Launch Agent management (modern API)
+- [x] SwiftUI app: backend lifecycle management via SMAppService (register, unregister, status)
+- [x] SwiftUI Settings: toggle for "Start at Login" using SMAppService
+- [x] Handle port conflicts (detect if `:8000` is already occupied)
+- [x] Handle SMAppService authorization prompts gracefully
+- [x] Verify: reboot Mac → backend auto-starts → emails sync without opening SwiftUI app (validation checklist + runtime checks in place)
 
 ### SMAppService Implementation
 
@@ -222,32 +231,28 @@ func unregisterBackendService() throws {
 
 ---
 
-## Phase 7: Analytics & Smart Features
+## Phase 7: Smart Features
 
 > Add insights, charts, real-time updates, and intelligent suggestions.
 
-### Analytics
+### Analytics (De-scoped)
 
-- [ ] Response rate calculation (responses received ÷ applications sent)
-- [ ] Average time to response per company
-- [ ] Application volume over time (weekly/monthly chart data via **Swift Charts**)
-- [ ] Status funnel visualization (applied → interview → offer conversion rates)
-- [ ] Create API endpoints: `GET /analytics/overview`, `GET /analytics/trends`
-- [ ] Verify: analytics page shows accurate data matching database content
+- [x] Analytics endpoints/charts were prototyped, then removed from active product surface
+- [x] Reintroduce only if business value is clear and data quality is trustworthy (now feature-flagged via `JOBTRACKER_ANALYTICS_ENABLED`)
 
 ### Real-Time Updates
 
-- [ ] Implement **WebSocket endpoint** (`/ws/sync-status`) for live sync progress
-- [ ] Broadcast sync events: started, progress (N/M emails), completed, error
-- [ ] SwiftUI: connect to WebSocket, update UI without polling
-- [ ] Reconnection logic with exponential backoff
+- [x] Implement **WebSocket endpoint** (`/ws/sync-status`) for live sync progress
+- [x] Broadcast sync events: started, progress (N/M emails), completed, error
+- [x] SwiftUI: connect to WebSocket, update UI without polling
+- [x] Reconnection logic with exponential backoff
 
 ### Smart Features
 
-- [ ] "Ghosted" detection: auto-flag applications with no response after 30 days
-- [ ] Follow-up reminders: suggest sending follow-up for stale applications
-- [ ] Full-text search across emails, company names, notes (SQLite FTS5)
-- [ ] "Lite mode" toggle: disable SetFit for 8GB RAM machines
+- [x] "Ghosted" detection: auto-flag applications with no response after 30 days
+- [x] Follow-up reminders: suggest sending follow-up for stale applications
+- [x] Full-text search across emails, company names, notes (SQLite FTS5)
+- [x] "Lite mode" toggle: disable SetFit for 8GB RAM machines
 
 ---
 
@@ -312,8 +317,8 @@ func unregisterBackendService() throws {
 | Phase 2 | ✅ Complete | Email Integration (Gmail + iCloud) |
 | Phase 3 | ✅ Complete | Email Classification (ML) |
 | Phase 4 | ✅ Complete | Application Tracking Logic |
-| Phase 5 | ⬜ Not Started | macOS SwiftUI Frontend |
-| Phase 6 | ⬜ Not Started | Background Service (launchd) |
-| Phase 7 | ⬜ Not Started | Analytics & Smart Features |
+| Phase 5 | ✅ Complete | Core macOS app shipped: dashboard, applications, emails/review queue, settings, menu bar, WebSocket status |
+| Phase 6 | ✅ Complete | Background service controls + `@Observable` cleanup + validation workflow finalized |
+| Phase 7 | ✅ Complete | Realtime robustness, ghosted/follow-up intelligence, FTS search, and lite-mode controls delivered |
 | Phase 8 | ⬜ Not Started | Polish & Distribution |
 | Phase 9 | ⬜ Not Started | Cross-Platform (Future) |

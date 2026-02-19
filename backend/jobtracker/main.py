@@ -127,10 +127,12 @@ app.add_middleware(
 
 from jobtracker.api import (
     applications_router,
+    analytics_router,
     auth_router,
     classification_router,
     emails_router,
     sync_router,
+    websocket_router,
 )
 
 app.include_router(auth_router)
@@ -138,6 +140,9 @@ app.include_router(sync_router)
 app.include_router(emails_router)
 app.include_router(classification_router)
 app.include_router(applications_router)
+app.include_router(websocket_router)
+if settings.analytics_enabled:
+    app.include_router(analytics_router)
 
 
 # =============================================================================

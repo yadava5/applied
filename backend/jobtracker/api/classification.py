@@ -22,6 +22,7 @@ from jobtracker.database.models import Email, EmailCategory
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/classify", tags=["classification"])
+REVIEW_QUEUE_CONFIDENCE_THRESHOLD = 0.85
 
 
 # =============================================================================
@@ -71,6 +72,20 @@ class BatchClassifyResponse(BaseModel):
     classified: int
     errors: int
     categories: dict[str, int]
+
+
+class LiteModeStateResponse(BaseModel):
+    """Lite mode runtime state."""
+
+    enabled: bool
+    setfit_available: bool
+    disabled_by_lite_mode: bool
+
+
+class LiteModeUpdateRequest(BaseModel):
+    """Request to toggle lite mode."""
+
+    enabled: bool
 
 
 # =============================================================================
@@ -301,6 +316,35 @@ async def get_classifier_status() -> ClassifierStatusResponse:
     )
 
 
+@router.get("/lite-mode", response_model=LiteModeStateResponse)
+async def get_lite_mode_state() -> LiteModeStateResponse:
+    """Get current lite-mode state."""
+    classifier = get_classifier()
+    status_info = await classifier.get_status()
+    setfit_info = status_info["setfit"]
+
+    return LiteModeStateResponse(
+        enabled=classifier.is_lite_mode(),
+        setfit_available=bool(setfit_info.get("available", False)),
+        disabled_by_lite_mode=bool(setfit_info.get("disabled_by_lite_mode", False)),
+    )
+
+
+@router.put("/lite-mode", response_model=LiteModeStateResponse)
+async def update_lite_mode(request: LiteModeUpdateRequest) -> LiteModeStateResponse:
+    """Enable/disable lite mode (rules + embeddings only)."""
+    classifier = get_classifier()
+    classifier.set_lite_mode(request.enabled)
+    status_info = await classifier.get_status()
+    setfit_info = status_info["setfit"]
+
+    return LiteModeStateResponse(
+        enabled=classifier.is_lite_mode(),
+        setfit_available=bool(setfit_info.get("available", False)),
+        disabled_by_lite_mode=bool(setfit_info.get("disabled_by_lite_mode", False)),
+    )
+
+
 @router.post("/retrain")
 async def trigger_retraining(background_tasks: BackgroundTasks) -> dict:
     """
@@ -438,6 +482,8 @@ class ReviewEmailResponse(BaseModel):
     sender_email: Optional[str]
     sender_name: Optional[str]
     snippet: Optional[str]
+    body_text: Optional[str]
+    body_html: Optional[str]
     current_category: str
     confidence: float
     received_at: Optional[str]
@@ -460,7 +506,7 @@ async def get_emails_needing_review(
 
     These are emails that:
     1. Are explicitly marked as NEEDS_REVIEW (borderline job-related)
-    2. Are job-related categories with low confidence (might be wrong)
+    2. Are job-related categories below 85% confidence (might be wrong)
 
     Review these to ensure you don't miss any job opportunities!
     """
@@ -484,7 +530,7 @@ async def get_emails_needing_review(
                 | (
                     Email.classified_as.in_(job_categories)
                     & (Email.classification_confidence != None)  # noqa: E711
-                    & (Email.classification_confidence < 0.70)
+                    & (Email.classification_confidence < REVIEW_QUEUE_CONFIDENCE_THRESHOLD)
                     & (Email.user_corrected == False)  # noqa: E712
                 )
             )
@@ -502,7 +548,7 @@ async def get_emails_needing_review(
             | (
                 Email.classified_as.in_(job_categories)
                 & (Email.classification_confidence != None)  # noqa: E711
-                & (Email.classification_confidence < 0.70)
+                & (Email.classification_confidence < REVIEW_QUEUE_CONFIDENCE_THRESHOLD)
                 & (Email.user_corrected == False)  # noqa: E712
             )
         )
@@ -518,7 +564,9 @@ async def get_emails_needing_review(
                     subject=email.subject,
                     sender_email=email.sender_email,
                     sender_name=email.sender_name,
-                    snippet=email.snippet,
+                    snippet=email.body_snippet,
+                    body_text=email.body_text,
+                    body_html=email.body_html,
                     current_category=(
                         email.classified_as.value if email.classified_as else "unknown"
                     ),
@@ -541,18 +589,19 @@ async def get_needs_review_count() -> dict:
     async with get_session() as session:
         from sqlalchemy import text
 
-        # Only count NEEDS_REVIEW or low-confidence job-related emails
-        result = await session.exec(
+        # Only count NEEDS_REVIEW or sub-85%-confidence job-related emails.
+        result = await session.execute(
             text("""
                 SELECT COUNT(*) FROM emails
-                WHERE classified_as = 'needs_review'
+                WHERE UPPER(classified_as) = 'NEEDS_REVIEW'
                 OR (
-                    classified_as IN ('applied', 'interview', 'rejection', 'offer', 'assessment', 'follow_up')
+                    UPPER(classified_as) IN ('APPLIED', 'INTERVIEW', 'REJECTION', 'OFFER', 'ASSESSMENT', 'FOLLOW_UP')
                     AND classification_confidence IS NOT NULL
-                    AND classification_confidence < 0.70
+                    AND classification_confidence < :threshold
                     AND user_corrected = 0
                 )
-            """)
+            """),
+            {"threshold": REVIEW_QUEUE_CONFIDENCE_THRESHOLD},
         )
         row = result.first()
         count = row[0] if row else 0
@@ -589,10 +638,6 @@ async def approve_classification(email_id: int) -> dict:
                 detail="Email has not been classified yet",
             )
 
-        # Mark as user-reviewed (approved)
-        email.user_corrected = True
-        email.classification_confidence = 1.0  # User confirmed
-
         # If it was NEEDS_REVIEW, we need the user to specify a category
         if email.classified_as == EmailCategory.NEEDS_REVIEW:
             raise HTTPException(
@@ -600,11 +645,29 @@ async def approve_classification(email_id: int) -> dict:
                 detail="Cannot approve NEEDS_REVIEW - use /correct endpoint to specify category",
             )
 
+        approved_category = email.classified_as
+
+        # Mark as user-reviewed (approved)
+        email.user_corrected = True
+        email.is_reviewed = True
+        email.classification_confidence = 1.0  # User confirmed
+        email.classification_method = "user"
+
         await session.commit()
+
+        # Feed approved examples into training so review queue decisions
+        # improve future classifications.
+        classifier = get_classifier()
+        await classifier.add_correction(
+            email_id,
+            email.subject or "",
+            email.body_text or "",
+            approved_category,
+        )
 
         return {
             "success": True,
             "email_id": email_id,
-            "approved_category": email.classified_as.value,
-            "message": f"Approved classification as {email.classified_as.value}",
+            "approved_category": approved_category.value,
+            "message": f"Approved classification as {approved_category.value}",
         }

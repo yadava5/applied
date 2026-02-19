@@ -14,7 +14,9 @@ Features:
 """
 
 import hashlib
+import html
 import logging
+import quopri
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -55,6 +57,7 @@ class ParsedEmail:
 
     # Raw data for debugging
     raw_headers: dict
+    body_html: Optional[str] = None
 
 
 # =============================================================================
@@ -98,7 +101,12 @@ class EmailParser:
             sender_email=self._normalize_email(msg.sender_email),
             received_at=msg.received_at,
             body_text=self._clean_body(msg.body_text),
-            body_snippet=self._generate_snippet(msg.body_text, msg.body_snippet),
+            body_html=self._clean_html(msg.body_html),
+            body_snippet=self._generate_snippet(
+                msg.body_text,
+                msg.body_snippet,
+                msg.body_html,
+            ),
             raw_headers=msg.raw_headers,
         )
 
@@ -122,7 +130,12 @@ class EmailParser:
             sender_email=self._normalize_email(msg.sender_email),
             received_at=msg.received_at,
             body_text=self._clean_body(msg.body_text),
-            body_snippet=self._generate_snippet(msg.body_text, msg.body_snippet),
+            body_html=self._clean_html(msg.body_html),
+            body_snippet=self._generate_snippet(
+                msg.body_text,
+                msg.body_snippet,
+                msg.body_html,
+            ),
             raw_headers=msg.raw_headers,
         )
 
@@ -178,15 +191,60 @@ class EmailParser:
 
         # Normalize line endings
         body = body.replace("\r\n", "\n").replace("\r", "\n")
+        body = self._decode_transfer_encoding(body)
+        body = self._strip_mime_scaffolding(body)
+
+        # Convert HTML-ish payloads to text for downstream classification/extraction.
+        if self._looks_like_html(body):
+            body = self._html_to_text(body)
+
+        # Decode HTML entities after transfer-encoding cleanup.
+        body = html.unescape(body)
 
         # Remove excessive blank lines
         body = re.sub(r"\n{3,}", "\n\n", body)
+        body = re.sub(r"[ \t]+\n", "\n", body)
 
         # Remove common email signatures/footers
         body = self._remove_common_footers(body)
 
         # Strip leading/trailing whitespace
         body = body.strip()
+
+        return body
+
+    def _decode_transfer_encoding(self, body: str) -> str:
+        """Best-effort decode of quoted-printable text bodies."""
+        # Only attempt expensive decode when transfer-encoding artifacts are present.
+        if "=" not in body:
+            return body
+
+        looks_qp = bool(
+            re.search(r"=[0-9A-Fa-f]{2}", body) or re.search(r"=\n", body)
+        )
+        if not looks_qp:
+            return body
+
+        try:
+            decoded = quopri.decodestring(body.encode("utf-8", errors="ignore"))
+            return decoded.decode("utf-8", errors="replace")
+        except Exception:
+            return body
+
+    def _strip_mime_scaffolding(self, body: str) -> str:
+        """Remove common MIME wrapper lines leaked from raw IMAP text payloads."""
+        # Remove boundary delimiter lines (e.g. "------=_Part_...").
+        body = re.sub(r"(?m)^--[-_A-Za-z0-9.=:/+]+(?:--)?\s*$", "", body)
+
+        # Remove MIME header lines that can leak into plain text payloads.
+        body = re.sub(
+            r"(?mi)^(?:content-(?:type|transfer-encoding|id|disposition)|mime-version):.*$",
+            "",
+            body,
+        )
+
+        # Remove folded header continuation lines.
+        body = re.sub(r"(?m)^[ \t]+(?:charset|boundary)=?.*$", "", body)
 
         return body
 
@@ -205,13 +263,48 @@ class EmailParser:
 
         return body
 
-    def _generate_snippet(self, body: str, existing_snippet: str = "") -> str:
+    def _clean_html(self, body_html: Optional[str]) -> Optional[str]:
+        """Normalize raw HTML while keeping markup intact for rendering."""
+        if not body_html:
+            return None
+
+        cleaned = body_html.strip()
+        if not cleaned:
+            return None
+
+        # Cap stored HTML size to keep DB rows reasonable.
+        if len(cleaned) > 300_000:
+            cleaned = cleaned[:300_000]
+
+        return cleaned
+
+    def _looks_like_html(self, value: str) -> bool:
+        """Heuristic to detect HTML payloads."""
+        lowered = value.lower()
+        return "<html" in lowered or "<body" in lowered or "<div" in lowered
+
+    def _html_to_text(self, html: str) -> str:
+        """Convert HTML to rough plain text for snippets/classification fallback."""
+        # Remove script/style blocks before stripping all tags.
+        html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.I)
+        html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.I)
+        html = re.sub(r"<[^>]+>", " ", html)
+        return re.sub(r"\s+", " ", html).strip()
+
+    def _generate_snippet(
+        self,
+        body: str,
+        existing_snippet: str = "",
+        body_html: Optional[str] = None,
+    ) -> str:
         """Generate a 500-char snippet from body or use existing."""
         # Prefer existing snippet if clean
         if existing_snippet and len(existing_snippet) >= 50:
             snippet = existing_snippet
         else:
             snippet = body
+            if not snippet and body_html:
+                snippet = self._html_to_text(body_html)
 
         if not snippet:
             return ""

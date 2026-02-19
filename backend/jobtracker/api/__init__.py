@@ -32,15 +32,19 @@ Usage:
 """
 
 from jobtracker.api.applications import router as applications_router
+from jobtracker.api.analytics import router as analytics_router
 from jobtracker.api.auth import router as auth_router
 from jobtracker.api.classification import router as classification_router
 from jobtracker.api.emails import router as emails_router
 from jobtracker.api.sync import router as sync_router
+from jobtracker.api.websocket import router as websocket_router
 
 __all__ = [
     "applications_router",
+    "analytics_router",
     "auth_router",
     "sync_router",
     "emails_router",
     "classification_router",
+    "websocket_router",
 ]

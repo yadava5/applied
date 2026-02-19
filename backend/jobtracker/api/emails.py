@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from jobtracker.database import get_session
 from jobtracker.database.models import Email, EmailCategory, EmailSource
@@ -18,6 +18,47 @@ from jobtracker.database.models import Email, EmailCategory, EmailSource
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/emails", tags=["emails"])
+
+
+def _normalize_fts_query(search: str) -> Optional[str]:
+    tokens = [token.strip() for token in search.replace('"', " ").split() if token.strip()]
+    if not tokens:
+        return None
+    return " AND ".join(f"{token}*" for token in tokens)
+
+
+async def _find_email_ids_for_search(session, search: str) -> Optional[list[int]]:
+    """
+    Resolve full-text query to email IDs using FTS5.
+
+    Returns:
+        - list of IDs when FTS lookup succeeds
+        - None when FTS is unavailable (caller should fallback to ILIKE)
+    """
+    fts_query = _normalize_fts_query(search)
+    if fts_query is None:
+        return []
+
+    try:
+        rows = await session.exec(
+            text(
+                """
+                SELECT emails.id AS email_id
+                FROM emails
+                JOIN emails_fts ON emails_fts.rowid = emails.id
+                WHERE emails_fts MATCH :query
+                """
+            ).bindparams(query=fts_query)
+        )
+        ids: list[int] = []
+        for row in rows.all():
+            value = row[0] if hasattr(row, "__getitem__") else row
+            if value is not None:
+                ids.append(int(value))
+        return ids
+    except Exception as exc:
+        logger.debug("Email FTS search unavailable, falling back to ILIKE: %s", exc)
+        return None
 
 
 # =============================================================================
@@ -51,6 +92,7 @@ class EmailDetailResponse(EmailResponse):
     """Detailed email response including full body."""
 
     body_text: str
+    body_html: Optional[str] = None
 
 
 class EmailListResponse(BaseModel):
@@ -134,12 +176,20 @@ async def list_emails(
             query = query.where(Email.is_reviewed == False)  # noqa: E712
 
         if search:
-            search_term = f"%{search}%"
-            query = query.where(
-                (Email.subject.ilike(search_term))
-                | (Email.sender_email.ilike(search_term))
-                | (Email.sender_name.ilike(search_term))
-            )
+            matching_ids = await _find_email_ids_for_search(session, search)
+            if matching_ids is None:
+                search_term = f"%{search}%"
+                query = query.where(
+                    (Email.subject.ilike(search_term))
+                    | (Email.sender_email.ilike(search_term))
+                    | (Email.sender_name.ilike(search_term))
+                    | (Email.body_snippet.ilike(search_term))
+                    | (Email.body_text.ilike(search_term))
+                )
+            elif matching_ids:
+                query = query.where(Email.id.in_(matching_ids))
+            else:
+                query = query.where(text("1 = 0"))
 
         # Get total count
         count_query = select(func.count()).select_from(query.subquery())
@@ -291,6 +341,7 @@ async def get_email(email_id: int) -> EmailDetailResponse:
             sender_email=email.sender_email or "",
             received_at=email.received_at,
             body_text=email.body_text or "",
+            body_html=email.body_html,
             body_snippet=email.body_snippet or "",
             classified_as=email.classified_as.value if hasattr(email.classified_as, 'value') else email.classified_as,
             classification_confidence=email.classification_confidence,

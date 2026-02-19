@@ -168,6 +168,10 @@ class Settings(BaseSettings):
         default=False,
         description="Disable SetFit for 8GB RAM machines (rules + embeddings only)",
     )
+    analytics_enabled: bool = Field(
+        default=False,
+        description="Expose analytics endpoints (off by default while de-scoped).",
+    )
 
     # -------------------------------------------------------------------------
     # Keychain

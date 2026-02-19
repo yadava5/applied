@@ -12,7 +12,6 @@ Features:
 - Async operations with progress reporting
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,6 +21,7 @@ from typing import Callable, Optional
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from jobtracker.classifier import get_classifier
 from jobtracker.credentials import get_gmail_credentials, get_icloud_credentials
 from jobtracker.database import get_session
 from jobtracker.database.models import Email, EmailSource, SyncState, SyncStatus
@@ -29,9 +29,9 @@ from jobtracker.email_clients import (
     GmailClient,
     ICloudClient,
     ParsedEmail,
-    generate_dedup_key,
     get_parser,
 )
+from jobtracker.tracking import get_application_linker
 
 logger = logging.getLogger(__name__)
 
@@ -505,18 +505,49 @@ class SyncService:
         Returns:
             Tuple of (saved count, skipped count).
         """
+        classifier = get_classifier()
+        linker = get_application_linker()
         saved = 0
         skipped = 0
+        updated = 0
+        saved_email_ids: list[int] = []
 
         async with get_session() as session:
             for parsed in emails:
-                # Check for duplicate
-                existing = await session.exec(
-                    select(Email).where(Email.message_id == parsed.message_id)
-                )
-                if existing.first():
+                if not self._is_parsed_email_usable(parsed):
                     skipped += 1
                     continue
+
+                # Check for duplicate
+                existing_result = await session.exec(
+                    select(Email).where(Email.message_id == parsed.message_id)
+                )
+                existing_row = existing_result.first()
+                if existing_row:
+                    existing_email = (
+                        existing_row[0]
+                        if hasattr(existing_row, "__getitem__")
+                        else existing_row
+                    )
+                    if self._merge_existing_email_content(existing_email, parsed):
+                        session.add(existing_email)
+                        updated += 1
+                    skipped += 1
+                    continue
+
+                try:
+                    classification = await classifier.classify(
+                        parsed.subject or "",
+                        parsed.body_text or parsed.body_snippet or "",
+                        parsed.sender_email,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Classification failed for message %s, defaulting to OTHER: %s",
+                        parsed.message_id,
+                        exc,
+                    )
+                    classification = None
 
                 # Create email record
                 email = Email(
@@ -528,16 +559,124 @@ class SyncService:
                     sender_email=parsed.sender_email,
                     received_at=parsed.received_at,
                     body_text=parsed.body_text,
+                    body_html=parsed.body_html,
                     body_snippet=parsed.body_snippet,
+                    classified_as=classification.category if classification else None,
+                    classification_confidence=classification.confidence if classification else None,
+                    classification_method=classification.method if classification else None,
                     raw_headers=str(parsed.raw_headers) if parsed.raw_headers else None,
                 )
                 session.add(email)
+                await session.flush()
+                if email.id is not None:
+                    saved_email_ids.append(email.id)
                 saved += 1
 
             await session.commit()
 
-        logger.info(f"Saved {saved} emails, skipped {skipped} duplicates")
+        # Link after commit so IDs and persisted classification are available.
+        if saved_email_ids:
+            await self._link_saved_emails(saved_email_ids, linker)
+
+        logger.info(
+            "Saved %s emails, updated %s existing, skipped %s duplicates",
+            saved,
+            updated,
+            skipped,
+        )
         return saved, skipped
+
+    def _merge_existing_email_content(self, email: Email, parsed: ParsedEmail) -> bool:
+        """
+        Enrich an existing email row when duplicate Message-ID is fetched again.
+
+        This keeps old records up to date after parser improvements (for example,
+        when earlier syncs stored plain text but later parsing can provide HTML).
+        """
+        changed = False
+
+        incoming_html = (parsed.body_html or "").strip()
+        incoming_text = (parsed.body_text or "").strip()
+        incoming_snippet = (parsed.body_snippet or "").strip()
+
+        existing_html = (email.body_html or "").strip()
+        existing_text = (email.body_text or "").strip()
+        existing_snippet = (email.body_snippet or "").strip()
+
+        if incoming_html and not existing_html:
+            email.body_html = incoming_html
+            changed = True
+
+        # Prefer richer text content when existing row is empty or clearly shorter.
+        if incoming_text and (
+            not existing_text or len(incoming_text) > len(existing_text) + 200
+        ):
+            email.body_text = incoming_text
+            changed = True
+
+        if incoming_snippet and not existing_snippet:
+            email.body_snippet = incoming_snippet
+            changed = True
+
+        if parsed.sender_name and not email.sender_name:
+            email.sender_name = parsed.sender_name
+            changed = True
+
+        if parsed.thread_id and not email.thread_id:
+            email.thread_id = parsed.thread_id
+            changed = True
+
+        if parsed.raw_headers and not email.raw_headers:
+            email.raw_headers = str(parsed.raw_headers)
+            changed = True
+
+        if changed:
+            email.updated_at = datetime.now()
+
+        return changed
+
+    def _is_parsed_email_usable(self, parsed: ParsedEmail) -> bool:
+        """
+        Filter out parser artifacts that are not useful as real emails.
+        """
+        subject = (parsed.subject or "").strip().lower()
+        sender = (parsed.sender_email or "").strip()
+        message_id = (parsed.message_id or "").strip()
+
+        if not message_id:
+            return False
+
+        # Some IMAP edge cases can produce synthetic IDs with no sender/subject.
+        if message_id.startswith("icloud-") and not sender and subject in {
+            "",
+            "(no subject)",
+            "no subject",
+        }:
+            logger.debug("Skipping iCloud parser artifact message: %s", message_id)
+            return False
+
+        return True
+
+    async def _link_saved_emails(
+        self,
+        email_ids: list[int],
+        linker,
+    ) -> None:
+        """Link newly saved emails to applications when possible."""
+        async with get_session() as session:
+            result = await session.exec(
+                select(Email)
+                .where(Email.id.in_(email_ids))
+                .order_by(Email.received_at.asc())
+            )
+            rows = result.all()
+            emails = [row[0] if hasattr(row, "__getitem__") else row for row in rows]
+
+        for email in emails:
+            try:
+                await linker.process_email(email, auto_create=True)
+            except Exception as exc:
+                logger.warning("Failed to auto-link email %s: %s", email.id, exc)
 
     async def _get_or_create_sync_state(
         self, session: AsyncSession, account_type: EmailSource, account_email: str
