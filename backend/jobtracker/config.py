@@ -62,7 +62,10 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    api_reload: bool = Field(default=True, description="Auto-reload on code changes")
+    api_reload: bool = Field(
+        default=False,
+        description="Auto-reload on code changes (development only).",
+    )
 
     # -------------------------------------------------------------------------
     # Database
@@ -72,6 +75,10 @@ class Settings(BaseSettings):
         description="Directory for SQLite database and related files",
     )
     database_name: str = "jobtracker.db"
+    database_echo: bool = Field(
+        default=False,
+        description="Enable verbose SQL statement logging.",
+    )
 
     @computed_field  # type: ignore[misc]
     @property
@@ -97,6 +104,10 @@ class Settings(BaseSettings):
     log_dir: str = Field(
         default="~/Library/Logs/JobTracker",
         description="Directory for log files",
+    )
+    uvicorn_access_log: bool = Field(
+        default=False,
+        description="Enable Uvicorn per-request access logging.",
     )
     log_format: str = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
     log_date_format: str = "%Y-%m-%d %H:%M:%S"

@@ -4,13 +4,16 @@ Tests for email client modules.
 These tests use mocks to avoid requiring real email credentials.
 """
 
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httplib2
 import pytest
+from googleapiclient.errors import HttpError
 
 from jobtracker.email_clients import EmailParser, ParsedEmail
-from jobtracker.email_clients.gmail import GmailClient, GmailMessage
+from jobtracker.email_clients.gmail import MAX_RETRIES, GmailClient, GmailMessage
 from jobtracker.email_clients.icloud import ICloudClient, IMAPMessage
 from jobtracker.email_clients.parser import (
     generate_dedup_key,
@@ -223,6 +226,18 @@ class TestJobRelatedDetection:
 class TestGmailClient:
     """Tests for Gmail client with mocked API."""
 
+    @staticmethod
+    def _make_http_error(status: int, reason: str) -> HttpError:
+        response = httplib2.Response({"status": str(status)})
+        payload = {
+            "error": {
+                "code": status,
+                "message": reason,
+                "errors": [{"reason": reason}],
+            }
+        }
+        return HttpError(response, json.dumps(payload).encode("utf-8"), uri="test://gmail")
+
     def test_is_authenticated_no_creds(self):
         """Test authentication check with no credentials."""
         with patch(
@@ -242,6 +257,54 @@ class TestGmailClient:
         ):
             client = GmailClient()
             assert client.is_authenticated() is True
+
+    def test_retryable_http_error_detection(self):
+        """Gmail quota/rate errors should be classified as retryable."""
+        client = GmailClient()
+
+        assert client._is_retryable_http_error(
+            self._make_http_error(429, "rateLimitExceeded")
+        )
+        assert client._is_retryable_http_error(
+            self._make_http_error(403, "userRateLimitExceeded")
+        )
+        assert not client._is_retryable_http_error(
+            self._make_http_error(403, "forbidden")
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_with_backoff_retries_then_succeeds(self):
+        """Retryable HTTP errors should back off and retry."""
+        client = GmailClient()
+        rate_limited = self._make_http_error(429, "rateLimitExceeded")
+        client._run_google_execute = AsyncMock(
+            side_effect=[rate_limited, {"ok": True}]
+        )
+
+        with patch("jobtracker.email_clients.gmail.asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
+            with patch("jobtracker.email_clients.gmail.random.uniform", return_value=0.0):
+                result = await client._execute_with_backoff(lambda: {"ok": True}, "test.op")
+
+        assert result == {"ok": True}
+        assert client._run_google_execute.await_count == 2
+        sleep_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_with_backoff_stops_after_max_retries(self):
+        """Retry loop should re-raise once retry budget is exhausted."""
+        client = GmailClient()
+        rate_limited = self._make_http_error(429, "rateLimitExceeded")
+        client._run_google_execute = AsyncMock(
+            side_effect=[rate_limited] * MAX_RETRIES
+        )
+
+        with patch("jobtracker.email_clients.gmail.asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
+            with patch("jobtracker.email_clients.gmail.random.uniform", return_value=0.0):
+                with pytest.raises(HttpError):
+                    await client._execute_with_backoff(lambda: {"ok": True}, "test.op")
+
+        assert client._run_google_execute.await_count == MAX_RETRIES
+        assert sleep_mock.await_count == MAX_RETRIES - 1
 
 
 # =============================================================================

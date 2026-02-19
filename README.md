@@ -197,9 +197,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Start backend
-uvicorn jobtracker.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn jobtracker.main:app --host 127.0.0.1 --port 8000
 
 # See docs/SETUP.md for full setup including Gmail/iCloud auth
+```
+
+For active backend development with hot reload, use:
+
+```bash
+uvicorn jobtracker.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Troubleshooting

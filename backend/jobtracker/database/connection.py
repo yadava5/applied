@@ -73,7 +73,7 @@ def get_engine() -> AsyncEngine:
         logger.info(f"Creating database engine: {settings.database_path}")
 
         engine_kwargs = {
-            "echo": settings.environment == "development",
+            "echo": settings.database_echo,
             # SQLite-specific settings
             "connect_args": {
                 "check_same_thread": False,  # Required for async

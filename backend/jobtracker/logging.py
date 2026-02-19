@@ -31,7 +31,6 @@ Usage:
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Optional
 
 from jobtracker.config import settings
@@ -107,8 +106,11 @@ def setup_logging(
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
 
-    # Use colored formatter for console
-    console_formatter = ColoredFormatter(
+    # Use colors only on interactive terminals.
+    formatter_cls: type[logging.Formatter] = (
+        ColoredFormatter if sys.stdout.isatty() else logging.Formatter
+    )
+    console_formatter = formatter_cls(
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt=settings.log_date_format,
     )
@@ -122,7 +124,12 @@ def setup_logging(
     # Reduce noise from third-party libraries
     _configure_library_loggers()
 
-    logging.info(f"Logging configured: level={settings.log_level}, file={log_to_file}")
+    logging.info(
+        "Logging configured: level=%s, file=%s, sql_echo=%s",
+        settings.log_level,
+        log_to_file,
+        settings.database_echo,
+    )
 
 
 def _setup_file_handlers(
@@ -178,15 +185,17 @@ def _configure_library_loggers() -> None:
     Reduces noise from verbose libraries while keeping
     important warnings and errors.
     """
-    # Reduce SQLAlchemy verbosity
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    # SQLAlchemy can be very noisy when echo/debug logging is enabled.
+    sqlalchemy_level = logging.INFO if settings.database_echo else logging.WARNING
+    logging.getLogger("sqlalchemy.engine").setLevel(sqlalchemy_level)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
 
     # Reduce aiosqlite verbosity
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
-    # Reduce uvicorn access log verbosity in development
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Uvicorn access logs are optional for desktop/local workflows.
+    access_level = logging.INFO if settings.uvicorn_access_log else logging.WARNING
+    logging.getLogger("uvicorn.access").setLevel(access_level)
 
     # Keep uvicorn errors visible
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
@@ -197,9 +206,15 @@ def _configure_library_loggers() -> None:
 
     # Reduce sentence-transformers verbosity
     logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+    logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
     # Reduce torch verbosity
     logging.getLogger("torch").setLevel(logging.WARNING)
+
+    # Suppress auto-reload filesystem watcher chatter unless debugging.
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 
 
 # =============================================================================

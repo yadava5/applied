@@ -369,6 +369,7 @@ def run() -> None:
         host=settings.api_host,
         port=settings.api_port,
         reload=settings.api_reload,
+        access_log=settings.uvicorn_access_log,
         log_level=settings.log_level.lower(),
     )
 

@@ -19,7 +19,9 @@ Rate Limits:
 
 import asyncio
 import base64
+import json
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.utils import parseaddr
@@ -59,8 +61,10 @@ MAX_RESULTS_PER_PAGE = 100
 
 # Rate limiting
 RATE_LIMIT_DELAY = 0.1  # 100ms between requests
-MAX_RETRIES = 3
-BACKOFF_FACTOR = 2
+MAX_RETRIES = 5
+INITIAL_BACKOFF_SECONDS = 0.5
+MAX_BACKOFF_SECONDS = 8.0
+BACKOFF_FACTOR = 2.0
 
 
 # =============================================================================
@@ -265,6 +269,81 @@ class GmailClient:
         self._service = build("gmail", "v1", credentials=creds)
         return self._service
 
+    async def _run_google_execute(self, operation):
+        """Execute a Gmail API operation in an executor thread."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, operation)
+
+    def _extract_http_error_reason(self, error: HttpError) -> str:
+        """Extract Google API error reason (for example, rateLimitExceeded)."""
+        content = getattr(error, "content", b"") or b""
+        if isinstance(content, bytes):
+            payload_text = content.decode("utf-8", errors="replace")
+        else:
+            payload_text = str(content)
+
+        try:
+            payload = json.loads(payload_text)
+            errors = payload.get("error", {}).get("errors", [])
+            if errors:
+                return str(errors[0].get("reason", "")).strip()
+        except Exception:
+            pass
+
+        try:
+            return str(error._get_reason()).strip()
+        except Exception:
+            return ""
+
+    def _is_retryable_http_error(self, error: HttpError) -> bool:
+        """Return True when the Gmail request should be retried with backoff."""
+        status = getattr(error.resp, "status", None)
+        reason = self._extract_http_error_reason(error).lower()
+
+        if status in (429, 500, 502, 503, 504):
+            return True
+
+        # Gmail/Google APIs often surface quota limits via 403.
+        if status == 403 and reason in {
+            "ratelimitexceeded",
+            "userratelimitexceeded",
+            "quotaexceeded",
+            "backenderror",
+        }:
+            return True
+
+        return False
+
+    async def _execute_with_backoff(self, operation, operation_name: str):
+        """
+        Execute a Gmail API operation with exponential backoff for retryable failures.
+        """
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                return await self._run_google_execute(operation)
+            except HttpError as error:
+                retryable = self._is_retryable_http_error(error)
+                if (not retryable) or attempt >= MAX_RETRIES:
+                    raise
+
+                backoff = min(
+                    MAX_BACKOFF_SECONDS,
+                    INITIAL_BACKOFF_SECONDS * (BACKOFF_FACTOR ** (attempt - 1)),
+                )
+                jitter = random.uniform(0.0, 0.25)
+                delay = backoff + jitter
+
+                logger.warning(
+                    "Retrying %s after HTTP %s (%s), attempt %s/%s in %.2fs",
+                    operation_name,
+                    getattr(error.resp, "status", "unknown"),
+                    self._extract_http_error_reason(error) or "unknown",
+                    attempt,
+                    MAX_RETRIES,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
     # -------------------------------------------------------------------------
     # Email Fetching
     # -------------------------------------------------------------------------
@@ -331,15 +410,12 @@ class GmailClient:
         page_token = None
         fetched = 0
 
-        loop = asyncio.get_event_loop()
-
         while fetched < max_results:
             # Rate limiting
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
             # List messages
-            response = await loop.run_in_executor(
-                None,
+            response = await self._execute_with_backoff(
                 lambda: service.users()
                 .messages()
                 .list(
@@ -349,6 +425,7 @@ class GmailClient:
                     pageToken=page_token,
                 )
                 .execute(),
+                "gmail.messages.list",
             )
 
             message_refs = response.get("messages", [])
@@ -366,10 +443,6 @@ class GmailClient:
                         messages.append(message)
                         fetched += 1
                 except HttpError as e:
-                    if e.resp.status == 429:
-                        # Rate limited, back off
-                        await asyncio.sleep(1)
-                        continue
                     logger.warning(f"Failed to fetch message {msg_ref['id']}: {e}")
 
             page_token = response.get("nextPageToken")
@@ -377,8 +450,9 @@ class GmailClient:
                 break
 
         # Get current history ID
-        profile = await loop.run_in_executor(
-            None, lambda: service.users().getProfile(userId="me").execute()
+        profile = await self._execute_with_backoff(
+            lambda: service.users().getProfile(userId="me").execute(),
+            "gmail.users.getProfile",
         )
         history_id = profile.get("historyId")
 
@@ -391,15 +465,12 @@ class GmailClient:
         messages: list[GmailMessage] = []
         message_ids_to_fetch: set[str] = set()
 
-        loop = asyncio.get_event_loop()
-
         # Get history changes
         page_token = None
         while True:
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
-            response = await loop.run_in_executor(
-                None,
+            response = await self._execute_with_backoff(
                 lambda: service.users()
                 .history()
                 .list(
@@ -409,6 +480,7 @@ class GmailClient:
                     pageToken=page_token,
                 )
                 .execute(),
+                "gmail.history.list",
             )
 
             # Collect message IDs from history
@@ -436,16 +508,14 @@ class GmailClient:
 
     async def _fetch_message(self, service, message_id: str) -> Optional[GmailMessage]:
         """Fetch and parse a single message."""
-        loop = asyncio.get_event_loop()
-
         await asyncio.sleep(RATE_LIMIT_DELAY)
 
-        response = await loop.run_in_executor(
-            None,
+        response = await self._execute_with_backoff(
             lambda: service.users()
             .messages()
             .get(userId="me", id=message_id, format="full")
             .execute(),
+            "gmail.messages.get",
         )
 
         return self._parse_message(response)
@@ -571,9 +641,9 @@ class GmailClient:
         """Get Gmail profile information."""
         try:
             service = await self._get_service()
-            loop = asyncio.get_event_loop()
-            profile = await loop.run_in_executor(
-                None, lambda: service.users().getProfile(userId="me").execute()
+            profile = await self._execute_with_backoff(
+                lambda: service.users().getProfile(userId="me").execute(),
+                "gmail.users.getProfile",
             )
             return profile
         except Exception as e:

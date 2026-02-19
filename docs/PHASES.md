@@ -262,10 +262,10 @@ func unregisterBackendService() throws {
 
 ### Error Handling & UX
 
-- [ ] Comprehensive error handling: graceful failures for network, auth, sync issues
+- [x] Comprehensive backend error handling: graceful API failures for DB corruption, network/auth/sync surfaces
 - [ ] First-run onboarding flow in SwiftUI (welcome → connect accounts → first sync)
 - [ ] Empty states with helpful guidance (no applications yet, no emails synced)
-- [ ] Rate limit handling for Gmail API (exponential backoff, user notification)
+- [x] Rate limit handling for Gmail API (exponential backoff + retryable quota error detection)
 
 ### Branding & Assets
 
@@ -275,7 +275,7 @@ func unregisterBackendService() throws {
 
 ### Local Development Setup
 
-- [ ] `install.sh` script: sets up Python venv, installs dependencies, downloads ML models
+- [x] `install.sh` script: sets up Python venv, installs dependencies, downloads ML models
 - [ ] Test complete flow end-to-end: fresh install → connect accounts → sync → classify → track
 
 ### Distribution (macOS)
@@ -320,5 +320,5 @@ func unregisterBackendService() throws {
 | Phase 5 | ✅ Complete | Core macOS app shipped: dashboard, applications, emails/review queue, settings, menu bar, WebSocket status |
 | Phase 6 | ✅ Complete | Background service controls + `@Observable` cleanup + validation workflow finalized |
 | Phase 7 | ✅ Complete | Realtime robustness, ghosted/follow-up intelligence, FTS search, and lite-mode controls delivered |
-| Phase 8 | ⬜ Not Started | Polish & Distribution |
+| Phase 8 | 🟨 In Progress | Error-handling/logging hardening + Gmail rate-limit backoff + installer script |
 | Phase 9 | ⬜ Not Started | Cross-Platform (Future) |
