@@ -441,11 +441,11 @@ private struct EmailInAppBrowserView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = .nonPersistent()
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = false
         return webView
     }
 
@@ -460,14 +460,22 @@ private struct EmailInAppBrowserView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         @Binding private var loadError: String?
         var lastLoadedHTML: String?
+        private var temporaryHTMLURL: URL?
 
         init(loadError: Binding<String?>) {
             _loadError = loadError
         }
 
         func load(_ htmlDocument: String, in webView: WKWebView) {
-            loadError = nil
-            webView.loadHTMLString(htmlDocument, baseURL: URL(string: "https://mail.jobtracker.local"))
+            updateLoadError(nil)
+
+            do {
+                let url = try persist(htmlDocument: htmlDocument)
+                webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            } catch {
+                webView.loadHTMLString(htmlDocument, baseURL: nil)
+                updateLoadError("Using fallback renderer for this message.")
+            }
         }
 
         func webView(
@@ -488,7 +496,7 @@ private struct EmailInAppBrowserView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            loadError = nil
+            updateLoadError(nil)
         }
 
         func webView(
@@ -496,7 +504,7 @@ private struct EmailInAppBrowserView: NSViewRepresentable {
             didFail navigation: WKNavigation!,
             withError error: Error
         ) {
-            loadError = "In-app browser could not finish loading this email."
+            updateLoadError("In-app browser could not finish loading this email.")
         }
 
         func webView(
@@ -504,7 +512,25 @@ private struct EmailInAppBrowserView: NSViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
-            loadError = "In-app browser failed to start loading this email."
+            updateLoadError("In-app browser failed to start loading this email.")
+        }
+
+        private func persist(htmlDocument: String) throws -> URL {
+            if let temporaryHTMLURL {
+                try? FileManager.default.removeItem(at: temporaryHTMLURL)
+            }
+
+            let filename = "jobtracker-inline-\(UUID().uuidString).html"
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+            try htmlDocument.write(to: url, atomically: true, encoding: .utf8)
+            temporaryHTMLURL = url
+            return url
+        }
+
+        private func updateLoadError(_ message: String?) {
+            DispatchQueue.main.async {
+                self.loadError = message
+            }
         }
     }
 }

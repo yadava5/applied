@@ -284,6 +284,18 @@ struct SyncResultResponse: Decodable {
     }
 }
 
+struct LiteModeStateResponse: Decodable {
+    let enabled: Bool
+    let setfitAvailable: Bool
+    let disabledByLiteMode: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case setfitAvailable = "setfit_available"
+        case disabledByLiteMode = "disabled_by_lite_mode"
+    }
+}
+
 struct CorrectionResponse: Decodable {
     let success: Bool
     let message: String

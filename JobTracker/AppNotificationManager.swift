@@ -1,10 +1,11 @@
-import Combine
 import Foundation
+import Observation
 import UserNotifications
 
 @MainActor
-final class AppNotificationManager: ObservableObject {
-    @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
+@Observable
+final class AppNotificationManager {
+    private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
 
     func requestAuthorizationIfNeeded() async {
         let center = UNUserNotificationCenter.current()

@@ -31,7 +31,7 @@ private enum SyncAccountChoice: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(AppModel.self) private var appModel
 
     @State private var authStatus: AuthStatusResponse?
     @State private var isLoadingStatus = false
@@ -39,6 +39,9 @@ struct SettingsView: View {
     @State private var syncMessage: String?
     @State private var isSyncing = false
     @State private var authActionMessage: String?
+    @State private var liteModeEnabled = false
+    @State private var liteModeSetFitAvailable = false
+    @State private var isUpdatingLiteMode = false
 
     @State private var accountChoice: SyncAccountChoice = .all
     @State private var fullSync = false
@@ -83,6 +86,28 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                 }
+            }
+
+            Section("Classifier") {
+                Toggle(
+                    "Lite Mode (Disable SetFit Layer)",
+                    isOn: Binding(
+                        get: { liteModeEnabled },
+                        set: { newValue in
+                            liteModeEnabled = newValue
+                            Task { await updateLiteMode(enabled: newValue) }
+                        }
+                    )
+                )
+                .disabled(isUpdatingLiteMode)
+
+                Text(
+                    liteModeSetFitAvailable
+                        ? "SetFit is currently active."
+                        : "SetFit is disabled (lite mode or model unavailable)."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section("Connected Accounts") {
@@ -206,6 +231,7 @@ struct SettingsView: View {
         .task {
             appModel.backendLifecycle.refreshServiceStatus()
             await loadAuthStatus()
+            await loadLiteModeState()
         }
     }
 
@@ -267,6 +293,33 @@ struct SettingsView: View {
         }
 
         isSyncing = false
+    }
+
+    private func loadLiteModeState() async {
+        do {
+            let state = try await BackendAPIClient.shared.fetchLiteModeState()
+            liteModeEnabled = state.enabled
+            liteModeSetFitAvailable = state.setfitAvailable
+        } catch {
+            // Do not fail settings screen over optional classifier metadata.
+        }
+    }
+
+    private func updateLiteMode(enabled: Bool) async {
+        isUpdatingLiteMode = true
+        defer { isUpdatingLiteMode = false }
+
+        do {
+            let state = try await BackendAPIClient.shared.setLiteMode(enabled: enabled)
+            liteModeEnabled = state.enabled
+            liteModeSetFitAvailable = state.setfitAvailable
+            authActionMessage = state.enabled
+                ? "Lite mode enabled (rules + embeddings only)."
+                : "Lite mode disabled (SetFit re-enabled when available)."
+        } catch {
+            liteModeEnabled.toggle()
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func saveGmailClientSecret() async {

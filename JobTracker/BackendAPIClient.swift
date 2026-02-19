@@ -387,6 +387,26 @@ final class BackendAPIClient {
         let (data, response) = try await session.data(for: request)
         return try decodeResponse(CorrectionResponse.self, from: data, response: response)
     }
+
+    func fetchLiteModeState() async throws -> LiteModeStateResponse {
+        let url = baseURL.appendingPathComponent("/classify/lite-mode")
+        let (data, response) = try await session.data(from: url)
+        return try decodeResponse(LiteModeStateResponse.self, from: data, response: response)
+    }
+
+    func setLiteMode(enabled: Bool) async throws -> LiteModeStateResponse {
+        struct LiteModeRequest: Encodable {
+            let enabled: Bool
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("/classify/lite-mode"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(LiteModeRequest(enabled: enabled))
+
+        let (data, response) = try await session.data(for: request)
+        return try decodeResponse(LiteModeStateResponse.self, from: data, response: response)
+    }
 }
 
 // MARK: - AnyCodable helper for arbitrary JSON payloads

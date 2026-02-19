@@ -4,12 +4,12 @@ import SwiftUI
 
 @main
 struct JobTrackerApp: App {
-    @StateObject private var appModel = AppModel()
+    @State private var appModel = AppModel()
 
     var body: some Scene {
         WindowGroup("JobTracker", id: "main") {
             AppShellView()
-                .environmentObject(appModel)
+                .environment(appModel)
                 .databaseContext(appModel.localDatabase.databaseContext)
                 .task {
                     appModel.start()

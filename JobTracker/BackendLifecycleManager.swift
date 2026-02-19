@@ -1,17 +1,18 @@
 import AppKit
-import Combine
 import Darwin
 import Foundation
+import Observation
 import ServiceManagement
 
 @MainActor
-final class BackendLifecycleManager: ObservableObject {
-    @Published private(set) var autoStartEnabled = false
-    @Published private(set) var serviceStatusText = "Unknown"
-    @Published private(set) var serviceHintText = ""
-    @Published private(set) var requiresSystemApproval = false
-    @Published private(set) var autoStartSupported = true
-    @Published private(set) var lastErrorMessage: String?
+@Observable
+final class BackendLifecycleManager {
+    private(set) var autoStartEnabled = false
+    private(set) var serviceStatusText = "Unknown"
+    private(set) var serviceHintText = ""
+    private(set) var requiresSystemApproval = false
+    private(set) var autoStartSupported = true
+    private(set) var lastErrorMessage: String?
 
     private let launchAgentPlistName = "com.jobtracker.backend.plist"
     private let backendPort: UInt16 = 8000

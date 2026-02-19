@@ -1,13 +1,14 @@
-import Combine
 import Foundation
+import Observation
 
 @MainActor
-final class AppModel: ObservableObject {
-    @Published var health: HealthResponse?
-    @Published var authStatus: AuthStatusResponse?
-    @Published var needsReviewCount: Int = 0
-    @Published var lastSyncSummary: String?
-    @Published var isSyncing: Bool = false
+@Observable
+final class AppModel {
+    var health: HealthResponse?
+    var authStatus: AuthStatusResponse?
+    var needsReviewCount: Int = 0
+    var lastSyncSummary: String?
+    var isSyncing: Bool = false
 
     let notifications = AppNotificationManager()
     let backendLifecycle = BackendLifecycleManager()
