@@ -152,7 +152,7 @@ curl http://127.0.0.1:8000/emails?limit=5
 ## Step 6: macOS SwiftUI App (Development)
 
 ```bash
-cd macos/JobTracker
+cd apps/macos/JobTracker
 open JobTracker.xcodeproj
 ```
 

@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 .venv/
+.venv*/
 venv/
 env/
 *.egg-info/
@@ -15,6 +16,7 @@ build/
 .env
 .env.local
 credentials/
+backend/client_secret.json
 *.key
 *.pem
 
@@ -30,8 +32,8 @@ models/
 .DS_Store
 xcuserdata/
 DerivedData/
-*.xcworkspace
 !*.xcodeproj/project.pbxproj
+*.xcuserstate
 
 ## IDEs
 .vscode/
