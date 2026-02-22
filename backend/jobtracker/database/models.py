@@ -56,6 +56,7 @@ class EmailCategory(str, Enum):
     """Classification categories for job-related emails."""
 
     APPLIED = "applied"
+    PENDING_APPLICATION = "pending_application"
     INTERVIEW = "interview"
     REJECTION = "rejection"
     OFFER = "offer"

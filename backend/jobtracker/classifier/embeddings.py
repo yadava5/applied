@@ -14,6 +14,7 @@ from typing import Optional
 
 import numpy as np
 
+from jobtracker.config import settings
 from jobtracker.database.models import EmailCategory
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,10 @@ class EmbeddingModel:
         try:
             from sentence_transformers import SentenceTransformer
 
+            logger.info(
+                "Embedding model strategy: %s",
+                settings.ml_model_delivery_strategy,
+            )
             logger.info(f"Loading embedding model: {self.MODEL_NAME}")
             self._model = SentenceTransformer(self.MODEL_NAME)
             self._model_loaded = True

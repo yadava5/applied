@@ -18,6 +18,7 @@ The hybrid classifier (hybrid.py) combines all layers:
 Categories:
 -----------
 - applied: Application confirmation
+- pending_application: Started/not-yet-submitted application reminder
 - interview: Interview invitation
 - rejection: Rejection notice
 - offer: Job offer

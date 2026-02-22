@@ -686,6 +686,7 @@ async def get_applications_overview():
         # Emails linked vs unlinked (job-related only)
         job_categories = [
             EmailCategory.APPLIED,
+            EmailCategory.PENDING_APPLICATION,
             EmailCategory.INTERVIEW,
             EmailCategory.OFFER,
             EmailCategory.REJECTION,

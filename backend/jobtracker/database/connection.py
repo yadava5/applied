@@ -73,7 +73,10 @@ def get_engine() -> AsyncEngine:
         logger.info(f"Creating database engine: {settings.database_path}")
 
         engine_kwargs = {
-            "echo": settings.database_echo,
+            # Keep SQLAlchemy's internal echo logger disabled to prevent
+            # duplicate output. SQL visibility is controlled via logger levels
+            # in jobtracker.logging when JOBTRACKER_DATABASE_ECHO is enabled.
+            "echo": False,
             # SQLite-specific settings
             "connect_args": {
                 "check_same_thread": False,  # Required for async

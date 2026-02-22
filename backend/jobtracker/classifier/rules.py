@@ -228,6 +228,35 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"important information about your application",
         ],
     ),
+    EmailCategory.PENDING_APPLICATION: CategoryPatterns(
+        strong=[
+            r"complete your application",
+            r"finish your application",
+            r"continue your application",
+            r"application.{0,20}(incomplete|not complete)",
+            r"your application is incomplete",
+            r"action required.{0,30}(application|submit)",
+            r"complete additional steps",
+            r"additional information.{0,20}(required|needed)",
+            r"please complete.{0,30}(application|profile)",
+            r"submit your application to be considered",
+            r"before we can review your application",
+        ],
+        weak=[
+            r"missing information",
+            r"update your application",
+            r"continue where you left off",
+            r"application deadline.{0,20}(approaching|soon)",
+        ],
+        negative=[
+            r"application.{0,20}received",
+            r"thank(s| you) for applying",
+            r"interview invitation",
+            r"pleased to offer",
+            r"regret to inform",
+            r"not moving forward",
+        ],
+    ),
     EmailCategory.ASSESSMENT: CategoryPatterns(
         strong=[
             r"(technical|coding|take.?home).{0,20}(assessment|challenge|test|exercise)",

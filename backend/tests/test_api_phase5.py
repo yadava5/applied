@@ -321,6 +321,27 @@ class TestClassificationRegressions:
         payload = response.json()
         assert payload["category"] == "applied"
 
+    @pytest.mark.asyncio
+    async def test_incomplete_application_prompt_classified_as_pending_application(
+        self,
+        test_client: AsyncClient,
+    ):
+        response = await test_client.post(
+            "/classify",
+            json={
+                "subject": "Complete your application for Software Engineer",
+                "body": (
+                    "You're almost done. Please complete your application "
+                    "before we can review your candidacy."
+                ),
+                "sender_email": "notifications@greenhouse.io",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["category"] == "pending_application"
+
 
 class TestExtractionRegressions:
     def test_extract_company_from_thank_you_from_subject(self):
@@ -1229,6 +1250,76 @@ class TestPhase7SmartFeatures:
         payload = response.json()
         assert payload["total"] == 1
         assert "fts-body" in payload["emails"][0]["message_id"]
+
+    @pytest.mark.asyncio
+    async def test_emails_unlinked_only_filters_to_unlinked_job_categories(self, test_client: AsyncClient):
+        await _reset_analytics_tables()
+        now = datetime.utcnow()
+
+        async with get_session() as session:
+            app = Application(
+                company="Linked Co",
+                position="Engineer",
+                status=ApplicationStatus.APPLIED,
+                applied_date=now.date(),
+            )
+            session.add(app)
+            await session.commit()
+            await session.refresh(app)
+
+            unlinked_job = Email(
+                source_account=EmailSource.GMAIL,
+                message_id=f"<unlinked-job-{now.timestamp()}@test.com>",
+                received_at=now,
+                subject="Interview update",
+                sender_email="talent@company.com",
+                classified_as=EmailCategory.INTERVIEW,
+                classification_confidence=0.93,
+                application_id=None,
+            )
+            unlinked_pending = Email(
+                source_account=EmailSource.GMAIL,
+                message_id=f"<unlinked-pending-{now.timestamp()}@test.com>",
+                received_at=now - timedelta(seconds=30),
+                subject="Complete your application",
+                sender_email="talent@company.com",
+                classified_as=EmailCategory.PENDING_APPLICATION,
+                classification_confidence=0.91,
+                application_id=None,
+            )
+            linked_job = Email(
+                source_account=EmailSource.GMAIL,
+                message_id=f"<linked-job-{now.timestamp()}@test.com>",
+                received_at=now - timedelta(minutes=1),
+                subject="Thanks for applying",
+                sender_email="talent@company.com",
+                classified_as=EmailCategory.APPLIED,
+                classification_confidence=0.95,
+                application_id=app.id,
+            )
+            unlinked_non_job = Email(
+                source_account=EmailSource.ICLOUD,
+                message_id=f"<unlinked-other-{now.timestamp()}@test.com>",
+                received_at=now - timedelta(minutes=2),
+                subject="Newsletter",
+                sender_email="news@example.com",
+                classified_as=EmailCategory.OTHER,
+                classification_confidence=1.0,
+                application_id=None,
+            )
+            session.add(unlinked_job)
+            session.add(unlinked_pending)
+            session.add(linked_job)
+            session.add(unlinked_non_job)
+            await session.commit()
+
+        response = await test_client.get("/emails?unlinked_only=true")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total"] == 2
+        message_ids = {entry["message_id"] for entry in payload["emails"]}
+        assert any("unlinked-job" in message_id for message_id in message_ids)
+        assert any("unlinked-pending" in message_id for message_id in message_ids)
 
     @pytest.mark.asyncio
     async def test_list_applications_auto_marks_ghosted(self, test_client: AsyncClient):

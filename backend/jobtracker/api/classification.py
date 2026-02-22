@@ -53,7 +53,14 @@ class CorrectionRequest(BaseModel):
     category: str = Field(
         ...,
         description="Correct category",
-        examples=["rejection", "interview", "offer", "applied", "assessment"],
+        examples=[
+            "rejection",
+            "interview",
+            "offer",
+            "applied",
+            "pending_application",
+            "assessment",
+        ],
     )
 
 
@@ -513,6 +520,7 @@ async def get_emails_needing_review(
     # Job-related categories that warrant review if low confidence
     job_categories = [
         EmailCategory.APPLIED,
+        EmailCategory.PENDING_APPLICATION,
         EmailCategory.INTERVIEW,
         EmailCategory.REJECTION,
         EmailCategory.OFFER,
@@ -595,7 +603,15 @@ async def get_needs_review_count() -> dict:
                 SELECT COUNT(*) FROM emails
                 WHERE UPPER(classified_as) = 'NEEDS_REVIEW'
                 OR (
-                    UPPER(classified_as) IN ('APPLIED', 'INTERVIEW', 'REJECTION', 'OFFER', 'ASSESSMENT', 'FOLLOW_UP')
+                    UPPER(classified_as) IN (
+                        'APPLIED',
+                        'PENDING_APPLICATION',
+                        'INTERVIEW',
+                        'REJECTION',
+                        'OFFER',
+                        'ASSESSMENT',
+                        'FOLLOW_UP'
+                    )
                     AND classification_confidence IS NOT NULL
                     AND classification_confidence < :threshold
                     AND user_corrected = 0

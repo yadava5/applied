@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS emails (
     body_snippet TEXT,                      -- First 500 chars for preview
     classified_as TEXT                      -- ML classification result
         CHECK(classified_as IN (
-            'applied', 'interview', 'rejection', 'offer',
+            'applied', 'pending_application', 'interview', 'rejection', 'offer',
             'assessment', 'follow_up', 'other'
         )),
     classification_confidence REAL,         -- 0.0 to 1.0
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS training_data (
     email_text TEXT NOT NULL,
     label TEXT NOT NULL
         CHECK(label IN (
-            'applied', 'interview', 'rejection', 'offer',
+            'applied', 'pending_application', 'interview', 'rejection', 'offer',
             'assessment', 'follow_up', 'other'
         )),
     source TEXT DEFAULT 'user_correction',  -- 'user_correction' or 'manual_label'
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS email_embeddings (
     email_id INTEGER UNIQUE REFERENCES emails(id) ON DELETE CASCADE,
     label TEXT NOT NULL
         CHECK(label IN (
-            'applied', 'interview', 'rejection', 'offer',
+            'applied', 'pending_application', 'interview', 'rejection', 'offer',
             'assessment', 'follow_up', 'other'
         )),
     embedding BLOB NOT NULL,                -- numpy array serialized

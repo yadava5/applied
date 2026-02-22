@@ -13,7 +13,7 @@ They communicate via REST API (+ WebSocket for real-time updates) over localhost
 
 | Decision | Reason |
 |----------|--------|
-| Python for backend | Best email libraries (google-api-python-client, aioimaplib), best ML ecosystem (sentence-transformers, SetFit), cross-platform |
+| Python for backend | Best email libraries (google-api-python-client, aioimaplib) and mature local ML ecosystem (sentence-transformers, SetFit) |
 | **Async FastAPI** | Non-blocking I/O for concurrent email fetching, DB access, and ML inference |
 | **aiosqlite + SQLModel** | Async database access that doesn't block the FastAPI event loop |
 | SwiftUI for macOS | Native Liquid Glass look and feel, Apple ecosystem integration, Keychain access |
@@ -359,26 +359,7 @@ struct EmailRequest: Queryable {
 | Auth | App-specific password (requires 2FA on Apple Account) |
 | Incremental Sync | IMAP `SEARCH SINCE <date>` + UID tracking |
 
-## Cross-Platform Strategy (Future)
+## Platform Scope
 
-```
-                    ┌──────────────────────────┐
-                    │    Python Backend         │
-                    │  (FastAPI + ML + Email)   │
-                    │    100% Shared Code       │
-                    └────────────┬──────────────┘
-                                 │
-             ┌───────────────────┼───────────────────┐
-             │                   │                   │
-             ▼                   ▼                   ▼
-      ┌──────────┐        ┌──────────┐        ┌──────────┐
-      │  macOS   │        │ Windows  │        │  Linux   │
-      │ SwiftUI  │        │  Tauri   │        │  Tauri   │
-      │ (native) │        │ (web UI) │        │ (web UI) │
-      └──────────┘        └──────────┘        └──────────┘
-```
-
-The Python backend requires **zero changes** for other platforms. Only the UI layer changes:
-- **macOS**: Native SwiftUI (best experience on Mac)
-- **Windows/Linux**: Tauri with React/Svelte frontend (lightweight, ~5MB app)
-- Both connect to the same Python backend via REST API on localhost
+Current product scope is macOS only. The backend and SwiftUI client are optimized for
+local-first desktop use on macOS with no active cross-platform roadmap in this phase.

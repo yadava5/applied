@@ -133,6 +133,9 @@ async def list_emails(
     unreviewed_only: bool = Query(
         default=False, description="Only show unreviewed emails"
     ),
+    unlinked_only: bool = Query(
+        default=False, description="Only show unlinked job-related emails"
+    ),
     search: Optional[str] = Query(
         default=None, description="Search in subject and sender"
     ),
@@ -144,6 +147,7 @@ async def list_emails(
     - Source account (gmail, icloud)
     - Classification category
     - Reviewed status
+    - Unlinked job-related emails
     - Search term (subject, sender)
     """
     async with get_session() as session:
@@ -174,6 +178,22 @@ async def list_emails(
 
         if unreviewed_only:
             query = query.where(Email.is_reviewed == False)  # noqa: E712
+
+        if unlinked_only:
+            # Keep this aligned with dashboard "emails_unlinked" semantics.
+            job_categories = [
+                EmailCategory.APPLIED,
+                EmailCategory.PENDING_APPLICATION,
+                EmailCategory.INTERVIEW,
+                EmailCategory.OFFER,
+                EmailCategory.REJECTION,
+                EmailCategory.ASSESSMENT,
+                EmailCategory.FOLLOW_UP,
+            ]
+            query = query.where(
+                Email.application_id == None,  # noqa: E711
+                Email.classified_as.in_(job_categories),
+            )
 
         if search:
             matching_ids = await _find_email_ids_for_search(session, search)

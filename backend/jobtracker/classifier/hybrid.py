@@ -232,9 +232,12 @@ class HybridClassifier:
 
                 # Only trust embeddings if rules doesn't strongly disagree
                 if emb_confidence >= 0.85 and not has_negative_signals:
-                    if emb_category == EmailCategory.APPLIED and not has_lifecycle_content:
+                    if emb_category in (
+                        EmailCategory.APPLIED,
+                        EmailCategory.PENDING_APPLICATION,
+                    ) and not has_lifecycle_content:
                         logger.debug(
-                            "Ignoring embeddings APPLIED prediction without lifecycle content"
+                            "Ignoring embeddings lifecycle prediction without lifecycle content"
                         )
                     elif self._forced_other_reason(subject, body, sender_email):
                         return ClassificationResult(
@@ -266,9 +269,12 @@ class HybridClassifier:
                 sf_category, sf_confidence = setfit_result
 
                 if sf_confidence >= CONFIDENCE_MIN_CLASSIFICATION:
-                    if sf_category == EmailCategory.APPLIED and not has_lifecycle_content:
+                    if sf_category in (
+                        EmailCategory.APPLIED,
+                        EmailCategory.PENDING_APPLICATION,
+                    ) and not has_lifecycle_content:
                         logger.debug(
-                            "Ignoring SetFit APPLIED prediction without lifecycle content"
+                            "Ignoring SetFit lifecycle prediction without lifecycle content"
                         )
                     elif self._forced_other_reason(subject, body, sender_email):
                         return ClassificationResult(
@@ -304,7 +310,14 @@ class HybridClassifier:
         if final_category == EmailCategory.OTHER:
             # Check if there were significant job-related scores (might be a borderline case)
             # Only flag if score >= 2 (at least one strong match or two weak matches)
-            job_categories = ["applied", "interview", "rejection", "offer", "assessment"]
+            job_categories = [
+                "applied",
+                "pending_application",
+                "interview",
+                "rejection",
+                "offer",
+                "assessment",
+            ]
             job_scores = {cat: rules_result.scores.get(cat, 0) for cat in job_categories}
             max_job_score = max(job_scores.values()) if job_scores else 0
 

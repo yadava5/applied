@@ -90,6 +90,7 @@ LIFECYCLE_EVIDENCE_PATTERNS = [
 # Email category → Application status mapping
 CATEGORY_TO_STATUS: dict[EmailCategory, ApplicationStatus] = {
     EmailCategory.APPLIED: ApplicationStatus.APPLIED,
+    EmailCategory.PENDING_APPLICATION: ApplicationStatus.APPLIED,
     EmailCategory.INTERVIEW: ApplicationStatus.INTERVIEWING,
     EmailCategory.OFFER: ApplicationStatus.OFFERED,
     EmailCategory.REJECTION: ApplicationStatus.REJECTED,
@@ -330,7 +331,10 @@ class ApplicationLinker:
         if self._looks_like_digest_or_promo(email) and not self._has_lifecycle_evidence(email):
             return False
 
-        if email.classified_as == EmailCategory.APPLIED:
+        if email.classified_as in (
+            EmailCategory.APPLIED,
+            EmailCategory.PENDING_APPLICATION,
+        ):
             if extraction.position_confidence >= 0.50:
                 return True
             return self._has_lifecycle_evidence(email)
@@ -439,7 +443,10 @@ class ApplicationLinker:
 
                     # If an earlier APPLIED email created a placeholder app, upgrade it
                     # with the newly extracted concrete position.
-                    if email.classified_as == EmailCategory.APPLIED:
+                    if email.classified_as in (
+                        EmailCategory.APPLIED,
+                        EmailCategory.PENDING_APPLICATION,
+                    ):
                         placeholder_apps = [
                             app for app in apps
                             if (app.position or "").strip().lower() == "unknown position"
@@ -473,7 +480,10 @@ class ApplicationLinker:
 
                 # For APPLIED emails without a position, do not collapse by company.
                 # A candidate may apply to multiple roles at the same company.
-                if email.classified_as == EmailCategory.APPLIED and auto_create:
+                if email.classified_as in (
+                    EmailCategory.APPLIED,
+                    EmailCategory.PENDING_APPLICATION,
+                ) and auto_create:
                     # If we already have a same-day concrete-position application for
                     # this company, treat this as a duplicate confirmation and link it.
                     if email.received_at:
@@ -872,6 +882,7 @@ class ApplicationLinker:
             # Find job-related emails without application link
             job_categories = [
                 EmailCategory.APPLIED,
+                EmailCategory.PENDING_APPLICATION,
                 EmailCategory.INTERVIEW,
                 EmailCategory.OFFER,
                 EmailCategory.REJECTION,

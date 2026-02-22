@@ -159,6 +159,16 @@ class Settings(BaseSettings):
         default="intfloat/e5-small-v2",
         description="Sentence embedding model from HuggingFace",
     )
+    ml_model_delivery_strategy: Literal[
+        "download_on_first_launch", "bundle_in_app"
+    ] = Field(
+        default="download_on_first_launch",
+        description=(
+            "How ML models are delivered for desktop builds. "
+            "'download_on_first_launch' keeps app size smaller and downloads models "
+            "the first time classification is used."
+        ),
+    )
     embedding_similarity_threshold: float = Field(
         default=0.85,
         description="Minimum cosine similarity for embedding-based classification",

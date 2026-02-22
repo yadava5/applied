@@ -187,7 +187,12 @@ def _configure_library_loggers() -> None:
     """
     # SQLAlchemy can be very noisy when echo/debug logging is enabled.
     sqlalchemy_level = logging.INFO if settings.database_echo else logging.WARNING
-    logging.getLogger("sqlalchemy.engine").setLevel(sqlalchemy_level)
+    for logger_name in ("sqlalchemy.engine", "sqlalchemy.engine.Engine"):
+        sqlalchemy_logger = logging.getLogger(logger_name)
+        # Avoid duplicate SQL lines if any library adds direct handlers.
+        sqlalchemy_logger.handlers.clear()
+        sqlalchemy_logger.propagate = True
+        sqlalchemy_logger.setLevel(sqlalchemy_level)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
 
     # Reduce aiosqlite verbosity

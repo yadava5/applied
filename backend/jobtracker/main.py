@@ -112,9 +112,7 @@ app = FastAPI(
 # Using allow_origin_regex for flexible localhost port matching
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "tauri://localhost",  # For future Tauri app
-    ],
+    allow_origins=[],
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
