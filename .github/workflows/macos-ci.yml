@@ -1,0 +1,54 @@
+name: macOS CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/macos/**"
+      - "scripts/bundle.sh"
+      - "scripts/generate_icons.sh"
+      - ".github/workflows/macos-ci.yml"
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "apps/macos/**"
+      - "scripts/bundle.sh"
+      - "scripts/generate_icons.sh"
+      - ".github/workflows/macos-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Xcode Version
+        run: xcodebuild -version
+
+      - name: Resolve Swift Packages
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project apps/macos/JobTracker/JobTracker/JobTracker.xcodeproj \
+            -scheme JobTracker
+
+      - name: Build JobTracker
+        run: |
+          xcodebuild \
+            -project apps/macos/JobTracker/JobTracker/JobTracker.xcodeproj \
+            -scheme JobTracker \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

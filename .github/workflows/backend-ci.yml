@@ -1,0 +1,60 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "scripts/install.sh"
+      - "scripts/start_backend.sh"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "backend/**"
+      - "scripts/install.sh"
+      - "scripts/start_backend.sh"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+        run: pytest tests -q

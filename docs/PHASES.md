@@ -2,7 +2,7 @@
 
 Track progress by checking off completed items. Each phase builds on the previous one.
 
-> Last updated: February 12, 2026
+> Last updated: February 20, 2026
 
 ---
 
@@ -263,51 +263,37 @@ func unregisterBackendService() throws {
 ### Error Handling & UX
 
 - [x] Comprehensive backend error handling: graceful API failures for DB corruption, network/auth/sync surfaces
-- [ ] First-run onboarding flow in SwiftUI (welcome → connect accounts → first sync)
-- [ ] Empty states with helpful guidance (no applications yet, no emails synced)
+- [x] First-run onboarding flow in SwiftUI (welcome → connect accounts → first sync)
+- [x] Empty states with helpful guidance (no applications yet, no emails synced)
 - [x] Rate limit handling for Gmail API (exponential backoff + retryable quota error detection)
 
 ### Branding & Assets
 
-- [ ] App icon using **Icon Composer** (supports all Liquid Glass appearance modes)
-- [ ] Menu bar icon (SF Symbol or custom, 16x16 template)
-- [ ] Write user-facing README with screenshots
+- [x] App icon using **Icon Composer** source asset + generated app icon set
+- [x] Menu bar icon finalized (custom 16x16 template image set wired to `MenuBarExtra`)
+- [x] Write user-facing README with screenshots
 
 ### Local Development Setup
 
 - [x] `install.sh` script: sets up Python venv, installs dependencies, downloads ML models
-- [ ] Test complete flow end-to-end: fresh install → connect accounts → sync → classify → track
+- [x] Test complete flow end-to-end: fresh install → connect accounts → sync → classify → track
+- [x] Consolidate project into a single monorepo source root (remove embedded nested Git repo for macOS app)
+- [x] Move macOS app source under `apps/macos/` and reserve `apps/mobile/` for future client work
+- [x] Add GitHub Actions CI quality gates (backend pytest + macOS xcodebuild) with path filters and non-mutating checks
 
 ### Distribution (macOS)
 
-- [ ] **PyInstaller bundling**: package Python backend as standalone executable
-- [ ] Create `bundle.sh` script to build `JobTracker.app` with embedded backend
-- [ ] Universal binary support (Intel + Apple Silicon)
-- [ ] ML model bundling vs. first-launch download (decide based on app size)
+- [x] **PyInstaller bundling**: package Python backend as standalone executable
+- [x] Create `bundle.sh` script to build `JobTracker.app` with embedded backend
+- [x] Universal binary support (Intel + Apple Silicon)
+- [x] ML model strategy decided: download on first launch (smaller app, cached locally after first use)
 - [ ] **Code signing** with Apple Developer certificate
 - [ ] **Notarization** via `notarytool` for Gatekeeper approval
-- [ ] Create `notarize.sh` script for automated notarization
+- [x] Create `notarize.sh` script for automated notarization
 - [ ] Package as `.dmg` with background image and Applications shortcut
 - [ ] Test installation on clean macOS 15+ system
 - [ ] GitHub Releases with downloadable `.dmg`
 - [ ] Optional: Homebrew Cask formula
-
----
-
-## Phase 9: Cross-Platform — Windows & Linux (Future)
-
-> Extend to Windows and Linux using Tauri.
-
-- [ ] Set up Tauri project with React or Svelte frontend
-- [ ] Port SwiftUI views to web components (same visual design)
-- [ ] Implement same API client targeting `localhost:8000`
-- [ ] Replace `launchd` with platform-specific schedulers:
-  - Windows: Task Scheduler
-  - Linux: systemd user service
-- [ ] Bundle Python backend with platform-specific installers
-- [ ] Test on Windows 10/11 and Ubuntu 22.04+
-
----
 
 ## Progress Tracker
 
@@ -320,5 +306,4 @@ func unregisterBackendService() throws {
 | Phase 5 | ✅ Complete | Core macOS app shipped: dashboard, applications, emails/review queue, settings, menu bar, WebSocket status |
 | Phase 6 | ✅ Complete | Background service controls + `@Observable` cleanup + validation workflow finalized |
 | Phase 7 | ✅ Complete | Realtime robustness, ghosted/follow-up intelligence, FTS search, and lite-mode controls delivered |
-| Phase 8 | 🟨 In Progress | Error-handling/logging hardening + Gmail rate-limit backoff + installer script |
-| Phase 9 | ⬜ Not Started | Cross-Platform (Future) |
+| Phase 8 | 🟨 In Progress | Error-handling/logging hardening + branding/assets + packaging/distribution |
