@@ -391,17 +391,230 @@ private struct EmailHTMLView: NSViewRepresentable {
     }
 }
 
+
+struct JTThemePalette {
+    let backgroundTop: Color
+    let backgroundBottom: Color
+    let surfaceTop: Color
+    let surfaceBottom: Color
+    let surfaceStroke: Color
+    let accentPrimary: Color
+    let accentSecondary: Color
+    let success: Color
+    let warning: Color
+    let danger: Color
+    let backgroundImageName: String?
+    let backgroundImageOpacity: Double
+    let backgroundImageSaturation: Double
+}
+
+enum JTThemePreset: String, CaseIterable, Identifiable {
+    case oceanGlass
+    case sunriseGlow
+    case forestMist
+    case graphiteSky
+    case auroraBorealis
+    case desertBloom
+    case midnightNeon
+
+    static let defaultsKey = "appearance.theme.preset"
+
+    static var persistedDefault: JTThemePreset {
+        guard
+            let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+            let preset = JTThemePreset(rawValue: rawValue)
+        else {
+            return .oceanGlass
+        }
+        return preset
+    }
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .oceanGlass:
+            return "Ocean Glass"
+        case .sunriseGlow:
+            return "Sunrise Glow"
+        case .forestMist:
+            return "Forest Mist"
+        case .graphiteSky:
+            return "Graphite Sky"
+        case .auroraBorealis:
+            return "Aurora Borealis"
+        case .desertBloom:
+            return "Desert Bloom"
+        case .midnightNeon:
+            return "Midnight Neon"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .oceanGlass:
+            return "Cool blue-teal with wave backdrop"
+        case .sunriseGlow:
+            return "Warm amber-coral with sunrise hills"
+        case .forestMist:
+            return "Earthy greens with canopy texture"
+        case .graphiteSky:
+            return "Neutral slate palette for minimalists"
+        case .auroraBorealis:
+            return "Northern light vibes with soft ribbons"
+        case .desertBloom:
+            return "Sand dunes and warm late-evening tones"
+        case .midnightNeon:
+            return "Dark city neon accents with depth"
+        }
+    }
+
+    var palette: JTThemePalette {
+        switch self {
+        case .oceanGlass:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.06, green: 0.10, blue: 0.18),
+                backgroundBottom: Color(red: 0.02, green: 0.05, blue: 0.10),
+                surfaceTop: Color(red: 0.21, green: 0.31, blue: 0.47).opacity(0.24),
+                surfaceBottom: Color(red: 0.10, green: 0.17, blue: 0.30).opacity(0.18),
+                surfaceStroke: Color(red: 0.66, green: 0.82, blue: 0.95).opacity(0.42),
+                accentPrimary: Color(red: 0.21, green: 0.79, blue: 0.71),
+                accentSecondary: Color(red: 0.97, green: 0.73, blue: 0.33),
+                success: Color(red: 0.54, green: 0.90, blue: 0.55),
+                warning: Color(red: 0.99, green: 0.72, blue: 0.31),
+                danger: Color(red: 0.98, green: 0.42, blue: 0.46),
+                backgroundImageName: "ThemeOceanWaves",
+                backgroundImageOpacity: 0.28,
+                backgroundImageSaturation: 1.05
+            )
+        case .sunriseGlow:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.24, green: 0.11, blue: 0.10),
+                backgroundBottom: Color(red: 0.10, green: 0.05, blue: 0.08),
+                surfaceTop: Color(red: 0.49, green: 0.29, blue: 0.25).opacity(0.24),
+                surfaceBottom: Color(red: 0.29, green: 0.15, blue: 0.18).opacity(0.20),
+                surfaceStroke: Color(red: 0.98, green: 0.79, blue: 0.67).opacity(0.42),
+                accentPrimary: Color(red: 0.98, green: 0.56, blue: 0.38),
+                accentSecondary: Color(red: 0.98, green: 0.78, blue: 0.37),
+                success: Color(red: 0.58, green: 0.86, blue: 0.53),
+                warning: Color(red: 0.99, green: 0.71, blue: 0.32),
+                danger: Color(red: 0.96, green: 0.39, blue: 0.42),
+                backgroundImageName: "ThemeSunriseHills",
+                backgroundImageOpacity: 0.27,
+                backgroundImageSaturation: 1.08
+            )
+        case .forestMist:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.06, green: 0.14, blue: 0.12),
+                backgroundBottom: Color(red: 0.03, green: 0.08, blue: 0.08),
+                surfaceTop: Color(red: 0.20, green: 0.35, blue: 0.30).opacity(0.24),
+                surfaceBottom: Color(red: 0.10, green: 0.21, blue: 0.19).opacity(0.20),
+                surfaceStroke: Color(red: 0.69, green: 0.88, blue: 0.80).opacity(0.40),
+                accentPrimary: Color(red: 0.31, green: 0.81, blue: 0.63),
+                accentSecondary: Color(red: 0.71, green: 0.86, blue: 0.46),
+                success: Color(red: 0.60, green: 0.90, blue: 0.56),
+                warning: Color(red: 0.95, green: 0.76, blue: 0.34),
+                danger: Color(red: 0.90, green: 0.42, blue: 0.46),
+                backgroundImageName: "ThemeForestCanopy",
+                backgroundImageOpacity: 0.25,
+                backgroundImageSaturation: 1.12
+            )
+        case .graphiteSky:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.11, green: 0.13, blue: 0.18),
+                backgroundBottom: Color(red: 0.05, green: 0.06, blue: 0.09),
+                surfaceTop: Color(red: 0.24, green: 0.27, blue: 0.36).opacity(0.24),
+                surfaceBottom: Color(red: 0.14, green: 0.16, blue: 0.24).opacity(0.20),
+                surfaceStroke: Color(red: 0.74, green: 0.79, blue: 0.88).opacity(0.38),
+                accentPrimary: Color(red: 0.42, green: 0.70, blue: 0.96),
+                accentSecondary: Color(red: 0.78, green: 0.69, blue: 0.95),
+                success: Color(red: 0.56, green: 0.86, blue: 0.58),
+                warning: Color(red: 0.95, green: 0.71, blue: 0.35),
+                danger: Color(red: 0.92, green: 0.43, blue: 0.46),
+                backgroundImageName: "ThemeGraphiteGrid",
+                backgroundImageOpacity: 0.20,
+                backgroundImageSaturation: 0.86
+            )
+        case .auroraBorealis:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.02, green: 0.11, blue: 0.16),
+                backgroundBottom: Color(red: 0.01, green: 0.04, blue: 0.09),
+                surfaceTop: Color(red: 0.16, green: 0.32, blue: 0.35).opacity(0.26),
+                surfaceBottom: Color(red: 0.07, green: 0.18, blue: 0.24).opacity(0.20),
+                surfaceStroke: Color(red: 0.64, green: 0.92, blue: 0.88).opacity(0.44),
+                accentPrimary: Color(red: 0.23, green: 0.88, blue: 0.74),
+                accentSecondary: Color(red: 0.45, green: 0.72, blue: 0.98),
+                success: Color(red: 0.58, green: 0.93, blue: 0.64),
+                warning: Color(red: 0.97, green: 0.78, blue: 0.36),
+                danger: Color(red: 0.95, green: 0.45, blue: 0.49),
+                backgroundImageName: "ThemeAuroraVeil",
+                backgroundImageOpacity: 0.30,
+                backgroundImageSaturation: 1.18
+            )
+        case .desertBloom:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.23, green: 0.12, blue: 0.08),
+                backgroundBottom: Color(red: 0.11, green: 0.06, blue: 0.05),
+                surfaceTop: Color(red: 0.46, green: 0.28, blue: 0.20).opacity(0.24),
+                surfaceBottom: Color(red: 0.24, green: 0.15, blue: 0.12).opacity(0.20),
+                surfaceStroke: Color(red: 0.98, green: 0.82, blue: 0.62).opacity(0.42),
+                accentPrimary: Color(red: 0.97, green: 0.62, blue: 0.37),
+                accentSecondary: Color(red: 0.97, green: 0.81, blue: 0.43),
+                success: Color(red: 0.62, green: 0.88, blue: 0.54),
+                warning: Color(red: 0.98, green: 0.73, blue: 0.33),
+                danger: Color(red: 0.94, green: 0.44, blue: 0.38),
+                backgroundImageName: "ThemeDesertDunes",
+                backgroundImageOpacity: 0.27,
+                backgroundImageSaturation: 1.06
+            )
+        case .midnightNeon:
+            return JTThemePalette(
+                backgroundTop: Color(red: 0.06, green: 0.05, blue: 0.14),
+                backgroundBottom: Color(red: 0.02, green: 0.02, blue: 0.08),
+                surfaceTop: Color(red: 0.20, green: 0.16, blue: 0.34).opacity(0.26),
+                surfaceBottom: Color(red: 0.10, green: 0.09, blue: 0.20).opacity(0.20),
+                surfaceStroke: Color(red: 0.78, green: 0.73, blue: 0.98).opacity(0.42),
+                accentPrimary: Color(red: 0.47, green: 0.78, blue: 0.99),
+                accentSecondary: Color(red: 0.95, green: 0.45, blue: 0.73),
+                success: Color(red: 0.58, green: 0.87, blue: 0.63),
+                warning: Color(red: 0.95, green: 0.72, blue: 0.33),
+                danger: Color(red: 0.96, green: 0.42, blue: 0.50),
+                backgroundImageName: "ThemeMidnightNeon",
+                backgroundImageOpacity: 0.24,
+                backgroundImageSaturation: 1.2
+            )
+        }
+    }
+}
+
 enum JTTheme {
-    static let backgroundTop = Color(red: 0.06, green: 0.10, blue: 0.18)
-    static let backgroundBottom = Color(red: 0.02, green: 0.05, blue: 0.10)
-    static let surfaceTop = Color(red: 0.21, green: 0.31, blue: 0.47).opacity(0.24)
-    static let surfaceBottom = Color(red: 0.10, green: 0.17, blue: 0.30).opacity(0.18)
-    static let surfaceStroke = Color(red: 0.66, green: 0.82, blue: 0.95).opacity(0.42)
-    static let accentPrimary = Color(red: 0.21, green: 0.79, blue: 0.71)
-    static let accentSecondary = Color(red: 0.97, green: 0.73, blue: 0.33)
-    static let success = Color(red: 0.54, green: 0.90, blue: 0.55)
-    static let warning = Color(red: 0.99, green: 0.72, blue: 0.31)
-    static let danger = Color(red: 0.98, green: 0.42, blue: 0.46)
+    private static var activePreset: JTThemePreset = .oceanGlass
+
+    static func apply(_ preset: JTThemePreset) {
+        activePreset = preset
+    }
+
+    static var currentPreset: JTThemePreset {
+        activePreset
+    }
+
+    private static var palette: JTThemePalette {
+        activePreset.palette
+    }
+
+    static var backgroundTop: Color { palette.backgroundTop }
+    static var backgroundBottom: Color { palette.backgroundBottom }
+    static var surfaceTop: Color { palette.surfaceTop }
+    static var surfaceBottom: Color { palette.surfaceBottom }
+    static var surfaceStroke: Color { palette.surfaceStroke }
+    static var accentPrimary: Color { palette.accentPrimary }
+    static var accentSecondary: Color { palette.accentSecondary }
+    static var success: Color { palette.success }
+    static var warning: Color { palette.warning }
+    static var danger: Color { palette.danger }
+    static var backgroundImageName: String? { palette.backgroundImageName }
+    static var backgroundImageOpacity: Double { palette.backgroundImageOpacity }
+    static var backgroundImageSaturation: Double { palette.backgroundImageSaturation }
 }
 
 struct JTBackdropView: View {
@@ -413,10 +626,30 @@ struct JTBackdropView: View {
                 endPoint: .bottomTrailing
             )
 
+            if let backgroundImageName = JTTheme.backgroundImageName {
+                Image(backgroundImageName)
+                    .resizable()
+                    .scaledToFill()
+                    .ignoresSafeArea()
+                    .opacity(JTTheme.backgroundImageOpacity)
+                    .saturation(JTTheme.backgroundImageSaturation)
+                    .overlay {
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.22),
+                                Color.clear,
+                                Color.black.opacity(0.30),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+            }
+
             Circle()
                 .fill(
                     RadialGradient(
-                        colors: [JTTheme.accentPrimary.opacity(0.35), .clear],
+                        colors: [JTTheme.accentPrimary.opacity(0.32), .clear],
                         center: .center,
                         startRadius: 10,
                         endRadius: 360
@@ -428,7 +661,7 @@ struct JTBackdropView: View {
             Circle()
                 .fill(
                     RadialGradient(
-                        colors: [JTTheme.accentSecondary.opacity(0.25), .clear],
+                        colors: [JTTheme.accentSecondary.opacity(0.22), .clear],
                         center: .center,
                         startRadius: 10,
                         endRadius: 420
@@ -439,7 +672,6 @@ struct JTBackdropView: View {
         }
     }
 }
-
 private struct JTPageBackdropModifier: ViewModifier {
     func body(content: Content) -> some View {
         content

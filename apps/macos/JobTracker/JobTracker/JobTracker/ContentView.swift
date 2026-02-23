@@ -1,5 +1,6 @@
 import SwiftUI
 
+
 private enum ApplicationsStatusFilter: String, CaseIterable, Identifiable {
     case all
     case applied
@@ -39,6 +40,37 @@ private enum ApplicationsSortOption: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ApplicationsLayoutOption: String, CaseIterable, Identifiable {
+    case featureCards
+    case compactRows
+    case statusBoard
+
+    static let defaultsKey = "applications.layout.option"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .featureCards:
+            return "Feature Cards"
+        case .compactRows:
+            return "Compact Rows"
+        case .statusBoard:
+            return "Status Board"
+        }
+    }
+
+    static var persistedDefault: ApplicationsLayoutOption {
+        guard
+            let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+            let value = ApplicationsLayoutOption(rawValue: rawValue)
+        else {
+            return .featureCards
+        }
+        return value
+    }
+}
+
 private struct ApplicationSheetSelection: Identifiable {
     let id: Int
 }
@@ -48,37 +80,25 @@ private struct ApplicationSheetSelection: Identifiable {
 struct ApplicationsView: View {
     @Environment(AppModel.self) private var appModel
     @State private var applications: [ApplicationSummary] = []
+    @State private var displayedApplications: [ApplicationSummary] = []
+    @State private var boardApplicationsByStatus: [String: [ApplicationSummary]] = [:]
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var searchText = ""
     @State private var statusFilter: ApplicationsStatusFilter = .all
     @State private var sortOption: ApplicationsSortOption = .newestFirst
+    @State private var layoutOption: ApplicationsLayoutOption = .persistedDefault
     @State private var applicationSheetSelection: ApplicationSheetSelection?
 
-    private var displayedApplications: [ApplicationSummary] {
-        var items = applications
-
-        switch sortOption {
-        case .newestFirst:
-            // Backend already returns newest-first.
-            break
-        case .companyAZ:
-            items.sort { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending }
-        case .companyZA:
-            items.sort { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedDescending }
-        case .status:
-            items.sort { $0.status.localizedCaseInsensitiveCompare($1.status) == .orderedAscending }
-        case .emailCountDesc:
-            items.sort {
-                if $0.emailCount == $1.emailCount {
-                    return $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending
-                }
-                return $0.emailCount > $1.emailCount
-            }
-        }
-
-        return items
-    }
+    private let boardStatuses = [
+        "applied",
+        "interviewing",
+        "offered",
+        "rejected",
+        "accepted",
+        "withdrawn",
+        "ghosted",
+    ]
 
     private var hasActiveFilters: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || statusFilter != .all
@@ -129,47 +149,17 @@ struct ApplicationsView: View {
                 .padding()
                 .jtCard()
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(displayedApplications) { app in
-                            Button {
-                                applicationSheetSelection = ApplicationSheetSelection(id: app.id)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(app.company)
-                                            .font(.headline)
-                                        Text(app.position)
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    VStack(alignment: .trailing, spacing: 4) {
-                                        Text(app.status.humanizedFromSnakeCase)
-                                            .font(.caption)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.white.opacity(0.12), in: Capsule())
-                                            .overlay(Capsule().stroke(JTTheme.surfaceStroke, lineWidth: 1))
-                                        Text("\(app.emailCount) emails")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                                .jtCard(cornerRadius: 14, contentPadding: 12)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                switch layoutOption {
+                case .featureCards:
+                    featureCardsLayout
+                case .compactRows:
+                    compactRowsLayout
+                case .statusBoard:
+                    statusBoardLayout
                 }
             }
         }
         .navigationTitle("Applications")
-        .jtPageBackdrop()
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Menu("Filter") {
@@ -181,6 +171,20 @@ struct ApplicationsView: View {
                     Picker("Sort", selection: $sortOption) {
                         ForEach(ApplicationsSortOption.allCases) { option in
                             Text(option.title).tag(option)
+                        }
+                    }
+                }
+
+                Menu("Layout") {
+                    ForEach(ApplicationsLayoutOption.allCases) { option in
+                        Button {
+                            layoutOption = option
+                        } label: {
+                            if option == layoutOption {
+                                Label(option.title, systemImage: "checkmark")
+                            } else {
+                                Text(option.title)
+                            }
                         }
                     }
                 }
@@ -207,8 +211,17 @@ struct ApplicationsView: View {
             }
         }
         .onAppear {
+            if displayedApplications.isEmpty, !applications.isEmpty {
+                rebuildDisplayIndex(for: applications)
+            }
             guard applications.isEmpty, !isLoading else { return }
             Task { await loadApplications() }
+        }
+        .onChange(of: layoutOption) { _, newValue in
+            UserDefaults.standard.set(newValue.rawValue, forKey: ApplicationsLayoutOption.defaultsKey)
+        }
+        .onChange(of: sortOption) { _, _ in
+            rebuildDisplayIndex(for: applications)
         }
         .sheet(item: $applicationSheetSelection) { selection in
             NavigationStack {
@@ -223,6 +236,285 @@ struct ApplicationsView: View {
                     }
             }
             .frame(minWidth: 760, minHeight: 620)
+        }
+    }
+
+    private var featureCardsLayout: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
+                ForEach(displayedApplications) { app in
+                    Button {
+                        applicationSheetSelection = ApplicationSheetSelection(id: app.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Image(systemName: statusIcon(for: app.status))
+                                    .font(.title3)
+                                    .foregroundStyle(statusTone(for: app.status))
+                                    .frame(width: 28)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.company)
+                                        .font(.headline)
+                                        .lineLimit(1)
+                                    Text(app.position)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer(minLength: 0)
+                            }
+
+                            HStack(spacing: 8) {
+                                Text(app.status.humanizedFromSnakeCase)
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(statusTone(for: app.status).opacity(0.18), in: Capsule())
+                                    .overlay(
+                                        Capsule().stroke(statusTone(for: app.status).opacity(0.55), lineWidth: 1)
+                                    )
+                                Spacer()
+                                Label("\(app.emailCount)", systemImage: "envelope.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            statusTone(for: app.status).opacity(0.14),
+                                            Color.white.opacity(0.035),
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(JTTheme.surfaceStroke.opacity(0.45), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var compactRowsLayout: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(displayedApplications) { app in
+                    Button {
+                        applicationSheetSelection = ApplicationSheetSelection(id: app.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(statusTone(for: app.status).opacity(0.85))
+                                .frame(width: 10, height: 10)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(app.company)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(app.position)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Text(app.status.humanizedFromSnakeCase)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
+                            Text("\(app.emailCount)")
+                                .font(.caption.monospacedDigit())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.09), in: Capsule())
+                                .overlay(Capsule().stroke(JTTheme.surfaceStroke, lineWidth: 1))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(0.065))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(JTTheme.surfaceStroke.opacity(0.42), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var statusBoardLayout: some View {
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(boardStatuses, id: \.self) { status in
+                    statusColumn(status: status)
+                        .frame(width: 280)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    @ViewBuilder
+    private func statusColumn(status: String) -> some View {
+        let items = boardApplicationsByStatus[status] ?? []
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(status.humanizedFromSnakeCase, systemImage: statusIcon(for: status))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(statusTone(for: status))
+                Spacer()
+                Text("\(items.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            if items.isEmpty {
+                Text("No applications")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(items) { app in
+                    Button {
+                        applicationSheetSelection = ApplicationSheetSelection(id: app.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(app.company)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                            Text(app.position)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            HStack {
+                                Spacer()
+                                Label("\(app.emailCount)", systemImage: "envelope")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(statusTone(for: status).opacity(0.12))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(statusTone(for: status).opacity(0.32), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.055))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(JTTheme.surfaceStroke.opacity(0.38), lineWidth: 1)
+        )
+    }
+
+    private func sortedApplications(from items: [ApplicationSummary]) -> [ApplicationSummary] {
+        var sorted = items
+
+        switch sortOption {
+        case .newestFirst:
+            // Backend already returns newest-first.
+            break
+        case .companyAZ:
+            sorted.sort { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending }
+        case .companyZA:
+            sorted.sort { $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedDescending }
+        case .status:
+            sorted.sort {
+                if $0.status == $1.status {
+                    return $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending
+                }
+                return $0.status.localizedCaseInsensitiveCompare($1.status) == .orderedAscending
+            }
+        case .emailCountDesc:
+            sorted.sort {
+                if $0.emailCount == $1.emailCount {
+                    return $0.company.localizedCaseInsensitiveCompare($1.company) == .orderedAscending
+                }
+                return $0.emailCount > $1.emailCount
+            }
+        }
+
+        return sorted
+    }
+
+    private func rebuildDisplayIndex(for items: [ApplicationSummary]) {
+        let sorted = sortedApplications(from: items)
+        displayedApplications = sorted
+        boardApplicationsByStatus = Dictionary(grouping: sorted, by: \.status)
+    }
+
+    private func statusIcon(for status: String) -> String {
+        switch status {
+        case "applied":
+            return "paperplane.fill"
+        case "interviewing":
+            return "person.2.fill"
+        case "offered":
+            return "sparkles"
+        case "rejected":
+            return "xmark.octagon.fill"
+        case "accepted":
+            return "checkmark.seal.fill"
+        case "withdrawn":
+            return "arrow.uturn.backward.circle.fill"
+        case "ghosted":
+            return "moon.stars.fill"
+        default:
+            return "briefcase.fill"
+        }
+    }
+
+    private func statusTone(for status: String) -> Color {
+        switch status {
+        case "applied":
+            return JTTheme.accentPrimary
+        case "interviewing":
+            return JTTheme.warning
+        case "offered":
+            return JTTheme.success
+        case "rejected":
+            return JTTheme.danger
+        case "accepted":
+            return JTTheme.success
+        case "withdrawn":
+            return JTTheme.accentSecondary
+        case "ghosted":
+            return Color.gray
+        default:
+            return JTTheme.accentPrimary
         }
     }
 
@@ -250,6 +542,7 @@ struct ApplicationsView: View {
                     search: trimmedSearch.isEmpty ? nil : trimmedSearch
                 )
                 applications = response.applications
+                rebuildDisplayIndex(for: response.applications)
                 errorMessage = nil
                 return
             } catch {
@@ -294,7 +587,6 @@ struct ApplicationsView: View {
         return description.contains("could not connect") || description.contains("connection refused")
     }
 }
-
 // MARK: - Application Detail
 private struct EmailSheetSelection: Identifiable {
     let id: Int

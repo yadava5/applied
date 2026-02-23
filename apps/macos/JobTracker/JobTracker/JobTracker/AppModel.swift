@@ -11,6 +11,8 @@ final class AppModel {
     var isSyncing: Bool = false
     var backendReady: Bool = false
     var backendStartupError: String?
+    var themePreset: JTThemePreset = JTThemePreset.persistedDefault
+    var themeRefreshID = UUID()
 
     let notifications = AppNotificationManager()
     let backendLifecycle = BackendLifecycleManager()
@@ -19,6 +21,10 @@ final class AppModel {
     @ObservationIgnored private var startupTask: Task<Void, Never>?
 
     init() {
+        let persistedTheme = JTThemePreset.persistedDefault
+        themePreset = persistedTheme
+        JTTheme.apply(persistedTheme)
+
         websocketClient.onEvent = { [weak self] event in
             guard let self else { return }
             self.handleWebSocketEvent(event)
@@ -56,6 +62,14 @@ final class AppModel {
         startupTask = nil
         websocketClient.disconnect()
         backendReady = false
+    }
+
+    func setThemePreset(_ preset: JTThemePreset) {
+        guard themePreset != preset else { return }
+        themePreset = preset
+        JTTheme.apply(preset)
+        UserDefaults.standard.set(preset.rawValue, forKey: JTThemePreset.defaultsKey)
+        themeRefreshID = UUID()
     }
 
     func refreshAllStatus() async {

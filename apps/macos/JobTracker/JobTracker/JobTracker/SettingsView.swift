@@ -140,6 +140,38 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
+            Section("Appearance") {
+                Picker(
+                    "Theme",
+                    selection: Binding(
+                        get: { appModel.themePreset },
+                        set: { newPreset in
+                            appModel.setThemePreset(newPreset)
+                        }
+                    )
+                ) {
+                    ForEach(JTThemePreset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text(appModel.themePreset.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    ForEach(JTThemePreset.allCases) { preset in
+                        Button {
+                            appModel.setThemePreset(preset)
+                        } label: {
+                            themeSwatch(preset)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
             Section("Pipeline Overview") {
                 if isLoadingOverview && overview == nil {
                     ProgressView("Loading pipeline metrics...")
@@ -334,13 +366,43 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(Color.clear)
-        .jtPageBackdrop()
         .task {
             appModel.backendLifecycle.refreshServiceStatus()
             await loadAuthStatus()
             await loadLiteModeState()
             await loadOverviewAndHealth()
         }
+    }
+
+    @ViewBuilder
+    private func themeSwatch(_ preset: JTThemePreset) -> some View {
+        let palette = preset.palette
+        let isSelected = preset == appModel.themePreset
+
+        HStack(spacing: 4) {
+            Circle()
+                .fill(palette.accentPrimary)
+                .frame(width: 10, height: 10)
+            Circle()
+                .fill(palette.accentSecondary)
+                .frame(width: 10, height: 10)
+            Circle()
+                .fill(palette.surfaceStroke)
+                .frame(width: 10, height: 10)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.white.opacity(0.18) : Color.white.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(
+                    isSelected ? JTTheme.accentPrimary.opacity(0.85) : JTTheme.surfaceStroke.opacity(0.55),
+                    lineWidth: 1
+                )
+        )
     }
 
     @ViewBuilder
