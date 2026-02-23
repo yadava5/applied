@@ -70,6 +70,7 @@ class EmailResponse(BaseModel):
     """Single email response."""
 
     id: int
+    application_id: Optional[int]
     source_account: str
     message_id: str
     thread_id: Optional[str]
@@ -136,6 +137,16 @@ async def list_emails(
     unlinked_only: bool = Query(
         default=False, description="Only show unlinked job-related emails"
     ),
+    unreviewed: Optional[bool] = Query(
+        default=None,
+        include_in_schema=False,
+        description="Deprecated alias for unreviewed_only",
+    ),
+    unlinked: Optional[bool] = Query(
+        default=None,
+        include_in_schema=False,
+        description="Deprecated alias for unlinked_only",
+    ),
     search: Optional[str] = Query(
         default=None, description="Search in subject and sender"
     ),
@@ -151,6 +162,11 @@ async def list_emails(
     - Search term (subject, sender)
     """
     async with get_session() as session:
+        if unreviewed is not None:
+            unreviewed_only = unreviewed
+        if unlinked is not None:
+            unlinked_only = unlinked
+
         # Build base query
         query = select(Email)
 
@@ -235,6 +251,7 @@ async def list_emails(
             emails=[
                 EmailResponse(
                     id=e.id,
+                    application_id=e.application_id,
                     source_account=e.source_account.value if hasattr(e.source_account, 'value') else str(e.source_account),
                     message_id=e.message_id,
                     thread_id=e.thread_id,
@@ -353,6 +370,7 @@ async def get_email(email_id: int) -> EmailDetailResponse:
 
         return EmailDetailResponse(
             id=email.id,
+            application_id=email.application_id,
             source_account=email.source_account.value if hasattr(email.source_account, 'value') else str(email.source_account),
             message_id=email.message_id,
             thread_id=email.thread_id,
