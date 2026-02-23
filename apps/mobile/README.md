@@ -1,10 +1,5 @@
-# Mobile App (Planned)
+# Mobile (Reserved)
 
-This directory is reserved for future mobile development.
+`apps/mobile/` is intentionally reserved for future mobile clients.
 
-Recommended structure when implementation starts:
-
-- `ios/` for native iOS app, or
-- `react-native/` / `flutter/` for cross-platform app.
-
-Keep mobile-specific tooling and CI configuration scoped to this subtree.
+When mobile work starts, keep it isolated under this directory (for example `ios/`, `android/`, `react-native/`, or `flutter/`) and add a dedicated CI workflow scoped to this path.
