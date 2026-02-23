@@ -68,7 +68,6 @@ struct EmailsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Emails")
-        .jtPageBackdrop()
     }
 }
 
@@ -86,8 +85,20 @@ private struct EmailInboxView: View {
     @State private var hasMore = false
     @State private var total = 0
     @State private var emailSheetSelection: InboxEmailSheetSelection?
+    @State private var clientSideFilteredEmails: [InboxEmailSummary] = []
+    @State private var cachedClientFilterKey = ""
 
     private let pageSize = 50
+    private let baseFetchPageSize = 100
+    private let jobRelatedCategories: Set<String> = [
+        "applied",
+        "pending_application",
+        "interview",
+        "rejection",
+        "offer",
+        "assessment",
+        "follow_up",
+    ]
 
     private var hasActiveFilters: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -97,6 +108,10 @@ private struct EmailInboxView: View {
             || unlinkedOnly
     }
 
+
+    private var requiresClientSideFiltering: Bool {
+        unreviewedOnly || unlinkedOnly
+    }
     var body: some View {
         List {
             Section {
@@ -221,6 +236,18 @@ private struct EmailInboxView: View {
         .task {
             await loadPage(reset: true)
         }
+        .onChange(of: sourceFilter) { _, _ in
+            Task { await loadPage(reset: true) }
+        }
+        .onChange(of: classificationFilter) { _, _ in
+            Task { await loadPage(reset: true) }
+        }
+        .onChange(of: unreviewedOnly) { _, _ in
+            Task { await loadPage(reset: true) }
+        }
+        .onChange(of: unlinkedOnly) { _, _ in
+            Task { await loadPage(reset: true) }
+        }
         .sheet(item: $emailSheetSelection) { selection in
             NavigationStack {
                 EmailDetailView(emailID: selection.id, showsCloseButton: true)
@@ -244,29 +271,125 @@ private struct EmailInboxView: View {
         let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
-            let response = try await BackendAPIClient.shared.fetchEmails(
-                page: page,
-                pageSize: pageSize,
-                source: sourceFilter.queryValue,
-                classification: classificationFilter.queryValue,
-                unreviewedOnly: unreviewedOnly,
-                unlinkedOnly: unlinkedOnly,
-                search: trimmedSearch.isEmpty ? nil : trimmedSearch
-            )
-
-            if reset {
-                emails = response.emails
+            if requiresClientSideFiltering {
+                try await loadPageWithClientSideFiltering(
+                    page: page,
+                    reset: reset,
+                    trimmedSearch: trimmedSearch
+                )
             } else {
-                emails.append(contentsOf: response.emails)
+                let response = try await BackendAPIClient.shared.fetchEmails(
+                    page: page,
+                    pageSize: pageSize,
+                    source: sourceFilter.queryValue,
+                    classification: classificationFilter.queryValue,
+                    unreviewedOnly: unreviewedOnly,
+                    unlinkedOnly: unlinkedOnly,
+                    search: trimmedSearch.isEmpty ? nil : trimmedSearch
+                )
+
+                if reset {
+                    emails = response.emails
+                } else {
+                    emails.append(contentsOf: response.emails)
+                }
+                currentPage = response.page
+                hasMore = response.hasMore
+                total = response.total
             }
-            currentPage = response.page
-            hasMore = response.hasMore
-            total = response.total
         } catch {
             errorMessage = error.localizedDescription
         }
 
         isLoading = false
+    }
+
+    private func loadPageWithClientSideFiltering(
+        page: Int,
+        reset: Bool,
+        trimmedSearch: String
+    ) async throws {
+        let filterKey = [
+            sourceFilter.rawValue,
+            classificationFilter.rawValue,
+            trimmedSearch,
+            unreviewedOnly ? "1" : "0",
+            unlinkedOnly ? "1" : "0",
+        ].joined(separator: "|")
+
+        if reset || filterKey != cachedClientFilterKey || clientSideFilteredEmails.isEmpty {
+            let baseEmails = try await fetchAllEmails(
+                source: sourceFilter.queryValue,
+                classification: classificationFilter.queryValue,
+                search: trimmedSearch.isEmpty ? nil : trimmedSearch
+            )
+            clientSideFilteredEmails = baseEmails.filter(matchesClientSideToggles)
+            cachedClientFilterKey = filterKey
+        }
+
+        let startIndex = (page - 1) * pageSize
+        let endIndex = min(startIndex + pageSize, clientSideFilteredEmails.count)
+
+        let pageSlice: [InboxEmailSummary]
+        if startIndex < endIndex {
+            pageSlice = Array(clientSideFilteredEmails[startIndex..<endIndex])
+        } else {
+            pageSlice = []
+        }
+
+        if reset {
+            emails = pageSlice
+        } else {
+            emails.append(contentsOf: pageSlice)
+        }
+
+        currentPage = page
+        total = clientSideFilteredEmails.count
+        hasMore = endIndex < clientSideFilteredEmails.count
+    }
+
+    private func fetchAllEmails(
+        source: String?,
+        classification: String?,
+        search: String?
+    ) async throws -> [InboxEmailSummary] {
+        var allEmails: [InboxEmailSummary] = []
+        var page = 1
+        var hasMorePages = true
+
+        while hasMorePages {
+            let response = try await BackendAPIClient.shared.fetchEmails(
+                page: page,
+                pageSize: baseFetchPageSize,
+                source: source,
+                classification: classification,
+                unreviewedOnly: false,
+                unlinkedOnly: false,
+                search: search
+            )
+            allEmails.append(contentsOf: response.emails)
+            hasMorePages = response.hasMore
+            page += 1
+        }
+
+        return allEmails
+    }
+
+    private func matchesClientSideToggles(_ email: InboxEmailSummary) -> Bool {
+        if unreviewedOnly && email.isReviewed {
+            return false
+        }
+
+        if unlinkedOnly {
+            guard email.applicationID == nil else {
+                return false
+            }
+            guard let category = email.classifiedAs, jobRelatedCategories.contains(category) else {
+                return false
+            }
+        }
+
+        return true
     }
 }
 

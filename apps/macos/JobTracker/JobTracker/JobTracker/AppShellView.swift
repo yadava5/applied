@@ -40,7 +40,12 @@ struct AppShellView: View {
     @AppStorage("onboarding.completed.v1") private var onboardingCompleted = false
 
     @State private var selection: AppSection? = .dashboard
+    @State private var initializedSections: Set<AppSection> = [.dashboard]
     @State private var showOnboarding = false
+
+    private var activeSection: AppSection {
+        selection ?? .dashboard
+    }
 
     var body: some View {
         ZStack {
@@ -111,21 +116,29 @@ struct AppShellView: View {
                 .background(Color.clear)
                 .navigationTitle("JobTracker")
             } detail: {
-                switch selection ?? .dashboard {
-                case .dashboard:
-                    DashboardView()
-                case .applications:
-                    ApplicationsView()
-                case .emails:
-                    EmailsView()
-                case .settings:
-                    SettingsView()
+                ZStack {
+                    ForEach(AppSection.allCases) { section in
+                        if initializedSections.contains(section) {
+                            sectionView(for: section)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .opacity(activeSection == section ? 1 : 0)
+                                .allowsHitTesting(activeSection == section)
+                                .accessibilityHidden(activeSection != section)
+                        }
+                    }
                 }
+                .animation(nil, value: activeSection)
             }
         }
+        .tint(JTTheme.accentPrimary)
         .task {
+            initializedSections.insert(activeSection)
             await appModel.refreshAllStatus()
             syncOnboardingPresentation()
+        }
+        .onChange(of: activeSection) { _, newValue in
+            initializedSections.insert(newValue)
+            selection = newValue
         }
         .onChange(of: appModel.health?.lastSync) { _, _ in
             syncOnboardingPresentation()
@@ -144,6 +157,21 @@ struct AppShellView: View {
             .environment(appModel)
             .presentationBackground(.clear)
         }
+        .id(appModel.themeRefreshID)
+    }
+
+    @ViewBuilder
+    private func sectionView(for section: AppSection) -> some View {
+        switch section {
+        case .dashboard:
+            DashboardView()
+        case .applications:
+            ApplicationsView()
+        case .emails:
+            EmailsView()
+        case .settings:
+            SettingsView()
+        }
     }
 
     private func syncOnboardingPresentation() {
@@ -161,7 +189,6 @@ struct AppShellView: View {
         showOnboarding = true
     }
 }
-
 private enum OnboardingStep: Int, CaseIterable {
     case welcome
     case connectAccounts

@@ -166,6 +166,7 @@ struct NeedsReviewResponse: Decodable {
 
 struct InboxEmailSummary: Identifiable, Decodable {
     let id: Int
+    let applicationID: Int?
     let sourceAccount: String
     let messageID: String
     let threadID: String?
@@ -183,6 +184,7 @@ struct InboxEmailSummary: Identifiable, Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case id, subject
+        case applicationID = "application_id"
         case sourceAccount = "source_account"
         case messageID = "message_id"
         case threadID = "thread_id"
@@ -215,6 +217,7 @@ struct InboxEmailListResponse: Decodable {
 
 struct InboxEmailDetail: Identifiable, Decodable {
     let id: Int
+    let applicationID: Int?
     let sourceAccount: String
     let messageID: String
     let threadID: String?
@@ -234,6 +237,7 @@ struct InboxEmailDetail: Identifiable, Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case id, subject
+        case applicationID = "application_id"
         case sourceAccount = "source_account"
         case messageID = "message_id"
         case threadID = "thread_id"

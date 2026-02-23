@@ -115,7 +115,6 @@ struct DashboardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .navigationTitle("Dashboard")
-        .jtPageBackdrop()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

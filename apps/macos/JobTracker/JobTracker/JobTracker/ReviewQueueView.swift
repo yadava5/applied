@@ -64,7 +64,6 @@ struct ReviewQueueView: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .background(Color.clear)
-        .jtPageBackdrop()
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button("Refresh") {
