@@ -12,11 +12,13 @@ Training happens in the background and takes 2-5 minutes on CPU.
 """
 
 import asyncio
+import json
 import logging
-import os
+import random
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from jobtracker.config import settings
 from jobtracker.database.models import EmailCategory
@@ -64,6 +66,23 @@ class SetFitClassifier:
     MIN_CATEGORIES = 3
     MIN_TOTAL_EXAMPLES = 40
     MAX_SAVED_MODELS = 3
+    MAX_EXAMPLES_PER_LABEL_FOR_TRAINING = 24
+    SOURCE_PRIORITY = (
+        "user_correction",
+        "external_dataset",
+        "mock_seed_v3",
+        "mock_seed_v2",
+        "mock_seed",
+        "bulk_import",
+    )
+    SOURCE_TARGET_PER_LABEL = {
+        "user_correction": 12,
+        "external_dataset": 8,
+        "mock_seed_v3": 8,
+        "mock_seed_v2": 8,
+        "mock_seed": 4,
+        "bulk_import": 8,
+    }
 
     def __init__(self):
         self._model = None
@@ -71,6 +90,8 @@ class SetFitClassifier:
         self._is_training = False
         self._label_to_category: dict[int, str] = {}
         self._category_to_label: dict[str, int] = {}
+        self._last_training_source_counts: dict[str, int] = {}
+        self._last_training_label_source_counts: dict[str, dict[str, int]] = {}
 
     def _load_model(self):
         """Load the latest trained model if available."""
@@ -138,7 +159,7 @@ class SetFitClassifier:
         try:
             # Get prediction
             predictions = self._model.predict([text])
-            pred_label = int(predictions[0])
+            predicted_value = predictions[0]
 
             # Get probabilities if available
             try:
@@ -148,17 +169,51 @@ class SetFitClassifier:
                 # Fallback confidence
                 confidence = 0.75
 
-            # Map label to category
-            category_name = self._label_to_category.get(pred_label)
-            if category_name is None:
+            category = self._resolve_predicted_category(predicted_value)
+            if category is None:
                 return None
 
-            category = EmailCategory(category_name)
             return (category, confidence)
 
         except Exception as e:
             logger.error(f"SetFit prediction failed: {e}")
             return None
+
+    def _resolve_predicted_category(self, predicted_value: Any) -> Optional[EmailCategory]:
+        """
+        Resolve SetFit output into an EmailCategory.
+
+        Some SetFit versions return integer label IDs while others return
+        string labels. We support both formats for compatibility.
+        """
+        if isinstance(predicted_value, EmailCategory):
+            return predicted_value
+
+        # Direct string label output (common in some SetFit versions)
+        if isinstance(predicted_value, str):
+            normalized = predicted_value.strip()
+
+            if normalized in self._category_to_label:
+                return EmailCategory(normalized)
+
+            if normalized in {category.value for category in EmailCategory}:
+                return EmailCategory(normalized)
+
+            if normalized.isdigit():
+                category_name = self._label_to_category.get(int(normalized))
+                if category_name is not None:
+                    return EmailCategory(category_name)
+
+            return None
+
+        # Numeric label output
+        if isinstance(predicted_value, (int, float)):
+            category_name = self._label_to_category.get(int(predicted_value))
+            if category_name is None:
+                return None
+            return EmailCategory(category_name)
+
+        return None
 
     async def should_retrain(self) -> bool:
         """
@@ -262,19 +317,102 @@ class SetFitClassifier:
             from jobtracker.database import get_session
             from jobtracker.database.models import TrainingData
 
-            texts = []
-            labels = []
+            texts: list[str] = []
+            labels: list[str] = []
+            rng = random.Random(42)
+            source_counts: Counter[str] = Counter()
+            label_source_counts: dict[str, Counter[str]] = {}
 
             async with get_session() as session:
                 result = await session.exec(select(TrainingData))
                 examples = result.all()
 
+                by_label_source: dict[str, dict[str, list[str]]] = {}
                 for row in examples:
                     data = row[0] if hasattr(row, "__getitem__") else row
                     # Combine subject and body
                     text = f"{data.subject or ''}\n\n{data.body_text or ''}"
-                    texts.append(text)
-                    labels.append(data.label)
+                    label = str(data.label)
+                    if label == EmailCategory.NEEDS_REVIEW.value:
+                        continue
+                    source = str(data.source or "unknown")
+                    by_label_source.setdefault(label, {}).setdefault(source, []).append(text)
+
+                for source_map in by_label_source.values():
+                    for items in source_map.values():
+                        rng.shuffle(items)
+
+                for label in sorted(by_label_source.keys()):
+                    selected_texts: list[str] = []
+                    selected_sources: list[str] = []
+                    source_map = by_label_source[label]
+                    taken_per_source: dict[str, int] = {
+                        source: 0 for source in source_map.keys()
+                    }
+
+                    for source in self.SOURCE_PRIORITY:
+                        if source not in source_map:
+                            continue
+                        remaining = self.MAX_EXAMPLES_PER_LABEL_FOR_TRAINING - len(selected_texts)
+                        if remaining <= 0:
+                            break
+                        cap = self.SOURCE_TARGET_PER_LABEL.get(
+                            source,
+                            self.MAX_EXAMPLES_PER_LABEL_FOR_TRAINING,
+                        )
+                        take = min(remaining, cap, len(source_map[source]))
+                        if take <= 0:
+                            continue
+                        selected_texts.extend(source_map[source][:take])
+                        selected_sources.extend([source] * take)
+                        taken_per_source[source] += take
+
+                    if len(selected_texts) < self.MAX_EXAMPLES_PER_LABEL_FOR_TRAINING:
+                        source_order = list(self.SOURCE_PRIORITY) + [
+                            source
+                            for source in sorted(source_map.keys())
+                            if source not in self.SOURCE_PRIORITY
+                        ]
+                        while len(selected_texts) < self.MAX_EXAMPLES_PER_LABEL_FOR_TRAINING:
+                            added = False
+                            for source in source_order:
+                                if source not in source_map:
+                                    continue
+                                idx = taken_per_source.get(source, 0)
+                                if idx >= len(source_map[source]):
+                                    continue
+                                selected_texts.append(source_map[source][idx])
+                                selected_sources.append(source)
+                                taken_per_source[source] = idx + 1
+                                added = True
+                                if (
+                                    len(selected_texts)
+                                    >= self.MAX_EXAMPLES_PER_LABEL_FOR_TRAINING
+                                ):
+                                    break
+                            if not added:
+                                break
+
+                    label_counter = label_source_counts.setdefault(label, Counter())
+
+                    for item_text, item_source in zip(selected_texts, selected_sources):
+                        texts.append(item_text)
+                        labels.append(label)
+                        source_counts[item_source] += 1
+                        label_counter[item_source] += 1
+
+                self._last_training_source_counts = dict(sorted(source_counts.items()))
+                self._last_training_label_source_counts = {
+                    label: dict(sorted(counter.items()))
+                    for label, counter in sorted(label_source_counts.items())
+                }
+
+                logger.info(
+                    "Prepared balanced SetFit training set: %d examples (%d labels, max %d/label)",
+                    len(labels),
+                    len(set(labels)),
+                    self.MAX_EXAMPLES_PER_LABEL_FOR_TRAINING,
+                )
 
             return texts, labels
 
@@ -338,6 +476,8 @@ class SetFitClassifier:
                 for idx, label in self._label_to_category.items():
                     f.write(f"{idx}:{label}\n")
 
+            self._write_training_metadata(model_path, labels, dataset)
+
             logger.info(f"Model saved to: {model_path}")
 
             # Cleanup old models
@@ -366,6 +506,25 @@ class SetFitClassifier:
                 logger.info(f"Removed old model: {old_model}")
             except Exception as e:
                 logger.warning(f"Failed to remove old model {old_model}: {e}")
+
+    def _write_training_metadata(self, model_path: Path, labels: list[str], dataset) -> None:
+        """Persist training provenance metadata with the saved model."""
+        label_counts = Counter(labels)
+        metadata = {
+            "trained_at": datetime.utcnow().isoformat(),
+            "base_model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+            "total_examples": len(labels),
+            "label_counts": dict(sorted(label_counts.items())),
+            "source_counts": self._last_training_source_counts,
+            "label_source_counts": self._last_training_label_source_counts,
+            "label_to_id": self._category_to_label,
+            "id_to_label": self._label_to_category,
+            "train_split_size": len(dataset["train"]),
+            "eval_split_size": len(dataset["test"]),
+            "max_saved_models": self.MAX_SAVED_MODELS,
+        }
+        with open(model_path / "training_metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)
 
     def reload(self):
         """Force reload of model on next use."""
