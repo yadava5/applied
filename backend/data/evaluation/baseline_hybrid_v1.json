@@ -1,0 +1,191 @@
+{
+  "confusion_matrix": {
+    "applied": {
+      "applied": 5,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "assessment": {
+      "applied": 0,
+      "assessment": 5,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "follow_up": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 5,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "interview": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 5,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "offer": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 5,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "other": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 5,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "pending_application": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 5,
+      "rejection": 0
+    },
+    "rejection": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 5
+    }
+  },
+  "label_distribution": {
+    "applied": 5,
+    "assessment": 5,
+    "follow_up": 5,
+    "interview": 5,
+    "offer": 5,
+    "other": 5,
+    "pending_application": 5,
+    "rejection": 5
+  },
+  "meta": {
+    "dataset": "data/evaluation/classifier_eval_v1.jsonl",
+    "generated_at": "2026-02-26T16:38:23.153430+00:00",
+    "mode": "hybrid",
+    "sample_count": 40
+  },
+  "mismatches": [],
+  "overall": {
+    "accuracy": 1.0,
+    "macro_f1": 1.0,
+    "misclassified": 0,
+    "weighted_f1": 1.0
+  },
+  "per_label": {
+    "applied": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "assessment": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "follow_up": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "interview": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "offer": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "other": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "pending_application": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    },
+    "rejection": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 5,
+      "tp": 5
+    }
+  },
+  "prediction_distribution": {
+    "applied": 5,
+    "assessment": 5,
+    "follow_up": 5,
+    "interview": 5,
+    "offer": 5,
+    "other": 5,
+    "pending_application": 5,
+    "rejection": 5
+  }
+}
