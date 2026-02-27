@@ -27,6 +27,15 @@ backend/client_secret.json
 
 ## ML Models (downloaded at runtime)
 models/
+backend/checkpoints/
+
+## External training datasets (downloaded locally, never committed)
+backend/data/external/
+backend/data/processed/
+backend/data/evaluation/real_labeling_batch_*.csv
+backend/data/evaluation/real_labeling_batch_*.md
+backend/data/evaluation/label_balance_report.md
+backend/data/evaluation/ml_monitoring_report.md
 
 ## macOS
 .DS_Store
