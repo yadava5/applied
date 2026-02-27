@@ -1,0 +1,64 @@
+{"subject":"Application received for Platform Engineer","body_text":"Thank you for applying. We have received your application and will review it soon.","label":"applied","sender_email":"no-reply@greenhouse.io"}
+{"subject":"Your application to ML Engineer at Vector Labs","body_text":"Your application has been submitted successfully. We will be in touch.","label":"applied","sender_email":"jobs-noreply@linkedin.com"}
+{"subject":"Thanks for applying to Nimbus","body_text":"We appreciate your interest. Your application is in review.","label":"applied","sender_email":"careers@nimbus.ai"}
+{"subject":"Submission confirmed","body_text":"We confirm receipt of your application for Staff Data Engineer.","label":"applied","sender_email":"recruiting@company.com"}
+{"subject":"Application complete","body_text":"Your profile was submitted and is now under review by our recruiting team.","label":"applied","sender_email":"talent@example.com"}
+{"subject":"We received your job application","body_text":"Thank you for your interest in the Backend Engineer role.","label":"applied","sender_email":"hiring@startup.dev"}
+{"subject":"Application sent successfully","body_text":"Your application was sent to Launchpad Inc. You can view the job post online.","label":"applied","sender_email":"jobs-noreply@linkedin.com"}
+{"subject":"Thanks for applying (unsubscribe preferences below)","body_text":"Thank you for applying to Acme. We will review your application soon. Unsubscribe from updates.","label":"applied","sender_email":"no-reply@acme.com"}
+{"subject":"Complete your application for Security Engineer","body_text":"Your application is incomplete. Please finish required sections.","label":"pending_application","sender_email":"notifications@greenhouse.io"}
+{"subject":"Action required: continue your application","body_text":"Please continue where you left off and submit to be considered.","label":"pending_application","sender_email":"noreply@lever.co"}
+{"subject":"Missing information in your application","body_text":"We need additional information before we can review your application.","label":"pending_application","sender_email":"recruiting@company.com"}
+{"subject":"Finish your profile to apply","body_text":"Complete additional steps to finalize your application.","label":"pending_application","sender_email":"jobs@workday.com"}
+{"subject":"Application deadline approaching","body_text":"Your application is not complete. Update and submit before the deadline.","label":"pending_application","sender_email":"careers@enterprise.com"}
+{"subject":"Continue your application for Product Manager","body_text":"Submit your application to move forward in our hiring process.","label":"pending_application","sender_email":"talent@firm.com"}
+{"subject":"You are almost done","body_text":"Please complete your application so we can evaluate your candidacy.","label":"pending_application","sender_email":"no-reply@jobs.com"}
+{"subject":"Additional information required","body_text":"Your application remains incomplete until missing fields are provided.","label":"pending_application","sender_email":"hiring@org.com"}
+{"subject":"Interview invitation: Data Engineer","body_text":"We would like to schedule a 30-minute interview this week.","label":"interview","sender_email":"recruiter@acme.com"}
+{"subject":"Phone screen availability","body_text":"Please share your availability for a phone screen.","label":"interview","sender_email":"talent@company.com"}
+{"subject":"Book your interview slot","body_text":"Use this Calendly link to pick a time to meet the hiring manager.","label":"interview","sender_email":"recruiting@startup.io"}
+{"subject":"Technical interview next step","body_text":"Please choose your preferred interview time for the technical round.","label":"interview","sender_email":"no-reply@lever.co"}
+{"subject":"Meet our team","body_text":"We are excited to arrange a video interview with the panel.","label":"interview","sender_email":"hiring@firm.com"}
+{"subject":"Interview scheduling request","body_text":"Could you confirm availability for Thursday afternoon?", "label":"interview","sender_email":"recruiter@example.org"}
+{"subject":"Availability for call with hiring manager","body_text":"Let's set up a call to discuss your candidacy.","label":"interview","sender_email":"talent@enterprise.com"}
+{"subject":"Next step: interview","body_text":"We would like to invite you to interview for this role.","label":"interview","sender_email":"careers@sample.com"}
+{"subject":"Update on your application","body_text":"After careful consideration, we decided not to proceed with your candidacy.","label":"rejection","sender_email":"talent@nimbus.com"}
+{"subject":"We regret to inform you","body_text":"We moved forward with other candidates for this role.","label":"rejection","sender_email":"recruiting@company.com"}
+{"subject":"Position has been filled","body_text":"Unfortunately we are unable to continue with your application.","label":"rejection","sender_email":"careers@example.com"}
+{"subject":"Application decision","body_text":"You were not selected at this time. We wish you success in your search.","label":"rejection","sender_email":"hiring@sample.org"}
+{"subject":"Different direction","body_text":"We've decided to go in a different direction for this opening.","label":"rejection","sender_email":"jobs@enterprise.com"}
+{"subject":"Not moving forward","body_text":"Thank you for your interest. We will not be advancing your candidacy.","label":"rejection","sender_email":"no-reply@ats.io"}
+{"subject":"Decision on candidacy","body_text":"We are pursuing candidates whose experience more closely matches our needs.","label":"rejection","sender_email":"people@startup.io"}
+{"subject":"Role closed","body_text":"We are unable to offer an interview for this position.","label":"rejection","sender_email":"recruiting@firm.com"}
+{"subject":"Congratulations! Job offer","body_text":"We are excited to offer you the Software Engineer position.","label":"offer","sender_email":"recruiter@acme.com"}
+{"subject":"Offer letter attached","body_text":"Please review and sign your offer letter by Friday.","label":"offer","sender_email":"hr@company.com"}
+{"subject":"Compensation package details","body_text":"Your compensation package details and start date are included.","label":"offer","sender_email":"people@startup.io"}
+{"subject":"Formal offer for Product Engineer","body_text":"We are pleased to extend a formal offer for this role.","label":"offer","sender_email":"talent@firm.com"}
+{"subject":"Accept this offer","body_text":"Please confirm acceptance of our employment offer.","label":"offer","sender_email":"hiring@organization.com"}
+{"subject":"Start date confirmation","body_text":"Your start date will be May 12 pending background check.","label":"offer","sender_email":"recruiting@enterprise.com"}
+{"subject":"Employment agreement","body_text":"Attached is your employment agreement and offer package.","label":"offer","sender_email":"people@sample.org"}
+{"subject":"Offer expires soon","body_text":"Please sign and return your offer letter before deadline.","label":"offer","sender_email":"hr@acme.com"}
+{"subject":"Coding assessment invitation","body_text":"You are invited to complete a coding assessment within 72 hours.","label":"assessment","sender_email":"assessments@company.com"}
+{"subject":"HackerRank challenge","body_text":"Please complete the HackerRank test as the next step.","label":"assessment","sender_email":"no-reply@hackerrank.com"}
+{"subject":"Online assessment reminder","body_text":"Your skills assessment deadline is tomorrow.","label":"assessment","sender_email":"talent@startup.com"}
+{"subject":"Take-home assignment","body_text":"This take-home exercise is part of our interview process.","label":"assessment","sender_email":"recruiter@acme.com"}
+{"subject":"Technical test details","body_text":"The coding challenge has a 90-minute time limit.","label":"assessment","sender_email":"hiring@company.org"}
+{"subject":"Codility test link","body_text":"Please complete the Codility challenge before Friday.","label":"assessment","sender_email":"assessments@enterprise.com"}
+{"subject":"Next step: skills evaluation","body_text":"Complete this online test so we can evaluate your fit.","label":"assessment","sender_email":"recruiting@firm.com"}
+{"subject":"Assessment follow-up","body_text":"Reminder to submit your technical assignment by the deadline.","label":"assessment","sender_email":"talent@org.com"}
+{"subject":"Following up on my application","body_text":"I wanted to follow up regarding my application status.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Checking in after interview","body_text":"Any updates on my interview process would be appreciated.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Wanted to follow up on my candidacy","body_text":"I am reaching out for an update on my candidacy progress.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Any updates?","body_text":"Just checking in on the status of my application.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Circling back on the role","body_text":"Circling back to ask whether there are hiring updates.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Follow-up on interview outcome","body_text":"I wanted to check in on next steps after our interview.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Status of my application","body_text":"Could you share the current status of my application?", "label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Quick follow-up","body_text":"Following up to see if there are updates on this role.","label":"follow_up","sender_email":"candidate@example.com"}
+{"subject":"Security alert: new login","body_text":"We detected a new sign-in. Reset your password if this wasn't you.","label":"other","sender_email":"security@service.com"}
+{"subject":"Weekly tech newsletter","body_text":"Top stories and trends in technology this week.","label":"other","sender_email":"newsletter@media.com"}
+{"subject":"Order confirmation #55210","body_text":"Your order has been received and is now being processed.","label":"other","sender_email":"orders@shop.com"}
+{"subject":"Verification code","body_text":"Use this one-time code to finish login.","label":"other","sender_email":"no-reply@auth.com"}
+{"subject":"Limited time sale","body_text":"Shop now and save 40 percent today only.","label":"other","sender_email":"promo@store.com"}
+{"subject":"LinkedIn Job Alerts: roles for you","body_text":"New jobs for you. Manage preferences or unsubscribe.","label":"other","sender_email":"jobs-noreply@linkedin.com"}
+{"subject":"Bank transaction alert","body_text":"A transaction was made from your account.","label":"other","sender_email":"alerts@bank.com"}
+{"subject":"Talent community newsletter","body_text":"Join our talent community and get future opportunities.","label":"other","sender_email":"newsletter@company.com"}
