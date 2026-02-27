@@ -292,6 +292,39 @@ Server emits sync lifecycle messages:
 - `heartbeat`
 - `pong` (reply to client `ping`)
 
+## Classification
+
+### `POST /classify/import-training-data`
+
+Bulk-import labeled training data. Validates labels, deduplicates, inserts into `training_data` table, and optionally triggers SetFit retraining.
+
+Request body:
+
+```json
+{
+  "items": [
+    {"subject": "Interview at Acme", "body_text": "We'd like to schedule...", "label": "interview"},
+    {"subject": "", "body_text": "Unfortunately we have decided...", "label": "rejection"}
+  ],
+  "source": "bulk_import",
+  "trigger_retrain": true
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "inserted": 42,
+  "skipped_duplicate": 3,
+  "skipped_invalid": 0,
+  "label_distribution": {"interview": 12, "rejection": 10, "other": 20},
+  "retrain_triggered": true,
+  "message": "Imported 42 training examples, retraining triggered"
+}
+```
+
 ## Optional Analytics (Feature Flag)
 
 When `JOBTRACKER_ANALYTICS_ENABLED=true`:
