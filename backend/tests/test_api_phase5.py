@@ -342,7 +342,6 @@ class TestClassificationRegressions:
         payload = response.json()
         assert payload["category"] == "pending_application"
 
-
 class TestExtractionRegressions:
     def test_extract_company_from_thank_you_from_subject(self):
         extraction = extract_company_and_position(
