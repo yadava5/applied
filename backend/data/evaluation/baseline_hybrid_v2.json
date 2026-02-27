@@ -1,0 +1,242 @@
+{
+  "confusion_matrix": {
+    "applied": {
+      "applied": 6,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 1,
+      "pending_application": 0,
+      "rejection": 1
+    },
+    "assessment": {
+      "applied": 0,
+      "assessment": 7,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 1,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "follow_up": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 6,
+      "interview": 0,
+      "offer": 0,
+      "other": 2,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "interview": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 6,
+      "offer": 0,
+      "other": 2,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "offer": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 8,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "other": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 8,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "pending_application": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 1,
+      "pending_application": 7,
+      "rejection": 0
+    },
+    "rejection": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 2,
+      "pending_application": 0,
+      "rejection": 6
+    }
+  },
+  "label_distribution": {
+    "applied": 8,
+    "assessment": 8,
+    "follow_up": 8,
+    "interview": 8,
+    "offer": 8,
+    "other": 8,
+    "pending_application": 8,
+    "rejection": 8
+  },
+  "meta": {
+    "dataset": "data/evaluation/classifier_eval_v2.jsonl",
+    "generated_at": "2026-02-26T16:31:16.483331+00:00",
+    "mode": "hybrid",
+    "sample_count": 64
+  },
+  "mismatches": [
+    {
+      "expected": "applied",
+      "predicted": "other",
+      "subject": "Application complete"
+    },
+    {
+      "expected": "applied",
+      "predicted": "rejection",
+      "subject": "We received your job application"
+    },
+    {
+      "expected": "pending_application",
+      "predicted": "other",
+      "subject": "Application deadline approaching"
+    },
+    {
+      "expected": "interview",
+      "predicted": "other",
+      "subject": "Meet our team"
+    },
+    {
+      "expected": "interview",
+      "predicted": "other",
+      "subject": "Interview scheduling request"
+    },
+    {
+      "expected": "rejection",
+      "predicted": "other",
+      "subject": "Not moving forward"
+    },
+    {
+      "expected": "rejection",
+      "predicted": "other",
+      "subject": "Decision on candidacy"
+    },
+    {
+      "expected": "assessment",
+      "predicted": "other",
+      "subject": "Assessment follow-up"
+    },
+    {
+      "expected": "follow_up",
+      "predicted": "other",
+      "subject": "Circling back on the role"
+    },
+    {
+      "expected": "follow_up",
+      "predicted": "other",
+      "subject": "Quick follow-up"
+    }
+  ],
+  "overall": {
+    "accuracy": 0.84375,
+    "macro_f1": 0.8597619047619047,
+    "misclassified": 10,
+    "weighted_f1": 0.8597619047619047
+  },
+  "per_label": {
+    "applied": {
+      "f1": 0.8571428571428571,
+      "fn": 2,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.75,
+      "support": 8,
+      "tp": 6
+    },
+    "assessment": {
+      "f1": 0.9333333333333333,
+      "fn": 1,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.875,
+      "support": 8,
+      "tp": 7
+    },
+    "follow_up": {
+      "f1": 0.8571428571428571,
+      "fn": 2,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.75,
+      "support": 8,
+      "tp": 6
+    },
+    "interview": {
+      "f1": 0.8571428571428571,
+      "fn": 2,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.75,
+      "support": 8,
+      "tp": 6
+    },
+    "offer": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 8,
+      "tp": 8
+    },
+    "other": {
+      "f1": 0.6399999999999999,
+      "fn": 0,
+      "fp": 9,
+      "precision": 0.47058823529411764,
+      "recall": 1.0,
+      "support": 8,
+      "tp": 8
+    },
+    "pending_application": {
+      "f1": 0.9333333333333333,
+      "fn": 1,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.875,
+      "support": 8,
+      "tp": 7
+    },
+    "rejection": {
+      "f1": 0.7999999999999999,
+      "fn": 2,
+      "fp": 1,
+      "precision": 0.8571428571428571,
+      "recall": 0.75,
+      "support": 8,
+      "tp": 6
+    }
+  },
+  "prediction_distribution": {
+    "applied": 6,
+    "assessment": 7,
+    "follow_up": 6,
+    "interview": 6,
+    "offer": 8,
+    "other": 17,
+    "pending_application": 7,
+    "rejection": 7
+  }
+}
