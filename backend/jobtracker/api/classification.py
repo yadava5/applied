@@ -687,3 +687,140 @@ async def approve_classification(email_id: int) -> dict:
             "approved_category": approved_category.value,
             "message": f"Approved classification as {approved_category.value}",
         }
+
+
+# =============================================================================
+# Bulk Import Endpoint
+# =============================================================================
+
+
+class BulkTrainingItem(BaseModel):
+    """Single training example for bulk import."""
+
+    subject: str = Field(default="", description="Email subject")
+    body_text: str = Field(..., description="Email body text")
+    label: str = Field(
+        ...,
+        description="Classification label",
+        examples=["applied", "interview", "rejection", "offer", "other"],
+    )
+
+
+class BulkImportRequest(BaseModel):
+    """Request to bulk-import training data."""
+
+    items: list[BulkTrainingItem] = Field(
+        ..., description="Training examples to import", min_length=1
+    )
+    source: str = Field(
+        default="bulk_import",
+        description="Source tag for these training examples",
+    )
+    trigger_retrain: bool = Field(
+        default=True,
+        description="Auto-trigger SetFit retraining if gates are met",
+    )
+
+
+class BulkImportResponse(BaseModel):
+    """Result of bulk training data import."""
+
+    success: bool
+    inserted: int
+    skipped_duplicate: int
+    skipped_invalid: int
+    label_distribution: dict[str, int]
+    retrain_triggered: bool
+    message: str
+
+
+@router.post("/import-training-data", response_model=BulkImportResponse)
+async def import_training_data(
+    request: BulkImportRequest,
+    background_tasks: BackgroundTasks,
+) -> BulkImportResponse:
+    """
+    Bulk-import labeled training data.
+
+    Accepts a JSON array of {subject, body_text, label} objects.
+    Validates labels, deduplicates against existing training_data,
+    and optionally triggers SetFit retraining.
+
+    Useful for:
+    - Importing externally labeled datasets
+    - Future drag-and-drop UI in the macOS app
+    - Script-based data ingestion
+    """
+    from collections import defaultdict
+    from datetime import datetime
+    import hashlib
+
+    from jobtracker.database.models import TrainingData
+
+    # Valid labels (same as DB CHECK constraint, excluding needs_review)
+    valid_labels = {c.value for c in EmailCategory if c != EmailCategory.NEEDS_REVIEW}
+
+    inserted = 0
+    skipped_duplicate = 0
+    skipped_invalid = 0
+    label_dist: dict[str, int] = defaultdict(int)
+
+    # Collect existing training texts for dedup
+    existing_hashes: set[str] = set()
+    async with get_session() as session:
+        result = await session.exec(select(TrainingData.email_text))
+        for row in result.all():
+            txt = row[0] if hasattr(row, "__getitem__") else row
+            if txt:
+                h = hashlib.md5(str(txt).encode("utf-8", errors="replace")).hexdigest()
+                existing_hashes.add(h)
+
+    # Insert new training data
+    async with get_session() as session:
+        for item in request.items:
+            # Validate label
+            if item.label not in valid_labels:
+                skipped_invalid += 1
+                continue
+
+            email_text = f"{item.subject}\n\n{item.body_text}".strip()
+            h = hashlib.md5(email_text.encode("utf-8", errors="replace")).hexdigest()
+
+            if h in existing_hashes:
+                skipped_duplicate += 1
+                continue
+
+            training_entry = TrainingData(
+                email_text=email_text,
+                subject=item.subject if item.subject else None,
+                body_text=item.body_text if item.body_text else None,
+                label=item.label,
+                source=request.source,
+                created_at=datetime.utcnow(),
+            )
+            session.add(training_entry)
+            existing_hashes.add(h)
+            inserted += 1
+            label_dist[item.label] += 1
+
+        await session.commit()
+
+    # Check if we should trigger retraining
+    retrain_triggered = False
+    if request.trigger_retrain and inserted > 0:
+        classifier = get_classifier()
+        setfit = classifier._setfit
+        if await setfit.should_retrain():
+            background_tasks.add_task(classifier.retrain_setfit)
+            retrain_triggered = True
+
+    return BulkImportResponse(
+        success=True,
+        inserted=inserted,
+        skipped_duplicate=skipped_duplicate,
+        skipped_invalid=skipped_invalid,
+        label_distribution=dict(label_dist),
+        retrain_triggered=retrain_triggered,
+        message=f"Imported {inserted} training examples"
+        + (", retraining triggered" if retrain_triggered else ""),
+    )
