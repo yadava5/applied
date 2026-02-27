@@ -232,7 +232,15 @@ class HybridClassifier:
 
                 # Only trust embeddings if rules doesn't strongly disagree
                 if emb_confidence >= 0.85 and not has_negative_signals:
-                    if emb_category in (
+                    if (
+                        emb_category == EmailCategory.OTHER
+                        and rules_result.category != EmailCategory.OTHER
+                        and rules_result.confidence >= CONFIDENCE_MIN_CLASSIFICATION
+                    ):
+                        logger.debug(
+                            "Ignoring embeddings OTHER override due to stronger rules signal"
+                        )
+                    elif emb_category in (
                         EmailCategory.APPLIED,
                         EmailCategory.PENDING_APPLICATION,
                     ) and not has_lifecycle_content:
@@ -269,7 +277,15 @@ class HybridClassifier:
                 sf_category, sf_confidence = setfit_result
 
                 if sf_confidence >= CONFIDENCE_MIN_CLASSIFICATION:
-                    if sf_category in (
+                    if (
+                        sf_category == EmailCategory.OTHER
+                        and rules_result.category != EmailCategory.OTHER
+                        and rules_result.confidence >= CONFIDENCE_MIN_CLASSIFICATION
+                    ):
+                        logger.debug(
+                            "Ignoring SetFit OTHER override due to stronger rules signal"
+                        )
+                    elif sf_category in (
                         EmailCategory.APPLIED,
                         EmailCategory.PENDING_APPLICATION,
                     ) and not has_lifecycle_content:
