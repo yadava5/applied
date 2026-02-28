@@ -25,6 +25,193 @@ from jobtracker.database.models import EmailCategory
 
 logger = logging.getLogger(__name__)
 
+TRAINING_METADATA_SCHEMA_VERSION = 1
+TRAINING_METADATA_SUPPORTED_SCHEMA_VERSIONS = {TRAINING_METADATA_SCHEMA_VERSION}
+
+
+def _validate_count_mapping(
+    value: Any,
+    *,
+    field_name: str,
+) -> dict[str, int]:
+    """Validate a flat mapping of string keys to non-negative integer counts."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+
+    normalized: dict[str, int] = {}
+    for raw_key, raw_count in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            raise ValueError(f"{field_name} contains empty key")
+        if not isinstance(raw_count, int) or isinstance(raw_count, bool):
+            raise ValueError(f"{field_name}.{key} must be an integer")
+        if raw_count < 0:
+            raise ValueError(f"{field_name}.{key} must be >= 0")
+        normalized[key] = int(raw_count)
+    return normalized
+
+
+def _validate_nested_count_mapping(
+    value: Any,
+    *,
+    field_name: str,
+) -> dict[str, dict[str, int]]:
+    """Validate a nested mapping of label->source->count."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+
+    normalized: dict[str, dict[str, int]] = {}
+    for raw_label, raw_source_map in value.items():
+        label = str(raw_label).strip()
+        if not label:
+            raise ValueError(f"{field_name} contains empty label key")
+        normalized[label] = _validate_count_mapping(
+            raw_source_map,
+            field_name=f"{field_name}.{label}",
+        )
+    return normalized
+
+
+def _validate_label_to_id_mapping(value: Any) -> dict[str, int]:
+    """Validate label->id mapping."""
+    if not isinstance(value, dict):
+        raise ValueError("label_to_id must be an object")
+
+    normalized: dict[str, int] = {}
+    for raw_label, raw_id in value.items():
+        label = str(raw_label).strip()
+        if not label:
+            raise ValueError("label_to_id contains empty label")
+        if not isinstance(raw_id, int) or isinstance(raw_id, bool):
+            raise ValueError(f"label_to_id.{label} must be an integer")
+        if raw_id < 0:
+            raise ValueError(f"label_to_id.{label} must be >= 0")
+        normalized[label] = int(raw_id)
+    return normalized
+
+
+def _validate_id_to_label_mapping(value: Any) -> dict[int, str]:
+    """Validate id->label mapping with numeric-string keys from JSON."""
+    if not isinstance(value, dict):
+        raise ValueError("id_to_label must be an object")
+
+    normalized: dict[int, str] = {}
+    for raw_id, raw_label in value.items():
+        key = str(raw_id).strip()
+        if not key.isdigit():
+            raise ValueError(f"id_to_label key '{raw_id}' must be a non-negative integer string")
+        if not isinstance(raw_label, str) or not raw_label.strip():
+            raise ValueError(f"id_to_label.{key} must be a non-empty string")
+        normalized[int(key)] = raw_label.strip()
+    return normalized
+
+
+def validate_training_metadata_contract(
+    metadata: dict[str, Any],
+    *,
+    allow_legacy_without_schema_version: bool = False,
+) -> None:
+    """
+    Validate the strict training metadata provenance contract.
+
+    Raises ValueError when metadata is missing required fields or contains
+    inconsistent values.
+    """
+    if not isinstance(metadata, dict):
+        raise ValueError("training metadata must be an object")
+
+    schema_version = metadata.get("schema_version")
+    if schema_version is None:
+        if not allow_legacy_without_schema_version:
+            raise ValueError("schema_version is required")
+    else:
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+            raise ValueError("schema_version must be an integer")
+        if schema_version < 1:
+            raise ValueError("schema_version must be >= 1")
+        if schema_version not in TRAINING_METADATA_SUPPORTED_SCHEMA_VERSIONS:
+            raise ValueError(
+                "unsupported schema_version; update compatibility checks before loading this artifact"
+            )
+
+    trained_at = metadata.get("trained_at")
+    if not isinstance(trained_at, str) or not trained_at.strip():
+        raise ValueError("trained_at must be a non-empty string")
+    try:
+        datetime.fromisoformat(trained_at)
+    except ValueError as exc:
+        raise ValueError("trained_at must be ISO-8601 compatible") from exc
+
+    base_model = metadata.get("base_model")
+    if not isinstance(base_model, str) or not base_model.strip():
+        raise ValueError("base_model must be a non-empty string")
+
+    scalar_int_fields = (
+        "total_examples",
+        "train_split_size",
+        "eval_split_size",
+        "max_saved_models",
+    )
+    scalar_values: dict[str, int] = {}
+    for field_name in scalar_int_fields:
+        raw_value = metadata.get(field_name)
+        if not isinstance(raw_value, int) or isinstance(raw_value, bool):
+            raise ValueError(f"{field_name} must be an integer")
+        if raw_value < 0:
+            raise ValueError(f"{field_name} must be >= 0")
+        scalar_values[field_name] = int(raw_value)
+
+    if scalar_values["max_saved_models"] <= 0:
+        raise ValueError("max_saved_models must be > 0")
+
+    label_counts = _validate_count_mapping(
+        metadata.get("label_counts"),
+        field_name="label_counts",
+    )
+    source_counts = _validate_count_mapping(
+        metadata.get("source_counts"),
+        field_name="source_counts",
+    )
+    label_source_counts = _validate_nested_count_mapping(
+        metadata.get("label_source_counts"),
+        field_name="label_source_counts",
+    )
+    label_to_id = _validate_label_to_id_mapping(metadata.get("label_to_id"))
+    id_to_label = _validate_id_to_label_mapping(metadata.get("id_to_label"))
+
+    total_examples = scalar_values["total_examples"]
+    if sum(label_counts.values()) != total_examples:
+        raise ValueError("sum(label_counts) must equal total_examples")
+    if sum(source_counts.values()) != total_examples:
+        raise ValueError("sum(source_counts) must equal total_examples")
+    if scalar_values["train_split_size"] + scalar_values["eval_split_size"] != total_examples:
+        raise ValueError("train_split_size + eval_split_size must equal total_examples")
+
+    label_keys = set(label_counts.keys())
+    if set(label_source_counts.keys()) != label_keys:
+        raise ValueError("label_source_counts keys must exactly match label_counts keys")
+    if set(label_to_id.keys()) != label_keys:
+        raise ValueError("label_to_id keys must exactly match label_counts keys")
+
+    for label, counts_by_source in label_source_counts.items():
+        if sum(counts_by_source.values()) != label_counts[label]:
+            raise ValueError(
+                f"sum(label_source_counts.{label}) must equal label_counts.{label}"
+            )
+
+    rolled_up_source_counts: Counter[str] = Counter()
+    for counts_by_source in label_source_counts.values():
+        for source, count in counts_by_source.items():
+            rolled_up_source_counts[source] += count
+    if dict(sorted(rolled_up_source_counts.items())) != dict(sorted(source_counts.items())):
+        raise ValueError(
+            "source_counts must equal the sum of label_source_counts across all labels"
+        )
+
+    derived_id_to_label = {idx: label for label, idx in label_to_id.items()}
+    if derived_id_to_label != id_to_label:
+        raise ValueError("label_to_id and id_to_label must be exact inverses")
+
 
 # =============================================================================
 # Model Paths
@@ -511,6 +698,7 @@ class SetFitClassifier:
         """Persist training provenance metadata with the saved model."""
         label_counts = Counter(labels)
         metadata = {
+            "schema_version": TRAINING_METADATA_SCHEMA_VERSION,
             "trained_at": datetime.utcnow().isoformat(),
             "base_model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
             "total_examples": len(labels),
@@ -523,7 +711,8 @@ class SetFitClassifier:
             "eval_split_size": len(dataset["test"]),
             "max_saved_models": self.MAX_SAVED_MODELS,
         }
-        with open(model_path / "training_metadata.json", "w") as f:
+        validate_training_metadata_contract(metadata)
+        with open(model_path / "training_metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, sort_keys=True)
 
     def reload(self):
