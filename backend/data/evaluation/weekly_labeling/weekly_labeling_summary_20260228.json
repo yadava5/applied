@@ -1,0 +1,24 @@
+{
+  "confusion_max_confidence": 0.95,
+  "confusion_pairs": [
+    [
+      "assessment",
+      "follow_up"
+    ]
+  ],
+  "generated_at_utc": "2026-02-28T18:13:56.880278",
+  "low_confidence_threshold": 0.9,
+  "summary": {
+    "candidate_ids": [],
+    "category_counts": {},
+    "reason_counts": {},
+    "total_candidates": 0
+  },
+  "target_labels": [
+    "offer",
+    "interview",
+    "pending_application"
+  ],
+  "window_days": 365,
+  "window_start_utc": "2025-02-28T18:13:56.880278"
+}
