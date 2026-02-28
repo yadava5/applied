@@ -1,0 +1,156 @@
+{
+  "alerts": [],
+  "confusion_pair_signals": [
+    {
+      "corrections_by_label": {
+        "assessment": 1,
+        "follow_up": 0
+      },
+      "corrections_total": 1,
+      "low_confidence_by_label": {
+        "assessment": 0,
+        "follow_up": 0
+      },
+      "low_confidence_total": 0,
+      "pair": [
+        "assessment",
+        "follow_up"
+      ]
+    },
+    {
+      "corrections_by_label": {
+        "applied": 43,
+        "pending_application": 3
+      },
+      "corrections_total": 46,
+      "low_confidence_by_label": {
+        "applied": 0,
+        "pending_application": 0
+      },
+      "low_confidence_total": 0,
+      "pair": [
+        "applied",
+        "pending_application"
+      ]
+    }
+  ],
+  "distribution": {
+    "current_by_label": {
+      "applied": 11
+    },
+    "drift": {
+      "by_label": [
+        {
+          "abs_delta_pp": 100.0,
+          "current_share_pct": 100.0,
+          "delta_pp": 100.0,
+          "label": "applied",
+          "previous_share_pct": 0.0
+        },
+        {
+          "abs_delta_pp": 0.0,
+          "current_share_pct": 0.0,
+          "delta_pp": 0.0,
+          "label": "pending_application",
+          "previous_share_pct": 0.0
+        },
+        {
+          "abs_delta_pp": 0.0,
+          "current_share_pct": 0.0,
+          "delta_pp": 0.0,
+          "label": "interview",
+          "previous_share_pct": 0.0
+        },
+        {
+          "abs_delta_pp": 0.0,
+          "current_share_pct": 0.0,
+          "delta_pp": 0.0,
+          "label": "rejection",
+          "previous_share_pct": 0.0
+        },
+        {
+          "abs_delta_pp": 0.0,
+          "current_share_pct": 0.0,
+          "delta_pp": 0.0,
+          "label": "offer",
+          "previous_share_pct": 0.0
+        },
+        {
+          "abs_delta_pp": 0.0,
+          "current_share_pct": 0.0,
+          "delta_pp": 0.0,
+          "label": "assessment",
+          "previous_share_pct": 0.0
+        },
+        {
+          "abs_delta_pp": 0.0,
+          "current_share_pct": 0.0,
+          "delta_pp": 0.0,
+          "label": "follow_up",
+          "previous_share_pct": 0.0
+        }
+      ],
+      "current_total": 11,
+      "drift_score_pp": 50.0,
+      "max_label_drift": {
+        "abs_delta_pp": 100.0,
+        "current_share_pct": 100.0,
+        "delta_pp": 100.0,
+        "label": "applied",
+        "previous_share_pct": 0.0
+      },
+      "previous_total": 0
+    },
+    "previous_by_label": {}
+  },
+  "generated_at_utc": "2026-02-28T18:31:47.163588",
+  "low_confidence": {
+    "current_by_label": {},
+    "current_total": 0,
+    "delta": 0,
+    "growth_pct": null,
+    "previous_by_label": {},
+    "previous_total": 0
+  },
+  "snapshot": {
+    "needs_review_count": 0,
+    "real_sources": [
+      "user_correction"
+    ],
+    "total_emails": 856,
+    "total_training_examples": 1249
+  },
+  "thresholds": {
+    "confusion_pair_alert_count": 3,
+    "distribution_drift_alert_pp": 12.0,
+    "low_confidence_delta_alert_count": 10,
+    "low_confidence_growth_alert_pct": 25.0,
+    "low_confidence_threshold": 0.85,
+    "min_distribution_volume": 20,
+    "min_previous_low_confidence_volume": 5
+  },
+  "user_corrections": {
+    "current_by_label": {
+      "applied": 43,
+      "assessment": 1,
+      "other": 1,
+      "pending_application": 3,
+      "rejection": 5
+    },
+    "current_total": 53,
+    "delta": 32,
+    "previous_by_label": {
+      "applied": 6,
+      "other": 8,
+      "rejection": 7
+    },
+    "previous_total": 21
+  },
+  "window": {
+    "current_end_utc": "2026-02-28T18:31:47.163588",
+    "current_start_utc": "2026-02-21T18:31:47.163588",
+    "previous_end_utc": "2026-02-21T18:31:47.163588",
+    "previous_start_utc": "2026-02-14T18:31:47.163588"
+  },
+  "window_days": 7
+}
