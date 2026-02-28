@@ -1,0 +1,65 @@
+name: ML Monitoring Weekly
+
+on:
+  schedule:
+    # Every Monday at 14:00 UTC
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ml-monitoring-weekly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -r requirements-dev.txt
+
+      - name: Generate monitoring artifacts
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+        run: |
+          python -m jobtracker.scripts.generate_ml_monitoring_report \
+            --days 7 \
+            --output-md data/evaluation/ml_monitoring_report.md \
+            --output-json data/evaluation/ml_monitoring_report.json \
+            --history-jsonl data/evaluation/ml_monitoring_history.jsonl \
+            --append-history \
+            --confusion-pairs assessment:follow_up,applied:pending_application \
+            --emit-github-step-summary
+
+      - name: Upload monitoring artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-monitoring-weekly
+          path: |
+            backend/data/evaluation/ml_monitoring_report.md
+            backend/data/evaluation/ml_monitoring_report.json
+            backend/data/evaluation/ml_monitoring_history.jsonl
