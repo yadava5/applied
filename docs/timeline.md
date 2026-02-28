@@ -1,6 +1,6 @@
 # JobTracker Detailed Timeline
 
-As of **February 26, 2026**.
+As of **February 28, 2026**.
 
 This is the continuity document for product and ML behavior. It records what changed, why it changed, what was verified, and what remains open.
 
@@ -10,7 +10,7 @@ This is the continuity document for product and ML behavior. It records what cha
 - Classifier quality depended on interactions between rules, embeddings, SetFit, and data ingestion; isolated notes were insufficient.
 - Regressions were often caused by good-intention changes without a durable historical record of rationale.
 
-## Current Snapshot (February 26, 2026)
+## Current Snapshot (February 28, 2026)
 
 - Architecture remains local-first: SwiftUI macOS app + local FastAPI backend + SQLite.
 - Classification stack remains hybrid: `rules -> embeddings -> SetFit -> fallback/needs_review`.
@@ -18,19 +18,19 @@ This is the continuity document for product and ML behavior. It records what cha
 - Rules no longer contain narrow brand/one-off marketing phrase patches; only broad safety guard families are retained for newsletter/promo/security content.
 - SetFit retraining now uses balanced per-label sampling with mixed source quotas (not single-source dominance).
 - Current training data footprint in DB:
-  - total rows: `1,247`
-  - sources: `mock_seed_v3=640`, `mock_seed_v2=320`, `external_dataset=192`, `user_correction=79`, `mock_seed=16`
+  - total rows: `1,249` (latest recorded run)
+  - sources: `mock_seed_v3=640`, `mock_seed_v2=320`, `external_dataset=192`, `user_correction=81`, `mock_seed=16`
 - Latest SetFit model:
-  - path: `setfit_model_20260226_125304`
-  - trained at: `2026-02-26T17:53:04Z`
+  - path: `setfit_model_20260228_131948`
+  - trained at: `2026-02-28T18:19:48Z`
   - training examples: `192` (`24` per label across 8 labels)
-  - source mix used for this train: `external_dataset=50`, `user_correction=37`, `mock_seed_v3=58`, `mock_seed_v2=43`, `mock_seed=4`
+  - source mix used for this train: stored in model artifact metadata
 - Quality gates currently passing:
   - eval v1 rules: `1.0000 accuracy / 1.0000 macro-F1`
   - eval v1 hybrid: `1.0000 accuracy / 1.0000 macro-F1`
   - eval v2 rules: `0.9688 accuracy / 0.9686 macro-F1`
   - eval v2 hybrid: `0.9688 accuracy / 0.9686 macro-F1`
-  - backend tests: `122 passed`
+  - backend tests: `138 passed`
 
 ## Chronology
 
@@ -241,17 +241,55 @@ Outcome:
 - User-correction signal increased again (`79` total).
 - New model `setfit_model_20260226_125304` passed all gates.
 
+### Phase 16: Weekly labeling workflow automation (February 28, 2026)
+
+Context:
+- Real-signal growth needed a repeatable operational cadence, especially for rare lifecycle classes.
+
+What changed:
+- Added weekly workflow tooling and wrapper command:
+  - `python -m jobtracker.scripts.weekly_labeling_workflow`
+  - `scripts/weekly_labeling_cycle.sh --append-tracker`
+- Added privacy-safe weekly artifacts:
+  - candidates CSV (IDs + predicted metadata)
+  - JSON/Markdown summary
+  - KPI markdown snapshot
+- Appended KPI snapshots into `docs/ML_EXECUTION_TRACKER.md`.
+
+Impact:
+- Real-signal growth is now operationalized as a repeatable weekly process.
+
+### Phase 17: Monitoring automation and metadata-contract enforcement (February 28, 2026)
+
+Context:
+- Needed machine-readable confidence/drift monitoring and strict provenance contract guarantees for SetFit retrains.
+
+What changed:
+- Monitoring:
+  - Expanded monitoring report script to emit markdown + JSON + optional JSONL history.
+  - Added alert thresholds for low-confidence growth/delta, distribution drift, and confusion pairs.
+  - Added scheduled workflow `.github/workflows/ml-monitoring-weekly.yml`.
+- Metadata contract:
+  - Added strict validator for `training_metadata.json` with schema version checks.
+  - Enforced required keys/types/invariants and source/label rollup consistency.
+  - Retrain metadata writer now emits `schema_version` and validates before write.
+  - Added regression tests and docs contract example.
+
+Impact:
+- Weekly monitoring became automated and auditable.
+- Retrain artifact provenance is now strict and CI-protected against contract regressions.
+
 ## Open Risks / Remaining Work
 
-- Real user-correction volume is still modest (`29`) relative to synthetic and external data.
+- Real user-correction volume is still modest (`81`) relative to synthetic and external data.
 - `offer` remains low in real-world examples; synthetic helps coverage but cannot replace true distribution.
-- Benchmark corpora are still limited in scale despite v2 improvements.
+- Benchmark corpora are still limited in scale despite v2 improvements (v3 evaluation set still open).
 
 ## Immediate Priorities
 
 1. Increase real correction volume for rare classes (`offer`, `assessment`, `pending_application`).
-2. Add periodic monitoring snapshots and alerting for drift in confidence/misroutes.
-3. Keep provenance metadata attached to every retrain and track trend deltas over time.
+2. Build `classifier_eval_v3` + v3 baselines and add associated gate/test coverage (issue `#4`).
+3. Stabilize deterministic hybrid benchmark for eventual blocking CI rollout (issue `#6`).
 4. Continue avoiding narrow phrase patches unless backed by broad data and evaluation.
 
 ## Resume Checklist
