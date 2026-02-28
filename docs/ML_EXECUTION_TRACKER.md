@@ -181,3 +181,157 @@ Current counts after Cycle D:
 - `training_data(source='user_correction')`: `79`
 - `emails.user_corrected=1`: `79`
 - review queue count: `0`
+
+## Cycle E (February 28, 2026): Weekly Real-Signal Workflow - Completed
+
+Goal:
+- Establish a repeatable weekly process for real-signal growth focused on rare lifecycle classes and known confusion pairs.
+
+### Step E1 - Workflow tooling added (`completed`)
+
+Implemented:
+- New weekly workflow module:
+  - `python -m jobtracker.scripts.weekly_labeling_workflow`
+- New root runner command:
+  - `scripts/weekly_labeling_cycle.sh --append-tracker`
+
+Outputs:
+- `backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_YYYYMMDD.csv`
+- `backend/data/evaluation/weekly_labeling/weekly_labeling_summary_YYYYMMDD.{md,json}`
+- `backend/data/evaluation/weekly_labeling/weekly_kpi_YYYYMMDD.md`
+
+Privacy guardrails:
+- Artifact schema stores IDs + aggregate counts only.
+- No subject/body/snippet fields are emitted by the weekly batch CSV.
+
+### Step E2 - KPI tracker integration (`completed`)
+
+Added KPI snapshot generation suitable for weekly appends to `docs/ML_EXECUTION_TRACKER.md`, including:
+- `user_correction` weekly delta
+- per-label real-signal totals and weekly deltas
+- latest retrain real-signal share from `training_metadata.json` source mix
+
+### Step E3 - Data collection run (`completed`)
+
+Run details:
+- Initial weekly run selected only high-confidence `applied` items.
+- Full iCloud sync attempted and failed once due stale backend process enum mismatch, then succeeded after backend restart:
+  - `emails_fetched=852`
+  - `emails_saved=154`
+  - `emails_skipped=698`
+- Re-generated rare-label-focused batch over larger lookback window:
+  - selected IDs: `801 (pending_application)`, `766 (interview)`
+- Manual corrections applied:
+  - `801 -> pending_application` (confirmed)
+  - `766 -> other` (newsletter false-positive correction)
+
+Post-run state:
+- `training_data(source='user_correction')`: `81` (from `79`)
+- per-label delta from this run:
+  - `pending_application`: `+1`
+  - `other`: `+1`
+- Re-generated weekly batch (same settings): `0` remaining candidates.
+
+## Cycle F (February 28, 2026): Monitoring Automation - Completed
+
+Goal:
+- Automate weekly confidence/drift monitoring with machine-readable artifacts and thresholded alert signals.
+
+### Step F1 - Monitoring script expanded (`completed`)
+
+Implemented:
+- `jobtracker.scripts.generate_ml_monitoring_report` now emits:
+  - markdown summary
+  - JSON payload
+  - optional JSONL history append
+- Added trend indicators for:
+  - low-confidence window-over-window movement
+  - uncorrected label distribution drift
+  - confusion-pair signal counts
+- Added threshold-based alert output with optional `--fail-on-alert`.
+
+### Step F2 - Scheduled workflow (`completed`)
+
+Added:
+- `.github/workflows/ml-monitoring-weekly.yml`
+  - weekly schedule + manual dispatch
+  - monitoring artifact generation
+  - artifact upload (`md`, `json`, `jsonl`)
+
+### Step F3 - Baseline historical run committed (`completed`)
+
+Artifacts:
+- `backend/data/evaluation/ml_monitoring_report.md`
+- `backend/data/evaluation/ml_monitoring_report.json`
+- `backend/data/evaluation/ml_monitoring_history.jsonl`
+
+## Weekly KPI Snapshot (2026-02-28)
+
+### Weekly KPI Snapshot
+
+- generated_at_utc: `2026-02-28T09:40:58.770145`
+- real_sources: `user_correction`
+- user_correction_total: `79`
+- user_correction_last_7_days: `51`
+- user_correction_prev_7_days: `21`
+- user_correction_weekly_delta: `+30`
+- real_signal_share_latest_retrain: `19.27%` (37/192)
+- latest_model: `setfit_model_20260226_125304`
+- latest_model_trained_at: `2026-02-26T17:53:04.241243`
+
+#### Per-Label Real-Signal Totals
+- applied: total=51, last_7d=43, delta_vs_prev_window=+37
+- assessment: total=1, last_7d=1, delta_vs_prev_window=+1
+- other: total=10, last_7d=0, delta_vs_prev_window=-8
+- pending_application: total=2, last_7d=2, delta_vs_prev_window=+2
+- rejection: total=15, last_7d=5, delta_vs_prev_window=-2
+
+### Weekly Labeling Batch
+- total_candidates: `7`
+- reason_counts: confusion_pair_focus=7
+- category_counts: applied=7
+- candidate_ids: `621, 613, 612, 611, 610, 609, 608`
+
+Artifacts:
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260228.csv`
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260228.md`
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260228.json`
+
+## Cycle G (February 28, 2026): Training Metadata Contract Enforcement - Completed
+
+Goal:
+- Make SetFit retrain artifacts auditable with strict provenance contract checks and schema versioning.
+
+### Step G1 - Contract validator enforcement (`completed`)
+
+Implemented:
+- Added strict contract validation for `training_metadata.json`:
+  - required keys and types
+  - scalar consistency (`total_examples`, split sizes)
+  - `label_counts`, `source_counts`, and `label_source_counts` rollup integrity
+  - exact inverse checks for `label_to_id` and `id_to_label`
+- Added explicit schema compatibility guard:
+  - `schema_version` required for current artifacts
+  - unknown schema versions fail fast
+  - legacy compatibility path available only when explicitly enabled
+
+### Step G2 - Retrain artifact emission hardened (`completed`)
+
+Implemented:
+- Retrain metadata writer now emits `schema_version`.
+- Metadata is validated before it is written to disk to prevent malformed provenance artifacts.
+
+### Step G3 - Contract tests + docs (`completed`)
+
+Implemented:
+- Expanded metadata tests to cover:
+  - generated metadata contract conformance
+  - missing schema version rejection
+  - legacy compatibility allowance
+  - unsupported schema version rejection
+  - source rollup mismatch rejection
+- Added metadata contract policy + JSON example in `docs/ML_STRATEGY.md`.
+
+Verification:
+- targeted metadata tests: `5 passed`
+- full backend suite: `138 passed`
