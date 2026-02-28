@@ -73,9 +73,90 @@ Operational behavior:
 - latest model is loaded on startup
 - only recent model versions are retained
 - each trained model directory includes `training_metadata.json` provenance
-  (timestamp, label counts, split sizes, label mapping)
 
 If no trained SetFit model exists, classifier still runs with rules + embeddings.
+
+### Training Metadata Contract
+
+`training_metadata.json` is validated by `validate_training_metadata_contract(...)` in
+`backend/jobtracker/classifier/setfit_model.py`. CI tests enforce the contract so refactors
+cannot silently drop provenance fields.
+
+Required fields:
+
+- `schema_version` (integer, currently `1`)
+- `trained_at` (ISO-8601 timestamp string)
+- `base_model` (string)
+- `total_examples` (integer)
+- `train_split_size` (integer)
+- `eval_split_size` (integer)
+- `max_saved_models` (integer > 0)
+- `label_counts` (object: `label -> count`)
+- `source_counts` (object: `source -> count`)
+- `label_source_counts` (object: `label -> source -> count`)
+- `label_to_id` (object: `label -> id`)
+- `id_to_label` (object: `id -> label`)
+
+Contract invariants:
+
+- `sum(label_counts) == total_examples`
+- `sum(source_counts) == total_examples`
+- `train_split_size + eval_split_size == total_examples`
+- `label_source_counts` must roll up exactly to both `label_counts` and `source_counts`
+- `label_to_id` and `id_to_label` must be exact inverses
+
+Example:
+
+```json
+{
+  "schema_version": 1,
+  "trained_at": "2026-02-28T10:30:00",
+  "base_model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+  "total_examples": 48,
+  "label_counts": {
+    "applied": 18,
+    "pending_application": 12,
+    "rejection": 18
+  },
+  "source_counts": {
+    "external_dataset": 20,
+    "user_correction": 28
+  },
+  "label_source_counts": {
+    "applied": {
+      "external_dataset": 8,
+      "user_correction": 10
+    },
+    "pending_application": {
+      "external_dataset": 4,
+      "user_correction": 8
+    },
+    "rejection": {
+      "external_dataset": 8,
+      "user_correction": 10
+    }
+  },
+  "label_to_id": {
+    "applied": 0,
+    "pending_application": 1,
+    "rejection": 2
+  },
+  "id_to_label": {
+    "0": "applied",
+    "1": "pending_application",
+    "2": "rejection"
+  },
+  "train_split_size": 43,
+  "eval_split_size": 5,
+  "max_saved_models": 3
+}
+```
+
+Backward compatibility note:
+
+- legacy artifacts without `schema_version` are accepted only when explicitly loaded with
+  `allow_legacy_without_schema_version=True`
+- unknown future schema versions fail fast until compatibility is intentionally added
 
 ## Runtime Controls
 
@@ -153,6 +234,65 @@ For better accuracy:
 2. Approve valid review-queue items instead of leaving them pending
 3. Keep labels consistent (especially `pending_application` vs `applied`)
 4. Trigger `POST /classify/retrain` after substantial new corrections if auto-train has not run yet
+
+## Monitoring and Drift
+
+Monitoring command (single command, emits markdown + JSON):
+
+```bash
+scripts/monitoring_cycle.sh --days 7 --append-history
+```
+
+Artifacts:
+
+- `backend/data/evaluation/ml_monitoring_report.md`
+- `backend/data/evaluation/ml_monitoring_report.json`
+- `backend/data/evaluation/ml_monitoring_history.jsonl`
+
+Default alert thresholds:
+
+- low-confidence growth: `>=25%` window-over-window (only when previous volume >= 5)
+- low-confidence absolute delta: `>=10`
+- max label distribution drift: `>=12 pp` (only when each window has >= 20 samples)
+- confusion-pair low-confidence volume: `>=3`
+
+Scheduled automation:
+
+- `.github/workflows/ml-monitoring-weekly.yml`
+
+## Weekly Real-Signal Workflow
+
+To keep `user_correction` growth consistent for rare lifecycle classes, run:
+
+```bash
+scripts/weekly_labeling_cycle.sh --append-tracker
+```
+
+Common tuning flags (no code edits needed):
+
+- `--low-confidence-threshold`
+- `--confusion-max-confidence`
+- `--target-labels`
+- `--confusion-pairs`
+- `--query-overfetch-multiplier`
+
+This command creates privacy-safe weekly artifacts (IDs + aggregate counts only, no email snippets/body content):
+
+- `backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_YYYYMMDD.csv`
+- `backend/data/evaluation/weekly_labeling/weekly_labeling_summary_YYYYMMDD.{md,json}`
+- `backend/data/evaluation/weekly_labeling/weekly_kpi_YYYYMMDD.md`
+
+It targets:
+
+1. Lowest-confidence job predictions
+2. Known confusion pairs (`assessment` vs `follow_up`, `applied` vs `pending_application`)
+3. Low-support labels (`offer`, `interview`, `pending_application`)
+
+When `--append-tracker` is used, it appends KPI snapshots into `docs/ML_EXECUTION_TRACKER.md` including:
+
+- weekly `user_correction` delta
+- per-label real-signal counts
+- real-signal share in latest retrain sample metadata
 
 ## External Data Ingestion
 
