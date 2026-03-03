@@ -59,26 +59,27 @@ jobs:
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
         run: pytest tests -q
 
-      - name: Run classifier non-regression gate
+      - name: Run classifier non-regression gate (rules v3)
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
         run: |
           python -m jobtracker.scripts.evaluate_classifier \
             --mode rules \
-            --dataset data/evaluation/classifier_eval_v1.jsonl \
-            --baseline data/evaluation/baseline_rules_v1.json \
+            --dataset data/evaluation/classifier_eval_v3.jsonl \
+            --baseline data/evaluation/baseline_rules_v3.json \
             --tolerance 0.001 \
-            --min-macro-f1 0.90
+            --min-macro-f1 0.95
 
-      - name: Run hybrid benchmark signal (non-blocking)
-        continue-on-error: true
+      - name: Run hybrid benchmark gate (v3 deterministic)
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
         run: |
           python -m jobtracker.scripts.evaluate_classifier \
             --mode hybrid \
-            --dataset data/evaluation/classifier_eval_v1.jsonl \
-            --baseline data/evaluation/baseline_hybrid_v1.json \
+            --dataset data/evaluation/classifier_eval_v3.jsonl \
+            --baseline data/evaluation/baseline_hybrid_v3.json \
+            --hybrid-profile deterministic \
+            --min-macro-f1 0.95 \
             --tolerance 0.001
