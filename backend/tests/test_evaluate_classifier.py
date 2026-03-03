@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from jobtracker.scripts.evaluate_classifier import (
+    _configure_hybrid_profile,
     compare_against_baseline,
     compute_report,
     load_dataset,
@@ -70,3 +71,39 @@ def test_compare_against_baseline_flags_f1_regression() -> None:
     assert any("overall.accuracy" in msg for msg in failures)
     assert any("overall.macro_f1" in msg for msg in failures)
     assert any("per_label.applied.f1" in msg for msg in failures)
+
+
+class _FakeEmbeddings:
+    def __init__(self) -> None:
+        self._known_embeddings = [("x", "y")]
+        self._loaded = False
+
+
+class _FakeHybridClassifier:
+    def __init__(self) -> None:
+        self._embeddings = _FakeEmbeddings()
+        self.lite_mode_enabled = False
+
+    def set_lite_mode(self, enabled: bool) -> None:
+        self.lite_mode_enabled = enabled
+
+
+def test_configure_hybrid_profile_deterministic_disables_semantic_state() -> None:
+    classifier = _FakeHybridClassifier()
+
+    _configure_hybrid_profile(classifier, "deterministic")
+
+    assert classifier.lite_mode_enabled is True
+    assert classifier._embeddings._loaded is True
+    assert classifier._embeddings._known_embeddings == []
+
+
+def test_configure_hybrid_profile_rejects_unknown_profile() -> None:
+    classifier = _FakeHybridClassifier()
+
+    try:
+        _configure_hybrid_profile(classifier, "unknown-profile")
+    except ValueError as exc:
+        assert "Unsupported hybrid profile" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for unsupported hybrid profile")
