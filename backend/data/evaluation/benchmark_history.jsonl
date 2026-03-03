@@ -1,4 +1,6 @@
 {"accuracy": 1.0, "dataset": "data/evaluation/classifier_eval_v1.jsonl", "macro_f1": 1.0, "misclassified": 0, "mode": "hybrid", "version": 1, "weighted_f1": 1.0}
 {"accuracy": 0.84375, "dataset": "data/evaluation/classifier_eval_v2.jsonl", "macro_f1": 0.8597619047619047, "misclassified": 10, "mode": "hybrid", "version": 2, "weighted_f1": 0.8597619047619047}
+{"accuracy": 0.9791666666666666, "dataset": "data/evaluation/classifier_eval_v3.jsonl", "macro_f1": 0.9791304347826086, "misclassified": 2, "mode": "hybrid", "version": 3, "weighted_f1": 0.9791304347826086}
 {"accuracy": 1.0, "dataset": "data/evaluation/classifier_eval_v1.jsonl", "macro_f1": 1.0, "misclassified": 0, "mode": "rules", "version": 1, "weighted_f1": 1.0}
 {"accuracy": 0.859375, "dataset": "data/evaluation/classifier_eval_v2.jsonl", "macro_f1": 0.8737728937728937, "misclassified": 9, "mode": "rules", "version": 2, "weighted_f1": 0.8737728937728937}
+{"accuracy": 0.9791666666666666, "dataset": "data/evaluation/classifier_eval_v3.jsonl", "macro_f1": 0.9791304347826086, "misclassified": 2, "mode": "rules", "version": 3, "weighted_f1": 0.9791304347826086}
