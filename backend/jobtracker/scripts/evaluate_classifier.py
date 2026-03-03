@@ -18,6 +18,7 @@ from typing import Any
 
 from jobtracker.classifier.hybrid import HybridClassifier
 from jobtracker.classifier.rules import get_rules_classifier
+from jobtracker.database import init_db
 from jobtracker.database.models import EmailCategory
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -119,7 +120,12 @@ def load_dataset(path: Path) -> list[EvaluationExample]:
     return examples
 
 
-async def predict_labels(examples: list[EvaluationExample], mode: str) -> list[str]:
+async def predict_labels(
+    examples: list[EvaluationExample],
+    mode: str,
+    *,
+    hybrid_profile: str,
+) -> list[str]:
     """Run classifier predictions for all examples."""
     predictions: list[str] = []
 
@@ -132,12 +138,36 @@ async def predict_labels(examples: list[EvaluationExample], mode: str) -> list[s
 
     if mode == "hybrid":
         classifier = HybridClassifier()
+        _configure_hybrid_profile(classifier, hybrid_profile)
         for item in examples:
             result = await classifier.classify(item.subject, item.body_text, item.sender_email)
             predictions.append(result.category.value)
         return predictions
 
     raise ValueError(f"Unsupported mode: {mode}")
+
+
+def _configure_hybrid_profile(classifier: HybridClassifier, profile: str) -> None:
+    """
+    Configure hybrid classifier profile for reproducible evaluation.
+
+    - full: normal runtime behavior (all available layers)
+    - deterministic: force layer behavior that is independent of local model/DB state
+      by disabling SetFit and bypassing embedding examples
+    """
+    if profile == "full":
+        return
+
+    if profile == "deterministic":
+        classifier.set_lite_mode(True)
+        embeddings = getattr(classifier, "_embeddings", None)
+        if embeddings is not None:
+            # Prevent DB/stateful embedding examples from affecting benchmark outcomes.
+            embeddings._known_embeddings = []
+            embeddings._loaded = True
+        return
+
+    raise ValueError(f"Unsupported hybrid profile: {profile}")
 
 
 def _select_label_order(expected: list[str], predicted: list[str]) -> list[str]:
@@ -326,6 +356,8 @@ def print_summary(report: dict[str, Any], max_mismatches: int) -> None:
     print("\n=== Classifier Evaluation ===")
     print(f"dataset: {meta['dataset']}")
     print(f"mode: {meta['mode']}")
+    if "hybrid_profile" in meta:
+        print(f"hybrid_profile: {meta['hybrid_profile']}")
     print(f"samples: {meta['sample_count']}")
     print(
         f"accuracy: {overall['accuracy']:.4f} | macro_f1: {overall['macro_f1']:.4f} | "
@@ -354,17 +386,39 @@ def print_summary(report: dict[str, Any], max_mismatches: int) -> None:
             print(f"- expected={expected:<20} predicted={predicted:<20} subject={preview}")
 
 
-async def run_evaluation(dataset: Path, mode: str) -> dict[str, Any]:
+async def run_evaluation(
+    dataset: Path,
+    mode: str,
+    *,
+    hybrid_profile: str,
+) -> dict[str, Any]:
+    await init_db()
     examples = load_dataset(dataset)
     expected = [item.label for item in examples]
-    predicted = await predict_labels(examples, mode=mode)
-    return compute_report(expected, predicted, examples, dataset_path=dataset, mode=mode)
+    predicted = await predict_labels(
+        examples,
+        mode=mode,
+        hybrid_profile=hybrid_profile,
+    )
+    report = compute_report(expected, predicted, examples, dataset_path=dataset, mode=mode)
+    if mode == "hybrid":
+        report["meta"]["hybrid_profile"] = hybrid_profile
+    return report
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate classifier on a labeled JSONL dataset")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--mode", choices=["rules", "hybrid"], default="rules")
+    parser.add_argument(
+        "--hybrid-profile",
+        choices=["full", "deterministic"],
+        default="full",
+        help=(
+            "Hybrid evaluation profile. "
+            "'deterministic' disables stateful semantic layers for machine-stable CI gating."
+        ),
+    )
     parser.add_argument("--baseline", type=Path, default=None)
     parser.add_argument(
         "--tolerance",
@@ -395,7 +449,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    report = asyncio.run(run_evaluation(args.dataset, args.mode))
+    if args.mode != "hybrid" and args.hybrid_profile != "full":
+        print("\nFAIL: --hybrid-profile is only valid when --mode hybrid")
+        return 1
+
+    report = asyncio.run(
+        run_evaluation(
+            args.dataset,
+            args.mode,
+            hybrid_profile=args.hybrid_profile,
+        )
+    )
     baseline_path = args.baseline or DEFAULT_BASELINES[args.mode]
 
     print_summary(report, max_mismatches=args.max_mismatches)
