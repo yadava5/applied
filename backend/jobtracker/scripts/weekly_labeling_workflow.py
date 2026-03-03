@@ -35,15 +35,18 @@ DEFAULT_CONFUSION_PAIRS = (
     ("applied", "pending_application"),
 )
 DEFAULT_REAL_SOURCES = ("user_correction",)
+DEFAULT_TARGET_PER_LABEL = 25
 
 REASON_LOW_CONFIDENCE = "low_confidence"
 REASON_CONFUSION_PAIR = "confusion_pair_focus"
 REASON_LOW_SUPPORT = "low_support_category"
+REASON_TARGET_SIGNAL = "target_label_signal"
 
 REASON_PRIORITY = {
     REASON_LOW_CONFIDENCE: 1,
-    REASON_CONFUSION_PAIR: 2,
+    REASON_TARGET_SIGNAL: 2,
     REASON_LOW_SUPPORT: 3,
+    REASON_CONFUSION_PAIR: 4,
 }
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -52,6 +55,36 @@ DEFAULT_OUTPUT_DIR = BACKEND_DIR / "data" / "evaluation" / "weekly_labeling"
 DEFAULT_TRACKER_PATH = PROJECT_ROOT / "docs" / "ML_EXECUTION_TRACKER.md"
 
 SENSITIVE_COLUMNS = {"subject", "body_text", "body_html", "body_snippet", "snippet"}
+
+TARGET_SIGNAL_PATTERNS: dict[str, tuple[str, ...]] = {
+    "offer": (
+        "offer letter",
+        "formal offer",
+        "offer of employment",
+        "compensation package",
+        "start date",
+        "accept this offer",
+        "employment agreement",
+    ),
+    "interview": (
+        "interview invitation",
+        "schedule interview",
+        "phone screen",
+        "hiring manager",
+        "calendly",
+        "availability for",
+        "video interview",
+    ),
+    "pending_application": (
+        "complete your application",
+        "finish your application",
+        "continue your application",
+        "application is incomplete",
+        "missing information",
+        "action required",
+        "before we can review your application",
+    ),
+}
 
 
 @dataclass
@@ -64,6 +97,7 @@ class LabelingCandidate:
     classification_method: str | None
     is_reviewed: bool
     reasons: set[str] = field(default_factory=set)
+    target_signal_labels: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -146,10 +180,16 @@ def _format_received_at(received_at: datetime | None) -> str:
 
 
 def _candidate_sort_key(candidate: LabelingCandidate) -> tuple[int, float, float]:
-    reason_priority = min(REASON_PRIORITY.get(reason, 99) for reason in candidate.reasons)
+    reason_priority = REASON_PRIORITY.get(_primary_reason(candidate), 99)
     confidence_score = candidate.confidence if candidate.confidence is not None else -1.0
     recency_score = candidate.received_at.timestamp() if candidate.received_at is not None else 0.0
     return (reason_priority, confidence_score, -recency_score)
+
+
+def _primary_reason(candidate: LabelingCandidate) -> str:
+    if not candidate.reasons:
+        return ""
+    return min(candidate.reasons, key=lambda reason: REASON_PRIORITY.get(reason, 99))
 
 
 async def _fetch_candidates_for_labels(
@@ -228,26 +268,207 @@ async def _fetch_candidates_for_labels(
     return candidates
 
 
+async def _fetch_candidates_for_target_signal(
+    *,
+    target_label: str,
+    since: datetime,
+    query_limit: int,
+    max_confidence: float | None = None,
+) -> list[LabelingCandidate]:
+    patterns = TARGET_SIGNAL_PATTERNS.get(target_label, ())
+    if not patterns:
+        return []
+
+    signal_clauses = []
+    for token in patterns:
+        normalized = token.strip().lower()
+        if not normalized:
+            continue
+        like_pattern = f"%{normalized}%"
+        signal_clauses.append(func.lower(func.coalesce(Email.subject, "")).like(like_pattern))
+        signal_clauses.append(func.lower(func.coalesce(Email.body_text, "")).like(like_pattern))
+        signal_clauses.append(func.lower(func.coalesce(Email.body_snippet, "")).like(like_pattern))
+
+    if not signal_clauses:
+        return []
+
+    stmt = (
+        select(Email)
+        .where(Email.user_corrected.is_(False))
+        .where(Email.received_at >= since)
+        .where(or_(*signal_clauses))
+    )
+
+    if max_confidence is not None:
+        stmt = stmt.where(
+            or_(
+                Email.classification_confidence.is_(None),
+                Email.classification_confidence <= max_confidence,
+            )
+        )
+
+    # Prefer potentially misclassified/non-target rows first, then lower confidence.
+    stmt = stmt.order_by(
+        case(
+            (Email.classified_as == EmailCategory(target_label), 1),
+            else_=0,
+        ),
+        case(
+            (Email.classification_confidence.is_(None), -1.0),
+            else_=Email.classification_confidence,
+        ),
+        Email.received_at.desc(),
+    ).limit(query_limit)
+
+    async with get_session() as session:
+        rows = (await session.exec(stmt)).all()
+
+    candidates: list[LabelingCandidate] = []
+    for row in rows:
+        email = _unwrap_email(row)
+        if email.id is None:
+            continue
+        if email.classified_as is None:
+            category = "unknown"
+        else:
+            category = (
+                email.classified_as.value
+                if hasattr(email.classified_as, "value")
+                else str(email.classified_as)
+            )
+        source_account = (
+            email.source_account.value
+            if hasattr(email.source_account, "value")
+            else str(email.source_account)
+        )
+        candidates.append(
+            LabelingCandidate(
+                email_id=int(email.id),
+                received_at=email.received_at,
+                source_account=str(source_account),
+                current_category=category,
+                confidence=email.classification_confidence,
+                classification_method=email.classification_method,
+                is_reviewed=bool(email.is_reviewed),
+            )
+        )
+    return candidates
+
+
 def _merge_pool(
     *,
     candidate_map: dict[int, LabelingCandidate],
     pool: list[LabelingCandidate],
     reason: str,
     max_new_candidates: int,
+    target_signal_label: str | None = None,
 ) -> None:
     added = 0
     for candidate in pool:
         existing = candidate_map.get(candidate.email_id)
         if existing is not None:
             existing.reasons.add(reason)
+            if target_signal_label is not None:
+                existing.target_signal_labels.add(target_signal_label)
             continue
 
         if added >= max_new_candidates:
             break
 
         candidate.reasons.add(reason)
+        if target_signal_label is not None:
+            candidate.target_signal_labels.add(target_signal_label)
         candidate_map[candidate.email_id] = candidate
         added += 1
+
+
+def _compute_target_support_gaps(
+    *,
+    target_labels: list[str],
+    all_time_by_label: dict[str, int],
+    target_per_label: int,
+) -> dict[str, dict[str, int]]:
+    support: dict[str, dict[str, int]] = {}
+    for label in target_labels:
+        current_total = int(all_time_by_label.get(label, 0))
+        gap = max(target_per_label - current_total, 0)
+        support[label] = {"current_total": current_total, "gap_to_target": gap}
+    return support
+
+
+def _allocate_label_quotas(
+    *,
+    total_limit: int,
+    target_labels: list[str],
+    support_gaps: dict[str, dict[str, int]],
+) -> dict[str, int]:
+    if total_limit <= 0 or not target_labels:
+        return {}
+
+    labels = list(target_labels)
+    raw_weights: dict[str, int] = {}
+    for label in labels:
+        gap = int(support_gaps.get(label, {}).get("gap_to_target", 0))
+        raw_weights[label] = gap if gap > 0 else 1
+
+    weight_sum = sum(raw_weights.values())
+    quotas: dict[str, int] = {label: 0 for label in labels}
+    remainders: list[tuple[float, str]] = []
+
+    for label in labels:
+        exact = (raw_weights[label] * total_limit) / weight_sum
+        floor_value = int(exact)
+        quotas[label] = floor_value
+        remainders.append((exact - floor_value, label))
+
+    assigned = sum(quotas.values())
+    for _fractional, label in sorted(remainders, key=lambda item: item[0], reverse=True):
+        if assigned >= total_limit:
+            break
+        quotas[label] += 1
+        assigned += 1
+
+    return quotas
+
+
+def _select_final_candidates(
+    *,
+    candidates: list[LabelingCandidate],
+    limit: int,
+    confusion_share_cap: float,
+) -> list[LabelingCandidate]:
+    if limit <= 0:
+        return []
+    if not candidates:
+        return []
+
+    sorted_candidates = sorted(candidates, key=_candidate_sort_key)
+    confusion_cap = int(limit * confusion_share_cap)
+    selected: list[LabelingCandidate] = []
+    deferred_confusion: list[LabelingCandidate] = []
+    confusion_selected = 0
+
+    for candidate in sorted_candidates:
+        primary_reason = _primary_reason(candidate)
+        is_confusion_primary = primary_reason == REASON_CONFUSION_PAIR
+
+        if is_confusion_primary and confusion_selected >= confusion_cap:
+            deferred_confusion.append(candidate)
+            continue
+
+        selected.append(candidate)
+        if is_confusion_primary:
+            confusion_selected += 1
+        if len(selected) >= limit:
+            return selected
+
+    # Backfill with deferred confusion candidates if we still need more rows.
+    for candidate in deferred_confusion:
+        selected.append(candidate)
+        if len(selected) >= limit:
+            break
+
+    return selected
 
 
 def write_candidates_csv(path: Path, candidates: list[LabelingCandidate]) -> None:
@@ -261,6 +482,7 @@ def write_candidates_csv(path: Path, candidates: list[LabelingCandidate]) -> Non
         "classification_method",
         "is_reviewed",
         "selection_reasons",
+        "target_signal_labels",
         "reviewed_label",
         "notes",
     ]
@@ -287,6 +509,7 @@ def write_candidates_csv(path: Path, candidates: list[LabelingCandidate]) -> Non
                     "classification_method": candidate.classification_method or "",
                     "is_reviewed": int(candidate.is_reviewed),
                     "selection_reasons": ";".join(sorted(candidate.reasons)),
+                    "target_signal_labels": ";".join(sorted(candidate.target_signal_labels)),
                     "reviewed_label": "",
                     "notes": "",
                 }
@@ -296,17 +519,21 @@ def write_candidates_csv(path: Path, candidates: list[LabelingCandidate]) -> Non
 def _summarize_candidates(candidates: list[LabelingCandidate]) -> dict[str, Any]:
     reason_counts: dict[str, int] = defaultdict(int)
     category_counts: dict[str, int] = defaultdict(int)
+    target_signal_counts: dict[str, int] = defaultdict(int)
 
     for candidate in candidates:
         category_counts[candidate.current_category] += 1
         for reason in candidate.reasons:
             reason_counts[reason] += 1
+        for target_label in candidate.target_signal_labels:
+            target_signal_counts[target_label] += 1
 
     return {
         "total_candidates": len(candidates),
         "candidate_ids": [candidate.email_id for candidate in candidates],
         "reason_counts": dict(sorted(reason_counts.items())),
         "category_counts": dict(sorted(category_counts.items())),
+        "target_signal_counts": dict(sorted(target_signal_counts.items())),
     }
 
 
@@ -315,8 +542,11 @@ def _render_candidate_summary_markdown(
     generated_at: datetime,
     since: datetime,
     low_confidence_threshold: float,
+    confusion_share_cap: float,
     target_labels: list[str],
     confusion_pairs: list[tuple[str, str]],
+    target_per_label: int,
+    target_support: dict[str, dict[str, int]],
     summary_payload: dict[str, Any],
     candidates_csv_path: Path,
 ) -> str:
@@ -326,7 +556,9 @@ def _render_candidate_summary_markdown(
     lines.append(f"Generated at: {generated_at.isoformat()} UTC")
     lines.append(f"Window start: {since.isoformat()} UTC")
     lines.append(f"Low-confidence threshold: < {low_confidence_threshold:.2f}")
+    lines.append(f"Confusion-pair primary-share cap: {confusion_share_cap:.0%}")
     lines.append(f"Target low-support labels: {', '.join(target_labels)}")
+    lines.append(f"Real-signal target per label: {target_per_label}")
     lines.append(
         "Target confusion pairs: "
         + ", ".join([f"{left} vs {right}" for left, right in confusion_pairs])
@@ -350,6 +582,27 @@ def _render_candidate_summary_markdown(
     if category_counts:
         for category, count in category_counts.items():
             lines.append(f"- {category}: {count}")
+    else:
+        lines.append("- none")
+
+    lines.append("")
+    lines.append("### By Target Signal Label")
+    target_signal_counts: dict[str, int] = summary_payload.get("target_signal_counts", {})
+    if target_signal_counts:
+        for label, count in target_signal_counts.items():
+            lines.append(f"- {label}: {count}")
+    else:
+        lines.append("- none")
+
+    lines.append("")
+    lines.append("### Target Label Support (Real)")
+    if target_support:
+        for label in target_labels:
+            support = target_support.get(label, {"current_total": 0, "gap_to_target": 0})
+            lines.append(
+                f"- {label}: real_total={support['current_total']}, "
+                f"gap_to_target={support['gap_to_target']}"
+            )
     else:
         lines.append("- none")
 
@@ -651,10 +904,34 @@ def _parse_args() -> argparse.Namespace:
         help="Upper confidence bound for confusion-pair pool sampling",
     )
     parser.add_argument(
+        "--confusion-share-cap",
+        type=float,
+        default=0.50,
+        help="Max fraction of final batch where confusion_pair_focus can be the primary reason",
+    )
+    parser.add_argument(
         "--support-limit",
         type=int,
         default=20,
         help="Max unique candidates added from low-support-label pool",
+    )
+    parser.add_argument(
+        "--target-signal-limit",
+        type=int,
+        default=20,
+        help="Max unique candidates added from target-label signal mining pool",
+    )
+    parser.add_argument(
+        "--target-signal-max-confidence",
+        type=float,
+        default=0.92,
+        help="Upper confidence bound for target-signal pool sampling",
+    )
+    parser.add_argument(
+        "--target-per-label",
+        type=int,
+        default=DEFAULT_TARGET_PER_LABEL,
+        help="Desired real-signal count per target label for gap-aware prioritization",
     )
     parser.add_argument(
         "--target-labels",
@@ -711,10 +988,18 @@ async def _run(args: argparse.Namespace) -> int:
         raise ValueError("--confusion-limit must be >= 0")
     if args.support_limit < 0:
         raise ValueError("--support-limit must be >= 0")
+    if args.target_signal_limit < 0:
+        raise ValueError("--target-signal-limit must be >= 0")
     if not 0.0 <= args.low_confidence_threshold <= 1.0:
         raise ValueError("--low-confidence-threshold must be between 0.0 and 1.0")
     if not 0.0 <= args.confusion_max_confidence <= 1.0:
         raise ValueError("--confusion-max-confidence must be between 0.0 and 1.0")
+    if not 0.0 <= args.confusion_share_cap <= 1.0:
+        raise ValueError("--confusion-share-cap must be between 0.0 and 1.0")
+    if not 0.0 <= args.target_signal_max_confidence <= 1.0:
+        raise ValueError("--target-signal-max-confidence must be between 0.0 and 1.0")
+    if args.target_per_label <= 0:
+        raise ValueError("--target-per-label must be > 0")
     if args.query_overfetch_multiplier <= 0:
         raise ValueError("--query-overfetch-multiplier must be > 0")
 
@@ -730,6 +1015,22 @@ async def _run(args: argparse.Namespace) -> int:
     since = generated_at - timedelta(days=args.days)
 
     confusion_labels = sorted({label for pair in confusion_pairs for label in pair})
+    all_time_real_by_label = await _get_training_counts_by_label(real_sources=real_sources)
+    target_support = _compute_target_support_gaps(
+        target_labels=target_labels,
+        all_time_by_label=all_time_real_by_label,
+        target_per_label=args.target_per_label,
+    )
+    support_quotas = _allocate_label_quotas(
+        total_limit=args.support_limit,
+        target_labels=target_labels,
+        support_gaps=target_support,
+    )
+    signal_quotas = _allocate_label_quotas(
+        total_limit=args.target_signal_limit,
+        target_labels=target_labels,
+        support_gaps=target_support,
+    )
 
     # Query more rows than limits to absorb dedupe overlap across pools.
     overfetch_multiplier = args.query_overfetch_multiplier
@@ -745,11 +1046,6 @@ async def _run(args: argparse.Namespace) -> int:
         query_limit=max(args.confusion_limit * overfetch_multiplier, args.limit * 2),
         max_confidence=args.confusion_max_confidence,
     )
-    low_support_pool = await _fetch_candidates_for_labels(
-        labels=target_labels,
-        since=since,
-        query_limit=max(args.support_limit * overfetch_multiplier, args.limit * 2),
-    )
 
     candidate_map: dict[int, LabelingCandidate] = {}
     _merge_pool(
@@ -764,15 +1060,45 @@ async def _run(args: argparse.Namespace) -> int:
         reason=REASON_CONFUSION_PAIR,
         max_new_candidates=args.confusion_limit,
     )
-    _merge_pool(
-        candidate_map=candidate_map,
-        pool=low_support_pool,
-        reason=REASON_LOW_SUPPORT,
-        max_new_candidates=args.support_limit,
-    )
 
-    selected = sorted(candidate_map.values(), key=_candidate_sort_key)[: args.limit]
+    for target_label in target_labels:
+        support_quota = support_quotas.get(target_label, 0)
+        if support_quota > 0:
+            low_support_pool = await _fetch_candidates_for_labels(
+                labels=[target_label],
+                since=since,
+                query_limit=max(support_quota * overfetch_multiplier, args.limit * 2),
+            )
+            _merge_pool(
+                candidate_map=candidate_map,
+                pool=low_support_pool,
+                reason=REASON_LOW_SUPPORT,
+                max_new_candidates=support_quota,
+            )
+
+        signal_quota = signal_quotas.get(target_label, 0)
+        if signal_quota > 0:
+            target_signal_pool = await _fetch_candidates_for_target_signal(
+                target_label=target_label,
+                since=since,
+                query_limit=max(signal_quota * overfetch_multiplier, args.limit * 2),
+                max_confidence=args.target_signal_max_confidence,
+            )
+            _merge_pool(
+                candidate_map=candidate_map,
+                pool=target_signal_pool,
+                reason=REASON_TARGET_SIGNAL,
+                max_new_candidates=signal_quota,
+                target_signal_label=target_label,
+            )
+
+    selected = _select_final_candidates(
+        candidates=list(candidate_map.values()),
+        limit=args.limit,
+        confusion_share_cap=args.confusion_share_cap,
+    )
     summary_payload = _summarize_candidates(selected)
+    summary_payload["target_support"] = target_support
 
     kpi = await _build_weekly_kpi(
         now=generated_at,
@@ -796,9 +1122,13 @@ async def _run(args: argparse.Namespace) -> int:
         "window_days": args.days,
         "window_start_utc": since.isoformat(),
         "target_labels": target_labels,
+        "target_per_label": args.target_per_label,
+        "target_support": target_support,
         "confusion_pairs": confusion_pairs,
         "confusion_max_confidence": args.confusion_max_confidence,
+        "confusion_share_cap": args.confusion_share_cap,
         "low_confidence_threshold": args.low_confidence_threshold,
+        "target_signal_max_confidence": args.target_signal_max_confidence,
         "summary": summary_payload,
     }
     summary_json_path.write_text(
@@ -810,8 +1140,11 @@ async def _run(args: argparse.Namespace) -> int:
         generated_at=generated_at,
         since=since,
         low_confidence_threshold=args.low_confidence_threshold,
+        confusion_share_cap=args.confusion_share_cap,
         target_labels=target_labels,
         confusion_pairs=confusion_pairs,
+        target_per_label=args.target_per_label,
+        target_support=target_support,
         summary_payload=summary_payload,
         candidates_csv_path=candidates_csv_path,
     )
