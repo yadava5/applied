@@ -1,0 +1,85 @@
+{
+  "coverage_contract": {
+    "confusion_pair_counts": {
+      "applied_vs_other": 3,
+      "applied_vs_pending_application": 20,
+      "assessment_vs_follow_up": 9,
+      "assessment_vs_interview": 2,
+      "assessment_vs_pending_application": 1,
+      "follow_up_vs_assessment": 6,
+      "follow_up_vs_interview": 3,
+      "follow_up_vs_other": 2,
+      "follow_up_vs_pending_application": 1,
+      "interview_vs_assessment": 1,
+      "interview_vs_follow_up": 9,
+      "interview_vs_other": 2,
+      "offer_vs_applied": 6,
+      "offer_vs_follow_up": 1,
+      "offer_vs_interview": 2,
+      "offer_vs_other": 3,
+      "other_vs_applied": 7,
+      "other_vs_assessment": 1,
+      "other_vs_interview": 1,
+      "other_vs_offer": 3,
+      "pending_application_vs_other": 1,
+      "rejection_vs_follow_up": 1,
+      "rejection_vs_interview": 1,
+      "rejection_vs_other": 10
+    },
+    "historical_miss_subjects": [
+      "Meet our team",
+      "Interview scheduling request",
+      "Decision on candidacy",
+      "Role closed",
+      "Not moving forward",
+      "Assessment follow-up",
+      "Circling back on the role",
+      "Quick follow-up"
+    ],
+    "per_label_target": 12,
+    "required_confusion_pairs": [
+      "applied_vs_pending_application",
+      "assessment_vs_follow_up",
+      "interview_vs_follow_up",
+      "rejection_vs_other",
+      "other_vs_interview"
+    ],
+    "scenario_groups": {
+      "core_negative": 6,
+      "core_positive": 65,
+      "edge_noise": 17,
+      "historical_miss": 8
+    },
+    "total_examples": 96
+  },
+  "dataset": "backend/data/evaluation/classifier_eval_v3.jsonl",
+  "description": "Expanded evaluation dataset focused on real-world edge cases and confusion-pair coverage.",
+  "notes": [
+    "Includes explicit historical miss cases from v2 mismatch reports.",
+    "Adds noise-heavy samples with unsubscribe/security/promo language to test guardrails.",
+    "Maintains equal class balance to keep metric changes interpretable."
+  ],
+  "schema": {
+    "label_set": [
+      "applied",
+      "assessment",
+      "follow_up",
+      "interview",
+      "offer",
+      "other",
+      "pending_application",
+      "rejection"
+    ],
+    "optional_fields": [
+      "sender_email",
+      "scenario_group",
+      "confusion_pair"
+    ],
+    "required_fields": [
+      "subject",
+      "body_text",
+      "label"
+    ]
+  },
+  "version": "v3"
+}
