@@ -1,0 +1,202 @@
+{
+  "confusion_matrix": {
+    "applied": {
+      "applied": 12,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "assessment": {
+      "applied": 0,
+      "assessment": 12,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "follow_up": {
+      "applied": 0,
+      "assessment": 1,
+      "follow_up": 11,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "interview": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 12,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "offer": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 12,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "other": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 12,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "pending_application": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 12,
+      "rejection": 0
+    },
+    "rejection": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 1,
+      "pending_application": 0,
+      "rejection": 11
+    }
+  },
+  "label_distribution": {
+    "applied": 12,
+    "assessment": 12,
+    "follow_up": 12,
+    "interview": 12,
+    "offer": 12,
+    "other": 12,
+    "pending_application": 12,
+    "rejection": 12
+  },
+  "meta": {
+    "dataset": "data/evaluation/classifier_eval_v3.jsonl",
+    "generated_at": "2026-03-03T00:01:57.266898+00:00",
+    "mode": "rules",
+    "sample_count": 96
+  },
+  "mismatches": [
+    {
+      "expected": "rejection",
+      "predicted": "other",
+      "subject": "Thank you for interviewing with us"
+    },
+    {
+      "expected": "follow_up",
+      "predicted": "assessment",
+      "subject": "Follow-up after completing assessment"
+    }
+  ],
+  "overall": {
+    "accuracy": 0.9791666666666666,
+    "macro_f1": 0.9791304347826086,
+    "misclassified": 2,
+    "weighted_f1": 0.9791304347826086
+  },
+  "per_label": {
+    "applied": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "assessment": {
+      "f1": 0.9600000000000001,
+      "fn": 0,
+      "fp": 1,
+      "precision": 0.9230769230769231,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "follow_up": {
+      "f1": 0.9565217391304348,
+      "fn": 1,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.9166666666666666,
+      "support": 12,
+      "tp": 11
+    },
+    "interview": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "offer": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "other": {
+      "f1": 0.9600000000000001,
+      "fn": 0,
+      "fp": 1,
+      "precision": 0.9230769230769231,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "pending_application": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "rejection": {
+      "f1": 0.9565217391304348,
+      "fn": 1,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.9166666666666666,
+      "support": 12,
+      "tp": 11
+    }
+  },
+  "prediction_distribution": {
+    "applied": 12,
+    "assessment": 13,
+    "follow_up": 11,
+    "interview": 12,
+    "offer": 12,
+    "other": 13,
+    "pending_application": 12,
+    "rejection": 11
+  }
+}
