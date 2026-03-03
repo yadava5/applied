@@ -331,6 +331,19 @@ What changed:
 Impact:
 - Weekly candidate generation now explicitly optimizes for sparse real-signal growth while preserving privacy-safe artifact outputs.
 
+### Phase 21: Issue backlog normalization (March 3, 2026)
+
+Context:
+- Implemented work was ahead of issue status, and remaining work needed explicit, execution-ready issue specs.
+
+What changed:
+- Closed completed implementation issues: `#2`, `#3`, `#4`, `#5`, `#6`.
+- Created detailed remaining-work issues: `#7`, `#8`, `#9`, `#10`.
+- Aligned planning docs so open issues match the active execution backlog.
+
+Impact:
+- GitHub issue board now cleanly separates completed work from remaining milestones.
+
 ## Open Risks / Remaining Work
 
 - Real user-correction volume is still modest (`81`) relative to synthetic and external data.
@@ -339,9 +352,11 @@ Impact:
 
 ## Immediate Priorities
 
-1. Increase real correction volume for rare classes (`offer`, `assessment`, `pending_application`).
-2. Execute weekly review loop on generated candidates and apply confirmed corrections.
-3. Continue avoiding narrow phrase patches unless backed by broad data and evaluation.
+1. Execute issue `#7`: operational weekly sparse-label review SOP + strict run cadence.
+2. Grow real correction coverage for `offer`, `interview`, and `pending_application`.
+3. Execute issue `#8`: add monitoring alert triage runbook + escalation workflow.
+4. Execute issue `#9`: define real-signal-heavy eval v4 dataset + baselines.
+5. Execute issue `#10`: add classifier rule-governance guardrails.
 
 ## Resume Checklist
 

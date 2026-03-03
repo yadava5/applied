@@ -20,7 +20,21 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
 - Real user-correction rows: `81` (latest recorded run; still lower than synthetic volume).
 - Current review queue count: `0`.
 
-## Priority 1: Increase Real-Signal Share
+## Issue Status Snapshot (March 3, 2026)
+
+- Closed (implemented): `#2`, `#3`, `#4`, `#5`, `#6`
+- Open (remaining): `#7`, `#8`, `#9`, `#10`
+
+## Priority 1: Operationalize Weekly Sparse-Label Review SOP (`#7`)
+
+- Convert current weekly tooling into a strict operating runbook:
+  - cadence
+  - reviewer checklist
+  - retrain/eval/test verification checklist
+- Standardize tracker update format for every weekly run.
+- Keep weekly artifacts privacy-safe (IDs + aggregate counts only).
+
+## Priority 2: Increase Real-Signal Share (`#7` continuation)
 
 - Collect more true user-correction examples, especially for:
   - `offer`
@@ -37,7 +51,7 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - `backend/data/evaluation/weekly_labeling/weekly_kpi_YYYYMMDD.md`
   - tracker append: `docs/ML_EXECUTION_TRACKER.md`
 
-## Priority 2: Monitor Drift and Confidence Health
+## Priority 3: Monitoring Alert Triage + Escalation (`#8`)
 
 - Run periodic monitoring snapshots (single command):
   - `scripts/monitoring_cycle.sh --days 7 --append-history`
@@ -56,8 +70,23 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - confusion-pair low-confidence volume: `>=3`
 - Scheduled automation:
   - `.github/workflows/ml-monitoring-weekly.yml` runs weekly and uploads artifacts.
+- Remaining gap:
+  - add explicit alert triage runbook
+  - add owner/severity/escalation workflow for threshold breaches
 
-## Priority 3: Keep Retrain Provenance Strict
+## Priority 4: Define Real-Signal-Heavy Eval v4 (`#9`)
+
+- Create `classifier_eval_v4` contract + dataset with stronger real-signal representation.
+- Commit v4 rules/hybrid baselines and wire migration plan for CI gating.
+- Keep v1/v2/v3 for continuity during staged rollout.
+
+## Priority 5: Guard Against Shortcut Reintroduction (`#10`)
+
+- Avoid narrow phrase/brand-based rule patches unless clearly broad and justified.
+- Add governance policy + PR evidence requirements for classifier rule edits.
+- Keep fixes benchmark-backed and data-driven.
+
+## Priority 6: Keep Retrain Provenance Strict (Maintenance from `#5`)
 
 - Enforced in code/tests via `validate_training_metadata_contract(...)`.
 - Every retrain artifact now includes:
@@ -66,20 +95,6 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - train/eval split sizes
   - timestamp and base model
 - Keep this contract versioned and explicit for future schema changes.
-
-## Priority 4: Execute Weekly Sparse-Label Review Loop (Next Implementation Target)
-
-- Run weekly batch and manually review `reviewed_label` for selected candidates.
-- Prioritize confirming true `offer`, `interview`, and `pending_application` examples.
-- Feed confirmed labels into corrections and retrain cycle to increase real-signal share.
-
-## Priority 5: Guard Against Shortcut Reintroduction
-
-- Avoid narrow phrase/brand-based rule patches unless clearly broad and justified.
-- Prefer fixes through:
-  - representative data
-  - confidence calibration
-  - benchmark-backed validation
 
 ## Standard Verification Commands
 
