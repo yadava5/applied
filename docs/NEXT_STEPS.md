@@ -1,6 +1,6 @@
 # Next Steps for JobTracker ML
 
-Updated: **February 28, 2026**
+Updated: **March 3, 2026**
 
 This checklist starts from the current post-cleanup state (broad rules + mixed-source SetFit retrain).
 
@@ -8,6 +8,13 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
 
 - Rules/hybrid v1 baselines pass.
 - Rules/hybrid v2 baselines pass.
+- Rules/hybrid v3 baselines committed.
+- v3 rules benchmark gate is active in CI.
+- v3 hybrid benchmark gate is active in CI (deterministic profile).
+- Weekly labeling workflow now includes:
+  - target-label signal mining for sparse classes
+  - gap-aware per-label quotas (`--target-per-label`)
+  - confusion-share cap in final batch selection
 - Full backend tests pass.
 - Training data rows: `1,249` (latest recorded run).
 - Real user-correction rows: `81` (latest recorded run; still lower than synthetic volume).
@@ -60,13 +67,11 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - timestamp and base model
 - Keep this contract versioned and explicit for future schema changes.
 
-## Priority 4: Expand Evaluation Coverage (Next Implementation Target)
+## Priority 4: Execute Weekly Sparse-Label Review Loop (Next Implementation Target)
 
-- Build `classifier_eval_v3` with stronger edge-case and confusion-pair coverage.
-- Generate and commit `baseline_rules_v3.json` and `baseline_hybrid_v3.json`.
-- Add regression tests for known historical misses.
-- Add CI gate policy for v3 rules benchmark (or document staged rollout rationale).
-- This maps to GitHub issue `#4`.
+- Run weekly batch and manually review `reviewed_label` for selected candidates.
+- Prioritize confirming true `offer`, `interview`, and `pending_application` examples.
+- Feed confirmed labels into corrections and retrain cycle to increase real-signal share.
 
 ## Priority 5: Guard Against Shortcut Reintroduction
 
@@ -86,5 +91,13 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode rules --dataset data/evaluation/classifier_eval_v2.jsonl --baseline data/evaluation/baseline_rules_v2.json`
 - Hybrid v2:
   - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode hybrid --dataset data/evaluation/classifier_eval_v2.jsonl --baseline data/evaluation/baseline_hybrid_v2.json`
+- Rules v3:
+  - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode rules --dataset data/evaluation/classifier_eval_v3.jsonl --baseline data/evaluation/baseline_rules_v3.json`
+- Hybrid v3:
+  - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode hybrid --dataset data/evaluation/classifier_eval_v3.jsonl --baseline data/evaluation/baseline_hybrid_v3.json --hybrid-profile deterministic`
+- Weekly sparse-label batch (enhanced):
+  - `scripts/weekly_labeling_cycle.sh --append-tracker --target-per-label 25 --target-signal-limit 20 --confusion-share-cap 0.50`
+- Regenerate baselines for any eval version:
+  - `scripts/generate_eval_baselines.sh --version 3`
 - Full backend tests:
   - `.venv311/bin/pytest -q`
