@@ -75,6 +75,7 @@ echo "[ML] Evaluating hybrid v1..."
   --mode hybrid \
   --dataset data/evaluation/classifier_eval_v1.jsonl \
   --baseline data/evaluation/baseline_hybrid_v1.json \
+  --hybrid-profile deterministic \
   --tolerance 0.001
 
 echo "[ML] Evaluating rules v2..."
@@ -89,6 +90,22 @@ echo "[ML] Evaluating hybrid v2..."
   --mode hybrid \
   --dataset data/evaluation/classifier_eval_v2.jsonl \
   --baseline data/evaluation/baseline_hybrid_v2.json \
+  --hybrid-profile deterministic \
+  --tolerance 0.001
+
+echo "[ML] Evaluating rules v3..."
+"$PYTHON" -m jobtracker.scripts.evaluate_classifier \
+  --mode rules \
+  --dataset data/evaluation/classifier_eval_v3.jsonl \
+  --baseline data/evaluation/baseline_rules_v3.json \
+  --tolerance 0.001
+
+echo "[ML] Evaluating hybrid v3..."
+"$PYTHON" -m jobtracker.scripts.evaluate_classifier \
+  --mode hybrid \
+  --dataset data/evaluation/classifier_eval_v3.jsonl \
+  --baseline data/evaluation/baseline_hybrid_v3.json \
+  --hybrid-profile deterministic \
   --tolerance 0.001
 
 echo "[ML] Rebuilding benchmark history..."
