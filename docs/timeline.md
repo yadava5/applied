@@ -1,6 +1,6 @@
 # JobTracker Detailed Timeline
 
-As of **February 28, 2026**.
+As of **March 3, 2026**.
 
 This is the continuity document for product and ML behavior. It records what changed, why it changed, what was verified, and what remains open.
 
@@ -10,7 +10,7 @@ This is the continuity document for product and ML behavior. It records what cha
 - Classifier quality depended on interactions between rules, embeddings, SetFit, and data ingestion; isolated notes were insufficient.
 - Regressions were often caused by good-intention changes without a durable historical record of rationale.
 
-## Current Snapshot (February 28, 2026)
+## Current Snapshot (March 3, 2026)
 
 - Architecture remains local-first: SwiftUI macOS app + local FastAPI backend + SQLite.
 - Classification stack remains hybrid: `rules -> embeddings -> SetFit -> fallback/needs_review`.
@@ -28,9 +28,11 @@ This is the continuity document for product and ML behavior. It records what cha
 - Quality gates currently passing:
   - eval v1 rules: `1.0000 accuracy / 1.0000 macro-F1`
   - eval v1 hybrid: `1.0000 accuracy / 1.0000 macro-F1`
-  - eval v2 rules: `0.9688 accuracy / 0.9686 macro-F1`
-  - eval v2 hybrid: `0.9688 accuracy / 0.9686 macro-F1`
-  - backend tests: `138 passed`
+  - eval v2 rules: `0.9688 accuracy / 0.9686 macro-F1` (latest spot run)
+  - eval v2 hybrid: `0.9531 accuracy / 0.9526 macro-F1` (latest spot run)
+  - eval v3 rules baseline: `0.9792 accuracy / 0.9791 macro-F1`
+  - eval v3 hybrid baseline (deterministic profile): `0.9792 accuracy / 0.9791 macro-F1`
+  - backend tests: `145 passed`
 
 ## Chronology
 
@@ -279,18 +281,67 @@ Impact:
 - Weekly monitoring became automated and auditable.
 - Retrain artifact provenance is now strict and CI-protected against contract regressions.
 
+### Phase 18: Evaluation v3 + baseline workflow + CI gate refresh (March 2, 2026)
+
+Context:
+- Evaluation coverage needed stronger edge-case/confusion-pair representation and explicit reproducible baseline refresh commands.
+
+What changed:
+- Added `classifier_eval_v3.jsonl` and machine-readable contract `classifier_eval_v3_spec.json`.
+- Added baseline workflow script `scripts/generate_eval_baselines.sh`.
+- Generated and committed `baseline_rules_v3.json` and `baseline_hybrid_v3.json`.
+- Refreshed benchmark history artifacts from all baseline versions.
+- Updated backend CI to use v3 rules blocking gate and v3 hybrid non-blocking signal.
+- Added dataset contract tests for v3 coverage/historical-miss presence.
+
+Impact:
+- Evaluation corpus quality and governance moved from ad-hoc updates to explicit contract + repeatable generation workflow.
+- CI rules protection now reflects the latest high-coverage benchmark set.
+
+### Phase 19: Deterministic hybrid benchmark gating (March 2, 2026)
+
+Context:
+- Hybrid benchmark output varied by machine because local semantic-layer state (especially SetFit artifacts) could influence results.
+
+What changed:
+- Added hybrid evaluator profiles:
+  - `full` (runtime state aware)
+  - `deterministic` (state-independent for CI)
+- Hybrid v3 baseline regenerated with deterministic profile.
+- Backend CI hybrid step switched from non-blocking signal to blocking gate using deterministic profile and macro-F1 floor.
+- Added evaluator tests covering deterministic-profile behavior.
+
+Impact:
+- Hybrid benchmark gate is now reproducible and safe to enforce in CI.
+
+### Phase 20: Real-signal sparse-label coverage expansion (March 3, 2026)
+
+Context:
+- Weekly batches could become dominated by confusion-pair candidates (often `applied`), which limited discovery of true sparse-label corrections for `offer`, `interview`, and `pending_application`.
+
+What changed:
+- Added gap-aware sparse-label quotas (`--target-per-label`) in weekly labeling workflow.
+- Added target-label signal mining from subject/body text for sparse classes:
+  - `--target-signal-limit`
+  - `--target-signal-max-confidence`
+- Added final-batch balancing guard:
+  - `--confusion-share-cap`
+- Added workflow tests covering quota bias, signal-mining selection, and cap behavior.
+
+Impact:
+- Weekly candidate generation now explicitly optimizes for sparse real-signal growth while preserving privacy-safe artifact outputs.
+
 ## Open Risks / Remaining Work
 
 - Real user-correction volume is still modest (`81`) relative to synthetic and external data.
 - `offer` remains low in real-world examples; synthetic helps coverage but cannot replace true distribution.
-- Benchmark corpora are still limited in scale despite v2 improvements (v3 evaluation set still open).
+- Real-signal coverage for sparse labels remains the main model-quality bottleneck.
 
 ## Immediate Priorities
 
 1. Increase real correction volume for rare classes (`offer`, `assessment`, `pending_application`).
-2. Build `classifier_eval_v3` + v3 baselines and add associated gate/test coverage (issue `#4`).
-3. Stabilize deterministic hybrid benchmark for eventual blocking CI rollout (issue `#6`).
-4. Continue avoiding narrow phrase patches unless backed by broad data and evaluation.
+2. Execute weekly review loop on generated candidates and apply confirmed corrections.
+3. Continue avoiding narrow phrase patches unless backed by broad data and evaluation.
 
 ## Resume Checklist
 
@@ -302,5 +353,7 @@ Impact:
    - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode hybrid --dataset data/evaluation/classifier_eval_v1.jsonl --baseline data/evaluation/baseline_hybrid_v1.json`
    - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode rules --dataset data/evaluation/classifier_eval_v2.jsonl --baseline data/evaluation/baseline_rules_v2.json`
    - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode hybrid --dataset data/evaluation/classifier_eval_v2.jsonl --baseline data/evaluation/baseline_hybrid_v2.json`
+   - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode rules --dataset data/evaluation/classifier_eval_v3.jsonl --baseline data/evaluation/baseline_rules_v3.json`
+   - `.venv311/bin/python -m jobtracker.scripts.evaluate_classifier --mode hybrid --dataset data/evaluation/classifier_eval_v3.jsonl --baseline data/evaluation/baseline_hybrid_v3.json --hybrid-profile deterministic`
 4. Run tests:
    - `.venv311/bin/pytest -q`
