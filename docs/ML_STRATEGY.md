@@ -174,8 +174,15 @@ Classifier evaluation harness:
 Versioned benchmark assets:
 
 - `backend/data/evaluation/classifier_eval_v1.jsonl`
+- `backend/data/evaluation/classifier_eval_v2.jsonl`
+- `backend/data/evaluation/classifier_eval_v3.jsonl`
+- `backend/data/evaluation/classifier_eval_v3_spec.json`
 - `backend/data/evaluation/baseline_rules_v1.json`
 - `backend/data/evaluation/baseline_hybrid_v1.json`
+- `backend/data/evaluation/baseline_rules_v2.json`
+- `backend/data/evaluation/baseline_hybrid_v2.json`
+- `backend/data/evaluation/baseline_rules_v3.json`
+- `backend/data/evaluation/baseline_hybrid_v3.json`
 
 Core output metrics:
 
@@ -185,21 +192,36 @@ Core output metrics:
 - weighted-F1
 - confusion matrix
 
-CI (`.github/workflows/backend-ci.yml`) runs this harness in `rules` mode and fails on
-baseline regressions (with configured tolerance) or when macro-F1 drops below floor.
-This protects against silent quality regressions from rule or pipeline changes.
+CI (`.github/workflows/backend-ci.yml`) runs blocking v3 gates for both rules and hybrid:
+- rules gate uses the default runtime profile
+- hybrid gate uses `--hybrid-profile deterministic`
 
-Hybrid benchmark track is available for full pipeline checks:
+Both fail on baseline regressions (with configured tolerance) or when macro-F1 drops below
+the configured floor. This protects against silent quality regressions from rule or pipeline changes.
+
+Hybrid benchmark track supports profiles:
+- `full`: normal runtime behavior with available semantic layers
+- `deterministic`: disables stateful semantic layers for machine-stable CI gating
+
+Use deterministic profile for reproducible gates:
 
 ```bash
 cd backend
 .venv311/bin/python -m jobtracker.scripts.evaluate_classifier \
   --mode hybrid \
-  --dataset data/evaluation/classifier_eval_v1.jsonl
+  --dataset data/evaluation/classifier_eval_v3.jsonl \
+  --hybrid-profile deterministic
 ```
 
-Hybrid checks are intentionally not in CI yet because they depend on local model state
-(SetFit model availability/version and embedding model warmup), which can reduce run determinism.
+Use full profile for exploratory local checks against your current semantic-layer state:
+
+```bash
+cd backend
+.venv311/bin/python -m jobtracker.scripts.evaluate_classifier \
+  --mode hybrid \
+  --dataset data/evaluation/classifier_eval_v3.jsonl \
+  --hybrid-profile full
+```
 
 Category performance history artifacts can be generated from all baseline files:
 
@@ -217,6 +239,12 @@ Standardized end-to-end ML cycle command:
 
 ```bash
 scripts/ml_cycle.sh
+```
+
+Baseline update workflow for versioned evaluation sets:
+
+```bash
+scripts/generate_eval_baselines.sh --version 3
 ```
 
 Optional flags:
@@ -272,7 +300,11 @@ Common tuning flags (no code edits needed):
 
 - `--low-confidence-threshold`
 - `--confusion-max-confidence`
+- `--confusion-share-cap`
 - `--target-labels`
+- `--target-per-label`
+- `--target-signal-limit`
+- `--target-signal-max-confidence`
 - `--confusion-pairs`
 - `--query-overfetch-multiplier`
 
@@ -286,7 +318,13 @@ It targets:
 
 1. Lowest-confidence job predictions
 2. Known confusion pairs (`assessment` vs `follow_up`, `applied` vs `pending_application`)
-3. Low-support labels (`offer`, `interview`, `pending_application`)
+3. Low-support labels (`offer`, `interview`, `pending_application`) using gap-aware quotas
+4. Target-label signal mining in subject/body text to surface likely sparse-label items even when currently misclassified
+
+Selection behavior notes:
+
+- `target_label_signal` candidates are prioritized ahead of confusion-pair-only items.
+- `--confusion-share-cap` limits how much of the final batch can be driven primarily by confusion-pair focus, preventing `applied`-heavy batches from crowding out sparse-label discovery.
 
 When `--append-tracker` is used, it appends KPI snapshots into `docs/ML_EXECUTION_TRACKER.md` including:
 
