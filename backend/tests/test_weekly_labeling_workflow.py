@@ -142,6 +142,69 @@ def test_append_snapshot_to_tracker_avoids_duplicate_heading(tmp_path: Path) -> 
     assert first == second
 
 
+def test_allocate_label_quotas_biases_toward_larger_real_signal_gaps() -> None:
+    support_gaps = {
+        "offer": {"current_total": 2, "gap_to_target": 23},
+        "interview": {"current_total": 18, "gap_to_target": 7},
+        "pending_application": {"current_total": 26, "gap_to_target": 0},
+    }
+
+    quotas = workflow._allocate_label_quotas(
+        total_limit=12,
+        target_labels=["offer", "interview", "pending_application"],
+        support_gaps=support_gaps,
+    )
+
+    assert sum(quotas.values()) == 12
+    assert quotas["offer"] > quotas["interview"]
+    assert quotas["pending_application"] <= quotas["interview"]
+
+
+def test_select_final_candidates_caps_primary_confusion_share() -> None:
+    base_time = datetime(2026, 3, 1, 10, 0, 0)
+    candidates = []
+    for idx in range(6):
+        candidates.append(
+            LabelingCandidate(
+                email_id=idx + 1,
+                received_at=base_time + timedelta(minutes=idx),
+                source_account="gmail",
+                current_category="applied",
+                confidence=0.9,
+                classification_method="rules",
+                is_reviewed=False,
+                reasons={"confusion_pair_focus"},
+            )
+        )
+    for idx in range(6, 14):
+        candidates.append(
+            LabelingCandidate(
+                email_id=idx + 1,
+                received_at=base_time + timedelta(minutes=idx),
+                source_account="gmail",
+                current_category="offer",
+                confidence=0.8,
+                classification_method="setfit",
+                is_reviewed=False,
+                reasons={"target_label_signal"},
+            )
+        )
+
+    selected = workflow._select_final_candidates(
+        candidates=candidates,
+        limit=8,
+        confusion_share_cap=0.25,
+    )
+
+    assert len(selected) == 8
+    confusion_primary = sum(
+        1
+        for item in selected
+        if workflow._primary_reason(item) == workflow.REASON_CONFUSION_PAIR
+    )
+    assert confusion_primary <= 2
+
+
 @pytest.mark.asyncio
 async def test_weekly_workflow_rejects_invalid_thresholds(tmp_path: Path) -> None:
     args = argparse.Namespace(
@@ -151,7 +214,11 @@ async def test_weekly_workflow_rejects_invalid_thresholds(tmp_path: Path) -> Non
         low_confidence_limit=10,
         confusion_limit=10,
         confusion_max_confidence=0.95,
+        confusion_share_cap=0.50,
         support_limit=10,
+        target_signal_limit=10,
+        target_signal_max_confidence=0.92,
+        target_per_label=25,
         target_labels="offer,interview,pending_application",
         confusion_pairs="assessment:follow_up,applied:pending_application",
         real_sources="user_correction",
@@ -291,7 +358,11 @@ async def test_weekly_workflow_run_selects_expected_candidates_and_reasons(
         low_confidence_limit=10,
         confusion_limit=10,
         confusion_max_confidence=0.95,
+        confusion_share_cap=0.50,
         support_limit=10,
+        target_signal_limit=10,
+        target_signal_max_confidence=0.92,
+        target_per_label=25,
         target_labels="offer,interview,pending_application",
         confusion_pairs="assessment:follow_up,applied:pending_application",
         real_sources="user_correction",
@@ -373,7 +444,11 @@ async def test_weekly_workflow_honors_custom_pairs_labels_and_thresholds(
         low_confidence_limit=10,
         confusion_limit=10,
         confusion_max_confidence=0.50,
+        confusion_share_cap=0.50,
         support_limit=10,
+        target_signal_limit=10,
+        target_signal_max_confidence=0.92,
+        target_per_label=25,
         target_labels="offer",
         confusion_pairs="interview:offer",
         real_sources="user_correction",
@@ -394,3 +469,77 @@ async def test_weekly_workflow_honors_custom_pairs_labels_and_thresholds(
     assert payload["confusion_max_confidence"] == 0.5
     # Ensure support-target candidate still appears even with strict confusion threshold.
     assert payload["summary"]["total_candidates"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_weekly_workflow_target_signal_mines_sparse_label_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _reset_weekly_tables()
+    monkeypatch.setattr(settings, "database_dir", str(tmp_path / "dbdir"), raising=False)
+
+    now = datetime.utcnow()
+    async with get_session() as session:
+        emails = [
+            Email(
+                source_account=EmailSource.GMAIL,
+                message_id="<signal-1@test.com>",
+                received_at=now - timedelta(hours=1),
+                subject="Offer letter attached",
+                sender_email="talent@test.com",
+                classified_as=EmailCategory.OTHER,
+                classification_confidence=0.90,
+                classification_method="rules",
+                user_corrected=False,
+            ),
+            Email(
+                source_account=EmailSource.GMAIL,
+                message_id="<signal-2@test.com>",
+                received_at=now - timedelta(hours=2),
+                subject="Weekly newsletter",
+                sender_email="news@test.com",
+                classified_as=EmailCategory.OTHER,
+                classification_confidence=0.80,
+                classification_method="rules",
+                user_corrected=False,
+            ),
+        ]
+        session.add_all(emails)
+        await session.commit()
+        for email in emails:
+            await session.refresh(email)
+        target_email_id = int(emails[0].id or 0)
+
+    output_dir = tmp_path / "signal-output"
+    args = argparse.Namespace(
+        days=30,
+        limit=10,
+        low_confidence_threshold=0.10,
+        low_confidence_limit=0,
+        confusion_limit=0,
+        confusion_max_confidence=0.95,
+        confusion_share_cap=0.50,
+        support_limit=0,
+        target_signal_limit=5,
+        target_signal_max_confidence=0.92,
+        target_per_label=25,
+        target_labels="offer",
+        confusion_pairs="assessment:follow_up",
+        real_sources="user_correction",
+        output_dir=output_dir,
+        tracker_path=tmp_path / "tracker.md",
+        append_tracker=False,
+        query_overfetch_multiplier=3,
+    )
+
+    rc = await workflow._run(args)
+    assert rc == 0
+
+    summary_path = sorted(output_dir.glob("weekly_labeling_summary_*.json"))[0]
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    candidate_ids = payload["summary"]["candidate_ids"]
+
+    assert target_email_id in candidate_ids
+    assert payload["summary"]["reason_counts"]["target_label_signal"] >= 1
+    assert payload["summary"]["target_signal_counts"]["offer"] >= 1
