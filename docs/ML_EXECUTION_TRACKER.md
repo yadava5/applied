@@ -335,3 +335,173 @@ Implemented:
 Verification:
 - targeted metadata tests: `5 passed`
 - full backend suite: `138 passed`
+
+## Cycle H (March 2, 2026): Evaluation v3 Dataset + Baseline Workflow - Completed
+
+Goal:
+- Complete issue `#4` by adding a stronger v3 evaluation corpus, reproducible baseline generation workflow, and CI gate coverage for rules.
+
+### Step H1 - Add v3 dataset spec + corpus (`completed`)
+
+Implemented:
+- Added machine-readable dataset contract:
+  - `backend/data/evaluation/classifier_eval_v3_spec.json`
+- Added expanded corpus with edge/noise/confusion coverage:
+  - `backend/data/evaluation/classifier_eval_v3.jsonl`
+
+Coverage shape:
+- total rows: `96`
+- per label: `12` across 8 labels
+- includes explicit historical-miss subjects and confusion-pair tagging metadata
+
+### Step H2 - Add baseline generation workflow (`completed`)
+
+Implemented:
+- Added reusable root command:
+  - `scripts/generate_eval_baselines.sh --version 3`
+- Workflow behavior:
+  - updates `baseline_rules_v<version>.json`
+  - updates `baseline_hybrid_v<version>.json` (optional skip flag)
+  - rebuilds benchmark history artifacts
+
+### Step H3 - Generate and commit v3 baselines (`completed`)
+
+Artifacts:
+- `backend/data/evaluation/baseline_rules_v3.json`
+- `backend/data/evaluation/baseline_hybrid_v3.json`
+- refreshed:
+  - `backend/data/evaluation/benchmark_history.jsonl`
+  - `backend/data/evaluation/benchmark_history.md`
+
+Verification on v3:
+- rules: `accuracy=0.9792`, `macro_f1=0.9791`, `misclassified=2`
+- hybrid: `accuracy=0.9583`, `macro_f1=0.9583`, `misclassified=4`
+
+### Step H4 - CI + regression coverage updates (`completed`)
+
+Implemented:
+- Backend CI rules gate moved to v3 dataset/baseline with macro-F1 floor.
+- Hybrid CI signal moved to v3 dataset/baseline (still non-blocking).
+- Added dataset contract tests:
+  - `backend/tests/test_eval_v3_dataset_contract.py`
+
+Verification:
+- v3 rules gate command: `PASS`
+- v3 hybrid signal command: `PASS`
+- full backend suite: `140 passed`
+
+## Cycle I (March 2, 2026): Deterministic Hybrid CI Stabilization - Completed
+
+Goal:
+- Complete issue `#6` by making hybrid benchmark behavior reproducible and safe to use as a blocking CI gate.
+
+### Step I1 - Deterministic hybrid profile in evaluator (`completed`)
+
+Implemented:
+- Added `--hybrid-profile` to evaluator with:
+  - `full` (default runtime behavior)
+  - `deterministic` (disables SetFit + embedding-example state dependence)
+- Added profile metadata into reports for hybrid runs.
+- Evaluator now initializes DB schema before predictions, eliminating repeated table-missing noise in test environment runs.
+
+### Step I2 - Baseline workflow alignment (`completed`)
+
+Implemented:
+- `scripts/generate_eval_baselines.sh` now supports `--hybrid-profile` and defaults hybrid baseline generation to `deterministic`.
+- Regenerated `baseline_hybrid_v3.json` using deterministic profile.
+- Refreshed benchmark history artifacts.
+
+### Step I3 - CI gate rollout (`completed`)
+
+Implemented:
+- Updated backend CI hybrid step to:
+  - use v3 dataset/baseline
+  - run with `--hybrid-profile deterministic`
+  - enforce `--min-macro-f1 0.95`
+  - run as blocking gate (removed non-blocking mode)
+
+### Step I4 - Regression tests (`completed`)
+
+Implemented:
+- Added evaluator unit coverage for deterministic profile behavior and invalid profile rejection in:
+  - `backend/tests/test_evaluate_classifier.py`
+
+Verification:
+- v3 rules gate command: `PASS`
+- v3 hybrid gate command (deterministic profile): `PASS`
+- full backend suite: `142 passed`
+
+## Cycle J (March 3, 2026): Real-Signal Labeling Coverage Expansion - Completed
+
+Goal:
+- Complete issue `#2` by improving weekly candidate discovery for sparse real-signal classes (`offer`, `interview`, `pending_application`) without unsafe pseudo-labeling.
+
+### Step J1 - Gap-aware sparse-label prioritization (`completed`)
+
+Implemented:
+- Added per-label real-signal gap calculation against configurable target (`--target-per-label`, default `25`).
+- Added quota allocation by gap size for low-support candidate sampling.
+
+### Step J2 - Target-label signal mining (`completed`)
+
+Implemented:
+- Added `target_label_signal` pool that mines likely sparse-label candidates from subject/body patterns, even when currently classified as other labels.
+- Added tunables:
+  - `--target-signal-limit`
+  - `--target-signal-max-confidence`
+- Added `target_signal_labels` field in weekly candidate CSV (privacy-safe metadata only).
+
+### Step J3 - Final-batch balancing safeguards (`completed`)
+
+Implemented:
+- Added `--confusion-share-cap` to prevent confusion-pair-only candidates from crowding out sparse-label candidates when alternatives exist.
+- Reordered reason priority to favor sparse-label discovery:
+  - `low_confidence` → `target_label_signal` → `low_support_category` → `confusion_pair_focus`
+
+### Step J4 - Tests + artifacts (`completed`)
+
+Implemented:
+- Expanded weekly workflow tests for:
+  - gap-based quota bias behavior
+  - target-signal discovery path
+  - confusion-share cap selection behavior
+- Regenerated weekly artifacts:
+  - `weekly_labeling_candidates_20260303.csv`
+  - `weekly_labeling_summary_20260303.{md,json}`
+  - `weekly_kpi_20260303.md`
+
+Verification:
+- `pytest -q tests/test_weekly_labeling_workflow.py` -> `10 passed`
+- full backend suite -> `145 passed`
+
+## Weekly KPI Snapshot (2026-03-03)
+
+### Weekly KPI Snapshot
+
+- generated_at_utc: `2026-03-03T00:14:21.801426`
+- real_sources: `user_correction`
+- user_correction_total: `81`
+- user_correction_last_30_days: `81`
+- user_correction_prev_30_days: `0`
+- user_correction_weekly_delta: `+81`
+- real_signal_share_latest_retrain: `19.79%` (38/192)
+- latest_model: `setfit_model_20260228_131948`
+- latest_model_trained_at: `2026-02-28T18:19:48.379662`
+
+#### Per-Label Real-Signal Totals
+- applied: total=51, last_30d=51, delta_vs_prev_window=+51
+- assessment: total=1, last_30d=1, delta_vs_prev_window=+1
+- other: total=11, last_30d=11, delta_vs_prev_window=+11
+- pending_application: total=3, last_30d=3, delta_vs_prev_window=+3
+- rejection: total=15, last_30d=15, delta_vs_prev_window=+15
+
+### Weekly Labeling Batch
+- total_candidates: `20`
+- reason_counts: confusion_pair_focus=19, target_label_signal=1
+- category_counts: applied=19, other=1
+- candidate_ids: `691, 704, 234, 233, 231, 195, 187, 186, 184, 128, 126, 103, 251, 79, 621, 613, 612, 611, 610, 609`
+
+Artifacts:
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260303.csv`
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260303.md`
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260303.json`
