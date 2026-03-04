@@ -1,6 +1,6 @@
 # JobTracker Detailed Timeline
 
-As of **March 3, 2026**.
+As of **March 4, 2026**.
 
 This is the continuity document for product and ML behavior. It records what changed, why it changed, what was verified, and what remains open.
 
@@ -10,7 +10,7 @@ This is the continuity document for product and ML behavior. It records what cha
 - Classifier quality depended on interactions between rules, embeddings, SetFit, and data ingestion; isolated notes were insufficient.
 - Regressions were often caused by good-intention changes without a durable historical record of rationale.
 
-## Current Snapshot (March 3, 2026)
+## Current Snapshot (March 4, 2026)
 
 - Architecture remains local-first: SwiftUI macOS app + local FastAPI backend + SQLite.
 - Classification stack remains hybrid: `rules -> embeddings -> SetFit -> fallback/needs_review`.
@@ -344,6 +344,23 @@ What changed:
 Impact:
 - GitHub issue board now cleanly separates completed work from remaining milestones.
 
+### Phase 22: Weekly operations SOP rollout (March 4, 2026)
+
+Context:
+- Weekly labeling tooling existed, but operating cadence/checklists/rubric were not centralized in a single runbook.
+
+What changed:
+- Added `docs/ML_WEEKLY_OPERATIONS.md` with:
+  - weekly command bundle
+  - sparse-label KPI targets
+  - manual review rubric
+  - rollback/escalation policy
+- Ran a full weekly cycle using the SOP and generated March 4 artifacts + tracker snapshot.
+- Added tracker-format assertions in weekly workflow tests.
+
+Impact:
+- Weekly real-signal operations are now reproducible by another contributor and verifiable with explicit gates.
+
 ## Open Risks / Remaining Work
 
 - Real user-correction volume is still modest (`81`) relative to synthetic and external data.
@@ -352,11 +369,10 @@ Impact:
 
 ## Immediate Priorities
 
-1. Execute issue `#7`: operational weekly sparse-label review SOP + strict run cadence.
-2. Grow real correction coverage for `offer`, `interview`, and `pending_application`.
-3. Execute issue `#8`: add monitoring alert triage runbook + escalation workflow.
-4. Execute issue `#9`: define real-signal-heavy eval v4 dataset + baselines.
-5. Execute issue `#10`: add classifier rule-governance guardrails.
+1. Sustain weekly SOP execution and grow real correction coverage for `offer`, `interview`, and `pending_application`.
+2. Execute issue `#8`: add monitoring alert triage runbook + escalation workflow.
+3. Execute issue `#9`: define real-signal-heavy eval v4 dataset + baselines.
+4. Execute issue `#10`: add classifier rule-governance guardrails.
 
 ## Resume Checklist
 

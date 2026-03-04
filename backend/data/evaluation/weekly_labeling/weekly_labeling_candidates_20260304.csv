@@ -1,0 +1,3 @@
+rank,email_id,received_at,source_account,current_category,confidence,classification_method,is_reviewed,selection_reasons,target_signal_labels,reviewed_label,notes
+1,691,2026-02-27T15:02:41,icloud,other,0.5000,fallback,0,target_label_signal,pending_application,,
+2,704,2026-02-28T00:31:00,icloud,applied,0.9000,rules,0,confusion_pair_focus,,,

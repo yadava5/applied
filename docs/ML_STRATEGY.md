@@ -296,6 +296,10 @@ To keep `user_correction` growth consistent for rare lifecycle classes, run:
 scripts/weekly_labeling_cycle.sh --append-tracker
 ```
 
+Operational SOP (cadence, rubric, gates, escalation) lives in:
+
+- `docs/ML_WEEKLY_OPERATIONS.md`
+
 Common tuning flags (no code edits needed):
 
 - `--low-confidence-threshold`

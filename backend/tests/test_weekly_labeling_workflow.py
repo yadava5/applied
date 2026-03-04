@@ -142,6 +142,48 @@ def test_append_snapshot_to_tracker_avoids_duplicate_heading(tmp_path: Path) -> 
     assert first == second
 
 
+def test_append_snapshot_to_tracker_includes_standardized_sections(tmp_path: Path) -> None:
+    tracker_path = tmp_path / "ML_EXECUTION_TRACKER.md"
+    tracker_path.write_text("# Tracker\n", encoding="utf-8")
+
+    append_snapshot_to_tracker(
+        tracker_path=tracker_path,
+        snapshot_date=datetime(2026, 3, 4, 10, 0, 0),
+        kpi_markdown=(
+            "### Weekly KPI Snapshot\n\n"
+            "- generated_at_utc: `2026-03-04T10:00:00`\n"
+            "- real_sources: `user_correction`\n"
+            "- user_correction_total: `81`\n"
+            "- user_correction_last_7_days: `5`\n"
+            "- user_correction_prev_7_days: `4`\n"
+            "- user_correction_weekly_delta: `+1`\n"
+            "- real_signal_share_latest_retrain: `20.00%` (40/200)\n"
+            "\n"
+            "#### Per-Label Real-Signal Totals\n"
+            "- offer: total=2, last_7d=1, delta_vs_prev_window=+1\n"
+        ),
+        summary_payload={
+            "total_candidates": 3,
+            "reason_counts": {"target_label_signal": 2, "low_confidence": 1},
+            "category_counts": {"other": 1, "interview": 2},
+            "candidate_ids": [101, 102, 103],
+        },
+        candidates_csv_path=tmp_path / "candidates.csv",
+        summary_md_path=tmp_path / "summary.md",
+        summary_json_path=tmp_path / "summary.json",
+    )
+
+    content = tracker_path.read_text(encoding="utf-8")
+    assert "## Weekly KPI Snapshot (2026-03-04)" in content
+    assert "### Weekly KPI Snapshot" in content
+    assert "#### Per-Label Real-Signal Totals" in content
+    assert "### Weekly Labeling Batch" in content
+    assert "- total_candidates: `3`" in content
+    assert "- reason_counts: " in content
+    assert "- category_counts: " in content
+    assert "- candidate_ids: `101, 102, 103`" in content
+
+
 def test_allocate_label_quotas_biases_toward_larger_real_signal_gaps() -> None:
     support_gaps = {
         "offer": {"current_total": 2, "gap_to_target": 23},

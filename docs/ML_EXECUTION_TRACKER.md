@@ -530,3 +530,76 @@ Opened:
 
 Verification:
 - Open issues now represent only remaining execution backlog.
+
+## Cycle L (March 4, 2026): Weekly Ops SOP Operationalization - Completed
+
+Goal:
+- Complete issue `#7` by shipping a reproducible weekly operating runbook and validating one full cycle.
+
+### Step L1 - Weekly operations runbook (`completed`)
+
+Implemented:
+- Added canonical SOP:
+  - `docs/ML_WEEKLY_OPERATIONS.md`
+- Documented:
+  - exact weekly command bundle
+  - sparse-label KPI targets
+  - manual review rubric
+  - gate verification checklist
+  - rollback/escalation actions
+
+### Step L2 - Tracker format standardization (`completed`)
+
+Implemented:
+- Added explicit tracker entry format requirements in `docs/ML_WEEKLY_OPERATIONS.md`.
+- Added tracker-format assertion coverage in:
+  - `backend/tests/test_weekly_labeling_workflow.py`
+
+### Step L3 - End-to-end cycle execution (`completed`)
+
+Run:
+- `scripts/weekly_labeling_cycle.sh --append-tracker --days 7 --limit 60 --target-per-label 25 --target-signal-limit 20 --target-signal-max-confidence 0.92 --confusion-share-cap 0.50`
+
+Outputs:
+- `backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`
+- `backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.{md,json}`
+- `backend/data/evaluation/weekly_labeling/weekly_kpi_20260304.md`
+- tracker snapshot appended below
+
+Verification:
+- v3 rules gate command: `PASS`
+- v3 hybrid gate command (deterministic profile): `PASS`
+- targeted weekly-workflow tests: `11 passed`
+- full backend suite: `146 passed`
+
+## Weekly KPI Snapshot (2026-03-04)
+
+### Weekly KPI Snapshot
+
+- generated_at_utc: `2026-03-04T17:24:11.809470`
+- real_sources: `user_correction`
+- user_correction_total: `81`
+- user_correction_last_7_days: `52`
+- user_correction_prev_7_days: `22`
+- user_correction_weekly_delta: `+30`
+- real_signal_share_latest_retrain: `19.79%` (38/192)
+- latest_model: `setfit_model_20260228_131948`
+- latest_model_trained_at: `2026-02-28T18:19:48.379662`
+
+#### Per-Label Real-Signal Totals
+- applied: total=51, last_7d=43, delta_vs_prev_window=+37
+- assessment: total=1, last_7d=1, delta_vs_prev_window=+1
+- other: total=11, last_7d=1, delta_vs_prev_window=-7
+- pending_application: total=3, last_7d=3, delta_vs_prev_window=+3
+- rejection: total=15, last_7d=4, delta_vs_prev_window=-4
+
+### Weekly Labeling Batch
+- total_candidates: `2`
+- reason_counts: confusion_pair_focus=1, target_label_signal=1
+- category_counts: applied=1, other=1
+- candidate_ids: `691, 704`
+
+Artifacts:
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.md`
+- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.json`

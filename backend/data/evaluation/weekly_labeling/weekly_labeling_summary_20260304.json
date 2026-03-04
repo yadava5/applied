@@ -1,0 +1,71 @@
+{
+  "confusion_max_confidence": 0.95,
+  "confusion_pairs": [
+    [
+      "assessment",
+      "follow_up"
+    ],
+    [
+      "applied",
+      "pending_application"
+    ]
+  ],
+  "confusion_share_cap": 0.5,
+  "generated_at_utc": "2026-03-04T17:24:11.809470",
+  "low_confidence_threshold": 0.85,
+  "summary": {
+    "candidate_ids": [
+      691,
+      704
+    ],
+    "category_counts": {
+      "applied": 1,
+      "other": 1
+    },
+    "reason_counts": {
+      "confusion_pair_focus": 1,
+      "target_label_signal": 1
+    },
+    "target_signal_counts": {
+      "pending_application": 1
+    },
+    "target_support": {
+      "interview": {
+        "current_total": 0,
+        "gap_to_target": 25
+      },
+      "offer": {
+        "current_total": 0,
+        "gap_to_target": 25
+      },
+      "pending_application": {
+        "current_total": 3,
+        "gap_to_target": 22
+      }
+    },
+    "total_candidates": 2
+  },
+  "target_labels": [
+    "offer",
+    "interview",
+    "pending_application"
+  ],
+  "target_per_label": 25,
+  "target_signal_max_confidence": 0.92,
+  "target_support": {
+    "interview": {
+      "current_total": 0,
+      "gap_to_target": 25
+    },
+    "offer": {
+      "current_total": 0,
+      "gap_to_target": 25
+    },
+    "pending_application": {
+      "current_total": 3,
+      "gap_to_target": 22
+    }
+  },
+  "window_days": 7,
+  "window_start_utc": "2026-02-25T17:24:11.809470"
+}

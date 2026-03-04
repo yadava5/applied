@@ -1,6 +1,6 @@
 # Next Steps for JobTracker ML
 
-Updated: **March 3, 2026**
+Updated: **March 4, 2026**
 
 This checklist starts from the current post-cleanup state (broad rules + mixed-source SetFit retrain).
 
@@ -20,21 +20,19 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
 - Real user-correction rows: `81` (latest recorded run; still lower than synthetic volume).
 - Current review queue count: `0`.
 
-## Issue Status Snapshot (March 3, 2026)
+## Issue Status Snapshot (March 4, 2026)
 
-- Closed (implemented): `#2`, `#3`, `#4`, `#5`, `#6`
-- Open (remaining): `#7`, `#8`, `#9`, `#10`
+- Closed (implemented): `#2`, `#3`, `#4`, `#5`, `#6`, `#7`
+- Open (remaining): `#8`, `#9`, `#10`
 
-## Priority 1: Operationalize Weekly Sparse-Label Review SOP (`#7`)
+## Priority 1: Execute Weekly Sparse-Label SOP (Ongoing Ops)
 
-- Convert current weekly tooling into a strict operating runbook:
-  - cadence
-  - reviewer checklist
-  - retrain/eval/test verification checklist
-- Standardize tracker update format for every weekly run.
+- Run the SOP every week and keep evidence in tracker + artifacts.
+- Canonical runbook:
+  - `docs/ML_WEEKLY_OPERATIONS.md`
 - Keep weekly artifacts privacy-safe (IDs + aggregate counts only).
 
-## Priority 2: Increase Real-Signal Share (`#7` continuation)
+## Priority 2: Increase Real-Signal Share
 
 - Collect more true user-correction examples, especially for:
   - `offer`
