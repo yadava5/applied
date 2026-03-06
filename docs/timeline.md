@@ -32,7 +32,7 @@ This is the continuity document for product and ML behavior. It records what cha
   - eval v2 hybrid: `0.9531 accuracy / 0.9526 macro-F1` (latest spot run)
   - eval v3 rules baseline: `0.9792 accuracy / 0.9791 macro-F1`
   - eval v3 hybrid baseline (deterministic profile): `0.9792 accuracy / 0.9791 macro-F1`
-  - backend tests: `145 passed`
+  - backend tests: `150 passed`
 
 ## Chronology
 

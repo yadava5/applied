@@ -70,6 +70,9 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - `.github/workflows/ml-monitoring-weekly.yml` runs weekly and uploads artifacts.
 - Canonical runbook:
   - `docs/ML_MONITORING_RUNBOOK.md`
+- Alert issue flow assets:
+  - `backend/jobtracker/scripts/prepare_ml_monitoring_alert_issue.py`
+  - `.github/ISSUE_TEMPLATE/ml-monitoring-alert.md`
 - Keep weekly alert issues triaged to closure with verification evidence.
 
 ## Priority 4: Define Real-Signal-Heavy Eval v4 (`#9`)

@@ -287,10 +287,13 @@ Default alert thresholds:
 Scheduled automation:
 
 - `.github/workflows/ml-monitoring-weekly.yml`
+- workflow prepares alert issue payload files when alerts are present
+- workflow can open a monitoring triage issue (`monitoring`, `ml`) with duplicate-title guard
 
 Operational triage runbook:
 
 - `docs/ML_MONITORING_RUNBOOK.md`
+- issue template: `.github/ISSUE_TEMPLATE/ml-monitoring-alert.md`
 
 ## Weekly Real-Signal Workflow
 
