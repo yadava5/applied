@@ -603,3 +603,46 @@ Artifacts:
 - `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`
 - `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.md`
 - `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.json`
+
+## Cycle M (March 5, 2026): Monitoring Triage Runbook + Alert Issue Flow - Completed
+
+Goal:
+- Complete issue `#8` by defining actionable monitoring triage operations and automating alert issue creation path.
+
+### Step M1 - Monitoring runbook (`completed`)
+
+Implemented:
+- Added:
+  - `docs/ML_MONITORING_RUNBOOK.md`
+- Includes:
+  - severity matrix (`warning` / `critical`)
+  - owner mapping and SLA
+  - metric-specific triage/remediation playbooks
+  - close criteria
+
+### Step M2 - Alert issue template + automation (`completed`)
+
+Implemented:
+- Added issue template:
+  - `.github/ISSUE_TEMPLATE/ml-monitoring-alert.md`
+- Added helper script:
+  - `python -m jobtracker.scripts.prepare_ml_monitoring_alert_issue`
+- Updated workflow:
+  - `.github/workflows/ml-monitoring-weekly.yml`
+  - prepares issue payload files from monitoring JSON
+  - creates monitoring triage issue when alerts are present (with duplicate-title guard)
+
+### Step M3 - Simulation + test verification (`completed`)
+
+Simulation:
+- forced alert report generation with aggressive thresholds:
+  - `python -m jobtracker.scripts.generate_ml_monitoring_report ... --low-confidence-growth-alert-pct 0 --low-confidence-delta-alert-count 0 --distribution-drift-alert-pp 0 --confusion-pair-alert-count 0`
+- alert issue payload generation:
+  - `python -m jobtracker.scripts.prepare_ml_monitoring_alert_issue ...`
+- Result: `HAS_ALERTS=true`, title/body files generated.
+
+Verification:
+- targeted monitoring tests:
+  - `pytest -q tests/test_ml_monitoring_report.py tests/test_prepare_ml_monitoring_alert_issue.py` -> `9 passed`
+- full backend suite:
+  - `pytest -q` -> `150 passed`

@@ -5,9 +5,16 @@ on:
     # Every Monday at 14:00 UTC
     - cron: "0 14 * * 1"
   workflow_dispatch:
+    inputs:
+      create_issue_on_alert:
+        description: "Create/update triage issue when alerts are present"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: ml-monitoring-weekly-${{ github.ref }}
@@ -55,6 +62,35 @@ jobs:
             --confusion-pairs assessment:follow_up,applied:pending_application \
             --emit-github-step-summary
 
+      - name: Prepare monitoring alert issue payload
+        id: prepare_alert_issue
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+        run: |
+          python -m jobtracker.scripts.prepare_ml_monitoring_alert_issue \
+            --monitoring-json data/evaluation/ml_monitoring_report.json \
+            --title-out data/evaluation/ml_monitoring_alert_title.txt \
+            --body-out data/evaluation/ml_monitoring_alert_body.md \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Create monitoring triage issue
+        if: ${{ steps.prepare_alert_issue.outputs.has_alerts == 'true' && (github.event_name == 'schedule' || inputs.create_issue_on_alert == true) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="$(cat data/evaluation/ml_monitoring_alert_title.txt)"
+          EXISTING_COUNT="$(gh issue list --state open --search "$TITLE in:title" --json number --jq 'length')"
+          if [ "$EXISTING_COUNT" != "0" ]; then
+            echo "Open issue with same title already exists; skipping create."
+            exit 0
+          fi
+          gh issue create \
+            --title "$TITLE" \
+            --body-file data/evaluation/ml_monitoring_alert_body.md \
+            --label monitoring \
+            --label ml
+
       - name: Upload monitoring artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -63,3 +99,5 @@ jobs:
             backend/data/evaluation/ml_monitoring_report.md
             backend/data/evaluation/ml_monitoring_report.json
             backend/data/evaluation/ml_monitoring_history.jsonl
+            backend/data/evaluation/ml_monitoring_alert_title.txt
+            backend/data/evaluation/ml_monitoring_alert_body.md

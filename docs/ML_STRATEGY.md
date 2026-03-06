@@ -288,6 +288,10 @@ Scheduled automation:
 
 - `.github/workflows/ml-monitoring-weekly.yml`
 
+Operational triage runbook:
+
+- `docs/ML_MONITORING_RUNBOOK.md`
+
 ## Weekly Real-Signal Workflow
 
 To keep `user_correction` growth consistent for rare lifecycle classes, run:

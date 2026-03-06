@@ -1,6 +1,6 @@
 # Next Steps for JobTracker ML
 
-Updated: **March 4, 2026**
+Updated: **March 5, 2026**
 
 This checklist starts from the current post-cleanup state (broad rules + mixed-source SetFit retrain).
 
@@ -20,10 +20,10 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
 - Real user-correction rows: `81` (latest recorded run; still lower than synthetic volume).
 - Current review queue count: `0`.
 
-## Issue Status Snapshot (March 4, 2026)
+## Issue Status Snapshot (March 5, 2026)
 
-- Closed (implemented): `#2`, `#3`, `#4`, `#5`, `#6`, `#7`
-- Open (remaining): `#8`, `#9`, `#10`
+- Closed (implemented): `#2`, `#3`, `#4`, `#5`, `#6`, `#7`, `#8`
+- Open (remaining): `#9`, `#10`
 
 ## Priority 1: Execute Weekly Sparse-Label SOP (Ongoing Ops)
 
@@ -49,7 +49,7 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - `backend/data/evaluation/weekly_labeling/weekly_kpi_YYYYMMDD.md`
   - tracker append: `docs/ML_EXECUTION_TRACKER.md`
 
-## Priority 3: Monitoring Alert Triage + Escalation (`#8`)
+## Priority 3: Monitoring Alert Ops (Ongoing)
 
 - Run periodic monitoring snapshots (single command):
   - `scripts/monitoring_cycle.sh --days 7 --append-history`
@@ -68,9 +68,9 @@ This checklist starts from the current post-cleanup state (broad rules + mixed-s
   - confusion-pair low-confidence volume: `>=3`
 - Scheduled automation:
   - `.github/workflows/ml-monitoring-weekly.yml` runs weekly and uploads artifacts.
-- Remaining gap:
-  - add explicit alert triage runbook
-  - add owner/severity/escalation workflow for threshold breaches
+- Canonical runbook:
+  - `docs/ML_MONITORING_RUNBOOK.md`
+- Keep weekly alert issues triaged to closure with verification evidence.
 
 ## Priority 4: Define Real-Signal-Heavy Eval v4 (`#9`)
 

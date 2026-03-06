@@ -1,6 +1,6 @@
 # JobTracker Detailed Timeline
 
-As of **March 4, 2026**.
+As of **March 5, 2026**.
 
 This is the continuity document for product and ML behavior. It records what changed, why it changed, what was verified, and what remains open.
 
@@ -10,7 +10,7 @@ This is the continuity document for product and ML behavior. It records what cha
 - Classifier quality depended on interactions between rules, embeddings, SetFit, and data ingestion; isolated notes were insufficient.
 - Regressions were often caused by good-intention changes without a durable historical record of rationale.
 
-## Current Snapshot (March 4, 2026)
+## Current Snapshot (March 5, 2026)
 
 - Architecture remains local-first: SwiftUI macOS app + local FastAPI backend + SQLite.
 - Classification stack remains hybrid: `rules -> embeddings -> SetFit -> fallback/needs_review`.
@@ -361,6 +361,28 @@ What changed:
 Impact:
 - Weekly real-signal operations are now reproducible by another contributor and verifiable with explicit gates.
 
+### Phase 23: Monitoring triage runbook + alert issue flow (March 5, 2026)
+
+Context:
+- Monitoring alerts existed, but response ownership and remediation workflow were not formalized.
+
+What changed:
+- Added `docs/ML_MONITORING_RUNBOOK.md` with:
+  - severity matrix (`warning`/`critical`)
+  - owner mapping + SLA
+  - metric-specific playbooks
+  - close criteria
+- Added monitoring-alert issue template:
+  - `.github/ISSUE_TEMPLATE/ml-monitoring-alert.md`
+- Added automation helper:
+  - `python -m jobtracker.scripts.prepare_ml_monitoring_alert_issue`
+- Updated weekly monitoring workflow to:
+  - generate alert issue payload files
+  - open a triage issue when alerts exist (with duplicate-title guard)
+
+Impact:
+- Monitoring now has an explicit alert-to-action path with tracked remediation issues.
+
 ## Open Risks / Remaining Work
 
 - Real user-correction volume is still modest (`81`) relative to synthetic and external data.
@@ -370,9 +392,8 @@ Impact:
 ## Immediate Priorities
 
 1. Sustain weekly SOP execution and grow real correction coverage for `offer`, `interview`, and `pending_application`.
-2. Execute issue `#8`: add monitoring alert triage runbook + escalation workflow.
-3. Execute issue `#9`: define real-signal-heavy eval v4 dataset + baselines.
-4. Execute issue `#10`: add classifier rule-governance guardrails.
+2. Execute issue `#9`: define real-signal-heavy eval v4 dataset + baselines.
+3. Execute issue `#10`: add classifier rule-governance guardrails.
 
 ## Resume Checklist
 
