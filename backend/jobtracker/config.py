@@ -24,10 +24,10 @@ Usage:
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, computed_field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, computed_field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     # - production: same as development for now, but reserved for future tuning
     # - test: in-memory SQLite DB for pytest (never touches real data)
     environment: Literal["development", "production", "test"] = "development"
+
+    # Deployment target. "desktop" keeps every existing assumption (SQLite,
+    # Keychain, WebSocket router, localhost CORS). "cloud" selects the
+    # Vercel-safe code paths (Postgres via DATABASE_URL, encrypted-column
+    # credentials, polling, env-driven CORS). Downstream issues wire the
+    # cloud paths in one at a time; this flag only gates which app builder
+    # is imported.
+    deployment: Literal["desktop", "cloud"] = "desktop"
 
     # -------------------------------------------------------------------------
     # API Server
@@ -198,6 +206,54 @@ class Settings(BaseSettings):
     # Keychain
     # -------------------------------------------------------------------------
     keychain_service: str = "jobtracker"
+
+    # -------------------------------------------------------------------------
+    # Cloud (Vercel + Supabase). Only consumed when deployment == "cloud".
+    # -------------------------------------------------------------------------
+    cors_allowed_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Extra hostnames permitted by CORS in cloud mode. Comma-separated "
+            "in the env var, for example "
+            "JOBTRACKER_CORS_ALLOWED_HOSTS='jobtracker.app,app.jobtracker.dev'. "
+            "Vercel preview URLs (*.vercel.app) are always allowed."
+        ),
+    )
+    supabase_jwt_secret: str | None = Field(
+        default=None,
+        description="Supabase JWT signing secret; required for cloud auth middleware (C3).",
+    )
+    secret_encryption_key: str | None = Field(
+        default=None,
+        description=(
+            "Fernet key (urlsafe base64, 32 bytes) used to encrypt user credentials "
+            "stored in the cloud `user_credentials` table (C4). Generate with "
+            "`python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`."
+        ),
+    )
+    vercel_cron_secret: str | None = Field(
+        default=None,
+        description=(
+            "Shared secret Vercel Cron attaches via `x-vercel-cron-secret` header; "
+            "used by `POST /cron/sync` (C7) to reject unauthenticated cron calls."
+        ),
+    )
+
+    @field_validator("cors_allowed_hosts", mode="before")
+    @classmethod
+    def _split_cors_hosts(cls, value: Any) -> Any:
+        """Accept a comma-separated env var string for cors_allowed_hosts.
+
+        Vercel and most shells can only pass strings, so
+        `JOBTRACKER_CORS_ALLOWED_HOSTS='jobtracker.app,app.jobtracker.dev'`
+        should Just Work. A list/tuple is still accepted for programmatic use.
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     def ensure_directories(self) -> None:
         """Create required directories if they don't exist."""

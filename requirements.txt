@@ -1,0 +1,53 @@
+# JobTracker Cloud (Vercel) Dependencies
+# =======================================
+# Consumed by Vercel's Python runtime at build time.
+#
+# This file is DELIBERATELY DIFFERENT from backend/requirements.txt.
+# Vercel's Python Function size budget is 50 MB zipped (Hobby) / 250 MB
+# zipped (Pro). Shipping torch (~800 MB) + sentence-transformers + setfit
+# exceeds it by a wide margin — so the cloud deployment excludes the
+# entire heavy-ML stack.
+#
+# DO NOT add (they break the deploy or blow the size budget):
+#   - torch, sentence-transformers, setfit, transformers, scikit-learn
+#   - keyring (macOS Keychain only; replaced by Fernet encryption in C4)
+#   - aiosqlite, websockets (not supported / not needed on Vercel)
+#
+# Heavy-ML moves to a separate inference service in a follow-up; cloud
+# rules-only classifier lands in C6.
+
+# -----------------------------------------------------------------------------
+# Web Framework
+# -----------------------------------------------------------------------------
+fastapi>=0.109.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+email-validator>=2.0.0
+
+# -----------------------------------------------------------------------------
+# Database (Postgres via Supabase)
+# -----------------------------------------------------------------------------
+sqlmodel>=0.0.14
+sqlalchemy[asyncio]>=2.0.25
+asyncpg>=0.29.0
+
+# -----------------------------------------------------------------------------
+# Auth (Supabase JWT verification, wired in C3)
+# -----------------------------------------------------------------------------
+pyjwt[crypto]>=2.8.0
+cryptography>=42.0.0
+
+# -----------------------------------------------------------------------------
+# Email Integration (cloud Gmail OAuth wired in C5, IMAP stays)
+# -----------------------------------------------------------------------------
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1.0
+aioimaplib>=2.0.0
+
+# -----------------------------------------------------------------------------
+# Email Parsing
+# -----------------------------------------------------------------------------
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+python-dateutil>=2.8.0
