@@ -87,6 +87,24 @@ class Settings(BaseSettings):
         default=False,
         description="Enable verbose SQL statement logging.",
     )
+    database_url_override: str | None = Field(
+        default=None,
+        description=(
+            "Explicit async DB URL (e.g. postgresql+asyncpg://... for Supabase "
+            "or sqlite+aiosqlite:///path.db). When set, this overrides the "
+            "computed SQLite URL used by the application engine. Leave unset "
+            "on desktop builds to keep the local SQLite database."
+        ),
+    )
+    direct_database_url: str | None = Field(
+        default=None,
+        description=(
+            "Non-pooler database URL used by Alembic migrations only. "
+            "Required on Supabase because PgBouncer (transaction pooling) "
+            "does not support the prepared-statement flow Alembic emits "
+            "during DDL. Not consumed by the runtime app engine."
+        ),
+    )
 
     @computed_field  # type: ignore[misc]
     @property
@@ -97,7 +115,17 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[misc]
     @property
     def database_url(self) -> str:
-        """SQLAlchemy async database URL."""
+        """SQLAlchemy async database URL.
+
+        Resolution order:
+        1. ``database_url_override`` - explicit opt-in for Postgres/Supabase.
+        2. Test environment -> isolated in-memory SQLite.
+        3. Desktop default -> on-disk SQLite at ``database_path``.
+        """
+
+        if self.database_url_override:
+            return self.database_url_override
+
         # During tests we want a completely isolated, in-memory database that
         # does not touch the real on-disk JobTracker DB.
         if self.environment == "test":

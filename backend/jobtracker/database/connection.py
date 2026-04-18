@@ -38,10 +38,10 @@ Usage:
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import SQLModel, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -53,13 +53,25 @@ logger = logging.getLogger(__name__)
 _engine: Optional[AsyncEngine] = None
 
 
+def _is_sqlite_url(url: str) -> bool:
+    """Return True if ``url`` targets a SQLite backend (sync or async)."""
+
+    return url.startswith("sqlite")
+
+
 def get_engine() -> AsyncEngine:
     """
     Get or create the async database engine.
 
     The engine is created once and reused for all connections.
-    Uses StaticPool for SQLite to ensure a single connection
-    is shared across all async operations.
+
+    SQLite builds use ``StaticPool`` for in-memory DBs so state persists
+    across sessions, and default pool behaviour for on-disk DBs.
+
+    Postgres builds (Supabase) use ``NullPool`` plus asyncpg kwargs that
+    disable prepared-statement caching. This is required when the app
+    connects through the Supabase PgBouncer (transaction pooling), which
+    does not support the PREPARE/EXECUTE protocol asyncpg uses by default.
 
     Returns:
         AsyncEngine: SQLAlchemy async engine instance.
@@ -67,31 +79,41 @@ def get_engine() -> AsyncEngine:
     global _engine
 
     if _engine is None:
-        # Ensure database directory exists
-        settings.ensure_directories()
-
-        logger.info(f"Creating database engine: {settings.database_path}")
-
-        engine_kwargs = {
+        url = settings.database_url
+        engine_kwargs: dict[str, Any] = {
             # Keep SQLAlchemy's internal echo logger disabled to prevent
-            # duplicate output. SQL visibility is controlled via logger levels
-            # in jobtracker.logging when JOBTRACKER_DATABASE_ECHO is enabled.
+            # duplicate output. SQL visibility is controlled via logger
+            # levels in jobtracker.logging when JOBTRACKER_DATABASE_ECHO is
+            # enabled.
             "echo": False,
-            # SQLite-specific settings
-            "connect_args": {
-                "check_same_thread": False,  # Required for async
-            },
         }
 
-        # In-memory SQLite must use a single shared connection to persist state
-        # across sessions. File-based DBs should use normal pooling behavior.
-        if settings.database_url.endswith(":memory:"):
-            engine_kwargs["poolclass"] = StaticPool
+        if _is_sqlite_url(url):
+            # Ensure database directory exists for on-disk SQLite.
+            settings.ensure_directories()
+            logger.info(f"Creating SQLite database engine: {settings.database_path}")
 
-        _engine = create_async_engine(
-            settings.database_url,
-            **engine_kwargs,
-        )
+            engine_kwargs["connect_args"] = {
+                "check_same_thread": False,  # Required for async
+            }
+
+            # In-memory SQLite must use a single shared connection to persist
+            # state across sessions. File-based DBs use normal pooling.
+            if url.endswith(":memory:"):
+                engine_kwargs["poolclass"] = StaticPool
+        else:
+            # Assume Postgres via asyncpg (Supabase). Configure for pgbouncer
+            # transaction-mode pooler compatibility: no server-side prepared
+            # statement cache, no client-side cache. NullPool lets the pooler
+            # own connection lifecycle (every checkout is a fresh connection).
+            logger.info("Creating Postgres database engine (Supabase/pgbouncer-safe)")
+            engine_kwargs["connect_args"] = {
+                "statement_cache_size": 0,
+                "prepared_statement_cache_size": 0,
+            }
+            engine_kwargs["poolclass"] = NullPool
+
+        _engine = create_async_engine(url, **engine_kwargs)
 
     return _engine
 
@@ -100,8 +122,15 @@ async def init_db() -> None:
     """
     Initialize the database.
 
-    Creates all tables and enables WAL mode for concurrent access.
-    Safe to call multiple times (tables are only created if missing).
+    Behaviour is dialect-gated:
+
+    - SQLite (desktop/tests): enables WAL + busy_timeout + foreign keys,
+      creates all tables from ``SQLModel.metadata``, and installs FTS5
+      virtual tables/triggers. Safe to call repeatedly.
+    - Postgres (cloud/Supabase): no-op for schema management. Alembic
+      owns the schema; running ``create_all`` here would race with
+      Alembic and fight over ownership during cold-start deploys. WAL
+      and FTS5 are SQLite-specific concepts and are skipped entirely.
 
     This should be called on application startup.
     """
@@ -110,8 +139,17 @@ async def init_db() -> None:
     from jobtracker.database import models  # noqa: F401
 
     engine = get_engine()
+    url = settings.database_url
 
-    logger.info("Initializing database...")
+    if not _is_sqlite_url(url):
+        logger.info(
+            "Skipping init_db() schema creation on non-SQLite backend "
+            "(%s) - Alembic owns migrations.",
+            url.split("://", 1)[0],
+        )
+        return
+
+    logger.info("Initializing SQLite database...")
 
     async with engine.begin() as conn:
         # Enable WAL mode for concurrent read/write access
@@ -400,17 +438,24 @@ async def get_db_stats() -> dict:
             text("SELECT COUNT(*) FROM training_data")
         )
 
-        # Get database file size
-        db_size_result = await session.exec(
-            text("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
-        )
+        # File size query is SQLite-specific. On Postgres we just report 0;
+        # cloud deployments observe DB size via Supabase dashboards.
+        size_bytes = 0
+        if _is_sqlite_url(settings.database_url):
+            db_size_result = await session.exec(
+                text(
+                    "SELECT page_count * page_size as size "
+                    "FROM pragma_page_count(), pragma_page_size()"
+                )
+            )
+            size_bytes = db_size_result.scalar() or 0
 
         return {
             "path": str(settings.database_path),
             "applications": app_count.scalar() or 0,
             "emails": email_count.scalar() or 0,
             "training_examples": training_count.scalar() or 0,
-            "size_bytes": db_size_result.scalar() or 0,
+            "size_bytes": size_bytes,
         }
 
 
@@ -418,11 +463,14 @@ async def vacuum_db() -> None:
     """
     Vacuum the database to reclaim space.
 
-    Should be run periodically (e.g., weekly) to:
-    - Reclaim space from deleted rows
-    - Rebuild indexes for better performance
-    - Reduce database file size
+    SQLite-only operation. On Postgres this is a no-op because VACUUM
+    behaves very differently (and is typically handled by the managed
+    provider, e.g. Supabase autovacuum).
     """
+    if not _is_sqlite_url(settings.database_url):
+        logger.info("vacuum_db() is SQLite-only; skipping on non-SQLite backend.")
+        return
+
     engine = get_engine()
 
     logger.info("Vacuuming database...")
