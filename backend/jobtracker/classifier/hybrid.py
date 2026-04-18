@@ -22,14 +22,16 @@ Confidence thresholds:
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from jobtracker.config import settings
 from jobtracker.database.models import EmailCategory
 
-from .embeddings import get_embeddings_classifier
 from .rules import get_rules_classifier
-from .setfit_model import get_setfit_classifier
+
+if TYPE_CHECKING:  # pragma: no cover - types only, never imported at runtime
+    from .embeddings import EmbeddingsClassifier
+    from .setfit_model import SetFitClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -142,15 +144,68 @@ class HybridClassifier:
 
     def __init__(self):
         self._rules = get_rules_classifier()
-        self._embeddings = get_embeddings_classifier()
-        self._setfit = get_setfit_classifier()
-        self._lite_mode = settings.lite_mode
+        # Embeddings (Layer 2) and SetFit (Layer 3) are loaded lazily via
+        # the ``_embeddings`` / ``_setfit`` properties so the cloud import
+        # graph never pays the torch / sentence-transformers / setfit cost.
+        # See ``_load_embeddings`` and ``_load_setfit`` below.
+        self._embeddings_instance: Optional["EmbeddingsClassifier"] = None
+        self._setfit_instance: Optional["SetFitClassifier"] = None
+        # Cloud deployment implies lite-mode (no SetFit, no embeddings)
+        # regardless of the explicit ``lite_mode`` setting.
+        self._lite_mode = settings.lite_mode or settings.deployment == "cloud"
+        self._cloud_rules_only = settings.deployment == "cloud"
         self._non_application_patterns = [
             re.compile(pattern, re.IGNORECASE) for pattern in NON_APPLICATION_PATTERNS
         ]
         self._lifecycle_patterns = [
             re.compile(pattern, re.IGNORECASE) for pattern in LIFECYCLE_PATTERNS
         ]
+
+    # ------------------------------------------------------------------
+    # Lazy Layer Loaders
+    # ------------------------------------------------------------------
+    # Accessing ``self._embeddings`` or ``self._setfit`` triggers the
+    # first-time import of the heavy submodule. On cloud deployments the
+    # short-circuit in ``classify()`` returns before either property is
+    # read, which is what keeps torch / sentence-transformers / setfit
+    # out of ``sys.modules``.
+
+    def _load_embeddings(self) -> "EmbeddingsClassifier":
+        if self._embeddings_instance is None:
+            # Local import — must stay inside the method body so that the
+            # cloud import graph never imports ``embeddings`` (which pulls
+            # ``numpy`` plus transitive sentence-transformers use sites).
+            from .embeddings import get_embeddings_classifier
+
+            self._embeddings_instance = get_embeddings_classifier()
+        return self._embeddings_instance
+
+    def _load_setfit(self) -> "SetFitClassifier":
+        if self._setfit_instance is None:
+            # Local import — must stay inside the method body so that the
+            # cloud import graph never imports ``setfit_model``.
+            from .setfit_model import get_setfit_classifier
+
+            self._setfit_instance = get_setfit_classifier()
+        return self._setfit_instance
+
+    @property
+    def _embeddings(self) -> "EmbeddingsClassifier":
+        return self._load_embeddings()
+
+    @_embeddings.setter
+    def _embeddings(self, value: "EmbeddingsClassifier") -> None:
+        # Allow tests / callers to swap in a fake embeddings instance.
+        self._embeddings_instance = value
+
+    @property
+    def _setfit(self) -> "SetFitClassifier":
+        return self._load_setfit()
+
+    @_setfit.setter
+    def _setfit(self, value: "SetFitClassifier") -> None:
+        # Allow tests / callers to swap in a fake setfit instance.
+        self._setfit_instance = value
 
     async def classify(
         self,
@@ -200,6 +255,50 @@ class HybridClassifier:
                 confidence=rules_result.confidence,
                 method="rules",
                 needs_review=False,
+                details={
+                    "matched_patterns": rules_result.matched_patterns[:5],
+                    "scores": rules_result.scores,
+                },
+            )
+
+        # =====================================================================
+        # Cloud Short-Circuit: Rules-Only Deployment
+        # =====================================================================
+        # On Vercel the classifier runs in a 50 MB / 60 s serverless slot,
+        # so torch / sentence-transformers / setfit are neither bundled
+        # nor importable. We must return after the rules layer — even if
+        # rules were unsure — without touching ``self._embeddings`` or
+        # ``self._setfit`` (whose property access would lazy-import the
+        # heavy submodules). User-corrected labels still persist to
+        # ``TrainingData`` and sync back to macOS where full SetFit
+        # remains canonical.
+        if self._cloud_rules_only:
+            # ``rules.py`` returns ``OTHER`` + 0.5 confidence when no
+            # category scored above zero. Distinguish that "miss" case by
+            # inspecting the raw category scores so cloud responses can
+            # surface ``confidence=0.0`` for genuine rule misses.
+            max_score = (
+                max(rules_result.scores.values()) if rules_result.scores else 0
+            )
+            rules_miss = (
+                rules_result.category == EmailCategory.OTHER and max_score <= 0
+            )
+            if rules_miss:
+                return ClassificationResult(
+                    category=EmailCategory.OTHER,
+                    confidence=0.0,
+                    method="rules",
+                    needs_review=False,
+                    details={
+                        "matched_patterns": rules_result.matched_patterns[:5],
+                        "scores": rules_result.scores,
+                    },
+                )
+            return ClassificationResult(
+                category=rules_result.category,
+                confidence=rules_result.confidence,
+                method="rules",
+                needs_review=rules_result.confidence < CONFIDENCE_AUTO,
                 details={
                     "matched_patterns": rules_result.matched_patterns[:5],
                     "scores": rules_result.scores,
@@ -500,6 +599,28 @@ class HybridClassifier:
 
     async def get_status(self) -> dict:
         """Get status of all classification layers."""
+        if self._cloud_rules_only:
+            # Deliberately avoid touching ``self._embeddings`` /
+            # ``self._setfit`` so the cloud import graph stays light.
+            return {
+                "rules": {
+                    "available": True,
+                    "description": "Pattern matching with weighted scoring",
+                },
+                "embeddings": {
+                    "available": False,
+                    "example_count": 0,
+                    "has_examples": False,
+                    "description": "Disabled on cloud (rules-only deployment)",
+                },
+                "setfit": {
+                    "available": False,
+                    "is_training": False,
+                    "disabled_by_lite_mode": True,
+                    "description": "Disabled on cloud (rules-only deployment)",
+                },
+            }
+
         embedding_count = await self._embeddings.get_example_count()
         return {
             "rules": {

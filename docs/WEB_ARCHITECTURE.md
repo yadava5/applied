@@ -20,7 +20,37 @@ is kept in:
   `backend/jobtracker/main_cloud.py` (cloud app builder).
 - `backend/jobtracker/credentials.py` (to be split in C4).
 - `backend/jobtracker/database/connection.py` (to be dialect-gated in C2).
-- `backend/jobtracker/classifier/hybrid.py` (lazy SetFit import in C6).
+- `backend/jobtracker/classifier/hybrid.py` — C6 now short-circuits to
+  rules-only when `settings.deployment == "cloud"` and lazy-imports
+  `embeddings` / `setfit_model` inside method bodies so neither
+  `torch`, `sentence-transformers`, nor `setfit` enters the cloud
+  import graph. The `jobtracker.classifier` package itself uses PEP
+  562 `__getattr__` so heavy re-exports resolve only on demand.
+
+## Classifier (cloud)
+
+- **Layers available.** Rules only. Embeddings (Layer 2) and SetFit
+  (Layer 3) are disabled; `settings.deployment == "cloud"` implies
+  `lite_mode = True` regardless of the explicit `JOBTRACKER_LITE_MODE`
+  value.
+- **Response shape.** `HybridClassifier.classify()` returns
+  `{category, confidence, method: "rules", …}`. Rules hits keep the
+  rules layer's category + confidence; rules misses (no category scored
+  above zero) collapse to `{category: "other", confidence: 0.0,
+  method: "rules"}` — the cloud path never escalates to semantic
+  layers.
+- **Why rules-only.** The combined torch + sentence-transformers +
+  setfit wheel set exceeds Vercel's 250 MB unzipped function budget,
+  and even on Pro the cold-start cost blows the 60 s wall clock.
+- **Corrections.** User-corrected labels still persist to
+  `TrainingData` and sync back to macOS, where the full 3-layer
+  hybrid remains canonical.
+- **Guard test.** `backend/tests/test_main_cloud.py::
+  test_cloud_classifier_is_rules_only_and_skips_heavy_ml_imports`
+  subprocess-invokes `get_classifier()` under
+  `JOBTRACKER_DEPLOYMENT=cloud` and asserts neither `torch`,
+  `sentence_transformers`, `setfit`, nor `transformers` entered
+  `sys.modules`.
 
 ## Cloud entrypoints
 
@@ -62,7 +92,7 @@ Supabase Postgres (asyncpg, transaction-mode pooler)
 | Supabase Auth + user_id + RLS | C3 |
 | Encrypted credentials | C4 |
 | Gmail web OAuth | C5 |
-| Rules-only cloud classifier | C6 |
+| Rules-only cloud classifier | #17 (C6) |
 | WebSocket → polling + cron | C7 |
 | test_cloud pytest marker | C8 |
 | Next.js scaffold | C9 |
