@@ -24,10 +24,10 @@ Usage:
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, computed_field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, computed_field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -210,7 +210,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Cloud (Vercel + Supabase). Only consumed when deployment == "cloud".
     # -------------------------------------------------------------------------
-    cors_allowed_hosts: list[str] = Field(
+    cors_allowed_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         description=(
             "Extra hostnames permitted by CORS in cloud mode. Comma-separated "
@@ -238,6 +238,22 @@ class Settings(BaseSettings):
             "used by `POST /cron/sync` (C7) to reject unauthenticated cron calls."
         ),
     )
+
+    @field_validator("cors_allowed_hosts", mode="before")
+    @classmethod
+    def _split_cors_hosts(cls, value: Any) -> Any:
+        """Accept a comma-separated env var string for cors_allowed_hosts.
+
+        Vercel and most shells can only pass strings, so
+        `JOBTRACKER_CORS_ALLOWED_HOSTS='jobtracker.app,app.jobtracker.dev'`
+        should Just Work. A list/tuple is still accepted for programmatic use.
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     def ensure_directories(self) -> None:
         """Create required directories if they don't exist."""
