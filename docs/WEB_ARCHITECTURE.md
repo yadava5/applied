@@ -52,6 +52,70 @@ is kept in:
   `sentence_transformers`, `setfit`, nor `transformers` entered
   `sys.modules`.
 
+## Frontend scaffold (C9)
+
+Greenfield `apps/web/` lives as a standalone pnpm project (no workspace
+tooling yet). Stack:
+
+- **Next.js 16** (App Router, Turbopack default) + **React 19.2**.
+- **TypeScript** strict mode.
+- **Tailwind CSS 4**.
+- **Supabase Auth** via `@supabase/ssr` — SSR-safe cookie handling with
+  `getAll` / `setAll` methods (the only supported shape going forward).
+- **TanStack Query 5** installed in preparation for C10 (real API client).
+- **zod** for runtime env validation (`lib/env.ts`).
+- **shadcn/ui**-compatible scaffold: `components.json` in place,
+  `components/ui/button.tsx` committed; further primitives are added via
+  `pnpm dlx shadcn@latest add ...`.
+
+File layout:
+
+```
+apps/web/
+├── app/
+│   ├── (auth)/
+│   │   ├── login/page.tsx      # email+password form
+│   │   ├── signup/page.tsx     # email+password form
+│   │   └── callback/route.ts   # PKCE code-exchange handler
+│   ├── (app)/
+│   │   ├── layout.tsx          # protected AppShell wrapper
+│   │   └── dashboard/page.tsx  # placeholder
+│   ├── layout.tsx              # root html + Geist fonts
+│   └── globals.css             # Tailwind entry
+├── components/
+│   ├── shell/{AppShell,Sidebar,TopBar}.tsx
+│   └── ui/button.tsx
+├── lib/
+│   ├── env.ts                  # zod-validated process.env
+│   ├── utils.ts                # cn() helper
+│   └── supabase/{client,server,middleware}.ts
+├── proxy.ts                    # session refresh + auth gate
+└── components.json             # shadcn config
+```
+
+Auth flow:
+
+1. Unauthenticated visitor hits any `/(app)/...` URL (e.g. `/dashboard`).
+2. `proxy.ts` calls `updateSession(request)` which constructs a Supabase
+   server client, invokes `auth.getUser()` to refresh near-expiry
+   tokens, and redirects missing sessions to `/login?redirect=...`.
+3. The `/login` Client Component calls `supabase.auth.signInWithPassword`
+   in the browser. Supabase writes session cookies via `document.cookie`.
+4. `router.refresh()` + `router.replace(redirect)` re-runs the proxy with
+   the new cookies, which now pass the auth gate.
+5. `app/(app)/layout.tsx` re-checks `auth.getUser()` server-side
+   (defence-in-depth) and hydrates the `AppShell` with the user's email.
+6. Sign-out from `TopBar` calls `supabase.auth.signOut()` and redirects
+   back to `/login`.
+
+> **Next.js 16 note.** The `middleware.ts` convention was renamed to
+> `proxy.ts` in v16. The behaviour is identical; only the file/function
+> name changed.
+
+The scaffold intentionally does **not** wire the real backend API
+client — that arrives in C10 as a typed `fetch` wrapper bound to
+`BACKEND_API_URL` and the Supabase JWT.
+
 ## Cloud entrypoints
 
 - `api/index.py` — Vercel Python runtime entry. Prepends `backend/` to
