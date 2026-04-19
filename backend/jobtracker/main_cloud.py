@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from typing import Any
 
-from fastapi import FastAPI, status
+from fastapi import Depends, FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -124,3 +125,53 @@ async def root() -> dict[str, Any]:
         "docs": "/docs",
         "health": "/health",
     }
+
+
+# =============================================================================
+# Auth (Supabase JWT) — issue #20 (C3)
+# =============================================================================
+#
+# Auth-aware routes live *after* the health/root endpoints so the cloud
+# app remains probeable without credentials. ``current_user`` and
+# ``require_user`` are imported here (not at module top) so a desktop
+# build that never sets DEPLOYMENT=cloud can still import main_cloud
+# without pulling in the cloud auth code — in practice ``jobtracker.main``
+# never imports this module, but the guard keeps the cloud graph thin
+# for the subprocess-based import-hygiene test in test_main_cloud.py.
+
+from jobtracker.auth import current_user  # noqa: E402
+from jobtracker.cloud.applications import router as applications_cloud_router  # noqa: E402
+
+
+class AuthMeResponse(BaseModel):
+    """Response shape for ``/auth/me``."""
+
+    user_id: str
+    authenticated: bool = True
+
+
+@app.get(
+    "/auth/me",
+    response_model=AuthMeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Echo authenticated user",
+    tags=["Auth"],
+)
+async def auth_me(user_id: uuid.UUID = Depends(current_user)) -> AuthMeResponse:
+    """Return the authenticated Supabase user's UUID.
+
+    Useful for:
+    - Web clients to confirm their JWT decodes correctly before
+      mutating state.
+    - Smoke probes after deploy: a 200 here proves both CORS and
+      ``SUPABASE_JWT_SECRET`` are configured correctly on Vercel.
+    """
+
+    return AuthMeResponse(user_id=str(user_id))
+
+
+# Router-level ``require_user()`` is already applied inside
+# ``applications_cloud``; we include without extra dependencies so the
+# router's own contract (auth required on every handler) is the single
+# source of truth.
+app.include_router(applications_cloud_router)
