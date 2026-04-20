@@ -1,0 +1,215 @@
+"""End-to-end test for per-user row scoping on the cloud app (issue #20, C3).
+
+Two distinct Supabase users each insert their own applications via the
+cloud ``/applications`` endpoint. Each user's ``GET /applications`` must
+return only their own rows. This is the contract C3 exists to enforce;
+every subsequent cloud issue (C5, C7, C11+) depends on it.
+
+We stand up the cloud FastAPI app with the in-memory SQLite test DB,
+patch ``settings.supabase_jwt_secret`` so HS256 tokens validate, and
+issue signed JWTs with two different ``sub`` claims. RLS is a
+Postgres-only defence-in-depth layer (SQLite tests exercise only the
+application-level ``user_id`` filter in the cloud router), but that is
+sufficient to prove the correctness of the scoping logic — RLS is
+additive security, not the primary check.
+"""
+
+from __future__ import annotations
+
+import importlib
+import time
+import uuid
+from typing import Any, AsyncIterator
+
+import jwt as pyjwt
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+
+# 32+ bytes of entropy to satisfy PyJWT's HMAC length warning; value
+# is irrelevant as long as it's consistent within the test module.
+JWT_SECRET = "scoping-test-jwt-secret-at-least-32-bytes-long-for-hs256"
+USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+def _token_for(user_id: str, secret: str = JWT_SECRET) -> str:
+    """Build a Supabase-shaped HS256 JWT for ``user_id``."""
+
+    now = int(time.time())
+    return pyjwt.encode(
+        {
+            "sub": user_id,
+            "aud": "authenticated",
+            "iat": now,
+            "exp": now + 300,
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+
+@pytest.fixture
+async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
+    """Build a cloud FastAPI app with a JWT secret and initialized DB.
+
+    We drive everything through env vars (not direct attribute patches)
+    so a single ``importlib.reload(config)`` picks up all three of:
+
+    - ``JOBTRACKER_DEPLOYMENT=cloud`` — selects the cloud code paths.
+    - ``JOBTRACKER_ENVIRONMENT=test`` — pins the in-memory SQLite URL.
+    - ``JOBTRACKER_SUPABASE_JWT_SECRET=<secret>`` — enables the auth
+      dependency for all three of our test JWT signatures.
+
+    After the env vars are in place we reload ``jobtracker.config``,
+    ``jobtracker.database.connection`` (so the engine is rebuilt
+    against the fresh in-memory URL, not the stale on-disk path
+    cached from an earlier import), and ``jobtracker.main_cloud`` (so
+    every route uses the reloaded settings).
+
+    Teardown undoes every env var and reloads config once more so
+    later tests in the same session see an unmodified settings
+    singleton.
+    """
+
+    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
+    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
+    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
+
+    import jobtracker.config as config_module
+    import jobtracker.database.connection as connection_module
+
+    importlib.reload(config_module)
+    # Reset the cached engine so the in-memory DB URL takes effect.
+    connection_module._engine = None
+
+    # Reload auth + cloud modules so their ``from jobtracker.config
+    # import settings`` bindings pick up the reloaded module.
+    import jobtracker.auth.supabase_jwt as auth_module
+
+    importlib.reload(auth_module)
+
+    import jobtracker.cloud.applications as cloud_apps_module
+
+    importlib.reload(cloud_apps_module)
+
+    import jobtracker.main_cloud as main_cloud_module
+
+    importlib.reload(main_cloud_module)
+
+    from jobtracker.database import init_db
+
+    await init_db()
+
+    yield main_cloud_module.app
+
+    # Reset engine so the next test's on-disk URL isn't still bound to
+    # the in-memory one.
+    await connection_module._engine.dispose() if connection_module._engine else None
+    connection_module._engine = None
+
+    monkeypatch.undo()
+    importlib.reload(config_module)
+
+
+@pytest.fixture
+async def client(cloud_app) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=cloud_app)
+    async with AsyncClient(transport=transport, base_url="http://cloud-test") as c:
+        yield c
+
+
+async def test_auth_me_echoes_user_uuid(client: AsyncClient) -> None:
+    """Smoke test: ``/auth/me`` returns the ``sub`` claim verbatim."""
+
+    resp = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["user_id"] == USER_A
+    assert body["authenticated"] is True
+
+
+async def test_missing_jwt_rejected(client: AsyncClient) -> None:
+    """Applications endpoint must 401 without a bearer token."""
+
+    resp = await client.get("/applications")
+    assert resp.status_code == 401
+
+
+async def test_users_see_only_their_own_applications(client: AsyncClient) -> None:
+    """The core C3 guarantee.
+
+    User A creates two applications; user B creates one. Each user's
+    GET /applications must return only their own rows and the
+    ``user_id`` on every returned row must match the requester's JWT
+    ``sub`` claim.
+    """
+
+    headers_a = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    headers_b = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+
+    # User A creates two applications.
+    for payload in (
+        {"company": "Acme", "position": "SWE"},
+        {"company": "Initech", "position": "Backend"},
+    ):
+        resp = await client.post("/applications", json=payload, headers=headers_a)
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["user_id"] == USER_A
+
+    # User B creates one.
+    resp = await client.post(
+        "/applications",
+        json={"company": "Hooli", "position": "Infra"},
+        headers=headers_b,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["user_id"] == USER_B
+
+    # User A sees only A's rows.
+    resp_a = await client.get("/applications", headers=headers_a)
+    assert resp_a.status_code == 200
+    payload_a = resp_a.json()
+    assert payload_a["total"] == 2
+    assert {r["company"] for r in payload_a["applications"]} == {"Acme", "Initech"}
+    assert all(r["user_id"] == USER_A for r in payload_a["applications"])
+
+    # User B sees only B's row.
+    resp_b = await client.get("/applications", headers=headers_b)
+    assert resp_b.status_code == 200
+    payload_b = resp_b.json()
+    assert payload_b["total"] == 1
+    assert payload_b["applications"][0]["company"] == "Hooli"
+    assert payload_b["applications"][0]["user_id"] == USER_B
+
+
+async def test_client_cannot_spoof_user_id_in_request_body(client: AsyncClient) -> None:
+    """Sanity: even if a client sends a ``user_id`` in the JSON body,
+    the cloud router ignores it and uses the JWT ``sub`` claim.
+
+    ``CloudApplicationCreate`` doesn't declare a ``user_id`` field so
+    Pydantic silently drops it; the handler then reads ``user_id`` from
+    ``Depends(current_user)``. This test documents the invariant so a
+    future refactor that adds the field by accident fails loudly.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    spoofed_user = str(uuid.uuid4())
+
+    resp = await client.post(
+        "/applications",
+        json={
+            "company": "Evil Corp",
+            "position": "Attacker",
+            "user_id": spoofed_user,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["user_id"] == USER_A
+    assert resp.json()["user_id"] != spoofed_user
