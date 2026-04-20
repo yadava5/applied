@@ -90,10 +90,55 @@ apps/web/
 6. Sign-out from `TopBar` calls `supabase.auth.signOut()` and redirects back
    to `/login`.
 
+## Updating the API client
+
+Typed bindings for the FastAPI backend live under `lib/api/`:
+
+```
+lib/api/
+├── schema.d.ts   # generated (or seed) OpenAPI types — `paths` / `components` / `operations`
+├── client.ts     # `createApiClient({ baseUrl, token? })` → typed openapi-fetch client
+└── server.ts     # `createServerApiClient()` — reads Supabase JWT from cookies
+```
+
+`schema.d.ts` is committed so screens (C11–C16) compile without a live
+backend. It is a **seed**: hand-authored to cover only the endpoints we
+currently touch (`GET /auth/me`, `GET /health`, `GET /applications`,
+`POST /applications`). Regenerate from the live OpenAPI whenever the
+backend contract changes:
+
+```bash
+# Against the deployed cloud backend (reads BACKEND_API_URL from env)
+pnpm -C apps/web api:gen
+
+# Against a local uvicorn (backend/jobtracker/main_cloud.py) on :8000
+pnpm -C apps/web api:gen:local
+```
+
+Both scripts run `openapi-typescript <url> -o lib/api/schema.d.ts` and
+will OVERWRITE the seed file with the full generated output — that is the
+intended flow. After regenerating, run `pnpm typecheck` to surface any
+shape changes in consuming screens.
+
+Typical usage in a Server Component:
+
+```tsx
+import { createServerApiClient } from "@/lib/api/server";
+
+export default async function Page() {
+  const api = await createServerApiClient();
+  const { data, error } = await api.GET("/auth/me");
+  // `data` is typed as `{ user_id: string; authenticated: boolean } | undefined`
+  if (error) return <p>Unauthorized</p>;
+  return <p>{data.user_id}</p>;
+}
+```
+
 ## Not yet in scope
 
-- Real backend API client (comes in C10).
-- Playwright E2E tests (separate issue).
+- Playwright E2E tests (separate issue, C17).
+- Auto-regenerate `schema.d.ts` in CI (manual `pnpm api:gen` for now).
+- Zod runtime validation layer on top of the static types.
 - shadcn/ui kit beyond `Button`.
 - Monorepo tooling (`pnpm-workspace.yaml`, `turbo.json`).
 
