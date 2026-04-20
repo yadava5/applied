@@ -543,3 +543,91 @@ class SyncState(SQLModel, table=True):
     # Status - use string column to store enum values
     status: str = Field(default="idle", description="Current sync status")
     error_message: Optional[str] = Field(default=None, description="Last error message")
+
+
+class UserCredential(SQLModel, table=True):
+    """
+    Encrypted third-party credentials (cloud deployment only).
+
+    Stores Gmail OAuth tokens and iCloud app-specific passwords as
+    Fernet-encrypted blobs, scoped to the authenticated Supabase user.
+    Desktop uses macOS Keychain via ``jobtracker.credentials.desktop``
+    and never writes to this table.
+
+    See ``jobtracker.credentials.cloud`` for the read/write API and
+    ``jobtracker.config.secret_encryption_key`` for the encryption key.
+
+    Composite PK (user_id, kind) means at most one row per user per
+    credential type; re-issuing a Gmail OAuth token overwrites the
+    existing row.
+    """
+
+    __tablename__ = "user_credentials"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("user_id", "kind", name="pk_user_credentials"),
+        sa.CheckConstraint(
+            "kind IN ('gmail_oauth', 'icloud_mail')",
+            name="ck_user_credentials_kind",
+        ),
+        sa.Index("ix_user_credentials_kind", "kind"),
+    )
+
+    # Owner (Supabase auth.users.id). NOT using the shared
+    # ``_user_id_field()`` factory here because this table's PK *is*
+    # (user_id, kind) — we want the column declared with an explicit
+    # SA column object that participates in the composite PK.
+    user_id: uuid.UUID = Field(
+        sa_column=Column(
+            "user_id",
+            sa.Uuid(as_uuid=True),
+            nullable=False,
+        ),
+        description="Supabase auth.users(id) owner of this credential.",
+    )
+
+    # Credential type discriminator. Text, not Python enum — the
+    # CHECK constraint (see __table_args__) enforces valid values and
+    # keeps the column portable across SQLite/Postgres.
+    kind: str = Field(
+        sa_column=Column("kind", sa.Text, nullable=False),
+        description="Credential kind: 'gmail_oauth' or 'icloud_mail'.",
+    )
+
+    # Fernet token: base64url(version || timestamp || iv || ciphertext || hmac).
+    # Fernet embeds its own IV, so ``nonce`` is reserved for a future AEAD
+    # upgrade and currently stored as an empty byte string.
+    ciphertext: bytes = Field(
+        sa_column=Column("ciphertext", sa.LargeBinary, nullable=False),
+        description="Fernet-encrypted credential blob.",
+    )
+    nonce: bytes = Field(
+        default=b"",
+        sa_column=Column("nonce", sa.LargeBinary, nullable=False),
+        description="Reserved for AEAD nonce (unused by Fernet).",
+    )
+
+    # Encryption key id — supports rotation. Active key is named 'v1'.
+    key_id: str = Field(
+        default="v1",
+        sa_column=Column("key_id", sa.Text, nullable=False, server_default="v1"),
+        description="Identifier of the encryption key used (rotation support).",
+    )
+
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
