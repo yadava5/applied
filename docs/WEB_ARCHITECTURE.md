@@ -159,6 +159,40 @@ The scaffold intentionally does **not** wire the real backend API
 client — that arrives in C10 as a typed `fetch` wrapper bound to
 `BACKEND_API_URL` and the Supabase JWT.
 
+## Credentials (cloud)
+
+- **Package layout.** `backend/jobtracker/credentials/` is the package
+  introduced by issue #21 (C4). It contains `types.py` (shared
+  `GmailCredentials` / `ICloudCredentials` dataclasses), `desktop.py`
+  (macOS Keychain via `keyring`, sync API), and `cloud.py`
+  (Supabase Postgres + Fernet, async API taking `user_id`).
+- **Backward compatibility.** `__init__.py` re-exports every
+  symbol from `desktop.py` at the top level, so historical
+  desktop imports like
+  `from jobtracker.credentials import save_gmail_credentials` compile
+  unchanged. Cloud routers import from
+  `jobtracker.credentials.cloud` explicitly.
+- **Storage table.** `user_credentials` (Alembic rev `22cefa34bc94`).
+  Composite PK `(user_id, kind)`; `kind ∈ {'gmail_oauth',
+  'icloud_mail'}`. Ciphertext is an opaque Fernet token; `nonce`
+  reserved for a future AEAD upgrade (Fernet embeds its own IV).
+- **Encryption.** `cryptography.fernet.Fernet` keyed by
+  `settings.secret_encryption_key` (urlsafe base64, 32 bytes).
+  Generate with `python -c "from cryptography.fernet import Fernet;
+  print(Fernet.generate_key().decode())"`. Active key is named
+  `v1`; the `key_id` column supports rotation (multi-key decrypt
+  scaffolded but not wired for v1).
+- **Defence-in-depth.** Alembic rev `c4user_creds_rls` enables
+  Postgres Row-Level Security on `user_credentials` with per-op
+  policies `USING (user_id = auth.uid())` and the FK
+  `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`.
+  Migration is a no-op on SQLite.
+- **Failure modes.** If `JOBTRACKER_SECRET_ENCRYPTION_KEY` is unset,
+  `cloud.save_*_credentials` raises `CredentialEncryptionError`
+  immediately (loud failure). Invalid ciphertext (bad key or
+  tampered row) causes `cloud.get_*_credentials` to log and return
+  `None` — routers degrade gracefully.
+
 ## Cloud entrypoints
 
 - `api/index.py` — Vercel Python runtime entry. Prepends `backend/` to
@@ -197,7 +231,7 @@ Supabase Postgres (asyncpg, transaction-mode pooler)
 | Deployment toggle + shim | #14 (C1) |
 | Postgres + Alembic | C2 |
 | Supabase Auth + user_id + RLS | #20 (C3) |
-| Encrypted credentials | C4 |
+| Encrypted credentials | #21 (C4) |
 | Gmail web OAuth | C5 |
 | Rules-only cloud classifier | #17 (C6) |
 | WebSocket → polling + cron | C7 |
