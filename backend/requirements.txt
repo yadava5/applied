@@ -35,6 +35,7 @@ aioimaplib>=2.0.0                   # Async IMAP client for iCloud Mail
 # Security & Credentials
 # -----------------------------------------------------------------------------
 keyring>=24.3.0               # Secure credential storage (macOS Keychain)
+pyjwt[crypto]>=2.8.0          # Supabase JWT validation (cloud auth middleware, C3)
 
 # -----------------------------------------------------------------------------
 # ML & NLP

@@ -27,6 +27,49 @@ is kept in:
   import graph. The `jobtracker.classifier` package itself uses PEP
   562 `__getattr__` so heavy re-exports resolve only on demand.
 
+## Auth (cloud)
+
+- **Identity provider.** Supabase Auth. Users sign up / sign in via
+  `supabase-js` in the Next.js frontend (C9); the browser exchanges
+  email+password for a JWT which is then attached as
+  `Authorization: Bearer <JWT>` on every request to the cloud
+  FastAPI backend.
+- **Token format.** HS256 JWT signed with `SUPABASE_JWT_SECRET` (the
+  project-wide Supabase signing key, configured as
+  `JOBTRACKER_SUPABASE_JWT_SECRET` on Vercel). Supabase default
+  claims: `sub` (UUID of `auth.users.id`), `aud` = `"authenticated"`,
+  plus `exp` / `iat` / `role`.
+- **Verification.** `backend/jobtracker/auth/supabase_jwt.py` decodes
+  the token with `pyjwt[crypto]`, pinned to `algorithms=["HS256"]`
+  (rejects `alg: none` and `alg: RS256`), with
+  `audience="authenticated"` and `require=["exp", "sub", "aud"]`.
+  The `sub` claim is parsed as `uuid.UUID` and returned by the
+  `current_user` dependency.
+- **Router contract.** Cloud-only routers live under
+  `backend/jobtracker/cloud/` and declare
+  `dependencies=[require_user()]` at the router level. Desktop
+  routers in `backend/jobtracker/api/` stay unauthenticated — the
+  two package trees are separate so the cloud app's import graph
+  never pulls in `jobtracker.credentials` / `keyring`.
+- **Per-row scoping.** Every entity table carries a
+  `user_id UUID NOT NULL` column (Alembic rev `6e64c46d32fd`).
+  Handlers read the authenticated UUID from
+  `Depends(current_user)` and use it both for reads
+  (`WHERE user_id = :uid`) and writes (`Application(user_id=uid,
+  ...)`). Clients cannot spoof `user_id` because the cloud Pydantic
+  request models do not expose it.
+- **Defence-in-depth (RLS).** Alembic rev `a8d4ec5fba26` enables
+  PostgreSQL Row-Level Security on every tenant-scoped table with
+  per-operation policies of the form
+  `USING (user_id = auth.uid())` (and `WITH CHECK` for writes). The
+  migration is a no-op on SQLite so `alembic upgrade head` runs
+  cleanly in CI; on Supabase it guarantees the DB rejects any query
+  that forgets the application-level filter.
+- **Desktop.** Unchanged. `jobtracker.main` never imports the auth
+  module; desktop rows are owned by a fixed sentinel UUID
+  (`00000000-0000-0000-0000-000000000000`) declared in
+  `jobtracker.database.models.LOCAL_USER_ID`.
+
 ## Classifier (cloud)
 
 - **Layers available.** Rules only. Embeddings (Layer 2) and SetFit
@@ -89,7 +132,7 @@ Supabase Postgres (asyncpg, transaction-mode pooler)
 |---|---|
 | Deployment toggle + shim | #14 (C1) |
 | Postgres + Alembic | C2 |
-| Supabase Auth + user_id + RLS | C3 |
+| Supabase Auth + user_id + RLS | #20 (C3) |
 | Encrypted credentials | C4 |
 | Gmail web OAuth | C5 |
 | Rules-only cloud classifier | #17 (C6) |
