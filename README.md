@@ -67,6 +67,21 @@ Open the macOS app project:
 open apps/macos/JobTracker/JobTracker/JobTracker.xcodeproj
 ```
 
+## Web app (beta)
+
+A Next.js 16 frontend for the cloud deployment lives in `apps/web/` (scaffolded in issue #24). It is not wired to a production backend yet — the typed API client ships in a follow-up — but the auth shell and Supabase session handling are in place.
+
+Quickstart:
+
+```bash
+cd apps/web
+cp .env.example .env.local       # fill Supabase URL, anon key, BACKEND_API_URL
+pnpm install --frozen-lockfile
+pnpm dev                         # http://localhost:3000
+```
+
+Full setup, stack, and auth-flow notes: see `apps/web/README.md` and the "Frontend scaffold (C9)" section of `docs/WEB_ARCHITECTURE.md`.
+
 ## Active Docs
 
 - `docs/SETUP.md` - local setup and day-to-day development flow
