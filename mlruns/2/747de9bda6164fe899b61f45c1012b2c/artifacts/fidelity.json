@@ -1,0 +1,16 @@
+{
+  "n_total": 100000,
+  "n_holdout": 20000,
+  "seed": 20260717,
+  "n_bins_max": 8,
+  "surrogate_vs_real_auc_median_threshold": 0.9603163345599005,
+  "median_threshold_value": 0.5868230164051056,
+  "surrogate_vs_real_auc_0p5_threshold": 0.9548402752115217,
+  "spearman_prob_corr": 0.9222218110575462,
+  "top1_direction_agreement": 0.9814,
+  "published_real_holdout_auc": 0.8976505126872839,
+  "timestamp_utc": "2026-07-17T19:43:57.004319+00:00",
+  "n_synthetic_baseline_block": 80000,
+  "n_synthetic_fully_varied_block": 20000,
+  "n_synthetic_total": 100000
+}
