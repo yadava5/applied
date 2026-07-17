@@ -1,29 +1,25 @@
 import { createServerApiClient } from "@/lib/api/server";
+import type { components } from "@/lib/api/schema";
+import { ApplicationsBoard } from "@/components/applications/ApplicationsBoard";
+import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
+
+type Application = components["schemas"]["Application"];
 
 /**
- * Dashboard smoke screen.
- *
- * Intentionally minimal for C10: we make one server-side, typed fetch to
- * `GET /auth/me` to prove the API client is wired up. Real dashboard
- * widgets (pipeline totals, recent emails, follow-up reminders) land in
- * C13 once the backend endpoints for them exist.
- *
- * The fetch is wrapped in try/catch so a backend outage renders a
- * "Backend offline" placeholder rather than crashing the RSC — the
- * protected shell above us has already confirmed the user is signed in,
- * so the UX shouldn't degrade into a redirect loop if the backend is
- * momentarily unreachable.
+ * The signed-in product: the pipeline board driven by GET /applications,
+ * with a filing form posting through the server-side proxy. Failure
+ * modes stay first-class — an unreachable backend degrades to a labeled
+ * state, never a crash (the shell above already guarantees auth).
  */
-type AuthMeState =
-  | { kind: "ok"; userId: string }
+type LoadState =
+  | { kind: "ok"; applications: Application[]; total: number }
   | { kind: "unauthorized"; message: string }
   | { kind: "offline"; message: string };
 
-async function loadAuthMe(): Promise<AuthMeState> {
+async function loadApplications(): Promise<LoadState> {
   try {
     const api = await createServerApiClient();
-    const { data, error, response } = await api.GET("/auth/me");
-
+    const { data, error, response } = await api.GET("/applications");
     if (error || !data) {
       return {
         kind: "unauthorized",
@@ -33,8 +29,7 @@ async function loadAuthMe(): Promise<AuthMeState> {
             : `Backend responded ${response.status}`,
       };
     }
-
-    return { kind: "ok", userId: data.user_id };
+    return { kind: "ok", applications: data.applications, total: data.total };
   } catch (err) {
     return {
       kind: "offline",
@@ -44,41 +39,53 @@ async function loadAuthMe(): Promise<AuthMeState> {
 }
 
 export default async function DashboardPage() {
-  const authMe = await loadAuthMe();
+  const state = await loadApplications();
+
+  if (state.kind !== "ok") {
+    return (
+      <section className="space-y-4">
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
+        <div
+          className="rounded-xl border border-line-soft bg-surface p-4 font-mono text-sm text-muted"
+          role="status"
+        >
+          {state.kind === "unauthorized"
+            ? `The backend rejected the session: ${state.message}`
+            : `The backend is unreachable — the board renders the moment it answers. (${state.message})`}
+        </div>
+      </section>
+    );
+  }
+
+  const active = state.applications.filter((a) =>
+    ["applied", "interviewing"].includes(a.status),
+  ).length;
+  const offers = state.applications.filter((a) =>
+    ["offered", "accepted"].includes(a.status),
+  ).length;
 
   return (
-    <section className="space-y-4">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Your JobTracker pipeline will show up here once the backend API
-          integration lands. For now this is an empty placeholder served by
-          the authenticated shell.
-        </p>
+    <section className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
+          <p className="mt-1 font-mono text-xs text-dim">
+            {state.total} filed · {active} in motion · {offers} offer{offers === 1 ? "" : "s"}
+          </p>
+        </div>
+        <AddApplicationForm />
       </header>
 
-      <div
-        className="rounded-md border border-neutral-200 p-3 text-sm dark:border-neutral-800"
-        data-testid="auth-me-smoke"
-      >
-        {authMe.kind === "ok" ? (
-          <p>
-            <span className="font-medium">Backend reachable.</span>{" "}
-            <code className="font-mono text-xs">user_id={authMe.userId}</code>
+      {state.total === 0 ? (
+        <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center">
+          <p className="text-strong">Nothing filed yet.</p>
+          <p className="mt-1 text-sm text-muted">
+            File your first application above — the board takes it from there.
           </p>
-        ) : authMe.kind === "unauthorized" ? (
-          <p className="text-amber-700 dark:text-amber-400">
-            Backend reachable, but the session token was rejected:{" "}
-            {authMe.message}
-          </p>
-        ) : (
-          <p className="text-neutral-500 dark:text-neutral-400">
-            Backend offline — dashboard will populate once{" "}
-            <code className="font-mono text-xs">BACKEND_API_URL</code> is
-            reachable. ({authMe.message})
-          </p>
-        )}
-      </div>
+        </div>
+      ) : (
+        <ApplicationsBoard applications={state.applications} />
+      )}
     </section>
   );
 }
