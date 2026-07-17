@@ -74,11 +74,25 @@ logger = logging.getLogger(__name__)
 # auth (only the cloud ``/health`` + ``/`` today).
 _SUPABASE_AUDIENCE = "authenticated"
 
-# Supabase JWTs are signed with HS256 by default. Supporting RS256 is
-# a Supabase Enterprise tier feature and out of scope for C3 — we pin
-# the accepted algorithm list so a spoofed ``alg: none`` or ``alg:
-# RS256`` token cannot be accepted.
+# Supabase historically signed user tokens with HS256 (shared secret);
+# projects created since 2025 default to asymmetric ES256 signing keys
+# published at ``/auth/v1/.well-known/jwks.json``. We accept exactly
+# these two, dispatching on the token header to the matching verified
+# path — a spoofed ``alg: none`` (or anything else) is rejected before
+# any verification is attempted.
 _SUPABASE_ALGORITHMS: list[str] = ["HS256"]
+_SUPABASE_ASYMMETRIC_ALGORITHMS: list[str] = ["ES256"]
+
+# Cached JWKS client (keys are cached by PyJWKClient; a rotated key is
+# refetched automatically on kid miss).
+_jwks_client: jwt.PyJWKClient | None = None
+
+
+def _get_jwks_client(jwks_url: str) -> jwt.PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None or _jwks_client.uri != jwks_url:
+        _jwks_client = jwt.PyJWKClient(jwks_url, cache_keys=True, lifespan=3600)
+    return _jwks_client
 
 
 class AuthError(HTTPException):
@@ -99,13 +113,40 @@ class AuthError(HTTPException):
 
 
 def _decode_token(token: str, secret: str) -> dict[str, Any]:
-    """Decode + verify the JWT. Raises :class:`AuthError` on any failure."""
+    """Decode + verify the JWT. Raises :class:`AuthError` on any failure.
+
+    Dispatches on the (unverified) header ``alg`` strictly: ES256 tokens
+    verify against the project's JWKS (when configured), HS256 tokens
+    against the shared secret. The header is only used to *choose* a
+    fully-verified path, never to relax verification.
+    """
+
+    try:
+        header_alg = jwt.get_unverified_header(token).get("alg")
+    except jwt.InvalidTokenError:
+        raise AuthError("Invalid token") from None
+
+    key: Any = secret
+    algorithms = _SUPABASE_ALGORITHMS
+    if header_alg in _SUPABASE_ASYMMETRIC_ALGORITHMS:
+        jwks_url = settings.supabase_jwks_url
+        if not jwks_url:
+            logger.error(
+                "Received an ES256 Supabase token but JOBTRACKER_SUPABASE_JWKS_URL "
+                "is not configured; rejecting."
+            )
+            raise AuthError("Auth not configured")
+        try:
+            key = _get_jwks_client(jwks_url).get_signing_key_from_jwt(token).key
+        except jwt.PyJWKClientError:
+            raise AuthError("Invalid signature") from None
+        algorithms = _SUPABASE_ASYMMETRIC_ALGORITHMS
 
     try:
         payload: dict[str, Any] = jwt.decode(
             token,
-            secret,
-            algorithms=_SUPABASE_ALGORITHMS,
+            key,
+            algorithms=algorithms,
             audience=_SUPABASE_AUDIENCE,
             # ``pyjwt`` verifies ``exp``, ``iat``, ``nbf``, and signature
             # by default; we also want strict audience verification, which

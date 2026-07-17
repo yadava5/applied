@@ -251,6 +251,16 @@ class Settings(BaseSettings):
         default=None,
         description="Supabase JWT signing secret; required for cloud auth middleware (C3).",
     )
+    supabase_jwks_url: str | None = Field(
+        default=None,
+        description=(
+            "JWKS endpoint for Supabase's asymmetric JWT signing keys "
+            "(new projects sign user tokens with ES256), e.g. "
+            "https://<ref>.supabase.co/auth/v1/.well-known/jwks.json. "
+            "When set, ES256 tokens verify against these keys; HS256 "
+            "tokens still verify against supabase_jwt_secret."
+        ),
+    )
     secret_encryption_key: str | None = Field(
         default=None,
         description=(
