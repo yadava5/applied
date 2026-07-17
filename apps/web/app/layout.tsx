@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "JobTracker",
+  title: { default: "JobTracker — your inbox, made legible", template: "%s · JobTracker" },
   description:
-    "Email-powered job application tracker — web app scaffold (C9)",
+    "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads the pipeline out of your inbox at 0.979 macro-F1, CI-gated at 0.95.",
 };
 
 export default function RootLayout({
@@ -28,7 +28,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+      <body className="flex min-h-full flex-col">
         {children}
       </body>
     </html>
