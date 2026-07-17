@@ -1,26 +1,60 @@
 @import "tailwindcss";
 
+/* JobTracker web — monochrome system. Near-black surfaces, a gray text
+ * ramp, hairline rules, mono uppercase labels. Chromatic ink is
+ * semantic only: green = confident/live, amber = needs review,
+ * red = rejection. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+  --background: #0a0a0b;
+  --surface: #0f1011;
+  --surface-2: #141517;
+  --foreground: #d6d8db;
+  --text-strong: #f7f8f8;
+  --text-muted: #8a8f98;
+  --text-dim: #63666c;
+  --line: rgb(255 255 255 / 0.09);
+  --line-soft: rgb(255 255 255 / 0.055);
+  --line-strong: rgb(255 255 255 / 0.2);
+  --green: #4ade80;
+  --amber: #f59e0b;
+  --red: #f87171;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-foreground: var(--foreground);
+  --color-strong: var(--text-strong);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-strong: var(--line-strong);
+  --color-live: var(--green);
+  --color-review: var(--amber);
+  --color-reject: var(--red);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mono uppercase label — the machine voice. */
+.label-mono {
+  color: var(--text-dim);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
