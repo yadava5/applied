@@ -1,0 +1,17 @@
+# The Python function needs backend/jobtracker (2.2 MB) — nothing else.
+# Without these excludes the backend tree is ~880 MB and the function
+# build exceeds Vercel's 250 MB unzipped limit.
+backend/build
+backend/dist
+backend/checkpoints
+backend/data
+backend/tests
+backend/.venv
+backend/.venv311
+backend/.pytest_cache
+backend/.ruff_cache
+apps
+dist
+docs
+ml
+scripts
