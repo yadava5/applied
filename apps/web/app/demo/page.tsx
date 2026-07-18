@@ -1,11 +1,8 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import {
-  DEMO_APPLICATIONS,
-  DEMO_REVIEW_QUEUE,
-  DEMO_STATS,
-  type DemoStatus,
-} from "@/lib/demo/demoData";
+import { DEMO_APPLICATIONS, DEMO_STATS, type DemoStatus } from "@/lib/demo/demoData";
+import { PipelineFunnel } from "@/components/viz/PipelineFunnel";
+import { DecisionTrace } from "@/components/viz/DecisionTrace";
 
 export const metadata: Metadata = {
   title: "Live demo — JobTracker",
@@ -19,18 +16,6 @@ const COLUMNS: { status: DemoStatus; label: string }[] = [
   { status: "offered", label: "offered" },
   { status: "rejected", label: "rejected" },
 ];
-
-const METHOD_NOTE: Record<string, string> = {
-  rules: "regex rules — instant",
-  embeddings: "e5 similarity",
-  setfit: "SetFit few-shot",
-};
-
-function confidenceTone(item: { needsReview: boolean; category: string }) {
-  if (item.needsReview) return "text-review";
-  if (item.category === "rejection") return "text-reject";
-  return "text-live";
-}
 
 /**
  * The product, auth-free: the same board and review-queue UX the
@@ -71,9 +56,10 @@ export default function DemoPage() {
 
       <section aria-labelledby="board-title" className="mt-10">
         <h2 id="board-title" className="label-mono mb-3">
-          01 · pipeline board
+          01 · pipeline
         </h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <PipelineFunnel />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {COLUMNS.map((col) => {
             const items = DEMO_APPLICATIONS.filter((a) => a.status === col.status);
             return (
@@ -108,42 +94,18 @@ export default function DemoPage() {
       <section aria-labelledby="queue-title" className="mt-12">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 id="queue-title" className="label-mono">
-            02 · classifier feed — rules → e5 → SetFit
+            02 · decision trace — click an email to open its verdict
           </h2>
           <span className="font-mono text-[11px] text-dim">
             CI-gated at 0.95 macro-F1 · 0.979 measured
           </span>
         </div>
-        <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
-          <ul className="divide-y divide-line-soft">
-            {DEMO_REVIEW_QUEUE.map((item) => (
-              <li key={item.subject} className="flex flex-wrap items-center gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-strong">{item.subject}</p>
-                  <p className="truncate font-mono text-[11px] text-dim">{item.from}</p>
-                </div>
-                <span className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-foreground">
-                  {item.category.replace("_", " ")}
-                </span>
-                <span className={`tabular font-mono text-xs ${confidenceTone(item)}`}>
-                  {(item.confidence * 100).toFixed(1)}%
-                </span>
-                <span className="hidden font-mono text-[11px] text-muted sm:inline">
-                  {METHOD_NOTE[item.method]}
-                </span>
-                {item.needsReview && (
-                  <span className="rounded-full border border-review/40 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
-                    needs review
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <DecisionTrace />
         <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
-          Below 0.85 confidence, nothing is auto-filed — the email waits for a human, and the
-          correction becomes SetFit training data. The live classifier behind this UX holds
-          0.979 macro-F1 on the committed eval set, gated in CI at 0.95.
+          Each verdict is traced through three layers — regex rules strike first, e5 embeddings
+          arbitrate, a SetFit head renders the call. Below the 0.85 gate nothing is auto-filed;
+          the email waits for a human and the correction becomes new training data. 0.979 macro-F1
+          on the committed eval set, gated in CI at 0.95.
         </p>
       </section>
     </main>

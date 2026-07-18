@@ -19,6 +19,11 @@
   --green: #4ade80;
   --amber: #f59e0b;
   --red: #f87171;
+  /* Data-viz sub-palette — the three classifier layers get their own
+   * categorical hues so the pipeline reads as data, not just mono text. */
+  --viz-rules: #38bdf8; /* layer 1 — regex rules, instant */
+  --viz-embeddings: #a78bfa; /* layer 2 — e5 similarity */
+  --viz-setfit: #34d399; /* layer 3 — SetFit few-shot */
 }
 
 @theme inline {
@@ -35,6 +40,9 @@
   --color-live: var(--green);
   --color-review: var(--amber);
   --color-reject: var(--red);
+  --color-viz-rules: var(--viz-rules);
+  --color-viz-embeddings: var(--viz-embeddings);
+  --color-viz-setfit: var(--viz-setfit);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
