@@ -47,7 +47,7 @@ export default function Landing() {
             href="/demo"
             className="rounded-lg bg-strong px-5 py-2.5 font-medium text-background transition-transform hover:-translate-y-px"
           >
-            Enter the live demo ↓
+            Enter the live demo →
           </Link>
           <a
             href="https://huggingface.co/spaces/yadava5/jobtracker-classifier"
