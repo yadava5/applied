@@ -2,6 +2,10 @@
 
 JobTracker is a native macOS app plus a local Python backend that tracks your job pipeline by syncing Gmail/iCloud emails, classifying messages, and linking them to applications.
 
+> **Live (web):** https://jobtracker-web-five.vercel.app · fixture demo at `/demo` · in-browser classifier: https://huggingface.co/spaces/yadava5/jobtracker-classifier
+>
+> **2026 status — hosted web app + portable ML.** Beyond the original desktop app, the pipeline now ships as a Next.js 16 web product and a 3-layer email classifier (201 regex rules → fine-tuned e5 similarity → SetFit head) exported to int8 ONNX that runs **entirely in the browser** (22.8MB, zero servers), verified output-identical to the Python model. 0.979 macro-F1, CI-gated ≥ 0.95; 182 tests. The landing hero runs a real email through all three layers past the 0.85 confidence gate. Independently audited live (2026-07): ship-ready — zero functional bugs, zero console errors.
+
 This repo is intentionally documented without screenshots right now. The previous images were outdated and have been removed.
 
 ## What Works Today
