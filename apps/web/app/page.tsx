@@ -64,7 +64,7 @@ export default function Landing() {
             ["macro-F1", "0.979 / gate 0.95"],
             ["layers", "rules → e5 → SetFit"],
             ["test suite", "182 passing"],
-            ["pipeline stages", "9 tracked"],
+            ["email classes", "9 distinguished"],
           ].map(([k, v]) => (
             <div key={k} className="border-b border-r border-line-soft p-4 text-left last:border-r-0 sm:border-b-0">
               <dt className="label-mono">{k}</dt>

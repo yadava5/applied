@@ -24,10 +24,8 @@ export function TopBar({ userEmail }: TopBarProps) {
   }
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-neutral-200 bg-white px-4 dark:border-neutral-800 dark:bg-neutral-950">
-      <div className="text-sm text-neutral-500 dark:text-neutral-400">
-        {userEmail ?? ""}
-      </div>
+    <header className="flex h-14 items-center justify-between border-b border-line-soft bg-surface px-4">
+      <div className="font-mono text-sm text-muted">{userEmail ?? ""}</div>
       <Button
         type="button"
         variant="ghost"
