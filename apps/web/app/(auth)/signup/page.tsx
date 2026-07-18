@@ -65,7 +65,7 @@ export default function SignupPage() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Create your JobTracker account
           </h1>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="text-sm text-muted">
             Track your job pipeline from one place.
           </p>
         </header>
@@ -82,7 +82,7 @@ export default function SignupPage() {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100 dark:focus:ring-neutral-100"
+              className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
             />
           </div>
 
@@ -98,9 +98,9 @@ export default function SignupPage() {
               minLength={8}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100 dark:focus:ring-neutral-100"
+              className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
             />
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-xs text-dim">
               At least 8 characters.
             </p>
           </div>
@@ -108,14 +108,14 @@ export default function SignupPage() {
           {error ? (
             <p
               role="alert"
-              className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+              className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject"
             >
               {error}
             </p>
           ) : null}
 
           {infoMessage ? (
-            <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+            <p className="rounded-md border border-live/40 bg-live/10 px-3 py-2 text-sm text-live">
               {infoMessage}
             </p>
           ) : null}
@@ -125,9 +125,9 @@ export default function SignupPage() {
           </Button>
         </form>
 
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-muted">
           Already have an account?{" "}
-          <Link href="/login" className="underline underline-offset-4">
+          <Link href="/login" className="text-strong underline underline-offset-4 hover:text-foreground">
             Sign in
           </Link>
         </p>

@@ -21,7 +21,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Sign in to JobTracker
           </h1>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="text-sm text-muted">
             Enter your email and password to continue.
           </p>
         </header>
@@ -30,9 +30,9 @@ export default function LoginPage() {
           <LoginForm />
         </Suspense>
 
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-muted">
           Don&apos;t have an account?{" "}
-          <Link href="/signup" className="underline underline-offset-4">
+          <Link href="/signup" className="text-strong underline underline-offset-4 hover:text-foreground">
             Sign up
           </Link>
         </p>
@@ -45,11 +45,11 @@ function LoginFormSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className="space-y-4 animate-pulse text-neutral-400"
+      className="space-y-4 animate-pulse text-dim"
     >
-      <div className="h-9 rounded-md bg-neutral-200 dark:bg-neutral-800" />
-      <div className="h-9 rounded-md bg-neutral-200 dark:bg-neutral-800" />
-      <div className="h-9 rounded-md bg-neutral-200 dark:bg-neutral-800" />
+      <div className="h-9 rounded-md bg-surface-2" />
+      <div className="h-9 rounded-md bg-surface-2" />
+      <div className="h-9 rounded-md bg-surface-2" />
     </div>
   );
 }
@@ -100,7 +100,7 @@ function LoginForm() {
           required
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100 dark:focus:ring-neutral-100"
+          className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
         />
       </div>
 
@@ -116,14 +116,14 @@ function LoginForm() {
           minLength={6}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100 dark:focus:ring-neutral-100"
+          className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
         />
       </div>
 
       {error ? (
         <p
           role="alert"
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+          className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject"
         >
           {error}
         </p>
