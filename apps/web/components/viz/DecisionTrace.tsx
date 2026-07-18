@@ -54,7 +54,10 @@ export function DecisionTrace() {
                 onClick={() => setOpen(isOpen ? null : item.subject)}
                 className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
               >
-                <div className="min-w-0 flex-1">
+                {/* basis-full on mobile gives the subject its own line so the
+                    layer track / verdict / % wrap below instead of squeezing it
+                    to a few characters; sm+ restores the single-row layout. */}
+                <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
                   <p className="truncate text-sm text-strong">{item.subject}</p>
                   <p className="truncate font-mono text-[11px] text-dim">{item.from}</p>
                 </div>
