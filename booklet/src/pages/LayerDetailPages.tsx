@@ -3,7 +3,7 @@ import { BodyPage } from "../templates/BodyPage";
 import { COLORS, FONTS, TYPE, SECTION, SECTION_INK } from "../theme";
 import { HOW, LAYERS } from "../content";
 import { StatBig } from "../primitives/StatBig";
-import { RulesSignature, E5Signature, SetfitSignature } from "../visuals/LayerSignatures";
+import { RulesSignature, RulesDistribution, E5Signature, SetfitSignature } from "../visuals/LayerSignatures";
 
 /**
  * Shared template for the three Layer pages (10–12). Each is one rung of the
@@ -28,7 +28,8 @@ const LayerDetail: React.FC<{
   activeIndex: number;
   data: LayerContent;
   signature: React.ReactNode;
-}> = ({ parity, pageNumber, totalPages, activeIndex, data, signature }) => {
+  extra?: React.ReactNode;
+}> = ({ parity, pageNumber, totalPages, activeIndex, data, signature, extra }) => {
   const layer = LAYERS[activeIndex]!;
   const accent = SECTION[layer.accentKey];
   const accentInk = SECTION_INK[layer.accentKey];
@@ -118,6 +119,8 @@ const LayerDetail: React.FC<{
         <StatBig value={data.stat2.value} label={data.stat2.label} tier="metricMedium" color={COLORS.INK} />
         <div style={{ flex: 1 }} />
       </div>
+
+      {extra && <div style={{ marginTop: 26 }}>{extra}</div>}
     </BodyPage>
   );
 };
@@ -190,7 +193,7 @@ const LayerRail: React.FC<{ activeIndex: number }> = ({ activeIndex }) => (
 type PageProps = { parity: "recto" | "verso"; pageNumber: number; totalPages: number };
 
 export const HowRulesPage: React.FC<PageProps> = (p) => (
-  <LayerDetail {...p} activeIndex={0} data={HOW.rules} signature={<RulesSignature />} />
+  <LayerDetail {...p} activeIndex={0} data={HOW.rules} signature={<RulesSignature />} extra={<RulesDistribution />} />
 );
 export const HowEmbeddingsPage: React.FC<PageProps> = (p) => (
   <LayerDetail {...p} activeIndex={1} data={HOW.embeddings} signature={<E5Signature />} />
