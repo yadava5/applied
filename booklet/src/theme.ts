@@ -8,7 +8,7 @@
  * ground with the four semantic classifier accents surfaced from the app:
  *
  *   RULES_CYAN   #38BDF8   Layer 1 · 201 regex rules
- *   E5_VIOLET    #A78BFA   Layer 2 · fine-tuned e5 embeddings
+ *   E5_VIOLET    #A78BFA   Layer 2 · pretrained e5 embeddings (cosine similarity)
  *   SETFIT_GREEN #34D399   Layer 3 · SetFit few-shot head
  *   GATE_AMBER   #F59E0B   the 0.85 confidence gate · a human decides
  *
