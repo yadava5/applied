@@ -426,7 +426,7 @@ export default function Landing() {
             </h2>
           </Reveal>
 
-          <Reveal stagger className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Reveal stagger className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
               {
                 href: "/demo",
@@ -441,6 +441,13 @@ export default function Landing() {
                 title: "Sample inbox",
                 arrow: "→",
                 body: "Eleven job emails, the real classifier's verdicts, gate, and trace. No inbox read.",
+              },
+              {
+                href: "/import",
+                external: false,
+                title: "Import your mail",
+                arrow: "→",
+                body: "Drop a Google Takeout .mbox; it's parsed and classified in your browser. No upload, no sign-in.",
               },
               {
                 href: SPACE_URL,
