@@ -3,6 +3,7 @@ import { BodyPage } from "../templates/BodyPage";
 import { COLORS, FONTS, TYPE, SECTION, SECTION_INK } from "../theme";
 import { HOW, LAYERS } from "../content";
 import { StatBig } from "../primitives/StatBig";
+import { RulesSignature, E5Signature, SetfitSignature } from "../visuals/LayerSignatures";
 
 /**
  * Shared template for the three Layer pages (10–12). Each is one rung of the
@@ -26,7 +27,8 @@ const LayerDetail: React.FC<{
   totalPages: number;
   activeIndex: number;
   data: LayerContent;
-}> = ({ parity, pageNumber, totalPages, activeIndex, data }) => {
+  signature: React.ReactNode;
+}> = ({ parity, pageNumber, totalPages, activeIndex, data, signature }) => {
   const layer = LAYERS[activeIndex]!;
   const accent = SECTION[layer.accentKey];
   const accentInk = SECTION_INK[layer.accentKey];
@@ -42,22 +44,64 @@ const LayerDetail: React.FC<{
     >
       <LayerRail activeIndex={activeIndex} />
 
-      <div style={{ maxWidth: "6.3in", marginTop: 20 }}>
-        {data.body.map((p, i) => (
-          <p
-            key={i}
-            style={{
-              fontFamily: FONTS.SANS,
-              fontSize: TYPE.body.size,
-              lineHeight: TYPE.body.lh,
-              letterSpacing: TYPE.body.tracking,
-              color: COLORS.INK,
-              margin: "0 0 10px",
-            }}
-          >
-            {p}
-          </p>
-        ))}
+      {/* Prose + honesty note on the left; the layer's own signature visual
+          on the right, so each rung reads distinctly. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.05fr 0.95fr",
+          columnGap: 26,
+          marginTop: 22,
+          alignItems: "start",
+        }}
+      >
+        <div>
+          {data.body.map((p, i) => (
+            <p
+              key={i}
+              style={{
+                fontFamily: FONTS.SANS,
+                fontSize: TYPE.body.size,
+                lineHeight: TYPE.body.lh,
+                letterSpacing: TYPE.body.tracking,
+                color: COLORS.INK,
+                margin: "0 0 10px",
+              }}
+            >
+              {p}
+            </p>
+          ))}
+
+          <div style={{ marginTop: 16, borderLeft: `2.5px solid ${accent}`, paddingLeft: 14 }}>
+            <div
+              style={{
+                fontFamily: FONTS.MONO,
+                fontSize: 8.5,
+                fontWeight: 700,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: accentInk,
+                marginBottom: 5,
+              }}
+            >
+              On the record
+            </div>
+            <p
+              style={{
+                fontFamily: FONTS.SERIF,
+                fontStyle: "italic",
+                fontSize: 14,
+                lineHeight: 1.4,
+                color: COLORS.INK,
+                margin: 0,
+              }}
+            >
+              {data.note}
+            </p>
+          </div>
+        </div>
+
+        <div>{signature}</div>
       </div>
 
       {/* Two headline numbers */}
@@ -73,42 +117,6 @@ const LayerDetail: React.FC<{
         <StatBig value={data.stat.value} label={data.stat.label} tier="metricMedium" color={accentInk} />
         <StatBig value={data.stat2.value} label={data.stat2.label} tier="metricMedium" color={COLORS.INK} />
         <div style={{ flex: 1 }} />
-      </div>
-
-      {/* Honesty note */}
-      <div
-        style={{
-          marginTop: 24,
-          borderLeft: `2.5px solid ${accent}`,
-          paddingLeft: 14,
-          maxWidth: "6in",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: FONTS.MONO,
-            fontSize: 8.5,
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            color: accentInk,
-            marginBottom: 5,
-          }}
-        >
-          On the record
-        </div>
-        <p
-          style={{
-            fontFamily: FONTS.SERIF,
-            fontStyle: "italic",
-            fontSize: 15,
-            lineHeight: 1.4,
-            color: COLORS.INK,
-            margin: 0,
-          }}
-        >
-          {data.note}
-        </p>
       </div>
     </BodyPage>
   );
@@ -182,11 +190,11 @@ const LayerRail: React.FC<{ activeIndex: number }> = ({ activeIndex }) => (
 type PageProps = { parity: "recto" | "verso"; pageNumber: number; totalPages: number };
 
 export const HowRulesPage: React.FC<PageProps> = (p) => (
-  <LayerDetail {...p} activeIndex={0} data={HOW.rules} />
+  <LayerDetail {...p} activeIndex={0} data={HOW.rules} signature={<RulesSignature />} />
 );
 export const HowEmbeddingsPage: React.FC<PageProps> = (p) => (
-  <LayerDetail {...p} activeIndex={1} data={HOW.embeddings} />
+  <LayerDetail {...p} activeIndex={1} data={HOW.embeddings} signature={<E5Signature />} />
 );
 export const HowSetfitPage: React.FC<PageProps> = (p) => (
-  <LayerDetail {...p} activeIndex={2} data={HOW.setfit} />
+  <LayerDetail {...p} activeIndex={2} data={HOW.setfit} signature={<SetfitSignature />} />
 );
