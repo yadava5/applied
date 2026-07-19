@@ -190,12 +190,16 @@ def _web_redirect(outcome: str) -> RedirectResponse:
 
 def _require_configured() -> None:
     if not settings.gmail_oauth_configured:
+        missing = ", ".join(
+            f"JOBTRACKER_{name.upper()}"
+            for name in settings.gmail_oauth_missing_fields
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Gmail OAuth is not configured on this deployment. The operator "
-                "must set the Google client id/secret, redirect URI, web app URL, "
-                "and encryption key."
+                "must set the missing backend environment variable(s): "
+                f"{missing}."
             ),
         )
 
