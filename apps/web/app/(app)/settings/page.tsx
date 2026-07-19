@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
+import { BetaCard } from "@/components/beta/BetaCard";
 import { getGmailStatus } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
@@ -136,6 +137,9 @@ export default async function SettingsPage({
           </p>
         )}
       </div>
+
+      {/* ---- Beta access — invite-only direct Gmail connection -------- */}
+      {!connected ? <BetaCard /> : null}
 
       {/* ---- How it works / why it's safe ----------------------------- */}
       <div className="space-y-3">
