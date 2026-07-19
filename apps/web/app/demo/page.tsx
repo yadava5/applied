@@ -107,6 +107,13 @@ export default function DemoPage() {
           the email waits for a human and the correction becomes new training data. 0.979 macro-F1
           on the committed eval set, gated in CI at 0.95.
         </p>
+        <Link
+          href="/demo/inbox"
+          className="mt-6 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+        >
+          Run a full sample inbox through the real classifier
+          <span aria-hidden>→</span>
+        </Link>
       </section>
     </main>
   );
