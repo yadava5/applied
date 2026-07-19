@@ -187,6 +187,13 @@ export default function Landing() {
               The same seven emails — nothing added, the signal just made legible. The one it is not
               sure about, it refuses to guess on.
             </p>
+            <Link
+              href="/demo/inbox"
+              className="mt-5 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+            >
+              See it label a full sample inbox — real verdicts, no sign-in
+              <span aria-hidden>→</span>
+            </Link>
           </Reveal>
         </div>
       </section>
@@ -319,7 +326,7 @@ export default function Landing() {
             </h2>
           </Reveal>
 
-          <Reveal stagger className="mt-10 grid gap-3 sm:grid-cols-3">
+          <Reveal stagger className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               {
                 href: "/demo",
@@ -327,6 +334,13 @@ export default function Landing() {
                 title: "Live demo",
                 arrow: "→",
                 body: "The pipeline board and decision trace, on fixture data. One click, no sign-in.",
+              },
+              {
+                href: "/demo/inbox",
+                external: false,
+                title: "Sample inbox",
+                arrow: "→",
+                body: "Eleven job emails, the real classifier's verdicts, gate, and trace. No inbox read.",
               },
               {
                 href: SPACE_URL,
