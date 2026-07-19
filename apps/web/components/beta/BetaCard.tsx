@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { CountUp } from "@/components/landing/CountUp";
 import {
   BETA_CTA_LABEL,
   BETA_IMPORT_LABEL,
@@ -19,11 +18,11 @@ import {
  * the two real actions: email the admin for a seat, or try the zero-connection
  * sample inbox right now.
  *
- * A Server Component: the only motion is CSS (the animated beam border, glow,
- * dot-ping and seat-panel sheen defined in globals.css) plus the `CountUp`
- * client island for the seat cap. All of it collapses to a static, fully
- * legible state under `prefers-reduced-motion`, and the true "100" renders on
- * the server so there is never any layout shift.
+ * A Server Component with no client island: all motion is CSS (the animated
+ * beam border, glow, dot-ping and seat-panel sheen defined in globals.css) and
+ * collapses to a static, fully legible state under `prefers-reduced-motion`.
+ * The seat cap is rendered as a plain server-side number (not a count-up) so
+ * the true "100" is always what shows — no hydration race can strand it at 0.
  */
 export function BetaCard({ className = "" }: { className?: string }) {
   return (
@@ -88,7 +87,7 @@ export function BetaCard({ className = "" }: { className?: string }) {
           aria-label={`Beta access is capped at ${BETA_SEATS} testers — Google's OAuth test-user limit.`}
         >
           <p className="tabular font-mono text-4xl font-semibold leading-none text-strong" aria-hidden>
-            <CountUp end={BETA_SEATS} />
+            {BETA_SEATS}
           </p>
           <p className="label-mono mt-2" aria-hidden>
             beta seats
