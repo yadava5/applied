@@ -53,18 +53,59 @@ export function RawInbox() {
         <span className="font-mono text-[11px] text-dim">every row hides a verdict</span>
       </figcaption>
       <ul className="divide-y divide-line-soft">
-        {ROWS.map((row) => (
-          <li key={row.subject} className="flex items-center gap-3 px-4 py-3">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] border border-line-strong" aria-hidden />
-            <span className="min-w-0 flex-1 truncate text-sm text-muted">{row.subject}</span>
-            <span className="hidden sm:block">
-              <Sender from={row.from} />
-            </span>
-            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-dim">
-              unclassified
-            </span>
-          </li>
-        ))}
+        {ROWS.map((row) => {
+          // Easter egg: one row quietly resolves to its verdict on hover / focus
+          // — the page's thesis ("your inbox already holds the verdict") made
+          // literal on a single line. CSS-only, so RawInbox stays server-rendered.
+          const isEgg = row.cat === "offer";
+          if (isEgg) {
+            return (
+              <li
+                key={row.subject}
+                tabIndex={0}
+                aria-label={`${row.subject} — hover to classify`}
+                className="group relative flex cursor-default items-center gap-3 px-4 py-3 outline-none transition-colors hover:bg-surface-2 focus-visible:bg-surface-2"
+              >
+                <span className="relative h-3 w-3 shrink-0" aria-hidden>
+                  <span className="absolute inset-0 rounded-[3px] border border-line-strong transition-opacity duration-300 group-hover:opacity-0 group-focus-visible:opacity-0" />
+                  <span
+                    className="absolute inset-0 rounded-full opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"
+                    style={{ background: "var(--green)", boxShadow: "0 0 10px -1px var(--green)" }}
+                  />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-muted transition-colors duration-300 group-hover:text-strong group-focus-visible:text-strong">
+                  {row.subject}
+                </span>
+                <span className="hidden sm:block">
+                  <Sender from={row.from} />
+                </span>
+                <span className="relative shrink-0">
+                  <span className="block rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-dim transition-opacity duration-300 group-hover:opacity-0 group-focus-visible:opacity-0">
+                    unclassified
+                  </span>
+                  <span
+                    className="absolute inset-0 grid place-items-center rounded-full border font-mono text-[10px] uppercase tracking-wide opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"
+                    style={{ color: "var(--green)", borderColor: "color-mix(in oklab, var(--green) 45%, transparent)" }}
+                  >
+                    offer
+                  </span>
+                </span>
+              </li>
+            );
+          }
+          return (
+            <li key={row.subject} className="flex items-center gap-3 px-4 py-3">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] border border-line-strong" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-sm text-muted">{row.subject}</span>
+              <span className="hidden sm:block">
+                <Sender from={row.from} />
+              </span>
+              <span className="shrink-0 rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-dim">
+                unclassified
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </figure>
   );
