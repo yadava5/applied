@@ -44,7 +44,7 @@ export const SpreadPage: React.FC<SpreadPageProps> = ({
       sectionColor={sectionColor}
     >
       <div style={{ display: "flex", flexDirection: "column", minHeight: LIVE_HEIGHT }}>
-        <Eyebrow color={SECTION_INK["05_BUILD"]} style={{ marginBottom: 6 }}>
+        <Eyebrow color={SECTION_INK["06_BUILD"]} style={{ marginBottom: 6 }}>
           {half === "left" ? pipeline.eyebrowLeft : pipeline.eyebrowRight}
         </Eyebrow>
 
@@ -114,7 +114,7 @@ export const SpreadPage: React.FC<SpreadPageProps> = ({
                 fontWeight: 700,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                color: SECTION_INK["05_BUILD"],
+                color: SECTION_INK["06_BUILD"],
                 whiteSpace: "nowrap",
               }}
             >
@@ -130,35 +130,40 @@ export const SpreadPage: React.FC<SpreadPageProps> = ({
               borderTop: `1pt solid ${COLORS.INK}`,
               paddingTop: 12,
               display: "flex",
-              justifyContent: "space-between",
+              flexWrap: "wrap",
               alignItems: "baseline",
-              gap: 16,
+              columnGap: 10,
+              rowGap: 3,
               fontFamily: FONTS.MONO,
-              fontSize: 8.5,
+              fontSize: 8,
               fontWeight: 600,
-              letterSpacing: "0.06em",
+              letterSpacing: "0.02em",
               color: COLORS.INK_MUTED,
             }}
           >
+            <span style={{ color: COLORS.INK_MUTED }}>ships to</span>
             <span style={{ color: COLORS.RULES_DEEP }}>{BUILD.closing.liveUrl}</span>
-            <span>·</span>
+            <span style={{ color: COLORS.INK_SUBTLE }}>·</span>
             <span style={{ color: COLORS.E5_DEEP }}>{BUILD.closing.spaceUrl}</span>
           </div>
         )}
       </div>
 
-      {/* gutter continuity marker */}
+      {/* gutter continuity marker — centered between the foot rail and the
+          page-number footer so it never collides with either */}
       <div
         style={{
           position: "absolute",
-          bottom: "0.55in",
-          [half === "left" ? "right" : "left"]: "0.75in",
+          bottom: "0.8in",
+          left: 0,
+          right: 0,
+          textAlign: "center",
           fontFamily: FONTS.MONO,
           fontSize: 8,
           fontWeight: 600,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
-          color: SECTION_INK["05_BUILD"],
+          color: SECTION_INK["06_BUILD"],
         }}
       >
         {half === "left" ? "pipeline continues →" : "← the export bridges the fold"}
