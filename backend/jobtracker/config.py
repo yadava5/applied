@@ -277,6 +277,88 @@ class Settings(BaseSettings):
         ),
     )
 
+    # -------------------------------------------------------------------------
+    # Gmail Web OAuth (cloud, C5). Only consumed when deployment == "cloud".
+    #
+    # These configure the *web* authorization-code flow used by the deployed
+    # app — distinct from the desktop `run_local_server` flow. The client
+    # secret is a Google-issued credential: it is provided by the operator
+    # via the Vercel env, is NEVER committed to the repo, NEVER returned to
+    # the browser, and NEVER logged.
+    # -------------------------------------------------------------------------
+    google_oauth_client_id: str | None = Field(
+        default=None,
+        description=(
+            "OAuth 2.0 client_id for the JobTracker *Web application* client "
+            "(Google Cloud Console → Credentials). Public by design; pairs with "
+            "google_oauth_client_secret. Env: JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID."
+        ),
+    )
+    google_oauth_client_secret: str | None = Field(
+        default=None,
+        description=(
+            "OAuth 2.0 client_secret for the Web application client. Operator-"
+            "supplied secret — set ONLY in the backend env (Vercel), never in the "
+            "repo, chat, or the browser. Env: JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET."
+        ),
+    )
+    gmail_oauth_redirect_uri: str | None = Field(
+        default=None,
+        description=(
+            "Absolute HTTPS callback URL registered as an Authorized redirect URI "
+            "on the Web OAuth client, e.g. "
+            "https://<api-host>/auth/gmail/callback. Google redirects the browser "
+            "here after consent; must match the console entry byte-for-byte. "
+            "Env: JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI."
+        ),
+    )
+    web_app_url: str | None = Field(
+        default=None,
+        description=(
+            "Absolute base URL of the web app the callback bounces the user back "
+            "to after a connect/disconnect, e.g. https://jobtracker-web-five."
+            "vercel.app. Used as a fixed, allow-listed redirect target so the "
+            "callback can never be turned into an open redirect. "
+            "Env: JOBTRACKER_WEB_APP_URL."
+        ),
+    )
+    gmail_fetch_max_results: int = Field(
+        default=25,
+        description=(
+            "Upper bound on messages fetched per cloud Gmail read. Kept small so a "
+            "single serverless invocation stays within the Vercel 60 s / memory "
+            "budget; the desktop app fetches far more."
+        ),
+    )
+    gmail_oauth_state_ttl_seconds: int = Field(
+        default=600,
+        description=(
+            "Lifetime of the signed OAuth `state` token that binds the Google "
+            "callback to the authenticated user. Short by design (10 min) to "
+            "limit the CSRF/replay window."
+        ),
+    )
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def gmail_oauth_configured(self) -> bool:
+        """True when every value the Gmail web OAuth flow needs is present.
+
+        Routers use this to return an honest ``503 not configured`` (instead
+        of a 500) while the operator has not yet pasted the Google client
+        credentials + redirect URIs into the backend env. ``secret_encryption_key``
+        is required twice over: to encrypt the stored refresh token (C4) and to
+        sign the OAuth ``state`` token.
+        """
+
+        return bool(
+            self.google_oauth_client_id
+            and self.google_oauth_client_secret
+            and self.gmail_oauth_redirect_uri
+            and self.web_app_url
+            and self.secret_encryption_key
+        )
+
     @field_validator("cors_allowed_hosts", mode="before")
     @classmethod
     def _split_cors_hosts(cls, value: Any) -> Any:
