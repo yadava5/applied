@@ -21,11 +21,22 @@ backend and no Supabase**.
 | Variable | API project (repo root) | Web project (`apps/web`) |
 |---|---|---|
 | `JOBTRACKER_DEPLOYMENT=cloud` | already in vercel.json | — |
-| `JOBTRACKER_SUPABASE_JWT_SECRET` | ✔ (Supabase **legacy HS256** JWT secret — verify the project isn't ES256-only) | — |
+| `JOBTRACKER_SUPABASE_JWT_SECRET` | ✔ (Supabase **legacy HS256** JWT secret) | — |
+| `JOBTRACKER_SUPABASE_JWKS_URL` | ✔ **if the project signs with ES256** — `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json` | — |
 | `JOBTRACKER_DATABASE_URL_OVERRIDE` | ✔ `postgresql+asyncpg://…pooler.supabase.com:6543/postgres` | — |
 | `JOBTRACKER_CORS_ALLOWED_HOSTS` | ✔ web project domain | — |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | ✔ |
 | `BACKEND_API_URL` | — | ✔ API project URL |
+
+> **ES256 vs HS256 (the #1 live-auth trap).** Supabase projects created since
+> 2025 sign user JWTs with **ES256** (asymmetric) keys, published at
+> `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`. The backend
+> verifies ES256 against that JWKS and HS256 against the legacy secret — but it
+> can only do the ES256 path if `JOBTRACKER_SUPABASE_JWKS_URL` is set. If your
+> project is ES256 and that var is missing, **every** authenticated backend call
+> returns 401, which the web app surfaces as "Can't connect Gmail" and an inbox
+> that won't load. Check your project's `.well-known/jwks.json`: if it lists an
+> `ES256` key, set `JOBTRACKER_SUPABASE_JWKS_URL`.
 
 Steps:
 1. Supabase: create free project; copy URL, anon key, JWT secret, DB
