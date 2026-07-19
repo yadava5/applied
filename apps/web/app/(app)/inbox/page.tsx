@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
+import { BetaCard } from "@/components/beta/BetaCard";
 import { getGmailInbox, type InboxVerdict } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
@@ -65,24 +66,18 @@ export default async function InboxPage() {
 
   if (result.kind === "not_connected") {
     return (
-      <section className="mx-auto max-w-3xl space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
-        <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center">
-          <p className="text-strong">Gmail isn&apos;t connected.</p>
+      <section className="mx-auto max-w-3xl space-y-6">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
           <p className="mt-1 text-sm text-muted">
-            Connect it in{" "}
+            Gmail isn&apos;t connected yet. Connect it in{" "}
             <Link href="/settings" className="text-strong underline-offset-4 hover:underline">
               Settings
             </Link>{" "}
             and this page fills with real, classified mail.
           </p>
-          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
-            Want to see it work first?{" "}
-            <Link href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
-              Try with a sample inbox →
-            </Link>
-          </p>
-        </div>
+        </header>
+        <BetaCard />
       </section>
     );
   }
