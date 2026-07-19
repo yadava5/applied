@@ -141,6 +141,7 @@ async def root() -> dict[str, Any]:
 
 from jobtracker.auth import current_user  # noqa: E402
 from jobtracker.cloud.applications import router as applications_cloud_router  # noqa: E402
+from jobtracker.cloud.gmail_oauth import router as gmail_cloud_router  # noqa: E402
 
 
 class AuthMeResponse(BaseModel):
@@ -175,3 +176,8 @@ async def auth_me(user_id: uuid.UUID = Depends(current_user)) -> AuthMeResponse:
 # router's own contract (auth required on every handler) is the single
 # source of truth.
 app.include_router(applications_cloud_router)
+
+# Gmail web OAuth + read/classify (issue C5). Auth is declared per-endpoint
+# inside the router (the callback is deliberately public and is bound to the
+# user by a signed ``state`` instead). See jobtracker.cloud.gmail_oauth.
+app.include_router(gmail_cloud_router)
