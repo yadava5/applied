@@ -316,11 +316,111 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ---- 05 · TRY IT ------------------------------------------------ */}
+      {/* ---- 05 · PRIVACY ---------------------------------------------- */}
+      {/* Every claim here is verified against the codebase:
+       *   · no external LLM/model in the classify path — the only openai/anthropic
+       *     strings in the repo are an employer domain→name lookup (tracking/extractor.py)
+       *   · 3 layers — classifier/rules.py · classifier/embeddings.py (intfloat/e5-small-v2)
+       *     · classifier/setfit_model.py (SetFitClassifier)
+       *   · 22.8 MB int8 ONNX runs client-side — ml/browser/site/app.js sets
+       *     env.allowRemoteModels = false; model_quantized.onnx = 22,843,695 B
+       *   · gmail.readonly is the ONLY scope — email_clients/gmail.py SCOPES,
+       *     config.py default. (Deliberately NOT claiming Fernet-at-rest or
+       *     revoke-at-Google here — those paths aren't wired in the deployed cloud.) */}
       <section className="border-t border-line-soft">
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="max-w-2xl">
-            <Eyebrow>05 · try it</Eyebrow>
+            <Eyebrow>05 · private by design</Eyebrow>
+            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+              Your inbox stays yours.
+            </h2>
+            <p className="mt-5 text-muted">
+              Most AI inbox tools work by sending your email to a large language model, where your
+              private messages can become prompts, logs, or training data. JobTracker is built the
+              other way around: the classifier is a small, purpose-built pipeline — not an LLM — and
+              it can run entirely in your browser, so on that path your mail never leaves your
+              machine.
+            </p>
+          </Reveal>
+
+          <Reveal className="mt-10">
+            <div className="privacy-card relative isolate overflow-hidden rounded-2xl border border-line-soft bg-surface p-5 sm:p-7">
+              <div className="relative z-[1] grid gap-6 sm:grid-cols-3">
+                {[
+                  {
+                    hue: "text-viz-rules",
+                    k: "no large language model",
+                    title: "No LLM reads your mail",
+                    body: (
+                      <>
+                        Classification is three small layers — regex rules, a compact{" "}
+                        <span className="text-strong">e5</span>{" "}embedding, and a fine-tuned{" "}
+                        <span className="text-strong">SetFit</span>{" "}head. Nothing in that path calls
+                        a third-party model or LLM API, so your email is never handed to one.
+                      </>
+                    ),
+                  },
+                  {
+                    hue: "text-viz-embeddings",
+                    k: "on your own cpu",
+                    title: "It can run in your browser",
+                    body: (
+                      <>
+                        The trained model compiles to a <span className="text-strong">22.8 MB</span>{" "}
+                        int8-ONNX file that Transformers.js runs on your own CPU (
+                        <span className="font-mono text-dim">allowRemoteModels = false</span>). Paste
+                        text into the in-browser Space and it is classified on-device, never leaving
+                        the tab.
+                      </>
+                    ),
+                  },
+                  {
+                    hue: "text-viz-setfit",
+                    k: "least privilege",
+                    title: "Read-only, by construction",
+                    body: (
+                      <>
+                        Connecting Gmail requests exactly one Google scope —{" "}
+                        <span className="font-mono text-strong">gmail.readonly</span>. It can read
+                        messages to classify them and <span className="text-strong">cannot</span>{" "}
+                        send, delete, or modify anything; you authorize on Google&apos;s own consent
+                        screen.
+                      </>
+                    ),
+                  },
+                ].map((p) => (
+                  <div key={p.title} className="flex flex-col">
+                    <p className={`label-mono inline-flex items-center gap-2 ${p.hue}`}>
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden />
+                      {p.k}
+                    </p>
+                    <h3 className="mt-3 text-base font-medium text-strong">{p.title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-muted">{p.body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+
+          <Reveal className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Link
+              href="/demo/inbox"
+              className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+            >
+              See it classify on-device <span aria-hidden>→</span>
+            </Link>
+            <span className="text-[12px] leading-relaxed text-dim">
+              Connecting your own Gmail is invite-only while we&apos;re in beta.
+            </span>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ---- 06 · TRY IT ------------------------------------------------ */}
+      <section className="border-t border-line-soft">
+        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
+          <Reveal className="max-w-2xl">
+            <Eyebrow>06 · try it</Eyebrow>
             <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
               Run a real email through all three layers.
             </h2>
@@ -404,11 +504,11 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ---- 06 · SIGNATURE ENDING -------------------------------------- */}
+      {/* ---- 07 · SIGNATURE ENDING -------------------------------------- */}
       <section className="border-t border-line-soft">
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>06 · one gesture</Eyebrow>
+            <Eyebrow>07 · one gesture</Eyebrow>
             <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
               One email. Three layers. One verdict.
             </h2>
