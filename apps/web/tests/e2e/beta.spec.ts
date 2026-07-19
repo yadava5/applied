@@ -34,7 +34,11 @@ test.describe("beta access notice", () => {
 
     await toggle.click();
     await expect(panel).toBeVisible();
-    await expect(panel.getByText(/100 beta testers/i)).toBeVisible();
+    // The seat cap is the honest Google OAuth test-user limit — always 100,
+    // never a hydration-stranded 0/-1. (This shared BETA_SEATS constant also
+    // feeds the rich <BetaCard> seat panel on the auth-gated /settings & /inbox,
+    // where it is rendered as a static server number for the same reason.)
+    await expect(panel.getByText(/\b100 beta testers\b/i)).toBeVisible();
     await expect(panel.getByText(/Google's OAuth test-user cap/i)).toBeVisible();
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
