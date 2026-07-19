@@ -381,6 +381,194 @@ body {
   opacity: 0.5;
 }
 
+/* ---------------------------------------------------------------------------
+ * Beta-access notice — the rich <BetaCard> (settings / not-connected inbox)
+ * and the slim <BetaBanner> pill. Uses the brand's data-viz hues (cyan rules /
+ * violet e5 / green SetFit) plus amber, on the dark ink system. Every effect
+ * here is pure CSS enhancement and collapses to a static, legible state under
+ * prefers-reduced-motion (block further down). Reuses the registered `--beam`
+ * angle + `beam-rotate` keyframe declared for the decision-trace card above.
+ * ------------------------------------------------------------------------- */
+
+/* Pulsing status dot — a solid core with a fading ping ring. */
+.beta-dot {
+  position: relative;
+  display: inline-block;
+  height: 0.45rem;
+  width: 0.45rem;
+  flex: none;
+  border-radius: 9999px;
+  background: var(--viz-setfit);
+}
+.beta-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--viz-setfit);
+  animation: beta-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes beta-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  75%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Card entrance — fade + rise once on load (opacity only lives in the keyframe
+ * so, if animations are unsupported, the card is simply visible). */
+.beta-card {
+  animation: beta-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes beta-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Soft dual-hue glow behind the card content, gently breathing. Shared with
+ * the landing privacy card so the two premium surfaces read as one family. */
+.beta-card::after,
+.privacy-card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 12% 0%, color-mix(in oklab, var(--viz-embeddings) 14%, transparent), transparent 55%),
+    radial-gradient(120% 90% at 100% 100%, color-mix(in oklab, var(--viz-rules) 12%, transparent), transparent 55%);
+  animation: beta-glow 6s ease-in-out infinite;
+}
+@keyframes beta-glow {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Traveling four-hue beam border (cyan → violet → green → amber). */
+.beta-card::before,
+.privacy-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam),
+    transparent 0 8%,
+    color-mix(in oklab, var(--viz-rules) 85%, transparent) 22%,
+    color-mix(in oklab, var(--viz-embeddings) 85%, transparent) 42%,
+    color-mix(in oklab, var(--viz-setfit) 85%, transparent) 60%,
+    color-mix(in oklab, var(--amber) 85%, transparent) 78%,
+    transparent 92% 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.6;
+  animation: beam-rotate 9s linear infinite;
+}
+
+/* Seat-cap panel — a single sheen sweep, on a slow loop. */
+.beta-seats {
+  position: relative;
+  overflow: hidden;
+}
+.beta-seats::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 32%,
+    color-mix(in oklab, var(--text-strong) 16%, transparent) 50%,
+    transparent 68%
+  );
+  transform: translateX(-130%);
+  animation: beta-sheen 5s ease-in-out 0.8s infinite;
+}
+@keyframes beta-sheen {
+  0% {
+    transform: translateX(-130%);
+  }
+  24%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+/* Pill — a subtle drifting accent border (masked ring, like the card beam). */
+.beta-pill {
+  position: relative;
+  isolation: isolate;
+}
+.beta-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam),
+    transparent 0 55%,
+    color-mix(in oklab, var(--viz-rules) 80%, transparent) 70%,
+    color-mix(in oklab, var(--viz-embeddings) 80%, transparent) 82%,
+    transparent 92% 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.65;
+  animation: beam-rotate 7s linear infinite;
+}
+
+/* Popover entrance. */
+.beta-panel {
+  transform-origin: bottom center;
+  animation: beta-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes beta-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reveal,
   .reveal-stagger > *,
@@ -427,5 +615,28 @@ body {
   }
   .spring-ease {
     transition: none !important;
+  }
+  /* Beta notice collapses to its resolved, static state. */
+  .beta-card,
+  .beta-panel {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .beta-panel {
+    /* keep the popover centered above the pill without the entrance transform */
+    transform: translateX(-50%) !important;
+  }
+  .beta-card::before,
+  .beta-card::after,
+  .privacy-card::before,
+  .privacy-card::after,
+  .beta-pill::before {
+    animation: none !important;
+  }
+  .beta-dot::after,
+  .beta-seats::after {
+    animation: none !important;
+    display: none !important;
   }
 }
