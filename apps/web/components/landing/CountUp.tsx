@@ -48,11 +48,21 @@ export function CountUp({
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduce || typeof IntersectionObserver === "undefined") return;
 
+    // Only the animate-on-scroll case is safe to reset to zero. If the element
+    // already sits at or above the fold, keep the server-rendered final value:
+    // resetting it to 0 and then relying on an IntersectionObserver callback
+    // that (with the rootMargin below, or in a background tab) may never fire
+    // is exactly what strands a visible number at 0. Roll up only what the
+    // reader will actually scroll *down* into.
+    const rect = el.getBoundingClientRect();
+    const belowFold = rect.top >= window.innerHeight;
+    if (!belowFold) return;
+
     let raf0 = 0;
     let rafN = 0;
 
     // Reset to zero in the next frame (never synchronously in the effect body),
-    // while the element is still off-screen — so the swap is never seen.
+    // while the element is still off-screen below — so the swap is never seen.
     raf0 = requestAnimationFrame(() => setDisplay(format(0)));
 
     const run = () => {
