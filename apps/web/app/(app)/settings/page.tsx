@@ -127,12 +127,19 @@ export default async function SettingsPage({
               classified inbox →
             </Link>
           </p>
-        ) : null}
+        ) : (
+          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
+            Not ready to connect? See exactly what the classifier does on a{" "}
+            <Link href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
+              sample inbox →
+            </Link>
+          </p>
+        )}
       </div>
 
       {/* ---- How it works / why it's safe ----------------------------- */}
       <div className="space-y-3">
-        <h3 className="label-mono">how the connection works — and why it's safe</h3>
+        <h3 className="label-mono">how the connection works — and why it&apos;s safe</h3>
         <ul className="grid gap-2 text-sm text-muted">
           {[
             ["Read-only", "JobTracker requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything."],
