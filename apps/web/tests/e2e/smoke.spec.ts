@@ -25,3 +25,18 @@ test("login page renders sign-in form", async ({ page }) => {
   await expect(page.getByLabel(/password/i)).toBeVisible();
   await expect(page.getByRole("button", { name: /^sign in/i })).toBeVisible();
 });
+
+test("signup page renders the create-account form", async ({ page }) => {
+  await page.goto("/signup");
+
+  await expect(
+    page.getByRole("heading", { name: /create your jobtracker account/i }),
+  ).toBeVisible();
+  await expect(page.getByLabel(/email/i)).toBeVisible();
+  await expect(page.getByLabel(/password/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /create account/i })).toBeVisible();
+
+  // Cross-link back to sign-in — never a dead end.
+  await page.getByRole("link", { name: /^sign in$/i }).click();
+  await expect(page).toHaveURL(/\/login$/);
+});
