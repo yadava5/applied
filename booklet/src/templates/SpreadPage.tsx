@@ -1,8 +1,11 @@
 import React from "react";
 import { Page } from "../primitives/Page";
 import { Eyebrow } from "../primitives/Eyebrow";
-import { COLORS, FONTS, SECTION, SECTION_INK, type SectionKey } from "../theme";
+import { COLORS, FONTS, PAGE, SECTION, SECTION_INK, type SectionKey } from "../theme";
 import { BUILD } from "../content";
+
+/** Live area = trim height minus the top/bottom content margins. */
+const LIVE_HEIGHT = `calc(${PAGE.trimH}in - ${PAGE.margin.top}in - ${PAGE.margin.bottom}in)`;
 
 /**
  * BUILD spread (pages 24 / 25) — the end-to-end pipeline read across the
@@ -40,52 +43,56 @@ export const SpreadPage: React.FC<SpreadPageProps> = ({
       sectionLabel={sectionLabel}
       sectionColor={sectionColor}
     >
-      <Eyebrow color={SECTION_INK["05_BUILD"]} style={{ marginBottom: 6 }}>
-        {half === "left" ? pipeline.eyebrowLeft : pipeline.eyebrowRight}
-      </Eyebrow>
+      <div style={{ display: "flex", flexDirection: "column", minHeight: LIVE_HEIGHT }}>
+        <Eyebrow color={SECTION_INK["05_BUILD"]} style={{ marginBottom: 6 }}>
+          {half === "left" ? pipeline.eyebrowLeft : pipeline.eyebrowRight}
+        </Eyebrow>
 
-      <div style={{ textAlign: half === "right" ? "right" : "left" }}>
-        <h1
-          style={{
-            fontFamily: FONTS.SANS,
-            fontSize: 30,
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-            lineHeight: 1.05,
-            color: COLORS.INK,
-            margin: 0,
-          }}
-        >
-          {headline}
-        </h1>
-        <p
-          style={{
-            fontFamily: FONTS.SERIF,
-            fontStyle: "italic",
-            fontSize: 14,
-            lineHeight: 1.4,
-            color: COLORS.INK_MUTED,
-            margin: "6px 0 0",
-            maxWidth: "5.4in",
-            marginLeft: half === "right" ? "auto" : 0,
-          }}
-        >
-          {sub}
-        </p>
-      </div>
+        <div style={{ textAlign: half === "right" ? "right" : "left" }}>
+          <h1
+            style={{
+              fontFamily: FONTS.SANS,
+              fontSize: 30,
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              lineHeight: 1.05,
+              color: COLORS.INK,
+              margin: 0,
+            }}
+          >
+            {headline}
+          </h1>
+          <p
+            style={{
+              fontFamily: FONTS.SERIF,
+              fontStyle: "italic",
+              fontSize: 14,
+              lineHeight: 1.4,
+              color: COLORS.INK_MUTED,
+              margin: "6px 0 0",
+              maxWidth: "5.4in",
+              marginLeft: half === "right" ? "auto" : 0,
+            }}
+          >
+            {sub}
+          </p>
+        </div>
 
-      {/* Vertical pipeline ribbon */}
-      <div style={{ marginTop: 34, display: "flex", flexDirection: "column", gap: 0 }}>
-        {stages.map((s, i) => {
-          const accent = SECTION[s.accentKey as SectionKey];
-          const bridge = s.label === "ONNX";
-          return (
-            <React.Fragment key={s.label}>
-              <StageCard n={s.n} label={s.label} detail={s.detail} accent={accent} bridge={bridge} />
-              {i < stages.length - 1 && <Connector />}
-            </React.Fragment>
-          );
-        })}
+        {/* Ribbon centered in the space between the header and the foot. */}
+        <div aria-hidden style={{ flexGrow: 0.7, flexShrink: 1, flexBasis: 0, minHeight: 0 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {stages.map((s, i) => {
+            const accent = SECTION[s.accentKey as SectionKey];
+            const bridge = s.label === "ONNX";
+            return (
+              <React.Fragment key={s.label}>
+                <StageCard n={s.n} label={s.label} detail={s.detail} accent={accent} bridge={bridge} />
+                {i < stages.length - 1 && <Connector />}
+              </React.Fragment>
+            );
+          })}
+        </div>
+        <div aria-hidden style={{ flexGrow: 1.05, flexShrink: 1, flexBasis: 0, minHeight: 0 }} />
       </div>
 
       {/* Foot — registry line (left) or ship targets (right) */}
@@ -223,9 +230,11 @@ const StageCard: React.FC<{
 );
 
 const Connector: React.FC = () => (
-  <div style={{ display: "flex", justifyContent: "center", padding: "3px 0" }}>
-    <span style={{ color: COLORS.HAIRLINE_STRONG, fontSize: 14 }} aria-hidden>
+  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: "10px 0", gap: 8 }}>
+    <span style={{ width: 1.5, height: 14, background: COLORS.HAIRLINE_STRONG }} aria-hidden />
+    <span style={{ color: COLORS.HAIRLINE_STRONG, fontSize: 15 }} aria-hidden>
       ↓
     </span>
+    <span style={{ width: 1.5, height: 14, background: COLORS.HAIRLINE_STRONG }} aria-hidden />
   </div>
 );
