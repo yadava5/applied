@@ -39,14 +39,20 @@ export const CoverPage: React.FC = () => (
       JobTracker · System Card
     </div>
 
-    {/* Layer legend — top-right, establishes the color language up front */}
+    {/* Layer legend — top-right, establishes the color language up front. A
+        subtle scrim lifts it off the busy resolved-envelope region. */}
     <div
       style={{
         position: "absolute",
-        top: "0.66in",
-        right: "0.7in",
+        top: "0.6in",
+        right: "0.62in",
         display: "flex",
-        gap: 12,
+        gap: 13,
+        alignItems: "center",
+        padding: "7px 12px",
+        borderRadius: 999,
+        background: "rgba(8, 13, 24, 0.66)",
+        border: `0.5pt solid ${COLORS.ON_DARK_HAIRLINE}`,
       }}
     >
       {[
@@ -65,7 +71,7 @@ export const CoverPage: React.FC = () => (
             fontSize: 8,
             letterSpacing: "0.1em",
             textTransform: "uppercase",
-            color: COLORS.ON_DARK_MUTED,
+            color: COLORS.ON_DARK,
           }}
         >
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: x.c }} />
