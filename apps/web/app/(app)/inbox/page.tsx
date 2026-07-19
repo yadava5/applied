@@ -76,6 +76,12 @@ export default async function InboxPage() {
             </Link>{" "}
             and this page fills with real, classified mail.
           </p>
+          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
+            Want to see it work first?{" "}
+            <Link href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
+              Try with a sample inbox →
+            </Link>
+          </p>
         </div>
       </section>
     );
