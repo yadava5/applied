@@ -378,6 +378,15 @@ export default function Landing() {
           <p className="mt-8 text-center font-mono text-[11px] text-dim">
             three layers · one gate · zero servers
           </p>
+          <p className="mx-auto mt-3 max-w-xl text-balance text-center text-[12px] leading-relaxed text-muted">
+            Signed in, JobTracker connects your Gmail{" "}
+            <span className="text-strong">read-only</span> to classify real mail — tokens encrypted,
+            revocable anytime, nothing sent or deleted. Because{" "}
+            <span className="font-mono text-dim">gmail.readonly</span> is a Google restricted scope,
+            direct connection is limited to invited test users until verification; a{" "}
+            <span className="text-strong">forwarding-address</span> option is the path to open,
+            public scale.
+          </p>
         </div>
       </section>
 
