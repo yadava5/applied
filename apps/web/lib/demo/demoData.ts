@@ -46,10 +46,3 @@ export const DEMO_REVIEW_QUEUE: DemoReviewItem[] = [
   { subject: "Quick question about your background", from: "maya@summit.dev", category: "needs_review", confidence: 0.61, method: "setfit", needsReview: true },
   { subject: "Your weekly job digest", from: "alerts@jobboard.com", category: "other", confidence: 0.973, method: "rules", needsReview: false },
 ];
-
-export const DEMO_STATS = [
-  ["applications", "10"],
-  ["classified emails", "47"],
-  ["auto-classified", "91%"],
-  ["awaiting review", "1"],
-] as const;
