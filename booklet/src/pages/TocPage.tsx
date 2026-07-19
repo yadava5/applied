@@ -340,7 +340,7 @@ const ReadingPath: React.FC = () => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
       <SmallLabel>Reading path</SmallLabel>
       <div style={{ fontFamily: FONTS.SERIF, fontStyle: "italic", fontSize: 11, color: COLORS.INK_SUBTLE }}>
-        five chapters · one sitting
+        six chapters · one sitting
       </div>
     </div>
     <div style={{ position: "relative", padding: "8px 0 4px" }}>
@@ -353,7 +353,7 @@ const ReadingPath: React.FC = () => (
           borderTop: `0.5pt solid ${COLORS.HAIRLINE}`,
         }}
       />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", position: "relative" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", position: "relative" }}>
         {CHAPTERS.map((ch) => (
           <div key={ch.num} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <div
