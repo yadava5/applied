@@ -59,4 +59,32 @@ test.describe("landing (/)", () => {
     await expectNoHorizontalOverflow(page);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
+
+  // The CountUp island rolls each proof stat up from zero the first time it
+  // scrolls into view. This guards that it always SETTLES on the true value —
+  // the failure mode that (in its at/above-fold form) stranded the beta seat
+  // cap at 0. Each tile is located by its description, then asserted to carry
+  // its real, code-verified number once animated.
+  test("the proof stats count up and settle on their true values", async ({ page }) => {
+    await page.goto("/");
+
+    const tile = (description: string | RegExp) =>
+      page
+        .locator("div")
+        .filter({ has: page.getByText(description) })
+        .filter({ hasText: /\d/ })
+        .last();
+
+    const floor = tile("the merge fails below it");
+    await floor.scrollIntoViewIfNeeded();
+    await expect(floor).toContainText("0.95");
+
+    const tests = tile("tests in the backend suite");
+    await tests.scrollIntoViewIfNeeded();
+    await expect(tests).toContainText("182");
+
+    const classes = tile(/8 predicted \+ needs_review/);
+    await classes.scrollIntoViewIfNeeded();
+    await expect(classes).toContainText("9");
+  });
 });
