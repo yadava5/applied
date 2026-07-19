@@ -15,15 +15,24 @@ export const metadata: Metadata = {
  * link to the server-side authorize route, and "Disconnect" is a native
  * form POST. No token ever reaches the browser.
  *
- * When the backend has not yet been given its Google OAuth credentials (or
- * is unreachable), the page says so plainly instead of pretending to be
- * connected.
+ * Failure modes are kept DISTINCT and honest: an auth rejection prompts a
+ * fresh sign-in (not a misleading "not enabled"), a 503 reads as "not enabled
+ * on this deployment", and a transient backend error says so. Every state also
+ * points at the no-connection "Import your mail" path so the page is never a
+ * dead end.
  */
 
 const FLAG_BANNERS: Record<string, { tone: "ok" | "warn" | "error"; text: string }> = {
-  connected: { tone: "ok", text: "Gmail connected. JobTracker can now read and classify your job-search mail." },
+  connected: {
+    tone: "ok",
+    text: "Gmail connected. JobTracker can now read and classify your job-search mail.",
+  },
   disconnected: { tone: "ok", text: "Gmail disconnected and access revoked at Google." },
-  error: { tone: "error", text: "Something went wrong with the Gmail connection. Please try again." },
+  error: { tone: "error", text: "Something went wrong reaching the mail backend. Please try again." },
+  auth: {
+    tone: "error",
+    text: "Your session couldn't be verified for the mail backend. Sign in again and retry.",
+  },
   unavailable: {
     tone: "warn",
     text: "Gmail connection isn't enabled on this deployment yet — see the note below.",
@@ -48,6 +57,7 @@ export default async function SettingsPage({
   const connected = result.kind === "ok" && result.status.connected;
   const configured = result.kind === "ok" && result.status.configured;
   const email = result.kind === "ok" ? result.status.email : null;
+  const needsSignin = result.kind === "unauthenticated" || result.kind === "auth";
 
   return (
     <section className="mx-auto max-w-3xl space-y-8">
@@ -81,7 +91,11 @@ export default async function SettingsPage({
               />
               {result.kind === "unauthenticated" ? (
                 <span className="text-dim">Sign in to manage Gmail.</span>
-              ) : result.kind === "unavailable" ? (
+              ) : result.kind === "auth" ? (
+                <span className="text-dim">
+                  Session couldn&apos;t be verified — sign in again (backend {result.status}).
+                </span>
+              ) : result.kind === "backend" ? (
                 <span className="text-dim">
                   Backend unreachable — connection status unavailable ({result.message}).
                 </span>
@@ -105,6 +119,13 @@ export default async function SettingsPage({
                   Disconnect
                 </button>
               </form>
+            ) : needsSignin ? (
+              <Link
+                href="/login?redirect=/settings"
+                className="rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background hover:opacity-90"
+              >
+                Sign in
+              </Link>
             ) : (
               <a
                 href="/api/gmail/authorize"
@@ -137,6 +158,24 @@ export default async function SettingsPage({
           </p>
         )}
       </div>
+
+      {/* ---- No-connection path: import your own mail ----------------- */}
+      {!connected ? (
+        <div className="rounded-xl border border-line-soft bg-surface p-5">
+          <h2 className="text-lg font-medium text-strong">Import your mail — no connection needed</h2>
+          <p className="mt-1 text-sm text-muted">
+            Don&apos;t want to connect an account (or waiting on a beta seat)? Export your mail from
+            Google Takeout and classify it <span className="text-strong">on-device</span> — parsed and
+            scored entirely in your browser, never uploaded.
+          </p>
+          <Link
+            href="/import"
+            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+          >
+            Open mail import <span aria-hidden>→</span>
+          </Link>
+        </div>
+      ) : null}
 
       {/* ---- Beta access — invite-only direct Gmail connection -------- */}
       {!connected ? <BetaCard /> : null}
