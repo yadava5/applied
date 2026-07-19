@@ -37,10 +37,85 @@ Steps:
 3. Vercel: two projects as above; env per matrix; deploy; smoke
    `GET /health`, then signed-in `GET /auth/me` + `POST/GET /applications`.
 
+## Path C — real Gmail connection (C5: connect → read → classify)
+
+This turns on the actual "Connect Gmail → read inbox → classify → show
+verdicts" path for signed-in users (backend router
+`jobtracker/cloud/gmail_oauth.py`, web `/settings` + `/inbox`). It needs
+**Path B already working** (auth + Postgres), plus a Google OAuth *Web*
+client and one extra key. **You (the owner) create the Google credentials
+and paste the secret into Vercel — it never goes in the repo or in chat.**
+
+### Owner steps in Google Cloud Console
+
+A Google Cloud project already exists from TaskFlow (`taskflow-502817`).
+**Use a *dedicated* OAuth client for JobTracker** (ideally a dedicated
+project, e.g. `jobtracker`) so Gmail's restricted-scope verification and
+test-user list don't entangle TaskFlow. The consent screen is per-project,
+so a separate project is the cleanest boundary.
+
+1. **APIs & Services → Enable APIs** → enable **Gmail API**.
+2. **OAuth consent screen** → User type **External** → fill app name /
+   support email → **Scopes**: add exactly
+   `https://www.googleapis.com/auth/gmail.readonly` (nothing broader) →
+   **Test users**: add each email you want to let connect (max 100 while
+   unverified) → keep **Publishing status = Testing**.
+3. **Credentials → Create credentials → OAuth client ID → Application type
+   = Web application**. Under **Authorized redirect URIs** add, byte-for-byte,
+   the API callback:
+   `https://<your-api-project>.vercel.app/auth/gmail/callback`
+   (add the localhost variant too if you run `vercel dev`).
+4. Copy the generated **Client ID** and **Client secret**.
+
+### Env — API project (repo root), added to Path B's matrix
+
+| Variable | Value | Notes |
+|---|---|---|
+| `JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID` | the Web client ID | public by design |
+| `JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET` | the Web client secret | **secret — paste in Vercel only; never commit / never share in chat** |
+| `JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI` | `https://<api>.vercel.app/auth/gmail/callback` | must equal the console entry exactly |
+| `JOBTRACKER_WEB_APP_URL` | `https://<web>.vercel.app` | fixed post-callback redirect target (no open redirect) |
+| `JOBTRACKER_SECRET_ENCRYPTION_KEY` | Fernet key (already set in C4) | encrypts the refresh token **and** signs the OAuth `state` |
+
+`JOBTRACKER_SECRET_ENCRYPTION_KEY` is generated with:
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+
+No new **web** env is needed — the web app reaches these endpoints through
+the existing `BACKEND_API_URL`.
+
+### Verify
+
+1. Redeploy the API project. `GET /auth/gmail/status` (with a signed-in
+   JWT) should return `{"configured": true, "connected": false}`. Until the
+   env is set it honestly returns `configured: false` (HTTP 200) and
+   `/auth/gmail/authorize` returns **503**, not a 500.
+2. In the web app, sign in → **Settings → Connect Gmail** → Google consent →
+   land back on `/settings?gmail=connected` → **Inbox** shows real, classified
+   mail. **Disconnect** revokes at Google and deletes the stored token.
+
+### Scale reality (state this plainly; don't over-claim)
+
+`gmail.readonly` is a Google **restricted** scope. While the app is
+unverified it can authorize **at most 100 test users** added on the consent
+screen; broad public use requires Google **OAuth verification + a CASA
+security assessment**. So the direct connection above is real and secure but
+gated to invited testers.
+
+The path that scales publicly **without** restricted-scope verification is
+**forwarding ingestion**: the user sets a Gmail filter that auto-forwards
+job-related mail to a per-user JobTracker ingest address, and the same
+classifier labels what arrives (no account access, no restricted scope).
+For "deploy only things good to scale," **forwarding ingestion is the
+recommended public path**; the OAuth connection fits a small invited group
+and the desktop app. Forwarding ingestion is not yet built — it is the
+recommended next increment.
+
 ## Known limits of the cloud build (by design, today)
 
-Cloud serves auth + applications CRUD only. Email sync, classification,
-review queue, and analytics are desktop-only routers not yet mounted in
-`main_cloud` — the classifier's public story is carried by the ML demo
-(`ml/demo`, Hugging Face Spaces) and the web `/demo` fixture until the
-cloud routers land.
+Cloud serves auth + applications CRUD **and** the Gmail web-OAuth read →
+classify path (C5, Path C above; rules-only classifier). Email sync
+persistence, the review queue, SetFit, and analytics remain desktop-only
+routers not yet mounted in `main_cloud` — the full-model classifier story is
+carried by the ML demo (`ml/demo`, Hugging Face Spaces) and the web `/demo`
+fixture. Until an owner completes Path C's Google setup, the deployed
+`/settings` page honestly reports Gmail as "not enabled on this deployment."
