@@ -18,6 +18,9 @@ export const BETA_SEATS = 100;
 /** The public, zero-connection classification demo. */
 export const SAMPLE_INBOX_HREF = "/demo/inbox";
 
+/** The public, no-OAuth "classify your own mail on-device" path. */
+export const IMPORT_HREF = "/import";
+
 const BETA_MAILTO_SUBJECT = "JobTracker beta access request";
 
 /**
@@ -45,3 +48,4 @@ export const BETA_MAILTO =
 /** Shared button/link labels so the card and the banner popover read identically. */
 export const BETA_CTA_LABEL = "Email admin for beta access";
 export const BETA_SAMPLE_LABEL = "Try the sample inbox";
+export const BETA_IMPORT_LABEL = "Import your own mail";
