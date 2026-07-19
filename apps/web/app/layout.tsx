@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BetaBanner } from "@/components/beta/BetaBanner";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,8 +28,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-theme="dark"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        {/* Apply the saved theme before paint — no flash, pages stay static. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="flex min-h-full flex-col">
         {children}
         <BetaBanner />
