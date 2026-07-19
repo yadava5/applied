@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { LayoutDashboard, Inbox, Settings } from "lucide-react";
+import { LayoutDashboard, Inbox, Upload, Settings } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/inbox", label: "Inbox", icon: Inbox },
+  { href: "/import", label: "Import mail", icon: Upload },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
