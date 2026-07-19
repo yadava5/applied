@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Committed third-party build artifact — the self-contained System Card
+    // Vite bundle. It ships minified and is not ours to lint.
+    "public/system-card/**",
   ]),
 ]);
 
