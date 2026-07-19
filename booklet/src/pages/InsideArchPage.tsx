@@ -165,8 +165,54 @@ export const InsideArchPage: React.FC<{
       </div>
     </div>
 
+    {/* Where the loop persists — the two stores that make it stateful */}
+    <div style={{ marginTop: 30 }}>
+      <div
+        style={{
+          fontFamily: FONTS.MONO,
+          fontSize: 9,
+          fontWeight: 700,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: SECTION_INK["03_INSIDE"],
+          marginBottom: 10,
+        }}
+      >
+        What the loop writes to
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <PersistBox table="training_data" desc="every human correction, kept as a labeled example for the next SetFit retrain." />
+        <PersistBox table="email_embeddings" desc="e5 vectors persisted so the similarity layer keeps growing its neighbor set." />
+      </div>
+    </div>
+
     <div style={{ position: "absolute", left: "0.75in", bottom: "1.1in" }}>
       <SourceNote>{INSIDE.architecture.source}</SourceNote>
     </div>
   </BodyPage>
+);
+
+const PersistBox: React.FC<{ table: string; desc: string }> = ({ table, desc }) => (
+  <div
+    style={{
+      border: `0.5pt solid ${COLORS.HAIRLINE}`,
+      borderLeft: `2.5px solid ${COLORS.E5_VIOLET}`,
+      borderRadius: 4,
+      background: COLORS.PAPER_ELEVATED,
+      padding: "11px 14px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 4,
+    }}
+  >
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <svg width={13} height={13} viewBox="0 0 14 14" aria-hidden style={{ flexShrink: 0 }}>
+        <ellipse cx={7} cy={3.2} rx={5} ry={2} fill="none" stroke={COLORS.E5_DEEP} strokeWidth={1} />
+        <path d="M2 3.2 V10.8 C2 11.9 4.2 12.8 7 12.8 C9.8 12.8 12 11.9 12 10.8 V3.2" fill="none" stroke={COLORS.E5_DEEP} strokeWidth={1} />
+        <path d="M2 7 C2 8.1 4.2 9 7 9 C9.8 9 12 8.1 12 7" fill="none" stroke={COLORS.E5_DEEP} strokeWidth={0.8} strokeOpacity={0.6} />
+      </svg>
+      <span style={{ fontFamily: FONTS.MONO, fontSize: 11, fontWeight: 700, color: COLORS.INK }}>{table}</span>
+    </div>
+    <span style={{ fontFamily: FONTS.SERIF, fontStyle: "italic", fontSize: 11, lineHeight: 1.38, color: COLORS.INK_MUTED }}>{desc}</span>
+  </div>
 );
