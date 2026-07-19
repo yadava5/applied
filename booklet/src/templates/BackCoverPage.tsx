@@ -1,13 +1,14 @@
 import React from "react";
-import { QRCodeSVG } from "qrcode.react";
-import { COLORS, FONTS } from "../theme";
+import { COLORS, FONTS, PAGE } from "../theme";
 import { BACK_COVER } from "../content";
 import { CoverField } from "../visuals/CoverField";
 
 /**
- * Back cover (page 28). Continues the front cover's envelope field (reseeded
- * so it reads as a wraparound), then lands the reader on the live product: a
- * QR to the web app on a paper card, plus the in-browser classifier Space.
+ * Back cover (page 32) — a PURE CLOSING that mirrors the front cover. The same
+ * wraparound envelope field (reseeded "back" variant), a colophon top-left, a
+ * quiet closing line + coda lower-left over a soft scrim, and a vertical margin
+ * callout on the right edge. No QR, no "scan me", no CTA — the Try-It page (31)
+ * already sent the reader to the product; this page just closes the book.
  */
 export const BackCoverPage: React.FC = () => (
   <section
@@ -22,7 +23,7 @@ export const BackCoverPage: React.FC = () => (
   >
     <CoverField widthIn={8.75} heightIn={11.25} variant="back" />
 
-    {/* Colophon — upper-left */}
+    {/* Colophon — upper-left (mirrors the cover masthead) */}
     <div
       style={{
         position: "absolute",
@@ -34,7 +35,7 @@ export const BackCoverPage: React.FC = () => (
         letterSpacing: "0.16em",
         textTransform: "uppercase",
         color: COLORS.ON_DARK_MUTED,
-        lineHeight: 1.6,
+        lineHeight: 1.7,
       }}
     >
       {BACK_COVER.colophon.map((line, i) => (
@@ -45,87 +46,101 @@ export const BackCoverPage: React.FC = () => (
       ))}
     </div>
 
-    {/* QR block — center-lower, on a paper card for scannability */}
+    {/* Vertical margin callout — right edge (mirrors the cover) */}
+    <div
+      style={{
+        position: "absolute",
+        right: "0.4in",
+        bottom: `${PAGE.margin.bottom}in`,
+        writingMode: "vertical-rl",
+        fontFamily: FONTS.MONO,
+        fontSize: 8.5,
+        fontWeight: 500,
+        letterSpacing: "0.22em",
+        textTransform: "uppercase",
+        color: COLORS.ON_DARK_SUBTLE,
+      }}
+    >
+      end · vol. 01
+    </div>
+
+    {/* Scrim behind the closing block */}
     <div
       style={{
         position: "absolute",
         left: 0,
         right: 0,
-        bottom: "2.2in",
+        bottom: 0,
+        height: "4.2in",
+        background: `linear-gradient(to top, ${COLORS.GROUND} 12%, rgba(11,18,32,0.86) 46%, rgba(11,18,32,0) 100%)`,
+        pointerEvents: "none",
+      }}
+    />
+
+    {/* Closing block — lower-left (mirrors the cover title block) */}
+    <div
+      style={{
+        position: "absolute",
+        left: "0.7in",
+        bottom: "0.95in",
+        right: "1.2in",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
         gap: 14,
       }}
     >
       <div
         style={{
-          background: COLORS.PAPER,
-          borderRadius: 12,
-          padding: 18,
-          boxShadow: `0 0 0 1px ${COLORS.ON_DARK_HAIRLINE}`,
-        }}
-      >
-        <QRCodeSVG value={BACK_COVER.qrTarget} size={150} level="M" marginSize={0} fgColor={COLORS.GROUND} />
-      </div>
-      <div
-        style={{
-          fontFamily: FONTS.MONO,
-          fontSize: 9,
-          fontWeight: 600,
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
+          fontFamily: FONTS.SANS,
+          fontSize: 34,
+          fontWeight: 700,
+          letterSpacing: "-0.03em",
+          lineHeight: 1,
           color: COLORS.ON_DARK,
         }}
       >
-        {BACK_COVER.qrCaption}
+        Job<span style={{ color: COLORS.RULES_CYAN }}>Tracker</span>
       </div>
-      <div
-        style={{
-          fontFamily: FONTS.SANS,
-          fontSize: 15,
-          fontWeight: 600,
-          letterSpacing: "-0.01em",
-          color: COLORS.RULES_CYAN,
-        }}
-      >
-        {BACK_COVER.qrTarget.replace("https://", "")}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div
+          style={{
+            fontFamily: FONTS.SERIF,
+            fontStyle: "italic",
+            fontSize: 24,
+            lineHeight: 1.2,
+            color: COLORS.ON_DARK,
+            maxWidth: "5.2in",
+          }}
+        >
+          {BACK_COVER.closingLine}
+        </div>
+        <div
+          style={{
+            fontFamily: FONTS.SERIF,
+            fontStyle: "italic",
+            fontSize: 17,
+            lineHeight: 1.25,
+            color: COLORS.ON_DARK_MUTED,
+          }}
+        >
+          {BACK_COVER.coda}
+        </div>
       </div>
-    </div>
-
-    {/* In-browser classifier Space note */}
-    <div
-      style={{
-        position: "absolute",
-        left: "0.9in",
-        right: "0.9in",
-        bottom: "1.35in",
-        textAlign: "center",
-        fontFamily: FONTS.MONO,
-        fontSize: 8.5,
-        fontWeight: 500,
-        letterSpacing: "0.04em",
-        color: COLORS.ON_DARK_MUTED,
-        lineHeight: 1.5,
-      }}
-    >
-      {BACK_COVER.spaceNote}
-    </div>
-
-    {/* Closing italic line — bottom-right */}
-    <div
-      style={{
-        position: "absolute",
-        bottom: "0.7in",
-        right: "0.7in",
-        fontFamily: FONTS.SERIF,
-        fontStyle: "italic",
-        fontSize: 14,
-        color: COLORS.ON_DARK_MUTED,
-        textAlign: "right",
-      }}
-    >
-      {BACK_COVER.closingLine}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 2 }}>
+        <span style={{ width: 34, height: 1, background: COLORS.ON_DARK_HAIRLINE }} />
+        <span
+          style={{
+            fontFamily: FONTS.MONO,
+            fontSize: 8.5,
+            fontWeight: 500,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: COLORS.ON_DARK_SUBTLE,
+          }}
+        >
+          System Card · Vol. 01
+        </span>
+      </div>
     </div>
   </section>
 );
