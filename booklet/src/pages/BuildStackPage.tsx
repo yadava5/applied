@@ -15,7 +15,7 @@ export const BuildStackPage: React.FC<{
     pageNumber={pageNumber}
     totalPages={totalPages}
     sectionLabel="BUILD"
-    sectionColor={SECTION_INK["05_BUILD"]}
+    sectionColor={SECTION_INK["06_BUILD"]}
     eyebrow={BUILD.stack.eyebrow}
     headline={BUILD.stack.headline}
   >
@@ -54,7 +54,7 @@ export const BuildStackPage: React.FC<{
               fontWeight: 700,
               letterSpacing: "0.1em",
               textTransform: "uppercase",
-              color: SECTION_INK["05_BUILD"],
+              color: SECTION_INK["06_BUILD"],
             }}
           >
             {r.area}
