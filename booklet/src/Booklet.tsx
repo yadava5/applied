@@ -22,6 +22,9 @@ import { ProofF1Page } from "./pages/ProofF1Page";
 import { ProofClassesPage } from "./pages/ProofClassesPage";
 import { ProofTracePage } from "./pages/ProofTracePage";
 import { ProofTestsPage } from "./pages/ProofTestsPage";
+import { SecurityNoLlmPage } from "./pages/SecurityNoLlmPage";
+import { SecurityOnDevicePage } from "./pages/SecurityOnDevicePage";
+import { SecurityGmailPage } from "./pages/SecurityGmailPage";
 import { BuildStackPage } from "./pages/BuildStackPage";
 import { BuildClosingPage } from "./pages/BuildClosingPage";
 
@@ -59,6 +62,9 @@ const BODY_COMPONENTS: Record<
   "proof-classes": ProofClassesPage,
   "proof-trace": ProofTracePage,
   "proof-tests": ProofTestsPage,
+  "sec-no-llm": SecurityNoLlmPage,
+  "sec-on-device": SecurityOnDevicePage,
+  "sec-gmail": SecurityGmailPage,
   "build-stack": BuildStackPage,
   "build-closing": BuildClosingPage,
 };
@@ -93,7 +99,7 @@ const PageSwitch: React.FC<{ spec: PageSpec; totalPages: number }> = ({ spec, to
           pageNumber={spec.num}
           totalPages={totalPages}
           sectionLabel="BUILD"
-          sectionColor={SECTION_INK["05_BUILD"]}
+          sectionColor={SECTION_INK["06_BUILD"]}
         />
       );
     case "body": {
