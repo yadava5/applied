@@ -34,6 +34,13 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
+  // The System Card is a self-contained Vite build committed under
+  // public/system-card/ (see booklet/ · `npm run build:system-card`). Serve its
+  // entry at the clean /system-card path; the hashed assets under
+  // /system-card/assets/* resolve as static files directly.
+  async rewrites() {
+    return [{ source: "/system-card", destination: "/system-card/index.html" }];
+  },
 };
 
 export default nextConfig;
