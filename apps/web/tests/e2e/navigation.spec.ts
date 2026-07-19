@@ -24,4 +24,18 @@ test.describe("route gating", () => {
     await expect(page).toHaveURL(/\/demo\/inbox$/);
     await expect(page.getByRole("heading", { name: "Sample inbox" })).toBeVisible();
   });
+
+  test("an unknown path renders the 404 with a route home — never a dead end", async ({ page }) => {
+    // Note: a genuine 404 route returns HTTP 404, which Chromium logs as a
+    // console "Failed to load resource" error — so we assert the page's content
+    // and escape hatch here, not console cleanliness.
+    await page.goto("/this-path-does-not-exist");
+    await expect(page.getByRole("heading", { name: /nothing is filed under this address/i })).toBeVisible();
+
+    await page.getByRole("link", { name: /back to the landing/i }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(
+      page.getByRole("heading", { name: /Your inbox already holds the verdict/i }),
+    ).toBeVisible();
+  });
 });
