@@ -24,7 +24,7 @@ Usage:
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -339,25 +339,49 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Every setting the Gmail web OAuth flow needs before it can offer a
+    # connect button. Each maps to an env var ``JOBTRACKER_<UPPER>``.
+    # ``secret_encryption_key`` is required twice over: to encrypt the stored
+    # refresh token (C4) and to sign the OAuth ``state`` token — so it belongs
+    # here even though it is not a "Google" value.
+    _GMAIL_OAUTH_REQUIRED_FIELDS: ClassVar[tuple[str, ...]] = (
+        "google_oauth_client_id",
+        "google_oauth_client_secret",
+        "gmail_oauth_redirect_uri",
+        "web_app_url",
+        "secret_encryption_key",
+    )
+
+    @property
+    def gmail_oauth_missing_fields(self) -> list[str]:
+        """Names (never values) of the required Gmail-OAuth settings still unset.
+
+        Turns the opaque ``gmail_oauth_configured is False`` into an actionable
+        list: an operator can map each name to its ``JOBTRACKER_<UPPER>`` env
+        var and see exactly what to set. Only field *names* are exposed here —
+        secret values are never read out — so this is safe to log or surface in
+        a 503 detail. An empty list means the flow is fully configured.
+        """
+
+        return [
+            name
+            for name in self._GMAIL_OAUTH_REQUIRED_FIELDS
+            if not getattr(self, name)
+        ]
+
     @computed_field  # type: ignore[misc]
     @property
     def gmail_oauth_configured(self) -> bool:
         """True when every value the Gmail web OAuth flow needs is present.
 
         Routers use this to return an honest ``503 not configured`` (instead
-        of a 500) while the operator has not yet pasted the Google client
-        credentials + redirect URIs into the backend env. ``secret_encryption_key``
-        is required twice over: to encrypt the stored refresh token (C4) and to
-        sign the OAuth ``state`` token.
+        of a 500) while the operator has not yet set the Google client
+        credentials + redirect URIs + encryption key in the backend env.
+        Backed by :attr:`gmail_oauth_missing_fields` so the "is it configured?"
+        boolean and the "what's missing?" diagnostic can never drift apart.
         """
 
-        return bool(
-            self.google_oauth_client_id
-            and self.google_oauth_client_secret
-            and self.gmail_oauth_redirect_uri
-            and self.web_app_url
-            and self.secret_encryption_key
-        )
+        return not self.gmail_oauth_missing_fields
 
     @field_validator("cors_allowed_hosts", mode="before")
     @classmethod
