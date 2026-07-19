@@ -55,6 +55,10 @@ export const COLORS = {
   SETFIT_GREEN: "#34D399",
   GATE_AMBER: "#F59E0B",
   STEEL: "#94A3B8",
+  // Security & Privacy chapter accent — a royal indigo that reads "trust /
+  // lock" while staying inside the app's cool (cyan → violet) half of the
+  // wheel. Distinct from the lighter E5 lavender on both dark and light.
+  SECURITY_INDIGO: "#6366F1",
 
   // ── Deep variants (legible on white — for editorial pages) ──
   RULES_DEEP: "#0284C7",
@@ -62,12 +66,14 @@ export const COLORS = {
   SETFIT_DEEP: "#059669",
   GATE_DEEP: "#B45309",
   STEEL_DEEP: "#475569",
+  SECURITY_DEEP: "#4338CA",
 
   // ── Accent tints (fills, bands) ──
   RULES_TINT: "rgba(56, 189, 248, 0.10)",
   E5_TINT: "rgba(167, 139, 250, 0.10)",
   SETFIT_TINT: "rgba(52, 211, 153, 0.12)",
   GATE_TINT: "rgba(245, 158, 11, 0.12)",
+  SECURITY_TINT: "rgba(99, 102, 241, 0.10)",
 
   // Status
   SUCCESS: "#059669",
@@ -97,11 +103,12 @@ export const FONTS = {
 // dividers + accent dots/bars; the *_INK map is the legible-on-white variant
 // for content-page eyebrows and page-number footers.
 //
-//   01 WHY     amber   · the manual/human cost — "a person is doing this by hand"
-//   02 HOW     cyan    · the cascade of rules
-//   03 INSIDE  violet  · the embedding engine room + ONNX
-//   04 PROOF   green   · the verdict / macro-F1
-//   05 BUILD   steel   · the workshop (deliberately neutral)
+//   01 WHY       amber   · the manual/human cost — "a person is doing this by hand"
+//   02 HOW       cyan    · the cascade of rules
+//   03 INSIDE    violet  · the embedding engine room + ONNX
+//   04 PROOF     green   · the verdict / macro-F1
+//   05 SECURITY  indigo  · least-privilege, on-device, no LLM (the trust story)
+//   06 BUILD     steel   · the workshop (deliberately neutral)
 // ---------------------------------------------------------------------------
 
 export const SECTION = {
@@ -109,7 +116,8 @@ export const SECTION = {
   "02_HOW": COLORS.RULES_CYAN,
   "03_INSIDE": COLORS.E5_VIOLET,
   "04_PROOF": COLORS.SETFIT_GREEN,
-  "05_BUILD": COLORS.STEEL,
+  "05_SECURITY": COLORS.SECURITY_INDIGO,
+  "06_BUILD": COLORS.STEEL,
 } as const;
 
 export const SECTION_INK = {
@@ -117,7 +125,8 @@ export const SECTION_INK = {
   "02_HOW": COLORS.RULES_DEEP,
   "03_INSIDE": COLORS.E5_DEEP,
   "04_PROOF": COLORS.SETFIT_DEEP,
-  "05_BUILD": COLORS.STEEL_DEEP,
+  "05_SECURITY": COLORS.SECURITY_DEEP,
+  "06_BUILD": COLORS.STEEL_DEEP,
 } as const;
 
 export type SectionKey = keyof typeof SECTION;
