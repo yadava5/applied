@@ -1,15 +1,23 @@
 import { createServerApiClient } from "@/lib/api/server";
-import type { components } from "@/lib/api/schema";
-import { ApplicationsBoard } from "@/components/applications/ApplicationsBoard";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
-
-type Application = components["schemas"]["Application"];
+import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
+import { RecentActivity } from "@/components/dashboard/RecentActivity";
+import { ClassifierContext, StatTiles } from "@/components/dashboard/StatTiles";
+import {
+  DashboardEmptyState,
+  ForwardRoutes,
+  SamplePreview,
+} from "@/components/dashboard/DashboardEmptyState";
+import { StageFunnel } from "@/components/viz/StageFunnel";
+import { summarize, type Application } from "@/lib/dashboard/summary";
 
 /**
- * The signed-in product: the pipeline board driven by GET /applications,
- * with a filing form posting through the server-side proxy. Failure
- * modes stay first-class — an unreachable backend degrades to a labeled
- * state, never a crash (the shell above already guarantees auth).
+ * The signed-in product: a real dashboard driven by GET /applications —
+ * headline metrics, the classifier-gate context, a proportional pipeline
+ * funnel, the status board, and a recent-activity feed. Failure modes stay
+ * first-class: an unreachable or unauthorized backend degrades to a labelled
+ * state that still routes the user forward and previews the product, never a
+ * blank page or a crash (the shell above already guarantees auth).
  */
 type LoadState =
   | { kind: "ok"; applications: Application[]; total: number }
@@ -38,54 +46,80 @@ async function loadApplications(): Promise<LoadState> {
   }
 }
 
+function DashboardHeader({ subtitle }: { subtitle: string }) {
+  return (
+    <header className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
+        <p className="mt-1 font-mono text-xs text-dim">{subtitle}</p>
+      </div>
+      <AddApplicationForm />
+    </header>
+  );
+}
+
 export default async function DashboardPage() {
   const state = await loadApplications();
 
+  // --- Honest degradation: unreachable / rejected backend --------------------
   if (state.kind !== "ok") {
+    const message =
+      state.kind === "unauthorized"
+        ? `The backend rejected the session: ${state.message}`
+        : `The backend is unreachable — your board renders the moment it answers. (${state.message})`;
     return (
-      <section className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
+      <section className="space-y-8">
+        <DashboardHeader subtitle="connection issue · showing a preview" />
         <div
-          className="rounded-xl border border-line-soft bg-surface p-4 font-mono text-sm text-muted"
+          className="rounded-xl border border-line-soft bg-surface px-4 py-3 font-mono text-sm text-muted"
           role="status"
         >
-          {state.kind === "unauthorized"
-            ? `The backend rejected the session: ${state.message}`
-            : `The backend is unreachable — the board renders the moment it answers. (${state.message})`}
+          {message}
         </div>
+        <ForwardRoutes />
+        <SamplePreview />
       </section>
     );
   }
 
-  const active = state.applications.filter((a) =>
-    ["applied", "interviewing"].includes(a.status),
-  ).length;
-  const offers = state.applications.filter((a) =>
-    ["offered", "accepted"].includes(a.status),
-  ).length;
+  // --- Empty: nothing filed yet ---------------------------------------------
+  if (state.total === 0) {
+    return (
+      <section className="space-y-6">
+        <DashboardHeader subtitle="0 filed · start your pipeline" />
+        <DashboardEmptyState />
+      </section>
+    );
+  }
+
+  // --- Populated dashboard ---------------------------------------------------
+  const summary = summarize(state.applications);
+  const funnelStages = summary.stages.map(({ stage, count }) => ({
+    label: stage.label,
+    count,
+    color: stage.color,
+  }));
+  const subtitle = `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
+    summary.offers === 1 ? "" : "s"
+  }`;
 
   return (
     <section className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
-          <p className="mt-1 font-mono text-xs text-dim">
-            {state.total} filed · {active} in motion · {offers} offer{offers === 1 ? "" : "s"}
-          </p>
-        </div>
-        <AddApplicationForm />
-      </header>
+      <DashboardHeader subtitle={subtitle} />
 
-      {state.total === 0 ? (
-        <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center">
-          <p className="text-strong">Nothing filed yet.</p>
-          <p className="mt-1 text-sm text-muted">
-            File your first application above — the board takes it from there.
-          </p>
-        </div>
-      ) : (
-        <ApplicationsBoard applications={state.applications} />
-      )}
+      <StatTiles summary={summary} />
+      <ClassifierContext />
+
+      <StageFunnel
+        stages={funnelStages}
+        total={summary.total}
+        caption={`pipeline distribution · ${summary.total} applications`}
+        highlight={`${summary.advancedPct}% advanced past applied`}
+      />
+
+      <PipelineBoard applications={state.applications} />
+
+      <RecentActivity applications={state.applications} />
     </section>
   );
 }
