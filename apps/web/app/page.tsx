@@ -4,6 +4,11 @@ import { Reveal } from "@/components/landing/Reveal";
 import { RawInbox, ClassifiedInbox } from "@/components/landing/InboxScene";
 import { Cascade } from "@/components/landing/Cascade";
 import { ClassF1Bars } from "@/components/landing/ClassF1Bars";
+import { AmbientField } from "@/components/landing/AmbientField";
+import { CountUp } from "@/components/landing/CountUp";
+import { ScrambleText } from "@/components/landing/ScrambleText";
+import { MagneticLink } from "@/components/landing/MagneticLink";
+import { SignatureEnding } from "@/components/landing/SignatureEnding";
 
 /**
  * Landing — a narrative scroll: PROBLEM → SHIFT → HOW → PROOF → TRY IT.
@@ -33,12 +38,16 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 
 export default function Landing() {
   return (
-    <main className="flex flex-col">
+    <main className="relative flex flex-col">
       {/* Motion is enhancement-only: with no JS, reveal everything up front. */}
       <noscript>
         <style>{`.reveal,.reveal-stagger>*,.bar-grow{opacity:1!important;transform:none!important}.bar-grow{width:var(--bar-w)!important}`}</style>
       </noscript>
 
+      {/* App-native ambient field — fixed, low-alpha, behind the z-10 content. */}
+      <AmbientField />
+
+      <div className="relative z-10 flex flex-col">
       {/* ---- nav -------------------------------------------------------- */}
       <header className="sticky top-0 z-50 border-b border-line-soft bg-background">
         <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-6">
@@ -84,15 +93,15 @@ export default function Landing() {
           tracker fills itself.
         </p>
         <div className="mt-9 flex flex-wrap justify-center gap-3">
-          <Link
+          <MagneticLink
             href="/demo"
-            className="rounded-lg bg-strong px-5 py-2.5 font-medium text-background transition-transform hover:-translate-y-px"
+            className="rounded-lg bg-strong px-5 py-2.5 font-medium text-background shadow-[0_0_0_0_transparent] transition-shadow duration-300 hover:shadow-[0_10px_34px_-10px_rgba(255,255,255,0.3)]"
           >
-            Enter the live demo →
-          </Link>
+            Enter the live demo <span aria-hidden>→</span>
+          </MagneticLink>
           <a
             href={SYSTEM_CARD}
-            className="rounded-lg border border-line px-5 py-2.5 text-foreground transition-colors hover:border-line-strong hover:text-strong"
+            className="spring-ease hover-lift rounded-lg border border-line px-5 py-2.5 text-foreground hover:border-line-strong hover:text-strong"
           >
             Read the System Card →
           </a>
@@ -113,7 +122,7 @@ export default function Landing() {
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="max-w-2xl">
             <Eyebrow>01 · the problem</Eyebrow>
-            <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
               A job search lives in your inbox.
             </h2>
             <p className="mt-5 text-muted">
@@ -155,8 +164,8 @@ export default function Landing() {
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="max-w-2xl">
             <Eyebrow>02 · the shift</Eyebrow>
-            <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              Stop tracking. Start classifying.
+            <h2 className="text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+              <ScrambleText text="Stop tracking. Start classifying." />
             </h2>
             <p className="mt-5 text-muted">
               Tracking is bookkeeping — a symptom. The real task is classification: given an email,
@@ -187,7 +196,7 @@ export default function Landing() {
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="max-w-2xl">
             <Eyebrow>03 · how it works</Eyebrow>
-            <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
               Three layers in series, cheapest first.
             </h2>
             <p className="mt-5 text-muted">
@@ -214,11 +223,11 @@ export default function Landing() {
             </p>
             <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line-soft bg-line-soft sm:grid-cols-4">
               {[
-                ["model", "22.8 MB int8 ONNX"],
-                ["from", "90.4 MB float32 · ≈4×"],
-                ["runtime", "Transformers.js · WASM"],
-                ["privacy", "allowRemoteModels = false"],
-              ].map(([k, v]) => (
+                { k: "model", v: (<><CountUp end={22.8} decimals={1} /> MB int8 ONNX</>) },
+                { k: "from", v: (<><CountUp end={90.4} decimals={1} /> MB float32 · ≈4×</>) },
+                { k: "runtime", v: "Transformers.js · WASM" },
+                { k: "privacy", v: "allowRemoteModels = false" },
+              ].map(({ k, v }) => (
                 <div key={k} className="bg-surface p-3">
                   <dt className="label-mono">{k}</dt>
                   <dd className="tabular mt-1 font-mono text-[12px] font-semibold text-strong">{v}</dd>
@@ -250,7 +259,7 @@ export default function Landing() {
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="max-w-2xl">
             <Eyebrow>04 · the receipts</Eyebrow>
-            <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
               0.979 macro-F1 — and a gate that blocks merges.
             </h2>
             <p className="mt-5 text-muted">
@@ -262,7 +271,9 @@ export default function Landing() {
 
           <div className="mt-10 grid gap-6 lg:grid-cols-[auto_1fr] lg:items-center">
             <Reveal className="rounded-xl border border-line-soft bg-surface px-8 py-7 text-center lg:text-left">
-              <p className="tabular font-mono text-6xl font-semibold text-strong sm:text-7xl">0.979</p>
+              <p className="tabular font-mono text-6xl font-semibold text-strong sm:text-7xl">
+                <CountUp end={0.979} decimals={3} />
+              </p>
               <p className="mt-2 font-mono text-[11px] leading-relaxed text-dim">
                 macro-F1 · hybrid classifier v3
                 <br />
@@ -274,18 +285,18 @@ export default function Landing() {
 
           <Reveal stagger className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
-              ["0.95", "macro-F1 CI floor — the merge fails below it"],
-              ["182", "tests in the backend suite"],
-              ["9", "email classes — 8 predicted + needs_review"],
-              ["6 / 6", "output-agreement vs the Python pipeline"],
-            ].map(([v, k], i) => (
+              { id: "floor", v: <CountUp end={0.95} decimals={2} />, k: "macro-F1 CI floor — the merge fails below it" },
+              { id: "tests", v: <CountUp end={182} />, k: "tests in the backend suite" },
+              { id: "classes", v: <CountUp end={9} />, k: "email classes — 8 predicted + needs_review" },
+              { id: "agree", v: (<><CountUp end={6} /> / 6</>), k: "output-agreement vs the Python pipeline" },
+            ].map((s, i) => (
               <div
-                key={v}
-                className="rounded-xl border border-line-soft bg-surface p-4"
+                key={s.id}
+                className="rounded-xl border border-line-soft bg-surface p-4 transition-colors hover:border-line"
                 style={{ ["--i" as string]: i }}
               >
-                <p className="tabular font-mono text-2xl font-semibold text-strong">{v}</p>
-                <p className="mt-1.5 text-[12px] leading-snug text-muted">{k}</p>
+                <p className="tabular font-mono text-2xl font-semibold text-strong">{s.v}</p>
+                <p className="mt-1.5 text-[12px] leading-snug text-muted">{s.k}</p>
               </div>
             ))}
           </Reveal>
@@ -303,7 +314,7 @@ export default function Landing() {
         <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
           <Reveal className="max-w-2xl">
             <Eyebrow>05 · try it</Eyebrow>
-            <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
               Run a real email through all three layers.
             </h2>
           </Reveal>
@@ -344,7 +355,7 @@ export default function Landing() {
                 </>
               );
               const cls =
-                "group block rounded-xl border border-line bg-surface p-5 transition-colors hover:border-line-strong";
+                "group block rounded-xl border border-line bg-surface p-5 transition-colors duration-200 hover:border-line-strong hover:bg-surface-2";
               return door.external ? (
                 <a
                   key={door.title}
@@ -370,6 +381,26 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ---- 06 · SIGNATURE ENDING -------------------------------------- */}
+      <section className="border-t border-line-soft">
+        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
+          <Reveal className="mx-auto max-w-2xl text-center">
+            <Eyebrow>06 · one gesture</Eyebrow>
+            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+              One email. Three layers. One verdict.
+            </h2>
+            <p className="mt-5 text-muted">
+              The whole system in a single gesture: an email falls through rules, e5, and SetFit,
+              clears the 0.85 gate, and resolves into one filed outcome.
+            </p>
+          </Reveal>
+
+          <Reveal className="mt-14">
+            <SignatureEnding />
+          </Reveal>
+        </div>
+      </section>
+
       {/* ---- footer ----------------------------------------------------- */}
       <footer className="border-t border-line-soft">
         <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-between gap-3 px-6 py-8 sm:flex-row">
@@ -389,6 +420,7 @@ export default function Landing() {
           </nav>
         </div>
       </footer>
+      </div>
     </main>
   );
 }
