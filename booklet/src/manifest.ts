@@ -39,6 +39,9 @@ export type BodyKey =
   | "proof-classes"
   | "proof-trace"
   | "proof-tests"
+  | "sec-no-llm"
+  | "sec-on-device"
+  | "sec-gmail"
   | "build-stack"
   | "build-closing";
 
@@ -72,7 +75,7 @@ export type PageSpec =
       sectionKey: SectionKey;
       half: "left" | "right";
     }
-  | { num: 28; kind: "back-cover"; parity: "verso"; sectionKey: null };
+  | { num: 32; kind: "back-cover"; parity: "verso"; sectionKey: null };
 
 // ---------------------------------------------------------------------------
 // Manifest — the 28 pages, in order.
@@ -88,7 +91,7 @@ export const PAGES: readonly PageSpec[] = [
     chapterNum: "01", chapterTitle: "WHY",
     subtitle: "the verdict is already sitting in your inbox",
     artSlot: "/art/div-01-why.svg",
-    chapterIndex: 1, chapterTotal: 5,
+    chapterIndex: 1, chapterTotal: 6,
   },
   { num: 5, kind: "body", parity: "recto", sectionKey: "01_WHY", body: "why-inbox" },
   { num: 6, kind: "body", parity: "verso", sectionKey: "01_WHY", body: "why-lossy" },
@@ -99,7 +102,7 @@ export const PAGES: readonly PageSpec[] = [
     chapterNum: "02", chapterTitle: "HOW",
     subtitle: "rules first · then similarity · then the learned head",
     artSlot: "/art/div-02-how.svg",
-    chapterIndex: 2, chapterTotal: 5,
+    chapterIndex: 2, chapterTotal: 6,
   },
   { num: 9, kind: "body", parity: "recto", sectionKey: "02_HOW", body: "how-cascade" },
   { num: 10, kind: "body", parity: "verso", sectionKey: "02_HOW", body: "how-rules" },
@@ -112,7 +115,7 @@ export const PAGES: readonly PageSpec[] = [
     chapterNum: "03", chapterTitle: "INSIDE",
     subtitle: "the engine room — and the model that fits in a browser tab",
     artSlot: "/art/div-03-inside.svg",
-    chapterIndex: 3, chapterTotal: 5,
+    chapterIndex: 3, chapterTotal: 6,
   },
   { num: 15, kind: "body", parity: "recto", sectionKey: "03_INSIDE", body: "inside-architecture" },
   { num: 16, kind: "body", parity: "verso", sectionKey: "03_INSIDE", body: "inside-onnx" },
@@ -123,7 +126,7 @@ export const PAGES: readonly PageSpec[] = [
     chapterNum: "04", chapterTitle: "PROOF",
     subtitle: "what we measured — and the gate that guards it",
     artSlot: "/art/div-04-proof.svg",
-    chapterIndex: 4, chapterTotal: 5,
+    chapterIndex: 4, chapterTotal: 6,
   },
   { num: 19, kind: "body", parity: "recto", sectionKey: "04_PROOF", body: "proof-f1" },
   { num: 20, kind: "body", parity: "verso", sectionKey: "04_PROOF", body: "proof-classes" },
@@ -131,18 +134,29 @@ export const PAGES: readonly PageSpec[] = [
   { num: 22, kind: "body", parity: "verso", sectionKey: "04_PROOF", body: "proof-tests" },
 
   {
-    num: 23, kind: "divider", parity: "recto", sectionKey: "05_BUILD",
-    chapterNum: "05", chapterTitle: "BUILD",
-    subtitle: "train · register · export · ship",
-    artSlot: "/art/div-05-build.svg",
-    chapterIndex: 5, chapterTotal: 5,
+    num: 23, kind: "divider", parity: "recto", sectionKey: "05_SECURITY",
+    chapterNum: "05", chapterTitle: "SECURITY",
+    subtitle: "no LLM reads the inbox · it can run on-device · Gmail is read-only",
+    artSlot: "/art/div-05-security.svg",
+    chapterIndex: 5, chapterTotal: 6,
   },
-  { num: 24, kind: "spread", parity: "verso", sectionKey: "05_BUILD", half: "left" },
-  { num: 25, kind: "spread", parity: "recto", sectionKey: "05_BUILD", half: "right" },
-  { num: 26, kind: "body", parity: "verso", sectionKey: "05_BUILD", body: "build-stack" },
-  { num: 27, kind: "body", parity: "recto", sectionKey: "05_BUILD", body: "build-closing" },
+  { num: 24, kind: "body", parity: "verso", sectionKey: "05_SECURITY", body: "sec-no-llm" },
+  { num: 25, kind: "body", parity: "recto", sectionKey: "05_SECURITY", body: "sec-on-device" },
+  { num: 26, kind: "body", parity: "verso", sectionKey: "05_SECURITY", body: "sec-gmail" },
 
-  { num: 28, kind: "back-cover", parity: "verso", sectionKey: null },
+  {
+    num: 27, kind: "divider", parity: "recto", sectionKey: "06_BUILD",
+    chapterNum: "06", chapterTitle: "BUILD",
+    subtitle: "train · register · export · ship",
+    artSlot: "/art/div-06-build.svg",
+    chapterIndex: 6, chapterTotal: 6,
+  },
+  { num: 28, kind: "spread", parity: "verso", sectionKey: "06_BUILD", half: "left" },
+  { num: 29, kind: "spread", parity: "recto", sectionKey: "06_BUILD", half: "right" },
+  { num: 30, kind: "body", parity: "verso", sectionKey: "06_BUILD", body: "build-stack" },
+  { num: 31, kind: "body", parity: "recto", sectionKey: "06_BUILD", body: "build-closing" },
+
+  { num: 32, kind: "back-cover", parity: "verso", sectionKey: null },
 ] as const;
 
 // ---------------------------------------------------------------------------
