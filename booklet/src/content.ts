@@ -64,7 +64,8 @@ export const CHAPTERS = [
   { num: "02", name: "HOW", pages: "08 – 13", sectionKey: "02_HOW" as const },
   { num: "03", name: "INSIDE", pages: "14 – 17", sectionKey: "03_INSIDE" as const },
   { num: "04", name: "PROOF", pages: "18 – 22", sectionKey: "04_PROOF" as const },
-  { num: "05", name: "BUILD", pages: "23 – 27", sectionKey: "05_BUILD" as const },
+  { num: "05", name: "SECURITY", pages: "23 – 26", sectionKey: "05_SECURITY" as const },
+  { num: "06", name: "BUILD", pages: "27 – 31", sectionKey: "06_BUILD" as const },
 ] as const;
 
 // TOC editorial bands ----------------------------------------------------------
@@ -75,6 +76,7 @@ export const TOC = {
     HOW: "rules → e5 → SetFit → the gate",
     INSIDE: "int8 ONNX, zero servers",
     PROOF: "0.979 macro-F1, CI-gated",
+    SECURITY: "no LLM · on-device · least-privilege",
     BUILD: "train · register · export · ship",
   } as Record<string, string>,
   chapterGlyphs: {
@@ -82,6 +84,7 @@ export const TOC = {
     HOW: "⌁",
     INSIDE: "◈",
     PROOF: "✓",
+    SECURITY: "⬡",
     BUILD: "⣿",
   } as Record<string, string>,
   audience: [
@@ -463,7 +466,118 @@ export const PROOF = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Section 05 — BUILD
+// Section 05 — SECURITY & PRIVACY
+//
+// Every claim on these pages is verified against the code on branch
+// integration/web-migration and carries a SOURCE note. Two deliberate honesty
+// calls, both grounded in the code rather than a marketing line:
+//
+//   · The on-device MAIL IMPORT classifies with the deterministic LAYER-1
+//     rules live in the tab (lib/demo/rulesLayer.ts). The full three-layer
+//     int8 model (e5 + SetFit) runs in the in-browser classifier Space, which
+//     apps/web's strict CSP keeps out of its own tab. We say "rules in the
+//     tab", not "the full model in the tab".
+//   · Disconnect REVOKES at Google (POST oauth2.googleapis.com/revoke) and is
+//     best-effort: confirmed when Google returns 2xx; the local encrypted row
+//     is deleted either way. We print it as "revokes, and confirms on 2xx",
+//     not as a guarantee.
+// ---------------------------------------------------------------------------
+
+export const SECURITY = {
+  divider: { subtitle: "no LLM reads the inbox · it can run on-device · Gmail is read-only" },
+
+  // Page 24 — no LLM in the classify path.
+  noLlm: {
+    eyebrow: "§05 · NO LLM",
+    headline: "No LLM reads your mail.",
+    lede:
+      "The classifier is not a prompt to somebody else's model. It is a three-layer cascade you can read line by line — no third-party LLM ever sees the inbox.",
+    body:
+      "Classification runs entirely on code that ships in this repo: 201 regex rules, then cosine similarity against a pretrained e5 embedding, then the fine-tuned SetFit head. There is no OpenAI, Anthropic, or Gemini call anywhere in the classify path — the classifier module imports no LLM API at all.",
+    path: [
+      { n: "1", label: "regex rules", note: "deterministic · auditable", accentKey: "02_HOW" as SectionKey },
+      { n: "2", label: "e5 similarity", note: "cosine 1-NN · pretrained", accentKey: "03_INSIDE" as SectionKey },
+      { n: "3", label: "SetFit head", note: "few-shot · local weights", accentKey: "04_PROOF" as SectionKey },
+    ],
+    absent: "LLM / third-party inference API",
+    absentNote: "never called in the classify path",
+    honest:
+      "The only “openai” / “anthropic” strings in the backend are an employer-name lookup — recognizing that a recruiter writing from openai.com works at “OpenAI”. It is a dictionary, not an API client, and the classifier never imports it.",
+    facts: [
+      { k: "CLASSIFY PATH", v: "rules → e5 cosine → SetFit — all in-repo" },
+      { k: "LLM CALLS", v: "zero · no OpenAI / Anthropic / Gemini SDK" },
+      { k: "EMBEDDING", v: "intfloat/e5-small-v2 · loaded locally" },
+      { k: "AUDITABILITY", v: "every layer is code you can read" },
+    ],
+    source: "source · classifier/hybrid.py:246,322,372 · embeddings.py:36,154 · no LLM import in classifier/",
+  },
+
+  // Page 25 — on-device: in-browser model + on-device import.
+  onDevice: {
+    eyebrow: "§05 · ON-DEVICE",
+    headline: "It can run with zero servers.",
+    lede:
+      "Two ways to classify without your mail ever leaving the machine — one uses the full model in the browser, one needs no account at all.",
+    modes: [
+      {
+        tag: "IN-BROWSER MODEL",
+        title: "The int8 ONNX classifier runs in the tab.",
+        body:
+          "The 22.8 MB quantized model loads over Transformers.js + onnxruntime-web (WASM) with allowRemoteModels = false and a local path. It fetches the weights once and never phones home.",
+        checks: ["allowRemoteModels = false", "22.8 MB · fetched once", "WebAssembly · your CPU"],
+        accentKey: "03_INSIDE" as SectionKey,
+      },
+      {
+        tag: "ON-DEVICE IMPORT",
+        title: "Drop a mail export; classify it in the tab.",
+        body:
+          "Point it at a Google Takeout MBOX, an .eml, or a JSON batch. The file is parsed and classified entirely in the browser by the layer-1 rules — no upload, no server, no OAuth. The mail never leaves your device.",
+        checks: ["MBOX · .eml · JSON", "no upload · no OAuth", "parsed + classified in-tab"],
+        accentKey: "05_SECURITY" as SectionKey,
+      },
+    ],
+    formats: ["Google Takeout MBOX", ".eml (RFC-822)", "JSON batch"],
+    honest:
+      "Honest scope: the import classifies with the deterministic rules layer live in your tab. The full three-layer int8 model runs in the in-browser classifier Space — apps/web's strict CSP deliberately keeps WASM/ONNX out of its own tab.",
+    source: "source · ml/browser/site/app.js:17–19 · apps/web/components/import/ImportMail.tsx:305 · lib/import/parseMail.ts:41",
+  },
+
+  // Page 26 — Gmail: least-privilege, encrypted, revocable, invite-gated.
+  gmail: {
+    eyebrow: "§05 · GMAIL ACCESS",
+    headline: "Read-only, encrypted, revocable.",
+    lede:
+      "When you do connect Gmail, the grant is the narrowest Google offers, the token is encrypted at rest, and disconnect revokes it at Google — not just locally.",
+    scopeGranted: { label: "gmail.readonly", note: "read message metadata + bodies" },
+    scopeWithheld: ["send", "delete", "modify", "compose", "settings"],
+    scopeCaption: "one scope requested; everything that could change your mailbox is never asked for.",
+    rows: [
+      {
+        k: "ENCRYPTED AT REST",
+        v: "The refresh token is a Fernet-encrypted blob in the database; the key lives only in the backend env — the token is never in the browser, a URL, or a log.",
+      },
+      {
+        k: "REVOKES AT GOOGLE",
+        v: "Disconnect POSTs the token to oauth2.googleapis.com/revoke, then deletes the local row. The revoke is confirmed when Google returns 2xx; the row is deleted either way.",
+      },
+      {
+        k: "CSRF-BOUND",
+        v: "The OAuth round-trip carries a signed, short-lived state token bound to your user id; the callback returns only gmail=connected — never a token.",
+      },
+    ],
+    beta: {
+      label: "BETA · INVITE-ONLY",
+      body:
+        "Google caps an unverified app on a restricted scope at 100 test users, so direct Gmail connect is invite-only until the app clears verification. The sample inbox and the on-device import work for everyone, no account required.",
+      seats: "100",
+      seatsNote: "Google's test-user cap — the real limit, not a marketing number",
+    },
+    source: "source · cloud/gmail_oauth.py:74,174,330,346 · credentials/cloud.py:187,209 · DEPLOY.md:110 · beta/constants.ts:16",
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
+// Section 06 — BUILD
 // ---------------------------------------------------------------------------
 
 export const BUILD = {
@@ -480,7 +594,7 @@ export const BUILD = {
       "The registered body is exported to int8 ONNX, published to a Hugging Face Space, and served by the Next.js 16 web app on Vercel — inference on the client.",
     stages: [
       { n: "1", label: "TRAIN", detail: "SetFit · MiniLM-L6 body", accentKey: "04_PROOF" },
-      { n: "2", label: "MLflow", detail: "log + register · gate 0.95", accentKey: "05_BUILD" },
+      { n: "2", label: "MLflow", detail: "log + register · gate 0.95", accentKey: "06_BUILD" },
       { n: "3", label: "ONNX", detail: "export · int8 · 22.8 MB", accentKey: "03_INSIDE" },
       { n: "4", label: "HF SPACE", detail: "static · in-browser", accentKey: "02_HOW" },
       { n: "5", label: "WEB", detail: "Next.js 16 · Vercel", accentKey: "01_WHY" },
@@ -506,14 +620,19 @@ export const BUILD = {
     source: "source · apps/web/package.json:24 · ml/track_run.py · pyproject.toml",
   },
 
+  // Page 31 — Try it. The reader's exit into the live product: the QR lives
+  // here now (the very last page is a quiet closing, not a CTA).
   closing: {
-    eyebrow: "END",
-    headline: "Try it.",
-    tagline: "Run a real email through all three layers, past the gate, in your browser.",
+    eyebrow: "TRY IT",
+    headline: "Run it yourself.",
+    tagline: "Scan to open the live app — or send a real email through all three layers, past the gate, in your browser.",
+    qrTarget: "https://jobtracker-web-five.vercel.app",
+    qrCaption: "scan to open the live web app",
     liveLabel: "LIVE WEB APP",
     liveUrl: "jobtracker-web-five.vercel.app",
     spaceLabel: "IN-BROWSER CLASSIFIER",
     spaceUrl: "hf.co/spaces/yadava5/jobtracker-classifier",
+    spaceNote: "int8 ONNX · zero servers · runs entirely in the tab",
     leftArrowLabel: "open it",
     rightArrowLabel: "classify",
     microNote: "three layers · one gate · zero servers",
@@ -521,13 +640,14 @@ export const BUILD = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Back cover
+// Back cover — a PURE CLOSING that mirrors the cover: the same wraparound
+// envelope field, a quiet closing line, the colophon. No QR, no CTA — the
+// Try-It page (31) sends the reader to the product; page 32 just closes.
 // ---------------------------------------------------------------------------
 
 export const BACK_COVER = {
-  qrTarget: "https://jobtracker-web-five.vercel.app",
-  qrCaption: "scan to open the live web app",
-  spaceNote: "In-browser classifier (int8 ONNX, zero servers): hf.co/spaces/yadava5/jobtracker-classifier",
-  colophon: ["JobTracker", "System Card · Vol. 01", "Ayush Yadav · 2026"],
-  closingLine: "— The verdict was always in the inbox.",
+  wordmark: "JobTracker",
+  closingLine: "The verdict was always in the inbox.",
+  coda: "Now it reads itself.",
+  colophon: ["JobTracker · System Card · Vol. 01", "Ayush Yadav · 2026", "Model licensed MIT · runs in-browser via ONNX"],
 } as const;
