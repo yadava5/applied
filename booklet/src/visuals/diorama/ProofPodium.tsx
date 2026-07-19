@@ -48,7 +48,7 @@ export const ProofPodium: React.FC = () => {
   return (
     <SceneFrame
       lineColor={LINE}
-      cornerLabels={{ topLeft: "MACRO-F1", bottomRight: "CI FLOOR 0.95" }}
+      cornerLabels={{ topLeft: "HELD-OUT EVAL", bottomRight: "CI FLOOR 0.95" }}
     >
       {/* ---- Iso plinth --------------------------------------------- */}
       {(() => {
@@ -128,17 +128,11 @@ export const ProofPodium: React.FC = () => {
         );
       })()}
 
-      {/* ---- Amber floor tick at 0.95 ------------------------------- */}
+      {/* ---- Amber floor tick at 0.95 (label lives on the left plate, so
+              nothing runs off the right frame edge) --------------------- */}
       <g style={{ color: AMBER }}>
-        <line x1={floorOuter.sx} y1={floorOuter.sy} x2={floorInner.sx} y2={floorInner.sy} stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
-        {(() => {
-          const lbl = arcPt(floorF, R + 8);
-          return (
-            <text x={lbl.sx + 4} y={lbl.sy + 1.5} fontFamily="ui-monospace, monospace" fontSize={4} fontWeight={600} letterSpacing="0.5" fill="currentColor">
-              0.95 CI
-            </text>
-          );
-        })()}
+        <line x1={floorOuter.sx} y1={floorOuter.sy} x2={floorInner.sx} y2={floorInner.sy} stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+        <circle cx={floorOuter.sx} cy={floorOuter.sy} r={1.6} fill="currentColor" />
       </g>
 
       {/* ---- Green needle + hub ------------------------------------- */}
@@ -163,6 +157,13 @@ export const ProofPodium: React.FC = () => {
             <g style={{ color: GREEN }}>
               <text x={cx} y={138} fontFamily="ui-monospace, monospace" fontSize={4.4} letterSpacing="0.6" fill="currentColor">
                 held-out · passing
+              </text>
+            </g>
+            {/* CI-floor legend, kept on the open left half (no edge clip) */}
+            <g style={{ color: AMBER }}>
+              <line x1={cx - 20} y1={150} x2={cx - 12} y2={150} stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
+              <text x={cx - 8} y={152} textAnchor="start" fontFamily="ui-monospace, monospace" fontSize={4.2} letterSpacing="0.4" fill="currentColor">
+                0.95 CI floor
               </text>
             </g>
           </g>
