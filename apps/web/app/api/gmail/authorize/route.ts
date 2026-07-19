@@ -11,19 +11,35 @@ import { getGmailAuthorizeUrl } from "@/lib/gmail/server";
  * bearing call here keeps the JWT and `BACKEND_API_URL` off the client,
  * and the browser only ever sees a top-level redirect to accounts.google.com.
  *
- * If the backend has not been given its Google OAuth credentials yet (or is
- * unreachable), we bounce back to the settings page with `?gmail=unavailable`
- * rather than surfacing an error — an honest "not enabled yet" state.
+ * When we can't get a consent URL we bounce back with an HONEST outcome
+ * rather than a single misleading "unavailable" for every cause:
+ *
+ *   - no session      → `/login?redirect=/settings` (sign in, then retry)
+ *   - JWT rejected    → `/settings?gmail=auth`       (session/auth problem)
+ *   - not configured  → `/settings?gmail=unavailable`(Gmail off on this deploy)
+ *   - backend error   → `/settings?gmail=error`      (transient — try again)
+ *
+ * This is the fix for the "Can't connect Gmail" dead end: a signed-in tester
+ * whose token was rejected used to be told "Gmail isn't enabled on this
+ * deployment yet", which is both wrong and actionless.
  */
 export async function GET(request: NextRequest) {
   const { origin } = new URL(request.url);
+  const result = await getGmailAuthorizeUrl();
 
-  const authorizeUrl = await getGmailAuthorizeUrl();
-  if (!authorizeUrl) {
-    const back = new URL("/settings", origin);
-    back.searchParams.set("gmail", "unavailable");
-    return NextResponse.redirect(back);
+  if (result.kind === "ok") {
+    return NextResponse.redirect(result.url);
   }
 
-  return NextResponse.redirect(authorizeUrl);
+  if (result.kind === "unauthenticated") {
+    const login = new URL("/login", origin);
+    login.searchParams.set("redirect", "/settings");
+    return NextResponse.redirect(login);
+  }
+
+  const flag =
+    result.kind === "auth" ? "auth" : result.kind === "unavailable" ? "unavailable" : "error";
+  const back = new URL("/settings", origin);
+  back.searchParams.set("gmail", flag);
+  return NextResponse.redirect(back);
 }
