@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { DEMO_REVIEW_QUEUE, type DemoReviewItem } from "@/lib/demo/demoData";
 
 const LAYERS = [
@@ -23,9 +23,41 @@ function layerIndex(method: DemoReviewItem["method"]) {
  */
 export function DecisionTrace() {
   const [open, setOpen] = useState<string | null>(DEMO_REVIEW_QUEUE[0]?.subject ?? null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  const reduce = () =>
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Cursor-follow spotlight (--mx/--my) + a subtle 3D tilt (--rx/--ry). Both are
+  // written straight onto the card element and are pure enhancement — the panel
+  // is fully usable without them, and reduced-motion opts out entirely.
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = cardRef.current;
+    if (!el || reduce()) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width;
+    const py = (e.clientY - r.top) / r.height;
+    el.style.setProperty("--mx", `${px * 100}%`);
+    el.style.setProperty("--my", `${py * 100}%`);
+    el.style.setProperty("--ry", `${(px - 0.5) * 6}deg`);
+    el.style.setProperty("--rx", `${-(py - 0.5) * 6}deg`);
+  };
+  const onLeave = () => {
+    const el = cardRef.current;
+    if (!el) return;
+    el.style.setProperty("--rx", "0deg");
+    el.style.setProperty("--ry", "0deg");
+  };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
+    <div
+      ref={cardRef}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      className="trace-card overflow-hidden rounded-xl border border-line-soft bg-surface"
+    >
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line-soft px-4 py-3">
         {LAYERS.map((l, i) => (
@@ -52,7 +84,7 @@ export function DecisionTrace() {
               <button
                 type="button"
                 onClick={() => setOpen(isOpen ? null : item.subject)}
-                className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
+                className="group trace-row flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
               >
                 {/* basis-full on mobile gives the subject its own line so the
                     layer track / verdict / % wrap below instead of squeezing it
@@ -100,6 +132,15 @@ export function DecisionTrace() {
                     {item.category.replace("_", " ")}
                   </span>
                 )}
+                {/* hover-only detail: how far the score sits from the 0.85 gate */}
+                <span
+                  className="tabular hidden w-14 shrink-0 text-right font-mono text-[10px] opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 sm:inline"
+                  style={{ color: item.confidence >= GATE ? "var(--green)" : "var(--amber)" }}
+                  aria-hidden
+                >
+                  {item.confidence >= GATE ? "+" : "−"}
+                  {Math.abs(item.confidence - GATE).toFixed(2)} gate
+                </span>
                 <span
                   className="tabular w-12 text-right font-mono text-xs"
                   style={{ color: item.needsReview ? "var(--amber)" : "var(--green)" }}
