@@ -1,5 +1,6 @@
 import React from "react";
 import { COLORS, FONTS } from "../theme";
+import { CATEGORIES } from "../content";
 
 /**
  * Per-layer "signature" visuals — one distinct diagram per cascade rung so the
@@ -101,6 +102,84 @@ export const RulesSignature: React.FC = () => (
     </div>
   </div>
 );
+
+// ── Layer 1 · Rules — how the 201 patterns split across categories ─────────
+// A lollipop (dot) chart, not a bar — the real per-category rule counts from
+// content.CATEGORIES (sum = 201). Distinct chart form; honest data.
+
+export const RulesDistribution: React.FC = () => {
+  const rows = CATEGORIES.filter((c) => c.rules > 0)
+    .slice()
+    .sort((a, b) => b.rules - a.rules);
+  const max = Math.max(...rows.map((r) => r.rules));
+  const total = rows.reduce((s, r) => s + r.rules, 0);
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+        <span
+          style={{
+            fontFamily: FONTS.MONO,
+            fontSize: 8.5,
+            fontWeight: 700,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: COLORS.RULES_DEEP,
+          }}
+        >
+          rules per category
+        </span>
+        <span style={{ fontFamily: FONTS.MONO, fontSize: 8, color: COLORS.INK_SUBTLE, fontVariantNumeric: "tabular-nums" }}>
+          {total} patterns · 7 categories
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((r) => {
+          const pct = (r.rules / max) * 100;
+          return (
+            <div key={r.id} style={{ display: "grid", gridTemplateColumns: "1.35in 1fr 22px", alignItems: "center", columnGap: 10 }}>
+              <span
+                style={{
+                  fontFamily: FONTS.MONO,
+                  fontSize: 9.5,
+                  fontWeight: 600,
+                  color: COLORS.INK,
+                  textAlign: "right",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {r.label}
+              </span>
+              <div style={{ position: "relative", height: 12, display: "flex", alignItems: "center" }}>
+                {/* baseline track */}
+                <span style={{ position: "absolute", left: 0, right: 0, height: 1, background: COLORS.HAIRLINE }} />
+                {/* stem */}
+                <span style={{ position: "absolute", left: 0, width: `${pct}%`, height: 2, background: COLORS.RULES_CYAN, borderRadius: 2 }} />
+                {/* dot */}
+                <span
+                  style={{
+                    position: "absolute",
+                    left: `${pct}%`,
+                    transform: "translateX(-50%)",
+                    width: 9,
+                    height: 9,
+                    borderRadius: "50%",
+                    background: COLORS.RULES_CYAN,
+                    border: `1.5px solid ${COLORS.RULES_DEEP}`,
+                  }}
+                />
+              </div>
+              <span style={{ fontFamily: FONTS.MONO, fontSize: 10, fontWeight: 700, color: COLORS.RULES_DEEP, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {r.rules}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 // ── Layer 2 · e5 — cosine nearest-neighbor ─────────────────────────────────
 
