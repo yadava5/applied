@@ -1,7 +1,7 @@
 import React from "react";
 import { Page } from "../primitives/Page";
-import { COLORS, FONTS } from "../theme";
-import { ABSTRACT, BRAND, MASTHEAD } from "../content";
+import { COLORS, FONTS, SECTION } from "../theme";
+import { ABSTRACT, BRAND, MASTHEAD, CHAPTERS } from "../content";
 
 /**
  * Welcome / endpaper (page 02). A quiet opening spread: the masthead kicker,
@@ -68,7 +68,38 @@ export const EndpaperPage: React.FC<{
         </p>
       </div>
 
-      <div style={{ flex: 1 }} />
+      <div style={{ flex: 0.55 }} />
+
+      {/* In this volume — a compact six-chapter preview */}
+      <div>
+        <div
+          style={{
+            fontFamily: FONTS.MONO,
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: COLORS.INK_MUTED,
+            marginBottom: 12,
+          }}
+        >
+          In this volume
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", columnGap: 12 }}>
+          {CHAPTERS.map((ch) => (
+            <div key={ch.num} style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: `2px solid ${SECTION[ch.sectionKey]}`, paddingTop: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: SECTION[ch.sectionKey], flexShrink: 0 }} />
+                <span style={{ fontFamily: FONTS.MONO, fontSize: 9, fontWeight: 700, color: COLORS.INK, fontVariantNumeric: "tabular-nums" }}>{ch.num}</span>
+              </div>
+              <span style={{ fontFamily: FONTS.SERIF, fontStyle: "italic", fontSize: 14, color: COLORS.INK, lineHeight: 1 }}>{ch.name}</span>
+              <span style={{ fontFamily: FONTS.MONO, fontSize: 7.5, color: COLORS.INK_SUBTLE, letterSpacing: "0.02em" }}>pp. {ch.pages}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex: 0.6 }} />
 
       {/* Three-fact strip */}
       <div
