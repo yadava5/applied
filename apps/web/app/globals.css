@@ -128,6 +128,259 @@ body {
   animation: cue-drift 1.8s ease-in-out infinite;
 }
 
+/* ---------------------------------------------------------------------------
+ * Enrichment layer — premium micro-interactions. Everything here is progressive
+ * enhancement over the existing narrative and collapses to a static, legible
+ * final state under prefers-reduced-motion (the block at the end of this file).
+ * ------------------------------------------------------------------------- */
+
+/* Spring-eased hover for interactive elements (buttons / door cards). */
+.spring-ease {
+  transition-property: transform, border-color, color, background-color, box-shadow;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Section titles pull from blur into focus as their Reveal block enters. */
+.title-focus {
+  filter: blur(12px);
+  transition: filter 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-visible="true"] .title-focus {
+  filter: blur(0);
+}
+
+/* The signature decision-trace card: cursor spotlight, 3D tilt, beam border. */
+@property --beam {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.trace-card {
+  position: relative;
+  isolation: isolate;
+  transform: perspective(1300px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+/* Lift real content above the spotlight wash. */
+.trace-card > * {
+  position: relative;
+  z-index: 1;
+}
+/* Cursor-follow spotlight. */
+.trace-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    260px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in oklab, var(--viz-embeddings) 15%, transparent),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.trace-card:hover::after {
+  opacity: 1;
+}
+/* Traveling beam border. */
+.trace-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam),
+    transparent 0 60%,
+    color-mix(in oklab, var(--viz-embeddings) 90%, transparent) 74%,
+    color-mix(in oklab, var(--viz-rules) 90%, transparent) 84%,
+    transparent 96%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  animation: beam-rotate 6s linear infinite;
+}
+.trace-card:hover::before,
+.trace-card:focus-within::before {
+  opacity: 0.95;
+}
+@keyframes beam-rotate {
+  to {
+    --beam: 360deg;
+  }
+}
+/* Decision-trace rows lift on hover/focus. */
+.trace-row {
+  transition:
+    background-color 0.2s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.trace-row:hover,
+.trace-row:focus-visible {
+  transform: translateX(3px);
+}
+
+/* Per-class F1 bars — a sheen sweeps once as each bar draws in. */
+@keyframes f1-sheen {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(360%);
+    opacity: 0;
+  }
+}
+[data-visible="true"] .f1-sheen {
+  animation: f1-sheen 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 80ms + 300ms);
+}
+
+/* ---- signature ending choreography -------------------------------------- */
+.sig__band {
+  opacity: 0.32;
+}
+.sig--play .sig__band {
+  animation: sig-pulse 0.6s ease var(--d, 0s) 1;
+}
+@keyframes sig-pulse {
+  0% {
+    opacity: 0.32;
+  }
+  45% {
+    opacity: 1;
+    filter: drop-shadow(0 0 6px currentColor);
+  }
+  100% {
+    opacity: 0.32;
+  }
+}
+
+.sig__envelope {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sig--play .sig__envelope {
+  animation: sig-descend 2.4s cubic-bezier(0.5, 0, 0.25, 1) forwards;
+}
+@keyframes sig-descend {
+  0% {
+    transform: translateY(-12px) scale(1);
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  8% {
+    transform: translateY(0) scale(1);
+  }
+  80% {
+    transform: translateY(246px) scale(1);
+    opacity: 1;
+  }
+  93% {
+    transform: translateY(246px) scale(0.16);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(246px) scale(0.16);
+    opacity: 0;
+  }
+}
+
+.sig__ring {
+  stroke-dasharray: 140;
+  stroke-dashoffset: 140;
+}
+.sig--play .sig__ring {
+  animation: sig-draw 0.5s ease 1.55s forwards;
+}
+.sig__check {
+  stroke-dasharray: 42;
+  stroke-dashoffset: 42;
+}
+.sig--play .sig__check {
+  animation: sig-draw 0.42s ease 1.95s forwards;
+}
+@keyframes sig-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.sig__glow {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sig--play .sig__glow {
+  animation: sig-glow 0.7s ease 1.85s forwards;
+}
+@keyframes sig-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0.26;
+    transform: scale(1);
+  }
+}
+.sig__ripple {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sig--play .sig__ripple {
+  animation: sig-ripple 0.8s ease 1.95s forwards;
+}
+@keyframes sig-ripple {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+/* Static resolved end-state (reduced-motion, or before first play we keep the
+ * envelope armed at the top; --static forces the verdict fully formed). */
+.sig--static .sig__envelope {
+  opacity: 0;
+}
+.sig--static .sig__ring,
+.sig--static .sig__check {
+  stroke-dashoffset: 0;
+}
+.sig--static .sig__glow {
+  opacity: 0.26;
+}
+.sig--static .sig__band {
+  opacity: 0.5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reveal,
   .reveal-stagger > *,
@@ -141,5 +394,38 @@ body {
   }
   .scroll-cue {
     animation: none !important;
+  }
+  /* Enrichment layer collapses to its resolved, static state. */
+  .title-focus {
+    filter: none !important;
+  }
+  .trace-card {
+    transform: none !important;
+    transition: none !important;
+  }
+  .trace-card::before {
+    animation: none !important;
+  }
+  .trace-row {
+    transition: none !important;
+  }
+  .trace-row:hover,
+  .trace-row:focus-visible {
+    transform: none !important;
+  }
+  .f1-sheen {
+    animation: none !important;
+    display: none !important;
+  }
+  .sig--play .sig__envelope,
+  .sig--play .sig__band,
+  .sig--play .sig__ring,
+  .sig--play .sig__check,
+  .sig--play .sig__glow,
+  .sig--play .sig__ripple {
+    animation: none !important;
+  }
+  .spring-ease {
+    transition: none !important;
   }
 }
