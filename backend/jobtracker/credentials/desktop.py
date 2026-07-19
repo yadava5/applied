@@ -8,7 +8,13 @@ continue to work unchanged.
 
 The cloud deployment uses ``jobtracker.credentials.cloud`` instead;
 the two backends are completely independent — ``keyring`` is imported
-only here and never enters the cloud import graph.
+only here and, critically, only *lazily* (see ``_keyring`` below) so it
+never enters the cloud (Vercel) import graph. The package ``__init__``
+re-exports these functions for backward compatibility, so merely
+importing ``jobtracker.credentials`` — which the cloud credential store's
+parent package does — would otherwise drag ``keyring`` in and break both
+the serverless deploy and the import-hygiene test in
+``tests/test_main_cloud.py``.
 """
 
 from __future__ import annotations
@@ -18,13 +24,29 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-import keyring
-from keyring.errors import KeyringError
-
 from jobtracker.config import settings
 from jobtracker.credentials.types import GmailCredentials, ICloudCredentials
 
 logger = logging.getLogger(__name__)
+
+
+def _keyring():
+    """Import ``keyring`` + ``KeyringError`` on first use.
+
+    Returned as a tuple so callers bind both to local names:
+
+        keyring, KeyringError = _keyring()
+
+    Deferring the import to call time (rather than module load) is what
+    keeps the macOS-only ``keyring`` dependency out of the cloud import
+    graph while leaving every function body's ``keyring.*`` calls and
+    ``except KeyringError`` handlers working exactly as before.
+    """
+
+    import keyring
+    from keyring.errors import KeyringError
+
+    return keyring, KeyringError
 
 
 # Service name for all JobTracker credentials in the macOS Keychain.
@@ -44,6 +66,7 @@ GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
 def save_gmail_credentials(credentials: GmailCredentials) -> bool:
     """Save Gmail OAuth credentials to the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         keyring.set_password(SERVICE_NAME, GMAIL_CREDENTIALS_KEY, credentials.to_json())
         logger.info("Gmail credentials saved for %s", credentials.email)
@@ -56,6 +79,7 @@ def save_gmail_credentials(credentials: GmailCredentials) -> bool:
 def get_gmail_credentials() -> Optional[GmailCredentials]:
     """Retrieve Gmail OAuth credentials from the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         raw = keyring.get_password(SERVICE_NAME, GMAIL_CREDENTIALS_KEY)
         if raw is None:
@@ -72,6 +96,7 @@ def get_gmail_credentials() -> Optional[GmailCredentials]:
 def delete_gmail_credentials() -> bool:
     """Delete Gmail OAuth credentials from the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         keyring.delete_password(SERVICE_NAME, GMAIL_CREDENTIALS_KEY)
         logger.info("Gmail credentials deleted from keychain")
@@ -102,6 +127,7 @@ def update_gmail_access_token(access_token: str, token_expiry: datetime) -> bool
 def save_gmail_client_secret(client_secret_json: dict) -> bool:
     """Save Gmail OAuth client secret (from Google Cloud Console)."""
 
+    keyring, KeyringError = _keyring()
     try:
         keyring.set_password(
             SERVICE_NAME, GMAIL_CLIENT_SECRET_KEY, json.dumps(client_secret_json)
@@ -116,6 +142,7 @@ def save_gmail_client_secret(client_secret_json: dict) -> bool:
 def get_gmail_client_secret() -> Optional[dict]:
     """Retrieve Gmail OAuth client secret from the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         raw = keyring.get_password(SERVICE_NAME, GMAIL_CLIENT_SECRET_KEY)
         if raw is None:
@@ -135,6 +162,7 @@ def get_gmail_client_secret() -> Optional[dict]:
 def save_icloud_credentials(credentials: ICloudCredentials) -> bool:
     """Save iCloud Mail credentials to the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         keyring.set_password(SERVICE_NAME, ICLOUD_CREDENTIALS_KEY, credentials.to_json())
         logger.info("iCloud credentials saved for %s", credentials.email)
@@ -147,6 +175,7 @@ def save_icloud_credentials(credentials: ICloudCredentials) -> bool:
 def get_icloud_credentials() -> Optional[ICloudCredentials]:
     """Retrieve iCloud Mail credentials from the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         raw = keyring.get_password(SERVICE_NAME, ICLOUD_CREDENTIALS_KEY)
         if raw is None:
@@ -163,6 +192,7 @@ def get_icloud_credentials() -> Optional[ICloudCredentials]:
 def delete_icloud_credentials() -> bool:
     """Delete iCloud Mail credentials from the Keychain."""
 
+    keyring, KeyringError = _keyring()
     try:
         keyring.delete_password(SERVICE_NAME, ICLOUD_CREDENTIALS_KEY)
         logger.info("iCloud credentials deleted from keychain")
@@ -192,6 +222,7 @@ def has_icloud_credentials() -> bool:
 def clear_all_credentials() -> bool:
     """Clear all JobTracker credentials from the Keychain."""
 
+    keyring, KeyringError = _keyring()
     for key in (GMAIL_CREDENTIALS_KEY, ICLOUD_CREDENTIALS_KEY, GMAIL_CLIENT_SECRET_KEY):
         try:
             keyring.delete_password(SERVICE_NAME, key)
