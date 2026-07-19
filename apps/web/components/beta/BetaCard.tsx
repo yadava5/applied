@@ -3,9 +3,11 @@ import Link from "next/link";
 import { CountUp } from "@/components/landing/CountUp";
 import {
   BETA_CTA_LABEL,
+  BETA_IMPORT_LABEL,
   BETA_MAILTO,
   BETA_SAMPLE_LABEL,
   BETA_SEATS,
+  IMPORT_HREF,
   SAMPLE_INBOX_HREF,
 } from "./constants";
 
@@ -57,6 +59,13 @@ export function BetaCard({ className = "" }: { className?: string }) {
               {BETA_CTA_LABEL}
             </a>
             <Link
+              href={IMPORT_HREF}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-visible:ring-2 focus-visible:ring-viz-rules"
+            >
+              {BETA_IMPORT_LABEL}
+              <span aria-hidden>→</span>
+            </Link>
+            <Link
               href={SAMPLE_INBOX_HREF}
               className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-visible:ring-2 focus-visible:ring-viz-rules"
             >
@@ -66,8 +75,9 @@ export function BetaCard({ className = "" }: { className?: string }) {
           </div>
 
           <p className="mt-3 text-[12px] leading-relaxed text-dim">
-            No connection needed — the sample inbox runs the real classifier on synthetic mail, so you
-            can see exactly what it does before asking for a seat.
+            No seat, no wait — <span className="text-muted">import your own mail</span> and classify it
+            on-device (nothing uploaded), or watch the classifier run on a synthetic sample inbox
+            first.
           </p>
         </div>
 
