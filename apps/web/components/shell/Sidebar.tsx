@@ -1,16 +1,20 @@
+"use client";
+
 import Link from "next/link";
-import { LayoutDashboard, Inbox, Upload, Settings } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
+import { isNavItemActive, navItems } from "./nav";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/inbox", label: "Inbox", icon: Inbox },
-  { href: "/import", label: "Import mail", icon: Upload },
-  { href: "/settings", label: "Settings", icon: Settings },
-] as const;
-
+/**
+ * Desktop primary navigation (hidden below `md`; the mobile menu in `TopBar`
+ * takes over there). The item matching the current route gets a clear active
+ * treatment — a cyan accent bar, a lit icon, a raised surface, and
+ * `aria-current="page"` — so it is always obvious which section you are in.
+ */
 export function Sidebar() {
+  const pathname = usePathname();
+
   return (
     <aside className="hidden w-56 shrink-0 border-r border-line-soft bg-surface md:block">
       <div className="px-4 py-4">
@@ -25,16 +29,29 @@ export function Sidebar() {
         <ul className="space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
+            const active = isNavItemActive(pathname, item.href);
             return (
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
-                    "text-muted hover:bg-surface-2 hover:text-strong",
+                    "relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-surface-2 text-strong"
+                      : "text-muted hover:bg-surface-2 hover:text-strong",
                   )}
                 >
-                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {active ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-viz-rules"
+                    />
+                  ) : null}
+                  <Icon
+                    className={cn("h-4 w-4", active && "text-viz-rules")}
+                    aria-hidden="true"
+                  />
                   {item.label}
                 </Link>
               </li>
