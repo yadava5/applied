@@ -26,6 +26,32 @@
   --viz-setfit: #34d399; /* layer 3 — SetFit few-shot */
 }
 
+/* Light theme — opt-in via the Appearance setting (a `jt-theme=light` cookie
+ * flips `data-theme` on <html>, read server-side in app/layout.tsx so there is
+ * no flash). The same monochrome system, inverted: paper surfaces, an ink text
+ * ramp, and darker semantic accents so green/amber/red/viz keep their contrast
+ * on white. The `@theme inline` map below reads these live, so every color
+ * utility re-themes automatically. */
+[data-theme="light"] {
+  color-scheme: light;
+  --background: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f4f4f5;
+  --foreground: #3f3f46;
+  --text-strong: #18181b;
+  --text-muted: #52525b;
+  --text-dim: #9599a1;
+  --line: rgb(0 0 0 / 0.1);
+  --line-soft: rgb(0 0 0 / 0.06);
+  --line-strong: rgb(0 0 0 / 0.24);
+  --green: #16a34a;
+  --amber: #b45309;
+  --red: #dc2626;
+  --viz-rules: #0284c7;
+  --viz-embeddings: #7c3aed;
+  --viz-setfit: #059669;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
@@ -638,5 +664,41 @@ body {
   .beta-seats::after {
     animation: none !important;
     display: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal dialog (components/ui/Dialog.tsx) — a quick fade for the scrim and a
+ * spring rise for the panel. Enhancement only: collapses to a static, fully
+ * visible state under prefers-reduced-motion.
+ * ------------------------------------------------------------------------- */
+.dialog-overlay {
+  animation: dialog-fade 0.16s ease both;
+}
+.dialog-panel {
+  animation: dialog-rise 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes dialog-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialog-overlay,
+  .dialog-panel {
+    animation: none !important;
   }
 }
