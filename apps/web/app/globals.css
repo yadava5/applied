@@ -26,6 +26,38 @@
   --viz-setfit: #34d399; /* layer 3 — SetFit few-shot */
 }
 
+/* Explicit dark re-assertion. `:root` already defaults to dark, but that only
+ * covers the top of the cascade — a subtree that forces `data-theme="dark"`
+ * on itself (the landing page, `/demo`: both are the product's own
+ * always-dark narrative, regardless of the visitor's saved Appearance
+ * setting) sits *inside* `<html>`, and `[data-theme="light"]` below is a bare
+ * attribute selector with no ancestor scoping, so it happily overrides `:root`
+ * from `<html data-theme="light">` right through a nested `data-theme="dark"`
+ * element with nothing to stop it. Mirroring `[data-theme="light"]` with an
+ * equally unscoped `[data-theme="dark"]` rule means the more specific,
+ * closer-to-the-element attribute wins the cascade as intended, so a
+ * light-themed visitor still sees the landing/demo pages in the dark system
+ * they're written for. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0a0a0b;
+  --surface: #0f1011;
+  --surface-2: #141517;
+  --foreground: #d6d8db;
+  --text-strong: #f7f8f8;
+  --text-muted: #8a8f98;
+  --text-dim: #63666c;
+  --line: rgb(255 255 255 / 0.09);
+  --line-soft: rgb(255 255 255 / 0.055);
+  --line-strong: rgb(255 255 255 / 0.2);
+  --green: #4ade80;
+  --amber: #f59e0b;
+  --red: #f87171;
+  --viz-rules: #38bdf8;
+  --viz-embeddings: #a78bfa;
+  --viz-setfit: #34d399;
+}
+
 /* Light theme — opt-in via the Appearance setting (a `jt-theme=light` cookie
  * flips `data-theme` on <html>, read server-side in app/layout.tsx so there is
  * no flash). The same monochrome system, inverted: paper surfaces, an ink text
