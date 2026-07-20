@@ -9,7 +9,7 @@ import { NotificationsSection, type NotificationPrefs } from "@/components/setti
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { DEFAULT_GATE_PREFERENCE, GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
 import { getGmailStatus } from "@/lib/gmail/server";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
   title: "Settings — JobTracker",
@@ -67,13 +67,7 @@ export default async function SettingsPage({
   const { gmail: flag } = await searchParams;
   const banner = flag ? FLAG_BANNERS[flag] : undefined;
 
-  const supabase = await createClient();
-  const [gmailResult, { data: userData }] = await Promise.all([
-    getGmailStatus(),
-    supabase.auth.getUser(),
-  ]);
-
-  const user = userData.user;
+  const [gmailResult, user] = await Promise.all([getGmailStatus(), getCurrentUser()]);
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
   const email = user?.email ?? "";
   const displayName = typeof meta.display_name === "string" ? meta.display_name : "";
