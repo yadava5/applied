@@ -74,28 +74,32 @@ export interface PipelineSummary {
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Derive every headline number from the application list. `now` is injectable
- * so tests are deterministic; production passes the real clock.
+ * Fold raw per-status counts into the display-stage summary. This is the
+ * single implementation of stage semantics (which raw statuses roll into
+ * which pipeline stage) — both the array path (`summarize`) and the
+ * counts-only path (the `GET /applications/summary` endpoint) funnel through
+ * here so the dashboard can never show one number derived two different ways.
+ *
+ * `statusCounts` is keyed by raw backend status; unknown statuses fall to the
+ * `applied` stage via `stageOf`, matching the board's "never invisible" rule.
  */
-export function summarize(applications: Application[], now: number = Date.now()): PipelineSummary {
-  const total = applications.length;
-
+export function summarizeCounts(
+  statusCounts: Record<string, number>,
+  total: number,
+  thisWeek: number,
+): PipelineSummary {
   const counts: Record<StageKey, number> = {
     applied: 0,
     interviewing: 0,
     offered: 0,
     rejected: 0,
   };
-  let thisWeek = 0;
   let advanced = 0;
 
-  for (const app of applications) {
-    const stage = stageOf(app.status);
-    counts[stage] += 1;
-    if (stage === "interviewing" || stage === "offered") advanced += 1;
-
-    const filed = Date.parse(app.created_at);
-    if (!Number.isNaN(filed) && now - filed >= 0 && now - filed <= WEEK_MS) thisWeek += 1;
+  for (const [status, n] of Object.entries(statusCounts)) {
+    const stage = stageOf(status);
+    counts[stage] += n;
+    if (stage === "interviewing" || stage === "offered") advanced += n;
   }
 
   return {
@@ -107,6 +111,29 @@ export function summarize(applications: Application[], now: number = Date.now())
     advancedPct: total > 0 ? Math.round((advanced / total) * 100) : 0,
     stages: STAGES.map((stage) => ({ stage, count: counts[stage.key] })),
   };
+}
+
+/**
+ * Derive every headline number from the application list. `now` is injectable
+ * so tests are deterministic; production passes the real clock.
+ *
+ * Kept for the demo twin (which holds the full fixture array in memory) and
+ * as the reference the counts-only endpoint is validated against. The real
+ * dashboard uses `summarizeCounts` fed by the O(1) summary endpoint instead of
+ * materializing every row just to count.
+ */
+export function summarize(applications: Application[], now: number = Date.now()): PipelineSummary {
+  const statusCounts: Record<string, number> = {};
+  let thisWeek = 0;
+
+  for (const app of applications) {
+    statusCounts[app.status] = (statusCounts[app.status] ?? 0) + 1;
+
+    const filed = Date.parse(app.created_at);
+    if (!Number.isNaN(filed) && now - filed >= 0 && now - filed <= WEEK_MS) thisWeek += 1;
+  }
+
+  return summarizeCounts(statusCounts, applications.length, thisWeek);
 }
 
 /** Most-recently-filed applications first — drives the recent-activity feed. */
