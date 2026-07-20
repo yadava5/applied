@@ -25,11 +25,12 @@ Why a separate package instead of extending ``api/applications.py``?
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlmodel import select
 
 from jobtracker.auth import current_user, require_user
@@ -42,6 +43,19 @@ router = APIRouter(
     tags=["Applications (cloud)"],
     dependencies=[require_user()],
 )
+
+# Pagination bounds for the list endpoint. The default page size is large
+# enough that a typical account (tens of applications) still gets its whole
+# board in one page — preserving the pre-pagination behaviour — while the
+# hard cap keeps a single response bounded for pathological accounts so a
+# serverless invocation never has to serialize thousands of rows at once.
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 500
+
+# How recent an application counts as "this week" for the summary tile. Kept
+# in one place so the backend aggregate and the frontend's array-based
+# `summarize()` fold agree on the window (7 days).
+_THIS_WEEK_WINDOW = timedelta(days=7)
 
 
 class CloudApplicationCreate(BaseModel):
@@ -72,6 +86,29 @@ class CloudApplicationListResponse(BaseModel):
     total: int
 
 
+class ApplicationSummaryResponse(BaseModel):
+    """Lightweight pipeline summary — counts only, no application rows.
+
+    This is the O(1)-transfer companion to the O(n) list endpoint. The
+    dashboard's stat tiles + funnel need per-status counts, a total, and a
+    "filed this week" number — none of which require shipping every row to
+    the client. The backend computes them with two index-assisted aggregate
+    queries (``GROUP BY status`` and a windowed ``COUNT``) against the
+    ``ix_applications_user_id_status`` composite index, so response size and
+    DB work stay constant as an account grows.
+
+    ``status_counts`` is keyed by the raw backend status value (``applied``,
+    ``interviewing``, ``offered``, ``rejected``, ``accepted``, ``withdrawn``,
+    ``ghosted``); only non-zero statuses are included. The frontend folds
+    these into its display stages so stage semantics live in exactly one
+    place (``lib/dashboard/summary.ts``).
+    """
+
+    total: int
+    this_week: int
+    status_counts: dict[str, int]
+
+
 def _serialize(app: Application) -> CloudApplicationResponse:
     """Convert an ``Application`` ORM row to the public response shape."""
 
@@ -91,8 +128,24 @@ def _serialize(app: Application) -> CloudApplicationResponse:
 @router.get("", response_model=CloudApplicationListResponse)
 async def list_applications_cloud(
     user_id: uuid.UUID = Depends(current_user),
+    page: int = Query(1, ge=1, description="1-based page number."),
+    page_size: int = Query(
+        DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=MAX_PAGE_SIZE,
+        description="Rows per page (capped so a single response stays bounded).",
+    ),
+    status: Optional[ApplicationStatus] = Query(
+        None, description="Filter to a single application status."
+    ),
+    company: Optional[str] = Query(
+        None, description="Case-insensitive substring match on company."
+    ),
+    search: Optional[str] = Query(
+        None, description="Case-insensitive substring match on company/position/notes."
+    ),
 ) -> CloudApplicationListResponse:
-    """List applications owned by the authenticated Supabase user.
+    """List applications owned by the authenticated Supabase user, paginated.
 
     The ``Depends(current_user)`` both enforces authentication (via the
     router-level dependency) and injects the resolved UUID so this
@@ -100,20 +153,107 @@ async def list_applications_cloud(
     revision ``a8d4ec5fba26``) are a second line of defence: even if
     the ``WHERE user_id = ...`` clause were dropped, the DB would still
     return only rows matching ``auth.uid()``.
+
+    ``total`` is the full count of rows matching the (owner + filter)
+    predicate — not the size of the returned page — so the UI can render an
+    honest "X of Y" without a second request. Server-side ``LIMIT``/``OFFSET``
+    keeps the transferred payload bounded regardless of account size; the
+    default page size still fits a typical whole board in one response.
     """
 
+    filters = [Application.user_id == user_id]
+    if status is not None:
+        filters.append(Application.status == status)
+    if company:
+        filters.append(Application.company.ilike(f"%{company}%"))
+    if search:
+        like = f"%{search}%"
+        filters.append(
+            or_(
+                Application.company.ilike(like),
+                Application.position.ilike(like),
+                Application.notes.ilike(like),
+            )
+        )
+
+    offset = (page - 1) * page_size
+
     async with get_session() as session:
+        total = (
+            await session.exec(
+                select(func.count()).select_from(Application).where(*filters)
+            )
+        ).one()
+
         stmt = (
             select(Application)
-            .where(Application.user_id == user_id)
+            .where(*filters)
             .order_by(Application.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
         )
-        result = await session.exec(stmt)
-        rows = result.all()
+        rows = (await session.exec(stmt)).all()
 
     return CloudApplicationListResponse(
         applications=[_serialize(app) for app in rows],
-        total=len(rows),
+        total=total,
+    )
+
+
+@router.get("/summary", response_model=ApplicationSummaryResponse)
+async def application_summary_cloud(
+    user_id: uuid.UUID = Depends(current_user),
+) -> ApplicationSummaryResponse:
+    """Return counts-only pipeline summary for the authenticated user.
+
+    Powers the dashboard stat tiles + funnel without transferring a single
+    application row. Two aggregate queries run against the composite
+    ``(user_id, status)`` index:
+
+    - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
+      applications the user has). ``total`` is their sum.
+    - a windowed ``COUNT(*)`` for applications created in the last 7 days.
+
+    Both are O(1) in transfer and index-assisted in the DB, so this endpoint
+    stays flat as an account scales from 10 to 10,000 applications — the whole
+    reason it exists instead of counting client-side over the full list.
+    """
+
+    now = datetime.utcnow()
+    week_ago = now - _THIS_WEEK_WINDOW
+
+    async with get_session() as session:
+        grouped = (
+            await session.exec(
+                select(Application.status, func.count())
+                .where(Application.user_id == user_id)
+                .group_by(Application.status)
+            )
+        ).all()
+
+        this_week = (
+            await session.exec(
+                select(func.count())
+                .select_from(Application)
+                .where(
+                    Application.user_id == user_id,
+                    Application.created_at >= week_ago,
+                    Application.created_at <= now,
+                )
+            )
+        ).one()
+
+    status_counts: dict[str, int] = {}
+    total = 0
+    for status_value, count in grouped:
+        key = status_value.value if hasattr(status_value, "value") else str(status_value)
+        status_counts[key] = count
+        total += count
+
+    return ApplicationSummaryResponse(
+        total=total,
+        this_week=this_week,
+        status_counts=status_counts,
     )
 
 
