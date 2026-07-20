@@ -25,7 +25,7 @@
  */
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { serverEnv } from "@/lib/env";
-import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
+import { getAccessToken } from "@/lib/supabase/auth";
 
 /**
  * Build a typed API client carrying the caller's Supabase JWT (when the
@@ -33,17 +33,18 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
  * there is no authenticated session, the client is returned without an
  * `Authorization` header so unauthenticated endpoints like `/health`
  * still work.
+ *
+ * The access-token read is request-memoized (`lib/supabase/auth`), so calling
+ * this multiple times in one render — the dashboard fetches summary + list —
+ * does not re-read the session each time.
  */
 export async function createServerApiClient(): Promise<ApiClient> {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const token = await getAccessToken();
 
   const { BACKEND_API_URL } = serverEnv();
 
   return createApiClient({
     baseUrl: BACKEND_API_URL,
-    token: session?.access_token,
+    token: token ?? undefined,
   });
 }
