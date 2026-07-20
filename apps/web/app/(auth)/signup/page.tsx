@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import {
+  AuthOrDivider,
+  GoogleSignInButton,
+} from "@/components/auth/GoogleSignInButton";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 
@@ -70,64 +74,71 @@ export default function SignupPage() {
           </p>
         </header>
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <div className="space-y-1">
-            <label htmlFor="email" className="block text-sm font-medium">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
-            />
-          </div>
+        <div className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div className="space-y-1">
+              <label htmlFor="email" className="block text-sm font-medium">
+                Email
+              </label>
+              <input
+                id="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
+              />
+            </div>
 
-          <div className="space-y-1">
-            <label htmlFor="password" className="block text-sm font-medium">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              required
-              minLength={8}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
-            />
-            <p className="text-xs text-dim">
-              At least 8 characters.
-            </p>
-          </div>
+            <div className="space-y-1">
+              <label htmlFor="password" className="block text-sm font-medium">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
+              />
+              <p className="text-xs text-dim">At least 8 characters.</p>
+            </div>
 
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject"
-            >
-              {error}
-            </p>
-          ) : null}
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject"
+              >
+                {error}
+              </p>
+            ) : null}
 
-          {infoMessage ? (
-            <p className="rounded-md border border-live/40 bg-live/10 px-3 py-2 text-sm text-live">
-              {infoMessage}
-            </p>
-          ) : null}
+            {infoMessage ? (
+              <p className="rounded-md border border-live/40 bg-live/10 px-3 py-2 text-sm text-live">
+                {infoMessage}
+              </p>
+            ) : null}
 
-          <Button type="submit" disabled={isSubmitting} className="w-full">
-            {isSubmitting ? "Creating account…" : "Create account"}
-          </Button>
-        </form>
+            <Button type="submit" disabled={isSubmitting} className="w-full">
+              {isSubmitting ? "Creating account…" : "Create account"}
+            </Button>
+          </form>
+
+          <AuthOrDivider />
+
+          <GoogleSignInButton label="Sign up with Google" />
+        </div>
 
         <p className="text-sm text-muted">
           Already have an account?{" "}
-          <Link href="/login" className="text-strong underline underline-offset-4 hover:text-foreground">
+          <Link
+            href="/login"
+            className="text-strong underline underline-offset-4 hover:text-foreground"
+          >
             Sign in
           </Link>
         </p>
