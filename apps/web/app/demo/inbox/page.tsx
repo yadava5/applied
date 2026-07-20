@@ -20,12 +20,12 @@ export const metadata: Metadata = {
 export default function DemoInboxPage() {
   return (
     <main className="mx-auto min-h-screen w-full max-w-3xl px-6 pb-20">
-      <header className="flex h-14 items-center justify-between border-b border-line-soft">
-        <div className="flex items-center gap-3">
+      <header className="flex min-h-14 flex-wrap items-center justify-between gap-y-2 border-b border-line-soft py-2">
+        <div className="flex flex-wrap items-center gap-3">
           <Link href="/" className="font-mono text-sm font-semibold text-strong">
             job<span className="text-dim">_</span>tracker
           </Link>
-          <span className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
+          <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
             sample inbox · real verdicts · no inbox read
           </span>
         </div>
