@@ -338,6 +338,18 @@ class Settings(BaseSettings):
             "limit the CSRF/replay window."
         ),
     )
+    gmail_inbox_cache_ttl_seconds: int = Field(
+        default=60,
+        description=(
+            "Short TTL (seconds) for the per-user in-process cache of the "
+            "`GET /gmail/inbox` classify result. A repeat load within the "
+            "window is served from memory instead of re-hitting Gmail and "
+            "re-running the classifier, which is the expensive part of that "
+            "endpoint. Scoped strictly per user_id — never shared across "
+            "users — so caching never weakens auth or leaks mail. Set to 0 to "
+            "disable (always fetch + classify fresh)."
+        ),
+    )
 
     # Every setting the Gmail web OAuth flow needs before it can offer a
     # connect button. Each maps to an env var ``JOBTRACKER_<UPPER>``.
