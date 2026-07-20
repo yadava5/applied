@@ -41,8 +41,10 @@ Security properties
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import secrets
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -50,7 +52,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -117,6 +119,80 @@ class InboxResponse(BaseModel):
     scanned: int
     verdicts: list[InboxVerdict]
     note: str
+
+
+# =============================================================================
+# Per-user inbox cache (short TTL, in-process)
+# =============================================================================
+#
+# ``GET /gmail/inbox`` is expensive: it lists + fetches metadata for up to
+# ``gmail_fetch_max_results`` messages from Gmail and runs each through the
+# classifier. A dashboard/inbox refresh that repeats within a few seconds
+# should not pay that cost twice. We keep a tiny in-process cache keyed by
+# ``user_id`` with a short TTL (``gmail_inbox_cache_ttl_seconds``).
+#
+# Isolation: entries are keyed strictly by the authenticated user's UUID and
+# are never shared across users, so the cache cannot leak one user's mail to
+# another and does not weaken auth (the JWT is still verified on every call
+# before the cache is ever consulted). On serverless this is a best-effort,
+# per-warm-instance cache — a cold instance simply recomputes; correctness
+# never depends on a hit.
+_MAX_CACHE_ENTRIES = 512
+# user_id -> (stored_at_monotonic, response, etag)
+_INBOX_CACHE: dict[str, tuple[float, InboxResponse, str]] = {}
+
+
+def _inbox_etag(response: InboxResponse) -> str:
+    """Stable strong ETag over the verdicts this response carries."""
+
+    digest = hashlib.sha256(
+        response.model_dump_json(exclude={"note"}).encode("utf-8")
+    ).hexdigest()
+    return f'"{digest[:32]}"'
+
+
+def _inbox_cache_get(user_id: uuid.UUID) -> Optional[tuple[InboxResponse, str]]:
+    """Return a fresh cached (response, etag) for ``user_id`` or ``None``."""
+
+    ttl = settings.gmail_inbox_cache_ttl_seconds
+    if ttl <= 0:
+        return None
+    entry = _INBOX_CACHE.get(str(user_id))
+    if entry is None:
+        return None
+    stored_at, response, etag = entry
+    if (time.monotonic() - stored_at) > ttl:
+        _INBOX_CACHE.pop(str(user_id), None)
+        return None
+    return response, etag
+
+
+def _inbox_cache_put(user_id: uuid.UUID, response: InboxResponse) -> str:
+    """Cache ``response`` for ``user_id`` and return its ETag.
+
+    Skips caching entirely when the TTL is disabled. Applies a crude size
+    cap (drop the oldest entry) so a burst of distinct users on one warm
+    instance cannot grow the map without bound.
+    """
+
+    etag = _inbox_etag(response)
+    ttl = settings.gmail_inbox_cache_ttl_seconds
+    if ttl <= 0:
+        return etag
+    if len(_INBOX_CACHE) >= _MAX_CACHE_ENTRIES and str(user_id) not in _INBOX_CACHE:
+        oldest_key = min(_INBOX_CACHE, key=lambda k: _INBOX_CACHE[k][0])
+        _INBOX_CACHE.pop(oldest_key, None)
+    _INBOX_CACHE[str(user_id)] = (time.monotonic(), response, etag)
+    return etag
+
+
+def _apply_inbox_cache_headers(response: Response, etag: str) -> None:
+    """Set validator + private cache headers on an inbox response."""
+
+    response.headers["ETag"] = etag
+    ttl = max(settings.gmail_inbox_cache_ttl_seconds, 0)
+    # ``private`` — this is per-user mail; never let a shared cache/CDN store it.
+    response.headers["Cache-Control"] = f"private, max-age={ttl}"
 
 
 # =============================================================================
@@ -374,16 +450,35 @@ async def _revoke_at_google(token: str) -> bool:
 
 @router.get("/gmail/inbox", response_model=InboxResponse)
 async def gmail_inbox(
+    response: Response,
     user_id: uuid.UUID = Depends(current_user),
-) -> InboxResponse:
+    if_none_match: Optional[str] = Header(default=None),
+) -> InboxResponse | Response:
     """Read a bounded batch of recent mail and classify each message.
 
     This is the honest end of the pipeline: real messages from the user's
     Gmail, one verdict each from the rules-only cloud classifier. Bodies are
     never returned — only the verdict metadata the tracker needs.
+
+    Performance: a per-user, short-TTL cache (``gmail_inbox_cache_ttl_seconds``)
+    serves repeat loads without re-hitting Gmail or re-running the classifier.
+    An ``ETag``/``If-None-Match`` validator lets a conditional caller skip the
+    body entirely with a ``304``. Auth is unchanged — the JWT is verified on
+    every request before the cache is consulted, and entries are keyed per
+    user_id so nothing is ever shared between users.
     """
 
     _require_configured()
+
+    cached = _inbox_cache_get(user_id)
+    if cached is not None:
+        cached_response, etag = cached
+        if if_none_match is not None and if_none_match == etag:
+            not_modified = Response(status_code=status.HTTP_304_NOT_MODIFIED)
+            _apply_inbox_cache_headers(not_modified, etag)
+            return not_modified
+        _apply_inbox_cache_headers(response, etag)
+        return cached_response
 
     # Imported lazily so the classifier package stays out of the cold-start
     # path for the OAuth endpoints (matches hybrid.py's cloud discipline).
@@ -414,7 +509,7 @@ async def gmail_inbox(
             )
         )
 
-    return InboxResponse(
+    result_response = InboxResponse(
         connected=True,
         scanned=len(messages),
         verdicts=verdicts,
@@ -424,3 +519,7 @@ async def gmail_inbox(
             "in the desktop app."
         ),
     )
+
+    etag = _inbox_cache_put(user_id, result_response)
+    _apply_inbox_cache_headers(response, etag)
+    return result_response
