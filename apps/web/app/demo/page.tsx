@@ -32,74 +32,76 @@ export default function DemoPage() {
   }));
 
   return (
-    <main data-theme="dark" className="mx-auto min-h-screen w-full max-w-6xl px-6 pb-16">
-      <header className="flex h-14 items-center justify-between border-b border-line-soft">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="font-mono text-sm font-semibold text-strong">
-            job<span className="text-dim">_</span>tracker
+    <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
+      <div className="mx-auto w-full max-w-6xl px-6 pb-16">
+        <header className="flex h-14 items-center justify-between border-b border-line-soft">
+          <div className="flex items-center gap-3">
+            <Link href="/" className="font-mono text-sm font-semibold text-strong">
+              job<span className="text-dim">_</span>tracker
+            </Link>
+            <span className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
+              demo · fixture data · no inbox read
+            </span>
+          </div>
+          <Link
+            href="/"
+            className="font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
+          >
+            ← landing
           </Link>
-          <span className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
-            demo · fixture data · no inbox read
-          </span>
-        </div>
-        <Link
-          href="/"
-          className="font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
-        >
-          ← landing
-        </Link>
-      </header>
+        </header>
 
-      <div className="mt-8 space-y-4">
-        <StatTiles summary={summary} />
-        <ClassifierContext />
+        <div className="mt-8 space-y-4">
+          <StatTiles summary={summary} />
+          <ClassifierContext />
+        </div>
+
+        <section aria-labelledby="board-title" className="mt-10">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="board-title" className="label-mono">
+              01 · pipeline
+            </h2>
+            <AddApplicationForm mode="demo" />
+          </div>
+          <StageFunnel
+            stages={funnelStages}
+            total={summary.total}
+            caption={`pipeline distribution · ${summary.total} applications`}
+            highlight={`${summary.advancedPct}% advanced past applied`}
+          />
+          <div className="mt-4">
+            <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} />
+          </div>
+          <div className="mt-4">
+            <RecentActivity applications={DEMO_APPLICATIONS_AS_API} limit={5} />
+          </div>
+        </section>
+
+        <section aria-labelledby="queue-title" className="mt-12">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 id="queue-title" className="label-mono">
+              02 · decision trace — click an email to open its verdict
+            </h2>
+            <span className="font-mono text-[11px] text-dim">
+              CI-gated at 0.95 macro-F1 · 0.979 measured
+            </span>
+          </div>
+          <DecisionTrace />
+          <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+            Each verdict is traced through three layers — regex rules strike first, e5 embeddings
+            arbitrate, a SetFit head renders the call. Below the 0.85 gate nothing is auto-filed;
+            the email waits for a human and the correction becomes new training data. 0.979 macro-F1
+            on the committed eval set, gated in CI at 0.95.
+          </p>
+          <Link
+            href="/demo/inbox"
+            className="mt-6 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+          >
+            Run a full sample inbox through the real classifier
+            <span aria-hidden>→</span>
+          </Link>
+        </section>
       </div>
-
-      <section aria-labelledby="board-title" className="mt-10">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 id="board-title" className="label-mono">
-            01 · pipeline
-          </h2>
-          <AddApplicationForm mode="demo" />
-        </div>
-        <StageFunnel
-          stages={funnelStages}
-          total={summary.total}
-          caption={`pipeline distribution · ${summary.total} applications`}
-          highlight={`${summary.advancedPct}% advanced past applied`}
-        />
-        <div className="mt-4">
-          <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} />
-        </div>
-        <div className="mt-4">
-          <RecentActivity applications={DEMO_APPLICATIONS_AS_API} limit={5} />
-        </div>
-      </section>
-
-      <section aria-labelledby="queue-title" className="mt-12">
-        <div className="mb-3 flex items-baseline justify-between">
-          <h2 id="queue-title" className="label-mono">
-            02 · decision trace — click an email to open its verdict
-          </h2>
-          <span className="font-mono text-[11px] text-dim">
-            CI-gated at 0.95 macro-F1 · 0.979 measured
-          </span>
-        </div>
-        <DecisionTrace />
-        <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
-          Each verdict is traced through three layers — regex rules strike first, e5 embeddings
-          arbitrate, a SetFit head renders the call. Below the 0.85 gate nothing is auto-filed;
-          the email waits for a human and the correction becomes new training data. 0.979 macro-F1
-          on the committed eval set, gated in CI at 0.95.
-        </p>
-        <Link
-          href="/demo/inbox"
-          className="mt-6 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
-        >
-          Run a full sample inbox through the real classifier
-          <span aria-hidden>→</span>
-        </Link>
-      </section>
     </main>
   );
 }
