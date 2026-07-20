@@ -121,6 +121,66 @@ recommended public path**; the OAuth connection fits a small invited group
 and the desktop app. Forwarding ingestion is not yet built — it is the
 recommended next increment.
 
+## Path D — "Sign in with Google" (Supabase Auth social login)
+
+This adds a **Continue with Google** button to `/login` and `/signup` so users
+can authenticate with a Google account instead of email + password. It is a
+**Supabase Auth provider** and is entirely distinct from Path C:
+
+| | Path C — Connect Gmail | Path D — Sign in with Google |
+|---|---|---|
+| What it does | reads the user's inbox (`gmail.readonly`) | authenticates the user into the app |
+| Who owns the OAuth flow | the **FastAPI backend** | **Supabase Auth (GoTrue)** |
+| Google redirect URI | `https://<api>.vercel.app/auth/gmail/callback` | `https://jbyvatoodyqqvkqbsrju.supabase.co/auth/v1/callback` |
+| Where the client secret lives | Vercel env on the **API** project | **Supabase dashboard** (never Vercel, never the repo) |
+| Scopes | `gmail.readonly` (restricted) | `openid email profile` (Supabase defaults; no verification needed) |
+
+No code, web env, or backend env changes are required to turn this on — the
+button and the `/callback` code-exchange are already shipped. **Until an owner
+completes the steps below, the button is graceful: clicking it shows an inline
+"Google sign-in isn't configured yet." and never navigates to a broken page.**
+
+### Owner steps (≈10 min; you do these, not the repo)
+
+1. **Google Cloud Console → APIs & Services → Credentials.** Use a **Web
+   application** OAuth client. You *may reuse* the existing JobTracker Web
+   client from Path C (or make a dedicated one — cleaner separation). To the
+   client's **Authorized redirect URIs** add, byte-for-byte:
+
+   ```
+   https://jbyvatoodyqqvkqbsrju.supabase.co/auth/v1/callback
+   ```
+
+   (This is Supabase's own auth callback — Google returns here first, then
+   Supabase redirects on to the app's `/callback` route. Do **not** put the app
+   domain here.) Copy the **Client ID** and **Client secret**.
+   - No consent-screen scope changes are needed: "Sign in with Google" only
+     uses the basic `openid email profile` scopes, which are non-sensitive, so
+     this does **not** drag in Gmail's restricted-scope verification.
+
+2. **Supabase → Authentication → Providers → Google.** Toggle **Enable**, paste
+   the **Client ID** and **Client secret**, **Save**. *The secret is entered
+   only here — it is never committed to the repo and never shared in chat.*
+
+3. **Supabase → Authentication → URL Configuration.** Confirm:
+   - **Site URL** = `https://jobtracker-web-five.vercel.app`
+   - **Redirect URLs** allowlist includes `https://jobtracker-web-five.vercel.app/**`
+     (and `http://localhost:3000/**` for local dev). The web app sends
+     `redirectTo=<origin>/callback`, which must match this allowlist or Supabase
+     rejects the redirect.
+
+### Verify
+
+- Provider **off**: `/login` → **Continue with Google** shows the inline
+  "Google sign-in isn't configured yet." message (no crash, no JSON page). This
+  is driven by a pre-flight against
+  `…/auth/v1/authorize?provider=google&skip_http_redirect=true`, which answers
+  `400 {"msg":"Unsupported provider: provider is not enabled"}` while disabled.
+- Provider **on**: clicking **Continue with Google** redirects to Google
+  consent → back through Supabase → the app's `/callback` route exchanges the
+  PKCE code for a session → lands on `/dashboard` (or the `?redirect=` path a
+  protected page bounced through). Email + password sign-in is unaffected.
+
 ## Known limits of the cloud build (by design, today)
 
 Cloud serves auth + applications CRUD **and** the Gmail web-OAuth read →
