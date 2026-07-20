@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/shell/AppShell";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/supabase/auth";
 
 /**
  * Protected shell for every route under `app/(app)/`.
@@ -11,16 +11,17 @@ import { createClient } from "@/lib/supabase/server";
  * paths. We re-check the user here (defence-in-depth) so that even if the
  * proxy matcher is ever misconfigured for a new protected route, rendering
  * will fall back to a redirect instead of leaking shell UI.
+ *
+ * `getCurrentUser()` is request-memoized (see `lib/supabase/auth`), so this
+ * verified read is shared with the page rendered inside the shell rather than
+ * costing a second Supabase Auth round-trip.
  */
 export default async function ProtectedLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
   if (!user) {
     redirect("/login");
