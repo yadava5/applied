@@ -29,6 +29,9 @@ export interface paths {
     get: operations["list_applications"];
     post: operations["create_application"];
   };
+  "/applications/summary": {
+    get: operations["application_summary"];
+  };
 }
 
 export interface components {
@@ -61,6 +64,12 @@ export interface components {
       position: string;
       status?: string;
       notes?: string | null;
+    };
+    ApplicationSummaryResponse: {
+      total: number;
+      this_week: number;
+      /** Keyed by raw backend status value; only non-zero statuses present. */
+      status_counts: Record<string, number>;
     };
   };
 }
@@ -119,7 +128,7 @@ export interface operations {
       };
     };
     responses: {
-      200: {
+      201: {
         content: {
           "application/json": components["schemas"]["Application"];
         };
@@ -132,6 +141,20 @@ export interface operations {
       422: {
         content: {
           "application/json": { detail: unknown };
+        };
+      };
+    };
+  };
+  application_summary: {
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ApplicationSummaryResponse"];
+        };
+      };
+      401: {
+        content: {
+          "application/json": { detail: string };
         };
       };
     };
