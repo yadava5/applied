@@ -213,3 +213,137 @@ async def test_client_cannot_spoof_user_id_in_request_body(client: AsyncClient) 
     assert resp.status_code == 201, resp.text
     assert resp.json()["user_id"] == USER_A
     assert resp.json()["user_id"] != spoofed_user
+
+
+# =============================================================================
+# Summary endpoint (counts-only pipeline summary) — perf: O(1) transfer.
+# =============================================================================
+
+
+async def _create(client: AsyncClient, headers: dict, company: str, status: str) -> None:
+    resp = await client.post(
+        "/applications",
+        json={"company": company, "position": "SWE", "status": status},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_summary_requires_auth(client: AsyncClient) -> None:
+    """The summary endpoint is behind the same router-level auth as the list."""
+
+    resp = await client.get("/applications/summary")
+    assert resp.status_code == 401
+
+
+async def test_summary_counts_by_status(client: AsyncClient) -> None:
+    """Summary returns per-status counts, a total, and a this-week count.
+
+    Everything created here is created "now", so ``this_week`` equals
+    ``total`` and every status is present in ``status_counts``.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await _create(client, headers, "Acme", "applied")
+    await _create(client, headers, "Initech", "applied")
+    await _create(client, headers, "Hooli", "interviewing")
+    await _create(client, headers, "Umbrella", "rejected")
+
+    resp = await client.get("/applications/summary", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["total"] == 4
+    assert body["this_week"] == 4
+    assert body["status_counts"] == {"applied": 2, "interviewing": 1, "rejected": 1}
+
+
+async def test_summary_scoped_per_user(client: AsyncClient) -> None:
+    """One user's summary never leaks another user's counts."""
+
+    headers_a = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    headers_b = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+
+    await _create(client, headers_a, "Acme", "applied")
+    await _create(client, headers_a, "Initech", "offered")
+    await _create(client, headers_b, "Hooli", "applied")
+
+    resp_a = await client.get("/applications/summary", headers=headers_a)
+    resp_b = await client.get("/applications/summary", headers=headers_b)
+
+    assert resp_a.json()["total"] == 2
+    assert resp_a.json()["status_counts"] == {"applied": 1, "offered": 1}
+    assert resp_b.json()["total"] == 1
+    assert resp_b.json()["status_counts"] == {"applied": 1}
+
+
+async def test_summary_empty_is_zeroed(client: AsyncClient) -> None:
+    """A user with no applications gets an honest all-zero summary."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    resp = await client.get("/applications/summary", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"total": 0, "this_week": 0, "status_counts": {}}
+
+
+# =============================================================================
+# List pagination + filtering — perf: bounded transfer, DB-side filtering.
+# =============================================================================
+
+
+async def test_list_pagination_bounds_the_page(client: AsyncClient) -> None:
+    """``page``/``page_size`` bound the returned rows; ``total`` is the full count."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    for i in range(5):
+        await _create(client, headers, f"Company{i}", "applied")
+
+    page1 = await client.get("/applications?page=1&page_size=2", headers=headers)
+    assert page1.status_code == 200, page1.text
+    body1 = page1.json()
+    assert body1["total"] == 5  # full count, not the page size
+    assert len(body1["applications"]) == 2
+
+    page3 = await client.get("/applications?page=3&page_size=2", headers=headers)
+    body3 = page3.json()
+    assert body3["total"] == 5
+    assert len(body3["applications"]) == 1  # remainder
+
+    # The three pages together cover every distinct application exactly once.
+    page2 = await client.get("/applications?page=2&page_size=2", headers=headers)
+    seen = {
+        r["id"]
+        for body in (body1, page2.json(), body3)
+        for r in body["applications"]
+    }
+    assert len(seen) == 5
+
+
+async def test_list_status_filter(client: AsyncClient) -> None:
+    """``status`` filters server-side; ``total`` reflects the filtered count."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await _create(client, headers, "Acme", "applied")
+    await _create(client, headers, "Initech", "applied")
+    await _create(client, headers, "Hooli", "rejected")
+
+    resp = await client.get("/applications?status=applied", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 2
+    assert {r["company"] for r in body["applications"]} == {"Acme", "Initech"}
+    assert all(r["status"] == "applied" for r in body["applications"])
+
+
+async def test_list_search_matches_company_and_position(client: AsyncClient) -> None:
+    """``search`` is a case-insensitive substring over company/position/notes."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await _create(client, headers, "Acme Robotics", "applied")
+    await _create(client, headers, "Globex", "applied")
+
+    resp = await client.get("/applications?search=robot", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["applications"][0]["company"] == "Acme Robotics"
