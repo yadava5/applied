@@ -29,7 +29,7 @@
  * — they resolve at runtime against the deployed backend.
  */
 import { serverEnv } from "@/lib/env";
-import { createClient } from "@/lib/supabase/server";
+import { getAccessToken } from "@/lib/supabase/auth";
 
 export interface GmailStatus {
   configured: boolean;
@@ -69,11 +69,9 @@ export type GmailInboxResult =
 export type GmailAuthorizeResult = { kind: "ok"; url: string } | GmailFailure;
 
 async function sessionToken(): Promise<string | null> {
-  const supabase = await createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
+  // Request-memoized (lib/supabase/auth) so the Settings page's user read and
+  // this Gmail-status read share one session decode rather than two.
+  return getAccessToken();
 }
 
 /**
