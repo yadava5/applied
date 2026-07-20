@@ -38,7 +38,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 
 export default function Landing() {
   return (
-    <main data-theme="dark" className="relative flex flex-col">
+    <main data-theme="dark" className="relative flex flex-col bg-background text-foreground">
       {/* Motion is enhancement-only: with no JS, reveal everything up front. */}
       <noscript>
         <style>{`.reveal,.reveal-stagger>*,.bar-grow{opacity:1!important;transform:none!important}.bar-grow{width:var(--bar-w)!important}`}</style>
