@@ -269,6 +269,93 @@ async def test_inbox_classifies_stubbed_messages(
     assert by_id["m2"]["category"] == "other"
 
 
+async def test_inbox_cache_serves_repeat_without_refetch(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeat load within the TTL is served from cache, skipping Gmail.
+
+    We count how often the (stubbed) Gmail fetch runs: the first request
+    populates the cache; the second must be served from it, so the fetch
+    fires exactly once. The response also carries an ``ETag`` + private
+    ``Cache-Control`` validator.
+    """
+
+    from datetime import datetime
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import CloudGmailMessage
+
+    calls = {"n": 0}
+
+    async def _fake_fetch(user_id, **_kwargs):
+        calls["n"] += 1
+        return [
+            CloudGmailMessage(
+                message_id="m1",
+                thread_id="t1",
+                subject="Update on your application to Acme",
+                sender_name="Acme Recruiting",
+                sender_email="no-reply@lever.co",
+                snippet="We would like to schedule an interview with you.",
+                received_at=datetime.utcnow(),
+            ),
+        ]
+
+    monkeypatch.setattr(gmail_client_module, "fetch_recent_messages", _fake_fetch)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    first = await client.get("/gmail/inbox", headers=headers)
+    assert first.status_code == 200, first.text
+    assert calls["n"] == 1
+    etag = first.headers.get("etag")
+    assert etag
+    assert "private" in first.headers.get("cache-control", "")
+
+    second = await client.get("/gmail/inbox", headers=headers)
+    assert second.status_code == 200, second.text
+    # Served from cache — the underlying Gmail fetch did NOT run again.
+    assert calls["n"] == 1
+    assert second.json() == first.json()
+    assert second.headers.get("etag") == etag
+
+
+async def test_inbox_conditional_request_returns_304(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A conditional GET with a matching If-None-Match short-circuits to 304."""
+
+    from datetime import datetime
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import CloudGmailMessage
+
+    async def _fake_fetch(user_id, **_kwargs):
+        return [
+            CloudGmailMessage(
+                message_id="m1",
+                thread_id="t1",
+                subject="Your application",
+                sender_name=None,
+                sender_email="jobs@corp.com",
+                snippet="Thanks for applying.",
+                received_at=datetime.utcnow(),
+            ),
+        ]
+
+    monkeypatch.setattr(gmail_client_module, "fetch_recent_messages", _fake_fetch)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    first = await client.get("/gmail/inbox", headers=headers)
+    etag = first.headers["etag"]
+
+    conditional = await client.get(
+        "/gmail/inbox",
+        headers={**headers, "If-None-Match": etag},
+    )
+    assert conditional.status_code == 304, conditional.text
+    assert conditional.headers.get("etag") == etag
+
+
 async def test_disconnect_when_not_connected_is_idempotent(client: AsyncClient) -> None:
     resp = await client.post(
         "/auth/gmail/disconnect",
