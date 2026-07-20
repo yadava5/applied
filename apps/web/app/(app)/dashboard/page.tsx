@@ -9,35 +9,69 @@ import {
   SamplePreview,
 } from "@/components/dashboard/DashboardEmptyState";
 import { StageFunnel } from "@/components/viz/StageFunnel";
-import { summarize, type Application } from "@/lib/dashboard/summary";
+import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
 
 /**
- * The signed-in product: a real dashboard driven by GET /applications —
- * headline metrics, the classifier-gate context, a proportional pipeline
- * funnel, the status board, and a recent-activity feed. Failure modes stay
- * first-class: an unreachable or unauthorized backend degrades to a labelled
- * state that still routes the user forward and previews the product, never a
- * blank page or a crash (the shell above already guarantees auth).
+ * The signed-in product: a real dashboard. Headline metrics + the funnel come
+ * from the lightweight `GET /applications/summary` (counts only — O(1) transfer
+ * that stays flat as an account grows), while the status board + recent-activity
+ * feed render from a single bounded page of `GET /applications`. The two fetch
+ * in parallel, so this is one round-trip of latency and never materializes every
+ * row just to compute the tiles.
+ *
+ * Failure modes stay first-class: an unreachable or unauthorized backend
+ * degrades to a labelled state that still routes the user forward and previews
+ * the product, never a blank page or a crash (the shell above already
+ * guarantees auth).
  */
+
+/**
+ * Upper bound on rows pulled for the board/recent-activity in one page. Large
+ * enough that a typical account sees its whole board, capped so a pathological
+ * account never ships thousands of rows to the client — the tiles/funnel stay
+ * exact regardless via the counts-only summary endpoint.
+ */
+const BOARD_PAGE_SIZE = 200;
+
 type LoadState =
-  | { kind: "ok"; applications: Application[]; total: number }
+  | { kind: "ok"; summary: PipelineSummary; applications: Application[]; total: number }
   | { kind: "unauthorized"; message: string }
   | { kind: "offline"; message: string };
 
-async function loadApplications(): Promise<LoadState> {
+function failureMessage(error: unknown, status: number): string {
+  return typeof error === "object" && error && "detail" in error
+    ? String((error as { detail: unknown }).detail)
+    : `Backend responded ${status}`;
+}
+
+async function loadDashboard(): Promise<LoadState> {
   try {
     const api = await createServerApiClient();
-    const { data, error, response } = await api.GET("/applications");
-    if (error || !data) {
-      return {
-        kind: "unauthorized",
-        message:
-          typeof error === "object" && error && "detail" in error
-            ? String((error as { detail: unknown }).detail)
-            : `Backend responded ${response.status}`,
-      };
+    const [summaryRes, listRes] = await Promise.all([
+      api.GET("/applications/summary"),
+      api.GET("/applications", {
+        params: { query: { page: 1, page_size: BOARD_PAGE_SIZE } },
+      }),
+    ]);
+
+    if (summaryRes.error || !summaryRes.data) {
+      return { kind: "unauthorized", message: failureMessage(summaryRes.error, summaryRes.response.status) };
     }
-    return { kind: "ok", applications: data.applications, total: data.total };
+    if (listRes.error || !listRes.data) {
+      return { kind: "unauthorized", message: failureMessage(listRes.error, listRes.response.status) };
+    }
+
+    const summary = summarizeCounts(
+      summaryRes.data.status_counts,
+      summaryRes.data.total,
+      summaryRes.data.this_week,
+    );
+    return {
+      kind: "ok",
+      summary,
+      applications: listRes.data.applications,
+      total: summaryRes.data.total,
+    };
   } catch (err) {
     return {
       kind: "offline",
@@ -59,7 +93,7 @@ function DashboardHeader({ subtitle }: { subtitle: string }) {
 }
 
 export default async function DashboardPage() {
-  const state = await loadApplications();
+  const state = await loadDashboard();
 
   // --- Honest degradation: unreachable / rejected backend --------------------
   if (state.kind !== "ok") {
@@ -93,7 +127,7 @@ export default async function DashboardPage() {
   }
 
   // --- Populated dashboard ---------------------------------------------------
-  const summary = summarize(state.applications);
+  const { summary } = state;
   const funnelStages = summary.stages.map(({ stage, count }) => ({
     label: stage.label,
     count,
