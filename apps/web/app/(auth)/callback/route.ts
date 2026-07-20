@@ -10,12 +10,19 @@ import { createClient } from "@/lib/supabase/server";
  * must happen server-side so the resulting cookies are set on the correct
  * domain with HttpOnly.
  *
+ * This one handler serves every redirect-based sign-in: email confirmation,
+ * magic links, and the Google OAuth provider (`signInWithOAuth`) — they all
+ * come back with the same `?code=...` PKCE payload.
+ *
  * Flow:
  *   1. Read `code` and optional `redirect` from the URL.
- *   2. Call `supabase.auth.exchangeCodeForSession(code)` — this writes the
+ *   2. If the provider bounced back an `?error` instead (e.g. the user
+ *      cancelled Google consent, or the provider is disabled), forward a
+ *      readable message to `/login` rather than treating it as a missing code.
+ *   3. Call `supabase.auth.exchangeCodeForSession(code)` — this writes the
  *      Supabase auth cookies via the `setAll` configured in
  *      `lib/supabase/server.ts`.
- *   3. Redirect to the original target (defaulting to `/dashboard`).
+ *   4. Redirect to the original target (defaulting to `/dashboard`).
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
@@ -24,6 +31,17 @@ export async function GET(request: NextRequest) {
 
   // Refuse open redirects: only allow same-origin paths.
   const nextPath = redirectParam.startsWith("/") ? redirectParam : "/dashboard";
+
+  // A provider (OAuth) that fails or is cancelled redirects here with an
+  // `error` / `error_description` instead of a `code`. Surface it on /login,
+  // which humanises the message, rather than the misleading "missing_code".
+  const providerError =
+    searchParams.get("error_description") ?? searchParams.get("error");
+  if (providerError) {
+    const failUrl = new URL("/login", origin);
+    failUrl.searchParams.set("error", providerError);
+    return NextResponse.redirect(failUrl);
+  }
 
   if (!code) {
     const failUrl = new URL("/login", origin);
