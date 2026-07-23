@@ -217,9 +217,18 @@ async def current_user(
         raise AuthError("Invalid subject")
 
     try:
-        return uuid.UUID(sub)
+        user_id = uuid.UUID(sub)
     except (ValueError, TypeError):
         raise AuthError("Invalid subject") from None
+
+    # Bind this user as the RLS identity for the current request context so the
+    # central engine wiring (jobtracker.database.connection) sets
+    # ``request.jwt.claims`` on every transaction that runs the user's queries.
+    # Imported lazily so this cloud-only module keeps its thin import graph.
+    from jobtracker.database.connection import set_current_user_id
+
+    set_current_user_id(user_id)
+    return user_id
 
 
 def require_user() -> Any:
