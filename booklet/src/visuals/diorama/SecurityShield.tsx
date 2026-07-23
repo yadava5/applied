@@ -106,7 +106,9 @@ export const SecurityShield: React.FC = () => {
                 </g>
               );
             })}
-            <text x={CX} y={y + 9} textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize={4} letterSpacing="0.8" fill="currentColor" opacity={0.7}>
+            {/* caption below the plinth (at y+9 it was crossed by the
+                plinth's front-top edge) */}
+            <text x={CX} y={252} textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize={4} letterSpacing="0.8" fill="currentColor" opacity={0.7}>
               1 GRANTED · 4 WITHHELD
             </text>
           </g>
