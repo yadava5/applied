@@ -307,3 +307,150 @@ def flag_follow_ups(
     return sorted(
         best_per_company.values(), key=lambda f: f.days_since, reverse=True
     )
+
+
+# =============================================================================
+# Rollup → Application rows (Phase 2: dashboard persistence)
+# =============================================================================
+#
+# The classified pipeline is grouped into ONE application per company (role
+# where detectable), with the status set to the furthest lifecycle stage that
+# company's mail reached. These plain-string statuses match ApplicationStatus
+# values; sync.py maps them to the enum + upserts. pipeline.py stays DB-free.
+
+# EmailCategory → lifecycle stage rank. Higher = further along.
+_STAGE_RANK: dict[str, int] = {
+    "applied": 1,
+    "pending_application": 1,
+    "follow_up": 1,
+    "assessment": 2,
+    "interview": 3,
+    "offer": 4,
+}
+
+# Application lifecycle status (ApplicationStatus values) by ascending progress.
+# Used to roll a stage rank up to a status and to advance monotonically.
+_STATUS_RANK: dict[str, int] = {
+    "applied": 1,
+    "interviewing": 2,
+    "offered": 3,
+    "accepted": 4,
+}
+
+# A stored status the mail signal must never silently override (a manual/terminal
+# decision the user or a prior signal already settled).
+_TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {"rejected", "accepted", "withdrawn", "ghosted"}
+)
+
+# Subject patterns that name the role. First match wins; best-effort only.
+_SUBJECT_ROLE = re.compile(
+    r"(?:for the|for a|the|as a|as an|regarding(?: the)?)\s+"
+    r"([A-Z][\w/&.\-]*(?:\s+[A-Z0-9][\w/&.\-]*){0,4}?)\s+"
+    r"(?:role|position|opening|opportunity|internship|intern)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class RolledApplication:
+    """One company's applications rolled into a single tracker row."""
+
+    company_token: str  # normalized match key (e.g. "acme")
+    company_display: str  # human display (e.g. "Acme")
+    role: str | None  # detected role, or None
+    status: str  # ApplicationStatus value
+    applied_at: datetime | None  # earliest application date
+    last_activity: datetime | None  # most recent relevant date
+
+
+def _rank_to_status(rank: int) -> str:
+    if rank >= 4:
+        return "offered"
+    if rank >= 2:
+        return "interviewing"
+    return "applied"
+
+
+def _role_from_subject(subject: str) -> str | None:
+    match = _SUBJECT_ROLE.search(subject or "")
+    if not match:
+        return None
+    role = re.sub(r"\s+", " ", match.group(1)).strip(" .-")
+    return role or None
+
+
+def advance_application_status(current: str, incoming: str) -> str:
+    """Return the status a stored row should hold given an incoming signal.
+
+    Monotonic and safe: a mail signal only moves an *in-flight* application
+    forward (applied → interviewing → offered) or, on a rejection, to the
+    terminal ``rejected``. It never downgrades a row and never overrides a
+    status the user already settled (rejected/accepted/withdrawn/ghosted), so
+    re-syncing cannot clobber a manual decision.
+    """
+
+    if current in _TERMINAL_STATUSES:
+        return current
+    if incoming == "rejected":
+        return "rejected"
+    if _STATUS_RANK.get(incoming, 0) > _STATUS_RANK.get(current, 0):
+        return incoming
+    return current
+
+
+def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
+    """Group classified mail into one :class:`RolledApplication` per company.
+
+    Only job-lifecycle mail counts (``other``/``needs_review`` are ignored). A
+    company's status is the furthest stage its mail reached (applied <
+    assessment < interview < offer), with any rejection as a terminal override.
+    A company seen only via a weak ``follow_up`` with no real lifecycle mail is
+    skipped so the board is not polluted with phantom rows.
+
+    Deterministic and DB-free — the same input always yields the same rows,
+    which is what makes the downstream upsert idempotent.
+    """
+
+    grouped: dict[str, list[PipelineItem]] = defaultdict(list)
+    for item in items:
+        if item.category not in JOB_LIFECYCLE_CATEGORIES:
+            continue
+        key = company_key(item.sender_email, item.subject, item.sender_name)
+        grouped[key].append(item)
+
+    rolled: list[RolledApplication] = []
+    for token, msgs in grouped.items():
+        categories = {m.category for m in msgs}
+        has_real_stage = any(c in _STAGE_RANK and c != "follow_up" for c in categories)
+        has_rejection = "rejection" in categories
+        if not has_real_stage and not has_rejection:
+            # Only a weak follow-up nudge — not enough to assert an application.
+            continue
+
+        max_rank = max((_STAGE_RANK.get(c, 0) for c in categories), default=1)
+        status = "rejected" if has_rejection else _rank_to_status(max_rank)
+
+        dated = [m.received_at for m in msgs if m.received_at is not None]
+        applied_dates = [
+            m.received_at
+            for m in msgs
+            if m.category in ("applied", "pending_application") and m.received_at
+        ]
+        applied_at = min(applied_dates) if applied_dates else (min(dated) if dated else None)
+        last_activity = max(dated) if dated else None
+
+        role = next((_role_from_subject(m.subject) for m in msgs if _role_from_subject(m.subject)), None)
+
+        rolled.append(
+            RolledApplication(
+                company_token=token,
+                company_display=token.title(),
+                role=role,
+                status=status,
+                applied_at=applied_at,
+                last_activity=last_activity,
+            )
+        )
+
+    return sorted(rolled, key=lambda r: r.company_token)
