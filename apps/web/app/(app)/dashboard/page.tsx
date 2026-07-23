@@ -1,5 +1,8 @@
+import Link from "next/link";
+
 import { createServerApiClient } from "@/lib/api/server";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
+import { GmailSyncTrigger } from "@/components/dashboard/GmailSyncTrigger";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { ClassifierContext, StatTiles } from "@/components/dashboard/StatTiles";
@@ -9,6 +12,7 @@ import {
   SamplePreview,
 } from "@/components/dashboard/DashboardEmptyState";
 import { StageFunnel } from "@/components/viz/StageFunnel";
+import { getGmailStatus } from "@/lib/gmail/server";
 import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
 
 /**
@@ -93,7 +97,11 @@ function DashboardHeader({ subtitle }: { subtitle: string }) {
 }
 
 export default async function DashboardPage() {
-  const state = await loadDashboard();
+  const [state, gmailStatus] = await Promise.all([loadDashboard(), getGmailStatus()]);
+
+  // A user who has connected Gmail (or imported) is a REAL user: never show
+  // them the "sample data · not yours" preview, even when empty or degraded.
+  const connected = gmailStatus.kind === "ok" && gmailStatus.status.connected;
 
   // --- Honest degradation: unreachable / rejected backend --------------------
   if (state.kind !== "ok") {
@@ -103,7 +111,9 @@ export default async function DashboardPage() {
         : `The backend is unreachable — your board renders the moment it answers. (${state.message})`;
     return (
       <section className="space-y-8">
-        <DashboardHeader subtitle="connection issue · showing a preview" />
+        <DashboardHeader
+          subtitle={connected ? "connection issue" : "connection issue · showing a preview"}
+        />
         <div
           className="rounded-xl border border-line-soft bg-surface px-4 py-3 font-mono text-sm text-muted"
           role="status"
@@ -111,13 +121,47 @@ export default async function DashboardPage() {
           {message}
         </div>
         <ForwardRoutes />
-        <SamplePreview />
+        {/* Only a genuinely fresh (not-connected) user sees the sample scaffold. */}
+        {connected ? null : <SamplePreview />}
       </section>
     );
   }
 
   // --- Empty: nothing filed yet ---------------------------------------------
   if (state.total === 0) {
+    // Connected but empty → honest real-empty state (never fake sample rows).
+    // A one-shot background sync tries to fill the board from connected Gmail.
+    if (connected) {
+      return (
+        <section className="space-y-6">
+          <DashboardHeader subtitle="connected · no applications detected yet" />
+          <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
+            <p className="label-mono">connected to gmail</p>
+            <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
+              No application emails detected yet.
+            </h2>
+            <p className="mt-2 max-w-xl text-sm text-muted">
+              We scan your recent mail on load. If your pipeline is older, widen the range from the{" "}
+              <Link href="/inbox" className="text-strong underline-offset-4 hover:underline">
+                classified inbox
+              </Link>{" "}
+              — or file an application by hand.
+            </p>
+            <div className="mt-4">
+              <GmailSyncTrigger />
+            </div>
+            <div className="mt-5">
+              <AddApplicationForm align="start" />
+            </div>
+            <div className="mt-6">
+              <ForwardRoutes />
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    // Genuinely fresh user (not connected, nothing imported) → scaffold + sample.
     return (
       <section className="space-y-6">
         <DashboardHeader subtitle="0 filed · start your pipeline" />
