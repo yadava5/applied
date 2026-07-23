@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BetaCard } from "@/components/beta/BetaCard";
+import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
 /**
@@ -71,17 +72,7 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
                 Sign in
               </Link>
             ) : (
-              <a
-                href="/api/gmail/authorize"
-                className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                  configured
-                    ? "bg-strong text-background hover:opacity-90"
-                    : "pointer-events-none border border-line text-dim opacity-60"
-                }`}
-                aria-disabled={!configured}
-              >
-                Connect Gmail
-              </a>
+              <ConnectGmailButton configured={configured} />
             )}
           </div>
         </div>
