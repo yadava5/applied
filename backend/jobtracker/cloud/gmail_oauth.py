@@ -79,6 +79,7 @@ from jobtracker.credentials.cloud import (
     save_gmail_credentials,
 )
 from jobtracker.credentials.types import GmailCredentials
+from jobtracker.database.connection import user_id_scope
 
 logger = logging.getLogger(__name__)
 
@@ -565,8 +566,14 @@ async def _exchange_and_store(
 
     loop = asyncio.get_running_loop()
     stored = await loop.run_in_executor(None, _exchange_code, code, code_verifier)
-    if not await save_gmail_credentials(user_id, stored):
-        raise RuntimeError("credential store rejected the Gmail token save")
+
+    # The callback is deliberately unauthenticated (identity comes from the
+    # signed ``state``), so no ``Depends(current_user)`` has bound the RLS
+    # identity. ``user_credentials`` is a FORCE-RLS table, so we must scope the
+    # write to this user explicitly or the INSERT's ``WITH CHECK`` fails.
+    with user_id_scope(user_id):
+        if not await save_gmail_credentials(user_id, stored):
+            raise RuntimeError("credential store rejected the Gmail token save")
     return stored
 
 
