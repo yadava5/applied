@@ -178,13 +178,18 @@ export const InsideEngine: React.FC = () => {
           );
         })()}
       </g>
-      {/* chip label */}
+      {/* chip label — below the browser slab with a leader to the chip's base
+          (was printed across the viewport's front edge lines) */}
       {(() => {
-        const p = P(-8, 6, co[2]);
+        const chipBase = P(4, 6, co[2]); // near the chip's front-left leg
         return (
-          <text x={p.sx - 2} y={p.sy + 12} fontFamily="ui-monospace, monospace" fontSize={4.6} letterSpacing="0.8" fontWeight={600} fill="currentColor">
-            ONNX · int8
-          </text>
+          <g>
+            <circle cx={chipBase.sx} cy={chipBase.sy + 3} r={1} fill="currentColor" opacity={0.8} />
+            <line x1={chipBase.sx} y1={chipBase.sy + 3} x2={84} y2={186} stroke="currentColor" strokeWidth={0.5} strokeDasharray="3 2" opacity={0.6} />
+            <text x={80} y={193} textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize={4.6} letterSpacing="0.8" fontWeight={600} fill="currentColor">
+              ONNX · int8
+            </text>
+          </g>
         );
       })()}
 
