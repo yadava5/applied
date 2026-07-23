@@ -152,7 +152,13 @@ class InboxResponse(BaseModel):
 
 
 class PipelineItemIn(BaseModel):
-    """One classified message the client asks the pipeline analytics about."""
+    """One classified message the client asks the pipeline analytics about.
+
+    ``confidence`` (the classifier's confidence for ``category``) is what the
+    sync now gates on: without it, a low-confidence guess used to manufacture a
+    fake ``interviewing``/``offered`` row. ``thread_id``/``snippet`` let a
+    persisted row deep-link + show the underlying mail in the detail view.
+    """
 
     message_id: str
     category: str
@@ -160,6 +166,9 @@ class PipelineItemIn(BaseModel):
     subject: str = ""
     sender_name: str | None = None
     received_at: str | None = None  # ISO-8601
+    confidence: float = 0.0
+    thread_id: str | None = None
+    snippet: str = ""
 
 
 class PipelineAnalyzeRequest(BaseModel):
@@ -202,6 +211,10 @@ class SyncResponse(BaseModel):
     updated: int
     applications: int  # total application rows the user has after the sync
     scanned: int
+    # Stale AUTO rows removed by the rebuild (the "garbage gone" number) and how
+    # many uncertain verdicts are waiting in the needs-classification queue.
+    purged: int = 0
+    needs_review: int = 0
 
 
 # =============================================================================
@@ -870,7 +883,7 @@ async def gmail_sync(
     """
 
     from jobtracker.cloud import pipeline
-    from jobtracker.cloud.applications import upsert_applications_for_user
+    from jobtracker.cloud.applications import purge_and_rebuild_gmail_pipeline
 
     if payload.items is not None:
         items = [
@@ -881,6 +894,9 @@ async def gmail_sync(
                 subject=item.subject,
                 sender_name=item.sender_name,
                 received_at=_parse_iso(item.received_at),
+                confidence=item.confidence,
+                thread_id=item.thread_id,
+                snippet=item.snippet,
             )
             for item in payload.items[: settings.gmail_fetch_hard_cap]
         ]
@@ -923,11 +939,20 @@ async def gmail_sync(
                     subject=msg.subject,
                     sender_name=msg.sender_name,
                     received_at=msg.received_at,
+                    confidence=result.confidence,
+                    thread_id=msg.thread_id,
+                    snippet=msg.snippet,
                 )
             )
         scanned = len(page.messages)
 
+    # A sync is a REPLACE of the Gmail-derived pipeline: only high-confidence
+    # lifecycle mail with a nameable employer becomes a hard row (roll_up), the
+    # uncertain remainder feeds the needs-classification queue (review), and any
+    # manual / user-corrected row is preserved untouched. This is what wipes the
+    # prior garbage rows and rebuilds an honest board on reconnect / re-sync.
     rolled = pipeline.roll_up_applications(items)
+    review = pipeline.collect_review_items(items)
 
     from sqlalchemy import func as sa_func
     from sqlmodel import select as sm_select
@@ -936,7 +961,9 @@ async def gmail_sync(
     from jobtracker.database.models import Application
 
     async with get_session() as session:
-        created, updated = await upsert_applications_for_user(session, user_id, rolled)
+        created, updated, purged, needs_review = await purge_and_rebuild_gmail_pipeline(
+            session, user_id, rolled, review
+        )
         total = (
             await session.exec(
                 sm_select(sa_func.count())
@@ -946,13 +973,21 @@ async def gmail_sync(
         ).one()
 
     logger.info(
-        "Gmail sync for user_id=%s: created=%s updated=%s total=%s scanned=%s",
+        "Gmail sync for user_id=%s: created=%s updated=%s purged=%s "
+        "needs_review=%s total=%s scanned=%s",
         user_id,
         created,
         updated,
+        purged,
+        needs_review,
         total,
         scanned,
     )
     return SyncResponse(
-        created=created, updated=updated, applications=total, scanned=scanned
+        created=created,
+        updated=updated,
+        applications=total,
+        scanned=scanned,
+        purged=purged,
+        needs_review=needs_review,
     )
