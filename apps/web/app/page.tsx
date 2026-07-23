@@ -32,6 +32,15 @@ import { SignatureEnding } from "@/components/landing/SignatureEnding";
 const SPACE_URL = "https://huggingface.co/spaces/yadava5/jobtracker-classifier";
 const SYSTEM_CARD = "/system-card";
 
+/**
+ * The landing is a showcase: every link that leaves it for the live app
+ * (dashboard/demo/import), the separately-built System Card, or an external
+ * project opens in a NEW TAB so the narrative stays put behind it. Only in-page
+ * anchors and the primary sign-in stay same-tab. `rel="noopener noreferrer"`
+ * on each so the opened tab can't reach back through `window.opener`.
+ */
+const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const;
+
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return <p className="label-mono mb-4">{children}</p>;
 }
@@ -57,16 +66,18 @@ export default function Landing() {
           <nav className="flex items-center gap-4">
             <a
               href={SYSTEM_CARD}
+              {...NEW_TAB}
               className="hidden font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong sm:inline"
             >
               system card
             </a>
-            <Link
+            <a
               href="/demo"
+              {...NEW_TAB}
               className="font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
             >
               live demo
-            </Link>
+            </a>
             <Link
               href="/login"
               className="rounded-lg border border-line px-3 py-1.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
@@ -95,12 +106,14 @@ export default function Landing() {
         <div className="mt-9 flex flex-wrap justify-center gap-3">
           <MagneticLink
             href="/demo"
+            {...NEW_TAB}
             className="rounded-lg bg-strong px-5 py-2.5 font-medium text-background shadow-[0_0_0_0_transparent] transition-shadow duration-300 hover:shadow-[0_10px_34px_-10px_rgba(255,255,255,0.3)]"
           >
             Enter the live demo <span aria-hidden>→</span>
           </MagneticLink>
           <a
             href={SYSTEM_CARD}
+            {...NEW_TAB}
             className="spring-ease hover-lift rounded-lg border border-line px-5 py-2.5 text-foreground hover:border-line-strong hover:text-strong"
           >
             Read the System Card →
@@ -108,7 +121,7 @@ export default function Landing() {
         </div>
         <p className="mt-6 font-mono text-[11px] text-dim">
           runs in your browser · 22.8 MB · zero servers ·{" "}
-          <a href={SPACE_URL} target="_blank" rel="noreferrer" className="text-muted underline-offset-4 hover:text-strong hover:underline">
+          <a href={SPACE_URL} {...NEW_TAB} className="text-muted underline-offset-4 hover:text-strong hover:underline">
             run the classifier ↗
           </a>
         </p>
@@ -187,13 +200,14 @@ export default function Landing() {
               The same seven emails — nothing added, the signal just made legible. The one it is not
               sure about, it refuses to guess on.
             </p>
-            <Link
+            <a
               href="/demo/inbox"
+              {...NEW_TAB}
               className="mt-5 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
             >
               See it label a full sample inbox — real verdicts, no sign-in
               <span aria-hidden>→</span>
-            </Link>
+            </a>
           </Reveal>
         </div>
       </section>
@@ -403,12 +417,13 @@ export default function Landing() {
           </Reveal>
 
           <Reveal className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <Link
+            <a
               href="/demo/inbox"
+              {...NEW_TAB}
               className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
             >
               See it classify on-device <span aria-hidden>→</span>
-            </Link>
+            </a>
             <span className="text-[12px] leading-relaxed text-dim">
               Connecting your own Gmail is invite-only while we&apos;re in beta.
             </span>
@@ -430,70 +445,53 @@ export default function Landing() {
             {[
               {
                 href: "/demo",
-                external: false,
                 title: "Live demo",
                 arrow: "→",
                 body: "The pipeline board and decision trace, on fixture data. One click, no sign-in.",
               },
               {
                 href: "/demo/inbox",
-                external: false,
                 title: "Sample inbox",
                 arrow: "→",
                 body: "Eleven job emails, the real classifier's verdicts, gate, and trace. No inbox read.",
               },
               {
                 href: "/import",
-                external: false,
                 title: "Import your mail",
                 arrow: "→",
                 body: "Drop a Google Takeout .mbox; it's parsed and classified in your browser. No upload, no sign-in.",
               },
               {
                 href: SPACE_URL,
-                external: true,
                 title: "In-browser classifier",
                 arrow: "↗",
                 body: "Paste your own text; it is classified client-side, on your CPU — nothing uploaded.",
               },
               {
                 href: SYSTEM_CARD,
-                external: false,
                 title: "System Card",
                 arrow: "→",
                 body: "The full printed walkthrough: the why, the cascade, and the receipts.",
               },
-            ].map((door, i) => {
-              const inner = (
-                <>
-                  <div className="flex items-center justify-between">
-                    <span className="text-base font-medium text-strong">{door.title}</span>
-                    <span className="font-mono text-muted transition-transform group-hover:translate-x-0.5">
-                      {door.arrow}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm text-muted">{door.body}</p>
-                </>
-              );
-              const cls =
-                "group block rounded-xl border border-line bg-surface p-5 transition-colors duration-200 hover:border-line-strong hover:bg-surface-2";
-              return door.external ? (
-                <a
-                  key={door.title}
-                  href={door.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={cls}
-                  style={{ ["--i" as string]: i }}
-                >
-                  {inner}
-                </a>
-              ) : (
-                <Link key={door.title} href={door.href} className={cls} style={{ ["--i" as string]: i }}>
-                  {inner}
-                </Link>
-              );
-            })}
+            ].map((door, i) => (
+              // Every door leaves the landing (live app / System Card / the
+              // external Space), so each opens in a new tab per the standard.
+              <a
+                key={door.title}
+                href={door.href}
+                {...NEW_TAB}
+                className="group block rounded-xl border border-line bg-surface p-5 transition-colors duration-200 hover:border-line-strong hover:bg-surface-2"
+                style={{ ["--i" as string]: i }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-base font-medium text-strong">{door.title}</span>
+                  <span className="font-mono text-muted transition-transform group-hover:translate-x-0.5">
+                    {door.arrow}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-muted">{door.body}</p>
+              </a>
+            ))}
           </Reveal>
 
           <p className="mt-8 text-center font-mono text-[11px] text-dim">
@@ -538,13 +536,13 @@ export default function Landing() {
             demo runs on fixture data — no inbox is read · by Ayush Yadav
           </span>
           <nav className="flex items-center gap-4 font-mono text-[11px] text-dim">
-            <a href={SYSTEM_CARD} className="transition-colors hover:text-strong">
+            <a href={SYSTEM_CARD} {...NEW_TAB} className="transition-colors hover:text-strong">
               System Card
             </a>
-            <Link href="/demo" className="transition-colors hover:text-strong">
+            <a href="/demo" {...NEW_TAB} className="transition-colors hover:text-strong">
               Live demo
-            </Link>
-            <a href={SPACE_URL} target="_blank" rel="noreferrer" className="transition-colors hover:text-strong">
+            </a>
+            <a href={SPACE_URL} {...NEW_TAB} className="transition-colors hover:text-strong">
               Classifier ↗
             </a>
           </nav>
