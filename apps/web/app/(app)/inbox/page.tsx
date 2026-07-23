@@ -3,35 +3,24 @@ import type { Metadata } from "next";
 
 import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
-import { getGmailInbox, type InboxVerdict } from "@/lib/gmail/server";
+import { InboxWorkbench } from "@/components/gmail/InboxWorkbench";
+import { getGmailStatus } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
   title: "Classified inbox — JobTracker",
-  description: "Recent Gmail messages, each with a classifier verdict.",
+  description: "Mine your Gmail for your real job-search pipeline, one classifier verdict per message.",
 };
 
 /**
- * The honest end of the pipeline: real recent messages from the connected
- * Gmail account, one classifier verdict each. Bodies are never fetched to
- * the client — the backend returns verdict metadata only.
+ * The honest end of the pipeline: real mail from the connected Gmail account,
+ * one classifier verdict each. The server render only resolves the *connection*
+ * state (cheap `/auth/gmail/status`); the actual high-volume, filterable mine
+ * runs in the client {@link InboxWorkbench}, which pages the backend and shows
+ * the pipeline (category summary + follow-up flags). Bodies are never fetched.
  *
- * When Gmail isn't connected, the backend is unreachable, or the session was
- * rejected, the page says so PLAINLY and always offers a way forward — the
- * beta invite and the no-connection "Import your mail" fallback — rather than
- * a raw error, a stack, or a dead end.
+ * Every non-connected path says so plainly and offers a way forward — connect,
+ * the beta invite, or the no-OAuth import fallback — never a raw error.
  */
-
-const CATEGORY_DOT: Record<string, string> = {
-  offer: "bg-live",
-  interview: "bg-live",
-  assessment: "bg-live",
-  applied: "bg-viz-embeddings",
-  pending_application: "bg-viz-embeddings",
-  follow_up: "bg-viz-rules",
-  rejection: "bg-reject",
-  needs_review: "bg-review",
-  other: "bg-dim",
-};
 
 function ImportFallback() {
   return (
@@ -70,40 +59,8 @@ function InboxShell({
   );
 }
 
-function VerdictRow({ v }: { v: InboxVerdict }) {
-  const dot = CATEGORY_DOT[v.category] ?? "bg-dim";
-  return (
-    <li className="flex items-start justify-between gap-4 border-b border-line-soft px-1 py-3 last:border-b-0">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-strong">{v.subject}</p>
-        <p className="truncate font-mono text-[11px] text-dim">
-          {v.sender_name ? `${v.sender_name} · ` : ""}
-          {v.sender_email}
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-3 text-right">
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted">
-          <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
-          {v.category}
-        </span>
-        <span className="tabular w-12 font-mono text-[11px] text-dim">
-          {(v.confidence * 100).toFixed(0)}%
-        </span>
-        <span className="hidden w-16 font-mono text-[11px] text-dim sm:inline">{v.method}</span>
-        {v.needs_review ? (
-          <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
-            review
-          </span>
-        ) : (
-          <span className="w-[52px]" aria-hidden />
-        )}
-      </div>
-    </li>
-  );
-}
-
 export default async function InboxPage() {
-  const result = await getGmailInbox();
+  const result = await getGmailStatus();
 
   // --- Signed out --------------------------------------------------------
   if (result.kind === "unauthenticated") {
@@ -124,74 +81,64 @@ export default async function InboxPage() {
     );
   }
 
-  // --- Connected, classified --------------------------------------------
+  // --- Backend answered: branch on configured / connected ----------------
   if (result.kind === "ok") {
-    return (
-      <section className="mx-auto max-w-3xl space-y-6">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
+    const { configured, connected, email } = result.status;
+
+    if (configured && connected) {
+      return (
+        <section className="mx-auto max-w-3xl space-y-6">
+          <header>
             <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
-            <p className="mt-1 font-mono text-xs text-dim">
-              {result.scanned} recent message{result.scanned === 1 ? "" : "s"} · one verdict each
+            <p className="mt-1 text-sm text-muted">
+              Mine your mail for your real pipeline. Pick a range and volume — every message gets one
+              verdict, and applications no one answered are flagged to follow up.
+            </p>
+          </header>
+          <InboxWorkbench email={email} />
+        </section>
+      );
+    }
+
+    if (configured && !connected) {
+      return (
+        <InboxShell
+          lede={
+            <>
+              This is where your real, classified mail lands. Connect Gmail read-only and it fills with
+              live verdicts — or preview the classifier first, no connection needed.
+            </>
+          }
+        >
+          <div className="rounded-xl border border-line-soft bg-surface p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-base font-medium text-strong">Connect Gmail to fill this inbox</h2>
+                <p className="mt-1.5 text-sm text-muted">
+                  Read-only, on Google&apos;s own consent screen. The classifier reads your job-search
+                  mail to label it — it <span className="text-strong">cannot</span> send, delete, or
+                  modify anything.
+                </p>
+              </div>
+              <ConnectGmailButton className="shrink-0" />
+            </div>
+            <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
+              Want the full breakdown of scopes and safeguards first? See{" "}
+              <Link href="/settings" className="text-strong underline-offset-4 hover:underline">
+                Settings
+              </Link>
+              .
             </p>
           </div>
-          <Link
-            href="/import"
-            className="font-mono text-[11px] text-dim underline-offset-4 hover:text-strong hover:underline"
-          >
-            import a file instead →
-          </Link>
-        </header>
+          <BetaCard />
+          <ImportFallback />
+        </InboxShell>
+      );
+    }
 
-        {result.verdicts.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center text-sm text-muted">
-            No recent messages to classify.
-          </div>
-        ) : (
-          <ul className="rounded-xl border border-line-soft bg-surface px-3">
-            {result.verdicts.map((v) => (
-              <VerdictRow key={v.message_id} v={v} />
-            ))}
-          </ul>
-        )}
-
-        <p className="font-mono text-[11px] leading-relaxed text-dim">{result.note}</p>
-      </section>
-    );
-  }
-
-  // --- Not connected -----------------------------------------------------
-  if (result.kind === "not_connected") {
+    // Backend reachable but Gmail not configured on this deploy.
     return (
-      <InboxShell
-        lede={
-          <>
-            This is where your real, classified mail lands. Connect Gmail read-only and it fills with
-            live verdicts — or preview the classifier first, no connection needed.
-          </>
-        }
-      >
-        <div className="rounded-xl border border-line-soft bg-surface p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h2 className="text-base font-medium text-strong">Connect Gmail to fill this inbox</h2>
-              <p className="mt-1.5 text-sm text-muted">
-                Read-only, on Google&apos;s own consent screen. The classifier reads your job-search
-                mail to label it — it <span className="text-strong">cannot</span> send, delete, or
-                modify anything.
-              </p>
-            </div>
-            <ConnectGmailButton className="shrink-0" />
-          </div>
-          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
-            Want the full breakdown of scopes and safeguards first? See{" "}
-            <Link href="/settings" className="text-strong underline-offset-4 hover:underline">
-              Settings
-            </Link>
-            .
-          </p>
-        </div>
-        <BetaCard />
+      <InboxShell lede={<>The Gmail connection isn&apos;t enabled on this deployment yet.</>}>
         <ImportFallback />
       </InboxShell>
     );
