@@ -68,11 +68,14 @@ RESPONSE_CATEGORIES: frozenset[str] = frozenset(
 # the company from the subject / sender display-name instead of the domain.
 RELAY_DOMAINS: frozenset[str] = frozenset(
     {
+        # Applicant tracking systems / recruiting relays (front many employers).
         "lever",
         "greenhouse",
         "greenhouse-mail",
+        "greenhousemail",
         "hire",
         "myworkday",
+        "myworkdayjobs",
         "workday",
         "icims",
         "ashbyhq",
@@ -86,6 +89,22 @@ RELAY_DOMAINS: frozenset[str] = frozenset(
         "gem",
         "goodtime",
         "modernloop",
+        "taleo",
+        "successfactors",
+        "brassring",
+        "oraclecloud",
+        "eightfold",
+        "avature",
+        "phenom",
+        "paradox",
+        "pageuppeople",
+        "pageup",
+        "jobs",
+        "jobapp",
+        "myjobs",
+        "onboarding",
+        "online-onboarding",
+        # Job boards / aggregators / campus recruiting.
         "linkedin",
         "indeed",
         "ziprecruiter",
@@ -95,14 +114,38 @@ RELAY_DOMAINS: frozenset[str] = frozenset(
         "monster",
         "dice",
         "handshake",
+        "joinhandshake",
+        "hire-education",
+        "builtin",
+        "lensa",
+        "simplyhired",
+        # Consumer webmail (never identify an employer).
         "gmail",
         "googlemail",
         "outlook",
         "hotmail",
+        "live",
         "yahoo",
+        "ymail",
+        "aol",
         "icloud",
+        "me",
         "proton",
         "protonmail",
+        "zoho",
+        # Generic mail-relay / ESP brands that front many senders.
+        "sendgrid",
+        "mailgun",
+        "amazonses",
+        "mailchimp",
+        "mandrillapp",
+        "sparkpostmail",
+        "notifications",
+        "email",
+        "mail",
+        "notification",
+        "message",
+        "messaging",
     }
 )
 
@@ -125,7 +168,15 @@ _SUBJECT_COMPANY = re.compile(
 
 @dataclass(frozen=True)
 class PipelineItem:
-    """One classified message reduced to what the analytics need."""
+    """One classified message reduced to what the analytics need.
+
+    ``confidence`` is the classifier's confidence for ``category`` (0.0-1.0).
+    It is what the Phase-2 rollup gates on: only a *high-confidence* lifecycle
+    verdict may assert a hard application status, so a low-confidence guess can
+    no longer manufacture a fake ``interviewing``/``offered`` row. Absent (the
+    default 0.0) it is treated as "no confidence" — the safe end of the gate.
+    ``thread_id`` lets a persisted row deep-link back to the Gmail conversation.
+    """
 
     message_id: str
     category: str
@@ -133,6 +184,9 @@ class PipelineItem:
     subject: str
     sender_name: str | None = None
     received_at: datetime | None = None
+    confidence: float = 0.0
+    thread_id: str | None = None
+    snippet: str = ""
 
 
 @dataclass(frozen=True)
@@ -317,6 +371,26 @@ def flag_follow_ups(
 # where detectable), with the status set to the furthest lifecycle stage that
 # company's mail reached. These plain-string statuses match ApplicationStatus
 # values; sync.py maps them to the enum + upserts. pipeline.py stays DB-free.
+#
+# PRECISION GATE (issue: "far too eager, low precision")
+# ------------------------------------------------------
+# A message may only assert a *hard* application status when BOTH:
+#   1. its classifier confidence is at or above the auto-file gate (0.85), and
+#   2. a real employer can be identified from the mail (never the sender domain
+#      of a shared ATS relay, never a bare subject fragment, never a person).
+# A lifecycle verdict in the 0.70-0.85 band, or one that clears the gate but
+# whose employer cannot be named, is routed to a *review* bucket rather than
+# fabricating an ``interviewing``/``offered``/``rejected`` row. Anything below
+# the review floor is dropped. Net effect: a handful of real rows, not 21 fake
+# ones parsed out of job-alert/newsletter/onboarding noise.
+
+# Confidence gates — kept in lock-step with classifier/hybrid.py (CONFIDENCE_AUTO
+# / CONFIDENCE_MIN_CLASSIFICATION) and the web's lib/dashboard/model.ts.
+AUTO_FILE_GATE = 0.85  # >= → may assert a hard status
+REVIEW_FLOOR = 0.70  # [floor, gate) → needs human review; below → dropped
+
+# Sort sentinel for undated mail (kept aware so mixed aware/naive never raises).
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 # EmailCategory → lifecycle stage rank. Higher = further along.
 _STAGE_RANK: dict[str, int] = {
@@ -343,13 +417,103 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"rejected", "accepted", "withdrawn", "ghosted"}
 )
 
-# Subject patterns that name the role. First match wins; best-effort only.
-_SUBJECT_ROLE = re.compile(
-    r"(?:for the|for a|the|as a|as an|regarding(?: the)?)\s+"
-    r"([A-Z][\w/&.\-]*(?:\s+[A-Z0-9][\w/&.\-]*){0,4}?)\s+"
-    r"(?:role|position|opening|opportunity|internship|intern)\b",
+# Words that are never, on their own, a company or a role — so an extraction
+# that yields only these is rejected (this is what stops rows like "The",
+# "Software", "Team", "Careers" from ever being created).
+_COMPANY_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the", "a", "an", "your", "our", "my", "this", "that", "these", "those",
+        "new", "re", "fw", "fwd", "hi", "hello", "hey", "thanks", "thank",
+        "software", "engineer", "developer", "engineering", "intern",
+        "internship", "role", "roles", "position", "positions", "opening",
+        "openings", "application", "applications", "interview", "interviews",
+        "offer", "offers", "update", "updates", "team", "teams", "careers",
+        "career", "job", "jobs", "hiring", "talent", "recruiting", "recruiter",
+        "recruitment", "hr", "people", "services", "service", "mail", "email",
+        "notification", "notifications", "message", "opportunity",
+        "opportunities", "candidate", "candidacy", "status", "confirmation",
+        "onboarding", "welcome", "us", "you", "we", "here", "now", "today",
+    }
+)
+
+# Corporate suffixes / recruiting tails stripped from a display name so that
+# "Globex Corp", "Globex Inc." and "Globex" all collapse to the same token.
+_CORP_TAIL = re.compile(
+    r"\b(?:inc|inc\.|llc|l\.l\.c\.|ltd|ltd\.|corp|corp\.|corporation|co|co\.|"
+    r"gmbh|plc|group|holdings|technologies|technology|labs|systems|solutions|"
+    r"careers?|recruiting|recruitment|talent|hiring|team|hr|people)\b\.?",
     re.IGNORECASE,
 )
+
+# "Acme via Lever" / "Acme (Greenhouse)" tails that name the relay, not the co.
+_VIA_TAIL = re.compile(r"\s*(?:\bvia\b|\bthrough\b|\bon\b|[(\[]).*$", re.IGNORECASE)
+
+# A capitalized proper-noun-ish company token (leading capital, up to 3 words).
+_COMPANY_CAPTURE = r"[A-Z][A-Za-z0-9&.\-']*(?:\s+[A-Z0-9][A-Za-z0-9&.\-']*){0,3}"
+
+# The employer named explicitly in a subject, anchored to lifecycle language so
+# a random "to Monday" is not mistaken for a company. The anchor/connective is
+# case-insensitive (subjects are Capitalized) but the company capture stays
+# case-sensitive so it only ever grabs a Capitalized proper noun. First match
+# wins.
+_EMPLOYER_ANCHORED = re.compile(
+    r"(?i:(?:application|applying|apply|interview(?:ing)?|role|position|"
+    r"opportunity|opening|offer|assessment|candidacy|"
+    r"thank you for your interest in)\b[^\n]{0,40}?\b"
+    r"(?:at|with|to|for|from|join)\s+)"
+    r"(" + _COMPANY_CAPTURE + r")"
+)
+_EMPLOYER_ON_BEHALF = re.compile(
+    r"(?i:on behalf of\s+)(" + _COMPANY_CAPTURE + r")"
+)
+_EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
+
+# Pure filler that is never itself a role title (kept SEPARATE from the company
+# stopwords, which reject legitimate title words like "Software"/"Engineer").
+_ROLE_FILLER: frozenset[str] = frozenset(
+    {"the", "a", "an", "your", "our", "my", "this", "that", "new", "re",
+     "fw", "fwd", "update", "status", "position", "role", "opening"}
+)
+
+# Role named in the subject. Tried in order; the capture is validated against
+# ``_ROLE_FILLER`` so "the role" alone never survives. Best-effort — a missing
+# role renders as nothing, never the literal "Unknown role".
+_ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:for the|for a|for an|as a|as an|regarding the|to the|to a|to an)\s+"
+        r"([A-Za-z][\w/&.\-]*(?:\s+[\w/&.\-]+){0,4}?)\s+"
+        r"(?:role|position|opening|opportunity|internship|intern)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?i:\bapplication for)(?i:\s+the)?\s+"
+        r"([A-Z][\w/&.\-]*(?:\s+[A-Z0-9][\w/&.\-]*){0,4})",
+    ),
+    re.compile(
+        r"^\s*(?i:new\s+)?"
+        r"([A-Z][\w/&.\-]*(?:\s+[A-Z0-9][\w/&.\-]*){0,4}?)\s+"
+        r"(?i:role|position|opening|internship)\b",
+    ),
+    re.compile(
+        r"^\s*(?i:new\s+)?"
+        r"([A-Z][\w/&.\-]*(?:\s+[A-Z0-9][\w/&.\-]*){0,4}?)\s+(?:at|@|[-–—])\s+[A-Z]",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class MessageRef:
+    """A metadata-only reference to one underlying email (for click-through)."""
+
+    message_id: str
+    thread_id: str | None
+    subject: str
+    sender_email: str
+    sender_name: str | None
+    received_at: datetime | None
+    category: str
+    confidence: float
+    snippet: str = ""
 
 
 @dataclass(frozen=True)
@@ -362,6 +526,27 @@ class RolledApplication:
     status: str  # ApplicationStatus value
     applied_at: datetime | None  # earliest application date
     last_activity: datetime | None  # most recent relevant date
+    messages: tuple[MessageRef, ...] = ()  # contributing mail, newest-first
+
+
+@dataclass(frozen=True)
+class ReviewItem:
+    """A lifecycle-ish verdict that is too uncertain to auto-file.
+
+    These populate the dashboard's "needs classification" queue: the user can
+    confirm a category (which then persists as an application *and* trains the
+    model) or dismiss it. Never rendered on the pipeline board as a hard row.
+    """
+
+    message_id: str
+    thread_id: str | None
+    subject: str
+    sender_email: str
+    sender_name: str | None
+    received_at: datetime | None
+    category: str  # the tentative lifecycle category
+    confidence: float
+    company_display: str | None  # best-effort; may be None (unknown employer)
 
 
 def _rank_to_status(rank: int) -> str:
@@ -372,12 +557,124 @@ def _rank_to_status(rank: int) -> str:
     return "applied"
 
 
+def _valid_company_token(token: str) -> bool:
+    """A token is a usable company only if it is not a stopword or a bare number."""
+
+    if not token or len(token) < 2:
+        return False
+    words = token.split()
+    if all(w in _COMPANY_STOPWORDS for w in words):
+        return False
+    if words[0] in _COMPANY_STOPWORDS:
+        return False
+    return re.fullmatch(r"[0-9]+", token) is None
+
+
+def _clean_company_display(raw: str) -> str:
+    """Trim a captured company string to a clean human display name."""
+
+    text = _VIA_TAIL.sub("", raw or "").strip()
+    text = _CORP_TAIL.sub("", text).strip(" ,.-&")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _employer_from_subject(subject: str) -> str | None:
+    """Return the employer explicitly named in a subject, or None.
+
+    Only trusts language that unambiguously names an employer (application/
+    interview/offer "... at/with/to <Company>", "on behalf of <Company>", or a
+    trailing "at <Company>"). The capture is cleaned and validated so a
+    fragment like "The" or "Software" can never survive.
+    """
+
+    for pattern in (_EMPLOYER_ANCHORED, _EMPLOYER_ON_BEHALF, _EMPLOYER_BARE_AT):
+        match = pattern.search(subject or "")
+        if not match:
+            continue
+        display = _clean_company_display(match.group(1))
+        token = _normalize_token(display.split(" ")[0]) if display else ""
+        if _valid_company_token(token):
+            return display
+    return None
+
+
+def _brand_display(brand: str, sender_name: str | None) -> str:
+    """Human display for an employer identified by its own mail domain."""
+
+    if sender_name:
+        cleaned = _clean_company_display(sender_name)
+        if cleaned and _normalize_token(cleaned).startswith(brand):
+            return cleaned
+    return brand.replace("-", " ").title()
+
+
+def resolve_employer(
+    sender_email: str,
+    subject: str = "",
+    sender_name: str | None = None,
+) -> tuple[str, str] | None:
+    """Identify the real EMPLOYER for a message, or None when unsure.
+
+    Returns ``(token, display)`` where ``token`` is the stable lowercase match
+    key and ``display`` the human name. Unlike :func:`company_key` (which always
+    returns *something* so follow-up grouping never None-guards), this refuses
+    to guess: if the employer cannot be named with confidence it returns None,
+    and the caller must NOT create an application row from that message.
+
+    Order:
+      1. The sender's own corporate domain (``careers@stripe.com`` → Stripe) —
+         but NOT a shared ATS/job-board relay, consumer webmail, generic ESP,
+         or a ``.edu`` host (a student's university is not an employer here).
+      2. An employer named explicitly in the subject ("... at <Company>",
+         "on behalf of <Company>"). This is the relay case (Lever/Greenhouse).
+    """
+
+    domain = ""
+    if "@" in sender_email:
+        domain = sender_email.rsplit("@", 1)[1].strip().lower()
+    labels = [p for p in domain.split(".") if p]
+    tld = labels[-1] if labels else ""
+    brand = _domain_brand(domain)
+
+    corporate = (
+        brand
+        and brand not in RELAY_DOMAINS
+        and len(brand) >= 2
+        and tld != "edu"
+        and not brand.isdigit()
+    )
+    if corporate:
+        return brand, _brand_display(brand, sender_name)
+
+    from_subject = _employer_from_subject(subject)
+    if from_subject:
+        token = _normalize_token(from_subject.split(" ")[0])
+        if _valid_company_token(token):
+            return token, from_subject
+
+    return None
+
+
 def _role_from_subject(subject: str) -> str | None:
-    match = _SUBJECT_ROLE.search(subject or "")
-    if not match:
-        return None
-    role = re.sub(r"\s+", " ", match.group(1)).strip(" .-")
-    return role or None
+    """Extract a job role/title from a subject, or None. Never 'Unknown role'."""
+
+    text = subject or ""
+    for pattern in _ROLE_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        role = re.sub(r"\s+", " ", match.group(1)).strip(" .-–—")
+        words = role.split()
+        if not words:
+            continue
+        # Reject a capture that is only filler (e.g. "the", "your update").
+        if all(_normalize_token(w) in _ROLE_FILLER for w in words):
+            continue
+        if len(role) < 3:
+            continue
+        return role
+    return None
 
 
 def advance_application_status(current: str, incoming: str) -> str:
@@ -399,35 +696,64 @@ def advance_application_status(current: str, incoming: str) -> str:
     return current
 
 
-def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
-    """Group classified mail into one :class:`RolledApplication` per company.
+def _message_ref(item: PipelineItem) -> MessageRef:
+    return MessageRef(
+        message_id=item.message_id,
+        thread_id=item.thread_id,
+        subject=item.subject,
+        sender_email=item.sender_email,
+        sender_name=item.sender_name,
+        received_at=item.received_at,
+        category=item.category,
+        confidence=item.confidence,
+        snippet=item.snippet,
+    )
 
-    Only job-lifecycle mail counts (``other``/``needs_review`` are ignored). A
-    company's status is the furthest stage its mail reached (applied <
-    assessment < interview < offer), with any rejection as a terminal override.
-    A company seen only via a weak ``follow_up`` with no real lifecycle mail is
-    skipped so the board is not polluted with phantom rows.
+
+def _qualifies_for_hard_row(item: PipelineItem) -> tuple[str, str] | None:
+    """Return the (token, display) employer iff this item may assert a status.
+
+    A hard-row contributor is a non-follow-up lifecycle verdict at/above the
+    auto-file gate whose employer can be named. Everything else (low confidence,
+    unknown employer, follow-up, other/needs_review) returns None.
+    """
+
+    if item.category not in JOB_LIFECYCLE_CATEGORIES or item.category == "follow_up":
+        return None
+    if item.confidence < AUTO_FILE_GATE:
+        return None
+    return resolve_employer(item.sender_email, item.subject, item.sender_name)
+
+
+def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
+    """Group high-confidence lifecycle mail into one row per real employer.
+
+    Only messages that clear the precision gate (:func:`_qualifies_for_hard_row`)
+    contribute: at/above the 0.85 auto-file confidence, a real lifecycle
+    category, and a nameable employer. A company's status is the furthest stage
+    its *gated* mail reached (applied < assessment < interview < offer), with a
+    gated rejection as a terminal override. Uncertain mail never lands here — it
+    goes to :func:`collect_review_items` instead — so the board shows real rows,
+    not noise parsed out of job alerts.
 
     Deterministic and DB-free — the same input always yields the same rows,
     which is what makes the downstream upsert idempotent.
     """
 
-    grouped: dict[str, list[PipelineItem]] = defaultdict(list)
+    grouped: dict[str, tuple[str, list[PipelineItem]]] = {}
     for item in items:
-        if item.category not in JOB_LIFECYCLE_CATEGORIES:
+        resolved = _qualifies_for_hard_row(item)
+        if resolved is None:
             continue
-        key = company_key(item.sender_email, item.subject, item.sender_name)
-        grouped[key].append(item)
+        token, display = resolved
+        if token not in grouped:
+            grouped[token] = (display, [])
+        grouped[token][1].append(item)
 
     rolled: list[RolledApplication] = []
-    for token, msgs in grouped.items():
+    for token, (display, msgs) in grouped.items():
         categories = {m.category for m in msgs}
-        has_real_stage = any(c in _STAGE_RANK and c != "follow_up" for c in categories)
         has_rejection = "rejection" in categories
-        if not has_real_stage and not has_rejection:
-            # Only a weak follow-up nudge — not enough to assert an application.
-            continue
-
         max_rank = max((_STAGE_RANK.get(c, 0) for c in categories), default=1)
         status = "rejected" if has_rejection else _rank_to_status(max_rank)
 
@@ -437,20 +763,103 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
             for m in msgs
             if m.category in ("applied", "pending_application") and m.received_at
         ]
-        applied_at = min(applied_dates) if applied_dates else (min(dated) if dated else None)
+        applied_at = (
+            min(applied_dates) if applied_dates else (min(dated) if dated else None)
+        )
         last_activity = max(dated) if dated else None
 
-        role = next((_role_from_subject(m.subject) for m in msgs if _role_from_subject(m.subject)), None)
+        role = next(
+            (
+                _role_from_subject(m.subject)
+                for m in msgs
+                if _role_from_subject(m.subject)
+            ),
+            None,
+        )
+
+        refs = sorted(
+            (_message_ref(m) for m in msgs),
+            key=lambda r: _as_utc(r.received_at) if r.received_at else _EPOCH,
+            reverse=True,
+        )
 
         rolled.append(
             RolledApplication(
                 company_token=token,
-                company_display=token.title(),
+                company_display=display,
                 role=role,
                 status=status,
                 applied_at=applied_at,
                 last_activity=last_activity,
+                messages=tuple(refs),
             )
         )
 
     return sorted(rolled, key=lambda r: r.company_token)
+
+
+def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
+    """Return the uncertain lifecycle verdicts that need a human decision.
+
+    An item is review-worthy when it is NOT a hard-row contributor and either:
+      - the classifier explicitly emitted ``needs_review``, or
+      - it is a lifecycle verdict (not follow-up) at/above the review floor
+        (0.70) — including one that clears the gate but whose employer could not
+        be named (skipping is better than inventing a company).
+
+    Anything below the review floor, or plain ``other`` noise, is omitted.
+    Deduplicated by ``message_id`` (newest wins), newest-first.
+    """
+
+    best: dict[str, ReviewItem] = {}
+    for item in items:
+        if _qualifies_for_hard_row(item) is not None:
+            continue  # already a real application row
+
+        is_needs_review = item.category == "needs_review"
+        is_lifecycle = (
+            item.category in JOB_LIFECYCLE_CATEGORIES and item.category != "follow_up"
+        )
+        if not is_needs_review and not (is_lifecycle and item.confidence >= REVIEW_FLOOR):
+            continue
+
+        employer = (
+            resolve_employer(item.sender_email, item.subject, item.sender_name)
+            if is_lifecycle
+            else None
+        )
+        candidate = ReviewItem(
+            message_id=item.message_id,
+            thread_id=item.thread_id,
+            subject=item.subject,
+            sender_email=item.sender_email,
+            sender_name=item.sender_name,
+            received_at=item.received_at,
+            category=item.category,
+            confidence=item.confidence,
+            company_display=employer[1] if employer else None,
+        )
+        best[item.message_id] = candidate
+
+    return sorted(
+        best.values(),
+        key=lambda r: _as_utc(r.received_at) if r.received_at else _EPOCH,
+        reverse=True,
+    )
+
+
+def gmail_deeplink(
+    *, thread_id: str | None = None, message_id: str | None = None
+) -> str | None:
+    """Build a stable Gmail web deep link for a thread/message, or None.
+
+    Prefers the conversation (``#all/<threadId>``) so the whole thread opens;
+    falls back to the message id. Uses the ``#all/`` anchor so archived mail is
+    still reachable. We only have Gmail API ids (never the RFC822 header), which
+    the ``#all/`` fragment resolves directly.
+    """
+
+    ref = (thread_id or "").strip() or (message_id or "").strip()
+    if not ref:
+        return None
+    return f"https://mail.google.com/mail/u/0/#all/{ref}"
