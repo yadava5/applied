@@ -24,6 +24,16 @@ export default function SignupPage() {
     event.preventDefault();
     setError(null);
     setInfoMessage(null);
+
+    // The form sets `noValidate`, which disables the input's native minLength,
+    // so enforce the "At least 8 characters" hint here — otherwise Supabase's
+    // own 6-character floor would silently accept a shorter password than the
+    // UI promises (JT-2). Kept in lockstep with the minLength={8} + hint below.
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     const supabase = createClient();
