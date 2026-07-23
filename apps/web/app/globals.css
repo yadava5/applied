@@ -12,7 +12,10 @@
   --foreground: #d6d8db;
   --text-strong: #f7f8f8;
   --text-muted: #8a8f98;
-  --text-dim: #63666c;
+  /* Dim is the faintest step of the text ramp (captions, mono labels). Kept at
+   * ≥4.5:1 against every dark surface (background/surface/surface-2) so the
+   * .label-mono / text-[11px] captions clear WCAG AA — see globals a11y note. */
+  --text-dim: #7c8088;
   --line: rgb(255 255 255 / 0.09);
   --line-soft: rgb(255 255 255 / 0.055);
   --line-strong: rgb(255 255 255 / 0.2);
@@ -46,7 +49,7 @@
   --foreground: #d6d8db;
   --text-strong: #f7f8f8;
   --text-muted: #8a8f98;
-  --text-dim: #63666c;
+  --text-dim: #7c8088;
   --line: rgb(255 255 255 / 0.09);
   --line-soft: rgb(255 255 255 / 0.055);
   --line-strong: rgb(255 255 255 / 0.2);
@@ -72,7 +75,9 @@
   --foreground: #3f3f46;
   --text-strong: #18181b;
   --text-muted: #52525b;
-  --text-dim: #9599a1;
+  /* Darkened from #9599a1 (~3.0:1) so dim captions clear WCAG AA (≥4.5:1) on
+   * the light paper surfaces too, while staying a step lighter than muted. */
+  --text-dim: #676b73;
   --line: rgb(0 0 0 / 0.1);
   --line-soft: rgb(0 0 0 / 0.06);
   --line-strong: rgb(0 0 0 / 0.24);
@@ -110,6 +115,18 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Tailwind v4's Preflight no longer sets `cursor: pointer` on buttons, so every
+ * <button>/[role=button] would otherwise show the default arrow cursor (trace
+ * rows, "File an application", "↺ replay", the beta pill + dismiss, etc.).
+ * Restore the expected affordance in the base layer so utilities still win, and
+ * exclude :disabled so a disabled control keeps its not-allowed/default cursor. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
 .tabular {
