@@ -72,7 +72,10 @@ export default async function ImportPage() {
     <main className="mx-auto min-h-screen w-full max-w-3xl px-6 pb-20">
       <header className="flex min-h-14 flex-wrap items-center justify-between gap-y-2 border-b border-line-soft py-2">
         <div className="flex flex-wrap items-center gap-3">
-          <Link href="/" className="font-mono text-sm font-semibold text-strong">
+          <Link
+            href="/"
+            className="inline-flex min-h-11 items-center font-mono text-sm font-semibold text-strong"
+          >
             job<span className="text-dim">_</span>tracker
           </Link>
           <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
@@ -81,7 +84,7 @@ export default async function ImportPage() {
         </div>
         <Link
           href="/demo/inbox"
-          className="font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
+          className="inline-flex min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
         >
           sample inbox →
         </Link>
