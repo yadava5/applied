@@ -62,6 +62,19 @@ export type GmailPipelineResult =
   | { kind: "ok"; analysis: PipelineAnalysis }
   | GmailFailure;
 
+/** Result of persisting the pipeline into Application rows. */
+export interface GmailSyncOutcome {
+  created: number;
+  updated: number;
+  applications: number;
+  scanned: number;
+}
+
+export type GmailSyncResult =
+  | { kind: "ok"; result: GmailSyncOutcome }
+  | { kind: "not_connected" }
+  | GmailFailure;
+
 export type GmailAuthorizeResult = { kind: "ok"; url: string } | GmailFailure;
 
 async function sessionToken(): Promise<string | null> {
@@ -204,6 +217,37 @@ export async function analyzeGmailPipeline(items: unknown): Promise<GmailPipelin
     });
     if (!res.ok) return classifyBadResponse(res.status);
     return { kind: "ok", analysis: (await res.json()) as PipelineAnalysis };
+  } catch (err) {
+    return networkFailure(err);
+  }
+}
+
+/**
+ * POST /gmail/sync — persist the classified pipeline into Application rows so
+ * the dashboard shows REAL data. `body` is either `{ items }` (the mined set
+ * relayed from the inbox workbench) or `{}` / range knobs (the backend fetches
+ * a bounded recent page itself). Idempotent upsert on the backend; the JWT and
+ * BACKEND_API_URL never leave the server.
+ */
+export async function syncGmailPipeline(body: unknown): Promise<GmailSyncResult> {
+  const token = await sessionToken();
+  if (!token) return { kind: "unauthenticated" };
+
+  try {
+    const { BACKEND_API_URL } = serverEnv();
+    const res = await fetch(`${BACKEND_API_URL}/gmail/sync`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+      cache: "no-store",
+    });
+    if (res.status === 409) return { kind: "not_connected" };
+    if (!res.ok) return classifyBadResponse(res.status);
+    return { kind: "ok", result: (await res.json()) as GmailSyncOutcome };
   } catch (err) {
     return networkFailure(err);
   }
