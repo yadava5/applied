@@ -191,28 +191,39 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         if (!token || page.verdicts.length === 0) break;
       }
 
+      // Reduce to the minimal shape the pipeline + sync endpoints need.
+      const pipelineItems = acc.map((v) => ({
+        message_id: v.message_id,
+        category: v.category,
+        sender_email: v.sender_email,
+        subject: v.subject,
+        sender_name: v.sender_name,
+        received_at: v.received_at,
+      }));
+
       // Whole-set analysis (category summary + follow-up flags).
       const analysisRes = await fetch("/api/gmail/pipeline", {
         method: "POST",
         cache: "no-store",
         signal: ac.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: acc.map((v) => ({
-            message_id: v.message_id,
-            category: v.category,
-            sender_email: v.sender_email,
-            subject: v.subject,
-            sender_name: v.sender_name,
-            received_at: v.received_at,
-          })),
-        }),
+        body: JSON.stringify({ items: pipelineItems }),
       });
       if (runId !== runIdRef.current) return;
       if (analysisRes.ok) {
         setAnalysis((await analysisRes.json()) as PipelineAnalysis);
       }
       setState({ phase: "ready", fetched: acc.length, target });
+
+      // Opportunistically persist the mined pipeline so the dashboard shows the
+      // real board. Fire-and-forget: the inbox view never blocks on it, and the
+      // backend upsert is idempotent.
+      void fetch("/api/gmail/sync", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: pipelineItems }),
+      }).catch(() => {});
     } catch {
       if (ac.signal.aborted || runId !== runIdRef.current) return;
       setState({ phase: "error", fetched: acc.length, target });
