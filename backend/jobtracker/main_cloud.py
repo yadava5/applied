@@ -78,6 +78,42 @@ app.add_middleware(
 )
 
 
+class _RLSIdentityScopeMiddleware:
+    """Reset the RLS identity ContextVar around every request.
+
+    A pure-ASGI middleware (not ``BaseHTTPMiddleware``) so it awaits the
+    downstream app in the *same* context — the auth dependency's
+    ``set_current_user_id(...)`` set inside the request stays visible to the
+    handler and to ``get_session()``, while this middleware guarantees the
+    identity is cleared before and after each request. Combined with the
+    transaction-local GUCs in ``jobtracker.database.connection``, one user's
+    Supabase identity can never bleed into another request, even when the ASGI
+    server or a pooled connection is reused.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        from jobtracker.database.connection import (
+            reset_current_user_id,
+            set_current_user_id,
+        )
+
+        token = set_current_user_id(None)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_current_user_id(token)
+
+
+app.add_middleware(_RLSIdentityScopeMiddleware)
+
+
 class HealthResponse(BaseModel):
     """Cloud health response. Intentionally minimal until C2/C3/C4 land."""
 
