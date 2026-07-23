@@ -90,6 +90,8 @@ def _msg(
     days_ago: int | None,
     subject: str = "",
     name: str | None = None,
+    conf: float = 0.9,
+    thread_id: str | None = None,
 ) -> p.PipelineItem:
     received = None if days_ago is None else NOW - timedelta(days=days_ago)
     return p.PipelineItem(
@@ -99,6 +101,8 @@ def _msg(
         subject=subject,
         sender_name=name,
         received_at=received,
+        confidence=conf,
+        thread_id=thread_id,
     )
 
 
@@ -258,3 +262,131 @@ def test_advance_never_overrides_a_settled_status() -> None:
     assert p.advance_application_status("rejected", "offered") == "rejected"
     assert p.advance_application_status("accepted", "rejected") == "accepted"
     assert p.advance_application_status("withdrawn", "interviewing") == "withdrawn"
+
+
+# --- resolve_employer (precision: never fabricate a company) -----------------
+
+
+def test_resolve_employer_uses_own_corporate_domain() -> None:
+    assert p.resolve_employer("careers@stripe.com", "Thanks for applying", "Stripe") == (
+        "stripe",
+        "Stripe",
+    )
+
+
+def test_resolve_employer_sees_through_relay_to_subject() -> None:
+    # Lever relays many employers; the domain is useless, the subject names Acme.
+    assert p.resolve_employer(
+        "no-reply@lever.co", "Your application to Acme was received", "Acme via Lever"
+    ) == ("acme", "Acme")
+
+
+def test_resolve_employer_returns_none_for_ats_job_alert() -> None:
+    # Handshake / Greenhouse / Workday / PageUp relays with no named employer:
+    # skipping is better than a garbage "Joinhandshake" / "Pageuppeople" row.
+    assert p.resolve_employer("alerts@mail.joinhandshake.com", "New jobs for you", "Handshake") is None
+    assert p.resolve_employer("no-reply@pageuppeople.com", "Application update", None) is None
+    assert p.resolve_employer("no-reply@myworkday.com", "Workday Services", None) is None
+    assert p.resolve_employer("no-reply@greenhouse-mail.io", "An update", None) is None
+
+
+def test_resolve_employer_ignores_edu_and_person_and_fragments() -> None:
+    # A student's university is not an employer here.
+    assert p.resolve_employer("noreply@miamioh.edu", "Online Onboarding", "Miami OH") is None
+    # A person on consumer webmail is never a company (no "Julee Johnson" rows).
+    assert p.resolve_employer("julee.johnson@gmail.com", "Re: our chat", None) is None
+    # A bare subject fragment never becomes a company ("The", "Software") when
+    # the sender is a relay with no nameable employer.
+    assert p.resolve_employer("news@mail.joinhandshake.com", "The Software you wanted", "The") is None
+
+
+# --- roll_up precision gate --------------------------------------------------
+
+
+def test_rollup_requires_confidence_at_or_above_gate() -> None:
+    # Same employer, one gated verdict, one below-gate guess: status must not be
+    # bumped by the low-confidence signal, and no row for the guess alone.
+    items = [
+        _msg("a1", "applied", "careers@acme.com", 10, "Application to Acme", "Acme", conf=0.90),
+        _msg("i1", "interview", "careers@acme.com", 5, "Interview with Acme", "Acme", conf=0.75),
+    ]
+    rolled = p.roll_up_applications(items)
+    assert len(rolled) == 1
+    # The 0.75 interview is below the 0.85 gate → status stays applied.
+    assert rolled[0].status == "applied"
+
+
+def test_rollup_drops_low_confidence_lifecycle_entirely() -> None:
+    items = [_msg("a1", "applied", "careers@acme.com", 10, "Application to Acme", "Acme", conf=0.60)]
+    # Below the review floor → not a row and not even a review item.
+    assert p.roll_up_applications(items) == []
+    assert p.collect_review_items(items) == []
+
+
+def test_rollup_skips_when_employer_unnameable_even_if_confident() -> None:
+    # A confident "offer" from a person on webmail cannot name an employer:
+    # skipping is required (this is the observed "Julee Johnson → OFFERED" bug).
+    items = [_msg("o1", "offer", "julee.johnson@gmail.com", 2, "You have an offer", "Julee Johnson", conf=0.95)]
+    assert p.roll_up_applications(items) == []
+    # It still surfaces for human review rather than vanishing silently.
+    review = p.collect_review_items(items)
+    assert len(review) == 1 and review[0].company_display is None
+
+
+def test_rollup_ignores_ats_job_alert_noise() -> None:
+    # A Handshake job alert (marketing/noise) never becomes an application.
+    items = [
+        _msg("h1", "other", "alerts@mail.joinhandshake.com", 1, "New jobs for you", "Handshake", conf=0.96),
+        _msg("h2", "applied", "alerts@mail.joinhandshake.com", 1, "New jobs for you", "Handshake", conf=0.90),
+    ]
+    # Even the (mis)labelled "applied" has no nameable employer → no hard row.
+    assert p.roll_up_applications(items) == []
+
+
+def test_rollup_carries_message_refs_and_dates() -> None:
+    applied_day = NOW - timedelta(days=30)
+    interview_day = NOW - timedelta(days=10)
+    items = [
+        _msg("a1", "applied", "careers@stripe.com", 30, "Thanks for applying to the Data Scientist role", "Stripe", conf=0.9, thread_id="t-a1"),
+        _msg("i1", "interview", "careers@stripe.com", 10, "Interview with Stripe", "Stripe", conf=0.9, thread_id="t-i1"),
+    ]
+    rolled = p.roll_up_applications(items)
+    assert len(rolled) == 1
+    r = rolled[0]
+    assert r.company_display == "Stripe"
+    assert r.role == "Data Scientist"
+    assert r.status == "interviewing"
+    # Applied date is the earliest application mail, from the email — not now().
+    assert r.applied_at is not None and r.applied_at.date() == applied_day.date()
+    assert r.last_activity is not None and r.last_activity.date() == interview_day.date()
+    # Message refs are attached newest-first for the click-through detail view.
+    assert [m.message_id for m in r.messages] == ["i1", "a1"]
+    assert r.messages[0].thread_id == "t-i1"
+
+
+# --- collect_review_items (the "needs classification" queue) ------------------
+
+
+def test_review_items_include_uncertain_band_and_needs_review() -> None:
+    items = [
+        # 0.70-0.85 band lifecycle → review.
+        _msg("r1", "interview", "no-reply@lever.co", 3, "Interview with Globex", "Globex", conf=0.78),
+        # explicit needs_review → review regardless of confidence.
+        _msg("r2", "needs_review", "hr@initech.com", 2, "Quick question", "Initech", conf=0.4),
+        # confident + nameable → a hard row, NOT review.
+        _msg("r3", "applied", "careers@acme.com", 1, "Application to Acme", "Acme", conf=0.92),
+        # plain noise → neither.
+        _msg("r4", "other", "news@digest.example", 1, "Weekly digest"),
+    ]
+    review_ids = {r.message_id for r in p.collect_review_items(items)}
+    assert review_ids == {"r1", "r2"}
+    assert [r.company_token for r in p.roll_up_applications(items)] == ["acme"]
+
+
+# --- gmail_deeplink ----------------------------------------------------------
+
+
+def test_gmail_deeplink_prefers_thread_then_message() -> None:
+    assert p.gmail_deeplink(thread_id="t1", message_id="m1").endswith("#all/t1")
+    assert p.gmail_deeplink(message_id="m1").endswith("#all/m1")
+    assert p.gmail_deeplink() is None
