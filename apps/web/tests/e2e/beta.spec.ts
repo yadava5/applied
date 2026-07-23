@@ -129,9 +129,13 @@ test.describe("privacy positioning (landing)", () => {
     await expect(section.getByText(/22\.8 MB/)).toBeVisible();
   });
 
-  test("the on-device link routes to the sample inbox", async ({ page }) => {
+  test("the on-device link opens the sample inbox in a new tab", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: /see it classify on-device/i }).click();
-    await expect(page).toHaveURL(/\/demo\/inbox$/);
+    // Landing → live-app link opens a new tab per the landing standard.
+    const [popup] = await Promise.all([
+      page.waitForEvent("popup"),
+      page.getByRole("link", { name: /see it classify on-device/i }).click(),
+    ]);
+    await expect(popup).toHaveURL(/\/demo\/inbox$/);
   });
 });
