@@ -35,6 +35,7 @@ from httpx import ASGITransport, AsyncClient
 JWT_SECRET = "gmail-c5-test-jwt-secret-at-least-32-bytes-long-hs256"
 ENC_KEY = Fernet.generate_key().decode()  # valid Fernet key; also signs state
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
 CLIENT_ID = "test-client-id.apps.googleusercontent.com"
 CLIENT_SECRET = "test-client-secret"
@@ -666,6 +667,158 @@ async def test_pipeline_analyze_summary_and_follow_ups(client: AsyncClient) -> N
 
 async def test_pipeline_analyze_requires_auth(client: AsyncClient) -> None:
     resp = await client.post("/gmail/pipeline", json={"items": []})
+    assert resp.status_code == 401
+
+
+# --- POST /gmail/sync — dashboard persistence (Phase 2) ---------------------
+
+
+def _sync_items() -> list[dict]:
+    return [
+        {
+            "message_id": "a1",
+            "category": "applied",
+            "sender_email": "no-reply@lever.co",
+            "subject": "Your application to Acme",
+            "sender_name": "Acme via Lever",
+            "received_at": "2026-07-01T12:00:00+00:00",
+        },
+        {
+            "message_id": "i1",
+            "category": "interview",
+            "sender_email": "no-reply@lever.co",
+            "subject": "Interview with Acme",
+            "sender_name": "Acme",
+            "received_at": "2026-07-10T12:00:00+00:00",
+        },
+        {
+            "message_id": "o1",
+            "category": "offer",
+            "sender_email": "hr@initech.com",
+            "subject": "You have an offer",
+            "sender_name": "Initech",
+            "received_at": "2026-07-12T12:00:00+00:00",
+        },
+        {
+            "message_id": "n1",
+            "category": "other",
+            "sender_email": "news@digest.com",
+            "subject": "Weekly digest",
+        },
+    ]
+
+
+async def test_sync_from_items_creates_and_is_idempotent(client: AsyncClient) -> None:
+    """Syncing the mined set upserts one row per company; re-running dedupes."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    first = await client.post("/gmail/sync", json={"items": _sync_items()}, headers=headers)
+    assert first.status_code == 200, first.text
+    body = first.json()
+    # Two companies (Acme, Initech); the digest is noise and is not persisted.
+    assert body["created"] == 2
+    assert body["updated"] == 0
+    assert body["applications"] == 2
+
+    listing = (await client.get("/applications", headers=headers)).json()
+    by_company = {a["company"].lower(): a for a in listing["applications"]}
+    assert set(by_company) == {"acme", "initech"}
+    # Furthest stage reached: applied+interview → interviewing; offer → offered.
+    assert by_company["acme"]["status"] == "interviewing"
+    assert by_company["initech"]["status"] == "offered"
+
+    # Idempotent: the identical sync creates nothing new and never duplicates.
+    second = await client.post("/gmail/sync", json={"items": _sync_items()}, headers=headers)
+    assert second.status_code == 200, second.text
+    body2 = second.json()
+    assert body2["created"] == 0
+    assert body2["updated"] == 2
+    assert body2["applications"] == 2
+
+
+async def test_sync_scopes_strictly_per_user(client: AsyncClient) -> None:
+    """One user's synced applications never leak into another user's board."""
+
+    a_headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    b_headers = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+
+    await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "a1",
+                    "category": "applied",
+                    "sender_email": "careers@acme.com",
+                    "subject": "Applied to Acme",
+                }
+            ]
+        },
+        headers=a_headers,
+    )
+    await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "b1",
+                    "category": "applied",
+                    "sender_email": "careers@globex.com",
+                    "subject": "Applied to Globex",
+                }
+            ]
+        },
+        headers=b_headers,
+    )
+
+    a_list = (await client.get("/applications", headers=a_headers)).json()
+    b_list = (await client.get("/applications", headers=b_headers)).json()
+    assert [a["company"].lower() for a in a_list["applications"]] == ["acme"]
+    assert [a["company"].lower() for a in b_list["applications"]] == ["globex"]
+
+
+async def test_sync_server_fetch_mode_classifies_and_persists(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no items, the server fetches a bounded page and persists it."""
+
+    from datetime import datetime
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
+
+    async def _fake_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[
+                CloudGmailMessage(
+                    message_id="m1",
+                    thread_id="t1",
+                    subject="We received your application to Cedartech",
+                    sender_name="Cedartech",
+                    sender_email="careers@cedartech.com",
+                    snippet="Thank you for applying. Your application has been received.",
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
+                )
+            ],
+            next_page_token=None,
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+    resp = await client.post("/gmail/sync", json={}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["scanned"] == 1
+    assert body["created"] == 1
+
+    listing = (await client.get("/applications", headers=headers)).json()
+    assert [a["company"].lower() for a in listing["applications"]] == ["cedartech"]
+
+
+async def test_sync_requires_auth(client: AsyncClient) -> None:
+    resp = await client.post("/gmail/sync", json={})
     assert resp.status_code == 401
 
 
