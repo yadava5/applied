@@ -674,6 +674,8 @@ async def test_pipeline_analyze_requires_auth(client: AsyncClient) -> None:
 
 
 def _sync_items() -> list[dict]:
+    # Each lifecycle item carries a >= 0.85 confidence so it clears the precision
+    # gate; the digest is noise (and low-confidence) and is never persisted.
     return [
         {
             "message_id": "a1",
@@ -682,6 +684,8 @@ def _sync_items() -> list[dict]:
             "subject": "Your application to Acme",
             "sender_name": "Acme via Lever",
             "received_at": "2026-07-01T12:00:00+00:00",
+            "confidence": 0.9,
+            "thread_id": "th-acme",
         },
         {
             "message_id": "i1",
@@ -690,6 +694,8 @@ def _sync_items() -> list[dict]:
             "subject": "Interview with Acme",
             "sender_name": "Acme",
             "received_at": "2026-07-10T12:00:00+00:00",
+            "confidence": 0.9,
+            "thread_id": "th-acme",
         },
         {
             "message_id": "o1",
@@ -698,12 +704,15 @@ def _sync_items() -> list[dict]:
             "subject": "You have an offer",
             "sender_name": "Initech",
             "received_at": "2026-07-12T12:00:00+00:00",
+            "confidence": 0.9,
+            "thread_id": "th-initech",
         },
         {
             "message_id": "n1",
             "category": "other",
             "sender_email": "news@digest.com",
             "subject": "Weekly digest",
+            "confidence": 0.96,
         },
     ]
 
@@ -752,6 +761,8 @@ async def test_sync_scopes_strictly_per_user(client: AsyncClient) -> None:
                     "category": "applied",
                     "sender_email": "careers@acme.com",
                     "subject": "Applied to Acme",
+                    "confidence": 0.9,
+                    "received_at": "2026-07-01T12:00:00+00:00",
                 }
             ]
         },
@@ -766,6 +777,8 @@ async def test_sync_scopes_strictly_per_user(client: AsyncClient) -> None:
                     "category": "applied",
                     "sender_email": "careers@globex.com",
                     "subject": "Applied to Globex",
+                    "confidence": 0.9,
+                    "received_at": "2026-07-01T12:00:00+00:00",
                 }
             ]
         },
@@ -845,3 +858,217 @@ async def test_authorize_503_when_client_secret_missing(
         headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
     )
     assert resp.status_code == 503, resp.text
+
+
+# =============================================================================
+# Precision + click-through + correction/training + review queue (the fix)
+# =============================================================================
+
+
+def _owner_batch() -> list[dict]:
+    """A mined batch mirroring the owner's real senders: mostly noise, few real.
+
+    Only the two genuine, high-confidence application-lifecycle mails with a
+    nameable employer (Stripe, Airbnb) may become rows; everything else is noise
+    (no row) or an uncertain verdict (review queue).
+    """
+
+    return [
+        # Handshake job alert → relay, no employer, marketing → NO row/review.
+        {"message_id": "m-hs", "category": "other", "sender_email": "alerts@mail.joinhandshake.com",
+         "subject": "New jobs for you", "sender_name": "Handshake", "confidence": 0.96,
+         "received_at": "2026-06-01T10:00:00+00:00"},
+        # Turing marketing → other → dropped entirely.
+        {"message_id": "m-tur", "category": "other", "sender_email": "news@turing.com",
+         "subject": "Hire pre-vetted developers", "sender_name": "Turing", "confidence": 0.9,
+         "received_at": "2026-06-02T10:00:00+00:00"},
+        # Miami OH onboarding (edu) misfiled as rejection, uncertain → review only.
+        {"message_id": "m-miami", "category": "rejection", "sender_email": "noreply@miamioh.edu",
+         "subject": "Online Onboarding", "sender_name": "Miami OH", "confidence": 0.75,
+         "received_at": "2026-06-03T10:00:00+00:00"},
+        # A person on webmail, confident 'offer' → NO row (never OFFERED) → review.
+        {"message_id": "m-person", "category": "offer", "sender_email": "julee.johnson@gmail.com",
+         "subject": "Re: our chat", "sender_name": "Julee Johnson", "confidence": 0.9,
+         "received_at": "2026-06-04T10:00:00+00:00"},
+        # REAL: Thanks for applying to Stripe → one applied row, dated the email.
+        {"message_id": "m-stripe", "category": "applied", "sender_email": "careers@stripe.com",
+         "subject": "Thanks for applying to the Data Scientist role at Stripe", "sender_name": "Stripe",
+         "confidence": 0.95, "thread_id": "th-stripe", "received_at": "2026-05-15T09:00:00+00:00"},
+        # REAL: interview relayed via Greenhouse naming Airbnb → interviewing row.
+        {"message_id": "m-airbnb", "category": "interview", "sender_email": "no-reply@greenhouse-mail.io",
+         "subject": "Interview with Airbnb", "sender_name": "Airbnb via Greenhouse", "confidence": 0.9,
+         "thread_id": "th-airbnb", "received_at": "2026-05-20T09:00:00+00:00"},
+    ]
+
+
+async def test_sync_precision_only_real_rows_dates_and_review(client: AsyncClient) -> None:
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    resp = await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Two real rows only — the 4 noise/uncertain items never become applications.
+    assert body["created"] == 2
+    assert body["applications"] == 2
+
+    listing = (await client.get("/applications", headers=headers)).json()
+    by_company = {a["company"]: a for a in listing["applications"]}
+    assert set(by_company) == {"Stripe", "Airbnb"}
+    # Real employer names — never "Handshake"/"Joinhandshake"/"Miamioh"/a person.
+    assert "Joinhandshake" not in by_company and "Julee Johnson" not in by_company
+    # Correct status + REAL received date (not today), + role extracted.
+    assert by_company["Stripe"]["status"] == "applied"
+    assert by_company["Stripe"]["applied_date"] == "2026-05-15"
+    assert by_company["Stripe"]["position"] == "Data Scientist"
+    assert by_company["Airbnb"]["status"] == "interviewing"
+    # Never the literal "Unknown role".
+    assert all(a["position"] != "Unknown role" for a in listing["applications"])
+
+    # The uncertain verdicts populate the needs-classification queue, not the board.
+    review = (await client.get("/applications/review", headers=headers)).json()
+    review_senders = {i["sender_email"] for i in review["items"]}
+    assert "noreply@miamioh.edu" in review_senders  # edu onboarding → review
+    assert "julee.johnson@gmail.com" in review_senders  # person 'offer' → review
+    summary = (await client.get("/applications/summary", headers=headers)).json()
+    assert summary["needs_review"] == review["total"] == len(review_senders)
+
+
+async def test_application_detail_click_through_has_gmail_link(client: AsyncClient) -> None:
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    listing = (await client.get("/applications", headers=headers)).json()
+    stripe = next(a for a in listing["applications"] if a["company"] == "Stripe")
+
+    detail = (await client.get(f"/applications/{stripe['id']}", headers=headers)).json()
+    assert detail["application"]["company"] == "Stripe"
+    msgs = detail["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["message_id"] == "m-stripe"
+    assert msgs[0]["subject"].startswith("Thanks for applying")
+    assert msgs[0]["gmail_link"].endswith("#all/th-stripe")
+    # The row itself also carries the deep link for a one-click open.
+    assert stripe["url"].endswith("#all/th-stripe")
+
+
+async def test_status_correction_is_sticky_through_resync_and_trains(client: AsyncClient) -> None:
+    from jobtracker.database import get_session
+    from jobtracker.database.models import TrainingData
+    from sqlmodel import select as sm_select
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    listing = (await client.get("/applications", headers=headers)).json()
+    airbnb = next(a for a in listing["applications"] if a["company"] == "Airbnb")
+
+    # The user corrects Airbnb: interviewing → rejected.
+    patch = await client.patch(
+        f"/applications/{airbnb['id']}", json={"status": "rejected"}, headers=headers
+    )
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["status"] == "rejected"
+    assert patch.json()["source"] == "gmail_user"  # now user-owned → sticky
+
+    # A correction trains the model (training_data row written).
+    async with get_session() as session:
+        labels = (await session.exec(sm_select(TrainingData.label))).all()
+    assert "rejection" in labels
+
+    # A re-sync (mail still says 'interviewing') must NOT overwrite the decision.
+    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    listing2 = (await client.get("/applications", headers=headers)).json()
+    airbnb2 = next(a for a in listing2["applications"] if a["company"] == "Airbnb")
+    assert airbnb2["status"] == "rejected"
+
+
+async def test_dismiss_removes_row_and_trains_other(client: AsyncClient) -> None:
+    from jobtracker.database import get_session
+    from jobtracker.database.models import TrainingData
+    from sqlmodel import select as sm_select
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    listing = (await client.get("/applications", headers=headers)).json()
+    stripe = next(a for a in listing["applications"] if a["company"] == "Stripe")
+
+    resp = await client.post(f"/applications/{stripe['id']}/dismiss", headers=headers)
+    assert resp.status_code == 200 and resp.json()["dismissed"] is True
+
+    listing2 = (await client.get("/applications", headers=headers)).json()
+    assert "Stripe" not in {a["company"] for a in listing2["applications"]}
+    async with get_session() as session:
+        labels = (await session.exec(sm_select(TrainingData.label))).all()
+    assert "other" in labels  # taught that it was misfiled
+
+
+async def test_review_item_classify_creates_sticky_application(client: AsyncClient) -> None:
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    # An uncertain but real interview (below the gate) → lands in the review queue.
+    items = [
+        {"message_id": "rv1", "category": "interview", "sender_email": "talent@replit.com",
+         "subject": "About your background", "sender_name": "Replit", "confidence": 0.78,
+         "received_at": "2026-05-25T09:00:00+00:00"},
+    ]
+    await client.post("/gmail/sync", json={"items": items}, headers=headers)
+    review = (await client.get("/applications/review", headers=headers)).json()
+    assert any(i["message_id"] == "rv1" for i in review["items"])
+
+    # Classifying it into 'interview' creates a sticky application for Replit.
+    resp = await client.post(
+        "/applications/review/rv1/classify", json={"category": "interview"}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["application_id"] is not None
+
+    listing = (await client.get("/applications", headers=headers)).json()
+    replit = next(a for a in listing["applications"] if a["company"].lower() == "replit")
+    assert replit["status"] == "interviewing"
+    assert replit["source"] == "gmail_user"  # sticky
+    # It leaves the queue.
+    review2 = (await client.get("/applications/review", headers=headers)).json()
+    assert not any(i["message_id"] == "rv1" for i in review2["items"])
+
+
+async def test_resync_purges_stale_auto_but_preserves_manual(client: AsyncClient) -> None:
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    # A hand-filed application the user owns.
+    manual = await client.post(
+        "/applications", json={"company": "MyStartup", "position": "Founding Engineer"}, headers=headers
+    )
+    assert manual.status_code == 201
+    assert manual.json()["source"] == "manual"
+
+    # First sync produces Stripe + Airbnb (auto).
+    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    companies = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
+    assert {"MyStartup", "Stripe", "Airbnb"} <= companies
+
+    # A later sync where the mail no longer includes Airbnb: the stale AUTO row is
+    # purged, but the manual row survives untouched.
+    only_stripe = [i for i in _owner_batch() if i["message_id"] != "m-airbnb"]
+    resp = await client.post("/gmail/sync", json={"items": only_stripe}, headers=headers)
+    assert resp.json()["purged"] == 1
+    companies2 = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
+    assert "Airbnb" not in companies2  # stale auto row gone
+    assert "MyStartup" in companies2  # manual row preserved
+    assert "Stripe" in companies2
+
+
+async def test_correction_endpoints_require_auth(client: AsyncClient) -> None:
+    assert (await client.patch("/applications/1", json={"status": "rejected"})).status_code == 401
+    assert (await client.post("/applications/1/dismiss")).status_code == 401
+    assert (await client.delete("/applications/1")).status_code == 401
+    assert (await client.get("/applications/review")).status_code == 401
+    assert (await client.get("/applications/1")).status_code == 401
+
+
+async def test_correction_404_for_unknown_or_other_users_row(client: AsyncClient) -> None:
+    a_headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    b_headers = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=a_headers)
+    a_id = (await client.get("/applications", headers=a_headers)).json()["applications"][0]["id"]
+    # User B cannot see or mutate user A's row.
+    assert (await client.get(f"/applications/{a_id}", headers=b_headers)).status_code == 404
+    assert (
+        await client.patch(f"/applications/{a_id}", json={"status": "rejected"}, headers=b_headers)
+    ).status_code == 404
