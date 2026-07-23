@@ -29,6 +29,7 @@
  * — they resolve at runtime against the deployed backend.
  */
 import { serverEnv } from "@/lib/env";
+import type { InboxPage, PipelineAnalysis } from "@/lib/gmail/types";
 import { getAccessToken } from "@/lib/supabase/auth";
 
 export interface GmailStatus {
@@ -50,20 +51,15 @@ export type GmailFailure =
 
 export type GmailStatusResult = { kind: "ok"; status: GmailStatus } | GmailFailure;
 
-export interface InboxVerdict {
-  message_id: string;
-  subject: string;
-  sender_email: string;
-  sender_name: string | null;
-  category: string;
-  confidence: number;
-  method: string;
-  needs_review: boolean;
-}
-
-export type GmailInboxResult =
-  | { kind: "ok"; scanned: number; verdicts: InboxVerdict[]; note: string }
+/** One fetched page of the classified inbox, or a labelled failure. */
+export type GmailInboxPageResult =
+  | { kind: "ok"; page: InboxPage }
   | { kind: "not_connected" }
+  | GmailFailure;
+
+/** The whole-set pipeline analysis (summary + follow-ups), or a failure. */
+export type GmailPipelineResult =
+  | { kind: "ok"; analysis: PipelineAnalysis }
   | GmailFailure;
 
 export type GmailAuthorizeResult = { kind: "ok"; url: string } | GmailFailure;
@@ -156,30 +152,58 @@ export async function disconnectGmail(): Promise<boolean> {
   }
 }
 
-/** GET /gmail/inbox — read a bounded batch of recent mail and classify it. */
-export async function getGmailInbox(): Promise<GmailInboxResult> {
+/**
+ * GET /gmail/inbox — fetch ONE server-side page of classified mail.
+ *
+ * `search` is the already-built query string (count / range / scope /
+ * page_size / page_token). The web client loops this helper via the
+ * `/api/gmail/inbox` proxy, accumulating pages until it reaches the user's
+ * chosen count or `next_page_token` is null. The JWT and `BACKEND_API_URL`
+ * never leave the server.
+ */
+export async function fetchGmailInboxPage(search: string): Promise<GmailInboxPageResult> {
   const token = await sessionToken();
   if (!token) return { kind: "unauthenticated" };
 
   try {
     const { BACKEND_API_URL } = serverEnv();
-    const res = await fetch(`${BACKEND_API_URL}/gmail/inbox`, {
+    const suffix = search ? `?${search}` : "";
+    const res = await fetch(`${BACKEND_API_URL}/gmail/inbox${suffix}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       cache: "no-store",
     });
     if (res.status === 409) return { kind: "not_connected" };
     if (!res.ok) return classifyBadResponse(res.status);
-    const data = (await res.json()) as {
-      scanned: number;
-      verdicts: InboxVerdict[];
-      note: string;
-    };
-    return {
-      kind: "ok",
-      scanned: data.scanned,
-      verdicts: data.verdicts,
-      note: data.note,
-    };
+    return { kind: "ok", page: (await res.json()) as InboxPage };
+  } catch (err) {
+    return networkFailure(err);
+  }
+}
+
+/**
+ * POST /gmail/pipeline — analyze the accumulated verdict set for the canonical
+ * category summary + "no response / follow-up" flags across ALL fetched pages.
+ * Pure aggregation on the backend over data the client already holds; no Gmail
+ * call. `items` is passed straight through (the backend bounds its size).
+ */
+export async function analyzeGmailPipeline(items: unknown): Promise<GmailPipelineResult> {
+  const token = await sessionToken();
+  if (!token) return { kind: "unauthenticated" };
+
+  try {
+    const { BACKEND_API_URL } = serverEnv();
+    const res = await fetch(`${BACKEND_API_URL}/gmail/pipeline`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ items }),
+      cache: "no-store",
+    });
+    if (!res.ok) return classifyBadResponse(res.status);
+    return { kind: "ok", analysis: (await res.json()) as PipelineAnalysis };
   } catch (err) {
     return networkFailure(err);
   }
