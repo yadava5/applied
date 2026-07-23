@@ -377,39 +377,48 @@ async def test_inbox_not_connected_returns_409(client: AsyncClient) -> None:
 async def test_inbox_classifies_stubbed_messages(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With Gmail fetch stubbed, real messages flow through the classifier."""
+    """With Gmail fetch stubbed, real messages flow through the classifier.
+
+    Exercises the server-paginated contract: the router calls
+    ``fetch_message_page`` and returns per-page verdicts (now carrying
+    ``received_at`` + a normalized ``company`` token), a ``category_summary``,
+    and a ``next_page_token`` cursor.
+    """
 
     from datetime import datetime
 
     import jobtracker.cloud.gmail_client as gmail_client_module
-    from jobtracker.cloud.gmail_client import CloudGmailMessage
+    from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
 
-    async def _fake_fetch(user_id, **_kwargs):
-        return [
-            CloudGmailMessage(
-                message_id="m1",
-                thread_id="t1",
-                subject="Update on your application to Acme",
-                sender_name="Acme Recruiting",
-                sender_email="no-reply@lever.co",
-                snippet=(
-                    "Unfortunately, after careful consideration we have decided "
-                    "to move forward with other candidates for this position."
+    async def _fake_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[
+                CloudGmailMessage(
+                    message_id="m1",
+                    thread_id="t1",
+                    subject="Update on your application to Acme",
+                    sender_name="Acme Recruiting",
+                    sender_email="no-reply@lever.co",
+                    snippet=(
+                        "Unfortunately, after careful consideration we have decided "
+                        "to move forward with other candidates for this position."
+                    ),
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
                 ),
-                received_at=datetime.utcnow(),
-            ),
-            CloudGmailMessage(
-                message_id="m2",
-                thread_id="t2",
-                subject="Your weekly newsletter",
-                sender_name="Jobboard Digest",
-                sender_email="newsletter@jobboard.com",
-                snippet="Recommended jobs you may be interested in. Unsubscribe anytime.",
-                received_at=datetime.utcnow(),
-            ),
-        ]
+                CloudGmailMessage(
+                    message_id="m2",
+                    thread_id="t2",
+                    subject="Your weekly newsletter",
+                    sender_name="Jobboard Digest",
+                    sender_email="newsletter@jobboard.com",
+                    snippet="Recommended jobs you may be interested in. Unsubscribe anytime.",
+                    received_at=datetime(2026, 7, 2, 12, 0, 0),
+                ),
+            ],
+            next_page_token="PAGE2",
+        )
 
-    monkeypatch.setattr(gmail_client_module, "fetch_recent_messages", _fake_fetch)
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
 
     resp = await client.get(
         "/gmail/inbox",
@@ -420,10 +429,18 @@ async def test_inbox_classifies_stubbed_messages(
     assert body["connected"] is True
     assert body["scanned"] == 2
     assert len(body["verdicts"]) == 2
+    # Pagination cursor + per-page summary are surfaced.
+    assert body["next_page_token"] == "PAGE2"
+    assert body["category_summary"]["rejection"] == 1
+    assert body["category_summary"]["other"] == 1
 
     by_id = {v["message_id"]: v for v in body["verdicts"]}
     # The rejection language is a strong rules hit.
     assert by_id["m1"]["category"] == "rejection"
+    # New pipeline fields ride along: ISO receipt time + a company token that
+    # sees through the shared Lever relay to the employer named in the subject.
+    assert by_id["m1"]["received_at"] == "2026-07-01T12:00:00"
+    assert by_id["m1"]["company"] == "acme"
     # No body content is ever returned — only verdict metadata.
     assert set(by_id["m1"].keys()) == {
         "message_id",
@@ -434,6 +451,8 @@ async def test_inbox_classifies_stubbed_messages(
         "confidence",
         "method",
         "needs_review",
+        "received_at",
+        "company",
     }
     # Newsletter/digest content is guarded to OTHER.
     assert by_id["m2"]["category"] == "other"
@@ -453,25 +472,28 @@ async def test_inbox_cache_serves_repeat_without_refetch(
     from datetime import datetime
 
     import jobtracker.cloud.gmail_client as gmail_client_module
-    from jobtracker.cloud.gmail_client import CloudGmailMessage
+    from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
 
     calls = {"n": 0}
 
-    async def _fake_fetch(user_id, **_kwargs):
+    async def _fake_page(user_id, **_kwargs):
         calls["n"] += 1
-        return [
-            CloudGmailMessage(
-                message_id="m1",
-                thread_id="t1",
-                subject="Update on your application to Acme",
-                sender_name="Acme Recruiting",
-                sender_email="no-reply@lever.co",
-                snippet="We would like to schedule an interview with you.",
-                received_at=datetime.utcnow(),
-            ),
-        ]
+        return MessagePage(
+            messages=[
+                CloudGmailMessage(
+                    message_id="m1",
+                    thread_id="t1",
+                    subject="Update on your application to Acme",
+                    sender_name="Acme Recruiting",
+                    sender_email="no-reply@lever.co",
+                    snippet="We would like to schedule an interview with you.",
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
+                ),
+            ],
+            next_page_token=None,
+        )
 
-    monkeypatch.setattr(gmail_client_module, "fetch_recent_messages", _fake_fetch)
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
 
     first = await client.get("/gmail/inbox", headers=headers)
@@ -497,22 +519,25 @@ async def test_inbox_conditional_request_returns_304(
     from datetime import datetime
 
     import jobtracker.cloud.gmail_client as gmail_client_module
-    from jobtracker.cloud.gmail_client import CloudGmailMessage
+    from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
 
-    async def _fake_fetch(user_id, **_kwargs):
-        return [
-            CloudGmailMessage(
-                message_id="m1",
-                thread_id="t1",
-                subject="Your application",
-                sender_name=None,
-                sender_email="jobs@corp.com",
-                snippet="Thanks for applying.",
-                received_at=datetime.utcnow(),
-            ),
-        ]
+    async def _fake_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[
+                CloudGmailMessage(
+                    message_id="m1",
+                    thread_id="t1",
+                    subject="Your application",
+                    sender_name=None,
+                    sender_email="jobs@corp.com",
+                    snippet="Thanks for applying.",
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
+                ),
+            ],
+            next_page_token=None,
+        )
 
-    monkeypatch.setattr(gmail_client_module, "fetch_recent_messages", _fake_fetch)
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
 
     first = await client.get("/gmail/inbox", headers=headers)
@@ -524,6 +549,124 @@ async def test_inbox_conditional_request_returns_304(
     )
     assert conditional.status_code == 304, conditional.text
     assert conditional.headers.get("etag") == etag
+
+
+async def test_inbox_forwards_filters_to_query_and_pagination(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """range/scope build the Gmail query; count/page_token drive pagination."""
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import MessagePage
+
+    captured: dict = {}
+
+    async def _fake_page(user_id, *, query, page_size, page_token):
+        captured.update(query=query, page_size=page_size, page_token=page_token)
+        return MessagePage(messages=[], next_page_token="TOK2")
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    resp = await client.get(
+        "/gmail/inbox?range=6&scope=anywhere&count=200&page_token=ABC",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    # range + scope compose the Gmail search; count clamps this page's size.
+    assert captured["query"] == "in:anywhere newer_than:6m"
+    assert captured["page_token"] == "ABC"
+    assert captured["page_size"] == 200
+
+    body = resp.json()
+    assert body["scope"] == "anywhere"
+    assert body["range_months"] == 6
+    assert body["next_page_token"] == "TOK2"
+    assert body["query"] == "in:anywhere newer_than:6m"
+
+
+async def test_inbox_unknown_range_falls_back_to_all_time(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stray/unsupported range never errors — it means all-time (no bound)."""
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import MessagePage
+
+    captured: dict = {}
+
+    async def _fake_page(user_id, *, query, page_size, page_token):
+        captured.update(query=query)
+        return MessagePage(messages=[], next_page_token=None)
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    resp = await client.get(
+        "/gmail/inbox?range=999",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert captured["query"] == "in:inbox"
+    assert resp.json()["range_months"] is None
+
+
+async def test_pipeline_analyze_summary_and_follow_ups(client: AsyncClient) -> None:
+    """POST /gmail/pipeline aggregates the accumulated set: summary + ghosting."""
+
+    from datetime import UTC, datetime, timedelta
+
+    old = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+    recent = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+    payload = {
+        "items": [
+            {
+                "message_id": "a1",
+                "category": "applied",
+                "sender_email": "careers@acme.com",
+                "subject": "Application received",
+                "received_at": old,
+            },
+            {
+                "message_id": "a2",
+                "category": "applied",
+                "sender_email": "careers@initech.com",
+                "subject": "Applied",
+                "received_at": recent,
+            },
+            {
+                "message_id": "o1",
+                "category": "offer",
+                "sender_email": "careers@globex.com",
+                "subject": "Offer",
+            },
+            {
+                "message_id": "n1",
+                "category": "other",
+                "sender_email": "news@digest.com",
+                "subject": "Weekly digest",
+            },
+        ]
+    }
+    resp = await client.post(
+        "/gmail/pipeline",
+        json=payload,
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 4
+    assert body["category_summary"]["applied"] == 2
+    assert body["category_summary"]["offer"] == 1
+    assert body["category_summary"]["other"] == 1
+    # 3 lifecycle messages (2 applied + 1 offer); the digest is not job-related.
+    assert body["job_related"] == 3
+    # Acme: old + unanswered → follow up. Initech: too recent → not flagged.
+    assert [f["company"] for f in body["follow_ups"]] == ["acme"]
+    assert body["follow_ups"][0]["days_since"] >= 21
+
+
+async def test_pipeline_analyze_requires_auth(client: AsyncClient) -> None:
+    resp = await client.post("/gmail/pipeline", json={"items": []})
+    assert resp.status_code == 401
 
 
 async def test_disconnect_when_not_connected_is_idempotent(client: AsyncClient) -> None:
