@@ -29,8 +29,10 @@ test.describe("Gmail connect — honest degradation", () => {
     await page.goto("/");
     const importLink = page.getByRole("link", { name: /import your mail/i }).first();
     await expect(importLink).toHaveAttribute("href", "/import");
-    await importLink.click();
-    await expect(page).toHaveURL(/\/import$/);
-    await expect(page.getByRole("heading", { name: "Import your mail" })).toBeVisible();
+    // Landing links to the live app open in a new tab (the landing standard),
+    // so the import path is proven by the popup it opens.
+    const [popup] = await Promise.all([page.waitForEvent("popup"), importLink.click()]);
+    await expect(popup).toHaveURL(/\/import$/);
+    await expect(popup.getByRole("heading", { name: "Import your mail" })).toBeVisible();
   });
 });
