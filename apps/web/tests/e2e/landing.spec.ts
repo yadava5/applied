@@ -24,23 +24,38 @@ test.describe("landing (/)", () => {
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
-  test("primary CTA routes to the live demo", async ({ page }) => {
+  // Per the landing standard, links to the live app (demo/import) and the
+  // System Card open in a NEW TAB so the narrative stays put behind them. Each
+  // of these CTAs is therefore verified by the popup it opens, not by an
+  // in-place navigation — which also proves the target/rel wiring is live.
+  test("primary CTA opens the live demo in a new tab", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: /Enter the live demo/i }).click();
-    await expect(page).toHaveURL(/\/demo$/);
+    const cta = page.getByRole("link", { name: /Enter the live demo/i });
+    await expect(cta).toHaveAttribute("target", "_blank");
+    await expect(cta).toHaveAttribute("rel", /noopener/);
+    const [popup] = await Promise.all([page.waitForEvent("popup"), cta.click()]);
+    await expect(popup).toHaveURL(/\/demo$/);
+    // The landing itself stays open behind the new tab.
+    await expect(page).toHaveURL(/\/$/);
   });
 
-  test("the Sample inbox door routes to /demo/inbox", async ({ page }) => {
+  test("the Sample inbox door opens /demo/inbox in a new tab", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: /^Sample inbox/i }).click();
-    await expect(page).toHaveURL(/\/demo\/inbox$/);
-    await expect(page.getByRole("heading", { name: "Sample inbox" })).toBeVisible();
+    const [popup] = await Promise.all([
+      page.waitForEvent("popup"),
+      page.getByRole("link", { name: /^Sample inbox/i }).click(),
+    ]);
+    await expect(popup).toHaveURL(/\/demo\/inbox$/);
+    await expect(popup.getByRole("heading", { name: "Sample inbox" })).toBeVisible();
   });
 
-  test("the in-narrative sample-inbox CTA routes to /demo/inbox", async ({ page }) => {
+  test("the in-narrative sample-inbox CTA opens /demo/inbox in a new tab", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: /See it label a full sample inbox/i }).click();
-    await expect(page).toHaveURL(/\/demo\/inbox$/);
+    const [popup] = await Promise.all([
+      page.waitForEvent("popup"),
+      page.getByRole("link", { name: /See it label a full sample inbox/i }).click(),
+    ]);
+    await expect(popup).toHaveURL(/\/demo\/inbox$/);
   });
 
   test("the Sign in nav control routes to /login", async ({ page }) => {
