@@ -32,6 +32,17 @@ Security properties
   unauthenticated callback can be bound to the right user without any
   server-side session store. A forged/expired/reused-past-expiry state is
   rejected.
+- **Stateless PKCE**: ``authorize`` and ``callback`` run in *different*
+  serverless invocations, so the PKCE ``code_verifier`` minted for the
+  consent URL cannot live in process memory (letting the library
+  autogenerate one per ``Flow`` breaks the exchange with
+  ``invalid_grant`` — the callback's fresh ``Flow`` never knows the
+  verifier the challenge was derived from). We generate the verifier
+  ourselves, derive the S256 challenge for the consent URL from it, and
+  carry the verifier across the round-trip **Fernet-encrypted inside the
+  signed state** — tamper-proof via the HS256 signature, unreadable to
+  the browser/Google/URL logs via the encryption, and expiring with the
+  state's TTL.
 - **No open redirect**: the post-callback destination is the operator-
   configured ``web_app_url``, never a value taken from the request.
 - **Revocable**: disconnect calls Google's revocation endpoint and then
@@ -48,10 +59,10 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import jwt
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
@@ -61,6 +72,8 @@ from pydantic import BaseModel
 from jobtracker.auth import current_user
 from jobtracker.config import settings
 from jobtracker.credentials.cloud import (
+    CredentialEncryptionError,
+    _require_fernet,
     delete_gmail_credentials,
     get_gmail_credentials,
     save_gmail_credentials,
@@ -87,7 +100,7 @@ class GmailStatusResponse(BaseModel):
 
     configured: bool
     connected: bool
-    email: Optional[str] = None
+    email: str | None = None
 
 
 class GmailAuthorizeResponse(BaseModel):
@@ -107,7 +120,7 @@ class InboxVerdict(BaseModel):
     message_id: str
     subject: str
     sender_email: str
-    sender_name: Optional[str] = None
+    sender_name: str | None = None
     category: str
     confidence: float
     method: str
@@ -151,7 +164,7 @@ def _inbox_etag(response: InboxResponse) -> str:
     return f'"{digest[:32]}"'
 
 
-def _inbox_cache_get(user_id: uuid.UUID) -> Optional[tuple[InboxResponse, str]]:
+def _inbox_cache_get(user_id: uuid.UUID) -> tuple[InboxResponse, str] | None:
     """Return a fresh cached (response, etag) for ``user_id`` or ``None``."""
 
     ttl = settings.gmail_inbox_cache_ttl_seconds
@@ -196,26 +209,50 @@ def _apply_inbox_cache_headers(response: Response, etag: str) -> None:
 
 
 # =============================================================================
-# OAuth state (signed, short-lived, user-bound)
+# OAuth state (signed, short-lived, user-bound, carries the PKCE verifier)
 # =============================================================================
 
 
-def _sign_state(user_id: uuid.UUID) -> str:
-    """Return an HS256-signed state token binding the flow to ``user_id``."""
+def _generate_code_verifier() -> str:
+    """Return a fresh PKCE code verifier (RFC 7636: 43-128 unreserved chars).
 
-    now = datetime.now(timezone.utc)
+    ``token_urlsafe(64)`` yields 86 chars of ``[A-Za-z0-9_-]`` — squarely
+    inside the RFC's charset and length window.
+    """
+
+    return secrets.token_urlsafe(64)
+
+
+def _sign_state(user_id: uuid.UUID, code_verifier: str) -> str:
+    """Return an HS256-signed state binding the flow to ``user_id``.
+
+    The PKCE ``code_verifier`` rides along in the ``cv`` claim,
+    Fernet-encrypted with ``settings.secret_encryption_key``: the signed
+    JWT makes it tamper-proof and expiring, the encryption keeps it
+    secret from everything the state transits (browser history, Google,
+    proxy/URL logs). Only this backend can decrypt it in the callback —
+    which is what makes PKCE work across two serverless invocations.
+    """
+
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "aud": _STATE_AUDIENCE,
         "iat": now,
         "exp": now + timedelta(seconds=settings.gmail_oauth_state_ttl_seconds),
         "jti": secrets.token_urlsafe(16),
+        "cv": _require_fernet().encrypt(code_verifier.encode("utf-8")).decode("ascii"),
     }
     return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
 
 
-def _verify_state(token: str) -> Optional[uuid.UUID]:
-    """Return the bound ``user_id`` if ``token`` is a valid state, else None."""
+def _verify_state(token: str) -> tuple[uuid.UUID, str] | None:
+    """Return ``(user_id, code_verifier)`` for a valid state, else ``None``.
+
+    A state without a decryptable ``cv`` claim (forged, expired key, or
+    minted by a pre-PKCE deploy) is treated as invalid — the callback
+    bounces back with ``?gmail=error`` and the user simply reconnects.
+    """
 
     try:
         payload = jwt.decode(
@@ -225,8 +262,19 @@ def _verify_state(token: str) -> Optional[uuid.UUID]:
             audience=_STATE_AUDIENCE,
             options={"require": ["exp", "sub", "aud"]},
         )
-        return uuid.UUID(payload["sub"])
-    except (jwt.InvalidTokenError, ValueError, TypeError):
+        user_id = uuid.UUID(payload["sub"])
+        code_verifier = (
+            _require_fernet().decrypt(str(payload["cv"]).encode("ascii")).decode("utf-8")
+        )
+        return user_id, code_verifier
+    except (
+        jwt.InvalidTokenError,
+        InvalidToken,
+        CredentialEncryptionError,
+        KeyError,
+        ValueError,
+        TypeError,
+    ):
         return None
 
 
@@ -235,8 +283,19 @@ def _verify_state(token: str) -> Optional[uuid.UUID]:
 # =============================================================================
 
 
-def _build_flow() -> Flow:
-    """Construct a google-auth-oauthlib web ``Flow`` from operator settings."""
+def _build_flow(code_verifier: str | None = None) -> Flow:
+    """Construct a google-auth-oauthlib web ``Flow`` from operator settings.
+
+    PKCE is managed explicitly, never autogenerated: ``authorize`` and
+    ``callback`` run in different serverless invocations, so a verifier
+    the library invents inside one ``Flow`` object can never reach the
+    other — the exchange then fails with ``invalid_grant`` (this was the
+    live "Connect Gmail → error" bug). Instead the caller passes the
+    verifier explicitly on both legs; ``authorization_url`` derives the
+    S256 challenge from it, ``fetch_token`` sends it back to Google.
+    ``autogenerate_code_verifier=False`` is load-bearing — some library
+    versions would otherwise silently replace our verifier.
+    """
 
     client_config = {
         "web": {
@@ -247,7 +306,12 @@ def _build_flow() -> Flow:
             "redirect_uris": [settings.gmail_oauth_redirect_uri],
         }
     }
-    flow = Flow.from_client_config(client_config, scopes=settings.gmail_scopes)
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=settings.gmail_scopes,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=False,
+    )
     flow.redirect_uri = settings.gmail_oauth_redirect_uri
     return flow
 
@@ -315,25 +379,32 @@ async def gmail_authorize(
     The browser navigates to this URL (top-level) itself; we do not 302
     here so the user's JWT never has to accompany a cross-site redirect.
     ``access_type=offline`` + ``prompt=consent`` guarantee a refresh token.
+
+    The PKCE verifier minted here reaches the callback encrypted inside
+    the signed ``state`` (see ``_sign_state``). Incremental scope merging
+    (``include_granted_scopes``) is deliberately NOT requested: this app
+    only ever wants ``gmail.readonly``, and merged prior grants would make
+    the token response's scope set diverge from the requested one, which
+    strict OAuth clients reject.
     """
 
     _require_configured()
 
-    flow = _build_flow()
+    code_verifier = _generate_code_verifier()
+    flow = _build_flow(code_verifier=code_verifier)
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
         prompt="consent",
-        state=_sign_state(user_id),
+        state=_sign_state(user_id, code_verifier),
     )
     return GmailAuthorizeResponse(authorization_url=authorization_url)
 
 
 @router.get("/auth/gmail/callback", include_in_schema=False)
 async def gmail_callback(
-    state: Optional[str] = Query(default=None),
-    code: Optional[str] = Query(default=None),
-    error: Optional[str] = Query(default=None),
+    state: str | None = Query(default=None),
+    code: str | None = Query(default=None),
+    error: str | None = Query(default=None),
 ) -> RedirectResponse:
     """Handle Google's redirect: exchange the code and store the token.
 
@@ -353,13 +424,14 @@ async def gmail_callback(
         logger.info("Gmail callback rejected: error=%s has_code=%s", error, bool(code))
         return _web_redirect("error")
 
-    user_id = _verify_state(state)
-    if user_id is None:
+    verified = _verify_state(state)
+    if verified is None:
         logger.warning("Gmail callback rejected: invalid or expired state.")
         return _web_redirect("error")
+    user_id, code_verifier = verified
 
     try:
-        stored = await _exchange_and_store(user_id, code)
+        stored = await _exchange_and_store(user_id, code, code_verifier)
     except Exception as exc:  # noqa: BLE001 — never leak the token-bearing error
         logger.error(
             "Gmail token exchange failed for user_id=%s (%s).",
@@ -372,28 +444,44 @@ async def gmail_callback(
     return _web_redirect("connected")
 
 
-async def _exchange_and_store(user_id: uuid.UUID, code: str) -> GmailCredentials:
-    """Exchange ``code`` for tokens, read the account email, and persist."""
+def _exchange_code(code: str, code_verifier: str) -> GmailCredentials:
+    """Blocking: redeem ``code`` (+ PKCE verifier) and read the account email.
 
-    loop = asyncio.get_event_loop()
+    Module-level (rather than a closure) so tests can exercise the
+    callback wiring — state round-trip, verifier hand-off, save/redirect
+    honesty — without talking to Google.
+    """
 
-    def _exchange() -> GmailCredentials:
-        flow = _build_flow()
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-        profile = service.users().getProfile(userId="me").execute()
-        email = profile.get("emailAddress", "unknown")
-        return GmailCredentials(
-            access_token=creds.token,
-            refresh_token=creds.refresh_token or "",
-            token_expiry=creds.expiry or (datetime.utcnow() + timedelta(hours=1)),
-            email=email,
-            scopes=list(creds.scopes or settings.gmail_scopes),
-        )
+    flow = _build_flow(code_verifier=code_verifier)
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    profile = service.users().getProfile(userId="me").execute()
+    email = profile.get("emailAddress", "unknown")
+    return GmailCredentials(
+        access_token=creds.token,
+        refresh_token=creds.refresh_token or "",
+        token_expiry=creds.expiry or (datetime.utcnow() + timedelta(hours=1)),
+        email=email,
+        scopes=list(creds.scopes or settings.gmail_scopes),
+    )
 
-    stored = await loop.run_in_executor(None, _exchange)
-    await save_gmail_credentials(user_id, stored)
+
+async def _exchange_and_store(
+    user_id: uuid.UUID, code: str, code_verifier: str
+) -> GmailCredentials:
+    """Exchange ``code`` for tokens, read the account email, and persist.
+
+    Raises if the credential store rejects the save: a token that was
+    exchanged but never stored is NOT a connection, and pretending
+    otherwise would bounce the user to ``?gmail=connected`` while
+    ``/auth/gmail/status`` honestly reports disconnected.
+    """
+
+    loop = asyncio.get_running_loop()
+    stored = await loop.run_in_executor(None, _exchange_code, code, code_verifier)
+    if not await save_gmail_credentials(user_id, stored):
+        raise RuntimeError("credential store rejected the Gmail token save")
     return stored
 
 
@@ -452,7 +540,7 @@ async def _revoke_at_google(token: str) -> bool:
 async def gmail_inbox(
     response: Response,
     user_id: uuid.UUID = Depends(current_user),
-    if_none_match: Optional[str] = Header(default=None),
+    if_none_match: str | None = Header(default=None),
 ) -> InboxResponse | Response:
     """Read a bounded batch of recent mail and classify each message.
 
