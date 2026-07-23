@@ -17,12 +17,18 @@ export function MagneticLink({
   children,
   strength = 0.4,
   radius = 90,
+  target,
+  rel,
 }: {
   href: string;
   className?: string;
   children: ReactNode;
   strength?: number;
   radius?: number;
+  /** Forwarded to the underlying <a> — e.g. `_blank` for a new-tab CTA. */
+  target?: string;
+  /** Forwarded to the underlying <a>; pair `_blank` with `noopener noreferrer`. */
+  rel?: string;
 }) {
   const ref = useRef<HTMLAnchorElement>(null);
   const inner = useRef<HTMLSpanElement>(null);
@@ -66,6 +72,8 @@ export function MagneticLink({
       ref={ref}
       href={href}
       className={className}
+      target={target}
+      rel={rel}
       onMouseMove={onMove}
       onMouseLeave={reset}
       onBlur={reset}
