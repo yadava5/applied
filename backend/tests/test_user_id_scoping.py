@@ -283,7 +283,12 @@ async def test_summary_empty_is_zeroed(client: AsyncClient) -> None:
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     resp = await client.get("/applications/summary", headers=headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"total": 0, "this_week": 0, "status_counts": {}}
+    assert resp.json() == {
+        "total": 0,
+        "this_week": 0,
+        "status_counts": {},
+        "needs_review": 0,
+    }
 
 
 # =============================================================================
