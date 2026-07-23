@@ -98,17 +98,20 @@ export const ProofPodium: React.FC = () => {
                 0.95
               </text>
             </g>
-            <text x={GX} y={baseY + 8} textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize={3.8} letterSpacing="1" fill="currentColor" opacity={0.7}>
+            {/* caption below the plinth (was y 218 — crossed by the plinth's
+                front-top edge) */}
+            <text x={GX} y={252} textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize={3.8} letterSpacing="1" fill="currentColor" opacity={0.7}>
               9 CLASSES · ALL PASS
             </text>
           </g>
         );
       })()}
 
-      {/* ---- Gauge arc + ticks -------------------------------------- */}
-      <path d={`M ${GX} ${GY + R} A ${R} ${R} 0 0 1 ${GX} ${GY - R}`} fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
+      {/* ---- Gauge arc + ticks (sweep 0 = the RIGHT half, matching the
+              ticks/needle — sweep 1 drew the arc through the score plate) -- */}
+      <path d={`M ${GX} ${GY + R} A ${R} ${R} 0 0 0 ${GX} ${GY - R}`} fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
       {/* faint inner arc */}
-      <path d={`M ${GX} ${GY + (R - 9)} A ${R - 9} ${R - 9} 0 0 1 ${GX} ${GY - (R - 9)}`} fill="none" stroke="currentColor" strokeWidth={0.5} opacity={0.35} />
+      <path d={`M ${GX} ${GY + (R - 9)} A ${R - 9} ${R - 9} 0 0 0 ${GX} ${GY - (R - 9)}`} fill="none" stroke="currentColor" strokeWidth={0.5} opacity={0.35} />
       {Array.from({ length: 41 }).map((_, i) => {
         const f = i / 40;
         const major = i % 10 === 0;
