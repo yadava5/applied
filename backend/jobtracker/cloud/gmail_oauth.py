@@ -125,6 +125,11 @@ class InboxVerdict(BaseModel):
     confidence: float
     method: str
     needs_review: bool
+    # ISO-8601 receipt time (from the Date header) and the normalized company
+    # token this message groups under — both drive the pipeline view (age,
+    # follow-up detection, per-company rollup). Never any body content.
+    received_at: str | None = None
+    company: str = ""
 
 
 class InboxResponse(BaseModel):
@@ -132,6 +137,48 @@ class InboxResponse(BaseModel):
     scanned: int
     verdicts: list[InboxVerdict]
     note: str
+    # Server-side pagination: the opaque cursor for the next page, or null when
+    # the query is exhausted. The web client loops until it reaches the user's
+    # chosen count or this is null.
+    next_page_token: str | None = None
+    # Per-page category counts, for the live count-up while paging. The
+    # canonical whole-set summary + follow-ups come from POST /gmail/pipeline.
+    category_summary: dict[str, int]
+    # Echo of the resolved filters so the client can label what it fetched.
+    query: str
+    scope: str
+    range_months: int | None = None
+
+
+class PipelineItemIn(BaseModel):
+    """One classified message the client asks the pipeline analytics about."""
+
+    message_id: str
+    category: str
+    sender_email: str = ""
+    subject: str = ""
+    sender_name: str | None = None
+    received_at: str | None = None  # ISO-8601
+
+
+class PipelineAnalyzeRequest(BaseModel):
+    items: list[PipelineItemIn]
+    stale_days: int | None = None
+
+
+class FollowUpOut(BaseModel):
+    message_id: str
+    company: str
+    subject: str
+    days_since: int
+    applied_at: str | None = None
+
+
+class PipelineAnalyzeResponse(BaseModel):
+    total: int
+    job_related: int
+    category_summary: dict[str, int]
+    follow_ups: list[FollowUpOut]
 
 
 # =============================================================================
@@ -151,8 +198,24 @@ class InboxResponse(BaseModel):
 # per-warm-instance cache — a cold instance simply recomputes; correctness
 # never depends on a hit.
 _MAX_CACHE_ENTRIES = 512
-# user_id -> (stored_at_monotonic, response, etag)
+# cache_key -> (stored_at_monotonic, response, etag). The key is composite —
+# per user_id AND per (query, page_size, page_token) — so paging through a
+# large mine, or switching range/scope, never serves a stale page. Still keyed
+# by the authenticated user's UUID first, so nothing is ever shared across
+# users.
 _INBOX_CACHE: dict[str, tuple[float, InboxResponse, str]] = {}
+
+
+def _inbox_cache_key(
+    user_id: uuid.UUID,
+    *,
+    query: str,
+    page_size: int,
+    page_token: str | None,
+) -> str:
+    """Composite, per-user cache key for one inbox page request."""
+
+    return f"{user_id}|{query}|{page_size}|{page_token or ''}"
 
 
 def _inbox_etag(response: InboxResponse) -> str:
@@ -164,27 +227,27 @@ def _inbox_etag(response: InboxResponse) -> str:
     return f'"{digest[:32]}"'
 
 
-def _inbox_cache_get(user_id: uuid.UUID) -> tuple[InboxResponse, str] | None:
-    """Return a fresh cached (response, etag) for ``user_id`` or ``None``."""
+def _inbox_cache_get(cache_key: str) -> tuple[InboxResponse, str] | None:
+    """Return a fresh cached (response, etag) for ``cache_key`` or ``None``."""
 
     ttl = settings.gmail_inbox_cache_ttl_seconds
     if ttl <= 0:
         return None
-    entry = _INBOX_CACHE.get(str(user_id))
+    entry = _INBOX_CACHE.get(cache_key)
     if entry is None:
         return None
     stored_at, response, etag = entry
     if (time.monotonic() - stored_at) > ttl:
-        _INBOX_CACHE.pop(str(user_id), None)
+        _INBOX_CACHE.pop(cache_key, None)
         return None
     return response, etag
 
 
-def _inbox_cache_put(user_id: uuid.UUID, response: InboxResponse) -> str:
-    """Cache ``response`` for ``user_id`` and return its ETag.
+def _inbox_cache_put(cache_key: str, response: InboxResponse) -> str:
+    """Cache ``response`` under ``cache_key`` and return its ETag.
 
     Skips caching entirely when the TTL is disabled. Applies a crude size
-    cap (drop the oldest entry) so a burst of distinct users on one warm
+    cap (drop the oldest entry) so a burst of distinct users/pages on one warm
     instance cannot grow the map without bound.
     """
 
@@ -192,10 +255,10 @@ def _inbox_cache_put(user_id: uuid.UUID, response: InboxResponse) -> str:
     ttl = settings.gmail_inbox_cache_ttl_seconds
     if ttl <= 0:
         return etag
-    if len(_INBOX_CACHE) >= _MAX_CACHE_ENTRIES and str(user_id) not in _INBOX_CACHE:
+    if len(_INBOX_CACHE) >= _MAX_CACHE_ENTRIES and cache_key not in _INBOX_CACHE:
         oldest_key = min(_INBOX_CACHE, key=lambda k: _INBOX_CACHE[k][0])
         _INBOX_CACHE.pop(oldest_key, None)
-    _INBOX_CACHE[str(user_id)] = (time.monotonic(), response, etag)
+    _INBOX_CACHE[cache_key] = (time.monotonic(), response, etag)
     return etag
 
 
@@ -536,29 +599,104 @@ async def _revoke_at_google(token: str) -> bool:
     return await loop.run_in_executor(None, _post)
 
 
+# Age filters the UI offers (months). Anything else → "all time" (no bound).
+_ALLOWED_RANGE_MONTHS = frozenset({3, 6, 9, 12})
+
+
+def _parse_range_months(value: str | None) -> int | None:
+    """Map the ``range`` query param to a month count, or ``None`` for all-time.
+
+    Accepts ``"3"``/``"6"``/``"9"``/``"12"`` (optionally suffixed ``m``) and
+    ``"all"``/empty. Any unrecognized value falls back to all-time rather than
+    erroring, so a stray param can never 500 the mine.
+    """
+
+    if value is None:
+        return None
+    token = value.strip().lower().rstrip("m")
+    if token in ("", "all", "any", "0"):
+        return None
+    try:
+        months = int(token)
+    except ValueError:
+        return None
+    return months if months in _ALLOWED_RANGE_MONTHS else None
+
+
+def _parse_scope(value: str | None) -> str:
+    """``"anywhere"`` searches all mail (incl. archived); default ``"inbox"``."""
+
+    return "anywhere" if (value or "").strip().lower() == "anywhere" else "inbox"
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    """Best-effort ISO-8601 → datetime; tolerant of a trailing ``Z``."""
+
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 @router.get("/gmail/inbox", response_model=InboxResponse)
 async def gmail_inbox(
     response: Response,
     user_id: uuid.UUID = Depends(current_user),
     if_none_match: str | None = Header(default=None),
+    count: int | None = Query(default=None, ge=1),
+    range: str | None = Query(default=None),  # noqa: A002 — public API name
+    scope: str | None = Query(default=None),
+    page_size: int | None = Query(default=None, ge=1),
+    page_token: str | None = Query(default=None),
 ) -> InboxResponse | Response:
-    """Read a bounded batch of recent mail and classify each message.
+    """Read ONE server-side page of mail (filtered) and classify each message.
 
-    This is the honest end of the pipeline: real messages from the user's
-    Gmail, one verdict each from the rules-only cloud classifier. Bodies are
-    never returned — only the verdict metadata the tracker needs.
+    The honest end of the pipeline, now high-volume and filterable:
 
-    Performance: a per-user, short-TTL cache (``gmail_inbox_cache_ttl_seconds``)
-    serves repeat loads without re-hitting Gmail or re-running the classifier.
-    An ``ETag``/``If-None-Match`` validator lets a conditional caller skip the
-    body entirely with a ``304``. Auth is unchanged — the JWT is verified on
-    every request before the cache is consulted, and entries are keyed per
-    user_id so nothing is ever shared between users.
+    - ``range`` — ``3``/``6``/``9``/``12`` months, or all-time — becomes a
+      Gmail ``newer_than:<N>m`` term.
+    - ``scope`` — ``inbox`` (default) or ``anywhere`` (also searches archived /
+      other-tab mail so filed-away interview & offer emails are found).
+    - ``count`` — the client's total target; used only to clamp this page.
+    - ``page_size`` / ``page_token`` — server-side pagination. The response
+      carries ``next_page_token``; the web client loops until it reaches
+      ``count`` or the token is null, showing a progress tally.
+
+    A single invocation fetches at most ``gmail_fetch_page_size`` messages
+    (batched metadata gets, no bodies) so it stays inside the Vercel function
+    budget; big mines are many bounded pages, not one fragile mega-call.
+
+    Bodies are never returned — only verdict metadata. The per-user, per-page
+    short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is verified
+    on every request before the cache is consulted.
     """
 
     _require_configured()
 
-    cached = _inbox_cache_get(user_id)
+    # Imported lazily so the classifier + Gmail client stay out of the cold-
+    # start path for the OAuth endpoints (matches hybrid.py's cloud discipline).
+    from jobtracker.classifier import get_classifier
+    from jobtracker.cloud import pipeline
+    from jobtracker.cloud.gmail_client import build_gmail_query, fetch_message_page
+
+    range_months = _parse_range_months(range)
+    mail_scope = _parse_scope(scope)
+    query = build_gmail_query(range_months, mail_scope)  # type: ignore[arg-type]
+
+    # How many this page pulls: the configured per-invocation ceiling, further
+    # clamped by an explicit page_size, the total count target, and the hard cap.
+    configured_page = max(1, min(settings.gmail_fetch_page_size, 500))
+    requested = page_size if page_size is not None else (count or configured_page)
+    effective_page = max(
+        1, min(requested, configured_page, settings.gmail_fetch_hard_cap)
+    )
+
+    cache_key = _inbox_cache_key(
+        user_id, query=query, page_size=effective_page, page_token=page_token
+    )
+    cached = _inbox_cache_get(cache_key)
     if cached is not None:
         cached_response, etag = cached
         if if_none_match is not None and if_none_match == etag:
@@ -568,13 +706,10 @@ async def gmail_inbox(
         _apply_inbox_cache_headers(response, etag)
         return cached_response
 
-    # Imported lazily so the classifier package stays out of the cold-start
-    # path for the OAuth endpoints (matches hybrid.py's cloud discipline).
-    from jobtracker.classifier import get_classifier
-    from jobtracker.cloud.gmail_client import fetch_recent_messages
-
-    messages = await fetch_recent_messages(user_id)
-    if messages is None:
+    page = await fetch_message_page(
+        user_id, query=query, page_size=effective_page, page_token=page_token
+    )
+    if page is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Gmail is not connected for this user. Connect it first.",
@@ -582,25 +717,37 @@ async def gmail_inbox(
 
     classifier = get_classifier()
     verdicts: list[InboxVerdict] = []
-    for msg in messages:
+    summary = dict.fromkeys(pipeline.CANONICAL_CATEGORIES, 0)
+    for msg in page.messages:
         result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        category = result.category.value
+        summary[category] = summary.get(category, 0) + 1
         verdicts.append(
             InboxVerdict(
                 message_id=msg.message_id,
                 subject=msg.subject,
                 sender_email=msg.sender_email,
                 sender_name=msg.sender_name,
-                category=result.category.value,
+                category=category,
                 confidence=round(result.confidence, 4),
                 method=result.method,
                 needs_review=result.needs_review,
+                received_at=msg.received_at.isoformat() if msg.received_at else None,
+                company=pipeline.company_key(
+                    msg.sender_email, msg.subject, msg.sender_name
+                ),
             )
         )
 
     result_response = InboxResponse(
         connected=True,
-        scanned=len(messages),
+        scanned=len(page.messages),
         verdicts=verdicts,
+        next_page_token=page.next_page_token,
+        category_summary=summary,
+        query=query,
+        scope=mail_scope,
+        range_months=range_months,
         note=(
             "Classified from subject + Gmail snippet using the rules-only cloud "
             "classifier (gmail.readonly). Full-body + SetFit classification runs "
@@ -608,6 +755,63 @@ async def gmail_inbox(
         ),
     )
 
-    etag = _inbox_cache_put(user_id, result_response)
+    etag = _inbox_cache_put(cache_key, result_response)
     _apply_inbox_cache_headers(response, etag)
     return result_response
+
+
+@router.post(
+    "/gmail/pipeline",
+    response_model=PipelineAnalyzeResponse,
+    dependencies=[Depends(current_user)],
+)
+async def gmail_pipeline(payload: PipelineAnalyzeRequest) -> PipelineAnalyzeResponse:
+    """Analyze an accumulated set of verdicts: category summary + follow-ups.
+
+    Pure aggregation over data the client already holds (no Gmail call, no
+    bodies): the web client pages the mine via ``GET /gmail/inbox``, then posts
+    the accumulated verdict metadata here to get the canonical whole-set
+    category summary and the "No response — consider following up" flags across
+    ALL pages (which no single page can compute alone).
+
+    Auth is enforced via the route dependency (the caller's own data; 401
+    without a valid JWT), and the input is bounded by the fetch hard cap so it
+    cannot be abused as an unbounded compute endpoint.
+    """
+
+    from jobtracker.cloud import pipeline
+
+    items = [
+        pipeline.PipelineItem(
+            message_id=item.message_id,
+            category=item.category,
+            sender_email=item.sender_email,
+            subject=item.subject,
+            sender_name=item.sender_name,
+            received_at=_parse_iso(item.received_at),
+        )
+        for item in payload.items[: settings.gmail_fetch_hard_cap]
+    ]
+
+    stale_days = payload.stale_days or settings.gmail_followup_stale_days
+    summary = pipeline.summarize(items)
+    follow_ups = pipeline.flag_follow_ups(items, stale_days=stale_days)
+    job_related = sum(
+        summary.get(cat, 0) for cat in pipeline.JOB_LIFECYCLE_CATEGORIES
+    )
+
+    return PipelineAnalyzeResponse(
+        total=len(items),
+        job_related=job_related,
+        category_summary=summary,
+        follow_ups=[
+            FollowUpOut(
+                message_id=f.message_id,
+                company=f.company,
+                subject=f.subject,
+                days_since=f.days_since,
+                applied_at=f.applied_at.isoformat() if f.applied_at else None,
+            )
+            for f in follow_ups
+        ],
+    )
