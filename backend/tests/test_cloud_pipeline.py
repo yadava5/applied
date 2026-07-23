@@ -174,3 +174,87 @@ def test_follow_up_handles_naive_datetimes() -> None:
     flags = p.flag_follow_ups(items, now=NOW, stale_days=21)
     assert len(flags) == 1
     assert flags[0].company == "acme"
+
+
+# --- roll_up_applications ---------------------------------------------------
+
+
+def test_rollup_one_row_per_company_furthest_stage() -> None:
+    items = [
+        _msg("a1", "applied", "no-reply@lever.co", 40, "Application to Acme", "Acme via Lever"),
+        _msg("i1", "interview", "no-reply@lever.co", 20, "Interview with Acme", "Acme"),
+    ]
+    rolled = p.roll_up_applications(items)
+    assert len(rolled) == 1
+    r = rolled[0]
+    assert r.company_token == "acme"
+    assert r.company_display == "Acme"
+    # Furthest stage reached wins (applied < interview → interviewing).
+    assert r.status == "interviewing"
+    # applied_at is the earliest application date, not the interview date.
+    assert r.applied_at is not None and r.applied_at.day == (NOW - timedelta(days=40)).day
+
+
+def test_rollup_rejection_is_terminal_override() -> None:
+    items = [
+        _msg("a1", "applied", "careers@globex.com", 30, "Applied", "Globex"),
+        _msg("o1", "offer", "careers@globex.com", 10, "Offer", "Globex"),
+        _msg("r1", "rejection", "careers@globex.com", 5, "Update", "Globex"),
+    ]
+    rolled = p.roll_up_applications(items)
+    assert len(rolled) == 1
+    assert rolled[0].status == "rejected"
+
+
+def test_rollup_skips_noise_and_weak_followup_only() -> None:
+    items = [
+        _msg("n1", "other", "news@digest.com", 1, "Weekly digest"),
+        _msg("f1", "follow_up", "recruit@ghost.io", 5, "just checking in", "Ghost"),
+        _msg("nr", "needs_review", "x@y.com", 2, "hmm"),
+    ]
+    # Nothing is a real lifecycle signal → no phantom application rows.
+    assert p.roll_up_applications(items) == []
+
+
+def test_rollup_extracts_role_from_subject() -> None:
+    items = [
+        _msg(
+            "a1",
+            "applied",
+            "careers@acme.com",
+            10,
+            "Your application for the Senior Backend Engineer role",
+            "Acme",
+        )
+    ]
+    rolled = p.roll_up_applications(items)
+    assert rolled[0].role == "Senior Backend Engineer"
+
+
+def test_rollup_is_deterministic_and_sorted() -> None:
+    items = [
+        _msg("a2", "applied", "careers@zeta.com", 5, "Applied", "Zeta"),
+        _msg("a1", "applied", "careers@alpha.com", 5, "Applied", "Alpha"),
+    ]
+    tokens = [r.company_token for r in p.roll_up_applications(items)]
+    assert tokens == ["alpha", "zeta"]
+
+
+# --- advance_application_status ---------------------------------------------
+
+
+def test_advance_moves_forward_only() -> None:
+    assert p.advance_application_status("applied", "offered") == "offered"
+    assert p.advance_application_status("offered", "applied") == "offered"
+    assert p.advance_application_status("applied", "interviewing") == "interviewing"
+
+
+def test_advance_rejection_is_terminal_override_of_in_flight() -> None:
+    assert p.advance_application_status("interviewing", "rejected") == "rejected"
+
+
+def test_advance_never_overrides_a_settled_status() -> None:
+    # A mail signal must not un-reject, un-accept, or un-withdraw a row.
+    assert p.advance_application_status("rejected", "offered") == "rejected"
+    assert p.advance_application_status("accepted", "rejected") == "accepted"
+    assert p.advance_application_status("withdrawn", "interviewing") == "withdrawn"
