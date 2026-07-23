@@ -38,8 +38,20 @@ const nextConfig: NextConfig = {
   // public/system-card/ (see booklet/ · `npm run build:system-card`). Serve its
   // entry at the clean /system-card path; the hashed assets under
   // /system-card/assets/* resolve as static files directly.
+  //
+  // `beforeFiles` (not the default afterFiles): /system-card is NOT an app route,
+  // so an RSC data request for it (`?_rsc=…` + `RSC: 1`, emitted if anything ever
+  // <Link>-prefetches it) resolves to a 404 *before* an afterFiles rewrite runs —
+  // the console error the audit flagged (JT-1). Rewriting in beforeFiles maps the
+  // request to the static index.html ahead of route/RSC resolution, so it returns
+  // the page (200) instead. The landing already links it with a plain <a> (no
+  // prefetch); this is the belt-and-suspenders root fix for the endpoint itself.
   async rewrites() {
-    return [{ source: "/system-card", destination: "/system-card/index.html" }];
+    return {
+      beforeFiles: [
+        { source: "/system-card", destination: "/system-card/index.html" },
+      ],
+    };
   },
 };
 
