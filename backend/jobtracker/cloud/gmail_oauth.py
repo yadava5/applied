@@ -181,6 +181,28 @@ class PipelineAnalyzeResponse(BaseModel):
     follow_ups: list[FollowUpOut]
 
 
+class SyncRequest(BaseModel):
+    """Sync the classified pipeline into the user's Application rows.
+
+    Two modes: pass ``items`` to persist an already-mined set (the inbox
+    workbench relays what it fetched), or omit them to have the server fetch a
+    bounded, recent page itself and classify it (the dashboard's connect-time
+    backfill). ``count``/``range``/``scope`` tune the server-fetch mode.
+    """
+
+    items: list[PipelineItemIn] | None = None
+    count: int | None = None
+    range: str | None = None
+    scope: str | None = None
+
+
+class SyncResponse(BaseModel):
+    created: int
+    updated: int
+    applications: int  # total application rows the user has after the sync
+    scanned: int
+
+
 # =============================================================================
 # Per-user inbox cache (short TTL, in-process)
 # =============================================================================
@@ -814,4 +836,116 @@ async def gmail_pipeline(payload: PipelineAnalyzeRequest) -> PipelineAnalyzeResp
             )
             for f in follow_ups
         ],
+    )
+
+
+# Default backfill window (months) when the dashboard triggers a server-side
+# sync without specifying a range.
+_SYNC_DEFAULT_RANGE_MONTHS = 12
+
+
+@router.post("/gmail/sync", response_model=SyncResponse)
+async def gmail_sync(
+    payload: SyncRequest,
+    user_id: uuid.UUID = Depends(current_user),
+) -> SyncResponse:
+    """Persist the classified job-search pipeline into Application rows.
+
+    This is what makes the dashboard show REAL data after connecting Gmail:
+    the lifecycle mail (applied/interview/assessment/offer/rejection/…) is
+    grouped into one application per company (furthest stage reached; rejection
+    terminal) and idempotently upserted, scoped to the JWT's user.
+
+    Two modes (see :class:`SyncRequest`): persist the client's already-mined
+    ``items``, or — when omitted — fetch a bounded recent page server-side and
+    classify it. Either way the upsert is idempotent (re-running never
+    duplicates) and metadata-only (no bodies are stored).
+    """
+
+    from jobtracker.cloud import pipeline
+    from jobtracker.cloud.applications import upsert_applications_for_user
+
+    if payload.items is not None:
+        items = [
+            pipeline.PipelineItem(
+                message_id=item.message_id,
+                category=item.category,
+                sender_email=item.sender_email,
+                subject=item.subject,
+                sender_name=item.sender_name,
+                received_at=_parse_iso(item.received_at),
+            )
+            for item in payload.items[: settings.gmail_fetch_hard_cap]
+        ]
+        scanned = len(items)
+    else:
+        _require_configured()
+        from jobtracker.classifier import get_classifier
+        from jobtracker.cloud.gmail_client import build_gmail_query, fetch_message_page
+
+        # Not-provided range → default backfill window; explicit "all" → no bound.
+        range_months = (
+            _SYNC_DEFAULT_RANGE_MONTHS
+            if payload.range is None
+            else _parse_range_months(payload.range)
+        )
+        mail_scope = _parse_scope(payload.scope)
+        query = build_gmail_query(range_months, mail_scope)  # type: ignore[arg-type]
+        page_size = max(
+            1, min(payload.count or settings.gmail_fetch_page_size, settings.gmail_fetch_page_size)
+        )
+
+        page = await fetch_message_page(user_id, query=query, page_size=page_size)
+        if page is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Gmail is not connected for this user. Connect it first.",
+            )
+
+        classifier = get_classifier()
+        items = []
+        for msg in page.messages:
+            result = await classifier.classify(
+                msg.subject, msg.snippet, msg.sender_email
+            )
+            items.append(
+                pipeline.PipelineItem(
+                    message_id=msg.message_id,
+                    category=result.category.value,
+                    sender_email=msg.sender_email,
+                    subject=msg.subject,
+                    sender_name=msg.sender_name,
+                    received_at=msg.received_at,
+                )
+            )
+        scanned = len(page.messages)
+
+    rolled = pipeline.roll_up_applications(items)
+
+    from sqlalchemy import func as sa_func
+    from sqlmodel import select as sm_select
+
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Application
+
+    async with get_session() as session:
+        created, updated = await upsert_applications_for_user(session, user_id, rolled)
+        total = (
+            await session.exec(
+                sm_select(sa_func.count())
+                .select_from(Application)
+                .where(Application.user_id == user_id)
+            )
+        ).one()
+
+    logger.info(
+        "Gmail sync for user_id=%s: created=%s updated=%s total=%s scanned=%s",
+        user_id,
+        created,
+        updated,
+        total,
+        scanned,
+    )
+    return SyncResponse(
+        created=created, updated=updated, applications=total, scanned=scanned
     )
