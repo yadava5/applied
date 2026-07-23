@@ -350,6 +350,58 @@ class Settings(BaseSettings):
             "disable (always fetch + classify fresh)."
         ),
     )
+    gmail_fetch_hard_cap: int = Field(
+        default=2000,
+        description=(
+            "Absolute upper bound on the TOTAL number of messages a single "
+            "high-volume inbox mine may request across all pages. The web UI "
+            "offers 100/200/500/1000/2000; this caps whatever a caller asks "
+            "for so a hand-crafted request cannot ask Gmail for an unbounded "
+            "scan. Env: JOBTRACKER_GMAIL_FETCH_HARD_CAP."
+        ),
+    )
+    gmail_fetch_page_size: int = Field(
+        default=500,
+        description=(
+            "Messages fetched + classified in ONE serverless invocation of "
+            "`GET /gmail/inbox`. The endpoint is server-paginated: it returns "
+            "at most this many verdicts plus a `next_page_token`, and the web "
+            "client loops until it reaches the user's chosen count. Kept at "
+            "the Gmail `messages.list` page ceiling (500) so one list call "
+            "feeds one page, and small enough that a page's batched metadata "
+            "fetch + rules classification stays well inside the Vercel 60 s "
+            "function budget. Clamped to [1, 500]. Env: "
+            "JOBTRACKER_GMAIL_FETCH_PAGE_SIZE."
+        ),
+    )
+    gmail_batch_size: int = Field(
+        default=100,
+        description=(
+            "Sub-requests per Gmail batch HTTP request when fetching message "
+            "metadata (Subject/From/Date + snippet). Gmail caps a batch at "
+            "100. A 100-message metadata batch costs ~500 quota units, so the "
+            "batch pace (below) keeps the per-user ~250 units/sec quota "
+            "respected. Env: JOBTRACKER_GMAIL_BATCH_SIZE."
+        ),
+    )
+    gmail_batch_pause_seconds: float = Field(
+        default=0.4,
+        description=(
+            "Seconds to sleep between successive Gmail metadata batches to "
+            "stay under the per-user quota (~250 units/sec; a full 100-message "
+            "batch ≈ 500 units). Set to 0 to disable pacing. Env: "
+            "JOBTRACKER_GMAIL_BATCH_PAUSE_SECONDS."
+        ),
+    )
+    gmail_followup_stale_days: int = Field(
+        default=21,
+        description=(
+            "Age (days) after which an `applied` email with no later "
+            "interview/assessment/offer/rejection from the same company is "
+            "flagged 'No response — consider following up'. The ghosting "
+            "differentiator. Env: JOBTRACKER_GMAIL_FOLLOWUP_STALE_DAYS."
+        ),
+    )
 
     # Every setting the Gmail web OAuth flow needs before it can offer a
     # connect button. Each maps to an env var ``JOBTRACKER_<UPPER>``.
