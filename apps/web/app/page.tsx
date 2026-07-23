@@ -60,27 +60,30 @@ export default function Landing() {
       {/* ---- nav -------------------------------------------------------- */}
       <header className="sticky top-0 z-50 border-b border-line-soft bg-background">
         <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-6">
-          <Link href="/" className="font-mono text-sm font-semibold text-strong">
+          <Link
+            href="/"
+            className="inline-flex min-h-11 items-center font-mono text-sm font-semibold text-strong"
+          >
             job<span className="text-dim">_</span>tracker
           </Link>
           <nav className="flex items-center gap-4">
             <a
               href={SYSTEM_CARD}
               {...NEW_TAB}
-              className="hidden font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong sm:inline"
+              className="hidden min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong sm:inline-flex"
             >
               system card
             </a>
             <a
               href="/demo"
               {...NEW_TAB}
-              className="font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
+              className="inline-flex min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
             >
               live demo
             </a>
             <Link
               href="/login"
-              className="rounded-lg border border-line px-3 py-1.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+              className="inline-flex min-h-11 items-center rounded-lg border border-line px-3 py-1.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
             >
               Sign in
             </Link>
