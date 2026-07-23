@@ -34,8 +34,13 @@ from sqlalchemy import func, or_
 from sqlmodel import select
 
 from jobtracker.auth import current_user, require_user
+from jobtracker.cloud import pipeline
 from jobtracker.database import get_session
 from jobtracker.database.models import Application, ApplicationStatus
+
+# Placeholder position for a Gmail-derived application when no role could be
+# parsed from the mail metadata (bodies are never fetched).
+_UNKNOWN_ROLE = "Unknown role"
 
 
 router = APIRouter(
@@ -107,6 +112,73 @@ class ApplicationSummaryResponse(BaseModel):
     total: int
     this_week: int
     status_counts: dict[str, int]
+
+
+async def upsert_applications_for_user(
+    session,
+    user_id: uuid.UUID,
+    rolled: list[pipeline.RolledApplication],
+) -> tuple[int, int]:
+    """Idempotently persist rolled-up applications for one user.
+
+    For each company (keyed by the normalized ``company_token``) it updates the
+    existing row or inserts a new one — scoped strictly to ``user_id`` from the
+    verified JWT, never a client-supplied id. Re-running with the same input
+    creates no duplicates: the match is ``lower(company) == company_token`` and
+    Gmail-created rows store ``company = token.title()`` so they round-trip.
+
+    Status only advances (see ``pipeline.advance_application_status``): a re-sync
+    never downgrades a row and never overrides a settled/manual status. Returns
+    ``(created, updated)``.
+    """
+
+    created = 0
+    updated = 0
+    for r in rolled:
+        existing = (
+            await session.exec(
+                select(Application)
+                .where(
+                    Application.user_id == user_id,
+                    func.lower(Application.company) == r.company_token,
+                )
+                .limit(1)
+            )
+        ).first()
+
+        if existing is not None:
+            new_status = ApplicationStatus(
+                pipeline.advance_application_status(existing.status.value, r.status)
+            )
+            changed = False
+            if new_status != existing.status:
+                existing.status = new_status
+                changed = True
+            if r.role and (not existing.position or existing.position == _UNKNOWN_ROLE):
+                existing.position = r.role
+                changed = True
+            if r.applied_at and existing.applied_date is None:
+                existing.applied_date = r.applied_at.date()
+                changed = True
+            if changed:
+                existing.updated_at = datetime.utcnow()
+                session.add(existing)
+            updated += 1
+        else:
+            session.add(
+                Application(
+                    user_id=user_id,
+                    company=r.company_display,
+                    position=r.role or _UNKNOWN_ROLE,
+                    status=ApplicationStatus(r.status),
+                    applied_date=r.applied_at.date() if r.applied_at else None,
+                    source="gmail",
+                )
+            )
+            created += 1
+
+    await session.commit()
+    return created, updated
 
 
 def _serialize(app: Application) -> CloudApplicationResponse:
