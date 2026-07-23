@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { BetaCard } from "@/components/beta/BetaCard";
+import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { getGmailInbox, type InboxVerdict } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
@@ -165,14 +166,31 @@ export default async function InboxPage() {
       <InboxShell
         lede={
           <>
-            Gmail isn&apos;t connected yet. Connect it in{" "}
-            <Link href="/settings" className="text-strong underline-offset-4 hover:underline">
-              Settings
-            </Link>{" "}
-            and this page fills with real, classified mail.
+            This is where your real, classified mail lands. Connect Gmail read-only and it fills with
+            live verdicts — or preview the classifier first, no connection needed.
           </>
         }
       >
+        <div className="rounded-xl border border-line-soft bg-surface p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-base font-medium text-strong">Connect Gmail to fill this inbox</h2>
+              <p className="mt-1.5 text-sm text-muted">
+                Read-only, on Google&apos;s own consent screen. The classifier reads your job-search
+                mail to label it — it <span className="text-strong">cannot</span> send, delete, or
+                modify anything.
+              </p>
+            </div>
+            <ConnectGmailButton className="shrink-0" />
+          </div>
+          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
+            Want the full breakdown of scopes and safeguards first? See{" "}
+            <Link href="/settings" className="text-strong underline-offset-4 hover:underline">
+              Settings
+            </Link>
+            .
+          </p>
+        </div>
         <BetaCard />
         <ImportFallback />
       </InboxShell>
