@@ -42,7 +42,13 @@ cryptography>=42.0.0
 # -----------------------------------------------------------------------------
 google-api-python-client>=2.100.0
 google-auth-httplib2>=0.1.1
-google-auth-oauthlib>=1.1.0
+# >=1.2.4: Flow.from_client_config must accept + forward the explicit
+# code_verifier / autogenerate_code_verifier kwargs the stateless PKCE
+# flow in cloud/gmail_oauth.py depends on (older versions vary between
+# silently autogenerating a verifier per Flow — which broke the split
+# authorize/callback exchange with invalid_grant — and dropping the
+# kwargs entirely).
+google-auth-oauthlib>=1.2.4
 aioimaplib>=2.0.0
 
 # -----------------------------------------------------------------------------
