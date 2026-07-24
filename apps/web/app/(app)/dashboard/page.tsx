@@ -11,7 +11,9 @@ import {
   ForwardRoutes,
   SamplePreview,
 } from "@/components/dashboard/DashboardEmptyState";
+import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
 import { StageFunnel } from "@/components/viz/StageFunnel";
+import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
 
@@ -38,9 +40,31 @@ import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/d
 const BOARD_PAGE_SIZE = 200;
 
 type LoadState =
-  | { kind: "ok"; summary: PipelineSummary; applications: Application[]; total: number }
+  | {
+      kind: "ok";
+      summary: PipelineSummary;
+      applications: Application[];
+      total: number;
+      needsReview: number;
+    }
   | { kind: "unauthorized"; message: string }
   | { kind: "offline"; message: string };
+
+/**
+ * The needs-classification queue (uncertain verdicts). Fetched server-side via
+ * the plain-fetch helper (the endpoint is not in the seed OpenAPI schema);
+ * never throws — a failure just yields an empty queue so the board still renders.
+ */
+async function loadReviewQueue(): Promise<ReviewItem[]> {
+  try {
+    const r = await getReviewQueue();
+    if (!r.ok || typeof r.data !== "object" || r.data === null) return [];
+    const items = (r.data as { items?: unknown }).items;
+    return Array.isArray(items) ? (items as ReviewItem[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 function failureMessage(error: unknown, status: number): string {
   return typeof error === "object" && error && "detail" in error
@@ -75,6 +99,7 @@ async function loadDashboard(): Promise<LoadState> {
       summary,
       applications: listRes.data.applications,
       total: summaryRes.data.total,
+      needsReview: summaryRes.data.needs_review ?? 0,
     };
   } catch (err) {
     return {
@@ -91,7 +116,9 @@ function DashboardHeader({ subtitle }: { subtitle: string }) {
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
         <p className="mt-1 font-mono text-xs text-dim">{subtitle}</p>
       </div>
-      <AddApplicationForm />
+      {/* Manual filing is the rare path now — the pipeline fills from Gmail — so
+          the add control is a compact, unobtrusive "+" rather than a CTA. */}
+      <AddApplicationForm compact />
     </header>
   );
 }
@@ -177,9 +204,13 @@ export default async function DashboardPage() {
     count,
     color: stage.color,
   }));
+  const reviewNote = state.needsReview > 0 ? ` · ${state.needsReview} need classification` : "";
   const subtitle = `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
-  }`;
+  }${reviewNote}`;
+
+  // Only fetch the queue's rows when the summary says there is something to show.
+  const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
 
   return (
     <section className="space-y-6">
@@ -196,6 +227,8 @@ export default async function DashboardPage() {
       />
 
       <PipelineBoard applications={state.applications} />
+
+      <ReviewQueue items={reviewItems} />
 
       <RecentActivity applications={state.applications} />
     </section>
