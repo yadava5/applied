@@ -7,15 +7,42 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Auto-populates the dashboard from connected Gmail.
  *
- * Rendered only in the "connected but no applications yet" state, it fires one
- * bounded server-side sync (`POST /api/gmail/sync`) on mount. If it persists
- * any applications it calls `router.refresh()` so the server dashboard
+ * Rendered only in the "connected but no applications yet" state. It fires one
+ * bounded server-side sync (`POST /api/gmail/sync`, a full purge/rebuild) — but
+ * at most ONCE per cooldown window per tab session, not on every dashboard
+ * navigation. Each visit remounts this component, so a per-mount `useRef` guard
+ * alone still re-scanned Gmail on every Inbox → Dashboard hop; the cooldown
+ * stamp in `sessionStorage` is what makes repeat visits cheap. If a sync
+ * persists applications it calls `router.refresh()` so the server dashboard
  * re-renders with the real board; if it finds no job mail it leaves the honest
- * empty state in place. Runs once per mount (guarded), and the backend upsert
- * is idempotent, so this can never loop or duplicate rows.
+ * empty state in place. The backend upsert is idempotent, so this never
+ * duplicates rows.
  */
 
 type State = "syncing" | "empty" | "error";
+
+/** Cooldown so the auto-sync runs at most once per window per tab session. */
+const AUTOSYNC_KEY = "applied:dashboard:autosync:lastAt";
+const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
+function recentlyAutoSynced(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.sessionStorage.getItem(AUTOSYNC_KEY);
+    return raw != null && Date.now() - Number(raw) < AUTOSYNC_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markAutoSynced(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(AUTOSYNC_KEY, String(Date.now()));
+  } catch {
+    // sessionStorage unavailable — degrade to the per-mount guard only.
+  }
+}
 
 export function GmailSyncTrigger() {
   const router = useRouter();
@@ -28,6 +55,15 @@ export function GmailSyncTrigger() {
 
     let cancelled = false;
     (async () => {
+      // Already auto-synced recently in this session → show the honest empty
+      // state instead of re-scanning Gmail on this navigation.
+      if (recentlyAutoSynced()) {
+        if (!cancelled) setState("empty");
+        return;
+      }
+      // Stamp before the request so a rapid re-navigation can't double-fire the
+      // purge/rebuild while the first one is still in flight.
+      markAutoSynced();
       try {
         const res = await fetch("/api/gmail/sync", {
           method: "POST",
