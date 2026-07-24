@@ -101,7 +101,7 @@ export function BetaBanner() {
           <div
             id="beta-banner-panel"
             role="region"
-            aria-label="JobTracker beta access"
+            aria-label="Applied beta access"
             data-beta="banner-panel"
             className="beta-panel absolute bottom-full left-1/2 mb-2 w-[min(20rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-xl border border-line-soft bg-surface p-4 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)]"
           >
@@ -110,7 +110,7 @@ export function BetaBanner() {
               Beta · limited access
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              JobTracker is under active development. Direct Gmail connection is limited to{" "}
+              Applied is under active development. Direct Gmail connection is limited to{" "}
               <span className="text-strong">{BETA_SEATS} beta testers</span>{" "}— Google&apos;s OAuth
               test-user cap — while we gather feedback.
             </p>
