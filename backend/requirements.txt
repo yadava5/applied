@@ -10,7 +10,7 @@
 fastapi>=0.109.0              # Modern async web framework
 uvicorn[standard]>=0.27.0     # ASGI server with uvloop
 pydantic>=2.5.0               # Data validation using Python type hints
-pydantic-settings>=2.1.0      # Settings management with env var support
+pydantic-settings>=2.14.2     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
 email-validator>=2.0.0        # Email validation for Pydantic EmailStr
 websockets>=12.0              # WebSocket support for real-time sync updates
 
@@ -35,7 +35,8 @@ aioimaplib>=2.0.0                   # Async IMAP client for iCloud Mail
 # Security & Credentials
 # -----------------------------------------------------------------------------
 keyring>=24.3.0               # Secure credential storage (macOS Keychain)
-pyjwt[crypto]>=2.8.0          # Supabase JWT validation (cloud auth middleware, C3)
+pyjwt[crypto]>=2.13.0         # Supabase JWT validation (>=2.13.0: PYSEC-2026-175..179)
+cryptography>=48.0.1,<49      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-2026-2141 / GHSA-537c-gmf6-5ccf (upper bound keeps mlflow<49 happy)
 
 # -----------------------------------------------------------------------------
 # ML & NLP
@@ -50,7 +51,7 @@ numpy>=1.24.0                 # Numerical operations, embedding serialization
 # Email Parsing
 # -----------------------------------------------------------------------------
 beautifulsoup4>=4.12.0        # HTML email parsing
-lxml>=5.0.0                   # Fast HTML/XML parser (bs4 backend)
+lxml>=6.1.0                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
 python-dateutil>=2.8.0        # Date parsing utilities
 
 # -----------------------------------------------------------------------------
