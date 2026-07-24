@@ -133,21 +133,40 @@ function ReviewRow({ item }: { item: ReviewItem }) {
  * decision that both persists (a lifecycle choice becomes a sticky application)
  * and trains the model. Choosing "not job-related" removes it from the queue.
  */
+/**
+ * Past this many rows the queue overflows its fixed height and scrolls
+ * internally rather than running the page down — the taller review rows fit
+ * ~4 before the `max-h-[30rem]` cap engages, so the "scroll" hint + bottom
+ * fade appear from the 5th on.
+ */
+const SCROLL_AFTER = 4;
+
 export function ReviewQueue({ items }: { items: ReviewItem[] }) {
   if (items.length === 0) return null;
+  const overflowing = items.length > SCROLL_AFTER;
   return (
     <section id="needs-classification" aria-label="Needs classification" className="scroll-mt-6 rounded-2xl border border-line-soft bg-surface p-4 sm:p-5">
-      <div className="mb-3 flex items-baseline justify-between">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-sm font-semibold tracking-tight text-strong">Needs classification</h2>
-        <span className="font-mono text-[11px] text-dim">
-          {items.length} uncertain · classifying trains the model
+        <span className="shrink-0 font-mono text-[11px] text-dim">
+          {items.length} uncertain{overflowing ? " · scroll" : ""} · classifying trains the model
         </span>
       </div>
-      <ul className="space-y-2">
-        {items.map((item) => (
-          <ReviewRow key={item.message_id} item={item} />
-        ))}
-      </ul>
+      {/* Capped, internally-scrolling list so a long queue never extends the
+       * whole page; the wrapper anchors the bottom fade affordance. */}
+      <div className="relative">
+        <ul className="scroll-area max-h-[30rem] space-y-2 overflow-y-auto">
+          {items.map((item) => (
+            <ReviewRow key={item.message_id} item={item} />
+          ))}
+        </ul>
+        {overflowing ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent"
+          />
+        ) : null}
+      </div>
     </section>
   );
 }
