@@ -460,6 +460,78 @@ async def test_upsert_applications_path_is_scoped(pg_app: AsyncEngine) -> None:
     assert {r.company for r in rows} == {"Cedartech"}
 
 
+async def test_aware_received_at_persists_as_naive_utc(pg_app: AsyncEngine) -> None:
+    """Regression: an AWARE ``received_at`` must persist without a DataError.
+
+    ``email.utils.parsedate_to_datetime`` returns a timezone-AWARE datetime, but
+    the ``emails.received_at`` column is ``TIMESTAMP WITHOUT TIME ZONE``. asyncpg
+    refuses to encode an aware datetime into a naive column
+    (``can't subtract offset-naive and offset-aware datetimes`` → ``DataError``),
+    which 500'd ``POST /gmail/sync`` in production. SQLite silently tolerates the
+    mismatch, so only THIS real-Postgres path exercises the failing encoder.
+
+    Drives the actual purge/rebuild persistence with an aware timestamp and
+    asserts (a) it commits, and (b) every persisted ``received_at`` is tz-naive.
+    """
+
+    from datetime import timedelta, timezone
+
+    from sqlmodel import select
+
+    from jobtracker.cloud import pipeline
+    from jobtracker.cloud.applications import purge_and_rebuild_gmail_pipeline
+    from jobtracker.database import get_session, user_id_scope
+    from jobtracker.database.models import Application, Email
+
+    # Mirrors the owner's real crashing value (2026-07-08 20:04:21 -04:00).
+    aware = datetime(2026, 7, 8, 20, 4, 21, tzinfo=timezone(timedelta(hours=-4)))
+    items = [
+        pipeline.PipelineItem(
+            message_id="m-stripe",
+            category="applied",
+            sender_email="careers@stripe.com",
+            subject="Thanks for applying to the Data Scientist role at Stripe",
+            sender_name="Stripe",
+            received_at=aware,
+            confidence=0.95,
+            thread_id="th-stripe",
+        ),
+        pipeline.PipelineItem(
+            message_id="m-review",
+            category="interview",
+            sender_email="talent@replit.com",
+            subject="About your background",
+            sender_name="Replit",
+            received_at=aware,
+            confidence=0.78,
+        ),
+    ]
+    rolled = pipeline.roll_up_applications(items)
+    review = pipeline.collect_review_items(items)
+
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            # Before the fix this commit raised asyncpg DataError → HTTP 500.
+            created, updated, purged, needs_review = await purge_and_rebuild_gmail_pipeline(
+                s, USER_B, rolled, review
+            )
+        assert (created, needs_review) == (1, 1)
+
+        async with get_session() as s:
+            apps = (await s.exec(select(Application))).all()
+            emails = (await s.exec(select(Email))).all()
+
+    assert {a.company for a in apps} == {"Stripe"}
+    stripe = next(a for a in apps if a.company == "Stripe")
+    # -04:00 20:04 → 00:04 UTC the NEXT day: applied_date is the UTC date.
+    assert stripe.applied_date == datetime(2026, 7, 9).date()
+
+    assert emails, "the underlying mail must persist for click-through + review"
+    for e in emails:
+        assert e.received_at is not None
+        assert e.received_at.tzinfo is None, "received_at must be naive UTC"
+
+
 async def test_credential_save_read_is_scoped_and_cross_user_blocked(
     pg_app: AsyncEngine,
 ) -> None:
