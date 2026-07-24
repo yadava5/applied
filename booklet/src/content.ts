@@ -26,12 +26,12 @@ import type { SectionKey } from "./theme";
 // ---------------------------------------------------------------------------
 
 export const BRAND = {
-  name: "JobTracker",
+  name: "Applied",
   subtitle: "The inbox already holds the verdict. Classify it at the source.",
   author: "Ayush Yadav",
   year: "2026",
-  liveUrl: "jobtracker-web-five.vercel.app",
-  qrTarget: "https://jobtracker-web-five.vercel.app",
+  liveUrl: "getapplied.vercel.app",
+  qrTarget: "https://getapplied.vercel.app",
   spaceUrl: "huggingface.co/spaces/yadava5/jobtracker-classifier",
 } as const;
 
@@ -52,7 +52,7 @@ export const MASTHEAD = {
 export const ABSTRACT = {
   greeting: "Welcome.",
   body:
-    "Every job application resolves in your inbox — a rejection, an interview, an offer, an assessment link. The verdict already exists; it is just buried. JobTracker reads it at the source with a three-layer cascade — 201 regex rules, e5 embedding similarity, a SetFit few-shot head — behind a 0.85 confidence gate. Below the gate, a human decides. The learned head ships as int8 ONNX and runs entirely in your browser.",
+    "Every job application resolves in your inbox — a rejection, an interview, an offer, an assessment link. The verdict already exists; it is just buried. Applied reads it at the source with a three-layer cascade — 201 regex rules, e5 embedding similarity, a SetFit few-shot head — behind a 0.85 confidence gate. Below the gate, a human decides. The learned head ships as int8 ONNX and runs entirely in your browser.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ export const TOC = {
   ],
   colophon: [
     "© 2026 · Ayush Yadav",
-    "JobTracker · System Card Vol. 01",
+    "Applied · System Card Vol. 01",
     "Model licensed MIT",
   ],
   teaser:
@@ -327,7 +327,7 @@ export const HOW = {
     lede:
       "The cascade never auto-files a guess. A single confidence gate at 0.85 separates “file it” from “ask a person”.",
     body:
-      "Clear the gate and JobTracker files the email under its predicted category. Fall short and it lands in a review queue as needs_review — nothing is written, and the human’s correction becomes new SetFit training data. The gate is why a wrong label is rare and a silent wrong label is rarer.",
+      "Clear the gate and Applied files the email under its predicted category. Fall short and it lands in a review queue as needs_review — nothing is written, and the human’s correction becomes new SetFit training data. The gate is why a wrong label is rare and a silent wrong label is rarer.",
     bands: [
       { range: "≥ 0.85", verb: "AUTO-FILE", tone: "setfit", detail: "confident — filed under its category." },
       { range: "0.70 – 0.84", verb: "FLAG", tone: "gate", detail: "uncertain — queued for a human." },
@@ -434,7 +434,7 @@ export const PROOF = {
     eyebrow: "§04 · THE DECISION TRACE",
     headline: "Every verdict, traced.",
     lede:
-      "The signature JobTracker visual: each email’s path through the three layers and the gate. The layer that fired lights in its own hue; earlier layers passed it on, later layers were never needed. Confidence is drawn against the 0.85 gate.",
+      "The signature Applied visual: each email’s path through the three layers and the gate. The layer that fired lights in its own hue; earlier layers passed it on, later layers were never needed. Confidence is drawn against the 0.85 gate.",
     // Illustrative traces — demonstrate the mechanism (mirrors the app's
     // DEMO_REVIEW_QUEUE fixture); confidences illustrate behavior, not a benchmark.
     illustrativeNote: "Illustrative traces — the mechanism, not measured metrics.",
@@ -626,10 +626,10 @@ export const BUILD = {
     eyebrow: "TRY IT",
     headline: "Run it yourself.",
     tagline: "Scan to open the live app — or send a real email through all three layers, past the gate, in your browser.",
-    qrTarget: "https://jobtracker-web-five.vercel.app",
+    qrTarget: "https://getapplied.vercel.app",
     qrCaption: "scan to open the live web app",
     liveLabel: "LIVE WEB APP",
-    liveUrl: "jobtracker-web-five.vercel.app",
+    liveUrl: "getapplied.vercel.app",
     spaceLabel: "IN-BROWSER CLASSIFIER",
     spaceUrl: "hf.co/spaces/yadava5/jobtracker-classifier",
     spaceNote: "int8 ONNX · zero servers · runs entirely in the tab",
@@ -646,8 +646,8 @@ export const BUILD = {
 // ---------------------------------------------------------------------------
 
 export const BACK_COVER = {
-  wordmark: "JobTracker",
+  wordmark: "Applied",
   closingLine: "The verdict was always in the inbox.",
   coda: "Now it reads itself.",
-  colophon: ["JobTracker · System Card · Vol. 01", "Ayush Yadav · 2026", "Model licensed MIT · runs in-browser via ONNX"],
+  colophon: ["Applied · System Card · Vol. 01", "Ayush Yadav · 2026", "Model licensed MIT · runs in-browser via ONNX"],
 } as const;
