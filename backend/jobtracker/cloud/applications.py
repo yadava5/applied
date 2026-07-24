@@ -722,8 +722,34 @@ def _lifecycle_to_status(category: EmailCategory) -> str | None:
     return mapping.get(category)
 
 
-def _serialize(app: Application) -> CloudApplicationResponse:
-    """Convert an ``Application`` ORM row to the public response shape."""
+async def _connected_account_email(user_id: uuid.UUID) -> str | None:
+    """The email of the user's connected Gmail account, or ``None``.
+
+    Used only to retarget "Open in Gmail" deep links at the mailbox the user
+    actually linked (the reported bug: links opened the browser-default
+    ``/u/0/`` account). Best-effort — any lookup failure yields ``None`` and the
+    link falls back to the ``/u/0/`` form rather than breaking the response.
+    Imported lazily to keep the cloud cold-start import graph thin.
+    """
+
+    try:
+        from jobtracker.credentials.cloud import get_gmail_credentials
+
+        stored = await get_gmail_credentials(user_id)
+        return stored.email if stored else None
+    except Exception:  # noqa: BLE001 — a link hint must never break the endpoint
+        return None
+
+
+def _serialize(
+    app: Application, account_email: str | None = None
+) -> CloudApplicationResponse:
+    """Convert an ``Application`` ORM row to the public response shape.
+
+    ``account_email`` retargets the stored Gmail deep link (``url``) at the
+    connected mailbox so "Open in Gmail" lands in the right account even for rows
+    persisted before that fix; omitted callers keep the stored url verbatim.
+    """
 
     return CloudApplicationResponse(
         id=app.id,
@@ -737,7 +763,7 @@ def _serialize(app: Application) -> CloudApplicationResponse:
         ),
         applied_date=app.applied_date.isoformat() if app.applied_date else None,
         source=app.source,
-        url=app.url,
+        url=pipeline.retarget_gmail_deeplink(app.url, account_email),
     )
 
 
@@ -810,8 +836,11 @@ async def list_applications_cloud(
         )
         rows = (await session.exec(stmt)).all()
 
+    # Retarget each row's "Open in Gmail" link at the connected mailbox so the
+    # dashboard cards open the right account, not the browser-default /u/0/.
+    account_email = await _connected_account_email(user_id)
     return CloudApplicationListResponse(
-        applications=[_serialize(app) for app in rows],
+        applications=[_serialize(app, account_email) for app in rows],
         total=total,
     )
 
@@ -918,7 +947,9 @@ async def create_application_cloud(
     return _serialize(app)
 
 
-def _message_ref_response(email: Email) -> MessageRefResponse:
+def _message_ref_response(
+    email: Email, account_email: str | None = None
+) -> MessageRefResponse:
     return MessageRefResponse(
         message_id=email.message_id,
         thread_id=email.thread_id,
@@ -930,7 +961,9 @@ def _message_ref_response(email: Email) -> MessageRefResponse:
         category=email.classified_as.value if email.classified_as else None,
         confidence=email.classification_confidence,
         gmail_link=pipeline.gmail_deeplink(
-            thread_id=email.thread_id, message_id=email.message_id
+            thread_id=email.thread_id,
+            message_id=email.message_id,
+            account_email=account_email,
         ),
     )
 
@@ -962,6 +995,7 @@ async def review_queue_cloud(
             )
         ).all()
 
+    account_email = await _connected_account_email(user_id)
     items = [
         ReviewItemResponse(
             message_id=e.message_id,
@@ -973,7 +1007,9 @@ async def review_queue_cloud(
             snippet=e.body_snippet,
             confidence=e.classification_confidence,
             gmail_link=pipeline.gmail_deeplink(
-                thread_id=e.thread_id, message_id=e.message_id
+                thread_id=e.thread_id,
+                message_id=e.message_id,
+                account_email=account_email,
             ),
         )
         for e in rows
@@ -1009,6 +1045,10 @@ async def application_detail_cloud(
     anyone else's row).
     """
 
+    # Resolved before the row session opens so the deep-link retarget never
+    # nests a second session inside this one.
+    account_email = await _connected_account_email(user_id)
+
     async with get_session() as session:
         app = (
             await session.exec(
@@ -1031,12 +1071,10 @@ async def application_detail_cloud(
                 .order_by(Email.received_at.desc())
             )
         ).all()
-        serialized = _serialize(app)
+        serialized = _serialize(app, account_email)
+        messages = [_message_ref_response(e, account_email) for e in emails]
 
-    return ApplicationDetailResponse(
-        application=serialized,
-        messages=[_message_ref_response(e) for e in emails],
-    )
+    return ApplicationDetailResponse(application=serialized, messages=messages)
 
 
 @router.patch("/{application_id}", response_model=CloudApplicationResponse)
