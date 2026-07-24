@@ -9,11 +9,12 @@ import { CountUp } from "@/components/landing/CountUp";
 import { ScrambleText } from "@/components/landing/ScrambleText";
 import { MagneticLink } from "@/components/landing/MagneticLink";
 import { SignatureEnding } from "@/components/landing/SignatureEnding";
+import { Logo } from "@/components/brand/Logo";
 
 /**
  * Landing — a narrative scroll: PROBLEM → SHIFT → HOW → PROOF → TRY IT.
  *
- * The story is JobTracker's own, told in its own dark-monochrome system with
+ * The story is Applied's own, told in its own dark-monochrome system with
  * the viz accents (cyan rules / violet e5 / green SetFit / amber gate). Every
  * number on this page is verified against the repo:
  *   · 201 regex rules      — classifier/rules.py (106 strong + 26 weak + 69 neg)
@@ -62,9 +63,10 @@ export default function Landing() {
         <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-6">
           <Link
             href="/"
-            className="inline-flex min-h-11 items-center font-mono text-sm font-semibold text-strong"
+            aria-label="Applied — home"
+            className="brand-logo-link min-h-11 items-center text-strong"
           >
-            job<span className="text-dim">_</span>tracker
+            <Logo className="h-6 w-auto" />
           </Link>
           <nav className="flex items-center gap-4">
             <a
@@ -99,7 +101,7 @@ export default function Landing() {
         </p>
         <h1 className="max-w-3xl text-balance text-5xl font-medium tracking-tight text-strong sm:text-6xl">
           Your inbox already holds the verdict.
-          <span className="block text-muted">JobTracker extracts it.</span>
+          <span className="block text-muted">Applied extracts it.</span>
         </h1>
         <p className="mt-6 max-w-xl text-balance text-muted">
           Every application ends as an email — applied, interview, assessment, offer, rejection. The
@@ -353,7 +355,7 @@ export default function Landing() {
             </h2>
             <p className="mt-5 text-muted">
               Most AI inbox tools work by sending your email to a large language model, where your
-              private messages can become prompts, logs, or training data. JobTracker is built the
+              private messages can become prompts, logs, or training data. Applied is built the
               other way around: the classifier is a small, purpose-built pipeline — not an LLM — and
               it can run entirely in your browser, so on that path your mail never leaves your
               machine.
@@ -501,7 +503,7 @@ export default function Landing() {
             three layers · one gate · zero servers
           </p>
           <p className="mx-auto mt-3 max-w-xl text-balance text-center text-[12px] leading-relaxed text-muted">
-            Signed in, JobTracker connects your Gmail{" "}
+            Signed in, Applied connects your Gmail{" "}
             <span className="text-strong">read-only</span> to classify real mail — tokens encrypted,
             revocable anytime, nothing sent or deleted. Because{" "}
             <span className="font-mono text-dim">gmail.readonly</span> is a Google restricted scope,
