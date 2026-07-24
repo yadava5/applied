@@ -129,6 +129,57 @@ function SkeletonRow() {
   );
 }
 
+/**
+ * Per-visit snapshot cache (tab `sessionStorage`), keyed by the active filters.
+ *
+ * Every navigation to /inbox remounts this component; without a cache the mount
+ * effect re-mined Gmail on each visit — many paged `/api/gmail/inbox` calls plus
+ * a purge/rebuild `/api/gmail/sync` — which is the "re-scans on every visit" bug.
+ * Instead we persist the last successful mine and, on remount with the SAME
+ * filters, hydrate from it: repeat visits are instant and hit neither Gmail nor
+ * the classifier. Changing a filter or pressing Refresh still re-mines (and
+ * rewrites the snapshot); a short TTL bounds staleness. Session-scoped only —
+ * nothing touches disk, and the JWT is still verified on any real fetch.
+ */
+const SNAPSHOT_KEY = "applied:inbox:snapshot:v1";
+const SNAPSHOT_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+interface InboxSnapshot {
+  sig: string;
+  savedAt: number;
+  verdicts: InboxVerdict[];
+  analysis: PipelineAnalysis | null;
+  fetched: number;
+  target: number;
+}
+
+/** The fetch inputs that define a distinct mine — a snapshot is valid only for its own. */
+function filtersSig(f: InboxFilters): string {
+  return `${f.range}|${f.scope}|${f.count}`;
+}
+
+function readSnapshot(sig: string): InboxSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) return null;
+    const snap = JSON.parse(raw) as InboxSnapshot;
+    if (snap.sig !== sig || Date.now() - snap.savedAt > SNAPSHOT_TTL_MS) return null;
+    return snap;
+  } catch {
+    return null;
+  }
+}
+
+function writeSnapshot(snap: InboxSnapshot): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
+  } catch {
+    // Quota / serialization failure — the cache is a nicety, never required.
+  }
+}
+
 export function InboxWorkbench({ email }: { email?: string | null }) {
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_FILTERS);
   const [verdicts, setVerdicts] = useState<InboxVerdict[]>([]);
@@ -146,6 +197,9 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
 
   const runIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Distinguishes the first mount (may hydrate from cache) from a later
+  // filters change (always a real, user-initiated re-mine).
+  const didInitRef = useRef(false);
 
   const run = useCallback(async (f: InboxFilters) => {
     const runId = ++runIdRef.current;
@@ -210,10 +264,23 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         body: JSON.stringify({ items: pipelineItems }),
       });
       if (runId !== runIdRef.current) return;
+      let analysisData: PipelineAnalysis | null = null;
       if (analysisRes.ok) {
-        setAnalysis((await analysisRes.json()) as PipelineAnalysis);
+        analysisData = (await analysisRes.json()) as PipelineAnalysis;
+        setAnalysis(analysisData);
       }
       setState({ phase: "ready", fetched: acc.length, target });
+
+      // Persist this mine so a remount with the same filters (e.g. navigating
+      // Inbox → Dashboard → Inbox) hydrates instantly instead of re-hitting Gmail.
+      writeSnapshot({
+        sig: filtersSig(f),
+        savedAt: Date.now(),
+        verdicts: acc,
+        analysis: analysisData,
+        fetched: acc.length,
+        target,
+      });
 
       // Opportunistically persist the mined pipeline so the dashboard shows the
       // real board. Fire-and-forget: the inbox view never blocks on it, and the
@@ -230,12 +297,31 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
     }
   }, []);
 
-  // Debounced (re)fetch on mount + whenever the fetch filters change, so rapid
-  // toggling of range/count/scope collapses into a single mine.
+  // On first mount, serve a fresh cached snapshot for these filters if we have
+  // one — this is what stops the re-scan on every visit. Only mine Gmail when
+  // there's nothing cached (first-ever visit) or the user changed a filter;
+  // rapid toggling still collapses into a single debounced mine. The manual
+  // Refresh button calls `run` directly and always re-mines. The state update
+  // runs inside the timeout (not synchronously in the effect body) so hydration
+  // never triggers a cascading render.
   useEffect(() => {
-    const t = setTimeout(() => {
-      void run(filters);
-    }, 300);
+    const firstMount = !didInitRef.current;
+    didInitRef.current = true;
+    const t = setTimeout(
+      () => {
+        if (firstMount) {
+          const snap = readSnapshot(filtersSig(filters));
+          if (snap) {
+            setVerdicts(snap.verdicts);
+            setAnalysis(snap.analysis);
+            setState({ phase: "ready", fetched: snap.fetched, target: snap.target });
+            return;
+          }
+        }
+        void run(filters);
+      },
+      firstMount ? 0 : 300,
+    );
     return () => clearTimeout(t);
   }, [filters, run]);
 
