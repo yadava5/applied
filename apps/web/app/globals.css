@@ -133,6 +133,39 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------------------------------------------------------------------------
+ * Internal-scroll lists. Dashboard lists that can grow unbounded (pipeline
+ * columns, the review queue, recent activity) cap their height and scroll
+ * inside instead of stretching the page. `.scroll-area` gives them a thin,
+ * theme-aware scrollbar: a hairline thumb that reads against both the dark ink
+ * and light paper surfaces (via the --line ramp) and darkens on hover. The
+ * stable gutter reserves the scrollbar's width up-front so a column's card
+ * width — and thus the four-column row — never shifts when the thumb appears,
+ * and every column stays optically aligned whether or not it overflows.
+ * ------------------------------------------------------------------------- */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-gutter: stable;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background: var(--line);
+  background-clip: padding-box;
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+  background-clip: padding-box;
+}
+
 /* Mono uppercase label — the machine voice. */
 .label-mono {
   color: var(--text-dim);
