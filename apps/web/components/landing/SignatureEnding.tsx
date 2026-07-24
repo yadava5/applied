@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { ScrambleText } from "./ScrambleText";
 
 /**
- * The signature ending — JobTracker's own, no borrowed motif.
+ * The signature ending — Applied's own, no borrowed motif.
  *
  * One envelope descends the lane, and as it crosses each classifier layer the
  * band it passes pulses in that layer's hue (cyan rules → violet e5 → green
  * SetFit). It clears the 0.85 gate, then collapses into a single green verdict
  * glyph — the ring draws, the check lands, a ripple breathes out — while the
- * `job_tracker` wordmark decodes in beneath it. It plays once when scrolled
+ * `applied` wordmark decodes in beneath it. It plays once when scrolled
  * into view, and can be replayed.
  *
  * Reduced-motion renders the resolved end state directly (verdict glyph formed,
@@ -108,7 +108,7 @@ function Scene({ run, reduced }: { run: number; reduced: boolean }) {
       {/* wordmark + caption */}
       <div className="sig__mark mt-6 text-center">
         <p className="font-mono text-2xl font-semibold text-strong sm:text-3xl">
-          <ScrambleText text="job_tracker" mode="scramble" active={reduced ? true : landed} perCharMs={42} />
+          <ScrambleText text="applied" mode="scramble" active={reduced ? true : landed} perCharMs={42} />
         </p>
         <p className="mt-3 font-mono text-[11px] text-dim">
           one email · three layers · one gate · one verdict
