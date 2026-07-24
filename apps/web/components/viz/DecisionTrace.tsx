@@ -16,7 +16,7 @@ function layerIndex(method: DemoReviewItem["method"]) {
 }
 
 /**
- * The signature JobTracker visual: every email's verdict traced through the
+ * The signature Applied visual: every email's verdict traced through the
  * three-layer pipeline. The layer that *fired* lights in its own hue; layers
  * before it passed the email on, layers after weren't needed. A confidence
  * meter is drawn against the 0.85 auto-file gate — below it, a human presides.
@@ -178,7 +178,7 @@ export function DecisionTrace() {
                   <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
                     {item.needsReview
                       ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and the correction becomes new SetFit training data."
-                      : `Confidence clears the 0.85 gate, so JobTracker files this as “${item.category.replace("_", " ")}” automatically.`}
+                      : `Confidence clears the 0.85 gate, so Applied files this as “${item.category.replace("_", " ")}” automatically.`}
                   </p>
                 </div>
               )}
