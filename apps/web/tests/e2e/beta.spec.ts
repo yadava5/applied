@@ -16,9 +16,9 @@ import {
  * landing's privacy section.
  */
 
-// encodeURIComponent("JobTracker beta access request") === "JobTracker%20beta%20access%20request"
+// encodeURIComponent("Applied beta access request") === "Applied%20beta%20access%20request"
 const ADMIN_MAILTO =
-  /^mailto:aesh\.03\.23@gmail\.com\?subject=JobTracker%20beta%20access%20request/;
+  /^mailto:aesh\.03\.23@gmail\.com\?subject=Applied%20beta%20access%20request/;
 
 test.describe("beta access notice", () => {
   test("the beta pill renders and expands into the beta details", async ({ page }) => {
