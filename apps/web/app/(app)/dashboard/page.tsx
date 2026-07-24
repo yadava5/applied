@@ -170,9 +170,19 @@ export default async function DashboardPage() {
     // Connected but empty → honest real-empty state (never fake sample rows).
     // A one-shot background sync tries to fill the board from connected Gmail.
     if (connected) {
+      // Zero *filed* applications does not mean zero work for the user: the
+      // classifier may be holding low-confidence lifecycle mail for review.
+      // Surface that queue here so it is reachable from an otherwise-empty
+      // board (otherwise the "N need classification" items are stranded).
+      const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
+      const reviewNote =
+        state.needsReview > 0 ? ` · ${state.needsReview} need classification` : "";
       return (
         <section className="space-y-6">
-          <DashboardHeader subtitle="connected · no applications detected yet" />
+          <DashboardHeader
+            subtitle={`connected · no applications detected yet${reviewNote}`}
+            connected={connected}
+          />
           <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
             <p className="label-mono">connected to gmail</p>
             <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
@@ -195,6 +205,7 @@ export default async function DashboardPage() {
               <ForwardRoutes />
             </div>
           </div>
+          {reviewItems.length > 0 ? <ReviewQueue items={reviewItems} /> : null}
         </section>
       );
     }
