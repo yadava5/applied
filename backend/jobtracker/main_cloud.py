@@ -61,7 +61,7 @@ def _build_cors_origin_regex() -> str:
 
 app = FastAPI(
     title=f"{settings.app_name} (cloud)",
-    description="Cloud (Vercel + Supabase) deployment of the JobTracker backend.",
+    description="Cloud (Vercel + Supabase) deployment of the Applied backend.",
     version=settings.app_version,
     docs_url="/docs",
     redoc_url="/redoc",
