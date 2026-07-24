@@ -1,3 +1,4 @@
+import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
 import { type Application, STAGES, qualifierOf, stageOf } from "@/lib/dashboard/summary";
 
 /** Locale-stable short date ("Jul 14") — deterministic across server/client. */
@@ -7,12 +8,17 @@ function filedOn(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function ApplicationCard({ app }: { app: Application }) {
+/**
+ * Read-only card for the public demo + sample previews: no correction controls
+ * (they would 401 without a session). Still honours the real received date.
+ */
+function StaticApplicationCard({ app }: { app: Application }) {
   const qualifier = qualifierOf(app.status);
   const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
+  const filed = app.applied_date ?? app.created_at;
   return (
     <li
-      className="group rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
+      className="rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
       <p className="flex items-center gap-2 text-sm font-medium text-strong">
@@ -23,9 +29,9 @@ function ApplicationCard({ app }: { app: Application }) {
           </span>
         )}
       </p>
-      <p className="truncate text-xs text-muted">{app.position}</p>
+      {app.position ? <p className="truncate text-xs text-muted">{app.position}</p> : null}
       {app.notes && <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-dim">{app.notes}</p>}
-      <p className="mt-2 font-mono text-[10px] text-dim">filed {filedOn(app.created_at)}</p>
+      <p className="mt-2 font-mono text-[10px] text-dim">filed {filedOn(filed)}</p>
     </li>
   );
 }
@@ -33,10 +39,20 @@ function ApplicationCard({ app }: { app: Application }) {
 /**
  * Status-grouped pipeline board. `accepted` folds into the offered column and
  * `withdrawn` into rejected, each keeping a qualifier tag so no application is
- * ever invisible. Presentational — the same board the public demo renders,
- * driven by real rows on the dashboard.
+ * ever invisible.
+ *
+ * On the real dashboard (`interactive`, the default) each row is clickable +
+ * correctable (open in Gmail, change stage, dismiss/delete). The public demo
+ * and sample previews pass `interactive={false}` for a read-only board so their
+ * sample rows never fire real, auth-gated mutations.
  */
-export function PipelineBoard({ applications }: { applications: Application[] }) {
+export function PipelineBoard({
+  applications,
+  interactive = true,
+}: {
+  applications: Application[];
+  interactive?: boolean;
+}) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {STAGES.map((stage) => {
@@ -64,7 +80,13 @@ export function PipelineBoard({ applications }: { applications: Application[] })
                   none yet
                 </li>
               ) : (
-                items.map((app) => <ApplicationCard key={app.id} app={app} />)
+                items.map((app) =>
+                  interactive ? (
+                    <ApplicationCard key={app.id} app={app} />
+                  ) : (
+                    <StaticApplicationCard key={app.id} app={app} />
+                  ),
+                )
               )}
             </ul>
           </section>
