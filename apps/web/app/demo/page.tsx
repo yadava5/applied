@@ -73,7 +73,7 @@ export default function DemoPage() {
             highlight={`${summary.advancedPct}% advanced past applied`}
           />
           <div className="mt-4">
-            <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} />
+            <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} interactive={false} />
           </div>
           <div className="mt-4">
             <RecentActivity applications={DEMO_APPLICATIONS_AS_API} limit={5} />
