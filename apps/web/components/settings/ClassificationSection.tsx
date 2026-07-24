@@ -48,7 +48,7 @@ export function ClassificationSection({ initialGate }: { initialGate: number }) 
   return (
     <SettingsSection
       title="Classification"
-      description="How JobTracker decides what to auto-file versus hold for you."
+      description="How Applied decides what to auto-file versus hold for you."
     >
       <div className="space-y-5">
         <div>
