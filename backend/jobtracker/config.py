@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Application
     # -------------------------------------------------------------------------
-    app_name: str = "JobTracker"
+    app_name: str = "Applied"
     app_version: str = "0.1.0"
     # Environment:
     # - development: normal local runs (uses on-disk SQLite DB)
