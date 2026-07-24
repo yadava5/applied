@@ -62,9 +62,13 @@ function isValidUrl(value: string): boolean {
 export function AddApplicationForm({
   mode = "live",
   align = "end",
+  compact = false,
 }: {
   mode?: Mode;
   align?: "start" | "end";
+  /** Render an unobtrusive "+" icon instead of the prominent labelled button.
+   *  Manual filing is now the rare path — the pipeline fills from Gmail. */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -136,10 +140,22 @@ export function AddApplicationForm({
 
   return (
     <div className={`flex flex-col gap-1.5 ${align === "end" ? "items-end" : "items-start"}`}>
-      <button type="button" onClick={() => setOpen(true)} className={primaryBtnClass}>
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        File an application
-      </button>
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="File an application by hand"
+          aria-label="File an application by hand"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line text-dim transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </button>
+      ) : (
+        <button type="button" onClick={() => setOpen(true)} className={primaryBtnClass}>
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          File an application
+        </button>
+      )}
 
       {confirmation ? (
         <p role="status" className="font-mono text-[11px] text-live">
