@@ -1,0 +1,87 @@
+/**
+ * Server-only helpers for the application correction + review surface.
+ *
+ * These talk to the FastAPI backend's cloud `/applications` endpoints carrying
+ * the caller's Supabase JWT — the token and `BACKEND_API_URL` never reach the
+ * browser. They mirror `lib/gmail/server.ts`: plain `fetch` (not the typed
+ * openapi-fetch client) so these endpoints don't need to be baked into the
+ * committed seed schema, and every call returns a normalized result instead of
+ * throwing so the proxy route handlers can map it to an honest status.
+ *
+ * Everything here is user-scoped on the backend (the JWT's `sub`), and each
+ * write both updates the row AND records a training example — the correction
+ * loop the user drives from the board.
+ */
+import { serverEnv } from "@/lib/env";
+import { getAccessToken } from "@/lib/supabase/auth";
+
+export interface ApiCallResult {
+  ok: boolean;
+  status: number;
+  data: unknown;
+}
+
+const UNAUTHENTICATED: ApiCallResult = { ok: false, status: 401, data: { detail: "unauthenticated" } };
+
+async function call(
+  path: string,
+  init: { method: string; body?: unknown },
+): Promise<ApiCallResult> {
+  const token = await getAccessToken();
+  if (!token) return UNAUTHENTICATED;
+
+  try {
+    const { BACKEND_API_URL } = serverEnv();
+    const res = await fetch(`${BACKEND_API_URL}${path}`, {
+      method: init.method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      data: { detail: err instanceof Error ? err.message : "Backend unreachable" },
+    };
+  }
+}
+
+/** PATCH /applications/{id} — apply a user's status correction (sticky + trains). */
+export function updateApplicationStatus(id: number, status: string): Promise<ApiCallResult> {
+  return call(`/applications/${id}`, { method: "PATCH", body: { status } });
+}
+
+/** POST /applications/{id}/dismiss — "not an application"; removes + trains "other". */
+export function dismissApplication(id: number): Promise<ApiCallResult> {
+  return call(`/applications/${id}/dismiss`, { method: "POST", body: {} });
+}
+
+/** DELETE /applications/{id} — hard-delete the row and its linked emails. */
+export function deleteApplication(id: number): Promise<ApiCallResult> {
+  return call(`/applications/${id}`, { method: "DELETE" });
+}
+
+/** GET /applications/{id} — the row plus the underlying (metadata-only) mail. */
+export function getApplicationDetail(id: number): Promise<ApiCallResult> {
+  return call(`/applications/${id}`, { method: "GET" });
+}
+
+/** GET /applications/review — the needs-classification queue. */
+export function getReviewQueue(): Promise<ApiCallResult> {
+  return call(`/applications/review`, { method: "GET" });
+}
+
+/** POST /applications/review/{messageId}/classify — classify + persist + train. */
+export function classifyReviewItem(messageId: string, category: string): Promise<ApiCallResult> {
+  return call(`/applications/review/${encodeURIComponent(messageId)}/classify`, {
+    method: "POST",
+    body: { category },
+  });
+}
