@@ -10,7 +10,7 @@ import { secondaryBtnClass } from "@/components/ui/formStyles";
 type ExportState = "idle" | "working" | "error";
 
 /**
- * Data: export everything JobTracker holds for you, and the on-device mail
+ * Data: export everything Applied holds for you, and the on-device mail
  * import path. Export pulls your rows from the server-side proxy (which carries
  * your JWT) and downloads them as JSON entirely in the browser — no third party,
  * nothing emailed.
@@ -28,7 +28,7 @@ export function DataSection() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `jobtracker-applications-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `applied-applications-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
