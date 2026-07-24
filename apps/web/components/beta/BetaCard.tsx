@@ -43,7 +43,7 @@ export function BetaCard({ className = "" }: { className?: string }) {
           </h2>
 
           <p className="mt-2 text-sm leading-relaxed text-muted">
-            JobTracker is in active development. Direct Gmail connection is limited to{" "}
+            Applied is in active development. Direct Gmail connection is limited to{" "}
             <span className="text-strong">100 beta testers</span>{" "}right now — that&apos;s the real
             Google OAuth test-user cap on the <code className="font-mono text-dim">gmail.readonly</code>{" "}
             scope — while we gather feedback. Want in? Email the admin to be added to the beta.
