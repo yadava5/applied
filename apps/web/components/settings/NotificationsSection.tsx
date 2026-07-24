@@ -51,10 +51,12 @@ function Toggle({
 }
 
 /**
- * Notification preferences. The choices persist to the Supabase user's
- * metadata immediately, so they survive reloads and are readable by any future
- * sender. Email delivery isn't wired on this deployment yet — the caption says
- * so plainly rather than pretending a toggle sends mail it can't.
+ * Notification preferences. The choices persist to the Supabase user's metadata
+ * immediately (so they survive reloads) AND drive real in-app cues on the
+ * dashboard: `reviewAlerts` surfaces the "held for review" banner, `weekly`
+ * surfaces the in-app this-week digest (see `NotificationCues` in the dashboard
+ * page). Email delivery isn't wired on this deployment yet — the caption says so
+ * plainly rather than implying a toggle sends mail it can't.
  */
 export function NotificationsSection({ initial }: { initial: NotificationPrefs }) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
@@ -78,19 +80,20 @@ export function NotificationsSection({ initial }: { initial: NotificationPrefs }
           checked={prefs.weekly}
           onChange={(v) => persist({ ...prefs, weekly: v })}
           label="Weekly pipeline summary"
-          description="A once-a-week digest of what moved — applied, interviews, offers, rejections."
+          description="Show a this-week digest on your dashboard — new applications, what’s in motion, offers."
         />
         <Toggle
           checked={prefs.reviewAlerts}
           onChange={(v) => persist({ ...prefs, reviewAlerts: v })}
           label="Needs-review alerts"
-          description="Ping me when the classifier isn’t confident and an email is held for my review."
+          description="Surface a banner on your dashboard when the classifier isn’t confident and mail is held for review."
         />
       </div>
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-line-soft pt-4">
         <p className="text-[12px] leading-relaxed text-dim">
-          Preferences are saved to your account now. Email delivery is rolling out — until it lands,
-          these govern in-app cues only.
+          Saved to your account and applied to your dashboard cues right away. Email delivery isn’t
+          live on this deployment yet — these switches drive the in-app cues only, and will drive
+          email too once it ships.
         </p>
         <SaveStatus state={state} />
       </div>
