@@ -773,6 +773,32 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Sidebar rail (components/shell/RailPipeline.tsx) — the pipeline snapshot's
+ * distribution segments grow in once on mount, staggered left-to-right so the
+ * bar reads as the pipeline assembling. Transform-only (scaleX from an
+ * origin-left), so layout never shifts. Enhancement only: collapses to the
+ * static, fully-drawn bar under prefers-reduced-motion.
+ * ------------------------------------------------------------------------- */
+.rail-seg {
+  transform-origin: left;
+  animation: rail-seg-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@keyframes rail-seg-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-seg {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Modal dialog (components/ui/Dialog.tsx) — a quick fade for the scrim and a
  * spring rise for the panel. Enhancement only: collapses to a static, fully
  * visible state under prefers-reduced-motion.
