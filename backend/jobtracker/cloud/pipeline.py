@@ -21,6 +21,7 @@ Phase 2 dashboard-persistence path. No network, no I/O, no side effects.
 from __future__ import annotations
 
 import re
+import urllib.parse
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -875,7 +876,10 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
 
 
 def gmail_deeplink(
-    *, thread_id: str | None = None, message_id: str | None = None
+    *,
+    thread_id: str | None = None,
+    message_id: str | None = None,
+    account_email: str | None = None,
 ) -> str | None:
     """Build a stable Gmail web deep link for a thread/message, or None.
 
@@ -883,9 +887,50 @@ def gmail_deeplink(
     falls back to the message id. Uses the ``#all/`` anchor so archived mail is
     still reachable. We only have Gmail API ids (never the RFC822 header), which
     the ``#all/`` fragment resolves directly.
+
+    ``account_email`` — the CONNECTED Gmail account. When known we select it with
+    ``?authuser=<email>`` rather than the positional ``/u/0/`` slot. ``/u/0/`` is
+    the FIRST account in the browser's session, which is almost never the linked
+    mailbox for a user signed into several Google accounts — the reported bug
+    where "Open in Gmail" dumped the user into the wrong inbox. ``authuser`` with
+    the exact address is Google's robust multi-account selector; the ``/u/0/``
+    form is kept only as the fallback when the account is unknown.
     """
 
     ref = (thread_id or "").strip() or (message_id or "").strip()
     if not ref:
         return None
+    email = (account_email or "").strip()
+    if email:
+        return (
+            f"https://mail.google.com/mail/?authuser={urllib.parse.quote(email)}"
+            f"#all/{ref}"
+        )
     return f"https://mail.google.com/mail/u/0/#all/{ref}"
+
+
+def retarget_gmail_deeplink(url: str | None, account_email: str | None) -> str | None:
+    """Point an existing stored Gmail deep link at the connected account.
+
+    A persisted ``Application.url`` was minted with the positional ``/u/0/``
+    account (or an older connection). Rewriting the account selector to
+    ``?authuser=<connected-email>`` at READ time makes an "Open in Gmail" click
+    always land in the mailbox the user has linked *now* — healing rows written
+    before this fix without needing a re-sync, and following a reconnection to a
+    different account. The message/thread fragment is preserved verbatim, so the
+    same conversation still opens. Non-Gmail or fragment-less urls pass through
+    unchanged; when no account is known the url is returned as-is.
+    """
+
+    if not url or not account_email or "mail.google.com" not in url:
+        return url
+    marker = url.find("#")
+    if marker == -1:
+        return url
+    email = account_email.strip()
+    if not email:
+        return url
+    fragment = url[marker:]  # keep '#all/<ref>' (or '#search/…') exactly
+    return (
+        f"https://mail.google.com/mail/?authuser={urllib.parse.quote(email)}{fragment}"
+    )
