@@ -1,3 +1,4 @@
+import { Bell } from "lucide-react";
 import Link from "next/link";
 
 import { createServerApiClient } from "@/lib/api/server";
@@ -17,6 +18,9 @@ import { StageFunnel } from "@/components/viz/StageFunnel";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
+import { readNotificationPrefs } from "@/lib/settings/notifications";
+import { getCurrentUser } from "@/lib/supabase/auth";
+import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 
 /**
  * The signed-in product: a real dashboard. Headline metrics + the funnel come
@@ -134,8 +138,76 @@ function DashboardHeader({
   );
 }
 
+/**
+ * The real in-app behavior behind the Settings → Notifications toggles.
+ *
+ * Those toggles used to persist to the user's metadata but drive nothing, so
+ * the controls were effectively cosmetic. Here they gate genuine on-dashboard
+ * cues: "Needs-review alerts" surfaces a prominent banner (deep-linked to the
+ * review queue) whenever the classifier is holding mail for a decision, and
+ * "Weekly pipeline summary" surfaces an in-app digest of what moved this week.
+ * Both render only when their toggle is on and there is something to say, so a
+ * user who wants a quiet board simply leaves them off. Email delivery is a
+ * separate, not-yet-live channel — these are the in-app half, and they are real.
+ */
+function NotificationCues({
+  prefs,
+  needsReview,
+  total,
+  thisWeek,
+  inMotion,
+  offers,
+}: {
+  prefs: NotificationPrefs;
+  needsReview: number;
+  total: number;
+  thisWeek: number;
+  inMotion: number;
+  offers: number;
+}) {
+  const showReview = prefs.reviewAlerts && needsReview > 0;
+  const showWeekly = prefs.weekly && total > 0;
+  if (!showReview && !showWeekly) return null;
+
+  return (
+    <div className="space-y-2">
+      {showReview ? (
+        <Link
+          href="#needs-classification"
+          className="flex items-center gap-2.5 rounded-xl border border-review/40 bg-surface px-4 py-3 text-sm text-strong transition-colors hover:border-review"
+        >
+          <Bell className="h-4 w-4 shrink-0 text-review" aria-hidden />
+          <span>
+            {needsReview} email{needsReview === 1 ? " is" : "s are"} held for your review — classify
+            {needsReview === 1 ? " it" : " them"} to keep your pipeline accurate.
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[11px] text-dim" aria-hidden>
+            review ↓
+          </span>
+        </Link>
+      ) : null}
+      {showWeekly ? (
+        <div
+          role="status"
+          className="rounded-xl border border-line-soft bg-surface px-4 py-3 font-mono text-[12px] text-muted"
+        >
+          <span className="text-strong">This week</span> · {thisWeek} new application
+          {thisWeek === 1 ? "" : "s"} · {inMotion} in motion · {offers} offer{offers === 1 ? "" : "s"}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default async function DashboardPage() {
-  const [state, gmailStatus] = await Promise.all([loadDashboard(), getGmailStatus()]);
+  const [state, gmailStatus, user] = await Promise.all([
+    loadDashboard(),
+    getGmailStatus(),
+    getCurrentUser(),
+  ]);
+  const notifPrefs = readNotificationPrefs(
+    (user?.user_metadata ?? {}) as Record<string, unknown>,
+  );
 
   // A user who has connected Gmail (or imported) is a REAL user: never show
   // them the "sample data · not yours" preview, even when empty or degraded.
@@ -237,6 +309,15 @@ export default async function DashboardPage() {
   return (
     <section className="space-y-6">
       <DashboardHeader subtitle={subtitle} connected={connected} />
+
+      <NotificationCues
+        prefs={notifPrefs}
+        needsReview={state.needsReview}
+        total={summary.total}
+        thisWeek={summary.thisWeek}
+        inMotion={summary.inMotion}
+        offers={summary.offers}
+      />
 
       <StatTiles summary={summary} />
       <ClassifierContext />
