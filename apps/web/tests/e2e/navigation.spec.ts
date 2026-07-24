@@ -14,7 +14,7 @@ test.describe("route gating", () => {
       const watch = startConsoleWatch(page);
       await page.goto(path);
       await expect(page).toHaveURL(/\/login/);
-      await expect(page.getByRole("heading", { name: /sign in to jobtracker/i })).toBeVisible();
+      await expect(page.getByRole("heading", { name: /sign in to applied/i })).toBeVisible();
       expect(watch.errors, watch.errors.join("\n")).toEqual([]);
     });
   }
