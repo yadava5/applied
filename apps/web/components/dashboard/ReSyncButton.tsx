@@ -7,12 +7,13 @@ import { useState } from "react";
 /**
  * Manual "Re-sync from Gmail" control for the POPULATED dashboard.
  *
- * The empty-state auto-runs one sync (GmailSyncTrigger), but a user who already
- * has rows — including the owner's stale garbage rows — had NO way to trigger
- * the purge/rebuild. This button POSTs the same `/api/gmail/sync` (which REPLACES
- * the Gmail-derived pipeline: stale auto rows out, real rows + review queue
- * rebuilt, manual/user-set rows preserved) and `router.refresh()`es the server
- * board on success. Idempotent, so pressing it twice is harmless.
+ * This is the ONLY caller that runs the DESTRUCTIVE `mode: "rebuild"` — a
+ * deliberate "start clean" that REPLACES the Gmail-derived pipeline (stale auto
+ * rows out, real rows + review queue rebuilt from the fresh scan; manual/
+ * user-set rows preserved). Routine/auto syncs (GmailSyncTrigger, the inbox
+ * relay) use the additive path instead, so they can never wipe a real
+ * application the current bounded scan didn't re-include. `router.refresh()`es
+ * the server board on success; idempotent, so pressing it twice is harmless.
  */
 export function ReSyncButton() {
   const router = useRouter();
@@ -26,7 +27,8 @@ export function ReSyncButton() {
       const res = await fetch("/api/gmail/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        // Explicit destructive rebuild — the only place that purges.
+        body: JSON.stringify({ mode: "rebuild" }),
         cache: "no-store",
       });
       if (!res.ok) {
