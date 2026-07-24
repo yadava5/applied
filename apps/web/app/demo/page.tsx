@@ -11,9 +11,9 @@ import { DEMO_APPLICATIONS_AS_API } from "@/lib/demo/asApplications";
 import { summarize } from "@/lib/dashboard/summary";
 
 export const metadata: Metadata = {
-  title: "Live demo — JobTracker",
+  title: "Live demo — Applied",
   description:
-    "The JobTracker dashboard and classifier decision trace, on fixture data. No inbox is read.",
+    "The Applied dashboard and classifier decision trace, on fixture data. No inbox is read.",
 };
 
 /**
