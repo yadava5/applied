@@ -127,7 +127,7 @@ export const BuildClosingPage: React.FC<{
           lineHeight: 1.5,
         }}
       >
-        JobTracker · System Card Vol. 01
+        Applied · System Card Vol. 01
         <br />
         Ayush Yadav · 2026
       </div>
