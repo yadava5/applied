@@ -90,7 +90,7 @@ export function SamplePreview() {
           caption={`pipeline distribution · ${summary.total} applications`}
           highlight={`${summary.advancedPct}% advanced past applied`}
         />
-        <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} />
+        <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} interactive={false} />
       </div>
     </section>
   );
