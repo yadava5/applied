@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 
+import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -59,6 +60,15 @@ export function TopBar({ userEmail }: TopBarProps) {
             <Menu className="h-5 w-5" aria-hidden="true" />
           )}
         </button>
+        {/* Compact mark — the desktop sidebar wordmark is hidden below `md`, so
+            this keeps the app branded (and gives a home link) on phones. */}
+        <Link
+          href="/dashboard"
+          aria-label="Applied — go to dashboard"
+          className="brand-logo-link shrink-0 text-strong md:hidden"
+        >
+          <Logo variant="mark" className="h-7 w-7" />
+        </Link>
         <div className="truncate font-mono text-sm text-muted">{userEmail ?? ""}</div>
       </div>
 
