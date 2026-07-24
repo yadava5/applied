@@ -18,7 +18,7 @@ test("login page renders sign-in form", async ({ page }) => {
   await page.goto("/login");
 
   await expect(
-    page.getByRole("heading", { name: /sign in to jobtracker/i }),
+    page.getByRole("heading", { name: /sign in to applied/i }),
   ).toBeVisible();
 
   await expect(page.getByLabel(/email/i)).toBeVisible();
@@ -30,7 +30,7 @@ test("signup page renders the create-account form", async ({ page }) => {
   await page.goto("/signup");
 
   await expect(
-    page.getByRole("heading", { name: /create your jobtracker account/i }),
+    page.getByRole("heading", { name: /create your applied account/i }),
   ).toBeVisible();
   await expect(page.getByLabel(/email/i)).toBeVisible();
   await expect(page.getByLabel(/password/i)).toBeVisible();
