@@ -120,8 +120,8 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
         <h3 className="label-mono">how the connection works — and why it&apos;s safe</h3>
         <ul className="grid gap-2 text-sm text-muted">
           {[
-            ["Read-only", "JobTracker requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything."],
-            ["Standard OAuth", "Sign-in happens on Google's own consent screen. JobTracker never sees your Google password."],
+            ["Read-only", "Applied requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything."],
+            ["Standard OAuth", "Sign-in happens on Google's own consent screen. Applied never sees your Google password."],
             ["Encrypted at rest", "The refresh token is stored Fernet-encrypted, scoped to your account. It is never shown in the browser, never logged, and never placed in a URL."],
             ["Revocable anytime", "Disconnect here to revoke access at Google and delete the stored token. You can also remove it at myaccount.google.com/permissions."],
           ].map(([k, v]) => (
@@ -148,7 +148,7 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
         <p className="mt-3 text-sm text-muted">
           The path that scales to the public <span className="text-strong">without</span> restricted-scope
           verification is <span className="text-strong">forwarding ingestion</span>: you set a Gmail
-          filter that auto-forwards job-related mail to a per-user JobTracker address, and the same
+          filter that auto-forwards job-related mail to a per-user Applied address, and the same
           classifier labels what arrives — no account access required. That is the recommended route
           for broad, public use; the direct OAuth connection above is the right fit for a small,
           invited group and for the desktop app.
