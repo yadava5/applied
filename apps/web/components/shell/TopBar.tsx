@@ -69,7 +69,9 @@ export function TopBar({ userEmail }: TopBarProps) {
         >
           <Logo variant="mark" className="h-7 w-7" />
         </Link>
-        <div className="truncate font-mono text-sm text-muted">{userEmail ?? ""}</div>
+        {/* Identity moved to the sidebar rail's bottom user chip on desktop —
+            keep the email here only below `md`, where the rail is hidden. */}
+        <div className="truncate font-mono text-sm text-muted md:hidden">{userEmail ?? ""}</div>
       </div>
 
       <Button
