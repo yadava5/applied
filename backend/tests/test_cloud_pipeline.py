@@ -392,6 +392,32 @@ def test_gmail_deeplink_prefers_thread_then_message() -> None:
     assert p.gmail_deeplink() is None
 
 
+def test_gmail_deeplink_selects_connected_account_when_known() -> None:
+    # Unknown account → positional /u/0/ (browser-default) fallback.
+    assert (
+        p.gmail_deeplink(thread_id="t1")
+        == "https://mail.google.com/mail/u/0/#all/t1"
+    )
+    # Known account → authuser selector so the RIGHT mailbox opens, not /u/0/;
+    # the address is URL-encoded and the #all/<ref> conversation is preserved.
+    link = p.gmail_deeplink(thread_id="t1", account_email="yadava5@miamioh.edu")
+    assert link == "https://mail.google.com/mail/?authuser=yadava5%40miamioh.edu#all/t1"
+    assert "/u/0/" not in link
+
+
+def test_retarget_gmail_deeplink_heals_stored_links() -> None:
+    stored = "https://mail.google.com/mail/u/0/#all/t9"
+    # Retarget a legacy /u/0/ link at the connected account, keeping the ref.
+    assert (
+        p.retarget_gmail_deeplink(stored, "a@b.com")
+        == "https://mail.google.com/mail/?authuser=a%40b.com#all/t9"
+    )
+    # No account or non-Gmail / fragment-less urls pass through untouched.
+    assert p.retarget_gmail_deeplink(stored, None) == stored
+    assert p.retarget_gmail_deeplink("https://example.com/x", "a@b.com") == "https://example.com/x"
+    assert p.retarget_gmail_deeplink(None, "a@b.com") is None
+
+
 # --- datetime normalization (asyncpg naive-column safety) --------------------
 
 from datetime import timezone as _tz  # noqa: E402
