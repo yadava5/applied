@@ -71,7 +71,7 @@ export function NotificationsSection({ initial }: { initial: NotificationPrefs }
   return (
     <SettingsSection
       title="Notifications"
-      description="What JobTracker should keep you posted about."
+      description="What Applied should keep you posted about."
     >
       <div className="divide-y divide-line-soft">
         <Toggle
