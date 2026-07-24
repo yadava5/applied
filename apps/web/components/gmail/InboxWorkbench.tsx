@@ -283,13 +283,14 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       });
 
       // Opportunistically persist the mined pipeline so the dashboard shows the
-      // real board. Fire-and-forget: the inbox view never blocks on it, and the
-      // backend upsert is idempotent.
+      // real board. Fire-and-forget: the inbox view never blocks on it, the
+      // backend upsert is idempotent, and mode:"additive" means relaying a
+      // narrow mine never wipes applications a broader one already found.
       void fetch("/api/gmail/sync", {
         method: "POST",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: pipelineItems }),
+        body: JSON.stringify({ items: pipelineItems, mode: "additive" }),
       }).catch(() => {});
     } catch {
       if (ac.signal.aborted || runId !== runIdRef.current) return;
