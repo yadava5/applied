@@ -31,7 +31,7 @@ export function AppearanceSection() {
   const theme = useSyncExternalStore(subscribe, readAppliedTheme, () => "dark" as Theme);
 
   return (
-    <SettingsSection title="Appearance" description="Choose how JobTracker looks on this device.">
+    <SettingsSection title="Appearance" description="Choose how Applied looks on this device.">
       <div
         role="radiogroup"
         aria-label="Theme"
