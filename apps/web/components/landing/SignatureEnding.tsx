@@ -1,31 +1,82 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ScrambleText } from "./ScrambleText";
 
 /**
- * The signature ending — Applied's own, no borrowed motif.
+ * The signature ending — Applied's own, no borrowed motif — now a full-bleed
+ * band anchored at the very bottom of the landing.
  *
- * One envelope descends the lane, and as it crosses each classifier layer the
- * band it passes pulses in that layer's hue (cyan rules → violet e5 → green
- * SetFit). It clears the 0.85 gate, then collapses into a single green verdict
- * glyph — the ring draws, the check lands, a ripple breathes out — while the
- * `applied` wordmark decodes in beneath it. It plays once when scrolled
- * into view, and can be replayed.
+ * The pipeline runs horizontally, edge to edge: one envelope crosses the whole
+ * width, pulsing each classifier layer in its hue as it passes (cyan rules →
+ * violet e5 → green SetFit), clears the amber 0.85 gate, and collapses into a
+ * single green verdict glyph at the right edge. Beneath it, a giant `applied`
+ * wordmark — stretched across the full width — scramble-decodes as the verdict
+ * lands: the page's last image is the inbox resolving into a word.
  *
- * Reduced-motion renders the resolved end state directly (verdict glyph formed,
- * wordmark set), with no envelope and no motion.
+ * The whole band is a button: click (or Enter/Space) replays the gesture.
+ * It plays once when scrolled into view. Reduced-motion renders the resolved
+ * end state directly — verdict formed, wordmark decoded, no envelope.
  */
 
+const WORD = "applied";
+/** Deterministic pre-decode garble — stable across SSR + first client render. */
+const GARBLE = "4pp1_3d";
+const GLYPHS = "abcdefghjkmnpqrstuvwxyz0123456789<>·_/";
+
+function ScrambleWordmark({ resolved }: { resolved: boolean }) {
+  const [display, setDisplay] = useState(GARBLE);
+
+  useEffect(() => {
+    // `resolved` only ever flips false → true within a mount (the Scene is
+    // remounted per run, resetting `display` to the garble), so no reset here.
+    if (!resolved) return;
+    let settled = 0;
+    let tick = 0;
+    const id = setInterval(() => {
+      tick += 1;
+      if (tick % 2 === 0) settled += 1;
+      if (settled >= WORD.length) {
+        setDisplay(WORD);
+        clearInterval(id);
+        return;
+      }
+      setDisplay(
+        WORD.slice(0, settled) +
+          Array.from({ length: WORD.length - settled }, () =>
+            GLYPHS.charAt(Math.floor(Math.random() * GLYPHS.length)),
+          ).join(""),
+      );
+    }, 55);
+    return () => clearInterval(id);
+  }, [resolved]);
+
+  return (
+    <text
+      className="sig__wordmark font-mono"
+      x="600"
+      // Baseline rides the band's bottom edge so the descenders bleed off the
+      // page — the deliberate AutoML-wordmark clip, in Applied's mono voice.
+      y="276"
+      textAnchor="middle"
+      fontSize="200"
+      fontWeight="600"
+      textLength="1156"
+      lengthAdjust="spacingAndGlyphs"
+      fill="currentColor"
+      data-resolved={resolved || undefined}
+    >
+      {display}
+    </text>
+  );
+}
+
 function Scene({ run, reduced }: { run: number; reduced: boolean }) {
-  // Scene is keyed by `run` in the parent, so each play remounts it and `landed`
-  // resets to its initial value — no manual reset needed. When reduced, the
-  // wordmark is forced resolved via the `active` prop below, independent of this.
+  // Keyed by `run` in the parent, so each play remounts it and `landed` resets.
   const [landed, setLanded] = useState(false);
 
   useEffect(() => {
     if (reduced || run === 0) return;
-    const id = setTimeout(() => setLanded(true), 2000);
+    const id = setTimeout(() => setLanded(true), 3200);
     return () => clearTimeout(id);
   }, [run, reduced]);
 
@@ -34,60 +85,65 @@ function Scene({ run, reduced }: { run: number; reduced: boolean }) {
   return (
     <div className={cls}>
       <svg
-        viewBox="0 0 480 330"
-        className="sig__svg mx-auto block w-full max-w-[420px]"
+        viewBox="0 0 1200 280"
+        className="sig__svg block w-full"
         role="img"
-        aria-label="An email descends through the three classifier layers, clears the 0.85 gate, and resolves into a single verdict."
+        aria-label="An email crosses the three classifier layers left to right, clears the 0.85 gate, and resolves into a single verdict as the applied wordmark decodes."
       >
-        {/* lane guide */}
+        {/* the giant wordmark — full width, decodes when the verdict lands */}
+        <g style={{ color: "var(--text-dim)" }}>
+          <ScrambleWordmark resolved={reduced || landed} />
+        </g>
+
+        {/* lane guide — edge to edge */}
         <line
-          x1="240"
-          y1="30"
-          x2="240"
-          y2="292"
+          x1="20"
+          y1="64"
+          x2="1180"
+          y2="64"
           stroke="var(--line-soft)"
           strokeWidth="1"
           strokeDasharray="2 6"
         />
 
-        {/* layer bands */}
+        {/* layer crossings */}
         {[
-          { y: 116, color: "var(--viz-rules)", n: "1", label: "rules" },
-          { y: 160, color: "var(--viz-embeddings)", n: "2", label: "e5" },
-          { y: 204, color: "var(--viz-setfit)", n: "3", label: "SetFit" },
-        ].map((b, i) => (
-          <g key={b.label} className="sig__band" style={{ color: b.color, ["--d" as string]: `${0.55 + i * 0.35}s` }}>
-            <line x1="170" y1={b.y} x2="290" y2={b.y} stroke="currentColor" strokeWidth="1.5" />
-            <text x="300" y={b.y + 3.5} fontSize="9.5" fill="currentColor" className="font-mono">
+          { x: 320, color: "var(--viz-rules)", n: "1", label: "rules", d: "0.9s" },
+          { x: 560, color: "var(--viz-embeddings)", n: "2", label: "e5", d: "1.55s" },
+          { x: 800, color: "var(--viz-setfit)", n: "3", label: "SetFit", d: "2.2s" },
+        ].map((b) => (
+          <g key={b.label} className="sig__band" style={{ color: b.color, ["--d" as string]: b.d }}>
+            <line x1={b.x} y1="24" x2={b.x} y2="104" stroke="currentColor" strokeWidth="1.5" />
+            <text x={b.x + 9} y="21" fontSize="10.5" fill="currentColor" className="font-mono">
               {b.n} · {b.label}
             </text>
           </g>
         ))}
 
         {/* gate */}
-        <g className="sig__band sig__gate" style={{ color: "var(--amber)", ["--d" as string]: "1.6s" }}>
+        <g className="sig__band sig__gate" style={{ color: "var(--amber)", ["--d" as string]: "2.75s" }}>
           <line
-            x1="160"
-            y1="248"
-            x2="300"
-            y2="248"
+            x1="980"
+            y1="24"
+            x2="980"
+            y2="104"
             stroke="currentColor"
             strokeWidth="1.5"
             strokeDasharray="5 4"
           />
-          <text x="308" y="251.5" fontSize="9.5" fill="currentColor" className="font-mono">
+          <text x="989" y="21" fontSize="10.5" fill="currentColor" className="font-mono">
             0.85 · gate
           </text>
         </g>
 
-        {/* verdict node */}
+        {/* verdict node — the right edge of the lane */}
         <g style={{ color: "var(--viz-setfit)" }}>
-          <circle className="sig__glow" cx="240" cy="290" r="30" fill="currentColor" />
-          <circle className="sig__ripple" cx="240" cy="290" r="21" fill="none" stroke="currentColor" strokeWidth="1.5" />
-          <circle className="sig__ring" cx="240" cy="290" r="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <circle className="sig__glow" cx="1105" cy="64" r="27" fill="currentColor" />
+          <circle className="sig__ripple" cx="1105" cy="64" r="19" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <circle className="sig__ring" cx="1105" cy="64" r="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           <path
             className="sig__check"
-            d="M231 290 L237.5 297 L251 281"
+            d="M1097 64 L1103 70.5 L1115 56"
             fill="none"
             stroke="currentColor"
             strokeWidth="2.4"
@@ -96,30 +152,20 @@ function Scene({ run, reduced }: { run: number; reduced: boolean }) {
           />
         </g>
 
-        {/* the descending envelope */}
-        <g transform="translate(240 44)">
+        {/* the crossing envelope */}
+        <g transform="translate(40 64)">
           <g className="sig__envelope" style={{ color: "var(--text-muted)" }}>
-            <rect x="-26" y="-16" width="52" height="32" rx="3.5" fill="var(--surface)" stroke="currentColor" strokeWidth="1.4" />
-            <path d="M-26 -14 L0 3 L26 -14" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <rect x="-24" y="-15" width="48" height="30" rx="3.5" fill="var(--surface)" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M-24 -13 L0 3 L24 -13" fill="none" stroke="currentColor" strokeWidth="1.4" />
           </g>
         </g>
       </svg>
-
-      {/* wordmark + caption */}
-      <div className="sig__mark mt-6 text-center">
-        <p className="font-mono text-2xl font-semibold text-strong sm:text-3xl">
-          <ScrambleText text="applied" mode="scramble" active={reduced ? true : landed} perCharMs={42} />
-        </p>
-        <p className="mt-3 font-mono text-[11px] text-dim">
-          one email · three layers · one gate · one verdict
-        </p>
-      </div>
     </div>
   );
 }
 
 export function SignatureEnding() {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const [run, setRun] = useState(0);
   const [reduced, setReduced] = useState(false);
 
@@ -144,7 +190,7 @@ export function SignatureEnding() {
           }
         }
       },
-      { threshold: 0.4 },
+      { threshold: 0.3 },
     );
     io.observe(el);
     return () => {
@@ -154,21 +200,19 @@ export function SignatureEnding() {
   }, []);
 
   return (
-    <div ref={ref} className="relative">
+    <button
+      ref={ref}
+      type="button"
+      onClick={() => setRun((r) => r + 1)}
+      className="sig-band block w-full cursor-pointer border-0 bg-transparent p-0 text-left"
+      aria-label="Replay the signature ending: one email crosses three layers and one gate and resolves into one verdict."
+    >
+      <span className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-6 pt-8 pb-4 font-mono text-[11px] text-dim sm:px-10">
+        <span className="uppercase tracking-widest">07 · one gesture</span>
+        <span>one email · three layers · one gate · one verdict · ↺ click to replay</span>
+      </span>
       {/* keyed so a replay cleanly restarts every CSS animation in the scene */}
       <Scene key={run} run={run} reduced={reduced} />
-
-      {!reduced && (
-        <div className="mt-6 flex justify-center">
-          <button
-            type="button"
-            onClick={() => setRun((r) => r + 1)}
-            className="spring-ease rounded-lg border border-line px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-widest text-muted hover:border-line-strong hover:text-strong"
-          >
-            ↺ replay
-          </button>
-        </div>
-      )}
-    </div>
+    </button>
   );
 }
