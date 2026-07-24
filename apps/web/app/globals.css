@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* JobTracker web — monochrome system. Near-black surfaces, a gray text
+/* Applied web — monochrome system. Near-black surfaces, a gray text
  * ramp, hairline rules, mono uppercase labels. Chromatic ink is
  * semantic only: green = confident/live, amber = needs review,
  * red = rejection. */
@@ -644,6 +644,50 @@ body {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Brand logo (components/brand/Logo.tsx) — the wordmark + pipeline mark. On
+ * hover / keyboard-focus of its link, the pipeline "runs": each node pings in
+ * sequence up to the emerald verdict, echoing the landing `sig-pulse` and the
+ * `beta-dot` ping, while the lockup lifts on the same spring curve as the app's
+ * buttons (`.spring-ease`). The accents reuse the data-viz tokens so the mark
+ * re-themes with the UI. Collapses to a static logo under reduced-motion.
+ * ------------------------------------------------------------------------- */
+.brand-logo__proc {
+  color: var(--viz-rules);
+  stroke: currentColor;
+}
+.brand-logo__verdict {
+  color: var(--viz-setfit);
+  fill: currentColor;
+}
+.brand-logo__node {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.brand-logo-link {
+  display: inline-flex;
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.brand-logo-link:hover,
+.brand-logo-link:focus-visible {
+  transform: translateY(-1px);
+}
+.brand-logo-link:hover .brand-logo__node,
+.brand-logo-link:focus-visible .brand-logo__node {
+  animation: brand-pulse 0.5s ease var(--d, 0ms) both;
+}
+@keyframes brand-pulse {
+  0%,
+  100% {
+    filter: none;
+    transform: scale(1);
+  }
+  45% {
+    filter: drop-shadow(0 0 5px currentColor);
+    transform: scale(1.18);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reveal,
   .reveal-stagger > *,
@@ -690,6 +734,18 @@ body {
   }
   .spring-ease {
     transition: none !important;
+  }
+  /* Brand logo holds its resolved state — no lift, no pipeline pulse. */
+  .brand-logo-link {
+    transition: none !important;
+  }
+  .brand-logo-link:hover,
+  .brand-logo-link:focus-visible {
+    transform: none !important;
+  }
+  .brand-logo-link:hover .brand-logo__node,
+  .brand-logo-link:focus-visible .brand-logo__node {
+    animation: none !important;
   }
   /* Beta notice collapses to its resolved, static state. */
   .beta-card,
