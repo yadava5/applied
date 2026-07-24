@@ -54,6 +54,12 @@ export interface components {
       status: string;
       notes: string | null;
       created_at: string;
+      /** Real date the application mail was received (from the email, not now()). */
+      applied_date?: string | null;
+      /** Origin/ownership tag: "gmail" (auto), "gmail_user"/"manual" (user-owned). */
+      source?: string | null;
+      /** Gmail deep link to the underlying conversation (click-through). */
+      url?: string | null;
     };
     ApplicationListResponse: {
       applications: components["schemas"]["Application"][];
@@ -70,6 +76,8 @@ export interface components {
       this_week: number;
       /** Keyed by raw backend status value; only non-zero statuses present. */
       status_counts: Record<string, number>;
+      /** Uncertain verdicts awaiting a human decision (review queue size). */
+      needs_review?: number;
     };
   };
 }
