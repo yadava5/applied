@@ -37,7 +37,7 @@ export function ProfileSection({
   }
 
   return (
-    <SettingsSection title="Profile" description="How you show up in JobTracker.">
+    <SettingsSection title="Profile" description="How you show up in Applied.">
       <form onSubmit={save} className="space-y-4">
         <label className="grid gap-1">
           <span className={fieldLabelClass}>display name</span>
