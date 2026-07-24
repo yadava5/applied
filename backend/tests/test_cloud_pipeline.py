@@ -390,3 +390,57 @@ def test_gmail_deeplink_prefers_thread_then_message() -> None:
     assert p.gmail_deeplink(thread_id="t1", message_id="m1").endswith("#all/t1")
     assert p.gmail_deeplink(message_id="m1").endswith("#all/m1")
     assert p.gmail_deeplink() is None
+
+
+# --- datetime normalization (asyncpg naive-column safety) --------------------
+
+from datetime import timezone as _tz  # noqa: E402
+
+
+def test_to_naive_utc_strips_offset_and_converts_to_utc() -> None:
+    # An AWARE datetime (as parsedate_to_datetime returns) → naive UTC.
+    aware = datetime(2026, 7, 8, 20, 4, 21, tzinfo=_tz(timedelta(hours=-4)))
+    naive = p.to_naive_utc(aware)
+    assert naive is not None
+    assert naive.tzinfo is None
+    assert naive == datetime(2026, 7, 9, 0, 4, 21)  # -04:00 → +00:00 rolls the day
+    # A naive datetime passes through untouched; None → None.
+    already = datetime(2026, 7, 8, 20, 4, 21)
+    assert p.to_naive_utc(already) is already
+    assert p.to_naive_utc(None) is None
+
+
+def test_rollup_and_review_emit_naive_datetimes_from_aware_input() -> None:
+    # The pure layer must NEVER hand an aware datetime to the persistence layer,
+    # or asyncpg's naive TIMESTAMP encoder raises (the prod 500). Mixed aware/
+    # naive input must not raise on the min()/max() date reduction either.
+    aware = datetime(2026, 7, 8, 20, 4, 21, tzinfo=_tz(timedelta(hours=-4)))
+    naive = datetime(2026, 7, 1, 12, 0, 0)
+    items = [
+        p.PipelineItem(
+            message_id="a1", category="applied", sender_email="careers@stripe.com",
+            subject="Thanks for applying at Stripe", sender_name="Stripe",
+            received_at=aware, confidence=0.95, thread_id="t1",
+        ),
+        p.PipelineItem(
+            message_id="a2", category="interview", sender_email="careers@stripe.com",
+            subject="Interview with Stripe", sender_name="Stripe",
+            received_at=naive, confidence=0.9,
+        ),
+        p.PipelineItem(
+            message_id="r1", category="interview", sender_email="talent@replit.com",
+            subject="About your background", sender_name="Replit",
+            received_at=aware, confidence=0.78,
+        ),
+    ]
+    rolled = p.roll_up_applications(items)
+    assert len(rolled) == 1
+    r = rolled[0]
+    assert r.applied_at is not None and r.applied_at.tzinfo is None
+    assert r.last_activity is not None and r.last_activity.tzinfo is None
+    for ref in r.messages:
+        assert ref.received_at is None or ref.received_at.tzinfo is None
+
+    review = p.collect_review_items(items)
+    assert len(review) == 1
+    assert review[0].received_at is not None and review[0].received_at.tzinfo is None
