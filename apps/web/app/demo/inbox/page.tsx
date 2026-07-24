@@ -2,11 +2,12 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { SampleInbox } from "@/components/demo/SampleInbox";
+import { Logo } from "@/components/brand/Logo";
 
 export const metadata: Metadata = {
-  title: "Sample inbox — JobTracker",
+  title: "Sample inbox — Applied",
   description:
-    "See the JobTracker classifier's real verdicts on a set of sample job-search emails — no Google connection, no inbox read.",
+    "See the Applied classifier's real verdicts on a set of sample job-search emails — no Google connection, no inbox read.",
 };
 
 /**
@@ -24,9 +25,10 @@ export default function DemoInboxPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Link
             href="/"
-            className="inline-flex min-h-11 items-center font-mono text-sm font-semibold text-strong"
+            aria-label="Applied — home"
+            className="brand-logo-link min-h-11 items-center text-strong"
           >
-            job<span className="text-dim">_</span>tracker
+            <Logo className="h-6 w-auto" />
           </Link>
           <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
             sample inbox · real verdicts · no inbox read
@@ -43,7 +45,7 @@ export default function DemoInboxPage() {
       <section className="mt-8 space-y-3">
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Sample inbox</h1>
         <p className="max-w-2xl text-muted">
-          Eleven realistic job-search emails, each run through the actual JobTracker classifier. Click
+          Eleven realistic job-search emails, each run through the actual Applied classifier. Click
           any message to trace its path through the three layers and see where it lands against the
           0.85 auto-file gate.
         </p>
