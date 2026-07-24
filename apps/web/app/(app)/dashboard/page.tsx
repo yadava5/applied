@@ -11,6 +11,7 @@ import {
   ForwardRoutes,
   SamplePreview,
 } from "@/components/dashboard/DashboardEmptyState";
+import { ReSyncButton } from "@/components/dashboard/ReSyncButton";
 import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
 import { StageFunnel } from "@/components/viz/StageFunnel";
 import { getReviewQueue } from "@/lib/applications/server";
@@ -109,16 +110,26 @@ async function loadDashboard(): Promise<LoadState> {
   }
 }
 
-function DashboardHeader({ subtitle }: { subtitle: string }) {
+function DashboardHeader({
+  subtitle,
+  connected = false,
+}: {
+  subtitle: string;
+  /** When Gmail is connected, expose the manual "Re-sync" (purge+rebuild). */
+  connected?: boolean;
+}) {
   return (
     <header className="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
         <p className="mt-1 font-mono text-xs text-dim">{subtitle}</p>
       </div>
-      {/* Manual filing is the rare path now — the pipeline fills from Gmail — so
-          the add control is a compact, unobtrusive "+" rather than a CTA. */}
-      <AddApplicationForm compact />
+      <div className="flex items-start gap-2">
+        {connected ? <ReSyncButton /> : null}
+        {/* Manual filing is the rare path now — the pipeline fills from Gmail —
+            so the add control is a compact, unobtrusive "+" rather than a CTA. */}
+        <AddApplicationForm compact />
+      </div>
     </header>
   );
 }
@@ -214,7 +225,7 @@ export default async function DashboardPage() {
 
   return (
     <section className="space-y-6">
-      <DashboardHeader subtitle={subtitle} />
+      <DashboardHeader subtitle={subtitle} connected={connected} />
 
       <StatTiles summary={summary} />
       <ClassifierContext />
