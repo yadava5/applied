@@ -147,7 +147,7 @@ function ExpandedTrace({ email }: { email: SampleEmail }) {
       <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
         {needsReview
           ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and the correction becomes new SetFit training data."
-          : `Confidence clears the 0.85 gate, so JobTracker files this as “${pretty(category)}” automatically.`}
+          : `Confidence clears the 0.85 gate, so Applied files this as “${pretty(category)}” automatically.`}
       </p>
 
       {/* LIVE proof: layer 1 recomputed in-browser just now */}
