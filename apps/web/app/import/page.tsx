@@ -3,10 +3,11 @@ import type { Metadata } from "next";
 
 import { AppShell } from "@/components/shell/AppShell";
 import { ImportMail } from "@/components/import/ImportMail";
+import { Logo } from "@/components/brand/Logo";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
-  title: "Import your mail — JobTracker",
+  title: "Import your mail — Applied",
   description:
     "Classify your own job-search mail with no Google connection and no sign-in. Your file is parsed and classified entirely in your browser — nothing is uploaded.",
 };
@@ -38,7 +39,7 @@ export default async function ImportPage() {
       <p className="max-w-2xl text-muted">
         Classify your own job-search mail without connecting Gmail and without signing in. Export
         your mail from <span className="text-strong">Google Takeout</span> (or drop a single{" "}
-        <span className="font-mono text-dim">.eml</span>), and JobTracker runs the classifier on it
+        <span className="font-mono text-dim">.eml</span>), and Applied runs the classifier on it
         right here in your browser. Nothing is uploaded — this is the same privacy guarantee as the
         rest of the app, made literal.
       </p>
@@ -74,9 +75,10 @@ export default async function ImportPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Link
             href="/"
-            className="inline-flex min-h-11 items-center font-mono text-sm font-semibold text-strong"
+            aria-label="Applied — home"
+            className="brand-logo-link min-h-11 items-center text-strong"
           >
-            job<span className="text-dim">_</span>tracker
+            <Logo className="h-6 w-auto" />
           </Link>
           <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
             import · on-device · no upload
