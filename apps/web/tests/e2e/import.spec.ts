@@ -87,6 +87,50 @@ test.describe("import your mail", () => {
     await expect(page.getByText("interview", { exact: true }).first()).toBeVisible();
   });
 
+  test("a real multipart mbox with a mixed-case boundary decodes cleanly", async ({ page }) => {
+    // Regression: MIME boundaries are case-sensitive (RFC 2046), but the parser
+    // used to lowercase the whole Content-Type — so a mixed-case boundary
+    // (`Apple-Mail=_…`, Outlook `_000_…`) failed to split and the raw MIME (both
+    // parts + boundary lines + undecoded QP) leaked into the classifier as body.
+    // A short plain part makes any leak land inside the visible snippet.
+    await page.goto("/import");
+    const mbox = [
+      "From 1@import Thu Jul 16 10:00:00 2026",
+      "From: Juniper Cloud <recruiting@junipercloud.io>",
+      "Subject: Let's schedule your technical interview",
+      "MIME-Version: 1.0",
+      'Content-Type: multipart/alternative; boundary="Apple-Mail=_AbC123XyZ"',
+      "",
+      "--Apple-Mail=_AbC123XyZ",
+      'Content-Type: text/plain; charset="utf-8"',
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      "Please pick a slot for your interview at our caf=C3=A9.",
+      "--Apple-Mail=_AbC123XyZ",
+      'Content-Type: text/html; charset="utf-8"',
+      "",
+      "<html><body><p>Please pick a slot.</p></body></html>",
+      "--Apple-Mail=_AbC123XyZ--",
+      "",
+    ].join("\n");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "takeout.mbox",
+      mimeType: "application/mbox",
+      buffer: Buffer.from(mbox, "utf-8"),
+    });
+
+    await expect(page.getByTestId("import-row")).toHaveCount(1);
+    await expect(page.getByText("interview", { exact: true }).first()).toBeVisible();
+
+    // Expand the row: the decoded body must be the clean plain text (QP `=C3=A9`
+    // → café), never the raw boundary / html that the lowercasing bug leaked.
+    await page.getByTestId("import-row").click();
+    const results = page.getByTestId("import-results");
+    await expect(results.getByText(/café/)).toBeVisible();
+    await expect(results.getByText(/Apple-Mail=_AbC123XyZ/)).toHaveCount(0);
+    await expect(results.getByText(/text\/html/)).toHaveCount(0);
+  });
+
   test("an unparseable file shows an honest error, not a crash", async ({ page }) => {
     await page.goto("/import");
     await page.getByTestId("import-file").setInputFiles({
