@@ -61,14 +61,19 @@ export function TopBar({ userEmail }: TopBarProps) {
           )}
         </button>
         {/* Compact mark — the desktop sidebar wordmark is hidden below `md`, so
-            this keeps the app branded (and gives a home link) on phones. */}
-        <Link
-          href="/dashboard"
-          aria-label="Applied — go to dashboard"
-          className="brand-logo-link shrink-0 text-strong md:hidden"
-        >
-          <Logo variant="mark" className="h-7 w-7" />
-        </Link>
+            this keeps the app branded (and gives a home link) on phones. The
+            `md:hidden` lives on a wrapper because `.brand-logo-link` sets
+            `display` in unlayered CSS (globals), which outranks the layered
+            utility on the same element — hiding the parent sidesteps that. */}
+        <span className="shrink-0 md:hidden">
+          <Link
+            href="/dashboard"
+            aria-label="Applied — go to dashboard"
+            className="brand-logo-link text-strong"
+          >
+            <Logo variant="mark" className="h-7 w-7" />
+          </Link>
+        </span>
         {/* Identity moved to the sidebar rail's bottom user chip on desktop —
             keep the email here only below `md`, where the rail is hidden. */}
         <div className="truncate font-mono text-sm text-muted md:hidden">{userEmail ?? ""}</div>
