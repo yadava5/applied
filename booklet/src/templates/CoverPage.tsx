@@ -36,7 +36,7 @@ export const CoverPage: React.FC = () => (
         color: COLORS.ON_DARK_MUTED,
       }}
     >
-      JobTracker · System Card
+      Applied · System Card
     </div>
 
     {/* Layer legend — top-right, establishes the color language up front. A
@@ -133,7 +133,7 @@ export const CoverPage: React.FC = () => (
           color: COLORS.ON_DARK,
         }}
       >
-        Job<span style={{ color: COLORS.RULES_CYAN }}>Tracker</span>
+        App<span style={{ color: COLORS.RULES_CYAN }}>lied</span>
       </div>
       <div
         style={{
