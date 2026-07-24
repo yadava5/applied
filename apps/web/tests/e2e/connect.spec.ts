@@ -21,7 +21,7 @@ test.describe("Gmail connect — honest degradation", () => {
     // Ends on the login page, carrying a redirect back to settings.
     await expect(page).toHaveURL(/\/login/);
     expect(response?.url() ?? page.url()).toMatch(/redirect=%2Fsettings|redirect=\/settings/);
-    await expect(page.getByRole("heading", { name: /sign in to jobtracker/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /sign in to applied/i })).toBeVisible();
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
