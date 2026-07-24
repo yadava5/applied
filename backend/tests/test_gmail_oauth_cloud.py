@@ -933,6 +933,116 @@ async def test_sync_precision_only_real_rows_dates_and_review(client: AsyncClien
     assert summary["needs_review"] == review["total"] == len(review_senders)
 
 
+def _one_app_batch(mid: str, domain: str, company: str, category: str = "applied") -> list[dict]:
+    """A single-message scan that rolls up to exactly one real application."""
+
+    return [
+        {
+            "message_id": mid,
+            "category": category,
+            "sender_email": f"careers@{domain}",
+            "subject": f"Thanks for applying to the Engineer role at {company}",
+            "sender_name": company,
+            "confidence": 0.95,
+            "thread_id": f"th-{mid}",
+            "received_at": "2026-05-01T09:00:00+00:00",
+        }
+    ]
+
+
+async def test_auto_sync_is_additive_only_rebuild_purges(client: AsyncClient) -> None:
+    """A routine (additive) sync must NEVER drop an app the current scan missed.
+
+    Reproduces the data-loss bug: TCS is filed by one scan, then a later scan
+    whose bounded window doesn't re-include TCS ran and erased it. Additive mode
+    must keep TCS; only the explicit rebuild may clear it.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    # Sync A (additive by default) files TCS.
+    respA = await client.post(
+        "/gmail/sync", json={"items": _one_app_batch("m-tcs", "tcs.com", "Tata")}, headers=headers
+    )
+    assert respA.status_code == 200, respA.text
+    listA = (await client.get("/applications", headers=headers)).json()
+    assert listA["total"] == 1
+    tcs_company = listA["applications"][0]["company"]
+
+    # Sync B (additive) scans a DIFFERENT window — only Aven, TCS not included.
+    respB = await client.post(
+        "/gmail/sync", json={"items": _one_app_batch("m-aven", "aven.com", "Aven")}, headers=headers
+    )
+    assert respB.status_code == 200, respB.text
+    assert respB.json()["purged"] == 0  # additive removes nothing
+    listB = (await client.get("/applications", headers=headers)).json()
+    companies_B = {a["company"] for a in listB["applications"]}
+    # DURABLE: TCS survived a scan that never mentioned it; Aven was added.
+    assert tcs_company in companies_B
+    assert listB["total"] == 2
+
+    # Only an EXPLICIT rebuild replaces the board — TCS (absent from this scan) clears.
+    respC = await client.post(
+        "/gmail/sync",
+        json={"items": _one_app_batch("m-aven", "aven.com", "Aven"), "mode": "rebuild"},
+        headers=headers,
+    )
+    assert respC.status_code == 200, respC.text
+    assert respC.json()["purged"] >= 1
+    listC = (await client.get("/applications", headers=headers)).json()
+    companies_C = {a["company"] for a in listC["applications"]}
+    assert tcs_company not in companies_C
+    assert listC["total"] == 1
+
+
+async def test_additive_sync_no_duplicate_and_status_only_advances(
+    client: AsyncClient,
+) -> None:
+    """Repeat additive syncs upsert one row per company; status only advances."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    await client.post(
+        "/gmail/sync", json={"items": _one_app_batch("s1", "stripe.com", "Stripe")}, headers=headers
+    )
+    l1 = (await client.get("/applications", headers=headers)).json()
+    assert l1["total"] == 1
+    row_id = l1["applications"][0]["id"]
+    assert l1["applications"][0]["status"] == "applied"
+
+    # An interview signal for the SAME company advances the SAME row (no dupe).
+    await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "s2",
+                    "category": "interview",
+                    "sender_email": "careers@stripe.com",
+                    "subject": "Interview with Stripe",
+                    "sender_name": "Stripe",
+                    "confidence": 0.9,
+                    "thread_id": "th-s2",
+                    "received_at": "2026-05-10T09:00:00+00:00",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    l2 = (await client.get("/applications", headers=headers)).json()
+    assert l2["total"] == 1  # upserted, not duplicated
+    assert l2["applications"][0]["id"] == row_id
+    assert l2["applications"][0]["status"] == "interviewing"  # advanced
+
+    # A later applied-only signal must NOT downgrade interviewing → applied.
+    await client.post(
+        "/gmail/sync", json={"items": _one_app_batch("s1", "stripe.com", "Stripe")}, headers=headers
+    )
+    l3 = (await client.get("/applications", headers=headers)).json()
+    assert l3["total"] == 1
+    assert l3["applications"][0]["status"] == "interviewing"  # monotonic, no regression
+
+
 async def test_application_detail_click_through_has_gmail_link(client: AsyncClient) -> None:
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
@@ -1043,13 +1153,23 @@ async def test_resync_purges_stale_auto_but_preserves_manual(client: AsyncClient
     companies = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
     assert {"MyStartup", "Stripe", "Airbnb"} <= companies
 
-    # A later sync where the mail no longer includes Airbnb: the stale AUTO row is
-    # purged, but the manual row survives untouched.
     only_stripe = [i for i in _owner_batch() if i["message_id"] != "m-airbnb"]
-    resp = await client.post("/gmail/sync", json={"items": only_stripe}, headers=headers)
+
+    # A routine ADDITIVE sync that no longer includes Airbnb must NOT purge it —
+    # a bounded scan missing a company is not evidence the application is gone.
+    add_resp = await client.post("/gmail/sync", json={"items": only_stripe}, headers=headers)
+    assert add_resp.json()["purged"] == 0
+    companies_add = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
+    assert "Airbnb" in companies_add  # durable — additive kept it
+
+    # Only an EXPLICIT rebuild (the Re-sync button) purges the stale AUTO row,
+    # while the manual row survives untouched.
+    resp = await client.post(
+        "/gmail/sync", json={"items": only_stripe, "mode": "rebuild"}, headers=headers
+    )
     assert resp.json()["purged"] == 1
     companies2 = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
-    assert "Airbnb" not in companies2  # stale auto row gone
+    assert "Airbnb" not in companies2  # stale auto row gone (rebuild only)
     assert "MyStartup" in companies2  # manual row preserved
     assert "Stripe" in companies2
 
