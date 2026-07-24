@@ -424,6 +424,83 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
     return sum(1 for r in refs if r.received_at is not None)
 
 
+async def _persist_review_items_additive(session, user_id: uuid.UUID, review) -> int:
+    """Additively surface uncertain verdicts to the needs-review queue.
+
+    Unlike the rebuild path this NEVER resets the queue, so a review item found
+    by an earlier (possibly broader) scan survives a later scan whose window
+    missed it. Idempotent on ``message_id``, and it never re-opens a message the
+    user already classified (linked to an application) or dismissed (reviewed):
+    those are excluded up front so a subsequent low-confidence re-scan cannot
+    un-link them. Returns the number of dated items surfaced this pass.
+    """
+
+    refs = [
+        pipeline.MessageRef(
+            message_id=item.message_id,
+            thread_id=item.thread_id,
+            subject=item.subject,
+            sender_email=item.sender_email,
+            sender_name=item.sender_name,
+            received_at=item.received_at,
+            category="needs_review",
+            confidence=item.confidence,
+            snippet="",
+        )
+        for item in review
+    ]
+
+    msg_ids = [r.message_id for r in refs if r.message_id]
+    if msg_ids:
+        settled = set(
+            (
+                await session.exec(
+                    select(Email.message_id).where(
+                        Email.user_id == user_id,
+                        Email.message_id.in_(msg_ids),
+                        or_(
+                            Email.application_id.is_not(None),
+                            Email.is_reviewed == True,  # noqa: E712 — SQL boolean
+                        ),
+                    )
+                )
+            ).all()
+        )
+        refs = [r for r in refs if r.message_id not in settled]
+
+    await _persist_message_refs(session, user_id, None, refs)
+    return sum(1 for r in refs if r.received_at is not None)
+
+
+async def sync_gmail_pipeline_additive(
+    session,
+    user_id: uuid.UUID,
+    rolled: list[pipeline.RolledApplication],
+    review: list,
+) -> tuple[int, int, int, int]:
+    """ADDITIVELY merge a freshly-scanned Gmail pipeline — the durable sync.
+
+    The non-destructive path used by routine/auto syncs (the dashboard
+    connect-time backfill and the inbox workbench's relay). It ONLY inserts
+    newly-found applications and advances/refreshes existing ones — status moves
+    monotonically, manual and user-corrected rows are left untouched — and it
+    NEVER deletes a previously-found ``gmail``/``gmail_user`` row just because
+    the current, bounded scan didn't happen to re-include it. That is what lets
+    the pipeline ACCUMULATE and survive syncs whose windows differ, instead of
+    applications appearing then vanishing run-to-run. The destructive
+    purge+rebuild is reserved for the explicit user "Re-sync" button.
+
+    Idempotent and user-scoped. Returns ``(created, updated, purged=0,
+    needs_review)`` — ``purged`` is always 0 because an additive sync removes
+    nothing.
+    """
+
+    created, updated = await upsert_applications_for_user(session, user_id, rolled)
+    needs_review = await _persist_review_items_additive(session, user_id, review)
+    await session.commit()
+    return created, updated, 0, needs_review
+
+
 async def purge_and_rebuild_gmail_pipeline(
     session,
     user_id: uuid.UUID,
@@ -432,8 +509,12 @@ async def purge_and_rebuild_gmail_pipeline(
 ) -> tuple[int, int, int, int]:
     """REPLACE the Gmail-derived pipeline for one user, preserving edits.
 
-    This is what a re-sync runs so the owner's 21 garbage rows are wiped and the
-    board is rebuilt from the corrected rollup. It:
+    DESTRUCTIVE — reserved for the EXPLICIT user "Re-sync" button (a deliberate
+    "start clean"), never a routine/auto sync. Auto syncs use
+    :func:`sync_gmail_pipeline_additive` so they can't wipe a real application
+    the current bounded scan simply didn't re-include. This is what a re-sync
+    runs so the owner's 21 garbage rows are wiped and the board is rebuilt from
+    the corrected rollup. It:
 
       1. Deletes AUTO rows (``source == 'gmail'``) whose company is no longer in
          the freshly-rolled set — i.e. the stale noise — along with their emails.
