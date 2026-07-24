@@ -208,7 +208,7 @@ function Row({ item }: { item: Classified }) {
 
           <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
             {item.clearsGate
-              ? `Clears the 0.85 gate — JobTracker would file this as “${pretty(item.category)}”.`
+              ? `Clears the 0.85 gate — Applied would file this as “${pretty(item.category)}”.`
               : "Below the 0.85 gate — nothing is auto-filed; the message waits for a human (or the full model)."}
           </p>
 
