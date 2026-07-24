@@ -136,7 +136,7 @@ function ReviewRow({ item }: { item: ReviewItem }) {
 export function ReviewQueue({ items }: { items: ReviewItem[] }) {
   if (items.length === 0) return null;
   return (
-    <section aria-label="Needs classification" className="rounded-2xl border border-line-soft bg-surface p-4 sm:p-5">
+    <section id="needs-classification" aria-label="Needs classification" className="scroll-mt-6 rounded-2xl border border-line-soft bg-surface p-4 sm:p-5">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold tracking-tight text-strong">Needs classification</h2>
         <span className="font-mono text-[11px] text-dim">
