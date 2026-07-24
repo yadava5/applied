@@ -362,7 +362,14 @@ body {
   animation-delay: calc(var(--i, 0) * 80ms + 300ms);
 }
 
-/* ---- signature ending choreography -------------------------------------- */
+/* ---- signature ending choreography (full-bleed bottom band) -------------- */
+/* The whole band replays on click; focus ring inset so it stays visible on
+ * the full-bleed edge. */
+.sig-band:focus-visible {
+  outline: 2px solid var(--line-strong);
+  outline-offset: -2px;
+}
+
 .sig__band {
   opacity: 0.32;
 }
@@ -382,51 +389,54 @@ body {
   }
 }
 
+/* The giant wordmark: garbled and dim until the verdict lands, then decoded
+ * (JS swaps the glyphs) and lifted slightly brighter. */
+.sig__wordmark {
+  opacity: 0.4;
+  transition: opacity 0.6s ease;
+}
+.sig__wordmark[data-resolved] {
+  opacity: 0.8;
+}
+
 .sig__envelope {
   transform-box: fill-box;
   transform-origin: center;
 }
 .sig--play .sig__envelope {
-  animation: sig-descend 2.4s cubic-bezier(0.5, 0, 0.25, 1) forwards;
+  animation: sig-travel 3.4s cubic-bezier(0.45, 0, 0.3, 1) forwards;
 }
-@keyframes sig-descend {
+@keyframes sig-travel {
   0% {
-    transform: translateY(-12px) scale(1);
+    transform: translateX(0) scale(1);
     opacity: 0;
   }
-  6% {
+  4% {
     opacity: 1;
   }
-  8% {
-    transform: translateY(0) scale(1);
-  }
-  80% {
-    transform: translateY(246px) scale(1);
+  91% {
+    transform: translateX(1065px) scale(1);
     opacity: 1;
-  }
-  93% {
-    transform: translateY(246px) scale(0.16);
-    opacity: 0;
   }
   100% {
-    transform: translateY(246px) scale(0.16);
+    transform: translateX(1065px) scale(0.16);
     opacity: 0;
   }
 }
 
 .sig__ring {
-  stroke-dasharray: 140;
-  stroke-dashoffset: 140;
+  stroke-dasharray: 120;
+  stroke-dashoffset: 120;
 }
 .sig--play .sig__ring {
-  animation: sig-draw 0.5s ease 1.55s forwards;
+  animation: sig-draw 0.5s ease 3.05s forwards;
 }
 .sig__check {
   stroke-dasharray: 42;
   stroke-dashoffset: 42;
 }
 .sig--play .sig__check {
-  animation: sig-draw 0.42s ease 1.95s forwards;
+  animation: sig-draw 0.42s ease 3.45s forwards;
 }
 @keyframes sig-draw {
   to {
@@ -439,7 +449,7 @@ body {
   transform-origin: center;
 }
 .sig--play .sig__glow {
-  animation: sig-glow 0.7s ease 1.85s forwards;
+  animation: sig-glow 0.7s ease 3.35s forwards;
 }
 @keyframes sig-glow {
   0% {
@@ -460,7 +470,7 @@ body {
   transform-origin: center;
 }
 .sig--play .sig__ripple {
-  animation: sig-ripple 0.8s ease 1.95s forwards;
+  animation: sig-ripple 0.8s ease 3.45s forwards;
 }
 @keyframes sig-ripple {
   0% {
@@ -474,7 +484,7 @@ body {
 }
 
 /* Static resolved end-state (reduced-motion, or before first play we keep the
- * envelope armed at the top; --static forces the verdict fully formed). */
+ * envelope armed at the left; --static forces the verdict fully formed). */
 .sig--static .sig__envelope {
   opacity: 0;
 }
@@ -487,6 +497,9 @@ body {
 }
 .sig--static .sig__band {
   opacity: 0.5;
+}
+.sig--static .sig__wordmark {
+  opacity: 0.8;
 }
 
 /* ---------------------------------------------------------------------------
