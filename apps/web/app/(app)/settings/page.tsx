@@ -5,10 +5,11 @@ import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { ClassificationSection } from "@/components/settings/ClassificationSection";
 import { DataSection } from "@/components/settings/DataSection";
 import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
-import { NotificationsSection, type NotificationPrefs } from "@/components/settings/NotificationsSection";
+import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { DEFAULT_GATE_PREFERENCE, GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
 import { getGmailStatus } from "@/lib/gmail/server";
+import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
@@ -52,11 +53,6 @@ function clampGate(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return DEFAULT_GATE_PREFERENCE;
   return Math.min(GATE_MAX, Math.max(GATE_MIN, n));
-}
-
-function readNotificationPrefs(meta: Record<string, unknown>): NotificationPrefs {
-  const raw = (meta.notifications ?? {}) as Record<string, unknown>;
-  return { weekly: raw.weekly === true, reviewAlerts: raw.reviewAlerts === true };
 }
 
 export default async function SettingsPage({
