@@ -8,6 +8,7 @@ import {
   AuthOrDivider,
   GoogleSignInButton,
 } from "@/components/auth/GoogleSignInButton";
+import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 
@@ -37,8 +38,11 @@ export default function LoginPage() {
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-12">
       <div className="space-y-6">
         <header className="space-y-2">
+          <Link href="/" aria-label="Applied — home" className="brand-logo-link mb-4 text-strong">
+            <Logo className="h-7 w-auto" />
+          </Link>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Sign in to JobTracker
+            Sign in to Applied
           </h1>
           <p className="text-sm text-muted">
             Enter your email and password to continue.
