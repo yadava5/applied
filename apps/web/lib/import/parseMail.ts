@@ -208,12 +208,27 @@ function decodeBody(body: string, encoding: string | undefined, isHtml: boolean)
   return isHtml ? stripHtml(text) : text;
 }
 
-function contentType(headers: Map<string, string>): string {
-  return (headers.get("content-type") ?? "text/plain").toLowerCase();
+/** Raw (original-case) Content-Type value — MIME boundaries are case-sensitive. */
+function rawContentType(headers: Map<string, string>): string {
+  return headers.get("content-type") ?? "text/plain";
 }
 
-function boundaryOf(ct: string): string | null {
-  const m = ct.match(/boundary="?([^";]+)"?/i);
+function contentType(headers: Map<string, string>): string {
+  return rawContentType(headers).toLowerCase();
+}
+
+/**
+ * Extract the multipart boundary from the ORIGINAL-case Content-Type value.
+ *
+ * The boundary delimiter in the body is case-sensitive (RFC 2046 §5.1.1), so it
+ * must never be lowercased. Many real providers emit mixed-case boundaries
+ * (Apple Mail `Apple-Mail=_…`, Outlook `_000_…`, `NextPart_…`); lowercasing the
+ * boundary would make `--Apple-Mail=…` fail to match `--apple-mail=…`, so the
+ * split silently no-ops and the raw MIME — both parts, boundary lines, and
+ * undecoded transfer-encoding — leaks into the "body" handed to the classifier.
+ */
+function boundaryOf(ctRaw: string): string | null {
+  const m = ctRaw.match(/boundary="?([^";]+)"?/i);
   return m ? m[1] : null;
 }
 
@@ -226,7 +241,7 @@ function extractText(headers: Map<string, string>, body: string, depth = 0): str
   const ct = contentType(headers);
 
   if (ct.startsWith("multipart/") && depth < 4) {
-    const boundary = boundaryOf(ct);
+    const boundary = boundaryOf(rawContentType(headers));
     if (boundary) {
       const parts = body
         .split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:--)?\\r?\\n?`))
