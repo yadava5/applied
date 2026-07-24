@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import { isNavItemActive, navItems } from "./nav";
 
@@ -20,9 +21,10 @@ export function Sidebar() {
       <div className="px-4 py-4">
         <Link
           href="/dashboard"
-          className="block font-mono text-sm font-semibold tracking-tight text-strong"
+          aria-label="Applied — go to dashboard"
+          className="brand-logo-link text-strong"
         >
-          job<span className="text-dim">_</span>tracker
+          <Logo className="h-7 w-auto" />
         </Link>
       </div>
       <nav className="px-2" aria-label="Primary">
