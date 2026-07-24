@@ -194,16 +194,29 @@ class PipelineAnalyzeResponse(BaseModel):
 class SyncRequest(BaseModel):
     """Sync the classified pipeline into the user's Application rows.
 
-    Two modes: pass ``items`` to persist an already-mined set (the inbox
-    workbench relays what it fetched), or omit them to have the server fetch a
-    bounded, recent page itself and classify it (the dashboard's connect-time
-    backfill). ``count``/``range``/``scope`` tune the server-fetch mode.
+    Input source — two ways to supply the scan: pass ``items`` to persist an
+    already-mined set (the inbox workbench relays what it fetched), or omit them
+    to have the server fetch a bounded, recent window itself and classify it
+    (the dashboard's connect-time backfill). ``count``/``range``/``scope`` tune
+    the server-fetch source.
+
+    Persistence ``mode`` — how the scan is merged:
+
+    - ``"additive"`` (DEFAULT): upsert-only. Insert newly-found applications and
+      advance/refresh existing ones; NEVER delete a previously-found row just
+      because this scan's window missed it. The durable path every routine/auto
+      sync must use so the pipeline accumulates rather than vanishing run-to-run.
+    - ``"rebuild"``: the destructive purge+rebuild — wipe the Gmail-derived board
+      and rebuild it from this scan. Reserved for the EXPLICIT user "Re-sync"
+      button (a deliberate "start clean"); manual/user-corrected rows are still
+      preserved.
     """
 
     items: list[PipelineItemIn] | None = None
     count: int | None = None
     range: str | None = None
     scope: str | None = None
+    mode: str | None = None
 
 
 class SyncResponse(BaseModel):
@@ -863,6 +876,14 @@ async def gmail_pipeline(payload: PipelineAnalyzeRequest) -> PipelineAnalyzeResp
 # sync without specifying a range.
 _SYNC_DEFAULT_RANGE_MONTHS = 12
 
+# A server-side auto sync scans a STABLE, deep-enough slice of that window:
+# up to this many messages across at most this many bounded pages. Fixed so
+# every routine run covers the same ground (durability no longer depends on
+# which messages a single 500-cap page happened to catch) while staying inside
+# the serverless time budget.
+_SYNC_DEFAULT_SCAN_TARGET = 750
+_SYNC_MAX_PAGES = 4
+
 
 @router.post("/gmail/sync", response_model=SyncResponse)
 async def gmail_sync(
@@ -876,14 +897,25 @@ async def gmail_sync(
     grouped into one application per company (furthest stage reached; rejection
     terminal) and idempotently upserted, scoped to the JWT's user.
 
-    Two modes (see :class:`SyncRequest`): persist the client's already-mined
-    ``items``, or — when omitted — fetch a bounded recent page server-side and
-    classify it. Either way the upsert is idempotent (re-running never
-    duplicates) and metadata-only (no bodies are stored).
+    Input source (see :class:`SyncRequest`): persist the client's already-mined
+    ``items``, or — when omitted — fetch a bounded, STABLE recent window
+    server-side and classify it. Persistence is ``additive`` by default (durable
+    upsert-only) and only ``rebuild`` on the explicit "Re-sync" button. Either
+    way the upsert is idempotent (re-running never duplicates) and metadata-only
+    (no bodies are stored).
     """
 
     from jobtracker.cloud import pipeline
-    from jobtracker.cloud.applications import purge_and_rebuild_gmail_pipeline
+    from jobtracker.cloud.applications import (
+        purge_and_rebuild_gmail_pipeline,
+        sync_gmail_pipeline_additive,
+    )
+
+    # Default to the durable additive merge; only an explicit "rebuild" (the
+    # user's Re-sync button) may destructively purge. An unknown value is treated
+    # as additive so a stray param can never trigger a data-wiping rebuild.
+    mode = (payload.mode or "additive").strip().lower()
+    rebuild = mode == "rebuild"
 
     if payload.items is not None:
         items = [
@@ -914,43 +946,63 @@ async def gmail_sync(
         )
         mail_scope = _parse_scope(payload.scope)
         query = build_gmail_query(range_months, mail_scope)  # type: ignore[arg-type]
-        page_size = max(
-            1, min(payload.count or settings.gmail_fetch_page_size, settings.gmail_fetch_page_size)
-        )
 
-        page = await fetch_message_page(user_id, query=query, page_size=page_size)
-        if page is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Gmail is not connected for this user. Connect it first.",
-            )
+        # Scan a fixed, deep-enough target across bounded pages so a routine
+        # auto-sync reliably finds the user's whole recent pipeline and every run
+        # covers the same ground — no longer leaving durability to whichever
+        # messages one 500-cap page happened to catch.
+        target = max(
+            1, min(payload.count or _SYNC_DEFAULT_SCAN_TARGET, settings.gmail_fetch_hard_cap)
+        )
 
         classifier = get_classifier()
         items = []
-        for msg in page.messages:
-            result = await classifier.classify(
-                msg.subject, msg.snippet, msg.sender_email
+        scanned = 0
+        page_token: str | None = None
+        for page_index in range(_SYNC_MAX_PAGES):
+            remaining = target - scanned
+            if remaining <= 0:
+                break
+            page = await fetch_message_page(
+                user_id,
+                query=query,
+                page_size=min(settings.gmail_fetch_page_size, remaining),
+                page_token=page_token,
             )
-            items.append(
-                pipeline.PipelineItem(
-                    message_id=msg.message_id,
-                    category=result.category.value,
-                    sender_email=msg.sender_email,
-                    subject=msg.subject,
-                    sender_name=msg.sender_name,
-                    received_at=msg.received_at,
-                    confidence=result.confidence,
-                    thread_id=msg.thread_id,
-                    snippet=msg.snippet,
+            if page is None:
+                if page_index == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Gmail is not connected for this user. Connect it first.",
+                    )
+                break
+            for msg in page.messages:
+                result = await classifier.classify(
+                    msg.subject, msg.snippet, msg.sender_email
                 )
-            )
-        scanned = len(page.messages)
+                items.append(
+                    pipeline.PipelineItem(
+                        message_id=msg.message_id,
+                        category=result.category.value,
+                        sender_email=msg.sender_email,
+                        subject=msg.subject,
+                        sender_name=msg.sender_name,
+                        received_at=msg.received_at,
+                        confidence=result.confidence,
+                        thread_id=msg.thread_id,
+                        snippet=msg.snippet,
+                    )
+                )
+            scanned += len(page.messages)
+            page_token = page.next_page_token
+            if not page_token or not page.messages:
+                break
 
-    # A sync is a REPLACE of the Gmail-derived pipeline: only high-confidence
-    # lifecycle mail with a nameable employer becomes a hard row (roll_up), the
-    # uncertain remainder feeds the needs-classification queue (review), and any
-    # manual / user-corrected row is preserved untouched. This is what wipes the
-    # prior garbage rows and rebuilds an honest board on reconnect / re-sync.
+    # Roll the scan up: high-confidence lifecycle mail with a nameable employer
+    # becomes a hard row, the uncertain remainder feeds the needs-classification
+    # queue. How that merges into the board depends on ``mode``: additive
+    # accumulates (durable, the default), rebuild REPLACES (explicit Re-sync).
+    # Manual / user-corrected rows are preserved either way.
     rolled = pipeline.roll_up_applications(items)
     review = pipeline.collect_review_items(items)
 
@@ -961,9 +1013,14 @@ async def gmail_sync(
     from jobtracker.database.models import Application
 
     async with get_session() as session:
-        created, updated, purged, needs_review = await purge_and_rebuild_gmail_pipeline(
-            session, user_id, rolled, review
-        )
+        if rebuild:
+            created, updated, purged, needs_review = await purge_and_rebuild_gmail_pipeline(
+                session, user_id, rolled, review
+            )
+        else:
+            created, updated, purged, needs_review = await sync_gmail_pipeline_additive(
+                session, user_id, rolled, review
+            )
         total = (
             await session.exec(
                 sm_select(sa_func.count())
@@ -973,9 +1030,10 @@ async def gmail_sync(
         ).one()
 
     logger.info(
-        "Gmail sync for user_id=%s: created=%s updated=%s purged=%s "
+        "Gmail sync for user_id=%s: mode=%s created=%s updated=%s purged=%s "
         "needs_review=%s total=%s scanned=%s",
         user_id,
+        mode,
         created,
         updated,
         purged,
