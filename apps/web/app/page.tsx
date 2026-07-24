@@ -125,7 +125,7 @@ export default function Landing() {
           </a>
         </div>
         <p className="mt-6 font-mono text-[11px] text-dim">
-          runs in your browser · 22.8 MB · zero servers ·{" "}
+          zero servers ·{" "}
           <a href={SPACE_URL} {...NEW_TAB} className="text-muted underline-offset-4 hover:text-strong hover:underline">
             run the classifier ↗
           </a>
@@ -327,11 +327,6 @@ export default function Landing() {
             ))}
           </Reveal>
 
-          <Reveal className="mt-10 max-w-2xl border-l-2 border-line-strong pl-5">
-            <p className="text-balance text-lg font-medium text-strong sm:text-xl">
-              “A classifier that knows when to stop is worth more than one that is always sure.”
-            </p>
-          </Reveal>
         </div>
       </section>
 
@@ -354,11 +349,9 @@ export default function Landing() {
               Your inbox stays yours.
             </h2>
             <p className="mt-5 text-muted">
-              Most AI inbox tools work by sending your email to a large language model, where your
-              private messages can become prompts, logs, or training data. Applied is built the
-              other way around: the classifier is a small, purpose-built pipeline — not an LLM — and
-              it can run entirely in your browser, so on that path your mail never leaves your
-              machine.
+              Applied never hands your mail to an LLM. The classifier is a small, purpose-built
+              pipeline that can run entirely in your browser — on that path, your mail never leaves
+              your machine.
             </p>
           </Reveal>
 
@@ -385,8 +378,9 @@ export default function Landing() {
                     title: "It can run in your browser",
                     body: (
                       <>
-                        The trained model compiles to a <span className="text-strong">22.8 MB</span>{" "}
-                        int8-ONNX file that Transformers.js runs on your own CPU (
+                        The trained model compiles to a{" "}
+                        <span className="text-strong">compact</span> int8-ONNX file that
+                        Transformers.js runs on your own CPU (
                         <span className="font-mono text-dim">allowRemoteModels = false</span>). Paste
                         text into the in-browser Space and it is classified on-device, never leaving
                         the tab.
@@ -505,36 +499,15 @@ export default function Landing() {
           <p className="mx-auto mt-3 max-w-xl text-balance text-center text-[12px] leading-relaxed text-muted">
             Signed in, Applied connects your Gmail{" "}
             <span className="text-strong">read-only</span> to classify real mail — tokens encrypted,
-            revocable anytime, nothing sent or deleted. Because{" "}
-            <span className="font-mono text-dim">gmail.readonly</span> is a Google restricted scope,
-            direct connection is limited to invited test users until verification; a{" "}
-            <span className="text-strong">forwarding-address</span> option is the path to open,
-            public scale.
+            revocable anytime, nothing sent or deleted.
           </p>
         </div>
       </section>
 
-      {/* ---- 07 · SIGNATURE ENDING -------------------------------------- */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>07 · one gesture</Eyebrow>
-            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              One email. Three layers. One verdict.
-            </h2>
-            <p className="mt-5 text-muted">
-              The whole system in a single gesture: an email falls through rules, e5, and SetFit,
-              clears the 0.85 gate, and resolves into one filed outcome.
-            </p>
-          </Reveal>
-
-          <Reveal className="mt-14">
-            <SignatureEnding />
-          </Reveal>
-        </div>
-      </section>
-
-      {/* ---- footer ----------------------------------------------------- */}
+      {/* ---- footer + signature ending ---------------------------------- */}
+      {/* The signature ending is the page's last image: a full-bleed band
+       * below the footer meta, AutoML-landing style — the pipeline crossing
+       * the whole width and resolving into the wordmark. */}
       <footer className="border-t border-line-soft">
         <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-between gap-3 px-6 py-8 sm:flex-row">
           <span className="font-mono text-xs text-dim">
@@ -552,6 +525,7 @@ export default function Landing() {
             </a>
           </nav>
         </div>
+        <SignatureEnding />
       </footer>
       </div>
     </main>
