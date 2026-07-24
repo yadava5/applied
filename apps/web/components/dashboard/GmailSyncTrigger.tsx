@@ -68,7 +68,9 @@ export function GmailSyncTrigger() {
         const res = await fetch("/api/gmail/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          // Additive (durable): connect-time backfill must never purge rows a
+          // bounded scan missed. Only the explicit Re-sync button rebuilds.
+          body: JSON.stringify({ mode: "additive" }),
           cache: "no-store",
         });
         if (cancelled) return;
