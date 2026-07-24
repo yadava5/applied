@@ -176,6 +176,7 @@ async def root() -> dict[str, Any]:
 # for the subprocess-based import-hygiene test in test_main_cloud.py.
 
 from jobtracker.auth import current_user  # noqa: E402
+from jobtracker.cloud.account import router as account_cloud_router  # noqa: E402
 from jobtracker.cloud.applications import router as applications_cloud_router  # noqa: E402
 from jobtracker.cloud.gmail_oauth import router as gmail_cloud_router  # noqa: E402
 
@@ -217,3 +218,8 @@ app.include_router(applications_cloud_router)
 # inside the router (the callback is deliberately public and is bound to the
 # user by a signed ``state`` instead). See jobtracker.cloud.gmail_oauth.
 app.include_router(gmail_cloud_router)
+
+# Account deletion (DELETE /account) — purges the caller's rows so the web
+# "danger zone" no longer orphans data when it removes the Supabase auth user.
+# Router declares its own ``require_user()``. See jobtracker.cloud.account.
+app.include_router(account_cloud_router)
