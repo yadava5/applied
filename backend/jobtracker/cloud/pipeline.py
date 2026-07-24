@@ -298,6 +298,26 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def to_naive_utc(value: datetime | None) -> datetime | None:
+    """Coerce a datetime to NAIVE UTC for persistence, or pass through None.
+
+    The DB columns are ``TIMESTAMP WITHOUT TIME ZONE`` and the codebase writes
+    naive ``datetime.utcnow()``-style values. But ``received_at`` comes from
+    ``email.utils.parsedate_to_datetime``, which returns a timezone-AWARE
+    datetime — and asyncpg refuses to encode an aware datetime into a naive
+    column (``DataError``), which 500'd the whole sync in production. Every
+    datetime that flows into a persisted column MUST pass through here so the DB
+    never sees a mix of naive and aware values. (SQLite silently tolerates the
+    mismatch, which is why the unit suite missed it.)
+    """
+
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
 def flag_follow_ups(
     items: Iterable[PipelineItem],
     *,
@@ -703,7 +723,9 @@ def _message_ref(item: PipelineItem) -> MessageRef:
         subject=item.subject,
         sender_email=item.sender_email,
         sender_name=item.sender_name,
-        received_at=item.received_at,
+        # Naive-UTC so the ref persists straight into the naive Email.received_at
+        # column without asyncpg rejecting an aware datetime.
+        received_at=to_naive_utc(item.received_at),
         category=item.category,
         confidence=item.confidence,
         snippet=item.snippet,
@@ -757,9 +779,12 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
         max_rank = max((_STAGE_RANK.get(c, 0) for c in categories), default=1)
         status = "rejected" if has_rejection else _rank_to_status(max_rank)
 
-        dated = [m.received_at for m in msgs if m.received_at is not None]
+        # Normalize to naive UTC FIRST, so min()/max() never compares a mix of
+        # aware and naive datetimes (which raises), and the result persists into
+        # the naive TIMESTAMP columns without asyncpg's aware→naive encoder error.
+        dated = [to_naive_utc(m.received_at) for m in msgs if m.received_at is not None]
         applied_dates = [
-            m.received_at
+            to_naive_utc(m.received_at)
             for m in msgs
             if m.category in ("applied", "pending_application") and m.received_at
         ]
@@ -834,7 +859,8 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
             subject=item.subject,
             sender_email=item.sender_email,
             sender_name=item.sender_name,
-            received_at=item.received_at,
+            # Naive-UTC — this persists straight into Email.received_at.
+            received_at=to_naive_utc(item.received_at),
             category=item.category,
             confidence=item.confidence,
             company_display=employer[1] if employer else None,
