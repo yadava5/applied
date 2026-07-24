@@ -12,19 +12,36 @@ function filedOn(iso: string): string {
  * events — the honest counterpart to a fuller email-level timeline the backend
  * could feed later.
  */
+/**
+ * Past this many rows the feed overflows its capped height and scrolls
+ * internally instead of running the page down. The list is already bounded by
+ * `limit` (6 by default, which fits without scrolling), so this is a guard for
+ * any larger limit — it keeps the "never extend the page past a point" rule
+ * true regardless of how many rows are requested.
+ */
+const SCROLL_AFTER = 7;
+
 export function RecentActivity({ applications, limit = 6 }: { applications: Application[]; limit?: number }) {
   const recent = recentApplications(applications, limit);
   if (recent.length === 0) return null;
+  const overflowing = recent.length > SCROLL_AFTER;
 
   return (
-    <section aria-labelledby="recent-activity" className="rounded-xl border border-line-soft bg-surface">
+    <section aria-labelledby="recent-activity" className="overflow-hidden rounded-xl border border-line-soft bg-surface">
       <div className="flex items-baseline justify-between border-b border-line-soft px-4 py-3">
         <h2 id="recent-activity" className="label-mono">
           recent activity
         </h2>
-        <span className="font-mono text-[11px] text-dim">latest {recent.length}</span>
+        <span className="font-mono text-[11px] text-dim">
+          latest {recent.length}
+          {overflowing ? " · scroll" : ""}
+        </span>
       </div>
-      <ul>
+      {/* Capped, internally-scrolling feed: full-bleed rows keep the reserved
+       * scrollbar gutter off (`[scrollbar-gutter:auto]`) so their bottom rules
+       * still reach the edge; the wrapper anchors the bottom fade. */}
+      <div className="relative">
+        <ul className="scroll-area max-h-[22rem] overflow-y-auto [scrollbar-gutter:auto]">
         {recent.map((app) => {
           const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
           return (
@@ -57,7 +74,14 @@ export function RecentActivity({ applications, limit = 6 }: { applications: Appl
             </li>
           );
         })}
-      </ul>
+        </ul>
+        {overflowing ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent"
+          />
+        ) : null}
+      </div>
     </section>
   );
 }
