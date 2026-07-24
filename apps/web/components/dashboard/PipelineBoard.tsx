@@ -46,6 +46,15 @@ function StaticApplicationCard({ app }: { app: Application }) {
  * and sample previews pass `interactive={false}` for a read-only board so their
  * sample rows never fire real, auth-gated mutations.
  */
+/**
+ * Above this count a column overflows its fixed height and scrolls internally,
+ * so we surface the "scroll" hint + bottom fade. Chosen to match the capped
+ * height (`max-h-[30rem]` ≈ 4–5 cards), the point past which the page would
+ * otherwise stretch. A pure count is deterministic (SSR-safe, no measurement)
+ * and errs toward showing the affordance a touch early rather than never.
+ */
+const SCROLL_AFTER = 4;
+
 export function PipelineBoard({
   applications,
   interactive = true,
@@ -54,14 +63,15 @@ export function PipelineBoard({
   interactive?: boolean;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {STAGES.map((stage) => {
         const items = applications.filter((a) => stageOf(a.status) === stage.key);
+        const overflowing = items.length > SCROLL_AFTER;
         return (
           <section
             key={stage.key}
             aria-label={`${stage.label} — ${items.length}`}
-            className="rounded-xl border border-line-soft bg-surface p-3"
+            className="flex flex-col rounded-xl border border-line-soft bg-surface p-3"
           >
             <div className="mb-2 flex items-baseline justify-between px-1">
               <span className="label-mono inline-flex items-center gap-1.5">
@@ -72,23 +82,39 @@ export function PipelineBoard({
                 />
                 {stage.label}
               </span>
-              <span className="tabular font-mono text-xs text-muted">{items.length}</span>
+              <span className="inline-flex items-baseline gap-1.5">
+                {overflowing ? (
+                  <span className="font-mono text-[9px] uppercase tracking-wide text-dim">scroll</span>
+                ) : null}
+                <span className="tabular font-mono text-xs text-muted">{items.length}</span>
+              </span>
             </div>
-            <ul className="space-y-2">
-              {items.length === 0 ? (
-                <li className="rounded-lg border border-dashed border-line-soft p-3 text-center font-mono text-[11px] text-dim">
-                  none yet
-                </li>
-              ) : (
-                items.map((app) =>
-                  interactive ? (
-                    <ApplicationCard key={app.id} app={app} />
-                  ) : (
-                    <StaticApplicationCard key={app.id} app={app} />
-                  ),
-                )
-              )}
-            </ul>
+            {/* Fixed, uniform scroll region: caps tall columns at ~4–5 cards and
+             * keeps every column the same height so the row stays balanced no
+             * matter how lopsided the counts are. The wrapper anchors the fade. */}
+            <div className="relative min-h-0 flex-1">
+              <ul className="scroll-area max-h-[30rem] space-y-2 overflow-y-auto">
+                {items.length === 0 ? (
+                  <li className="rounded-lg border border-dashed border-line-soft p-3 text-center font-mono text-[11px] text-dim">
+                    none yet
+                  </li>
+                ) : (
+                  items.map((app) =>
+                    interactive ? (
+                      <ApplicationCard key={app.id} app={app} />
+                    ) : (
+                      <StaticApplicationCard key={app.id} app={app} />
+                    ),
+                  )
+                )}
+              </ul>
+              {overflowing ? (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-surface to-transparent"
+                />
+              ) : null}
+            </div>
           </section>
         );
       })}
