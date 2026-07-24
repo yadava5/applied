@@ -255,7 +255,10 @@ async def _persist_message_refs(
     """
 
     for ref in refs:
-        if ref.received_at is None:
+        # Naive-UTC: the Email.received_at column is TIMESTAMP WITHOUT TIME ZONE;
+        # asyncpg refuses an aware datetime (from parsedate_to_datetime) here.
+        received_at = pipeline.to_naive_utc(ref.received_at)
+        if received_at is None:
             continue
         existing = (
             await session.exec(
@@ -273,6 +276,7 @@ async def _persist_message_refs(
             existing.subject = ref.subject or existing.subject
             existing.sender_name = ref.sender_name
             existing.sender_email = ref.sender_email
+            existing.received_at = received_at
             existing.body_snippet = (ref.snippet or "")[:500]
             existing.classified_as = category
             existing.classification_confidence = ref.confidence
@@ -290,7 +294,7 @@ async def _persist_message_refs(
                     subject=ref.subject,
                     sender_name=ref.sender_name,
                     sender_email=ref.sender_email,
-                    received_at=ref.received_at,
+                    received_at=received_at,
                     body_snippet=(ref.snippet or "")[:500],
                     classified_as=category,
                     classification_confidence=ref.confidence,
