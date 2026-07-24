@@ -21,7 +21,7 @@ export const SAMPLE_INBOX_HREF = "/demo/inbox";
 /** The public, no-OAuth "classify your own mail on-device" path. */
 export const IMPORT_HREF = "/import";
 
-const BETA_MAILTO_SUBJECT = "JobTracker beta access request";
+const BETA_MAILTO_SUBJECT = "Applied beta access request";
 
 /**
  * A short, honest prefill. It only *composes* a message in the visitor's own
@@ -32,7 +32,7 @@ const BETA_MAILTO_SUBJECT = "JobTracker beta access request";
 const BETA_MAILTO_BODY = [
   "Hi Ayush,",
   "",
-  "I'd like to be added to the JobTracker Gmail beta (the 100 test-user group).",
+  "I'd like to be added to the Applied Gmail beta (the 100 test-user group).",
   "The Google account I'd connect read-only is:",
   "",
   "A little about how I'd use it:",
