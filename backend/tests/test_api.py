@@ -89,7 +89,7 @@ class TestRootEndpoint:
         response = await test_client.get("/")
         data = response.json()
 
-        assert data["name"] == "JobTracker"
+        assert data["name"] == "Applied"
         assert data["docs"] == "/docs"
         assert data["health"] == "/health"
 
