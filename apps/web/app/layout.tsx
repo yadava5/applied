@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: "JobTracker — your inbox, made legible", template: "%s · JobTracker" },
+  title: { default: "Applied — your inbox, made legible", template: "%s · Applied" },
   description:
     "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads the pipeline out of your inbox at 0.979 macro-F1, CI-gated at 0.95.",
 };
