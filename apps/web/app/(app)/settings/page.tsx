@@ -12,7 +12,7 @@ import { getGmailStatus } from "@/lib/gmail/server";
 import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
-  title: "Settings — JobTracker",
+  title: "Settings — Applied",
   description: "Manage your profile, appearance, notifications, classification, data, and Gmail.",
 };
 
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
 const FLAG_BANNERS: Record<string, { tone: "ok" | "warn" | "error"; text: string }> = {
   connected: {
     tone: "ok",
-    text: "Gmail connected. JobTracker can now read and classify your job-search mail.",
+    text: "Gmail connected. Applied can now read and classify your job-search mail.",
   },
   disconnected: { tone: "ok", text: "Gmail disconnected and access revoked at Google." },
   error: { tone: "error", text: "Something went wrong reaching the mail backend. Please try again." },
