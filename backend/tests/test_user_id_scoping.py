@@ -352,3 +352,53 @@ async def test_list_search_matches_company_and_position(client: AsyncClient) -> 
     body = resp.json()
     assert body["total"] == 1
     assert body["applications"][0]["company"] == "Acme Robotics"
+
+
+async def test_account_deletion_purges_only_caller(client: AsyncClient) -> None:
+    """DELETE /account removes every row owned by the caller and nothing else.
+
+    Regression for the orphaned-rows gap: the web "danger zone" deletes the
+    Supabase auth user but relied on this backend endpoint — which did not
+    exist — to purge the Postgres rows. User A seeds data, deletes their
+    account, and must vanish entirely while user B's data is untouched.
+    """
+
+    headers_a = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    headers_b = {"Authorization": f"Bearer {_token_for(USER_B)}"}
+
+    # Seed: A has two applications, B has one.
+    for payload in (
+        {"company": "Acme", "position": "SWE"},
+        {"company": "Initech", "position": "Backend"},
+    ):
+        resp = await client.post("/applications", json=payload, headers=headers_a)
+        assert resp.status_code == 201, resp.text
+    resp = await client.post(
+        "/applications",
+        json={"company": "Hooli", "position": "Infra"},
+        headers=headers_b,
+    )
+    assert resp.status_code == 201, resp.text
+
+    # A deletes their account.
+    resp = await client.delete("/account", headers=headers_a)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted"] is True
+
+    # A's data is gone...
+    resp_a = await client.get("/applications", headers=headers_a)
+    assert resp_a.status_code == 200, resp_a.text
+    assert resp_a.json()["total"] == 0
+
+    # ...while B is untouched.
+    resp_b = await client.get("/applications", headers=headers_b)
+    assert resp_b.status_code == 200, resp_b.text
+    assert resp_b.json()["total"] == 1
+    assert resp_b.json()["applications"][0]["company"] == "Hooli"
+
+
+async def test_account_deletion_requires_auth(client: AsyncClient) -> None:
+    """DELETE /account without a bearer token must 401 (never delete anything)."""
+
+    resp = await client.delete("/account")
+    assert resp.status_code == 401
