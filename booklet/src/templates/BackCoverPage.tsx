@@ -99,7 +99,7 @@ export const BackCoverPage: React.FC = () => (
           color: COLORS.ON_DARK,
         }}
       >
-        Job<span style={{ color: COLORS.RULES_CYAN }}>Tracker</span>
+        App<span style={{ color: COLORS.RULES_CYAN }}>lied</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <div
