@@ -610,14 +610,14 @@ export const BUILD = {
     lede:
       "A native macOS app and a FastAPI backend where the model was born; a Next.js 16 web app and a portable ONNX model where it ships.",
     rows: [
-      { area: "WEB", tech: "Next.js 16.2.4 · React 19 · Vercel", note: "the hosted product + live demo" },
+      { area: "WEB", tech: "Next.js 16.2.11 · React 19 · Vercel", note: "the hosted product + live demo" },
       { area: "IN-BROWSER ML", tech: "Transformers.js 3.5.2 · onnxruntime-web", note: "int8 ONNX on the client, no server" },
       { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 201 regex", note: "the 3-layer hybrid cascade" },
       { area: "TRAINING", tech: "MLflow registry · CI-gated ≥ 0.95", note: "log, register, promote to production" },
       { area: "BACKEND", tech: "FastAPI · SQLModel · SQLite", note: "sync, classify, review queue" },
       { area: "DESKTOP", tech: "SwiftUI macOS app", note: "the original native client" },
     ],
-    source: "source · apps/web/package.json:24 · ml/track_run.py · pyproject.toml",
+    source: "source · ml/browser/site/app.js:15 · ml/track_run.py · pyproject.toml",
   },
 
   // Page 31 — Try it. The reader's exit into the live product: the QR lives
