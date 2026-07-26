@@ -7,7 +7,7 @@ name = "jobtracker"
 version = "0.1.0"
 description = "Email-powered job application tracker with ML classification"
 readme = "README.md"
-license = "MIT"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 requires-python = ">=3.11"
 authors = [
     { name = "Ayush Yadav" }
@@ -18,7 +18,7 @@ classifiers = [
     "Environment :: MacOS X",
     "Framework :: FastAPI",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
