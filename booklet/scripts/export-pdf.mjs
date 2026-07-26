@@ -32,7 +32,7 @@ const URL = process.env.BOOKLET_URL ?? "http://localhost:5182";
 const OUT_DIR = resolve("dist");
 const OUT_PATH = process.env.BOOKLET_OUT
   ? resolve(process.env.BOOKLET_OUT)
-  : resolve(OUT_DIR, "jobtracker-system-card.pdf");
+  : resolve(OUT_DIR, "applied-system-card.pdf");
 
 async function waitForServer(url, attempts = 30) {
   for (let i = 0; i < attempts; i++) {
