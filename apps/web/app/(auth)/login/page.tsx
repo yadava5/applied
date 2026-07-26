@@ -57,6 +57,8 @@ export default function LoginPage() {
           Don&apos;t have an account?{" "}
           <Link
             href="/signup"
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-strong underline underline-offset-4 hover:text-foreground"
           >
             Sign up
