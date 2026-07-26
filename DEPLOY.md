@@ -1,4 +1,8 @@
-# Deploying JobTracker (free tier, minimal owner effort)
+# Deploying Applied (free tier, minimal owner effort)
+
+> Product name: **Applied**. The repo, backend project, and `JOBTRACKER_*`
+> environment variables keep the original `jobtracker` identifier — those are
+> real config keys and infra names, not the product brand.
 
 Topology: **two Vercel projects from this one repo** + optional Supabase.
 The web app and the Python API are structurally separate — the root
@@ -163,8 +167,8 @@ completes the steps below, the button is graceful: clicking it shows an inline
    only here — it is never committed to the repo and never shared in chat.*
 
 3. **Supabase → Authentication → URL Configuration.** Confirm:
-   - **Site URL** = `https://jobtracker-web-five.vercel.app`
-   - **Redirect URLs** allowlist includes `https://jobtracker-web-five.vercel.app/**`
+   - **Site URL** = `https://getapplied.vercel.app`
+   - **Redirect URLs** allowlist includes `https://getapplied.vercel.app/**`
      (and `http://localhost:3000/**` for local dev). The web app sends
      `redirectTo=<origin>/callback`, which must match this allowlist or Supabase
      rejects the redirect.
