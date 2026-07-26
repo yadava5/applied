@@ -35,9 +35,9 @@ const SYSTEM_CARD = "/system-card";
 
 /**
  * The landing is a showcase: every link that leaves it for the live app
- * (dashboard/demo/import), the separately-built System Card, or an external
- * project opens in a NEW TAB so the narrative stays put behind it. Only in-page
- * anchors and the primary sign-in stay same-tab. `rel="noopener noreferrer"`
+ * (dashboard/demo/import), the sign-in entry point, the separately-built System
+ * Card, or an external project opens in a NEW TAB so the narrative stays put
+ * behind it. Only in-page anchors stay same-tab. `rel="noopener noreferrer"`
  * on each so the opened tab can't reach back through `window.opener`.
  */
 const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const;
@@ -85,6 +85,7 @@ export default function Landing() {
             </a>
             <Link
               href="/login"
+              {...NEW_TAB}
               className="inline-flex min-h-11 items-center rounded-lg border border-line px-3 py-1.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
             >
               Sign in
