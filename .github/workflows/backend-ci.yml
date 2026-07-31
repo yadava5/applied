@@ -84,6 +84,94 @@ jobs:
             --min-macro-f1 0.95 \
             --tolerance 0.001
 
+  rls-postgres:
+    # tests/test_rls_postgres.py proves tenant isolation at the DATABASE layer:
+    # a non-BYPASSRLS role, FORCE'd policies, and the real
+    # jobtracker.database.connection machinery. Applied's RLS is live in
+    # production, so this is the suite that backs that claim.
+    #
+    # It has never run in CI. The `test` job has no Postgres, so
+    # JOBTRACKER_TEST_PG_ADMIN_URL is unset there and all ten tests skip — and a
+    # skip is green. Hence a separate job with its own service container: it
+    # needs the service anyway, and the separation also keeps it clear of the
+    # importlib.reload(jobtracker.config) that four sibling modules perform.
+    needs: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -r requirements-dev.txt
+
+      - name: Run RLS enforcement suite
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+          # The `+asyncpg` scheme is required, not cosmetic: the app's engine is
+          # created with create_async_engine, and a bare `postgresql://` URL
+          # fails with "The asyncio extension requires an async driver".
+          # asyncpg is already a runtime dependency; psycopg2 is NOT needed.
+          JOBTRACKER_TEST_PG_ADMIN_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
+        run: |
+          pytest tests/test_rls_postgres.py -q \
+            --junit-xml="$RUNNER_TEMP/rls-results.xml"
+
+      - name: Assert the RLS suite actually ran
+        # Without this, a wrong or missing JOBTRACKER_TEST_PG_ADMIN_URL turns
+        # the whole suite back into "10 skipped" — which pytest exits 0 on, and
+        # which is precisely the dead coverage this job exists to end.
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "rls-results.xml")).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          total = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+          print(f"RLS enforcement suite: {total} tests, {skipped} skipped")
+          if total == 0 or skipped:
+              sys.exit(
+                  "RLS enforcement tests did not run. Tenant isolation is "
+                  "UNVERIFIED by this build."
+              )
+          PY
+
   cloud-smoke:
     # Smoke-test the cloud FastAPI entrypoint (`api/index.py` /
     # `jobtracker.main_cloud`) under the exact env used on Vercel:
