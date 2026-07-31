@@ -4,8 +4,12 @@ import { useState, type CSSProperties } from "react";
 import { Reveal } from "./Reveal";
 
 /**
- * Per-class F1 for the hybrid classifier v3, measured on the held-out eval and
- * read verbatim from backend/data/evaluation/baseline_hybrid_v3.json. Their
+ * Per-class F1 for the RULES stage on the 96-email v3 benchmark, read verbatim
+ * from backend/data/evaluation/baseline_hybrid_v3.json — which despite its name
+ * holds the rules-only result, because evaluate_classifier.py's `deterministic`
+ * hybrid profile disables SetFit and blanks the embedding examples, making that
+ * file byte-identical to baseline_rules_v3.json. Do not describe these as the
+ * cascade's numbers. Their
  * average is the 0.9791 macro-F1 headline — shown here so the weakest class is
  * visible rather than hidden behind an accuracy number.
  *

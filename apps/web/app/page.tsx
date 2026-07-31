@@ -21,9 +21,19 @@ import { Logo } from "@/components/brand/Logo";
  *   · pretrained e5-small-v2 · fine-tuned SetFit (MiniLM-L6 body)
  *   · 0.85 confidence gate  — hybrid.py / DecisionTrace
  *   · 22.8 MB int8 ONNX     — model_quantized.onnx (22,843,695 B), from 90.4 MB
- *   · 0.9791 macro-F1       — baseline_hybrid_v3.json (acc 0.979, 2 misclassed)
+ *   · 0.9791 macro-F1       — the RULES stage, on the 96-email v3 benchmark.
+ *       Read this carefully before changing it. The number lives in
+ *       baseline_hybrid_v3.json, but that file is byte-identical to
+ *       baseline_rules_v3.json, because evaluate_classifier.py's
+ *       `deterministic` hybrid profile disables SetFit and blanks the
+ *       embedding examples (evaluate_classifier.py:156-167). So the file
+ *       named "hybrid" measured the regexes alone. The full cascade scored
+ *       0.9583 on this same set (docs/ML_EXECUTION_TRACKER.md:378) — it beat
+ *       the rules on v2 (0.9843 vs 0.9686) and lost on v3. Attribute this
+ *       number to the rules stage, never to the cascade.
  *   · CI floor 0.95         — backend-ci.yml (--min-macro-f1 0.95, ×2 gates)
- *   · 182 tests             — README.md · 9 classes (8 predicted + needs_review)
+ *   · 288 tests             — backend suite incl. the 10 real-Postgres RLS
+ *       enforcement tests · 9 classes (8 predicted + needs_review)
  *
  * Motion is progressive enhancement only (components/landing/Reveal.tsx + the
  * CSS in globals.css): it degrades to fully-visible under prefers-reduced-motion
@@ -98,7 +108,7 @@ export default function Landing() {
       <section className="mx-auto flex w-full max-w-5xl flex-col items-center px-6 pt-20 pb-16 text-center sm:pt-28">
         <p className="mb-8 inline-flex items-center gap-2 rounded-full border border-line px-4 py-1.5 font-mono text-xs text-muted">
           <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
-          three layers · gated at 0.95 macro-F1 · 0.979 measured
+          three layers · gated at 0.95 macro-F1 · rules stage 0.979
         </p>
         <h1 className="max-w-3xl text-balance text-5xl font-medium tracking-tight text-strong sm:text-6xl">
           Your inbox already holds the verdict.
@@ -294,6 +304,12 @@ export default function Landing() {
               not a one-time screenshot: two GitHub Actions gates re-run the evaluation on every
               backend change and fail the build below 0.95. The number is load-bearing.
             </p>
+            <p className="mt-4 text-sm text-dim">
+              To be precise about what that measures: 0.979 is the <strong>rules stage</strong> on a
+              96-email benchmark. The full cascade scores 0.958 on the same set — it beat the rules
+              on the previous benchmark and lost on this one, which is why the regexes are what ship
+              in the hosted app. The embeddings and SetFit head run in the browser demo.
+            </p>
           </Reveal>
 
           <div className="mt-10 grid gap-6 lg:grid-cols-[auto_1fr] lg:items-center">
@@ -302,9 +318,9 @@ export default function Landing() {
                 <CountUp end={0.979} decimals={3} />
               </p>
               <p className="mt-2 font-mono text-[11px] leading-relaxed text-dim">
-                macro-F1 · hybrid classifier v3
+                macro-F1 · rules stage · v3 benchmark
                 <br />
-                accuracy 0.979 · two of the held-out emails misclassified
+                accuracy 0.979 · two of 96 held-out emails misclassified
               </p>
             </Reveal>
             <ClassF1Bars />
@@ -313,7 +329,7 @@ export default function Landing() {
           <Reveal stagger className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { id: "floor", v: <CountUp end={0.95} decimals={2} />, k: "macro-F1 CI floor — the merge fails below it" },
-              { id: "tests", v: <CountUp end={182} />, k: "tests in the backend suite" },
+              { id: "tests", v: <CountUp end={288} />, k: "tests in the backend suite" },
               { id: "classes", v: <CountUp end={9} />, k: "email classes — 8 predicted + needs_review" },
               { id: "agree", v: (<><CountUp end={6} /> / 6</>), k: "output-agreement vs the Python pipeline" },
             ].map((s, i) => (
