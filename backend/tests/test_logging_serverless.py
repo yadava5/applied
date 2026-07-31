@@ -20,7 +20,6 @@ import pytest
 
 from jobtracker.logging import _is_serverless, setup_logging
 
-
 SERVERLESS_MARKERS = [
     "VERCEL",
     "AWS_LAMBDA_FUNCTION_NAME",
@@ -39,11 +38,7 @@ def _clean_env_and_handlers(monkeypatch):
 
 
 def _file_handlers():
-    return [
-        h
-        for h in logging.getLogger().handlers
-        if isinstance(h, RotatingFileHandler)
-    ]
+    return [h for h in logging.getLogger().handlers if isinstance(h, RotatingFileHandler)]
 
 
 @pytest.mark.parametrize("marker", SERVERLESS_MARKERS)
