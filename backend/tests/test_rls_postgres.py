@@ -38,6 +38,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
+from typing import Any
 
 import pytest
 from sqlalchemy import text
@@ -79,8 +80,10 @@ _ENTITY_TABLES = [
 def _app_url() -> str:
     """The app-role SQLAlchemy async URL derived from the admin URL."""
 
-    return make_url(ADMIN_URL).set(username=APP_ROLE, password=APP_PW).render_as_string(
-        hide_password=False
+    return (
+        make_url(ADMIN_URL)
+        .set(username=APP_ROLE, password=APP_PW)
+        .render_as_string(hide_password=False)
     )
 
 
@@ -95,9 +98,7 @@ async def _admin_build(engine: AsyncEngine) -> None:
         await c.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
         await c.execute(text("CREATE SCHEMA public"))
         await c.execute(text("CREATE SCHEMA IF NOT EXISTS auth"))
-        await c.execute(
-            text("CREATE TABLE IF NOT EXISTS auth.users (id uuid primary key)")
-        )
+        await c.execute(text("CREATE TABLE IF NOT EXISTS auth.users (id uuid primary key)"))
         # Supabase's auth.uid(): the sub claim out of the request.jwt.claims GUC.
         await c.execute(
             text(
@@ -122,10 +123,7 @@ async def _admin_build(engine: AsyncEngine) -> None:
             )
         )
         await c.execute(
-            text(
-                f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PW}' "
-                "NOBYPASSRLS NOSUPERUSER"
-            )
+            text(f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PW}' NOBYPASSRLS NOSUPERUSER")
         )
 
     async with engine.begin() as c:
@@ -137,8 +135,7 @@ async def _admin_build(engine: AsyncEngine) -> None:
         await c.execute(text(f"GRANT USAGE ON SCHEMA public TO {APP_ROLE}"))
         await c.execute(
             text(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
-                f"IN SCHEMA public TO {APP_ROLE}"
+                f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {APP_ROLE}"
             )
         )
         await c.execute(
@@ -157,7 +154,9 @@ async def _admin_build(engine: AsyncEngine) -> None:
                 text(f"CREATE POLICY {t}_select ON {t} FOR SELECT USING (user_id = auth.uid())")
             )
             await c.execute(
-                text(f"CREATE POLICY {t}_insert ON {t} FOR INSERT WITH CHECK (user_id = auth.uid())")
+                text(
+                    f"CREATE POLICY {t}_insert ON {t} FOR INSERT WITH CHECK (user_id = auth.uid())"
+                )
             )
             await c.execute(
                 text(
@@ -204,20 +203,61 @@ async def _admin_build(engine: AsyncEngine) -> None:
 _SCHEMA_READY = False
 
 
+def _live_settings_instances() -> list[Any]:
+    """Every distinct ``Settings`` object currently reachable from a loaded module.
+
+    There is normally exactly one. But ``test_credentials_cloud``,
+    ``test_gmail_oauth_cloud``, ``test_main_cloud`` and ``test_user_id_scoping``
+    each call ``importlib.reload(jobtracker.config)``, which **rebinds
+    ``jobtracker.config.settings`` to a brand-new object** while every module
+    that did ``from jobtracker.config import settings`` at import time keeps
+    holding the old one. Three of those four sort before this module
+    alphabetically, so in a full-suite run ``jobtracker.database.connection``
+    and ``jobtracker.config`` are routinely looking at different instances.
+
+    Setting ``database_url_override`` on only one of them is how this suite
+    silently ran against in-memory SQLite instead of Postgres: ``get_engine()``
+    read the stale instance, saw ``environment == "test"``, and returned
+    ``sqlite+aiosqlite:///:memory:``. Eight tests failed with "no such table";
+    the two that use the admin engine directly still passed.
+
+    Collecting by ``id()`` covers whichever instances exist, in any order.
+
+    Identified by duck-typing, deliberately, **not** ``isinstance``: the reload
+    rebuilds the ``Settings`` class as well as the instance, so a stale object
+    is not an instance of the freshly-imported class and an ``isinstance``
+    filter silently skips exactly the object that needs patching.
+    """
+    import sys
+
+    found: dict[int, Any] = {}
+    for name, module in list(sys.modules.items()):
+        if not name.startswith("jobtracker") or module is None:
+            continue
+        candidate = getattr(module, "settings", None)
+        if candidate is None:
+            continue
+        if hasattr(candidate, "database_url_override") and hasattr(
+            candidate, "secret_encryption_key"
+        ):
+            found.setdefault(id(candidate), candidate)
+    return list(found.values())
+
+
 @pytest.fixture
 async def pg_app() -> AsyncIterator[AsyncEngine]:
     """Point the real connection module at the non-bypass app role.
 
-    Mutates the shared ``settings`` singleton's attributes (every module holds
-    the same object), so no ``importlib.reload`` dance is needed; restores them
-    on teardown and rebuilds the global engine so the SQLite suites are
-    unaffected.
+    Mutates the ``settings`` attributes in place — no ``importlib.reload``
+    dance — but applies the change to *every* live ``Settings`` instance rather
+    than assuming there is one (see ``_live_settings_instances``). Restores each
+    instance's own previous values on teardown and rebuilds the global engine so
+    the SQLite suites are unaffected.
     """
 
     global _SCHEMA_READY
 
     import jobtracker.database.connection as conn
-    from jobtracker.config import settings
 
     admin = create_async_engine(ADMIN_URL, connect_args={"statement_cache_size": 0})
     if not _SCHEMA_READY:
@@ -226,24 +266,34 @@ async def pg_app() -> AsyncIterator[AsyncEngine]:
 
     # Clean the tenant tables before each test for independence.
     async with admin.begin() as c:
-        await c.execute(
-            text("TRUNCATE applications, user_credentials RESTART IDENTITY CASCADE")
-        )
+        await c.execute(text("TRUNCATE applications, user_credentials RESTART IDENTITY CASCADE"))
 
-    orig_url = settings.database_url_override
-    orig_key = settings.secret_encryption_key
+    instances = _live_settings_instances()
+    # Per-instance originals: an incomplete restore would silently leave later
+    # SQLite-suite tests pointed at Postgres, where they would mostly still pass.
+    originals = [(s, s.database_url_override, s.secret_encryption_key) for s in instances]
     orig_engine = conn._engine
 
-    settings.database_url_override = _app_url()
-    settings.secret_encryption_key = _FERNET_KEY
+    for s in instances:
+        s.database_url_override = _app_url()
+        s.secret_encryption_key = _FERNET_KEY
     conn._engine = None  # force a rebuild against the app-role URL (attaches RLS listener)
 
     try:
+        # Fail loudly rather than testing the wrong database. Without this the
+        # suite's failure mode was "wrong backend", which is indistinguishable
+        # from "RLS not enforced" in a red/green summary.
+        backend = conn.get_engine().url.get_backend_name()
+        assert backend == "postgresql", (
+            f"RLS suite bound to {backend!r}, not postgresql — the settings "
+            "singleton was orphaned by an importlib.reload in an earlier test."
+        )
         yield admin
     finally:
         await conn.close_db()
-        settings.database_url_override = orig_url
-        settings.secret_encryption_key = orig_key
+        for s, url, key in originals:
+            s.database_url_override = url
+            s.secret_encryption_key = key
         conn._engine = orig_engine
         await admin.dispose()
 
@@ -258,16 +308,11 @@ async def test_app_role_is_non_bypass_and_user_credentials_forced(
 ) -> None:
     async with pg_app.connect() as c:
         bypass = (
-            await c.execute(
-                text(f"SELECT rolbypassrls FROM pg_roles WHERE rolname='{APP_ROLE}'")
-            )
+            await c.execute(text(f"SELECT rolbypassrls FROM pg_roles WHERE rolname='{APP_ROLE}'"))
         ).scalar()
         forced = (
             await c.execute(
-                text(
-                    "SELECT relforcerowsecurity FROM pg_class "
-                    "WHERE relname='user_credentials'"
-                )
+                text("SELECT relforcerowsecurity FROM pg_class WHERE relname='user_credentials'")
             )
         ).scalar()
     assert bypass is False, "app role must NOT have BYPASSRLS"
@@ -287,16 +332,31 @@ async def test_with_guc_inserts_and_reads_only_own_rows(pg_app: AsyncEngine) -> 
 
     with user_id_scope(USER_A):
         async with get_session() as s:
-            s.add(Application(user_id=USER_A, company="Acme", position="SWE",
-                              status=ApplicationStatus.APPLIED))
-            s.add(Application(user_id=USER_A, company="Initech", position="Backend",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_A, company="Acme", position="SWE", status=ApplicationStatus.APPLIED
+                )
+            )
+            s.add(
+                Application(
+                    user_id=USER_A,
+                    company="Initech",
+                    position="Backend",
+                    status=ApplicationStatus.APPLIED,
+                )
+            )
             await s.commit()
 
     with user_id_scope(USER_B):
         async with get_session() as s:
-            s.add(Application(user_id=USER_B, company="Hooli", position="Infra",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_B,
+                    company="Hooli",
+                    position="Infra",
+                    status=ApplicationStatus.APPLIED,
+                )
+            )
             await s.commit()
 
     with user_id_scope(USER_A):
@@ -318,8 +378,11 @@ async def test_without_guc_insert_is_rejected(pg_app: AsyncEngine) -> None:
     # surfaces as a SQLAlchemy DBAPIError.
     with pytest.raises(DBAPIError):
         async with get_session() as s:  # no user_id_scope -> auth.uid() is NULL
-            s.add(Application(user_id=USER_A, company="Ghost", position="X",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_A, company="Ghost", position="X", status=ApplicationStatus.APPLIED
+                )
+            )
             await s.commit()
 
 
@@ -331,8 +394,11 @@ async def test_without_guc_reads_return_nothing(pg_app: AsyncEngine) -> None:
 
     with user_id_scope(USER_A):
         async with get_session() as s:
-            s.add(Application(user_id=USER_A, company="Acme", position="SWE",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_A, company="Acme", position="SWE", status=ApplicationStatus.APPLIED
+                )
+            )
             await s.commit()
 
     async with get_session() as s:  # no scope -> auth.uid() NULL -> nothing visible
@@ -352,13 +418,25 @@ async def test_non_bypass_role_cannot_see_other_users_rows(pg_app: AsyncEngine) 
     with user_id_scope(USER_A):
         async with get_session() as s:
             for company in ("Acme", "Initech"):
-                s.add(Application(user_id=USER_A, company=company, position="SWE",
-                                  status=ApplicationStatus.APPLIED))
+                s.add(
+                    Application(
+                        user_id=USER_A,
+                        company=company,
+                        position="SWE",
+                        status=ApplicationStatus.APPLIED,
+                    )
+                )
             await s.commit()
     with user_id_scope(USER_B):
         async with get_session() as s:
-            s.add(Application(user_id=USER_B, company="Hooli", position="Infra",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_B,
+                    company="Hooli",
+                    position="Infra",
+                    status=ApplicationStatus.APPLIED,
+                )
+            )
             await s.commit()
 
     # Raw, UNFILTERED count under B: only RLS can bound this to B's single row.
@@ -381,8 +459,11 @@ async def test_guc_does_not_leak_across_users_on_reused_engine(
 
     with user_id_scope(USER_A):
         async with get_session() as s:
-            s.add(Application(user_id=USER_A, company="Acme", position="SWE",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_A, company="Acme", position="SWE", status=ApplicationStatus.APPLIED
+                )
+            )
             await s.commit()
 
     # B on the same (reused) engine must see zero of A's rows.
@@ -419,8 +500,11 @@ async def test_multi_transaction_session_reapplies_guc(pg_app: AsyncEngine) -> N
 
     with user_id_scope(USER_A):
         async with get_session() as s:
-            s.add(Application(user_id=USER_A, company="Acme", position="SWE",
-                              status=ApplicationStatus.APPLIED))
+            s.add(
+                Application(
+                    user_id=USER_A, company="Acme", position="SWE", status=ApplicationStatus.APPLIED
+                )
+            )
             await s.commit()  # tx1 ends, GUC dropped
             # tx2 in the SAME session:
             rows = (await s.exec(select(Application))).all()
