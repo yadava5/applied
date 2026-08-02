@@ -4,7 +4,7 @@ import { COLORS, FONTS, TYPE, SECTION_INK } from "../theme";
 import { PROOF } from "../content";
 import { PullQuote } from "../primitives/PullQuote";
 
-/** Page 22 — 182 tests + a merge-blocking CI gate. */
+/** Page 22 — 288 tests (278 pass, 10 skip) + a merge-blocking CI gate. */
 export const ProofTestsPage: React.FC<{
   parity: "recto" | "verso";
   pageNumber: number;

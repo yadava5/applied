@@ -410,9 +410,9 @@ export const PROOF = {
     eyebrow: "§04 · THE NUMBER",
     headline: "0.979 macro-F1.",
     hero: "0.979",
-    heroLabel: "macro-F1 · hybrid classifier v3",
+    heroLabel: "macro-F1 · rules stage",
     body:
-      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the hybrid classifier scores 0.9791 — accuracy 0.9792, two emails misclassified. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
+      "Macro-F1 averages the per-class F1 so no category can hide behind the frequent ones. On the held-out evaluation the RULES stage scores 0.9791 — accuracy 0.9792, two emails misclassified. Not the full cascade, which scores 0.9583 on the same set: the evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named baseline_hybrid_v3.json measures the regexes alone. It is not a cherry-picked accuracy headline; it is the metric that punishes a weak class.",
     exact: "0.9791304 macro-F1 · 0.9792 accuracy · 2 misclassified",
     ciValue: "0.95",
     ciLabel: "CI floor — the merge blocks below it",
@@ -450,16 +450,16 @@ export const PROOF = {
 
   tests: {
     eyebrow: "§04 · THE GUARANTEE",
-    headline: "182 tests and a gate that blocks merges.",
+    headline: "288 tests and a gate that blocks merges.",
     body:
-      "Correctness is not asserted, it is enforced. The backend ships a 182-test suite; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
+      "Correctness is not asserted, it is enforced. The backend ships a 288-test suite — 278 passing, 10 skipped, the skips being the Postgres RLS module that needs a live database; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
     stats: [
-      { value: "182", label: "tests · backend suite", note: "README.md:7" },
+      { value: "288", label: "tests · backend suite", note: "pytest tests -q" },
       { value: "2", label: "CI gates · rules + hybrid", note: "backend-ci.yml" },
       { value: "0.95", label: "macro-F1 merge floor", note: "--min-macro-f1" },
     ],
     honest:
-      "Honesty note: the repo README states 182 tests; a static count of the current tree is ~186 backend test functions. We print the documented figure.",
+      "Provenance: 288 is what `pytest tests -q` collects — 278 passed, 10 skipped — run 2026-08-02. The previous note here said the README states 182 and cited README.md:7; that line is the tagline and carries no count, and no line of the README ever stated 182. A hedge about a figure is worth nothing when the hedge is itself unchecked, so this row now names a command instead of a document."
     handoffQuote:
       "A classifier that knows when to stop is worth more than one that is always sure.",
   },

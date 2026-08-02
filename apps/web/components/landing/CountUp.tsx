@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * A number that rolls up from zero the first time it scrolls into view. Used for
- * the load-bearing stats — 0.979 macro-F1, 182 tests, 22.8 MB, 9 classes.
+ * the load-bearing stats — 0.9791 macro-F1 (the rules stage), 288 tests,
+ * 22.8 MB, 9 classes.
  *
  * The final, formatted value is what renders on the server and on first paint,
  * so no-JS, crawlers, and reduced-motion all read the true number with zero
