@@ -37,7 +37,7 @@ Applied ships as a **Next.js 16 web product**, a **SwiftUI macOS app** on a loca
 The classifier is the heart of the product, and it's built to be both accurate and honest about its accuracy:
 
 - **Three layers, escalating cost.** A message is first matched against **201 deterministic regex rules**; unmatched messages fall through to **e5 embedding similarity**; ambiguous cases are resolved by a **fine-tuned SetFit head**. Cheap and explainable first, learned model only when needed.
-- **A load-bearing metric with a CI gate.** The hybrid classifier scores **0.979 macro-F1** on a held-out evaluation set, and continuous integration **fails any merge that drops below 0.95** — the number can't quietly rot.
+- **A load-bearing metric with a CI gate.** The **rules stage** scores **0.9791 macro-F1** on a held-out evaluation set — not the full cascade, which scores 0.9583 on the same set (`docs/ML_EXECUTION_TRACKER.md`). The evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named `baseline_hybrid_v3.json` measures the regexes alone, and continuous integration **fails any merge that drops below 0.95** — the number can't quietly rot.
 - **Runs entirely in the browser.** The model is exported to **int8 ONNX (22.8 MB)** and executed client-side via Transformers.js — **zero servers, zero data leaving the device** — and verified to produce output identical to the Python model.
 - **A confidence gate, not a guess.** Predictions below **0.85 confidence** are routed to a human review queue rather than silently accepted, and every correction feeds back into training data.
 

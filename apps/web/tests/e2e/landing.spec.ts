@@ -96,7 +96,7 @@ test.describe("landing (/)", () => {
 
     const tests = tile("tests in the backend suite");
     await tests.scrollIntoViewIfNeeded();
-    await expect(tests).toContainText("182");
+    await expect(tests).toContainText("288");
 
     const classes = tile(/8 predicted \+ needs_review/);
     await classes.scrollIntoViewIfNeeded();

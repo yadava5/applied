@@ -1,7 +1,7 @@
 # ml/ — the classifier as a hosted inference service
 
 Phase-1 deliverables that turn the 3-layer hybrid email classifier
-(rules → e5-small-v2 → SetFit; 182 tests; CI-gated at macro-F1 ≥ 0.95,
+(rules → e5-small-v2 → SetFit; 288 tests collected, 278 passing; CI-gated at macro-F1 ≥ 0.95,
 0.98 measured on the v3 eval set) into a standalone, deployable service
 with an MLOps trail.
 

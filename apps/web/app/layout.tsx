@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: { default: "Applied — your inbox, made legible", template: "%s · Applied" },
   description:
-    "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads the pipeline out of your inbox at 0.979 macro-F1, CI-gated at 0.95.",
+    "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads the pipeline out of your inbox; the rules stage alone scores 0.9791 macro-F1, CI-gated at 0.95.",
 };
 
 export default function RootLayout({
