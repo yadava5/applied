@@ -27,6 +27,7 @@ Usage (local smoke):
 from __future__ import annotations
 
 import logging
+import os
 import re
 import uuid
 from typing import Any
@@ -45,16 +46,53 @@ logger = logging.getLogger(__name__)
 def _build_cors_origin_regex() -> str:
     """Build the CORS ``allow_origin_regex`` from config.
 
-    Always allows ``localhost``/``127.0.0.1`` (for local ``vercel dev``) and
-    any ``*.vercel.app`` preview URL. Additional hosts come from
+    Allows ``localhost``/``127.0.0.1`` (for local ``vercel dev``), THIS
+    deployment's own Vercel hostnames, and any extra hosts from
     ``settings.cors_allowed_hosts``.
+
+    WHY THERE IS NO ``*.vercel.app`` WILDCARD ANY MORE
+    ---------------------------------------------------
+    This function used to include ``[a-zA-Z0-9-]+\.vercel\.app`` so that
+    preview deployments would work. Combined with ``allow_credentials=True``
+    below, that made the allowlist effectively open: anyone can deploy
+    ``anything.vercel.app`` for free, and the middleware would echo their
+    origin back with credentials permitted. SECURITY_AUDIT.md finding 2
+    (2026-07-22) recorded it as MEDIUM and confirmed it empirically —
+    ``evil-attacker-12345.vercel.app`` was echoed; ``evil.example.com`` was
+    correctly refused.
+
+    Impact was limited rather than critical because this API authenticates
+    with ``Authorization: Bearer <supabase-jwt>``, not cookies, so a hostile
+    origin has no ambient credential to ride. That is a reason it was not an
+    incident, not a reason to keep the hole.
+
+    THE FIX comes from the sibling project. Cadence solves the same problem
+    in ``lib/middleware/cors.ts`` by listing the deployment's OWN hostnames
+    rather than a pattern:
+
+        origin: [`https://${process.env.VERCEL_URL}`,
+                 `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`,
+                 process.env.FRONTEND_URL].filter(Boolean)
+
+    Vercel injects both variables into every deployment, including previews,
+    where ``VERCEL_URL`` is that preview's own hostname. So previews keep
+    working and a third party's ``*.vercel.app`` does not match. Same
+    behaviour, no wildcard.
     """
 
     parts: list[str] = [
         r"localhost(:\d+)?",
         r"127\.0\.0\.1(:\d+)?",
-        r"[a-zA-Z0-9-]+\.vercel\.app",
     ]
+
+    # This deployment's own hostnames, injected by Vercel. VERCEL_URL is the
+    # per-deployment host (unique per preview); VERCEL_PROJECT_PRODUCTION_URL
+    # is the stable production one. Both arrive WITHOUT a scheme.
+    for var_name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL"):
+        own_host = os.environ.get(var_name, "").strip()
+        if own_host:
+            parts.append(re.escape(own_host))
+
     parts.extend(re.escape(host) for host in settings.cors_allowed_hosts if host)
     return rf"^https?://({'|'.join(parts)})$"
 
