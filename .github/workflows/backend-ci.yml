@@ -11,6 +11,13 @@ on:
     branches:
       - main
       - develop
+      # The product branch. `rls-postgres` was added on 2026-07-31 and pushed,
+      # and had still never executed on 2026-08-02 — because every commit since
+      # has landed here, and this branch was not in this list. A job that cannot
+      # trigger is indistinguishable from a job that does not exist, and the
+      # whole point of that job is that a silently-skipped security suite is
+      # green. It was being silently NOT RUN instead, which is worse.
+      - integration/web-migration
     paths:
       - "backend/**"
       - "scripts/install.sh"
