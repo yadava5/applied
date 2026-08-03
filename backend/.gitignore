@@ -1,0 +1,7 @@
+
+
+# Stale local coverage databases misreport the total: one left at 7,941
+# statements produced a 52.6% reading against the real 53.2%.
+.coverage
+.coverage.*
+coverage.json

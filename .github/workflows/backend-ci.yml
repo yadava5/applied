@@ -64,7 +64,12 @@ jobs:
         env:
           JOBTRACKER_ENVIRONMENT: test
           PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
-        run: pytest tests -q
+        # --cov puts the coverage figure in a PUBLIC run log on every push.
+        # The portfolio cites this number; until now the only record of it
+        # was a README line and a local run, which is not evidence anyone
+        # else can check. No artifact is committed -- the run log is the
+        # artifact, and it regenerates itself.
+        run: pytest tests -q --cov=jobtracker --cov-report=term
 
       - name: Run classifier non-regression gate (rules v3)
         env:

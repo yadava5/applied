@@ -116,10 +116,28 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic
 to rules when SetFit will not import, and a degraded run reports flatteringly low
 latency for a classifier that is not actually running.
 
-**Coverage**, `pytest --cov=jobtracker`: 54% overall, 61% excluding one-off
-scripts. The distribution matters more than the total — `jobtracker/cloud`, the
-code actually deployed, is at **82%**; `auth` 81%; `database` 77%. What pulls the
-average down is 2,163 statements of dataset importers and mock-data generators.
+**Coverage**, `pytest tests -q --cov=jobtracker` in the project's Python 3.11
+venv: **53.2%** overall (8,210 statements, 3,844 missed), from a run of 305
+tests with 0 skipped. The distribution matters more than the total —
+`jobtracker/cloud`, the code actually deployed, is at **82.2%**; `auth` 80.5%;
+`database` 76.6%. What pulls the average down is `jobtracker/scripts` at
+**2,240 statements and 33.7%**, of which the eight modules no test imports are
+1,006 statements at 0%.
+
+This paragraph read "54% overall, 61% excluding one-off scripts ... 2,163
+statements of dataset importers" until 2026-08-03. Three of those four numbers
+were wrong, and the portfolio was citing this README rather than a run, which
+is how they persisted. The corrections: 54% came from a run on Python 3.14,
+where PEP 649 stops emitting line events for annotation-only class attributes
+and the same tree measures 8,018 statements instead of 8,210 — a 192-statement
+gap across 13 Pydantic models. 61% is dropped rather than restated, because it
+reaches 60.5% only by excluding 1,234 statements of code that CI invokes
+directly as gates. And 2,163 never described dataset importers: those are 662
+statements at 0%; `scripts/` as a whole was already 2,240 when the line was
+written.
+
+CI now runs `--cov` on every push, so this figure appears in a public run log
+rather than resting on a line of prose.
 
 **Dependencies:** `pip-audit -r requirements.txt` reports **0 known
 vulnerabilities** on the deployed Vercel surface. Use `pip-audit`, not
