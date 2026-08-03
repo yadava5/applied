@@ -28,6 +28,12 @@ DEFAULT_BASELINES = {
     "hybrid": BACKEND_DIR / "data" / "evaluation" / "baseline_hybrid_v1.json",
 }
 
+# The layers of HybridClassifier that are actually models. Deliberately excludes
+# "content_filter", which is a deterministic veto reachable without any model
+# loading, and "rules"/"fallback", which are the deterministic path itself.
+# Kept in sync with the ``method=`` values in classifier/hybrid.py.
+SEMANTIC_LAYERS = frozenset({"embeddings", "setfit"})
+
 VALID_LABELS = {category.value for category in EmailCategory}
 DEFAULT_LABEL_ORDER = [
     EmailCategory.APPLIED.value,
@@ -125,16 +131,32 @@ async def predict_labels(
     mode: str,
     *,
     hybrid_profile: str,
-) -> list[str]:
-    """Run classifier predictions for all examples."""
+) -> tuple[list[str], dict[str, int]]:
+    """
+    Run classifier predictions for all examples.
+
+    Returns the predicted labels *and* a tally of which layer produced each one.
+
+    The tally is not diagnostics. ``HybridClassifier`` degrades on purpose when a
+    semantic layer will not load — the API must keep answering when the SetFit
+    model is missing — so a hybrid run whose ML layers are all dead still returns
+    a full set of predictions, from rules. On this dataset rules and hybrid score
+    identically (see ``data/evaluation/benchmark_history.md``), so that run scores
+    0.9791, matches the committed baseline, and passes. A green hybrid benchmark
+    is therefore not by itself evidence that anything hybrid ran. The tally is what
+    makes the difference observable, and ``_assert_layers_exercised`` is what makes
+    it fatal.
+    """
     predictions: list[str] = []
+    methods: Counter[str] = Counter()
 
     if mode == "rules":
         classifier = get_rules_classifier()
         for item in examples:
             result = classifier.classify(item.subject, item.body_text, item.sender_email)
             predictions.append(result.category.value)
-        return predictions
+            methods["rules"] += 1
+        return predictions, dict(methods)
 
     if mode == "hybrid":
         classifier = HybridClassifier()
@@ -142,9 +164,48 @@ async def predict_labels(
         for item in examples:
             result = await classifier.classify(item.subject, item.body_text, item.sender_email)
             predictions.append(result.category.value)
-        return predictions
+            methods[getattr(result, "method", None) or "unknown"] += 1
+        return predictions, dict(methods)
 
     raise ValueError(f"Unsupported mode: {mode}")
+
+
+def _assert_layers_exercised(
+    report: dict[str, Any],
+    *,
+    mode: str,
+    hybrid_profile: str,
+) -> list[str]:
+    """
+    Fail a hybrid/full run whose semantic layers never actually ran.
+
+    Only ``--hybrid-profile full`` is checked. ``deterministic`` disables SetFit
+    and blanks the embedding examples by design, for machine-stable CI gating, so
+    demanding those layers there would be demanding the opposite of what it is for.
+    """
+    if mode != "hybrid" or hybrid_profile != "full":
+        return []
+
+    layers = report.get("layers", {})
+    # An allowlist, not "anything that is not rules". ``content_filter`` is a
+    # deterministic veto that fires both ahead of the rules layer (hybrid.py:238)
+    # and inside the semantic branches (hybrid.py:353, :398), so its presence says
+    # nothing about whether an ML layer ran -- a lite-mode run scores 0.9791 with
+    # content_filter=5, rules=58, fallback=33 and no model loaded at all. Naming the
+    # two layers that are actually models is the only check that excludes that run.
+    if any(layers.get(name, 0) > 0 for name in SEMANTIC_LAYERS):
+        return []
+
+    observed = ", ".join(f"{k}={v}" for k, v in sorted(layers.items())) or "none recorded"
+    expected = "/".join(sorted(SEMANTIC_LAYERS))
+    return [
+        f"hybrid/full answered nothing from {expected} (layers: {observed}). "
+        "Every prediction came from the deterministic path, so this run measures the "
+        "rules classifier and would report it as hybrid. Known causes: setfit or "
+        "sentence-transformers failed to import (check the warnings above), "
+        "JOBTRACKER_LITE_MODE is set, or deployment=cloud forces lite mode. "
+        "Re-run with --allow-degraded-layers if a rules-only measurement is what you want."
+    ]
 
 
 def _configure_hybrid_profile(classifier: HybridClassifier, profile: str) -> None:
@@ -299,6 +360,22 @@ def compare_against_baseline(
     """Return non-regression failures relative to baseline metrics."""
     failures: list[str] = []
 
+    # A run is only comparable to a baseline taken under the same profile. The
+    # committed hybrid baseline is a `deterministic` one -- SetFit off, embedding
+    # examples blanked -- which is why it equals the rules baseline to sixteen
+    # decimal places. Scoring a `full` run against it reads every contribution the
+    # semantic layers make, good or bad, as a regression against the rules number.
+    current_profile = report.get("meta", {}).get("hybrid_profile")
+    baseline_profile = baseline.get("meta", {}).get("hybrid_profile")
+    if current_profile != baseline_profile:
+        failures.append(
+            f"hybrid_profile mismatch: this run is '{current_profile}' but the baseline "
+            f"was generated with '{baseline_profile}'. These measure different classifiers "
+            "and their scores are not comparable. Point --baseline at a file recorded "
+            "under the same profile, or regenerate with --update-baseline."
+        )
+        return failures
+
     current_overall = report.get("overall", {})
     baseline_overall = baseline.get("overall", {})
 
@@ -359,6 +436,12 @@ def print_summary(report: dict[str, Any], max_mismatches: int) -> None:
     if "hybrid_profile" in meta:
         print(f"hybrid_profile: {meta['hybrid_profile']}")
     print(f"samples: {meta['sample_count']}")
+    layers = report.get("layers") or {}
+    if layers:
+        # Printed next to the score, not buried, because it is the line that says
+        # whether the score came from the classifier named in `mode`.
+        answered = ", ".join(f"{name}={count}" for name, count in sorted(layers.items()))
+        print(f"answered by: {answered}")
     print(
         f"accuracy: {overall['accuracy']:.4f} | macro_f1: {overall['macro_f1']:.4f} | "
         f"weighted_f1: {overall['weighted_f1']:.4f} | misclassified: {overall['misclassified']}"
@@ -395,12 +478,16 @@ async def run_evaluation(
     await init_db()
     examples = load_dataset(dataset)
     expected = [item.label for item in examples]
-    predicted = await predict_labels(
+    predicted, layers = await predict_labels(
         examples,
         mode=mode,
         hybrid_profile=hybrid_profile,
     )
     report = compute_report(expected, predicted, examples, dataset_path=dataset, mode=mode)
+    # Which layer answered, and how often. Recorded in the report so the artifact
+    # itself says whether the ML path ran, rather than leaving that to be inferred
+    # from a score that rules alone can reproduce.
+    report["layers"] = layers
     if mode == "hybrid":
         report["meta"]["hybrid_profile"] = hybrid_profile
     return report
@@ -444,6 +531,15 @@ def parse_args() -> argparse.Namespace:
         default=15,
         help="How many mismatches to print",
     )
+    parser.add_argument(
+        "--allow-degraded-layers",
+        action="store_true",
+        help=(
+            "Permit a --mode hybrid --hybrid-profile full run in which no semantic "
+            "layer answered. Off by default: such a run measures the rules "
+            "classifier and reports it as hybrid."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -467,6 +563,19 @@ def main() -> int:
     if args.output is not None:
         _write_json(args.output, report)
         print(f"\nSaved report: {args.output}")
+
+    # Before any pass/fail verdict, and before --update-baseline can write this
+    # report over the committed one: a hybrid run whose ML layers never loaded
+    # must not be allowed to become the baseline that future runs are judged by.
+    if not args.allow_degraded_layers:
+        layer_failures = _assert_layers_exercised(
+            report, mode=args.mode, hybrid_profile=args.hybrid_profile
+        )
+        if layer_failures:
+            print("\nFAIL: the evaluated classifier is not the one that was requested")
+            for failure in layer_failures:
+                print(f"- {failure}")
+            return 1
 
     if args.min_macro_f1 is not None:
         macro_f1 = float(report["overall"]["macro_f1"])

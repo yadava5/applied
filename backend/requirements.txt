@@ -42,7 +42,24 @@ cryptography>=48.0.1,<49      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-
 # ML & NLP
 # -----------------------------------------------------------------------------
 sentence-transformers>=2.2.0  # Sentence embeddings (loads e5-small-v2)
-transformers>=4.40,<5         # HuggingFace transformers (pinned for setfit compat)
+# The <5 cap is load-bearing and cannot be lifted from here. Note that neither
+# dependency's metadata says so: setfit 1.1.3 declares `transformers>=4.41.0` with
+# no upper bound and sentence-transformers 5.2.2 allows `<6.0.0`, so a resolver
+# will happily install transformers 5.x. Tested 2026-08-02 -- it breaks:
+#     ImportError: cannot import name 'default_logdir'
+#                  from 'transformers.training_args'   (setfit/training_args.py:13)
+# HybridClassifier catches that ImportError and degrades to the rules layer, so the
+# failure is silent: the API keeps answering and the benchmark keeps printing 0.9791.
+# See tests/test_evaluate_classifier_layer_guard.py for the guard that makes it loud.
+#
+# Cost of the cap, recorded rather than hidden: it holds open PYSEC-2026-2288
+# (fix 5.0.0), PYSEC-2026-2289 (fix 5.3.0) and PYSEC-2026-2290 (fix 5.5.0).
+# PYSEC-2025-217 has no fixed version in any release. All four are remote-code-
+# execution paths through model/checkpoint loading from an untrusted repository;
+# this app loads exactly one model, from a local path it wrote itself
+# (backend/checkpoints, appdata/models/setfit), and never from a user-supplied
+# repo id. Unblocking needs a setfit release that supports transformers 5.
+transformers>=4.40,<5         # HuggingFace transformers (see the note above)
 setfit>=1.0.0                 # Few-shot text classification
 scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
 numpy>=1.24.0                 # Numerical operations, embedding serialization
