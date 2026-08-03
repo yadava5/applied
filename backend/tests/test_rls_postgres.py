@@ -46,13 +46,69 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-ADMIN_URL = os.environ.get("JOBTRACKER_TEST_PG_ADMIN_URL")
+def _resolve_admin_url():
+    """Find a superuser Postgres, starting one if that is what it takes.
+
+    WHY THIS IS NOT JUST A SKIPIF ANY MORE
+    --------------------------------------
+    This module holds the only proof that tenant isolation is enforced by the
+    DATABASE rather than by application code that could forget a WHERE clause.
+    It used to skip unless a human had exported JOBTRACKER_TEST_PG_ADMIN_URL by
+    hand -- and a skip is green, so the default experience was ten silent skips
+    and a passing suite.
+
+    That default held. As of 2026-08-02 these ten tests had never executed
+    anywhere: not locally, and not in CI either, because the job that runs them
+    could not trigger on the branch the work lives on.
+
+    A test worth writing is worth running by default. So:
+
+      1. an explicit JOBTRACKER_TEST_PG_ADMIN_URL always wins -- CI sets it
+         against its own service container, and that path is unchanged;
+      2. otherwise, if Docker is available, start a throwaway postgres:16 and
+         use that. Nothing to remember, nothing to export;
+      3. only if there is no Docker either do we skip -- and that skip now
+         means "this machine cannot run Postgres", not "nobody set a variable".
+    """
+
+    explicit = os.environ.get("JOBTRACKER_TEST_PG_ADMIN_URL")
+    if explicit:
+        return explicit, None
+
+    try:
+        from testcontainers.community.postgres import PostgresContainer
+    except Exception:  # pragma: no cover - machine without the test extra
+        return None, None
+
+    try:
+        container = PostgresContainer("postgres:16")
+        container.start()
+    except Exception:  # pragma: no cover - no docker daemon, or it refused
+        return None, None
+
+    url = container.get_connection_url().replace(
+        "postgresql+psycopg2://", "postgresql+asyncpg://"
+    )
+    return url, container
+
+
+ADMIN_URL, _OWNED_CONTAINER = _resolve_admin_url()
+
+
+def teardown_module(module) -> None:  # noqa: ANN001 - pytest hook signature
+    """Stop the container we started, if we started one."""
+
+    if _OWNED_CONTAINER is not None:
+        _OWNED_CONTAINER.stop()
+
 
 pytestmark = pytest.mark.skipif(
     not ADMIN_URL,
     reason=(
-        "Set JOBTRACKER_TEST_PG_ADMIN_URL to a superuser postgresql+asyncpg URL "
-        "to run the real-Postgres RLS enforcement tests."
+        "No Postgres available: set JOBTRACKER_TEST_PG_ADMIN_URL to a superuser "
+        "postgresql+asyncpg URL, or run Docker so a throwaway postgres:16 can be "
+        "started automatically. These tests are the only proof of database-level "
+        "tenant isolation, so skipping them leaves it UNVERIFIED on this run."
     ),
 )
 
