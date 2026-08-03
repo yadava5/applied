@@ -149,10 +149,13 @@ export default function SignupPage() {
 
         <p className="text-sm text-muted">
           Already have an account?{" "}
+          {/*
+            No target="_blank": this is the signup <-> login cross-link, and
+            opening it in a new tab leaves the abandoned signup form behind in
+            the original one.
+          */}
           <Link
             href="/login"
-            target="_blank"
-            rel="noopener noreferrer"
             className="text-strong underline underline-offset-4 hover:text-foreground"
           >
             Sign in

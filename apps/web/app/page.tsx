@@ -93,9 +93,14 @@ export default function Landing() {
             >
               live demo
             </a>
+            {/*
+              Deliberately NOT NEW_TAB. The demo and Space links above open in a
+              new tab so the landing survives behind them, but signing in is the
+              opposite: opening /login in a second tab strands the user on a
+              stale landing page and leaves them with two tabs after auth.
+            */}
             <Link
               href="/login"
-              {...NEW_TAB}
               className="inline-flex min-h-11 items-center rounded-lg border border-line px-3 py-1.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
             >
               Sign in
@@ -396,7 +401,7 @@ export default function Landing() {
                     body: (
                       <>
                         The trained model compiles to a{" "}
-                        <span className="text-strong">compact</span> int8-ONNX file that
+                        <span className="text-strong">22.8 MB</span> int8-ONNX file that
                         Transformers.js runs on your own CPU (
                         <span className="font-mono text-dim">allowRemoteModels = false</span>). Paste
                         text into the in-browser Space and it is classified on-device, never leaving

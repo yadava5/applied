@@ -41,7 +41,10 @@ test.describe("app shell — signed out (public)", () => {
     // But never a dead end: the header logo goes home and the sample inbox is
     // linked from the standalone header.
     const header = page.locator("header");
-    await expect(header.getByRole("link", { name: /job.*tracker/i })).toHaveAttribute("href", "/");
+    // Matches the current brand. This asserted /job.*tracker/i until 2026-08-03,
+    // which was the pre-rename name — the product has been "Applied" since, so
+    // the test was failing against correct markup.
+    await expect(header.getByRole("link", { name: /applied/i })).toHaveAttribute("href", "/");
     await expect(header.getByRole("link", { name: /sample inbox/i })).toHaveAttribute(
       "href",
       "/demo/inbox",
