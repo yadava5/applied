@@ -1,0 +1,53 @@
+# gitleaks configuration
+#
+# A secret scanner is only useful if its output is believed. Three known-good
+# test fixtures were being reported on every scan of this repository's history,
+# and a scanner that cries wolf three times gets its output skimmed — which is
+# exactly when the fourth finding, the real one, gets missed.
+#
+# So each is allowlisted individually, by value, with the reason recorded. Not
+# by silencing the rule, and not by excluding the whole test tree: a real
+# credential pasted into a test file is still a real credential, and this
+# config must keep catching that.
+#
+# Scanned 2026-08-02 over full history (`gitleaks git`): 3 findings, all below,
+# all false positives. 0 real leaks.
+
+[extend]
+useDefault = true
+
+[[rules]]
+  # Keep the default generic-api-key rule; the allowlist below narrows it.
+  id = "generic-api-key"
+
+[allowlist]
+  description = "Test fixtures verified as non-credentials on 2026-08-02"
+
+  regexes = [
+    # backend/tests/{test_credentials_cloud,test_rls_postgres}.py
+    #
+    # A syntactically valid Fernet key, generated once so the credential
+    # encrypt/decrypt round-trip is deterministic across runs. It protects
+    # nothing: it is generated in the test file, used in the test file, and
+    # discarded. Verified 2026-08-02 to appear in zero files outside
+    # backend/tests/.
+    #
+    # It has high entropy (4.99) precisely BECAUSE it is a real Fernet key
+    # format, which is why the generic rule fires and why it cannot be
+    # distinguished by pattern alone.
+    '''fxHtKRWuaD2nQbNZoAzwEo9pG_Q4AoHTsWvj1_RlrZw=''',
+
+    # backend/tests/test_user_id_scoping.py
+    #
+    # A literal string long enough to satisfy PyJWT's HMAC key-length warning
+    # for HS256. Its content is irrelevant so long as it is consistent within
+    # the module — the tests assert user-id scoping, not signature strength.
+    # The value says what it is. Verified 2026-08-02 to appear in zero files
+    # outside backend/tests/.
+    '''scoping-test-jwt-secret-at-least-32-bytes-long-for-hs256''',
+  ]
+
+  # Deliberately NOT allowlisted:
+  #   - backend/tests/ as a path. A real key pasted into a test is still real.
+  #   - .env.example and friends. They already contain no values.
+  #   - the generic-api-key rule itself, which is the one that found these.
