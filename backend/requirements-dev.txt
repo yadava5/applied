@@ -13,6 +13,16 @@ pytest-asyncio>=0.23.0        # Async test support
 pytest-cov>=4.1.0             # Code coverage
 httpx>=0.26.0                 # Async HTTP client for API testing
 
+# Dependency auditing. Specifically pip-audit rather than osv-scanner: run
+# against a requirements file of `>=` floors, osv-scanner resolves each
+# constraint to its FLOOR and reports the worst case the file permits. On
+# 2026-08-02 that produced 319 "vulnerabilities" for this repo, including ~40
+# against aiohttp 3.9.5 when the resolved environment has 3.13.3. pip-audit
+# performs a real resolution, which gave 0 for the Vercel deploy surface.
+#   pip-audit -r requirements.txt          # what the deployment resolves to
+#   pip-audit                              # what is installed right now
+pip-audit>=2.10.0
+
 # -----------------------------------------------------------------------------
 # Code Quality
 # -----------------------------------------------------------------------------
@@ -23,3 +33,9 @@ mypy>=1.8.0                   # Static type checker
 # Distribution
 # -----------------------------------------------------------------------------
 pyinstaller>=6.3.0            # Bundle Python as standalone executable
+
+# Lets tests/test_rls_postgres.py provision its own postgres:16 instead of
+# skipping. The RLS suite is the only proof of database-level tenant
+# isolation, and it spent months skipped because it needed a hand-exported
+# env var. See the module docstring.
+testcontainers[postgres]>=4.0.0

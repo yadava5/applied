@@ -1,0 +1,881 @@
+@import "tailwindcss";
+
+/* Applied web — monochrome system. Near-black surfaces, a gray text
+ * ramp, hairline rules, mono uppercase labels. Chromatic ink is
+ * semantic only: green = confident/live, amber = needs review,
+ * red = rejection. */
+:root {
+  color-scheme: dark;
+  --background: #0a0a0b;
+  --surface: #0f1011;
+  --surface-2: #141517;
+  --foreground: #d6d8db;
+  --text-strong: #f7f8f8;
+  --text-muted: #8a8f98;
+  /* Dim is the faintest step of the text ramp (captions, mono labels). Kept at
+   * ≥4.5:1 against every dark surface (background/surface/surface-2) so the
+   * .label-mono / text-[11px] captions clear WCAG AA — see globals a11y note. */
+  --text-dim: #7c8088;
+  --line: rgb(255 255 255 / 0.09);
+  --line-soft: rgb(255 255 255 / 0.055);
+  --line-strong: rgb(255 255 255 / 0.2);
+  --green: #4ade80;
+  --amber: #f59e0b;
+  --red: #f87171;
+  /* Data-viz sub-palette — the three classifier layers get their own
+   * categorical hues so the pipeline reads as data, not just mono text. */
+  --viz-rules: #38bdf8; /* layer 1 — regex rules, instant */
+  --viz-embeddings: #a78bfa; /* layer 2 — e5 similarity */
+  --viz-setfit: #34d399; /* layer 3 — SetFit few-shot */
+}
+
+/* Explicit dark re-assertion. `:root` already defaults to dark, but that only
+ * covers the top of the cascade — a subtree that forces `data-theme="dark"`
+ * on itself (the landing page, `/demo`: both are the product's own
+ * always-dark narrative, regardless of the visitor's saved Appearance
+ * setting) sits *inside* `<html>`, and `[data-theme="light"]` below is a bare
+ * attribute selector with no ancestor scoping, so it happily overrides `:root`
+ * from `<html data-theme="light">` right through a nested `data-theme="dark"`
+ * element with nothing to stop it. Mirroring `[data-theme="light"]` with an
+ * equally unscoped `[data-theme="dark"]` rule means the more specific,
+ * closer-to-the-element attribute wins the cascade as intended, so a
+ * light-themed visitor still sees the landing/demo pages in the dark system
+ * they're written for. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0a0a0b;
+  --surface: #0f1011;
+  --surface-2: #141517;
+  --foreground: #d6d8db;
+  --text-strong: #f7f8f8;
+  --text-muted: #8a8f98;
+  --text-dim: #7c8088;
+  --line: rgb(255 255 255 / 0.09);
+  --line-soft: rgb(255 255 255 / 0.055);
+  --line-strong: rgb(255 255 255 / 0.2);
+  --green: #4ade80;
+  --amber: #f59e0b;
+  --red: #f87171;
+  --viz-rules: #38bdf8;
+  --viz-embeddings: #a78bfa;
+  --viz-setfit: #34d399;
+}
+
+/* Light theme — opt-in via the Appearance setting (a `jt-theme=light` cookie
+ * flips `data-theme` on <html>, read server-side in app/layout.tsx so there is
+ * no flash). The same monochrome system, inverted: paper surfaces, an ink text
+ * ramp, and darker semantic accents so green/amber/red/viz keep their contrast
+ * on white. The `@theme inline` map below reads these live, so every color
+ * utility re-themes automatically. */
+[data-theme="light"] {
+  color-scheme: light;
+  --background: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f4f4f5;
+  --foreground: #3f3f46;
+  --text-strong: #18181b;
+  --text-muted: #52525b;
+  /* Darkened from #9599a1 (~3.0:1) so dim captions clear WCAG AA (≥4.5:1) on
+   * the light paper surfaces too, while staying a step lighter than muted. */
+  --text-dim: #676b73;
+  --line: rgb(0 0 0 / 0.1);
+  --line-soft: rgb(0 0 0 / 0.06);
+  --line-strong: rgb(0 0 0 / 0.24);
+  --green: #16a34a;
+  --amber: #b45309;
+  --red: #dc2626;
+  --viz-rules: #0284c7;
+  --viz-embeddings: #7c3aed;
+  --viz-setfit: #059669;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-foreground: var(--foreground);
+  --color-strong: var(--text-strong);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-strong: var(--line-strong);
+  --color-live: var(--green);
+  --color-review: var(--amber);
+  --color-reject: var(--red);
+  --color-viz-rules: var(--viz-rules);
+  --color-viz-embeddings: var(--viz-embeddings);
+  --color-viz-setfit: var(--viz-setfit);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tailwind v4's Preflight no longer sets `cursor: pointer` on buttons, so every
+ * <button>/[role=button] would otherwise show the default arrow cursor (trace
+ * rows, "File an application", "↺ replay", the beta pill + dismiss, etc.).
+ * Restore the expected affordance in the base layer so utilities still win, and
+ * exclude :disabled so a disabled control keeps its not-allowed/default cursor. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+ * Internal-scroll lists. Dashboard lists that can grow unbounded (pipeline
+ * columns, the review queue, recent activity) cap their height and scroll
+ * inside instead of stretching the page. `.scroll-area` gives them a thin,
+ * theme-aware scrollbar: a hairline thumb that reads against both the dark ink
+ * and light paper surfaces (via the --line ramp) and darkens on hover. The
+ * stable gutter reserves the scrollbar's width up-front so a column's card
+ * width — and thus the four-column row — never shifts when the thumb appears,
+ * and every column stays optically aligned whether or not it overflows.
+ * ------------------------------------------------------------------------- */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-gutter: stable;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background: var(--line);
+  background-clip: padding-box;
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+  background-clip: padding-box;
+}
+
+/* Mono uppercase label — the machine voice. */
+.label-mono {
+  color: var(--text-dim);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------------------
+ * Landing scroll-motion. A single IntersectionObserver
+ * (components/landing/Reveal.tsx) flips [data-visible="true"] on a wrapper;
+ * everything below is pure CSS so the shipped client JS stays tiny. All of it
+ * collapses to the final, fully-visible state under prefers-reduced-motion —
+ * and, with JS disabled, via the <noscript> rule in app/page.tsx.
+ * ------------------------------------------------------------------------- */
+
+/* Fade + rise a block into view. */
+.reveal {
+  opacity: 0;
+  transform: translateY(1.5rem);
+  transition:
+    opacity 0.7s ease,
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reveal[data-visible="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Stagger direct children; each child sets its own --i for the delay. */
+.reveal-stagger > * {
+  opacity: 0;
+  transform: translateY(0.75rem);
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
+  transition-delay: calc(var(--i, 0) * 70ms);
+}
+.reveal-stagger[data-visible="true"] > * {
+  opacity: 1;
+  transform: none;
+}
+
+/* Grow a horizontal bar from 0 to its --bar-w once an ancestor is visible. */
+.bar-grow {
+  width: 0;
+  transition: width 1.1s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--i, 0) * 80ms);
+}
+[data-visible="true"] .bar-grow {
+  width: var(--bar-w);
+}
+
+/* A soft, slow drift for the scroll cue chevron (motion-safe only). */
+@keyframes cue-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(4px);
+    opacity: 1;
+  }
+}
+.scroll-cue {
+  animation: cue-drift 1.8s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------------------
+ * Enrichment layer — premium micro-interactions. Everything here is progressive
+ * enhancement over the existing narrative and collapses to a static, legible
+ * final state under prefers-reduced-motion (the block at the end of this file).
+ * ------------------------------------------------------------------------- */
+
+/* Spring-eased hover for interactive elements (buttons / door cards). */
+.spring-ease {
+  transition-property: transform, border-color, color, background-color, box-shadow;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Section titles pull from blur into focus as their Reveal block enters. */
+.title-focus {
+  filter: blur(12px);
+  transition: filter 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-visible="true"] .title-focus {
+  filter: blur(0);
+}
+
+/* The signature decision-trace card: cursor spotlight, 3D tilt, beam border. */
+@property --beam {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.trace-card {
+  position: relative;
+  isolation: isolate;
+  transform: perspective(1300px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+/* Lift real content above the spotlight wash. */
+.trace-card > * {
+  position: relative;
+  z-index: 1;
+}
+/* Cursor-follow spotlight. */
+.trace-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    260px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in oklab, var(--viz-embeddings) 15%, transparent),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.trace-card:hover::after {
+  opacity: 1;
+}
+/* Traveling beam border. */
+.trace-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam),
+    transparent 0 60%,
+    color-mix(in oklab, var(--viz-embeddings) 90%, transparent) 74%,
+    color-mix(in oklab, var(--viz-rules) 90%, transparent) 84%,
+    transparent 96%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  animation: beam-rotate 6s linear infinite;
+}
+.trace-card:hover::before,
+.trace-card:focus-within::before {
+  opacity: 0.95;
+}
+@keyframes beam-rotate {
+  to {
+    --beam: 360deg;
+  }
+}
+/* Decision-trace rows lift on hover/focus. */
+.trace-row {
+  transition:
+    background-color 0.2s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.trace-row:hover,
+.trace-row:focus-visible {
+  transform: translateX(3px);
+}
+
+/* Per-class F1 bars — a sheen sweeps once as each bar draws in. */
+@keyframes f1-sheen {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(360%);
+    opacity: 0;
+  }
+}
+[data-visible="true"] .f1-sheen {
+  animation: f1-sheen 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 80ms + 300ms);
+}
+
+/* ---- signature ending choreography (full-bleed bottom band) -------------- */
+/* The whole band replays on click; focus ring inset so it stays visible on
+ * the full-bleed edge. */
+.sig-band:focus-visible {
+  outline: 2px solid var(--line-strong);
+  outline-offset: -2px;
+}
+
+.sig__band {
+  opacity: 0.32;
+}
+.sig--play .sig__band {
+  animation: sig-pulse 0.6s ease var(--d, 0s) 1;
+}
+@keyframes sig-pulse {
+  0% {
+    opacity: 0.32;
+  }
+  45% {
+    opacity: 1;
+    filter: drop-shadow(0 0 6px currentColor);
+  }
+  100% {
+    opacity: 0.32;
+  }
+}
+
+/* The giant wordmark: garbled and dim until the verdict lands, then decoded
+ * (JS swaps the glyphs) and lifted slightly brighter. */
+.sig__wordmark {
+  opacity: 0.4;
+  transition: opacity 0.6s ease;
+}
+.sig__wordmark[data-resolved] {
+  opacity: 0.8;
+}
+
+.sig__envelope {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sig--play .sig__envelope {
+  animation: sig-travel 3.4s cubic-bezier(0.45, 0, 0.3, 1) forwards;
+}
+@keyframes sig-travel {
+  0% {
+    transform: translateX(0) scale(1);
+    opacity: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  91% {
+    transform: translateX(1065px) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(1065px) scale(0.16);
+    opacity: 0;
+  }
+}
+
+.sig__ring {
+  stroke-dasharray: 120;
+  stroke-dashoffset: 120;
+}
+.sig--play .sig__ring {
+  animation: sig-draw 0.5s ease 3.05s forwards;
+}
+.sig__check {
+  stroke-dasharray: 42;
+  stroke-dashoffset: 42;
+}
+.sig--play .sig__check {
+  animation: sig-draw 0.42s ease 3.45s forwards;
+}
+@keyframes sig-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.sig__glow {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sig--play .sig__glow {
+  animation: sig-glow 0.7s ease 3.35s forwards;
+}
+@keyframes sig-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0.26;
+    transform: scale(1);
+  }
+}
+.sig__ripple {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sig--play .sig__ripple {
+  animation: sig-ripple 0.8s ease 3.45s forwards;
+}
+@keyframes sig-ripple {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+/* Static resolved end-state (reduced-motion, or before first play we keep the
+ * envelope armed at the left; --static forces the verdict fully formed). */
+.sig--static .sig__envelope {
+  opacity: 0;
+}
+.sig--static .sig__ring,
+.sig--static .sig__check {
+  stroke-dashoffset: 0;
+}
+.sig--static .sig__glow {
+  opacity: 0.26;
+}
+.sig--static .sig__band {
+  opacity: 0.5;
+}
+.sig--static .sig__wordmark {
+  opacity: 0.8;
+}
+
+/* ---------------------------------------------------------------------------
+ * Beta-access notice — the rich <BetaCard> (settings / not-connected inbox)
+ * and the slim <BetaBanner> pill. Uses the brand's data-viz hues (cyan rules /
+ * violet e5 / green SetFit) plus amber, on the dark ink system. Every effect
+ * here is pure CSS enhancement and collapses to a static, legible state under
+ * prefers-reduced-motion (block further down). Reuses the registered `--beam`
+ * angle + `beam-rotate` keyframe declared for the decision-trace card above.
+ * ------------------------------------------------------------------------- */
+
+/* Pulsing status dot — a solid core with a fading ping ring. */
+.beta-dot {
+  position: relative;
+  display: inline-block;
+  height: 0.45rem;
+  width: 0.45rem;
+  flex: none;
+  border-radius: 9999px;
+  background: var(--viz-setfit);
+}
+.beta-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--viz-setfit);
+  animation: beta-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes beta-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  75%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Card entrance — fade + rise once on load (opacity only lives in the keyframe
+ * so, if animations are unsupported, the card is simply visible). */
+.beta-card {
+  animation: beta-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes beta-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Soft dual-hue glow behind the card content, gently breathing. Shared with
+ * the landing privacy card so the two premium surfaces read as one family. */
+.beta-card::after,
+.privacy-card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 12% 0%, color-mix(in oklab, var(--viz-embeddings) 14%, transparent), transparent 55%),
+    radial-gradient(120% 90% at 100% 100%, color-mix(in oklab, var(--viz-rules) 12%, transparent), transparent 55%);
+  animation: beta-glow 6s ease-in-out infinite;
+}
+@keyframes beta-glow {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Traveling four-hue beam border (cyan → violet → green → amber). */
+.beta-card::before,
+.privacy-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam),
+    transparent 0 8%,
+    color-mix(in oklab, var(--viz-rules) 85%, transparent) 22%,
+    color-mix(in oklab, var(--viz-embeddings) 85%, transparent) 42%,
+    color-mix(in oklab, var(--viz-setfit) 85%, transparent) 60%,
+    color-mix(in oklab, var(--amber) 85%, transparent) 78%,
+    transparent 92% 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.6;
+  animation: beam-rotate 9s linear infinite;
+}
+
+/* Seat-cap panel — a single sheen sweep, on a slow loop. */
+.beta-seats {
+  position: relative;
+  overflow: hidden;
+}
+.beta-seats::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 32%,
+    color-mix(in oklab, var(--text-strong) 16%, transparent) 50%,
+    transparent 68%
+  );
+  transform: translateX(-130%);
+  animation: beta-sheen 5s ease-in-out 0.8s infinite;
+}
+@keyframes beta-sheen {
+  0% {
+    transform: translateX(-130%);
+  }
+  24%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+/* Pill — a subtle drifting accent border (masked ring, like the card beam). */
+.beta-pill {
+  position: relative;
+  isolation: isolate;
+}
+.beta-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--beam),
+    transparent 0 55%,
+    color-mix(in oklab, var(--viz-rules) 80%, transparent) 70%,
+    color-mix(in oklab, var(--viz-embeddings) 80%, transparent) 82%,
+    transparent 92% 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.65;
+  animation: beam-rotate 7s linear infinite;
+}
+
+/* Popover entrance. */
+.beta-panel {
+  transform-origin: bottom center;
+  animation: beta-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes beta-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Brand logo (components/brand/Logo.tsx) — the wordmark + pipeline mark. On
+ * hover / keyboard-focus of its link, the pipeline "runs": each node pings in
+ * sequence up to the emerald verdict, echoing the landing `sig-pulse` and the
+ * `beta-dot` ping, while the lockup lifts on the same spring curve as the app's
+ * buttons (`.spring-ease`). The accents reuse the data-viz tokens so the mark
+ * re-themes with the UI. Collapses to a static logo under reduced-motion.
+ * ------------------------------------------------------------------------- */
+.brand-logo__proc {
+  color: var(--viz-rules);
+  stroke: currentColor;
+}
+.brand-logo__verdict {
+  color: var(--viz-setfit);
+  fill: currentColor;
+}
+.brand-logo__node {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.brand-logo-link {
+  display: inline-flex;
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.brand-logo-link:hover,
+.brand-logo-link:focus-visible {
+  transform: translateY(-1px);
+}
+.brand-logo-link:hover .brand-logo__node,
+.brand-logo-link:focus-visible .brand-logo__node {
+  animation: brand-pulse 0.5s ease var(--d, 0ms) both;
+}
+@keyframes brand-pulse {
+  0%,
+  100% {
+    filter: none;
+    transform: scale(1);
+  }
+  45% {
+    filter: drop-shadow(0 0 5px currentColor);
+    transform: scale(1.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal-stagger > *,
+  .bar-grow {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .bar-grow {
+    width: var(--bar-w) !important;
+  }
+  .scroll-cue {
+    animation: none !important;
+  }
+  /* Enrichment layer collapses to its resolved, static state. */
+  .title-focus {
+    filter: none !important;
+  }
+  .trace-card {
+    transform: none !important;
+    transition: none !important;
+  }
+  .trace-card::before {
+    animation: none !important;
+  }
+  .trace-row {
+    transition: none !important;
+  }
+  .trace-row:hover,
+  .trace-row:focus-visible {
+    transform: none !important;
+  }
+  .f1-sheen {
+    animation: none !important;
+    display: none !important;
+  }
+  .sig--play .sig__envelope,
+  .sig--play .sig__band,
+  .sig--play .sig__ring,
+  .sig--play .sig__check,
+  .sig--play .sig__glow,
+  .sig--play .sig__ripple {
+    animation: none !important;
+  }
+  .spring-ease {
+    transition: none !important;
+  }
+  /* Brand logo holds its resolved state — no lift, no pipeline pulse. */
+  .brand-logo-link {
+    transition: none !important;
+  }
+  .brand-logo-link:hover,
+  .brand-logo-link:focus-visible {
+    transform: none !important;
+  }
+  .brand-logo-link:hover .brand-logo__node,
+  .brand-logo-link:focus-visible .brand-logo__node {
+    animation: none !important;
+  }
+  /* Beta notice collapses to its resolved, static state. */
+  .beta-card,
+  .beta-panel {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .beta-panel {
+    /* keep the popover centered above the pill without the entrance transform */
+    transform: translateX(-50%) !important;
+  }
+  .beta-card::before,
+  .beta-card::after,
+  .privacy-card::before,
+  .privacy-card::after,
+  .beta-pill::before {
+    animation: none !important;
+  }
+  .beta-dot::after,
+  .beta-seats::after {
+    animation: none !important;
+    display: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Sidebar rail (components/shell/RailPipeline.tsx) — the pipeline snapshot's
+ * distribution segments grow in once on mount, staggered left-to-right so the
+ * bar reads as the pipeline assembling. Transform-only (scaleX from an
+ * origin-left), so layout never shifts. Enhancement only: collapses to the
+ * static, fully-drawn bar under prefers-reduced-motion.
+ * ------------------------------------------------------------------------- */
+.rail-seg {
+  transform-origin: left;
+  animation: rail-seg-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@keyframes rail-seg-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-seg {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal dialog (components/ui/Dialog.tsx) — a quick fade for the scrim and a
+ * spring rise for the panel. Enhancement only: collapses to a static, fully
+ * visible state under prefers-reduced-motion.
+ * ------------------------------------------------------------------------- */
+.dialog-overlay {
+  animation: dialog-fade 0.16s ease both;
+}
+.dialog-panel {
+  animation: dialog-rise 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes dialog-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialog-overlay,
+  .dialog-panel {
+    animation: none !important;
+  }
+}

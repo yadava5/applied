@@ -28,20 +28,28 @@ Usage:
 
 from jobtracker.database.connection import (
     close_db,
+    get_current_user_id,
     get_db_stats,
     get_engine,
     get_session,
     get_session_dependency,
     init_db,
+    reset_current_user_id,
+    set_current_user_id,
+    user_id_scope,
     vacuum_db,
 )
 
 __all__ = [
     "close_db",
+    "get_current_user_id",
     "get_db_stats",
     "get_engine",
     "get_session",
     "get_session_dependency",
     "init_db",
+    "reset_current_user_id",
+    "set_current_user_id",
+    "user_id_scope",
     "vacuum_db",
 ]

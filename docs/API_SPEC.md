@@ -1,16 +1,81 @@
 # API Specification
 
-Base URL: `http://127.0.0.1:8000`
+Base URL (desktop): `http://127.0.0.1:8000`
+
+Base URL (cloud): `https://<your-vercel-host>` (set in `apps/web/.env.local` as `NEXT_PUBLIC_API_BASE`).
 
 All endpoints return JSON.
+
+## Cloud authentication (required on every cloud endpoint except `/health` and `/`)
+
+Cloud requests must include a Supabase-issued JWT:
+
+```
+Authorization: Bearer <supabase-jwt>
+```
+
+- **Signing.** HS256 with the Supabase project JWT secret
+  (`JOBTRACKER_SUPABASE_JWT_SECRET` on the backend).
+- **Claims.** The backend requires `sub` (user UUID), `aud` =
+  `"authenticated"`, and a non-expired `exp`. Other Supabase
+  claims (`role`, `iat`, `session_id`) are accepted but not checked.
+- **Failure modes.** Missing header, non-`Bearer` scheme, bad
+  signature, expired token, wrong audience, or `sub` that is not a
+  UUID → `401 Unauthorized` with body
+  `{"detail": "<short reason>"}` and header `WWW-Authenticate:
+  Bearer`.
+
+Desktop endpoints ignore the header and remain single-user.
+
+### `GET /auth/me` (cloud)
+
+Echoes the authenticated user UUID. Use as a smoke check after deploy
+to prove the JWT is decoding correctly.
+
+Response:
+
+```json
+{ "user_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "authenticated": true }
+```
+
+### `GET /applications` (cloud)
+
+Returns applications owned by the authenticated user. Rows created
+by other users are never visible (enforced by both the
+application-level `user_id` filter and Postgres RLS).
+
+Response:
+
+```json
+{
+  "applications": [
+    { "id": 1, "user_id": "...", "company": "Acme", "position": "SWE", "status": "applied", "notes": null, "created_at": "2026-04-18T..." }
+  ],
+  "total": 1
+}
+```
+
+### `POST /applications` (cloud)
+
+Creates an application scoped to the authenticated user. The
+`user_id` column is set from the JWT `sub` claim; any `user_id`
+sent in the request body is ignored.
+
+Request:
+
+```json
+{ "company": "Acme", "position": "SWE", "status": "applied", "notes": null }
+```
 
 ## Health
 
 ### `GET /health`
 
-Returns backend, DB, account, and classifier status.
+Returns backend, DB, account, and classifier status. On the cloud
+deployment this is unauthenticated (no `Authorization` header
+required) so uptime monitors can probe it.
 
-## Auth
+## Auth (desktop)
 
 ### `GET /auth/status`
 

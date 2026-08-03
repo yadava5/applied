@@ -18,6 +18,7 @@ class BenchmarkRow:
     mode: str
     version: int
     dataset: str
+    profile: str
     accuracy: float
     macro_f1: float
     weighted_f1: float
@@ -51,6 +52,13 @@ def collect_rows(evaluation_dir: Path) -> list[BenchmarkRow]:
                 mode=mode,
                 version=version,
                 dataset=str(meta.get("dataset", "")),
+                # Carried through because dropping it made this table misleading:
+                # the v3 hybrid baseline is a `deterministic` run, which disables
+                # SetFit and blanks the embedding examples. That is why its row and
+                # the rules row agree to four decimal places. Without this column a
+                # reader concludes the cascade scores 0.9791; what scores 0.9791 is
+                # the cascade with its models switched off.
+                profile=str(meta.get("hybrid_profile", "n/a")),
                 accuracy=float(overall.get("accuracy", 0.0)),
                 macro_f1=float(overall.get("macro_f1", 0.0)),
                 weighted_f1=float(overall.get("weighted_f1", 0.0)),
@@ -72,6 +80,7 @@ def write_jsonl(rows: list[BenchmarkRow], out_path: Path) -> None:
                         "mode": row.mode,
                         "version": row.version,
                         "dataset": row.dataset,
+                        "profile": row.profile,
                         "accuracy": row.accuracy,
                         "macro_f1": row.macro_f1,
                         "weighted_f1": row.weighted_f1,
@@ -90,13 +99,18 @@ def write_markdown(rows: list[BenchmarkRow], out_path: Path) -> None:
         "",
         "Auto-generated from `baseline_*_v*.json` files.",
         "",
-        "| mode | version | dataset | accuracy | macro_f1 | weighted_f1 | misclassified |",
-        "|------|---------|---------|----------|----------|-------------|---------------|",
+        "`profile` is the hybrid evaluation profile the baseline was recorded under.",
+        "`deterministic` disables SetFit and blanks the embedding examples for",
+        "machine-stable CI gating, so a `deterministic` hybrid row measures the",
+        "deterministic path -- which is why it matches the `rules` row exactly.",
+        "",
+        "| mode | version | profile | dataset | accuracy | macro_f1 | weighted_f1 | misclassified |",
+        "|------|---------|---------|---------|----------|----------|-------------|---------------|",
     ]
 
     for row in rows:
         lines.append(
-            f"| {row.mode} | v{row.version} | `{row.dataset}` | {row.accuracy:.4f} | "
+            f"| {row.mode} | v{row.version} | {row.profile} | `{row.dataset}` | {row.accuracy:.4f} | "
             f"{row.macro_f1:.4f} | {row.weighted_f1:.4f} | {row.misclassified} |"
         )
 

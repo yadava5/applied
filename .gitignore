@@ -15,7 +15,11 @@ build/
 ## Environment & Secrets
 .env
 .env.local
-credentials/
+# Gmail desktop OAuth secret dir (default path from config.py,
+# JOBTRACKER_GMAIL_CREDENTIALS_FILE). Scoped to backend/ so the
+# python package `backend/jobtracker/credentials/` (issue #21, C4)
+# is not caught.
+backend/credentials/
 backend/client_secret.json
 *.key
 *.pem
@@ -73,3 +77,5 @@ build/
 ## PyInstaller
 *.manifest
 *.spec
+.vercel
+.claude/

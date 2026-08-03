@@ -37,7 +37,7 @@ Applied ships as a **Next.js 16 web product**, a **SwiftUI macOS app** on a loca
 The classifier is the heart of the product, and it's built to be both accurate and honest about its accuracy:
 
 - **Three layers, escalating cost.** A message is first matched against **201 deterministic regex rules**; unmatched messages fall through to **e5 embedding similarity**; ambiguous cases are resolved by a **fine-tuned SetFit head**. Cheap and explainable first, learned model only when needed.
-- **A load-bearing metric with a CI gate.** The hybrid classifier scores **0.979 macro-F1** on a held-out evaluation set, and continuous integration **fails any merge that drops below 0.95** — the number can't quietly rot.
+- **A load-bearing metric with a CI gate.** The **rules stage** scores **0.9791 macro-F1** on a held-out evaluation set — not the full cascade, which scores 0.9583 on the same set (`docs/ML_EXECUTION_TRACKER.md`). The evaluation runs under the `deterministic` hybrid profile, which disables SetFit and blanks the embedding examples, so the file named `baseline_hybrid_v3.json` measures the regexes alone, and continuous integration **fails any merge that drops below 0.95** — the number can't quietly rot.
 - **Runs entirely in the browser.** The model is exported to **int8 ONNX (22.8 MB)** and executed client-side via Transformers.js — **zero servers, zero data leaving the device** — and verified to produce output identical to the Python model.
 - **A confidence gate, not a guess.** Predictions below **0.85 confidence** are routed to a human review queue rather than silently accepted, and every correction feeds back into training data.
 
@@ -83,6 +83,49 @@ applied/  (repo: jobtracker)
 | **Infra** | Vercel (web + serverless API), Hugging Face Spaces (classifier demo), GitHub Actions CI |
 
 Quality is enforced by CI: a macro-F1 floor on the classifier, a CI-gated backend test suite spanning the classifier, API, sync, and auth, plus frontend, e2e, and macOS build gates. All pipelines are read-only quality gates.
+
+### Measured, not asserted
+
+**305 backend tests, 0 skipped.** The 10 that used to skip are the Postgres
+row-level-security module; they needed a live database URL no workflow provided,
+so the isolation guarantees were described but never demonstrated. They now start
+their own `postgres:16` via testcontainers, creating a non-superuser app role —
+which is the part that makes RLS mean anything, since policies do nothing against
+a superuser.
+
+**Per-layer classifier latency**, 96-sample v3 set, warm, 3 repetitions:
+
+| Layer | p50 | p95 | answered |
+| --- | ---: | ---: | ---: |
+| `content_filter` | 0.036 ms | 0.043 ms | 15 |
+| `rules` | **0.176 ms** | 0.241 ms | 174 |
+| `fallback` | 0.262 ms | 21.176 ms | 39 |
+| `setfit` | **17.649 ms** | 37.702 ms | 60 |
+
+The ratio is the result: SetFit costs roughly **100×** the rules layer at p50, and
+174 of 288 classifications never reach it. That is the cascade doing its job, as a
+measurement rather than an assertion. Reported per layer because a single mean is
+a statement about the corpus mix as much as the code — change the proportion of
+inputs the regexes catch and the mean moves with no code change.
+
+```bash
+python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic
+```
+
+`--require-semantic` fails a run in which no model answered. The cascade degrades
+to rules when SetFit will not import, and a degraded run reports flatteringly low
+latency for a classifier that is not actually running.
+
+**Coverage**, `pytest --cov=jobtracker`: 54% overall, 61% excluding one-off
+scripts. The distribution matters more than the total — `jobtracker/cloud`, the
+code actually deployed, is at **82%**; `auth` 81%; `database` 77%. What pulls the
+average down is 2,163 statements of dataset importers and mock-data generators.
+
+**Dependencies:** `pip-audit -r requirements.txt` reports **0 known
+vulnerabilities** on the deployed Vercel surface. Use `pip-audit`, not
+`osv-scanner`, against these files: osv-scanner resolves each `>=` floor to its
+*minimum* and reports the worst case the constraints permit, which overstated
+this repository by two orders of magnitude.
 
 ## Quick start
 

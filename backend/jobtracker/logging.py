@@ -10,10 +10,13 @@ Provides:
 - Async-safe logging handlers
 - Structured log format with timestamps
 
-Log files are stored at:
+Log files are stored at (desktop builds only; see _is_serverless):
     ~/Library/Logs/JobTracker/
         - backend.log: Main application log
         - error.log: Error-only log
+
+On serverless the file handlers are skipped and everything goes to stdout,
+which is what the platform collects.
 
 Usage:
 ------
@@ -29,6 +32,7 @@ Usage:
 """
 
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from typing import Optional
@@ -77,6 +81,27 @@ class ColoredFormatter(logging.Formatter):
 # =============================================================================
 
 
+def _is_serverless() -> bool:
+    """
+    True when running on a serverless platform with an ephemeral, mostly
+    read-only filesystem.
+
+    This module was written for the desktop build, where rotating files under
+    ~/Library/Logs/JobTracker are exactly right. On Vercel they are not: the
+    filesystem outside /tmp is read-only, nothing survives the invocation, and
+    the platform already collects stdout. So the file handlers are at best
+    wasted work writing logs nobody can read, and at worst an OSError raised
+    from module import during a cold start — `main_cloud.py` calls
+    setup_logging() at import time, not inside a startup hook.
+    """
+    return bool(
+        os.environ.get("VERCEL")
+        or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+        or os.environ.get("FUNCTIONS_WORKER_RUNTIME")
+        or os.environ.get("K_SERVICE")  # Cloud Run / Knative
+    )
+
+
 def setup_logging(
     level: Optional[str] = None,
     log_to_file: bool = True,
@@ -117,9 +142,26 @@ def setup_logging(
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
 
-    # File handlers (production or if explicitly requested)
-    if log_to_file:
-        _setup_file_handlers(root_logger, log_level)
+    # File handlers (production or if explicitly requested).
+    #
+    # Skipped on serverless, where they cannot work — see _is_serverless. And
+    # wrapped, because logging setup must never be the thing that takes the
+    # process down: if the directory cannot be created the right outcome is
+    # console-only logging plus a warning, not a failed cold start.
+    if log_to_file and not _is_serverless():
+        try:
+            _setup_file_handlers(root_logger, log_level)
+        except OSError as exc:
+            logging.warning(
+                "File logging disabled: cannot use %s (%s). Console logging continues.",
+                settings.log_path,
+                exc,
+            )
+    elif log_to_file:
+        logging.debug(
+            "Serverless runtime detected; logging to stdout only "
+            "(the platform collects it, and the filesystem is ephemeral)."
+        )
 
     # Reduce noise from third-party libraries
     _configure_library_loggers()

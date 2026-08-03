@@ -1,0 +1,447 @@
+"use client";
+
+import { useCallback, useMemo, useRef, useState } from "react";
+
+import { classifyWithRules } from "@/lib/demo/rulesLayer";
+import { GATE } from "@/lib/demo/sampleInbox";
+import {
+  DEFAULT_MESSAGE_CAP,
+  parseMailFile,
+  type MailFormat,
+  type ParsedMessage,
+} from "@/lib/import/parseMail";
+
+/**
+ * "Import your mail" — classify your own mail with NO Google connection and
+ * NO sign-in. The file is read, parsed, and classified entirely in this tab
+ * with `parseMail.ts` + the on-device rules layer (`rulesLayer.ts`) — the same
+ * layer 1 the live sample inbox runs. Nothing is uploaded; there is no server
+ * call and no OAuth, which is exactly why it reinforces the privacy story.
+ *
+ * Honesty: only the deterministic layer-1 rules run here. The full three-layer
+ * model (e5 embeddings + the SetFit head) needs the 23 MB ONNX weights, which
+ * the strict CSP keeps out of the tab — that runs in `/demo/inbox` and the
+ * Hugging Face Space. We label the layer-1 disposition on every row.
+ */
+
+const SPACE_URL = "https://huggingface.co/spaces/yadava5/jobtracker-classifier";
+
+/** Layer-1 accept bar from the shipped pipeline: rules answer at ≥ 0.90. */
+const RULES_ACCEPT = 0.9;
+
+const CATEGORY_DOT: Record<string, string> = {
+  offer: "var(--green)",
+  interview: "var(--viz-rules)",
+  assessment: "var(--viz-embeddings)",
+  applied: "var(--text-muted)",
+  pending_application: "var(--viz-embeddings)",
+  follow_up: "var(--viz-setfit)",
+  rejection: "var(--red)",
+  other: "var(--text-dim)",
+};
+
+const FORMAT_LABEL: Record<MailFormat, string> = {
+  mbox: "Google Takeout MBOX",
+  eml: "single .eml message",
+  json: "JSON batch",
+};
+
+/** A small synthetic mbox so anyone can see the feature work without a file. */
+const SAMPLE_MBOX = `From 1@import Thu Jul 16 09:00:00 2026
+From: Cedar Labs Recruiting <no-reply@greenhouse.io>
+Subject: We received your application
+Date: Thu, 16 Jul 2026 09:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+Thank you for applying to the Software Engineer role at Cedar Labs. Your application has been received and our team is reviewing it.
+
+From 2@import Thu Jul 16 10:00:00 2026
+From: Juniper Cloud <recruiting@junipercloud.io>
+Subject: Let's schedule your technical interview
+Date: Thu, 16 Jul 2026 10:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+We'd like to schedule a 45-minute technical interview next week. Please use the Calendly link to book a time to meet the hiring team.
+
+From 3@import Thu Jul 16 11:00:00 2026
+From: Atlas Freight Careers <careers@atlasfreight.com>
+Subject: Update on your application to Atlas Freight
+Date: Thu, 16 Jul 2026 11:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+After careful consideration we have decided to move forward with other candidates at this time. We wish you the best in your search.
+
+From 4@import Thu Jul 16 12:00:00 2026
+From: Maya Chen <maya@earlystage.xyz>
+Subject: Quick question about your background
+Date: Thu, 16 Jul 2026 12:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+Hi, I had a quick question about your background and some recent projects. Do you have a few minutes this week?
+`;
+
+interface Classified extends ParsedMessage {
+  category: string;
+  confidence: number;
+  answeredByRules: boolean;
+  clearsGate: boolean;
+  topScores: [string, number][];
+}
+
+interface ImportState {
+  fileName: string;
+  format: MailFormat;
+  totalFound: number;
+  truncated: boolean;
+  items: Classified[];
+}
+
+function pct(n: number) {
+  return `${Math.round(n * 100)}%`;
+}
+
+function pretty(category: string) {
+  return category.replace(/_/g, " ");
+}
+
+function classify(messages: ParsedMessage[]): Classified[] {
+  return messages.map((m) => {
+    const v = classifyWithRules(m.subject, m.body, m.senderEmail);
+    const topScores = Object.entries(v.scores)
+      .filter(([, s]) => s > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+    return {
+      ...m,
+      category: v.category,
+      confidence: v.confidence,
+      answeredByRules: v.confidence >= RULES_ACCEPT && v.category !== "other",
+      clearsGate: v.confidence >= GATE && v.category !== "other",
+      topScores,
+    };
+  });
+}
+
+function Row({ item }: { item: Classified }) {
+  const [open, setOpen] = useState(false);
+  const dot = CATEGORY_DOT[item.category] ?? "var(--text-dim)";
+  const meterPct = Math.round(item.confidence * 100);
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        data-testid="import-row"
+        className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
+      >
+        <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
+          <p className="truncate text-sm font-medium text-strong">{item.subject}</p>
+          <p className="truncate font-mono text-[11px] text-dim">
+            {item.senderName ? `${item.senderName} · ` : ""}
+            {item.senderEmail}
+          </p>
+        </div>
+
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
+          {pretty(item.category)}
+        </span>
+
+        {item.clearsGate ? (
+          <span className="hidden w-16 font-mono text-[10px] uppercase tracking-wide text-dim sm:inline">
+            auto-filed
+          </span>
+        ) : (
+          <span className="rounded-full border border-review/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
+            review
+          </span>
+        )}
+
+        <span
+          className="tabular w-12 shrink-0 text-right font-mono text-xs"
+          style={{ color: item.clearsGate ? "var(--green)" : "var(--amber)" }}
+        >
+          {pct(item.confidence)}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-line-soft bg-surface-2/50 px-4 py-4">
+          {/* layer-1 disposition */}
+          <p className="flex items-start gap-2 font-mono text-[11px] text-muted">
+            <span
+              className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full"
+              style={{ background: "var(--viz-rules)" }}
+              aria-hidden
+            />
+            <span>
+              layer 1 · rules —{" "}
+              {item.answeredByRules
+                ? `answered “${pretty(item.category)}” at ${pct(item.confidence)} (≥ 0.90 accept bar)`
+                : `top guess “${pretty(item.category)}” at ${pct(item.confidence)}; below the 0.90 accept bar, so the full model (e5 → SetFit) would decide`}
+            </span>
+          </p>
+
+          {/* confidence meter vs the 0.85 gate */}
+          <div className="mt-4">
+            <div className="relative h-2 rounded-full bg-surface">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{
+                  width: `${meterPct}%`,
+                  background: item.clearsGate ? "var(--green)" : "var(--amber)",
+                }}
+              />
+              <div
+                className="absolute inset-y-[-4px] w-px bg-line-strong"
+                style={{ left: `${GATE * 100}%` }}
+              />
+            </div>
+            <div className="mt-1.5 flex justify-between font-mono text-[10px] text-dim">
+              <span>0%</span>
+              <span style={{ marginLeft: `${GATE * 100 - 10}%` }}>gate {GATE}</span>
+              <span>100%</span>
+            </div>
+          </div>
+
+          <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+            {item.clearsGate
+              ? `Clears the 0.85 gate — Applied would file this as “${pretty(item.category)}”.`
+              : "Below the 0.85 gate — nothing is auto-filed; the message waits for a human (or the full model)."}
+          </p>
+
+          {item.topScores.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {item.topScores.map(([cat, score]) => (
+                <span
+                  key={cat}
+                  className="rounded border border-line-soft px-2 py-0.5 font-mono text-[10px] text-dim"
+                >
+                  {pretty(cat)} +{score}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {item.snippet && (
+            <p className="mt-3 border-t border-line-soft pt-3 text-[12px] leading-relaxed text-muted">
+              {item.snippet}
+              {item.body.length > item.snippet.length ? "…" : ""}
+            </p>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+export function ImportMail() {
+  const [state, setState] = useState<ImportState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const ingest = useCallback((fileName: string, text: string) => {
+    setError(null);
+    try {
+      const result = parseMailFile(fileName, text);
+      if (result.messages.length === 0) {
+        setState(null);
+        setError(
+          "No messages found in that file. Expected a Google Takeout .mbox, a single .eml, or a JSON array of { subject, from, body }.",
+        );
+        return;
+      }
+      setState({
+        fileName,
+        format: result.format,
+        totalFound: result.totalFound,
+        truncated: result.truncated,
+        items: classify(result.messages),
+      });
+    } catch {
+      setState(null);
+      setError(
+        "Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export — nothing was uploaded.",
+      );
+    }
+  }, []);
+
+  const onFile = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setBusy(true);
+      try {
+        const text = await file.text();
+        ingest(file.name, text);
+      } catch {
+        setError("Couldn't read that file in the browser.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [ingest],
+  );
+
+  const stats = useMemo(() => {
+    if (!state) return null;
+    const scanned = state.items.length;
+    const heldForReview = state.items.filter((i) => !i.clearsGate).length;
+    const autoClassified = scanned - heldForReview;
+    const autoPct = scanned === 0 ? 0 : Math.round((autoClassified / scanned) * 100);
+    return { scanned, autoClassified, heldForReview, autoPct };
+  }, [state]);
+
+  return (
+    <div className="space-y-6">
+      {/* privacy guarantee — the whole point */}
+      <div
+        role="note"
+        className="rounded-xl border border-viz-rules/25 bg-surface px-4 py-3 text-sm text-muted"
+      >
+        <span className="text-strong">On-device only.</span> Your file is read, parsed, and classified
+        entirely in this browser tab. There is no upload, no server, and no OAuth — the mail never
+        leaves your device. Only the deterministic layer-1 rules run here; the full three-layer model
+        (e5 + SetFit) runs in the{" "}
+        <a href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
+          sample inbox
+        </a>{" "}
+        and the{" "}
+        <a
+          href={SPACE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="text-strong underline-offset-4 hover:underline"
+        >
+          Space ↗
+        </a>
+        .
+      </div>
+
+      {/* drop zone / picker */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          void onFile(e.dataTransfer.files?.[0]);
+        }}
+        className={`rounded-xl border border-dashed p-6 text-center transition-colors ${
+          dragging ? "border-viz-rules bg-surface-2" : "border-line bg-surface"
+        }`}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".mbox,.eml,.json,message/rfc822,application/mbox,application/json"
+          data-testid="import-file"
+          className="sr-only"
+          onChange={(e) => void onFile(e.target.files?.[0] ?? undefined)}
+        />
+        <p className="text-sm text-muted">
+          Drop a <span className="text-strong">.mbox</span>,{" "}
+          <span className="text-strong">.eml</span>, or <span className="text-strong">.json</span>{" "}
+          file here, or
+        </p>
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background hover:opacity-90"
+          >
+            Choose a file
+          </button>
+          <button
+            type="button"
+            data-testid="import-sample"
+            onClick={() => ingest("sample.mbox", SAMPLE_MBOX)}
+            className="rounded-lg border border-line px-4 py-2 text-sm text-foreground hover:border-line-strong hover:text-strong"
+          >
+            Try a sample export
+          </button>
+        </div>
+        <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+          Export from Gmail via{" "}
+          <span className="text-muted">Google Takeout → Mail</span> (an .mbox). Up to{" "}
+          {DEFAULT_MESSAGE_CAP} messages are classified per file to keep the tab responsive.
+        </p>
+        {busy && <p className="mt-2 font-mono text-[11px] text-dim">reading…</p>}
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          data-testid="import-error"
+          className="rounded-xl border border-reject/40 bg-surface px-4 py-3 text-sm text-strong"
+        >
+          {error}
+        </div>
+      )}
+
+      {state && stats && (
+        <div className="space-y-5" data-testid="import-results">
+          <dl className="grid grid-cols-2 overflow-hidden rounded-xl border border-line-soft bg-surface sm:grid-cols-4">
+            {(
+              [
+                ["scanned", String(stats.scanned)],
+                ["auto-filed", `${stats.autoClassified} · ${stats.autoPct}%`],
+                ["held for review", String(stats.heldForReview)],
+                ["source", FORMAT_LABEL[state.format]],
+              ] as [string, string][]
+            ).map(([k, v]) => (
+              <div
+                key={k}
+                className="border-b border-r border-line-soft p-4 last:border-r-0 sm:border-b-0"
+              >
+                <dt className="label-mono">{k}</dt>
+                <dd className="tabular mt-1 font-mono text-sm font-semibold text-strong">{v}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <p className="font-mono text-[11px] text-dim">
+            {state.fileName} · {state.totalFound} message{state.totalFound === 1 ? "" : "s"} found
+            {state.truncated ? ` · classified the first ${state.items.length}` : ""} · layer-1 rules,
+            on-device
+          </p>
+
+          <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line-soft px-4 py-3">
+              <span className="flex items-center gap-2 font-mono text-[11px] text-muted">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--viz-rules)" }} />
+                layer 1 · rules · on-device
+              </span>
+              <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-review">
+                <span className="inline-block h-2 w-2 rounded-full bg-review" /> below {GATE} → review
+              </span>
+            </div>
+            <ul className="divide-y divide-line-soft">
+              {state.items.map((item) => (
+                <Row key={item.id} item={item} />
+              ))}
+            </ul>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setState(null);
+              setError(null);
+              if (inputRef.current) inputRef.current.value = "";
+            }}
+            className="font-mono text-[11px] text-dim underline-offset-4 hover:text-strong hover:underline"
+          >
+            clear — nothing was stored anyway
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

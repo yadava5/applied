@@ -1,0 +1,52 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "api:gen": "openapi-typescript $BACKEND_API_URL/openapi.json -o lib/api/schema.d.ts",
+    "api:gen:local": "openapi-typescript http://localhost:8000/openapi.json -o lib/api/schema.d.ts"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.103.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.8.0",
+    "next": "16.2.11",
+    "openapi-fetch": "^0.13.8",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tailwind-merge": "^3.5.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.11",
+    "openapi-typescript": "^7.13.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion@<1.1.16": ">=1.1.16 <2.0.0",
+      "brace-expansion@>=2.0.0 <2.1.2": ">=2.1.2 <3.0.0",
+      "js-yaml@>=4.0.0 <4.3.0": ">=4.3.0 <5.0.0",
+      "postcss@<=8.5.11": ">=8.5.12 <9.0.0",
+      "sharp@<0.35.0": ">=0.35.0 <0.36.0",
+      "ws@>=8.0.0 <8.21.0": ">=8.21.0 <9.0.0"
+    }
+  }
+}

@@ -35,13 +35,17 @@ Usage:
         await session.commit()
 """
 
+import json
 import logging
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from typing import Optional
+import uuid
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar, Token
+from typing import Any, Optional
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import SQLModel, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -53,13 +57,141 @@ logger = logging.getLogger(__name__)
 _engine: Optional[AsyncEngine] = None
 
 
+# =============================================================================
+# Row-Level Security: per-request user identity + per-transaction GUC wiring
+# =============================================================================
+#
+# Postgres RLS policies key off ``auth.uid()``, which reads the ``sub`` claim
+# out of the ``request.jwt.claims`` GUC. The FastAPI backend does not run
+# inside Supabase's PostgREST, so nothing sets that GUC for us — we must set
+# it ourselves, per request, from the verified JWT ``sub`` (or, for the Gmail
+# OAuth callback, from the ``sub`` carried in the signed ``state``).
+#
+# The authenticated user for the current request/transaction is carried in a
+# ``ContextVar`` so the *central* engine wiring below can read it without every
+# call site having to thread a ``user_id`` through ``get_session()``. Two
+# properties make this leak-proof under the shared Supabase PgBouncer
+# (transaction pooling):
+#
+#   1. The GUCs are applied with ``set_config(..., is_local => true)`` inside a
+#      ``begin`` event handler, so they are scoped to the *current transaction*
+#      and are automatically discarded at COMMIT/ROLLBACK. A physical
+#      connection handed to the next tenant by PgBouncer never carries a stale
+#      ``request.jwt.claims`` or a poisoned ``search_path``.
+#   2. The ContextVar is reset per request (see the cloud app middleware) and
+#      is scoped explicitly via :func:`user_id_scope` on the OAuth-callback
+#      write path, so one user's identity can never bleed into another's
+#      transaction at the application layer either.
+#
+# ``search_path`` is pinned to ``public`` on every transaction as well: the
+# shared pooler previously suffered a co-tenant ``search_path`` poisoning
+# incident, and pinning it here (transaction-locally) makes every query
+# resolve against the intended schema regardless of what a prior tenant left
+# on the physical connection.
+_current_user_id: ContextVar[uuid.UUID | None] = ContextVar(
+    "jobtracker_current_user_id", default=None
+)
+
+
+def set_current_user_id(user_id: uuid.UUID | None) -> Token:
+    """Bind ``user_id`` as the RLS identity for the current context.
+
+    Returns the :class:`contextvars.Token` so callers that own the request
+    lifecycle can reset it. The cloud auth dependency
+    (``jobtracker.auth.current_user``) calls this after verifying the JWT.
+    """
+
+    return _current_user_id.set(user_id)
+
+
+def reset_current_user_id(token: Token) -> None:
+    """Reset the RLS identity ContextVar using a token from ``set_current_user_id``."""
+
+    _current_user_id.reset(token)
+
+
+def get_current_user_id() -> uuid.UUID | None:
+    """Return the RLS identity bound to the current context, or ``None``."""
+
+    return _current_user_id.get()
+
+
+@contextmanager
+def user_id_scope(user_id: uuid.UUID | None) -> Iterator[None]:
+    """Scope the RLS identity to a block, resetting it on exit.
+
+    Used by code paths that do not resolve the user through the normal
+    ``Depends(current_user)`` dependency — most importantly the Gmail OAuth
+    **callback**, which derives the user from the signed ``state`` and writes
+    ``user_credentials`` (a FORCE-RLS table) without an auth dependency::
+
+        with user_id_scope(user_id):
+            await save_gmail_credentials(user_id, creds)
+    """
+
+    token = _current_user_id.set(user_id)
+    try:
+        yield
+    finally:
+        _current_user_id.reset(token)
+
+
+def _install_rls_guc_listener(engine: AsyncEngine) -> None:
+    """Attach a per-transaction GUC setter to a Postgres engine.
+
+    On every transaction ``begin`` we pin ``search_path`` and, when an
+    authenticated user is bound to the context, set ``request.jwt.claims`` so
+    Supabase's ``auth.uid()`` resolves to that user inside the transaction.
+    Both are set transaction-locally (``is_local => true``) so nothing leaks
+    across the PgBouncer transaction pool.
+
+    Scoped to the given engine instance (not the global ``Session`` class) so
+    that reloading this module in tests — which builds a fresh engine — never
+    stacks duplicate listeners.
+    """
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _set_transaction_gucs(conn: Any) -> None:  # pragma: no cover - see PG tests
+        # Always pin the schema search path for this transaction.
+        conn.exec_driver_sql("SELECT set_config('search_path', 'public', true)")
+
+        user_id = _current_user_id.get()
+        if user_id is None:
+            # Unauthenticated/health paths: leave request.jwt.claims unset so
+            # auth.uid() returns NULL and RLS fails closed (denies) rather than
+            # exposing rows. No user-scoped query should run without identity.
+            return
+
+        # ``user_id`` is always a uuid.UUID coming from a verified JWT / signed
+        # state, so its string form is strictly ``[0-9a-fA-F-]`` — safe to embed
+        # in the JSON literal. Guard defensively anyway.
+        if not isinstance(user_id, uuid.UUID):
+            return
+        claims = json.dumps({"sub": str(user_id)}, separators=(",", ":"))
+        conn.exec_driver_sql(
+            f"SELECT set_config('request.jwt.claims', '{claims}', true)"
+        )
+
+
+def _is_sqlite_url(url: str) -> bool:
+    """Return True if ``url`` targets a SQLite backend (sync or async)."""
+
+    return url.startswith("sqlite")
+
+
 def get_engine() -> AsyncEngine:
     """
     Get or create the async database engine.
 
     The engine is created once and reused for all connections.
-    Uses StaticPool for SQLite to ensure a single connection
-    is shared across all async operations.
+
+    SQLite builds use ``StaticPool`` for in-memory DBs so state persists
+    across sessions, and default pool behaviour for on-disk DBs.
+
+    Postgres builds (Supabase) use ``NullPool`` plus asyncpg kwargs that
+    disable prepared-statement caching. This is required when the app
+    connects through the Supabase PgBouncer (transaction pooling), which
+    does not support the PREPARE/EXECUTE protocol asyncpg uses by default.
 
     Returns:
         AsyncEngine: SQLAlchemy async engine instance.
@@ -67,31 +199,47 @@ def get_engine() -> AsyncEngine:
     global _engine
 
     if _engine is None:
-        # Ensure database directory exists
-        settings.ensure_directories()
-
-        logger.info(f"Creating database engine: {settings.database_path}")
-
-        engine_kwargs = {
+        url = settings.database_url
+        engine_kwargs: dict[str, Any] = {
             # Keep SQLAlchemy's internal echo logger disabled to prevent
-            # duplicate output. SQL visibility is controlled via logger levels
-            # in jobtracker.logging when JOBTRACKER_DATABASE_ECHO is enabled.
+            # duplicate output. SQL visibility is controlled via logger
+            # levels in jobtracker.logging when JOBTRACKER_DATABASE_ECHO is
+            # enabled.
             "echo": False,
-            # SQLite-specific settings
-            "connect_args": {
-                "check_same_thread": False,  # Required for async
-            },
         }
 
-        # In-memory SQLite must use a single shared connection to persist state
-        # across sessions. File-based DBs should use normal pooling behavior.
-        if settings.database_url.endswith(":memory:"):
-            engine_kwargs["poolclass"] = StaticPool
+        if _is_sqlite_url(url):
+            # Ensure database directory exists for on-disk SQLite.
+            settings.ensure_directories()
+            logger.info(f"Creating SQLite database engine: {settings.database_path}")
 
-        _engine = create_async_engine(
-            settings.database_url,
-            **engine_kwargs,
-        )
+            engine_kwargs["connect_args"] = {
+                "check_same_thread": False,  # Required for async
+            }
+
+            # In-memory SQLite must use a single shared connection to persist
+            # state across sessions. File-based DBs use normal pooling.
+            if url.endswith(":memory:"):
+                engine_kwargs["poolclass"] = StaticPool
+        else:
+            # Assume Postgres via asyncpg (Supabase). Configure for pgbouncer
+            # transaction-mode pooler compatibility: no server-side prepared
+            # statement cache, no client-side cache. NullPool lets the pooler
+            # own connection lifecycle (every checkout is a fresh connection).
+            logger.info("Creating Postgres database engine (Supabase/pgbouncer-safe)")
+            engine_kwargs["connect_args"] = {
+                "statement_cache_size": 0,
+                "prepared_statement_cache_size": 0,
+            }
+            engine_kwargs["poolclass"] = NullPool
+
+        _engine = create_async_engine(url, **engine_kwargs)
+
+        # On Postgres (Supabase), wire per-transaction RLS GUCs +
+        # search_path pinning onto the engine. SQLite (desktop/tests) has no
+        # RLS/GUC concept, so the listener is only attached for Postgres.
+        if not _is_sqlite_url(url):
+            _install_rls_guc_listener(_engine)
 
     return _engine
 
@@ -100,8 +248,15 @@ async def init_db() -> None:
     """
     Initialize the database.
 
-    Creates all tables and enables WAL mode for concurrent access.
-    Safe to call multiple times (tables are only created if missing).
+    Behaviour is dialect-gated:
+
+    - SQLite (desktop/tests): enables WAL + busy_timeout + foreign keys,
+      creates all tables from ``SQLModel.metadata``, and installs FTS5
+      virtual tables/triggers. Safe to call repeatedly.
+    - Postgres (cloud/Supabase): no-op for schema management. Alembic
+      owns the schema; running ``create_all`` here would race with
+      Alembic and fight over ownership during cold-start deploys. WAL
+      and FTS5 are SQLite-specific concepts and are skipped entirely.
 
     This should be called on application startup.
     """
@@ -110,8 +265,17 @@ async def init_db() -> None:
     from jobtracker.database import models  # noqa: F401
 
     engine = get_engine()
+    url = settings.database_url
 
-    logger.info("Initializing database...")
+    if not _is_sqlite_url(url):
+        logger.info(
+            "Skipping init_db() schema creation on non-SQLite backend "
+            "(%s) - Alembic owns migrations.",
+            url.split("://", 1)[0],
+        )
+        return
+
+    logger.info("Initializing SQLite database...")
 
     async with engine.begin() as conn:
         # Enable WAL mode for concurrent read/write access
@@ -400,17 +564,24 @@ async def get_db_stats() -> dict:
             text("SELECT COUNT(*) FROM training_data")
         )
 
-        # Get database file size
-        db_size_result = await session.exec(
-            text("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
-        )
+        # File size query is SQLite-specific. On Postgres we just report 0;
+        # cloud deployments observe DB size via Supabase dashboards.
+        size_bytes = 0
+        if _is_sqlite_url(settings.database_url):
+            db_size_result = await session.exec(
+                text(
+                    "SELECT page_count * page_size as size "
+                    "FROM pragma_page_count(), pragma_page_size()"
+                )
+            )
+            size_bytes = db_size_result.scalar() or 0
 
         return {
             "path": str(settings.database_path),
             "applications": app_count.scalar() or 0,
             "emails": email_count.scalar() or 0,
             "training_examples": training_count.scalar() or 0,
-            "size_bytes": db_size_result.scalar() or 0,
+            "size_bytes": size_bytes,
         }
 
 
@@ -418,11 +589,14 @@ async def vacuum_db() -> None:
     """
     Vacuum the database to reclaim space.
 
-    Should be run periodically (e.g., weekly) to:
-    - Reclaim space from deleted rows
-    - Rebuild indexes for better performance
-    - Reduce database file size
+    SQLite-only operation. On Postgres this is a no-op because VACUUM
+    behaves very differently (and is typically handled by the managed
+    provider, e.g. Supabase autovacuum).
     """
+    if not _is_sqlite_url(settings.database_url):
+        logger.info("vacuum_db() is SQLite-only; skipping on non-SQLite backend.")
+        return
+
     engine = get_engine()
 
     logger.info("Vacuuming database...")

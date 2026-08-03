@@ -10,35 +10,56 @@
 fastapi>=0.109.0              # Modern async web framework
 uvicorn[standard]>=0.27.0     # ASGI server with uvloop
 pydantic>=2.5.0               # Data validation using Python type hints
-pydantic-settings>=2.1.0      # Settings management with env var support
+pydantic-settings>=2.14.2     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
 email-validator>=2.0.0        # Email validation for Pydantic EmailStr
 websockets>=12.0              # WebSocket support for real-time sync updates
 
 # -----------------------------------------------------------------------------
-# Database (Async SQLite)
+# Database (Async SQLite + Postgres)
 # -----------------------------------------------------------------------------
-aiosqlite>=0.19.0             # Async SQLite driver
+aiosqlite>=0.19.0             # Async SQLite driver (desktop/tests)
+asyncpg>=0.29.0               # Async Postgres driver (Supabase/cloud)
 sqlmodel>=0.0.14              # SQLAlchemy + Pydantic ORM (by FastAPI creator)
 sqlalchemy[asyncio]>=2.0.25   # Async SQLAlchemy core
+alembic>=1.13.0               # DB migrations (owns schema on Postgres)
 
 # -----------------------------------------------------------------------------
 # Email Integration
 # -----------------------------------------------------------------------------
 google-api-python-client>=2.100.0   # Gmail API client
 google-auth-httplib2>=0.1.1         # Google auth HTTP transport
-google-auth-oauthlib>=1.1.0         # OAuth2 flow for Gmail
+google-auth-oauthlib>=1.2.4         # OAuth2 flow for Gmail (>=1.2.4: explicit PKCE kwargs in from_client_config)
 aioimaplib>=2.0.0                   # Async IMAP client for iCloud Mail
 
 # -----------------------------------------------------------------------------
 # Security & Credentials
 # -----------------------------------------------------------------------------
 keyring>=24.3.0               # Secure credential storage (macOS Keychain)
+pyjwt[crypto]>=2.13.0         # Supabase JWT validation (>=2.13.0: PYSEC-2026-175..179)
+cryptography>=48.0.1,<49      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-2026-2141 / GHSA-537c-gmf6-5ccf (upper bound keeps mlflow<49 happy)
 
 # -----------------------------------------------------------------------------
 # ML & NLP
 # -----------------------------------------------------------------------------
 sentence-transformers>=2.2.0  # Sentence embeddings (loads e5-small-v2)
-transformers>=4.40,<5         # HuggingFace transformers (pinned for setfit compat)
+# The <5 cap is load-bearing and cannot be lifted from here. Note that neither
+# dependency's metadata says so: setfit 1.1.3 declares `transformers>=4.41.0` with
+# no upper bound and sentence-transformers 5.2.2 allows `<6.0.0`, so a resolver
+# will happily install transformers 5.x. Tested 2026-08-02 -- it breaks:
+#     ImportError: cannot import name 'default_logdir'
+#                  from 'transformers.training_args'   (setfit/training_args.py:13)
+# HybridClassifier catches that ImportError and degrades to the rules layer, so the
+# failure is silent: the API keeps answering and the benchmark keeps printing 0.9791.
+# See tests/test_evaluate_classifier_layer_guard.py for the guard that makes it loud.
+#
+# Cost of the cap, recorded rather than hidden: it holds open PYSEC-2026-2288
+# (fix 5.0.0), PYSEC-2026-2289 (fix 5.3.0) and PYSEC-2026-2290 (fix 5.5.0).
+# PYSEC-2025-217 has no fixed version in any release. All four are remote-code-
+# execution paths through model/checkpoint loading from an untrusted repository;
+# this app loads exactly one model, from a local path it wrote itself
+# (backend/checkpoints, appdata/models/setfit), and never from a user-supplied
+# repo id. Unblocking needs a setfit release that supports transformers 5.
+transformers>=4.40,<5         # HuggingFace transformers (see the note above)
 setfit>=1.0.0                 # Few-shot text classification
 scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
 numpy>=1.24.0                 # Numerical operations, embedding serialization
@@ -47,7 +68,7 @@ numpy>=1.24.0                 # Numerical operations, embedding serialization
 # Email Parsing
 # -----------------------------------------------------------------------------
 beautifulsoup4>=4.12.0        # HTML email parsing
-lxml>=5.0.0                   # Fast HTML/XML parser (bs4 backend)
+lxml>=6.1.0                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
 python-dateutil>=2.8.0        # Date parsing utilities
 
 # -----------------------------------------------------------------------------
