@@ -84,6 +84,49 @@ applied/  (repo: jobtracker)
 
 Quality is enforced by CI: a macro-F1 floor on the classifier, a CI-gated backend test suite spanning the classifier, API, sync, and auth, plus frontend, e2e, and macOS build gates. All pipelines are read-only quality gates.
 
+### Measured, not asserted
+
+**305 backend tests, 0 skipped.** The 10 that used to skip are the Postgres
+row-level-security module; they needed a live database URL no workflow provided,
+so the isolation guarantees were described but never demonstrated. They now start
+their own `postgres:16` via testcontainers, creating a non-superuser app role —
+which is the part that makes RLS mean anything, since policies do nothing against
+a superuser.
+
+**Per-layer classifier latency**, 96-sample v3 set, warm, 3 repetitions:
+
+| Layer | p50 | p95 | answered |
+| --- | ---: | ---: | ---: |
+| `content_filter` | 0.036 ms | 0.043 ms | 15 |
+| `rules` | **0.176 ms** | 0.241 ms | 174 |
+| `fallback` | 0.262 ms | 21.176 ms | 39 |
+| `setfit` | **17.649 ms** | 37.702 ms | 60 |
+
+The ratio is the result: SetFit costs roughly **100×** the rules layer at p50, and
+174 of 288 classifications never reach it. That is the cascade doing its job, as a
+measurement rather than an assertion. Reported per layer because a single mean is
+a statement about the corpus mix as much as the code — change the proportion of
+inputs the regexes catch and the mean moves with no code change.
+
+```bash
+python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic
+```
+
+`--require-semantic` fails a run in which no model answered. The cascade degrades
+to rules when SetFit will not import, and a degraded run reports flatteringly low
+latency for a classifier that is not actually running.
+
+**Coverage**, `pytest --cov=jobtracker`: 54% overall, 61% excluding one-off
+scripts. The distribution matters more than the total — `jobtracker/cloud`, the
+code actually deployed, is at **82%**; `auth` 81%; `database` 77%. What pulls the
+average down is 2,163 statements of dataset importers and mock-data generators.
+
+**Dependencies:** `pip-audit -r requirements.txt` reports **0 known
+vulnerabilities** on the deployed Vercel surface. Use `pip-audit`, not
+`osv-scanner`, against these files: osv-scanner resolves each `>=` floor to its
+*minimum* and reports the worst case the constraints permit, which overstated
+this repository by two orders of magnitude.
+
 ## Quick start
 
 ### Web app
