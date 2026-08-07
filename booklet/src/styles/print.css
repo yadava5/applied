@@ -63,21 +63,134 @@ body {
   margin: 0;
 }
 
-/* Screen-preview only: stack pages vertically with 0.25" gaps so we can
- * scroll through the whole booklet during dev. Puppeteer never sees this
- * container because the PDF renderer paginates each .page individually. */
+/* Screen-preview only: a left-to-right paged reader, the way the bound book is
+ * actually read — one leaf per scroll-snap point instead of a single tall
+ * column. Puppeteer never sees any of this: the PDF renderer uses print media,
+ * where `.leaf`/`.leaf-inner` collapse to `display: contents` and each `.page`
+ * paginates exactly as before.
+ *
+ * Leaf geometry: a non-bleed page is 8.5in wide with a 0.125in margin and a
+ * bleed page is 8.75in with none, so BOTH occupy 8.75in — the leaf can use one
+ * width for either kind. A spread leaf is two of them, 17.5in.
+ *
+ * `--leaf-scale` is set from JS (Booklet.tsx `useFitScale`) so a leaf always
+ * fits the window, and is capped at 1 so it never enlarges. That cap keeps
+ * clipcheck honest: at its 840×1080 viewport a one-up leaf is 840×1080 CSS px,
+ * so with the 48px/96px chrome insets the scale computes to 0.911 (the height
+ * term binds) — near 1 only because the basis is the one-up leaf; a
+ * spread-width basis would drop it to ~0.5 and halve every threshold. */
 @media screen {
-  .booklet-root {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25in;
-    padding: 0.25in 0;
-    background: #e7e5e0;
-    min-height: 100vh;
+  html,
+  body {
+    height: 100%;
   }
+  body {
+    overflow: hidden;
+  }
+
+  .booklet-root {
+    --leaf-scale: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.3in;
+    padding: 0 24px;
+    background: #e7e5e0;
+    height: 100vh;
+    height: 100dvh;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+  }
+
+  .leaf {
+    flex: 0 0 auto;
+    scroll-snap-align: center;
+    width: calc(8.75in * var(--leaf-scale));
+    height: calc(11.25in * var(--leaf-scale));
+  }
+  .leaf[data-spread="true"] {
+    width: calc(17.5in * var(--leaf-scale));
+  }
+
+  /* The scaled box. Width/height stay in inches so every absolutely-positioned
+   * layout inside a page keeps referencing real trim coordinates; only the
+   * transform shrinks it to fit the window. */
+  .leaf-inner {
+    display: flex;
+    flex-direction: row;
+    width: 8.75in;
+    height: 11.25in;
+    transform: scale(var(--leaf-scale));
+    transform-origin: top left;
+  }
+  .leaf[data-spread="true"] .leaf-inner {
+    width: 17.5in;
+  }
+
   .page {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  }
+
+  /* Reader chrome — floating, so it never enters the page box and clipcheck
+   * (which walks `.page` descendants) never sees it. */
+  .reader-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 6px;
+    border-radius: 999px;
+    background: rgba(24, 24, 22, 0.86);
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.22);
+    z-index: 10;
+  }
+  .reader-bar button {
+    width: 34px;
+    height: 30px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #f4f3f0;
+    font-size: 19px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .reader-bar button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .reader-bar button:disabled {
+    opacity: 0.32;
+    cursor: default;
+  }
+  .reader-bar button:focus-visible {
+    outline: 2px solid #f4f3f0;
+    outline-offset: -2px;
+  }
+  .reader-count {
+    min-width: 5.5ch;
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: #f4f3f0;
+  }
+  .reader-of {
+    opacity: 0.7;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 }
 
@@ -87,6 +200,15 @@ body {
     background: transparent;
     padding: 0;
     gap: 0;
+  }
+  /* Collapse the reader's grouping boxes so the print tree is the flat run of
+   * `.page` elements it has always been — page-break rules apply unchanged. */
+  .leaf,
+  .leaf-inner {
+    display: contents;
+  }
+  .reader-bar {
+    display: none;
   }
   .page {
     box-shadow: none;

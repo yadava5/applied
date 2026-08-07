@@ -2,6 +2,7 @@ import React from "react";
 import { COLORS, FONTS, PAGE } from "../theme";
 import { BRAND, MASTHEAD } from "../content";
 import { CoverField } from "../visuals/CoverField";
+import { AppliedLogoMark } from "../visuals/AppliedLogoMark";
 
 /**
  * Front cover (page 01). A full-bleed near-black field of email envelopes
@@ -22,12 +23,23 @@ export const CoverPage: React.FC = () => (
   >
     <CoverField widthIn={8.75} heightIn={11.25} variant="front" />
 
-    {/* Masthead — top-left */}
+    {/* Masthead — top-left. Same scrim-pill chrome as the legend opposite it:
+        bare on the field, an envelope glyph ran straight through the text.
+        Leads with the app's pipeline mark as a publisher's device — the field
+        argues the mark's story at page scale, the masthead states it at seal
+        scale. The pill stands in for the chip's dark tile. */}
     <div
       style={{
         position: "absolute",
-        top: "0.7in",
-        left: "0.7in",
+        top: "0.62in",
+        left: "0.62in",
+        display: "flex",
+        alignItems: "center",
+        gap: 9,
+        padding: "6px 12px",
+        borderRadius: 999,
+        background: "rgba(8, 13, 24, 0.66)",
+        border: `0.5pt solid ${COLORS.ON_DARK_HAIRLINE}`,
         fontFamily: FONTS.MONO,
         fontSize: 9,
         fontWeight: 600,
@@ -36,6 +48,7 @@ export const CoverPage: React.FC = () => (
         color: COLORS.ON_DARK_MUTED,
       }}
     >
+      <AppliedLogoMark size={18} />
       {BRAND.name} · System Card
     </div>
 
@@ -80,7 +93,22 @@ export const CoverPage: React.FC = () => (
       ))}
     </div>
 
-    {/* Vertical margin callout — right edge */}
+    {/* Scrim behind the title block */}
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: "4.2in",
+        background: `linear-gradient(to top, ${COLORS.GROUND} 12%, rgba(11,18,32,0.86) 46%, rgba(11,18,32,0) 100%)`,
+        pointerEvents: "none",
+      }}
+    />
+
+    {/* Vertical margin callout — right edge. Painted AFTER the scrim: it sits
+        in the scrim's fade band, and stacking it below cut it to
+        near-invisible at print density. */}
     <div
       style={{
         position: "absolute",
@@ -97,19 +125,6 @@ export const CoverPage: React.FC = () => (
     >
       classify at the source
     </div>
-
-    {/* Scrim behind the title block */}
-    <div
-      style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: "4.2in",
-        background: `linear-gradient(to top, ${COLORS.GROUND} 12%, rgba(11,18,32,0.86) 46%, rgba(11,18,32,0) 100%)`,
-        pointerEvents: "none",
-      }}
-    />
 
     {/* Title block — lower-left */}
     <div
