@@ -36,7 +36,7 @@ aioimaplib>=2.0.0                   # Async IMAP client for iCloud Mail
 # -----------------------------------------------------------------------------
 keyring>=24.3.0               # Secure credential storage (macOS Keychain)
 pyjwt[crypto]>=2.13.0         # Supabase JWT validation (>=2.13.0: PYSEC-2026-175..179)
-cryptography>=48.0.1,<49      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-2026-2141 / GHSA-537c-gmf6-5ccf (upper bound keeps mlflow<49 happy)
+cryptography>=50.0.0,<51      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-2026-2141 / GHSA-537c-gmf6-5ccf (upper bound keeps mlflow<49 happy)
 
 # -----------------------------------------------------------------------------
 # ML & NLP
