@@ -202,50 +202,70 @@ async def _admin_build(engine: AsyncEngine) -> None:
 
         # RLS mirrors the migrations exactly: entity tables ENABLE+FORCE+4
         # policies (a8d4ec5fba26); user_credentials ENABLE+4 policies
-        # (c4user_creds_rls) + FORCE (c5_force_user_creds_rls).
+        # (c4user_creds_rls) + FORCE (c5_force_user_creds_rls); and every
+        # predicate in the hoisted `(SELECT auth.uid())` form that
+        # c6_rls_initplan_hoist leaves production in.
+        #
+        # The sub-select is not cosmetic and it is not optional here. Bare
+        # `auth.uid()` is STABLE, so the planner re-evaluates it once PER ROW;
+        # wrapping it makes it an uncorrelated subquery hoisted into an
+        # InitPlan evaluated once per query (Supabase's `auth_rls_initplan`
+        # lint). The comparison is identical either way, which is exactly why
+        # these tests must run the shape production runs: if this shim kept
+        # the bare form, the suite would go on proving the OLD policies and
+        # would tell us nothing about the ones actually deployed.
         for t in _ENTITY_TABLES:
             await c.execute(text(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY"))
             await c.execute(text(f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY"))
             await c.execute(
-                text(f"CREATE POLICY {t}_select ON {t} FOR SELECT USING (user_id = auth.uid())")
+                text(
+                    f"CREATE POLICY {t}_select ON {t} FOR SELECT "
+                    "USING (user_id = (SELECT auth.uid()))"
+                )
             )
             await c.execute(
                 text(
-                    f"CREATE POLICY {t}_insert ON {t} FOR INSERT WITH CHECK (user_id = auth.uid())"
+                    f"CREATE POLICY {t}_insert ON {t} FOR INSERT "
+                    "WITH CHECK (user_id = (SELECT auth.uid()))"
                 )
             )
             await c.execute(
                 text(
                     f"CREATE POLICY {t}_update ON {t} FOR UPDATE "
-                    "USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())"
+                    "USING (user_id = (SELECT auth.uid())) "
+                    "WITH CHECK (user_id = (SELECT auth.uid()))"
                 )
             )
             await c.execute(
-                text(f"CREATE POLICY {t}_delete ON {t} FOR DELETE USING (user_id = auth.uid())")
+                text(
+                    f"CREATE POLICY {t}_delete ON {t} FOR DELETE "
+                    "USING (user_id = (SELECT auth.uid()))"
+                )
             )
         await c.execute(text("ALTER TABLE user_credentials ENABLE ROW LEVEL SECURITY"))
         await c.execute(
             text(
                 "CREATE POLICY user_credentials_owner_select ON user_credentials "
-                "FOR SELECT USING (user_id = auth.uid())"
+                "FOR SELECT USING (user_id = (SELECT auth.uid()))"
             )
         )
         await c.execute(
             text(
                 "CREATE POLICY user_credentials_owner_insert ON user_credentials "
-                "FOR INSERT WITH CHECK (user_id = auth.uid())"
+                "FOR INSERT WITH CHECK (user_id = (SELECT auth.uid()))"
             )
         )
         await c.execute(
             text(
                 "CREATE POLICY user_credentials_owner_update ON user_credentials "
-                "FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())"
+                "FOR UPDATE USING (user_id = (SELECT auth.uid())) "
+                "WITH CHECK (user_id = (SELECT auth.uid()))"
             )
         )
         await c.execute(
             text(
                 "CREATE POLICY user_credentials_owner_delete ON user_credentials "
-                "FOR DELETE USING (user_id = auth.uid())"
+                "FOR DELETE USING (user_id = (SELECT auth.uid()))"
             )
         )
         await c.execute(text("ALTER TABLE user_credentials FORCE ROW LEVEL SECURITY"))

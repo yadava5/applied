@@ -61,10 +61,23 @@ is kept in:
 - **Defence-in-depth (RLS).** Alembic rev `a8d4ec5fba26` enables
   PostgreSQL Row-Level Security on every tenant-scoped table with
   per-operation policies of the form
-  `USING (user_id = auth.uid())` (and `WITH CHECK` for writes). The
-  migration is a no-op on SQLite so `alembic upgrade head` runs
-  cleanly in CI; on Supabase it guarantees the DB rejects any query
-  that forgets the application-level filter.
+  `USING (user_id = (SELECT auth.uid()))` (and `WITH CHECK` for
+  writes). The migration is a no-op on SQLite so `alembic upgrade
+  head` runs cleanly in CI; on Supabase it guarantees the DB rejects
+  any query that forgets the application-level filter.
+  The sub-select is a performance requirement, not style: bare
+  `auth.uid()` is `STABLE` and so re-evaluated **once per row**, while
+  the sub-select is hoisted into an `InitPlan` evaluated **once per
+  query** (Supabase's `auth_rls_initplan` lint). Rev
+  `c6_rls_initplan_hoist` applied that to all 32 policies. On a
+  *synthetic* 200k-row sequential scan in a throwaway `postgres:16`,
+  that cut `auth.uid()` invocations from 200,001 to 1 and the query
+  from 126 ms to 10 ms. Treat the millisecond figures as an upper
+  bound on the benefit, not a production measurement — Applied's real
+  tables are far smaller, and the win scales with rows scanned. What
+  does hold at any size is the invocation count: one per query instead
+  of one per row. The comparison is unchanged either way, so the
+  isolation guarantee is identical.
 - **Desktop.** Unchanged. `jobtracker.main` never imports the auth
   module; desktop rows are owned by a fixed sentinel UUID
   (`00000000-0000-0000-0000-000000000000`) declared in
@@ -184,7 +197,9 @@ client — that arrives in C10 as a typed `fetch` wrapper bound to
   scaffolded but not wired for v1).
 - **Defence-in-depth.** Alembic rev `c4user_creds_rls` enables
   Postgres Row-Level Security on `user_credentials` with per-op
-  policies `USING (user_id = auth.uid())` and the FK
+  policies `USING (user_id = (SELECT auth.uid()))` (named
+  `user_credentials_owner_*`, hoisted by `c6_rls_initplan_hoist`) and
+  the FK
   `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`.
   Migration is a no-op on SQLite.
 - **Failure modes.** If `JOBTRACKER_SECRET_ENCRYPTION_KEY` is unset,
