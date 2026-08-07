@@ -12,6 +12,22 @@ dist/
 build/
 *.egg
 
+## Test, lint & type-check caches, and local coverage/report output.
+# All of these regenerate from a normal `pytest` / `ruff` / `mypy` /
+# `playwright test` run, so committing them only ever produces churn. They
+# were sitting untracked-but-unignored, which is how 381 MB of .mypy_cache
+# accumulated without anyone noticing.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+test-results/
+playwright-report/
+playwright/.cache/
+
 ## Environment & Secrets
 .env
 .env.local
