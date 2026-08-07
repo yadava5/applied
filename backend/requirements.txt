@@ -29,7 +29,7 @@ alembic>=1.13.0               # DB migrations (owns schema on Postgres)
 google-api-python-client>=2.100.0   # Gmail API client
 google-auth-httplib2>=0.1.1         # Google auth HTTP transport
 google-auth-oauthlib>=1.2.4         # OAuth2 flow for Gmail (>=1.2.4: explicit PKCE kwargs in from_client_config)
-aioimaplib>=2.0.0                   # Async IMAP client for iCloud Mail
+aioimaplib>=2.0.1                   # Async IMAP client for iCloud Mail
 
 # -----------------------------------------------------------------------------
 # Security & Credentials
