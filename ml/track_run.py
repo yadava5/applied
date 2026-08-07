@@ -83,7 +83,18 @@ def main() -> int:
                     "mode": "hybrid",
                     "profile": "deterministic",
                     "dataset": DATASET,
-                    "layers": "rules,e5-small-v2,setfit",
+                    # The "deterministic" profile above disables BOTH semantic
+                    # layers: evaluate_classifier._configure_hybrid_profile
+                    # calls set_lite_mode(True), which short-circuits the
+                    # SetFit branch before the module is imported, and empties
+                    # the embedding store so classify() returns None. Naming
+                    # e5-small-v2 and setfit here described a cascade that did
+                    # not run -- and this run is what registers the model that
+                    # carries the "production" alias, so the claim propagated
+                    # into the model registry. These are the layers that
+                    # actually execute under this profile.
+                    "layers": "content_filter,rules,fallback",
+                    "layers_disabled_by_profile": "e5-small-v2,setfit",
                     "min_macro_f1_floor": MIN_MACRO_F1,
                 }
             )
