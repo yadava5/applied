@@ -159,7 +159,7 @@ export const ProofPodium: React.FC = () => {
             </text>
             <g style={{ color: GREEN }}>
               <text x={cx} y={138} fontFamily="ui-monospace, monospace" fontSize={4.4} letterSpacing="0.6" fill="currentColor">
-                held-out · passing
+                rules stage · held-out
               </text>
             </g>
             {/* CI-floor legend, kept on the open left half (no edge clip) */}

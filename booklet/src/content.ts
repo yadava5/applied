@@ -1,8 +1,8 @@
 /**
- * JobTracker System Card — copy + verified data (self-contained).
+ * Applied System Card — copy + verified data (self-contained).
  *
  * Every number here is verified against the jobtracker repo
- * (branch integration/web-migration) and carries a SOURCE note where it is a
+ * (branch main) and carries a SOURCE note where it is a
  * measured/enforced fact. Nothing is invented. Two deliberate honesty calls,
  * both grounded in the code rather than the README's marketing line:
  *
@@ -27,6 +27,11 @@ import type { SectionKey } from "./theme";
 
 export const BRAND = {
   name: "Applied",
+  // Two-tone wordmark split — covers tint the "lied" in rules-cyan. Kept in
+  // content (not hardcoded in templates) so a rename can never strand an old
+  // brand string in the TSX.
+  wordmarkHead: "App",
+  wordmarkTail: "lied",
   subtitle: "The inbox already holds the verdict. Classify it at the source.",
   author: "Ayush Yadav",
   year: "2026",
@@ -75,7 +80,7 @@ export const TOC = {
     WHY: "the verdict is already in the inbox",
     HOW: "rules → e5 → SetFit → the gate",
     INSIDE: "int8 ONNX, zero servers",
-    PROOF: "0.979 macro-F1, CI-gated",
+    PROOF: "0.979 macro-F1 (rules stage), CI-gated",
     SECURITY: "no LLM · on-device · least-privilege",
     BUILD: "train · register · export · ship",
   } as Record<string, string>,
@@ -418,7 +423,7 @@ export const PROOF = {
     ciLabel: "CI floor — the merge blocks below it",
     ciBody:
       "The score is not a one-time screenshot. Two GitHub Actions gates re-run the evaluation on every backend change and fail the build if macro-F1 drops below 0.95. The number is load-bearing.",
-    source: "source · baseline_hybrid_v3.json:115 · backend-ci.yml:72,84 (--min-macro-f1 0.95)",
+    source: "source · baseline_hybrid_v3.json:115 · backend-ci.yml:84,96 (--min-macro-f1 0.95)",
   },
 
   classes: {
@@ -450,16 +455,16 @@ export const PROOF = {
 
   tests: {
     eyebrow: "§04 · THE GUARANTEE",
-    headline: "288 tests and a gate that blocks merges.",
+    headline: "305 tests and a gate that blocks merges.",
     body:
-      "Correctness is not asserted, it is enforced. The backend ships a 288-test suite — 278 passing, 10 skipped, the skips being the Postgres RLS module that needs a live database; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
+      "Correctness is not asserted, it is enforced. The backend ships a 305-test suite — all 305 passing, including the ten Postgres row-level-security tests, which now provision their own postgres:16 through testcontainers instead of skipping; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
     stats: [
-      { value: "288", label: "tests · backend suite", note: "pytest tests -q" },
+      { value: "305", label: "tests · backend suite", note: "pytest tests -q" },
       { value: "2", label: "CI gates · rules + hybrid", note: "backend-ci.yml" },
       { value: "0.95", label: "macro-F1 merge floor", note: "--min-macro-f1" },
     ],
     honest:
-      "Provenance: 288 is what `pytest tests -q` collects — 278 passed, 10 skipped — run 2026-08-02. The previous note here said the README states 182 and cited README.md:7; that line is the tagline and carries no count, and no line of the README ever stated 182. A hedge about a figure is worth nothing when the hedge is itself unchecked, so this row now names a command instead of a document."
+      "Provenance: 305 is what `pytest tests -q` collects, all of them passing, run 2026-08-06 against backend/.venv311 on Python 3.11.14. The ten Postgres row-level-security tests that used to skip now start their own postgres:16 container via testcontainers, so the isolation claim is demonstrated rather than described — on a machine with no Docker daemon those ten skip again, and the suite reports 295. A hedge about a figure is worth nothing when the hedge is itself unchecked, so this row names a command, and the condition under which the command gives a different answer.",
     handoffQuote:
       "A classifier that knows when to stop is worth more than one that is always sure.",
   },
@@ -572,7 +577,7 @@ export const SECURITY = {
       seats: "100",
       seatsNote: "Google's test-user cap — the real limit, not a marketing number",
     },
-    source: "source · cloud/gmail_oauth.py:74,174,330,346 · credentials/cloud.py:187,209 · DEPLOY.md:110 · beta/constants.ts:16",
+    source: "source · cloud/gmail_oauth.py:90,338,607,632 · credentials/cloud.py:187,209 · DEPLOY.md:114 · beta/constants.ts:16",
   },
 } as const;
 
@@ -649,5 +654,7 @@ export const BACK_COVER = {
   wordmark: "Applied",
   closingLine: "The verdict was always in the inbox.",
   coda: "Now it reads itself.",
+  edgeNote: "end · vol. 01",
+  signature: "System Card · Vol. 01",
   colophon: ["Applied · System Card · Vol. 01", "Ayush Yadav · 2026", "Model licensed MIT · runs in-browser via ONNX"],
 } as const;

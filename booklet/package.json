@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "JobTracker System Card — a printed 8.5×11 booklet exported to PDF via Puppeteer.",
+  "description": "Applied System Card — a printed 8.5×11 booklet exported to PDF via Puppeteer.",
   "scripts": {
     "dev": "vite --port 5182",
     "build": "tsc --noEmit && vite build",

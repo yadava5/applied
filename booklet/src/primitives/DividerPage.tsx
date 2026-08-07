@@ -3,7 +3,7 @@ import { COLORS, FONTS, TYPE, PAGE, type SectionKey } from "../theme";
 import { DIORAMAS } from "../visuals/diorama";
 
 /**
- * Full-bleed chapter divider. JobTracker's identity inverts the sibling
+ * Full-bleed chapter divider. Applied's identity inverts the sibling
  * AutoML book: instead of a bright solid-color field, the ground is the
  * near-black app ink (#0B1220) and the chapter's semantic accent carries the
  * giant numeral, the counter, and the diorama's single highlight. The

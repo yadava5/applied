@@ -36,7 +36,7 @@ export const CoverPage: React.FC = () => (
         color: COLORS.ON_DARK_MUTED,
       }}
     >
-      Applied · System Card
+      {BRAND.name} · System Card
     </div>
 
     {/* Layer legend — top-right, establishes the color language up front. A
@@ -133,7 +133,8 @@ export const CoverPage: React.FC = () => (
           color: COLORS.ON_DARK,
         }}
       >
-        App<span style={{ color: COLORS.RULES_CYAN }}>lied</span>
+        {BRAND.wordmarkHead}
+        <span style={{ color: COLORS.RULES_CYAN }}>{BRAND.wordmarkTail}</span>
       </div>
       <div
         style={{

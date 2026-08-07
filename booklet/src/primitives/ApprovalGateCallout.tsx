@@ -3,7 +3,7 @@ import { COLORS, FONTS, TYPE } from "../theme";
 
 /**
  * Confidence-gate callout — a dotted border, a Monaspace eyebrow, and an
- * Instrument Serif italic body. Conceptually mirrors JobTracker's 0.85 gate:
+ * Instrument Serif italic body. Conceptually mirrors Applied's 0.85 gate:
  * below it, nothing is auto-filed and a human presides.
  */
 export const ApprovalGateCallout: React.FC<{

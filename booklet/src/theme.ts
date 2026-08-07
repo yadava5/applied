@@ -1,10 +1,10 @@
 /**
- * JobTracker System Card — design tokens (self-contained).
+ * Applied System Card — design tokens (self-contained).
  *
  * Unlike the sibling AutoML booklet (which re-exported COLORS/FONTS from a
  * `../../poster/src/tokens` workspace file), this booklet ships standalone:
  * every token is inlined here so `jobtracker/booklet` builds with no external
- * package. The palette is JobTracker's OWN identity — a dark-monochrome ink
+ * package. The palette is Applied's OWN identity — a dark-monochrome ink
  * ground with the four semantic classifier accents surfaced from the app:
  *
  *   RULES_CYAN   #38BDF8   Layer 1 · 201 regex rules

@@ -48,7 +48,6 @@ export const ConfidenceGate: React.FC = () => (
         {[
           { at: 0, label: "0.00" },
           { at: 70, label: "0.70" },
-          { at: 85, label: "0.85" },
           { at: 100, label: "1.00" },
         ].map((t) => (
           <div
@@ -60,14 +59,44 @@ export const ConfidenceGate: React.FC = () => (
                 t.at === 0 ? "translateX(0)" : t.at === 100 ? "translateX(-100%)" : "translateX(-50%)",
               fontFamily: FONTS.MONO,
               fontSize: 8,
-              fontWeight: t.at === 85 ? 700 : 500,
-              color: t.at === 85 ? COLORS.GATE_DEEP : COLORS.INK_MUTED,
+              fontWeight: 500,
+              color: COLORS.INK_MUTED,
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {t.at === 85 ? "▲ 0.85 gate" : t.label}
+            {t.label}
           </div>
         ))}
+        {/* gate tick — the ▲ itself is centered under the 0.85 line, and the
+            text hangs to its right, so the pointer points at the marker */}
+        <div
+          style={{
+            position: "absolute",
+            left: "85%",
+            transform: "translateX(-50%)",
+            fontFamily: FONTS.MONO,
+            fontSize: 8,
+            fontWeight: 700,
+            color: COLORS.GATE_DEEP,
+          }}
+        >
+          ▲
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            left: "85%",
+            marginLeft: 7,
+            fontFamily: FONTS.MONO,
+            fontSize: 8,
+            fontWeight: 700,
+            color: COLORS.GATE_DEEP,
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+        >
+          0.85 gate
+        </div>
       </div>
     </div>
 

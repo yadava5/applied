@@ -1,6 +1,6 @@
 import React from "react";
 import { COLORS, FONTS, PAGE } from "../theme";
-import { BACK_COVER } from "../content";
+import { BACK_COVER, BRAND } from "../content";
 import { CoverField } from "../visuals/CoverField";
 
 /**
@@ -61,7 +61,7 @@ export const BackCoverPage: React.FC = () => (
         color: COLORS.ON_DARK_SUBTLE,
       }}
     >
-      end · vol. 01
+      {BACK_COVER.edgeNote}
     </div>
 
     {/* Scrim behind the closing block */}
@@ -99,7 +99,8 @@ export const BackCoverPage: React.FC = () => (
           color: COLORS.ON_DARK,
         }}
       >
-        App<span style={{ color: COLORS.RULES_CYAN }}>lied</span>
+        {BRAND.wordmarkHead}
+        <span style={{ color: COLORS.RULES_CYAN }}>{BRAND.wordmarkTail}</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <div
@@ -138,7 +139,7 @@ export const BackCoverPage: React.FC = () => (
             color: COLORS.ON_DARK_SUBTLE,
           }}
         >
-          System Card · Vol. 01
+          {BACK_COVER.signature}
         </span>
       </div>
     </div>

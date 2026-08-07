@@ -3,7 +3,7 @@ import { COLORS, FONTS, SECTION, type SectionKey } from "../theme";
 import { PROOF, LAYERS } from "../content";
 
 /**
- * The signature JobTracker visual, printed. A faithful still of the app's
+ * The signature Applied visual, printed. A faithful still of the app's
  * DecisionTrace (apps/web/components/viz/DecisionTrace.tsx): every email's
  * verdict traced through the three layers, the firing layer lit in its hue,
  * a confidence meter drawn against the 0.85 gate. Rendered on the dark ground
@@ -273,19 +273,31 @@ const GateMeter: React.FC<{ item: Row }> = ({ item }) => {
           }}
         />
       </div>
+      {/* scale row — the gate label sits under the gate line itself, not at
+          the row's centre */}
       <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
+          position: "relative",
+          height: 12,
           fontFamily: FONTS.MONO,
           fontSize: 8,
           color: COLORS.ON_DARK_SUBTLE,
           marginTop: 4,
         }}
       >
-        <span>0%</span>
-        <span style={{ color: COLORS.ON_DARK_MUTED }}>gate {GATE}</span>
-        <span>100%</span>
+        <span style={{ position: "absolute", left: 0 }}>0%</span>
+        <span
+          style={{
+            position: "absolute",
+            left: `${GATE * 100}%`,
+            transform: "translateX(-50%)",
+            color: COLORS.ON_DARK_MUTED,
+            whiteSpace: "nowrap",
+          }}
+        >
+          gate {GATE}
+        </span>
+        <span style={{ position: "absolute", right: 0 }}>100%</span>
       </div>
       <div
         style={{
