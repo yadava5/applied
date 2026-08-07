@@ -22,6 +22,8 @@ Applied reads your inbox, classifies every message with a purpose-built ML pipel
 
 **[Live app](https://getapplied.vercel.app) · [Try the demo](https://getapplied.vercel.app/demo) · [System Card](https://getapplied.vercel.app/system-card) · [Classifier Space](https://huggingface.co/spaces/yadava5/jobtracker-classifier)**
 
+Applied is part of a six-project portfolio — browse the rest at [yadava5.github.io/Portfolio-2.0](https://yadava5.github.io/Portfolio-2.0/).
+
 </div>
 
 ---
@@ -58,7 +60,7 @@ The live landing page runs a real email through all three layers in front of you
 Applied is a monorepo with three deployable surfaces over one FastAPI core and one shared classifier.
 
 ```text
-applied/  (repo: jobtracker)
+applied/  (formerly jobtracker)
 ├── apps/
 │   ├── web/        # Next.js 16 web product (App Router, React 19)
 │   ├── macos/      # SwiftUI native macOS app
