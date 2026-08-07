@@ -10,7 +10,14 @@ backend/.venv
 backend/.venv311
 backend/.pytest_cache
 backend/.ruff_cache
-apps
+# NOTE: this file is read from the repository root for *every* Vercel project
+# built from this repo, whatever its Root Directory. A blanket `apps` entry
+# therefore deleted apps/web before the jobtracker-web build could run, and
+# every push-triggered web build failed with NEXT_NO_VERSION. Exclude only the
+# subtrees that are genuinely dead weight: apps/macos is 19.7 MB of Xcode
+# project and image assets, apps/web is 2 MB and is the deployed web app.
+apps/macos
+apps/mobile
 dist
 docs
 ml
