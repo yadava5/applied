@@ -1,0 +1,77 @@
+version: 2
+
+# Dependency updates for every ecosystem this repository actually builds from.
+# Until now there was none, which meant the only thing raising a floor on a
+# vulnerable transitive was a human noticing — see the "Security pins" block at
+# the bottom of the root requirements.txt, all of which were added by hand after
+# the fact. That is not a process; this is.
+#
+# Deliberately NOT covered, so the omissions are decisions and not oversights:
+#   - ml/demo/space/requirements.txt — a generated artifact. `ml/demo/
+#     package_space.py` writes that whole tree when packaging the Hugging Face
+#     Space; a PR against it would be reverted by the next package run.
+#   - ml/wandb/**/requirements.txt — a W&B run manifest recording what WAS
+#     installed for a past experiment. Bumping it would falsify the record.
+#   - apps/macos — Dependabot's `swift` ecosystem needs a Package.swift. This
+#     project's only SwiftPM state is a Package.resolved inside the .xcodeproj,
+#     which Dependabot cannot update.
+#
+# No `labels:` here on purpose. Dependabot cannot create labels, and naming one
+# that does not exist fails the whole update as a config error on the Dependabot
+# tab rather than degrading gracefully. Of the obvious candidates this repo only
+# has `ci`; `dependencies`, `python` and `javascript` do not exist. Add them in
+# repository settings first if you want the PRs labelled.
+
+updates:
+  # ---------------------------------------------------------------------------
+  # Python — the Vercel cloud function (jobtracker-api).
+  # ---------------------------------------------------------------------------
+  # This manifest is hand-tuned against Vercel's Python function size budget and
+  # carries an explicit DO-NOT-ADD list (torch, setfit, keyring, aiosqlite, ...).
+  # Dependabot only bumps what is already pinned here, so it cannot introduce
+  # those — but a major bump can still pull a heavier transitive tree, so these
+  # PRs want a human eye rather than an automerge.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # ---------------------------------------------------------------------------
+  # Python — the full backend (runtime + dev + migration extras).
+  # ---------------------------------------------------------------------------
+  # One entry covers requirements.txt, requirements-dev.txt and
+  # requirements-migrate.txt: Dependabot picks up every requirements file in the
+  # directory it is pointed at.
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # ---------------------------------------------------------------------------
+  # Node — the Next.js app (jobtracker-web).
+  # ---------------------------------------------------------------------------
+  # `npm` is the correct ecosystem name for a pnpm workspace; Dependabot reads
+  # pnpm-lock.yaml natively. Note package.json also carries a `pnpm.overrides`
+  # block pinning patched versions of transitives (brace-expansion, js-yaml,
+  # postcss, sharp, ws) — Dependabot does not manage those, so they still need
+  # to be revisited by hand when the direct dep that pulls them moves.
+  - package-ecosystem: "npm"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions.
+  # ---------------------------------------------------------------------------
+  # Several workflows (codeql, gitleaks, scorecard) pin actions by full commit
+  # SHA because OpenSSF Scorecard grades that. Dependabot understands SHA pins
+  # and rewrites both the SHA and its version comment, so keeping this on does
+  # not cost the Pinned-Dependencies score.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
