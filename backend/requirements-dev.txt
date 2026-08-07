@@ -27,7 +27,7 @@ pip-audit>=2.10.0
 # Code Quality
 # -----------------------------------------------------------------------------
 ruff>=0.1.0                   # Fast Python linter and formatter
-mypy>=1.8.0                   # Static type checker
+mypy>=2.3.0                   # Static type checker
 
 # -----------------------------------------------------------------------------
 # Distribution
