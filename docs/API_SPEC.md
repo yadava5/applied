@@ -315,7 +315,11 @@ Transition status with payload:
 
 ### `POST /applications/{application_id}/mark-not-job`
 
-Reclassifies linked emails to `other`, unlinks them, deletes the application.
+Reclassifies linked emails to `other`, unlinks them (sets `application_id=NULL`),
+and deletes the application. Any `Contact` and `Interview` rows linked to the
+application are also deleted, because their `application_id` FK is `NOT NULL`
+(see issue #11). The linked emails themselves are retained with
+`classified_as=OTHER` and `user_corrected=True`.
 
 ### `GET /applications/link/preview/{email_id}`
 

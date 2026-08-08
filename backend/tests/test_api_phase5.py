@@ -19,9 +19,14 @@ from jobtracker.database import get_session, init_db
 from jobtracker.database.models import (
     Application,
     ApplicationStatus,
+    Contact,
+    ContactRole,
     Email,
     EmailCategory,
     EmailSource,
+    Interview,
+    InterviewStatus,
+    InterviewType,
 )
 from jobtracker.main import app
 from jobtracker.tracking import get_application_linker
@@ -666,6 +671,87 @@ class TestApplicationDetailAndActions:
             assert email.application_id is None
             assert email.classified_as == EmailCategory.OTHER
             assert email.user_corrected is True
+
+    @pytest.mark.asyncio
+    async def test_mark_not_job_deletes_required_children_before_app_delete(
+        self,
+        test_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        await _reset_analytics_tables()
+        now = datetime.utcnow()
+        from jobtracker.api import applications as applications_api
+
+        mock_classifier = SimpleNamespace(add_correction=AsyncMock())
+        monkeypatch.setattr(applications_api, "get_classifier", lambda: mock_classifier)
+
+        async with get_session() as session:
+            app_row = Application(
+                company="Signal Corp",
+                position="Platform Engineer",
+                status=ApplicationStatus.INTERVIEWING,
+                applied_date=date.today(),
+            )
+            session.add(app_row)
+            await session.commit()
+            await session.refresh(app_row)
+
+            email_row = Email(
+                application_id=app_row.id,
+                source_account=EmailSource.GMAIL,
+                message_id=f"<mark-not-job-child-{now.timestamp()}@test.com>",
+                received_at=now,
+                subject="Interview scheduling",
+                sender_email="recruiter@signalcorp.com",
+                classified_as=EmailCategory.INTERVIEW,
+                classification_confidence=0.89,
+            )
+            contact_row = Contact(
+                application_id=app_row.id,
+                name="Alex Recruiter",
+                email="alex@signalcorp.com",
+                role=ContactRole.RECRUITER,
+            )
+            interview_row = Interview(
+                application_id=app_row.id,
+                type=InterviewType.VIDEO,
+                scheduled_at=now + timedelta(days=2),
+                status=InterviewStatus.SCHEDULED,
+            )
+            session.add(email_row)
+            session.add(contact_row)
+            session.add(interview_row)
+            await session.commit()
+            await session.refresh(email_row)
+            email_id = email_row.id
+            app_id = app_row.id
+
+        response = await test_client.post(f"/applications/{app_id}/mark-not-job")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["emails_reclassified"] == 1
+
+        async with get_session() as session:
+            app_check = await session.exec(select(Application).where(Application.id == app_id))
+            assert app_check.first() is None
+
+            contact_check = await session.exec(
+                select(Contact).where(Contact.application_id == app_id)
+            )
+            assert contact_check.first() is None
+
+            interview_check = await session.exec(
+                select(Interview).where(Interview.application_id == app_id)
+            )
+            assert interview_check.first() is None
+
+            email_check = await session.exec(select(Email).where(Email.id == email_id))
+            row = email_check.first()
+            assert row is not None
+            email = row[0] if hasattr(row, "__getitem__") else row
+            assert email.application_id is None
+            assert email.classified_as == EmailCategory.OTHER
 
 
 class TestAnalyticsTrendsDeScoped:

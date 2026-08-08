@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import delete, text
 from sqlmodel import func, select
 
 from jobtracker.classifier import get_classifier
@@ -19,8 +19,10 @@ from jobtracker.database import get_session
 from jobtracker.database.models import (
     Application,
     ApplicationStatus,
+    Contact,
     Email,
     EmailCategory,
+    Interview,
 )
 from jobtracker.services.application_insights import (
     get_follow_up_reminders,
@@ -413,6 +415,15 @@ async def mark_application_not_job_posting(application_id: int):
                     application_id,
                     exc,
                 )
+
+        # Contacts and interviews require a non-null application_id, so remove
+        # them explicitly before deleting the parent application record.
+        await session.exec(
+            delete(Contact).where(Contact.application_id == application_id)
+        )
+        await session.exec(
+            delete(Interview).where(Interview.application_id == application_id)
+        )
 
         await session.delete(app)
         await session.commit()
