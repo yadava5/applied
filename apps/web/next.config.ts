@@ -21,8 +21,18 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data:",
       "font-src 'self'",
-      // Supabase auth + the FastAPI backend are the only remote calls.
-      "connect-src 'self' https://jbyvatoodyqqvkqbsrju.supabase.co https://jobtracker-api-seven.vercel.app",
+      // Supabase auth is the only remote call this app makes.
+      //
+      // https://jobtracker-api-seven.vercel.app was allowed here too, and was
+      // dead permission: nothing in apps/web has ever fetched it. The web app
+      // serves its own Next route handlers under app/api/** and talks to
+      // Supabase directly, and a grep for that host across apps/web returned
+      // this line and nothing else. The FastAPI project it names is being
+      // retired; the grant outlived any call to it either way, and a
+      // connect-src entry for an origin the app does not use is exactly the
+      // kind of permission that survives long enough to be useful to someone
+      // else.
+      "connect-src 'self' https://jbyvatoodyqqvkqbsrju.supabase.co",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
