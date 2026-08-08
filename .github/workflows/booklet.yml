@@ -1,0 +1,108 @@
+name: Booklet
+
+# Drift guard for the committed System Card.
+#
+# booklet/ is a standalone Vite/React sub-project whose `build:system-card`
+# script renders the Applied System Card into apps/web/public/system-card,
+# which is COMMITTED because the git-driven Vercel build serves those files
+# directly. Nothing ever rebuilt them in CI or at deploy time, so an edit to
+# booklet/src that was not followed by a hand-run of the build would ship a
+# stale card while every page still returned 200. This job is the missing gate:
+# it rebuilds the card and fails if the result differs from the committed
+# bytes. It is modelled on the WASM drift guard (wasm.yml) in the fast-mnist
+# repo, which does the same for a committed build artifact.
+#
+# Note the script name: it is `build:system-card` here, not `build:embed` as in
+# the sibling repos.
+#
+# The blocking comparison assumes the rebuild is byte-identical, and that
+# was VERIFIED on the platform CI uses rather than only on the author's Mac.
+# Measured 2026-08-07 in node:20-bookworm against a simulated CLEAN
+# CHECKOUT -- both the root and booklet node_modules shadowed, then
+# booklet deps only --
+# and the committed card reproduced
+# exactly: `git status --porcelain --untracked-files=all` empty over all 44
+# tracked files.
+#
+# The clean-checkout part is the whole point. A first pass that left the
+# author's macOS node_modules mounted reported all four repos green; re-run
+# with it shadowed, taskflow-calendar failed outright on a PostCSS plugin it
+# was silently borrowing from the root install. A guard whose green has only
+# been seen in the author's environment says nothing about the runner.
+# Do not weaken this to a warning; if a runner difference ever surfaces,
+# rebuild the card and commit it in the same change.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'booklet/**'
+      # The committed card is what production serves, so an edit to it must
+      # re-run the drift check even when no booklet source moved.
+      - 'apps/web/public/system-card/**'
+      - '.github/workflows/booklet.yml'
+  pull_request:
+    paths:
+      - 'booklet/**'
+      - 'apps/web/public/system-card/**'
+      - '.github/workflows/booklet.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  booklet-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: booklet/package-lock.json
+
+      - name: Install booklet dependencies
+        working-directory: booklet
+        run: npm ci
+
+      - name: Rebuild the committed System Card
+        working-directory: booklet
+        run: npm run build:system-card
+
+      # This step runs from the repo ROOT on purpose. If it inherited
+      # working-directory: booklet, the pathspec below would resolve against
+      # booklet/, match nothing, and the guard would pass forever on a drifted
+      # card -- a null result that means "looked in the wrong place", not "no
+      # drift".
+      - name: Committed System Card matches a rebuild
+        run: |
+          set -euo pipefail
+          out='apps/web/public/system-card'
+
+          # Positive control: prove the guard is actually watching committed
+          # files before trusting a clean status.
+          tracked=$(git ls-files -- "$out" | wc -l | tr -d ' ')
+          if [ "$tracked" -eq 0 ]; then
+            echo "::error title=Booklet guard mis-scoped::no committed files under $out; the drift check is looking in the wrong place and proves nothing."
+            exit 1
+          fi
+          echo "Guarding $tracked committed files under $out."
+
+          # --untracked-files=all so a wholly-new hashed-name subtree is listed
+          # file-by-file rather than collapsed to a single '?? dir/' line.
+          if [ -n "$(git status --porcelain --untracked-files=all -- "$out")" ]; then
+            echo "::error title=System Card drift::$out differs from a rebuild of booklet/. Run 'npm run build:system-card' in booklet/ and commit the result."
+            git add -A -- "$out"
+            git diff --cached --name-status -- "$out"
+            git diff --cached --stat -- "$out"
+            exit 1
+          fi
+          echo "OK: $out reproduces byte-for-byte from booklet/ sources."
