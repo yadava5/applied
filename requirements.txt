@@ -49,7 +49,7 @@ google-auth-httplib2>=0.1.1
 # authorize/callback exchange with invalid_grant — and dropping the
 # kwargs entirely).
 google-auth-oauthlib>=1.2.4
-aioimaplib>=2.0.0
+aioimaplib>=2.0.1
 
 # -----------------------------------------------------------------------------
 # Email Parsing
