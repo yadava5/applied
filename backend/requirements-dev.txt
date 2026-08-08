@@ -21,7 +21,7 @@ httpx>=0.26.0                 # Async HTTP client for API testing
 # performs a real resolution, which gave 0 for the Vercel deploy surface.
 #   pip-audit -r requirements.txt          # what the deployment resolves to
 #   pip-audit                              # what is installed right now
-pip-audit>=2.10.0
+pip-audit>=2.10.1
 
 # -----------------------------------------------------------------------------
 # Code Quality
