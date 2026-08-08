@@ -31,11 +31,19 @@ updates:
   # Dependabot only bumps what is already pinned here, so it cannot introduce
   # those — but a major bump can still pull a heavier transitive tree, so these
   # PRs want a human eye rather than an automerge.
+  #
+  # Monthly, not weekly: `schedule` governs Dependabot's VERSION updates only.
+  # Security updates are a separate mechanism, unaffected by this interval, so
+  # vulnerability patches still arrive immediately regardless of the cadence.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
+    groups:
+      pip:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # ---------------------------------------------------------------------------
   # Python — the full backend (runtime + dev + migration extras).
@@ -46,8 +54,12 @@ updates:
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
+    groups:
+      pip-backend:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # ---------------------------------------------------------------------------
   # Node — the Next.js app (jobtracker-web).
@@ -60,8 +72,12 @@ updates:
   - package-ecosystem: "npm"
     directory: "/apps/web"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # ---------------------------------------------------------------------------
   # GitHub Actions.
@@ -73,5 +89,20 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
+    groups:
+      # codeql-action/{init,autobuild,analyze,upload-sarif} are sub-actions of a
+      # single action and must move in lockstep. Dependabot treats them as four
+      # separate dependencies and would otherwise bump one SHA while leaving the
+      # rest behind, mismatching the workflow and hard-failing CodeQL:
+      #   ##[error]Loaded a configuration file for version '4.36.2', but running version '4.37.6'
+      # No update-types key on purpose: ALL updates (majors included) for these
+      # sub-actions must ship together and never be separable. Listed before the
+      # catch-all below because Dependabot assigns a dep to the first matching
+      # group in file order.
+      codeql-action:
+        patterns: ["github/codeql-action*"]
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
