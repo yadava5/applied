@@ -21,17 +21,28 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data:",
       "font-src 'self'",
-      // Supabase auth is the only remote call this app makes.
+      // Supabase auth is the only remote origin the BROWSER reaches from here.
       //
-      // https://jobtracker-api-seven.vercel.app was allowed here too, and was
-      // dead permission: nothing in apps/web has ever fetched it. The web app
-      // serves its own Next route handlers under app/api/** and talks to
-      // Supabase directly, and a grep for that host across apps/web returned
-      // this line and nothing else. The FastAPI project it names is being
-      // retired; the grant outlived any call to it either way, and a
-      // connect-src entry for an origin the app does not use is exactly the
-      // kind of permission that survives long enough to be useful to someone
-      // else.
+      // https://jobtracker-api-seven.vercel.app was listed too, and removing it
+      // changed nothing a visitor can do — because connect-src only ever
+      // constrained fetches the browser makes, and the browser never makes that
+      // one. The backend is reached exclusively from the Next route handlers
+      // under app/api/**, server-side, where the caller's Supabase JWT is
+      // attached (lib/api/server.ts, lib/applications/server.ts,
+      // lib/gmail/server.ts). CSP does not apply to a fetch that originates in
+      // the Node runtime, so the grant was doing no work.
+      //
+      // It is NOT dead infrastructure, and an earlier version of this comment
+      // said it was. That claim came from grepping apps/web for the literal
+      // host, which returns this line and nothing else — the host reaches the
+      // code through BACKEND_API_URL, an env var, so a literal grep can never
+      // see it. Proved live instead: GET https://getapplied.vercel.app/api/
+      // applications answers 401 with {"detail":{"detail":"Missing
+      // Authorization header"}}, and that inner body is the FastAPI backend's,
+      // verbatim — the string exists only in backend/jobtracker/auth/
+      // supabase_jwt.py and nowhere in this tree. Deleting that project takes
+      // down the export, the pipeline board writes, Gmail connect/inbox and
+      // account deletion.
       "connect-src 'self' https://jbyvatoodyqqvkqbsrju.supabase.co",
       "frame-ancestors 'none'",
       "base-uri 'self'",
