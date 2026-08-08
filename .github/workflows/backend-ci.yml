@@ -60,6 +60,43 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch
           pip install -r requirements-dev.txt
 
+      # Ruff lint. Configured in pyproject.toml ([tool.ruff]) since the project
+      # was set up, but it had never run in CI. Advisory (continue-on-error):
+      # the first run on 2026-08-07 reported 379 errors across the configured
+      # rule set (E,W,F,I,B,C4,UP,ARG,SIM) in tracked source under jobtracker/,
+      # tests/ and alembic/. A gate that is red from birth gets ignored or
+      # deleted; this one reports the count on every run and flips to blocking
+      # (drop continue-on-error) once it reaches zero. Do NOT `--fix` here or
+      # loosen pyproject to force it green. Placed before "Run tests" so the
+      # advisory numbers still appear on builds where a later blocking step fails.
+      - name: Run ruff lint (advisory until clean)
+        continue-on-error: true
+        run: ruff check .
+
+      # Mypy strict type-check. pyproject sets [tool.mypy] strict = true with the
+      # pydantic plugin, but it had never run in CI either. Advisory: the first
+      # run on 2026-08-07 reported 879 errors in 65 of 92 checked files
+      # (jobtracker/ 561, tests/ 286, alembic/ 32) — expected when a strict
+      # config is enforced for the first time on a codebase that grew without it.
+      # Reports the count each run; flip to blocking when it hits zero. Do NOT
+      # add blanket `# type: ignore` or relax the config to pass.
+      - name: Run mypy strict (advisory until clean)
+        continue-on-error: true
+        run: mypy .
+
+      # Dependency audit of the deployment surface (requirements.txt), the set
+      # that actually ships to Vercel. `-r requirements.txt` forces a real
+      # resolution rather than osv-scanner's worst-case floor scan — see the
+      # rationale in requirements-dev.txt. Advisory and REPORT-only by policy:
+      # findings are upstream CVEs, not code to fix, and versions are NOT bumped
+      # reflexively to silence it. On 2026-08-07 it reported 8 known
+      # vulnerabilities in 2 packages (cryptography, transformers). Note: torch
+      # is installed out-of-band from the CPU index and is not in
+      # requirements.txt, so this audit does not cover it.
+      - name: Run pip-audit on deployment surface (advisory)
+        continue-on-error: true
+        run: pip-audit -r requirements.txt
+
       - name: Run tests
         env:
           JOBTRACKER_ENVIRONMENT: test
