@@ -38,4 +38,4 @@ pyinstaller>=6.3.0            # Bundle Python as standalone executable
 # skipping. The RLS suite is the only proof of database-level tenant
 # isolation, and it spent months skipped because it needed a hand-exported
 # env var. See the module docstring.
-testcontainers[postgres]>=4.0.0
+testcontainers[postgres]>=4.15.0
