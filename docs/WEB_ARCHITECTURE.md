@@ -6,7 +6,7 @@
 
 ## Deployment modes
 
-JobTracker runs in one of two modes, selected by
+Applied runs in one of two modes, selected by
 `JOBTRACKER_DEPLOYMENT`:
 
 | Mode | Host | UI | DB | Auth | Secrets | Classifier |

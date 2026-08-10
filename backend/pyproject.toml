@@ -64,9 +64,9 @@ dist = [
 jobtracker = "jobtracker.main:run"
 
 [project.urls]
-Homepage = "https://github.com/yadava5/jobtracker"
-Repository = "https://github.com/yadava5/jobtracker"
-Issues = "https://github.com/yadava5/jobtracker/issues"
+Homepage = "https://github.com/yadava5/applied"
+Repository = "https://github.com/yadava5/applied"
+Issues = "https://github.com/yadava5/applied/issues"
 
 # ============================================================================
 # Tool Configuration

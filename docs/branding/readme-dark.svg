@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="200" viewBox="0 0 760 200"
+     role="img" aria-label="Applied. Your job search, tracked automatically.">
+  <title>Applied</title>
+  <style>
+    .desc { font: 400 16px ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+            "Helvetica Neue", Arial, sans-serif; fill: #d6d8db; }
+  </style>
+
+  <!-- Lockup: pipeline tile + stroke-built wordmark from logos/applied.svg, scaled 2x. -->
+  <g transform="translate(199,36) scale(2)">
+    <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="12" fill="#0a0a0b"
+          stroke="rgba(128,128,128,0.4)" stroke-width="1.5"/>
+    <g stroke-linecap="round">
+      <path d="M17.2,30.2 L20.3,27.4" stroke="#f7f8f8" stroke-opacity="0.65" stroke-width="2"/>
+      <path d="M27.7,20.7 L30.6,18.1" stroke="#f7f8f8" stroke-opacity="0.65" stroke-width="2"/>
+      <circle cx="13.5" cy="33.5" r="3" fill="none" stroke="#06b6d4" stroke-width="2.4"/>
+      <circle cx="24" cy="24" r="3" fill="none" stroke="#06b6d4" stroke-width="2.4"/>
+      <circle cx="34.5" cy="14.5" r="4.1" fill="#10b981" stroke="none"/>
+    </g>
+    <g fill="none" stroke="#f7f8f8" stroke-width="3" stroke-linecap="butt"
+       stroke-linejoin="miter" transform="translate(0,10.5)">
+      <g transform="translate(64,0)"><path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"/><path d="M10.85,7 L10.85,20"/></g>
+      <g transform="translate(79,0)"><path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"/><path d="M0.15,7 L0.15,26"/></g>
+      <g transform="translate(94,0)"><path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"/><path d="M0.15,7 L0.15,26"/></g>
+      <g transform="translate(111.8,0)"><path d="M1.8,0 L1.8,16.4 A3.6,3.6 0 0 0 5.4,20"/></g>
+      <g transform="translate(127.9,0)"><path d="M1.6,7 L1.6,20"/></g>
+      <circle cx="129.5" cy="2.7" r="2" fill="#f7f8f8" stroke="none"/>
+      <g transform="translate(139,0)"><path d="M0.28,12.1 L10.72,12.1 A5.35,6.5 0 1 0 8.57,18.82"/></g>
+      <g transform="translate(154,0)"><path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"/><path d="M10.85,0 L10.85,20"/></g>
+    </g>
+    <circle cx="172" cy="31" r="2.8" fill="#10b981" stroke="none"/>
+  </g>
+
+  <text x="380" y="170" text-anchor="middle" class="desc">Your job search, tracked automatically.</text>
+</svg>

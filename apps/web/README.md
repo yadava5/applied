@@ -1,6 +1,6 @@
-# JobTracker web (`apps/web/`)
+# Applied web (`apps/web/`)
 
-Next.js 16 (App Router) frontend for the cloud deployment of JobTracker.
+Next.js 16 (App Router) frontend for the cloud deployment of Applied.
 Scaffolded in issue #24 (C9). This package is intentionally **not** wired
 into a pnpm workspace — treat it as a standalone app for now.
 

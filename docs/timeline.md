@@ -1,4 +1,4 @@
-# JobTracker Detailed Timeline
+# Applied Detailed Timeline
 
 As of **March 5, 2026**.
 

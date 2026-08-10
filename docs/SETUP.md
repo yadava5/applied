@@ -13,7 +13,7 @@ Current Xcode project target is `macOS 26.2` in `apps/macos/JobTracker/JobTracke
 
 ```bash
 git clone <your-repo-url>
-cd jobtracker
+cd applied
 ```
 
 ## 2. Backend Install (one-time)

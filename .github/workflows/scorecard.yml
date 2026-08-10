@@ -3,7 +3,7 @@ name: OpenSSF Scorecard
 # Scorecard grades this repository against 18 supply-chain checks -- pinned
 # dependencies, branch protection, code review, SAST, dangerous workflow
 # patterns -- and publishes the result at
-#   https://scorecard.dev/viewer/?uri=github.com/yadava5/jobtracker
+#   https://scorecard.dev/viewer/?uri=github.com/yadava5/applied
 #
 # The value is that it is computed by someone else. A number this project
 # calculates about itself is a claim; a number the OpenSSF publishes about it is

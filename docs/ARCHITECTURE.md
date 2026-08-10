@@ -2,7 +2,7 @@
 
 ## High-Level Design
 
-JobTracker runs as two local processes:
+Applied runs as two local processes:
 
 1. SwiftUI macOS app (`apps/macos/...`)
 2. FastAPI backend (`backend/jobtracker/...`)

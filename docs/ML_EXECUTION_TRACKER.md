@@ -293,9 +293,9 @@ Artifacts:
 - candidate_ids: `621, 613, 612, 611, 610, 609, 608`
 
 Artifacts:
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260228.csv`
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260228.md`
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260228.json`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260228.csv`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260228.md`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260228.json`
 
 ## Cycle G (February 28, 2026): Training Metadata Contract Enforcement - Completed
 
@@ -502,9 +502,9 @@ Verification:
 - candidate_ids: `691, 704, 234, 233, 231, 195, 187, 186, 184, 128, 126, 103, 251, 79, 621, 613, 612, 611, 610, 609`
 
 Artifacts:
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260303.csv`
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260303.md`
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260303.json`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260303.csv`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260303.md`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260303.json`
 
 ## Cycle K (March 3, 2026): Issue Tracker Synchronization - Completed
 
@@ -600,9 +600,9 @@ Verification:
 - candidate_ids: `691, 704`
 
 Artifacts:
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.md`
-- `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.json`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.md`
+- `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_summary_20260304.json`
 
 ## Cycle M (March 5, 2026): Monitoring Triage Runbook + Alert Issue Flow - Completed
 

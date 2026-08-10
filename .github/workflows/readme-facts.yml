@@ -1,0 +1,38 @@
+name: README facts
+
+# Deliberately NOT a job inside backend-ci.yml. That workflow is path-filtered
+# to `backend/**`, so a change that only touches README.md — which is exactly
+# how a number goes stale — would never trigger it. This one has no path filter
+# at all, because a claim in the README can be invalidated from anywhere in the
+# tree: a migration, a spec file, a workflow file, or the prose itself.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+      - integration/web-migration
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readme-facts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: README numbers agree with the code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `pip install`, no venv, no dependencies. The checker is stdlib-only
+      # on purpose: it has to stay fast enough that nobody is tempted to make it
+      # optional, and a disabled checker is how the drift it guards against
+      # started. The recorded figures come from docs/readme-facts.json, which is
+      # refreshed by `--record` on a developer machine, never here.
+      - name: Check every number the README asserts
+        run: python3 scripts/readme_facts.py --check

@@ -309,7 +309,7 @@ final class BackendLifecycleManager {
         }
 
         let defaultProjectsPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/Projects/jobtracker")
+            .appendingPathComponent("Documents/Projects/applied")
             .path
         candidates.append(defaultProjectsPath)
         candidates.append(fileManager.currentDirectoryPath)

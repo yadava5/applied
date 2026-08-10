@@ -64,7 +64,7 @@ and paste the secret into Vercel — it never goes in the repo or in chat.**
 ### Owner steps in Google Cloud Console
 
 A Google Cloud project already exists from TaskFlow (`taskflow-502817`).
-**Use a *dedicated* OAuth client for JobTracker** (ideally a dedicated
+**Use a *dedicated* OAuth client for Applied** (ideally a dedicated
 project, e.g. `jobtracker`) so Gmail's restricted-scope verification and
 test-user list don't entangle TaskFlow. The consent screen is per-project,
 so a separate project is the cleanest boundary.
@@ -118,7 +118,7 @@ gated to invited testers.
 
 The path that scales publicly **without** restricted-scope verification is
 **forwarding ingestion**: the user sets a Gmail filter that auto-forwards
-job-related mail to a per-user JobTracker ingest address, and the same
+job-related mail to a per-user Applied ingest address, and the same
 classifier labels what arrives (no account access, no restricted scope).
 For "deploy only things good to scale," **forwarding ingestion is the
 recommended public path**; the OAuth connection fits a small invited group

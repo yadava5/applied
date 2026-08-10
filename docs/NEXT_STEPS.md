@@ -1,4 +1,4 @@
-# Next Steps for JobTracker ML
+# Next Steps for Applied ML
 
 Updated: **March 5, 2026**
 

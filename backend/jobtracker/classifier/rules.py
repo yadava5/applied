@@ -344,10 +344,18 @@ class RulesClassifier:
     - Negative pattern match: -5
     - Subject patterns: 2x weight
 
-    Confidence is calculated based on:
-    - The winning category's score
-    - The margin over the second-best category
-    - Whether any strong patterns matched
+    Confidence is calculated from the winning category's score and its margin
+    over the second-best category:
+    - score >= 10 and margin >= 5: 0.95
+    - score >= 6 and margin >= 3: 0.90
+    - score >= 4 and margin >= 2: 0.80
+    - score >= 2 and margin >= 1: 0.70
+    - otherwise: 0.60
+
+    Two overrides apply:
+    - A non-positive winning score short-circuits to 'other' at 0.5
+    - A sender on a known ATS domain scoring as applied/rejection/interview/
+      offer gets +0.05, capped at 0.95
     """
 
     def __init__(self):
@@ -438,7 +446,6 @@ class RulesClassifier:
 
         # Calculate confidence
         margin = winner_score - runner_up_score
-        has_strong_match = any("[STRONG" in p for p in matched_patterns if winner_name in str(p).lower() or True)
 
         # Base confidence on score and margin
         if winner_score >= 10 and margin >= 5:

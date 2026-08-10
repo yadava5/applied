@@ -35,4 +35,4 @@ Target confusion pairs: assessment vs follow_up, applied vs pending_application
 - It does not include subjects, snippets, or email body content.
 
 ## Artifact
-- candidates_csv: `/Users/ayush/Documents/Projects/jobtracker/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`
+- candidates_csv: `/Users/ayush/Documents/Projects/applied/backend/data/evaluation/weekly_labeling/weekly_labeling_candidates_20260304.csv`

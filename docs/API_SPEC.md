@@ -186,7 +186,7 @@ Marks an email as reviewed.
 
 ### `DELETE /emails/{email_id}`
 
-Deletes one email from local JobTracker DB.
+Deletes one email from local Applied DB.
 
 ### `DELETE /emails`
 

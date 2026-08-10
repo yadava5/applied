@@ -166,7 +166,7 @@ sips -s format png -z 32 32 "$TMP_DIR/MenuBarIcon-64.png" \
 sips -s format png -z 16 16 "$TMP_DIR/MenuBarIcon-64.png" \
     --out "$MENUBAR_DIR/MenuBarIcon-16.png" >/dev/null
 
-cp "$TMP_DIR/AppIcon-2048.png" "$BRANDING_DIR/jobtracker-icon-composer-source.png"
+cp "$TMP_DIR/AppIcon-2048.png" "$BRANDING_DIR/applied-icon-composer-source.png"
 
 cat > "$APPICON_DIR/Contents.json" <<'JSON'
 {
@@ -268,4 +268,4 @@ JSON
 echo "Generated icon assets:"
 echo "  - $APPICON_DIR"
 echo "  - $MENUBAR_DIR"
-echo "  - $BRANDING_DIR/jobtracker-icon-composer-source.png"
+echo "  - $BRANDING_DIR/applied-icon-composer-source.png"
