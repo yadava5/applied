@@ -1109,6 +1109,25 @@ def run(mode: str) -> None:
                 f"{ARTIFACT.relative_to(REPO)} was recorded {artifact['recordedAt']}."
             )
 
+    # The recorded figures are only worth anything if the run that produced them
+    # passed. `--record` writes `suiteOutcome` and warns when it is red, but a
+    # warning is not a gate: nothing stopped a red run's numbers from being
+    # written and then agreeing with the README forever after. That is the same
+    # shape as a claim site matching zero times — a check that cannot fail.
+    outcome = artifact.get("suiteOutcome") or {}
+    if not outcome:
+        problems.append(
+            f"{ARTIFACT.relative_to(REPO)} carries no suiteOutcome, so there is no "
+            "evidence the run behind these figures passed. Re-run --record."
+        )
+    elif not outcome.get("allGreen"):
+        problems.append(
+            "the recorded figures came from a suite that did not pass "
+            f"(exit {outcome.get('exitCode')}, {outcome.get('failed')} failed, "
+            f"{outcome.get('skipped')} skipped). Numbers from a red run are not "
+            "evidence. Fix the suite, then re-run --record."
+        )
+
     if mode == "write":
         written = []
         for rel, entry in files.items():
