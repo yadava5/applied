@@ -382,10 +382,17 @@ class ReviewClassifyRequest(BaseModel):
     employer from the mail itself. That is the second half of the round trip the
     ``needs_employer`` response opens: the caller is told what is missing and
     re-sends the same classification with the company filled in.
+
+    ``application_id`` is the user answering "which of these is it about?". An
+    employer can hold several applications, and a message that names no role —
+    "Update on your application" — belongs to exactly one of them without saying
+    which. The board asks; this carries the answer. Ignored when the id is not
+    the caller's own row, or not at the employer the mail names.
     """
 
     category: EmailCategory
     company: str | None = None
+    application_id: int | None = None
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -565,13 +572,49 @@ def _pick_application(
 
     if req_id is None and role_token is None:
         # Rule 4. Deliberately looks at ALL rows, not just the identity-less
-        # ones: role-less mail at an employer with exactly one known application
-        # belongs to it. With several, there is nothing to choose between them.
-        return rows[0] if len(rows) == 1 else None
+        # ones, and always returns one rather than minting.
+        #
+        # A cluster reaches here only when the scan found NO role for this
+        # employer in ANY of its mail (`partition_applications` gives anonymous
+        # messages their own cluster only when nothing else at the employer is
+        # identified), so there is no keyed sibling it could be confused with.
+        # Returning None instead would mint a fresh row on EVERY sync at any
+        # employer that already has two rows — the same unbounded growth PR #76
+        # fixed for a different reason. `_company_rows` orders live-first then
+        # oldest-first, so the choice is stable across syncs.
+        return rows[0]
 
     # Rule 3 — adopt the employer's single pre-identity row, in place.
     unidentified = [row for row in rows if row.req_id is None and row.role_token is None]
-    return unidentified[0] if len(unidentified) == 1 else None
+    if len(unidentified) == 1:
+        return unidentified[0]
+    # With several, prefer the one the SYNC made. A manual row is a human's own
+    # entry and may legitimately duplicate what the mail says; adopting it would
+    # rewrite their record. An auto row is the sync's own and is exactly what
+    # this identity belongs on.
+    auto = [row for row in unidentified if _is_auto_row(row.source)]
+    return auto[0] if len(auto) == 1 else None
+
+
+async def _chosen_application(
+    session,
+    user_id: uuid.UUID,
+    application_id: int | None,
+    token: str,
+) -> Application | None:
+    """The row the USER picked for a review item, if it is a legitimate choice.
+
+    Returns None — falling the caller back to ordinary resolution — when no id
+    was sent, when the row is not this user's, or when it belongs to a different
+    employer than the one the mail names. Silent rather than an error: a stale id
+    from a board that has since re-synced is an ordinary race, not a caller bug,
+    and filing the message correctly beats rejecting the request.
+    """
+
+    if application_id is None:
+        return None
+    rows = await _company_rows(session, user_id, token)
+    return next((row for row in rows if row.id == application_id), None)
 
 
 async def _resolve_application_for_email(
@@ -1552,6 +1595,7 @@ async def classify_review_item(
     message_id: str,
     category: EmailCategory,
     company: str | None = None,
+    application_id: int | None = None,
 ) -> dict[str, object]:
     """Classify a needs-review email into a category — persist + train.
 
@@ -1629,7 +1673,14 @@ async def classify_review_item(
 
     if status_value is not None and employer is not None:
         token, display = employer
-        app = await _resolve_application_for_email(session, user_id, token, email)
+        # The user's own answer to "which application is this about?" outranks
+        # every inference below it — that is the whole point of asking. Still
+        # validated: the row must be theirs and must be at the employer this
+        # mail actually names, so a stale or wrong id degrades to the normal
+        # resolution instead of filing a message under an unrelated company.
+        app = await _chosen_application(session, user_id, application_id, token)
+        if app is None:
+            app = await _resolve_application_for_email(session, user_id, token, email)
         if app is None:
             role = pipeline.role_from_message(email.subject or "", email.body_snippet or "")
             app = Application(
@@ -2098,7 +2149,7 @@ async def classify_review_item_cloud(
 
     async with get_session() as session:
         return await classify_review_item(
-            session, user_id, message_id, data.category, data.company
+            session, user_id, message_id, data.category, data.company, data.application_id
         )
 
 

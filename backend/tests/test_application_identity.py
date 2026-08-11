@@ -378,3 +378,189 @@ def test_a_company_merely_mentioned_in_a_subject_does_not_rename_the_relay():
     resolved = p.resolve_employer("no-reply@us.greenhouse-mail.io", "Thank you for applying to Anthropic")
     assert resolved is not None
     assert resolved[1] == "Anthropic"
+
+
+# --- resolving a cluster onto a stored row ------------------------------------
+#
+# The rules above are pure; these are the persistent half. Both cases below were
+# found by predicting what a real sync would do to the owner's live rows, and
+# both would have been visible damage.
+
+import uuid as _uuid  # noqa: E402
+
+from jobtracker.cloud import applications as apps  # noqa: E402
+from jobtracker.database.models import Application, ApplicationStatus  # noqa: E402
+
+USER = _uuid.UUID("7d8676d9-6f45-4466-a1b1-fa63575b2ff5")
+
+
+def stored(
+    company: str,
+    *,
+    req_id: str | None = None,
+    role_token: str | None = None,
+    source: str | None = "gmail",
+    app_id: int | None = None,
+) -> Application:
+    return Application(
+        id=app_id,
+        user_id=USER,
+        company=company,
+        position="",
+        status=ApplicationStatus.APPLIED,
+        source=source,
+        req_id=req_id,
+        role_token=role_token,
+    )
+
+
+def test_a_cluster_that_names_no_role_never_mints_beside_existing_rows():
+    """Idempotence at an employer that already has two rows.
+
+    Returning None here would mint a fresh row on every single sync — the same
+    unbounded growth PR #76 fixed by a different route. The owner's live board
+    carries exactly this shape: two "Together AI" rows, and Together AI's mail
+    names no role anywhere.
+    """
+
+    rows = [stored("Together AI", app_id=64), stored("Together AI", app_id=65)]
+
+    picked = apps._pick_application(rows, None, None)
+
+    assert picked is not None
+    assert picked.id == 64  # live-first, then oldest — stable across syncs
+
+
+def test_an_identified_cluster_adopts_the_syncs_own_row_not_the_users():
+    """A manual row is a human's entry and must not be rewritten.
+
+    Live shape: Amazon holds one auto row from the sync and one filed by hand.
+    Exactly one of them is the sync's to claim.
+    """
+
+    auto = stored("Amazon", source="gmail", app_id=69)
+    manual = stored("Amazon", source="manual", app_id=75)
+
+    picked = apps._pick_application(
+        [auto, manual], "3177934", "software development engineer 2026 us"
+    )
+
+    assert picked is auto
+
+
+def test_a_second_requisition_mints_rather_than_stealing_the_adopted_row():
+    """Once a row carries an identity, a different requisition is a new row."""
+
+    adopted = stored("Amazon", req_id="3177934", source="gmail", app_id=69)
+
+    assert (
+        apps._pick_application(
+            [adopted], "3183020", "software development engineer embedded systems"
+        )
+        is None
+    )
+    assert (
+        apps._pick_application([adopted], "3177934", "software development engineer 2026 us")
+        is adopted
+    )
+
+
+# --- ghost nudges are per application too -------------------------------------
+
+
+def _followups(items, days: int = 40):
+    return p.flag_follow_ups(items, now=BASE + datetime.timedelta(days=days), stale_days=21)
+
+
+def test_a_rejection_for_one_role_does_not_silence_the_nudge_for_another():
+    """Grouping the ghost check by company hides a genuinely ignored application.
+
+    Two Amazon requisitions; one is rejected, the other never answered. The
+    un-answered one is exactly what a follow-up nudge is for.
+    """
+
+    rejected = amazon("f2", "Software Development Engineer – Database 2026 (US)", "3130865", 1)
+    rejection = p.PipelineItem(
+        **{
+            **amazon("f3", "Software Development Engineer – Database 2026 (US)", "3130865", 5).__dict__,
+            "category": "rejection",
+        }
+    )
+
+    flags = _followups([AMAZON_FOUR[0], rejected, rejection])
+
+    assert len(flags) == 1
+    # The flagged one is the requisition nobody answered, not the rejected one.
+    assert flags[0].message_id == "a1"
+
+
+def test_a_response_that_names_no_role_still_answers_the_whole_company():
+    """The conservative direction, on purpose.
+
+    "Update on your application" cannot be attributed to one of four
+    requisitions. Suppressing a nudge is a small annoyance; telling someone a
+    company has ignored them when it has already written back is not.
+    """
+
+    silent = item(
+        "f4",
+        "Update on your application",
+        AMAZON_SENDER,
+        "Hi Ayush, we have an update for you.",
+        category="rejection",
+        minutes=60,
+    )
+
+    assert _followups(AMAZON_FOUR + [silent]) == []
+
+
+# --- the user's own answer to "which application is this about?" --------------
+
+
+async def _seed(session, rows: list[Application]) -> None:
+    for row in rows:
+        session.add(row)
+    await session.commit()
+
+
+async def test_the_users_choice_of_application_is_honoured(test_session):
+    """The review queue asks which of an employer's rows a message belongs to.
+
+    A message that names no role — "Update on your application" — belongs to
+    exactly one of four Amazon applications without saying which. The answer has
+    to actually be used, or the control is decoration.
+    """
+
+    await _seed(
+        test_session,
+        [
+            stored("Amazon", req_id="3177934", app_id=None),
+            stored("Amazon", req_id="3130865", app_id=None),
+        ],
+    )
+    rows = await apps._company_rows(test_session, USER, "amazon")
+    assert len(rows) == 2
+    target = rows[1]
+
+    picked = await apps._chosen_application(test_session, USER, target.id, "amazon")
+
+    assert picked is not None
+    assert picked.id == target.id
+
+
+async def test_a_choice_at_the_wrong_employer_is_ignored_not_obeyed(test_session):
+    """A stale id from a board that has re-synced must not misfile the message.
+
+    Falling back to ordinary resolution files it correctly; obeying the id would
+    attach an Amazon message to a Crusoe row.
+    """
+
+    await _seed(
+        test_session,
+        [stored("Amazon", req_id="3177934"), stored("Crusoe", role_token="software engineer i storage")],
+    )
+    crusoe = (await apps._company_rows(test_session, USER, "crusoe"))[0]
+
+    assert await apps._chosen_application(test_session, USER, crusoe.id, "amazon") is None
+    assert await apps._chosen_application(test_session, USER, None, "amazon") is None
+    assert await apps._chosen_application(test_session, USER, 99999, "amazon") is None

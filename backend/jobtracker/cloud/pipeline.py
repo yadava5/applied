@@ -384,14 +384,23 @@ def flag_follow_ups(
 ) -> list[FollowUp]:
     """Flag `applied` mail that a company never responded to.
 
-    An application is "ghosted" when, grouped by :func:`company_key`, there is
-    no later message from the same company in :data:`RESPONSE_CATEGORIES`
-    (interview / assessment / offer / rejection) and the application is at
-    least ``stale_days`` old.
+    An application is "ghosted" when there is no later message answering it in
+    :data:`RESPONSE_CATEGORIES` (interview / assessment / offer / rejection) and
+    it is at least ``stale_days`` old.
 
-    De-duplicated to at most one flag per company — the oldest un-answered
-    application, which is the most overdue nudge — so a company you emailed
-    five times does not produce five identical "follow up" cards.
+    "Answering it" is judged per APPLICATION, not per company: since one employer
+    can hold several applications, a rejection for one role must not silence the
+    nudge for a different role that really has gone quiet. A response that names
+    a role answers only that role; a response that names none — "Update on your
+    application" is the common shape — cannot be attributed, so it counts as
+    contact for the whole company. That direction is deliberate: suppressing a
+    nudge is a small annoyance, while asserting a company has ignored you when it
+    has already written back is the kind of wrong that makes a user distrust the
+    product.
+
+    De-duplicated to at most one flag per application — the oldest un-answered
+    one — so re-sending the same application does not produce two identical
+    "follow up" cards.
 
     Returns the flags sorted by ``days_since`` descending (most overdue first).
     """
@@ -399,7 +408,13 @@ def flag_follow_ups(
     reference = _as_utc(now) if now is not None else datetime.now(UTC)
     materialized = list(items)
 
-    # Group every message by company so we can ask "did THIS company respond?".
+    def sub_key(item: PipelineItem) -> str | None:
+        return extract_req_id(item.subject, item.snippet) or normalize_role_token(
+            role_from_message(item.subject, item.snippet)
+        )
+
+    # Group every message by company so we can ask "did THIS company respond?",
+    # then narrow to the specific application inside the loop.
     by_company: dict[str, list[PipelineItem]] = defaultdict(list)
     for item in materialized:
         key = company_key(item.sender_email, item.subject, item.sender_name)
@@ -411,11 +426,15 @@ def flag_follow_ups(
             continue
         applied_at = _as_utc(item.received_at)
         key = company_key(item.sender_email, item.subject, item.sender_name)
+        mine = sub_key(item)
 
         responded = any(
             other.category in RESPONSE_CATEGORIES
             and other.received_at is not None
             and _as_utc(other.received_at) >= applied_at
+            # None on either side means "not attributable to one role" and so
+            # counts company-wide; two named roles must match to answer.
+            and (mine is None or (theirs := sub_key(other)) is None or theirs == mine)
             for other in by_company[key]
         )
         if responded:

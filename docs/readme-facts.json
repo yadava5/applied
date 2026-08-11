@@ -4,7 +4,7 @@
   "machine": "Darwin-arm64, 3.11.14",
   "facts": {
     "testsCollected": {
-      "value": 429,
+      "value": 436,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "testsSkipped": {
@@ -12,19 +12,19 @@
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coveragePercent": {
-      "value": 55.57,
+      "value": 55.6,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageStatements": {
-      "value": 8947,
+      "value": 8961,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageMissed": {
-      "value": 3975,
+      "value": 3979,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageCloud": {
-      "value": 81.7,
+      "value": 81.6,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageAuth": {
@@ -53,7 +53,7 @@
     }
   },
   "suiteOutcome": {
-    "passed": 429,
+    "passed": 436,
     "failed": 0,
     "skipped": 0,
     "errors": 0,
