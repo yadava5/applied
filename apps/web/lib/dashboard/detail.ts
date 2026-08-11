@@ -40,18 +40,26 @@ export interface DetailApplication {
 }
 
 /**
- * One proposed half of a merged row.
+ * One application hiding inside a merged row — the signal behind the "this
+ * looks like N applications — split?" surface. The backend derives these by
+ * re-clustering the row's OWN stored mail, so a non-empty list means this row's
+ * messages describe more than one requisition.
  *
- * TODO(backend): `split_candidates` is NOT in `ApplicationDetailResponse` yet.
- * It is the signal for the "this looks like N applications — split?" surface:
- * the entity-model branch will populate it when one row's mail spans several
- * requisitions (four Amazon roles filed as one card is the proven case). Until
- * the field exists this parses to `[]` and the split prompt renders nothing —
- * deliberately, so no fake candidates are ever shown.
+ * These field names are the wire contract (`SplitCandidateResponse` in
+ * `backend/jobtracker/cloud/applications.py`) and must not drift from it. They
+ * already did once: this interface said `position` while the backend has only
+ * ever sent `role`, so every candidate failed the reader's guard, the list was
+ * always empty, and the prompt — which needs two — could not mount for anyone.
+ * A stale TODO in this spot claiming the backend field did not exist is how
+ * that survived review.
  */
 export interface SplitCandidate {
-  position: string;
+  /** Nullable on the wire: the retained cluster is where role-less mail lands. */
+  role: string | null;
+  req_id: string | null;
   message_ids: string[];
+  /** True for the cluster that keeps this row's id. Exactly one candidate has it. */
+  retains_row: boolean;
 }
 
 export interface ApplicationDetail {
@@ -84,13 +92,29 @@ function readMessage(entry: unknown): DetailMessage | null {
   };
 }
 
+/**
+ * Read one candidate, degrading each field rather than discarding the entry.
+ *
+ * Only a non-object is rejected. That asymmetry is deliberate and is the whole
+ * lesson of this file: the previous reader dropped any candidate missing a
+ * field it wanted, which turned a single field-name mismatch into a feature
+ * that was simply absent — no error, no empty state, nothing to notice. A
+ * candidate whose `role` is null is not malformed, it is the ordinary retained
+ * cluster; dropping those would also shrink a genuine two-application row back
+ * under the prompt's threshold and hide the split exactly where it is needed.
+ */
 function readSplitCandidate(entry: unknown): SplitCandidate | null {
-  const c = asRecord(entry);
-  if (typeof c.position !== "string" || c.position.trim() === "") return null;
+  if (typeof entry !== "object" || entry === null) return null;
+  const c = entry as Record<string, unknown>;
   const ids = Array.isArray(c.message_ids)
     ? c.message_ids.filter((id): id is string => typeof id === "string")
     : [];
-  return { position: c.position, message_ids: ids };
+  return {
+    role: str(c.role),
+    req_id: str(c.req_id),
+    message_ids: ids,
+    retains_row: c.retains_row === true,
+  };
 }
 
 /** Read a detail response body into what the sheet renders. */
