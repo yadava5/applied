@@ -901,3 +901,44 @@ def test_a_siblings_status_is_recomputed_not_inherited():
 
     assert apps._status_from_mail(live) == "applied"
     assert apps._status_from_mail(rejected) == "rejected"
+
+
+# --- the snippet the user actually reads --------------------------------------
+
+
+def test_snippets_are_decoded_before_they_are_stored():
+    """The detail sheet rendered "Please don&#39;t be" verbatim on the live board.
+
+    Gmail returns snippets pre-escaped and they were persisted exactly as
+    fetched, so every surface that shows one showed the raw entity. Decoding at
+    the persistence layer fixes all of them at once, and the stored value is
+    then also what role extraction compares.
+    """
+
+    raw = "Hi Ayush, Thanks for applying to Supabase. We&#39;re glad you&#39;re interested &amp; excited."
+
+    assert p.unescape_entities(raw) == (
+        "Hi Ayush, Thanks for applying to Supabase. We're glad you're interested & excited."
+    )
+    # Numeric and named forms beyond the handful that happened to show up.
+    assert p.unescape_entities("caf&eacute; &mdash; 5&nbsp;PM &#8212; &hellip;") == (
+        "café — 5 PM — …"
+    )
+    # No entities: returned unchanged, not re-encoded.
+    assert p.unescape_entities("plain text") == "plain text"
+    assert p.unescape_entities("") == ""
+
+
+def test_a_role_extracted_from_a_decoded_snippet_is_unchanged():
+    """Decoding at write time must not change what the extractor already found."""
+
+    escaped = (
+        "Amazon.jobs Hi Ayush, Thanks for applying to Amazon! We&#39;ve received your "
+        "application for the Software Development Engineer - 2026 (US) (ID: 3177934) position."
+    )
+    decoded = p.unescape_entities(escaped)
+
+    assert p.role_from_message(AMAZON_SUBJECT, escaped) == p.role_from_message(
+        AMAZON_SUBJECT, decoded
+    )
+    assert p.extract_req_id(AMAZON_SUBJECT, decoded) == "3177934"

@@ -749,7 +749,7 @@ async def _persist_message_refs(
             # through the review queue. The role lives in the snippet, so erasing
             # it erases the identity the board groups by.
             if ref.snippet:
-                existing.body_snippet = ref.snippet[:500]
+                existing.body_snippet = pipeline.unescape_entities(ref.snippet)[:500]
             # A thread id, likewise: a metadata fetch that omits it must not
             # unlink a message from its conversation.
             if ref.thread_id:
@@ -772,7 +772,7 @@ async def _persist_message_refs(
                     sender_name=ref.sender_name,
                     sender_email=ref.sender_email,
                     received_at=received_at,
-                    body_snippet=(ref.snippet or "")[:500],
+                    body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
                     classified_as=category,
                     classification_confidence=ref.confidence,
                     classification_method="rules",
