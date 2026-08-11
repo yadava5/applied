@@ -55,6 +55,46 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("button", { name: /re-sync/i })).toHaveCount(0);
   });
 
+  test("the two type voices hold: product speaks Atkinson, data stays mono", async ({ page }) => {
+    // The type system's contract (globals.css): Atkinson Hyperlegible Next is
+    // the default voice — anything read as language — and Geist Mono has to
+    // earn each appearance as data. Guarded here because the demo mounts the
+    // real components; a regression that re-monos the UI (or un-monos the
+    // stamps) should fail loudly, not ship silently.
+    await page.goto("/demo");
+
+    // The FACE must actually be delivered, not merely declared. Every
+    // `font-family` assertion below is satisfied by the size-adjusted fallback
+    // ("atkinson Fallback", "Geist Mono Fallback") whose name contains the
+    // matched substring — verified by aborting the woff2 at the network, where
+    // the text rasterized as Arial and all of these still passed. So the wiring
+    // checks stay, and this is the one that can fail on a missing font.
+    await expect
+      .poll(() => page.evaluate(() => document.fonts.check('16px atkinson')))
+      .toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => document.fonts.check('16px "Geist Mono"')))
+      .toBe(true);
+
+    await expect(page.locator("body")).toHaveCSS("font-family", /atkinson/i);
+    // The page h1 and the board's structural column labels speak the product voice…
+    await expect(page.getByRole("heading", { name: "Pipeline" })).toHaveCSS(
+      "font-family",
+      /atkinson/i,
+    );
+    await expect(page.locator(".board-col .label-caps").first()).toHaveCSS(
+      "font-family",
+      /atkinson/i,
+    );
+    // …while a card's date stamp (the "quiet Nd" ageing tag rides inside it)
+    // and the demo's provenance badge remain data-voice mono.
+    await expect(page.getByText(/quiet \d+d/).first()).toHaveCSS("font-family", /Geist Mono/);
+    await expect(page.getByText("demo · fixture data · no inbox read")).toHaveCSS(
+      "font-family",
+      /Geist Mono/,
+    );
+  });
+
   test("Sync files the unsynced fixture mail onto the board — and says so", async ({ page }) => {
     await page.goto("/demo");
     await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();

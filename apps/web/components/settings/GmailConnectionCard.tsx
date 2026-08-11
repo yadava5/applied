@@ -36,7 +36,7 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
               Read-only access so the classifier can read your job-search mail at the source.
             </p>
 
-            <div className="mt-3 flex items-center gap-2 font-mono text-xs">
+            <div className="mt-3 flex items-center gap-2 text-xs">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-live" : "bg-dim"}`}
                 aria-hidden
@@ -61,9 +61,9 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
             </div>
 
             {connected ? (
-              <div className="mt-2 space-y-1 font-mono text-[11px] text-dim">
+              <div className="mt-2 space-y-1 text-xs text-dim">
                 <p>
-                  <LastSynced at={status?.last_sync_at ?? null} />
+                  <LastSynced at={status?.last_sync_at ?? null} className="font-mono text-[11px]" />
                   {status?.has_cursor ? (
                     <span> · next sync resumes from where that one stopped</span>
                   ) : null}
@@ -142,7 +142,7 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
 
       {/* ---- How it works / why it's safe ----------------------------- */}
       <div className="space-y-3">
-        <h3 className="label-mono">how the connection works — and why it&apos;s safe</h3>
+        <h3 className="label-caps">how the connection works — and why it&apos;s safe</h3>
         <ul className="grid gap-2 text-sm text-muted">
           {[
             ["Read-only", "Applied requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything."],
@@ -162,7 +162,7 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
 
       {/* ---- Honest scale story --------------------------------------- */}
       <div className="rounded-xl border border-line-soft bg-surface p-5">
-        <h3 className="label-mono mb-3">a note on scale — the honest version</h3>
+        <h3 className="label-caps mb-3">a note on scale — the honest version</h3>
         <p className="text-sm text-muted">
           <code className="text-strong">gmail.readonly</code> is a Google{" "}
           {/* The space is an explicit expression because a literal one does not survive the

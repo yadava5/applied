@@ -59,7 +59,7 @@ export default function DemoPage() {
             not a sequence. */}
         <section aria-labelledby="queue-title" className="mt-12">
           <div className="mb-3 flex items-baseline justify-between">
-            <h2 id="queue-title" className="label-mono">
+            <h2 id="queue-title" className="label-caps">
               decision trace — click an email to open its verdict
             </h2>
             <span className="font-mono text-[11px] text-dim">
@@ -67,7 +67,7 @@ export default function DemoPage() {
             </span>
           </div>
           <DecisionTrace />
-          <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+          <p className="mt-3 text-xs leading-relaxed text-dim">
             Each verdict is traced through three layers — regex rules strike first, e5 embeddings
             arbitrate, a SetFit head renders the call. Below the 0.85 gate nothing is auto-filed;
             the email waits for a human and the correction becomes new training data. 0.979 macro-F1
@@ -84,7 +84,7 @@ export default function DemoPage() {
 
         {/* In flow, not floating: the fixed beta pill used to sit on top of
             board content here, so the demo carries its beta note statically. */}
-        <p className="mt-12 border-t border-line-soft pt-6 text-center font-mono text-[11px] text-dim">
+        <p className="mt-12 border-t border-line-soft pt-6 text-center text-xs text-dim">
           beta · direct Gmail connection is invite-only — the sample inbox needs no seat
         </p>
       </div>

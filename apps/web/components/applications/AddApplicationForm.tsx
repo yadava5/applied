@@ -163,7 +163,7 @@ export function AddApplicationForm({
       )}
 
       {confirmation ? (
-        <p role="status" className="font-mono text-[11px] text-live">
+        <p role="status" className="text-xs text-live">
           {confirmation}
         </p>
       ) : null}
@@ -214,7 +214,7 @@ export function AddApplicationForm({
           </label>
 
           {error ? (
-            <p role="alert" className="font-mono text-xs text-reject sm:col-span-2">
+            <p role="alert" className="text-xs text-reject sm:col-span-2">
               {error}
             </p>
           ) : null}

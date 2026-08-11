@@ -69,7 +69,7 @@ export function SameCompanyChip({
       type="button"
       onClick={() => onFilter(company)}
       aria-label={`Show all applications at ${company}`}
-      className="mt-1.5 inline-flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5 font-mono text-[10px] text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+      className="mt-1.5 inline-flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5 text-[11px] font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
     >
       <Layers className="h-3 w-3" aria-hidden />+{count} at {company}
     </button>

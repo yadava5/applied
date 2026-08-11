@@ -1,9 +1,19 @@
 @import "tailwindcss";
 
 /* Applied web — monochrome system. Near-black surfaces, a gray text
- * ramp, hairline rules, mono uppercase labels. Chromatic ink is
- * semantic only: green = confident/live, amber = needs review,
- * red = rejection. */
+ * ramp, hairline rules. Chromatic ink is semantic only: green =
+ * confident/live, amber = needs review, red = rejection.
+ *
+ * Type system — the product speaks, the machine annotates:
+ *  - Atkinson Hyperlegible Next (--font-sans) is the product's voice:
+ *    headings, titles, guidance, status sentences, controls, names.
+ *  - Geist Mono (--font-mono) is the data voice, and has to EARN each
+ *    appearance: timestamps, counts, confidence figures, ids, code
+ *    literals, the landing's stats. A sentence in mono is a defect.
+ *  - `.label-caps` (below) is the structural label — column headers,
+ *    form labels, section eyebrows inside the app. `.label-mono` stays
+ *    for genuinely machine-flavored frames (the landing narrative, the
+ *    demo's provenance stamps). */
 :root {
   color-scheme: dark;
   --background: #0a0a0b;
@@ -69,9 +79,10 @@
   --viz-setfit: #34d399;
 }
 
-/* Light theme — opt-in via the Appearance setting (a `jt-theme=light` cookie
- * flips `data-theme` on <html>, read server-side in app/layout.tsx so there is
- * no flash). The same monochrome system, inverted: paper surfaces, an ink text
+/* Light theme — opt-in via the Appearance setting (`jt-theme` in
+ * localStorage, applied to `data-theme` on <html> by the pre-paint script in
+ * app/layout.tsx so there is no flash — see lib/theme.ts). The same
+ * monochrome system, inverted: paper surfaces, an ink text
  * ramp, and darker semantic accents so green/amber/red/viz keep their contrast
  * on white. The `@theme inline` map below reads these live, so every color
  * utility re-themes automatically. */
@@ -95,7 +106,12 @@
    * 5.02:1 / Lc 74 on white and 4.56:1 / Lc 68 on the paper surface-2. */
   --green: #15803d;
   --amber: #b45309;
-  --red: #dc2626;
+  /* Darkened from #dc2626, which measured 4.39:1 on the paper surface-2 and
+   * 3.77:1 over the `bg-reject/10` wash the delete-confirm button actually
+   * sits on — both WCAG AA failures for its small-text uses. #b91c1c
+   * measures 6.47:1 on white, 5.89:1 on surface-2, 4.98:1 / APCA Lc 63 on
+   * the wash. */
+  --red: #b91c1c;
   /* Ink counterpart of the dark ramp's #b3b9c2 — measured 9.93:1 on white,
    * 9.03:1 on the paper surface-2 (APCA Lc 93 / 87). */
   --stage-applied: #3f434b;
@@ -122,14 +138,14 @@
   --color-viz-rules: var(--viz-rules);
   --color-viz-embeddings: var(--viz-embeddings);
   --color-viz-setfit: var(--viz-setfit);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-atkinson);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -149,13 +165,30 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Mono uppercase label — the machine voice. */
+/* Mono uppercase label — the machine voice. Reserved for machine-flavored
+ * frames (landing eyebrows, demo provenance stamps); UI structure uses
+ * `.label-caps` below. */
 .label-mono {
   color: var(--text-dim);
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.68rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
+}
+
+/* Caps label — the product's structural voice: board column headers, form
+ * labels, settings field labels, rail headings. Semibold because Atkinson
+ * at this size needs the weight to hold uppercase; in the components layer
+ * so a per-use utility (`text-reject`, `text-viz-rules`) can override the
+ * color, which unlayered `.label-mono` never allowed. */
+@layer components {
+  .label-caps {
+    color: var(--text-dim);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
 }
 
 /* ---------------------------------------------------------------------------

@@ -120,12 +120,12 @@ function VerdictRow({ v }: { v: InboxVerdict }) {
           single-row layout (same rule as the landing trace rows). */}
       <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
         <p className="truncate text-sm font-medium text-strong">{v.subject}</p>
-        <p className="truncate font-mono text-[11px] text-dim">
+        <p className="truncate text-xs text-dim">
           {v.sender_name ? `${v.sender_name} · ` : ""}
           {v.sender_email}
         </p>
       </div>
-      <span className="inline-flex w-24 items-center gap-1.5 font-mono text-[11px] text-muted">
+      <span className="inline-flex w-24 items-center gap-1.5 text-xs text-muted">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
         <span className="truncate">{meta.label}</span>
       </span>
@@ -137,7 +137,7 @@ function VerdictRow({ v }: { v: InboxVerdict }) {
         {pct(v.confidence)}
       </span>
       {v.needs_review ? (
-        <span className="rounded-full border border-review/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
+        <span className="rounded-full border border-review/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-review">
           review
         </span>
       ) : (
@@ -455,7 +455,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
           <ConnectGmailButton />
           <Link
             href="/login?redirect=/inbox"
-            className="font-mono text-[11px] text-dim underline-offset-4 hover:text-strong hover:underline"
+            className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
           >
             or sign in again →
           </Link>
@@ -470,7 +470,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       <div className="rounded-xl border border-line-soft bg-surface p-4">
         <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
           <label className="flex flex-col gap-1.5">
-            <span className="label-mono">age</span>
+            <span className="label-caps">age</span>
             <Segmented<RangeValue>
               ariaLabel="Time range"
               options={RANGE_OPTIONS}
@@ -480,7 +480,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="label-mono">where</span>
+            <span className="label-caps">where</span>
             <Segmented<ScopeValue>
               ariaLabel="Mail scope"
               options={[
@@ -493,7 +493,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="label-mono">fetch</span>
+            <span className="label-caps">fetch</span>
             <select
               aria-label="Number of messages to fetch"
               className={cn(selectClass, "w-28 py-1.5 text-xs")}
@@ -524,13 +524,13 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         {/* progress while paging */}
         {loading ? (
           <div className="mt-4">
-            <div className="flex items-center justify-between font-mono text-[11px] text-dim">
+            <div className="flex items-center justify-between text-xs text-dim">
               <span className="inline-flex items-center gap-1.5">
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 mining {filters.scope === "anywhere" ? "all mail" : "inbox"}
                 {filters.range !== "all" ? ` · last ${filters.range} mo` : ""}
               </span>
-              <span className="tabular">
+              <span className="tabular font-mono text-[11px]">
                 {state.fetched.toLocaleString()} / {state.target.toLocaleString()}
               </span>
             </div>
@@ -542,7 +542,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
             </div>
           </div>
         ) : (
-          <p className="mt-3 font-mono text-[11px] text-dim">
+          <p className="tabular mt-3 text-xs text-dim">
             {email ? `${email} · ` : ""}
             {state.fetched.toLocaleString()} scanned · {jobRelatedTotal.toLocaleString()} job-related
           </p>
@@ -553,7 +553,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       {state.phase === "ready" && jobRelatedTotal > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-soft bg-surface px-4 py-3">
           <div className="min-w-0">
-            <p className="font-mono text-[11px] text-muted">
+            <p className="tabular text-xs text-muted">
               <span className="text-strong">{jobRelatedTotal.toLocaleString()}</span> job-related of{" "}
               {verdicts.length.toLocaleString()} scanned
             </p>
@@ -561,7 +561,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
               <p
                 role="status"
                 className={cn(
-                  "mt-1 font-mono text-[11px]",
+                  "mt-1 text-xs",
                   filing.phase === "error" ? "text-reject" : "text-dim",
                 )}
               >
@@ -579,7 +579,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
                 ) : null}
               </p>
             ) : (
-              <p className="mt-1 font-mono text-[11px] text-dim">
+              <p className="mt-1 text-xs text-dim">
                 filing adds these to your pipeline — nothing is removed, and filing twice is harmless
               </p>
             )}
@@ -643,7 +643,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
             onClick={() => setActiveCategory(null)}
             aria-pressed={activeCategory === null}
             className={cn(
-              "rounded-full border px-3 py-1 font-mono text-[11px] transition-colors",
+              "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
               activeCategory === null
                 ? "border-line-strong text-strong"
                 : "border-line-soft text-dim hover:text-muted",
@@ -661,7 +661,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
                 onClick={() => setActiveCategory(active ? null : c)}
                 aria-pressed={active}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition-colors",
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                   active
                     ? "border-line-strong text-strong"
                     : "border-line-soft text-muted hover:text-strong",
@@ -689,7 +689,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
               className="w-full rounded-lg border border-line bg-surface-2 py-1.5 pl-8 pr-3 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
             />
           </div>
-          <label className="inline-flex cursor-pointer select-none items-center gap-2 font-mono text-[11px] text-muted">
+          <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs text-muted">
             <input
               type="checkbox"
               checked={jobOnly}
@@ -723,7 +723,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       )}
 
       {state.phase === "error" ? (
-        <p className="font-mono text-[11px] text-review">
+        <p className="text-xs text-review">
           The mail backend hiccuped{state.errorStatus ? ` (${state.errorStatus})` : ""} — press
           Refresh to try again.
         </p>

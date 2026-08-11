@@ -38,8 +38,8 @@ export function SettingsSection({
 export function ReadonlyField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="grid gap-1">
-      <span className="label-mono">{label}</span>
-      <span className="font-mono text-sm text-muted">{value}</span>
+      <span className="label-caps">{label}</span>
+      <span className="text-sm text-muted">{value}</span>
     </div>
   );
 }
@@ -54,7 +54,7 @@ export function SaveStatus({ state }: { state: "idle" | "saving" | "saved" | "er
   } as const;
   const { text, cls } = map[state];
   return (
-    <span role="status" className={`font-mono text-[11px] ${cls}`}>
+    <span role="status" className={`text-xs ${cls}`}>
       {text}
     </span>
   );

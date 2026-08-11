@@ -83,7 +83,7 @@ export function PipelinePulse({
     >
       {/* --- momentum -------------------------------------------------------- */}
       <div className="border-b border-line-soft p-4 sm:border-b-0 sm:border-r">
-        <h2 className="label-mono">momentum · filed per wk</h2>
+        <h2 className="label-caps">momentum · filed per wk</h2>
         <div
           role="img"
           aria-label={`Applications filed per week, oldest first: ${weeks.join(", ")}`}
@@ -103,11 +103,11 @@ export function PipelinePulse({
             />
           ))}
         </div>
-        <div className="mt-1 flex justify-between font-mono text-[9px] text-dim" aria-hidden="true">
+        <div className="mt-1 flex justify-between font-mono text-[10px] text-dim" aria-hidden="true">
           <span>{MOMENTUM_WEEKS} wk ago</span>
           <span>now</span>
         </div>
-        <p className="mt-2 font-mono text-[11px] text-muted">
+        <p className="tabular mt-2 text-xs text-muted">
           <span className="tabular text-strong">{recent}</span> last 4 wk{" "}
           <span aria-hidden="true">{arrow}</span> vs {prior} prior
           {scopeNote ? <span className="text-dim"> · {scopeNote}</span> : null}
@@ -116,9 +116,9 @@ export function PipelinePulse({
 
       {/* --- ageing ---------------------------------------------------------- */}
       <div className="border-b border-line-soft p-4 sm:border-b-0 sm:border-r">
-        <h2 className="label-mono">open · age since filed</h2>
+        <h2 className="label-caps">open · age since filed</h2>
         {openTotal === 0 ? (
-          <p className="mt-3 font-mono text-[11px] text-dim">no open applications</p>
+          <p className="mt-3 text-xs text-dim">no open applications</p>
         ) : (
           <>
             <div
@@ -146,7 +146,7 @@ export function PipelinePulse({
                   />
                 ))}
             </div>
-            <p className="mt-2 font-mono text-[11px] text-muted">
+            <p className="tabular mt-2 text-xs text-muted">
               <span className="tabular text-strong">{ages.fresh}</span> &lt;1 wk ·{" "}
               <span className="tabular">{ages.waiting}</span> 1–2 wk ·{" "}
               <span className={ages.quiet > 0 ? "text-review" : ""}>
@@ -160,7 +160,7 @@ export function PipelinePulse({
 
       {/* --- classifier ------------------------------------------------------ */}
       <div className="p-4">
-        <h2 className="label-mono">classifier</h2>
+        <h2 className="label-caps">classifier</h2>
         <div
           role="img"
           aria-label={`${autoFiled} of ${applications.length} loaded rows were filed automatically from mail`}
@@ -177,19 +177,19 @@ export function PipelinePulse({
             />
           ) : null}
         </div>
-        <p className="mt-2 font-mono text-[11px] text-muted">
+        <p className="tabular mt-2 text-xs text-muted">
           <span className="tabular text-strong">{autoFiled}</span> of {applications.length}{" "}
           auto-filed from mail
         </p>
         {needsReview > 0 ? (
           <Link
             href="/dashboard#needs-classification"
-            className="mt-1 inline-flex items-center gap-1 font-mono text-[11px] text-review underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-review underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
           >
             <span className="tabular">{needsReview}</span> held under the 0.85 gate →
           </Link>
         ) : (
-          <p className="mt-1 font-mono text-[11px] text-dim">queue clear · gate 0.85</p>
+          <p className="mt-1 text-xs text-dim">queue clear · gate 0.85</p>
         )}
       </div>
     </section>

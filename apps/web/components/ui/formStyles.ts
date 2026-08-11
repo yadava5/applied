@@ -10,7 +10,7 @@ export const inputClass =
 export const selectClass = inputClass;
 export const textareaClass = `${inputClass} min-h-[72px] resize-y`;
 
-export const fieldLabelClass = "label-mono";
+export const fieldLabelClass = "label-caps";
 
 export const primaryBtnClass =
   "inline-flex items-center justify-center gap-2 rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-40";

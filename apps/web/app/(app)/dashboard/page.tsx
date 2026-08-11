@@ -175,14 +175,12 @@ export default async function DashboardPage() {
           role="alert"
           aria-live="polite"
         >
-          <p className="font-mono text-[0.68rem] uppercase tracking-[0.09em] text-reject">
-            load failed
-          </p>
+          <p className="label-caps text-reject">load failed</p>
           <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
             {headline}
           </h2>
           <p className="mt-2 max-w-xl text-sm text-muted">{detail}</p>
-          <p className="mt-2 max-w-xl font-mono text-[11px] text-dim">
+          <p className="mt-2 max-w-xl text-xs text-dim">
             This is a loading failure, not an empty pipeline — nothing below is your data, because
             we have none to show yet.
           </p>
@@ -191,7 +189,7 @@ export default async function DashboardPage() {
             {state.kind === "unauthorized" ? (
               <Link
                 href="/login?redirect=/dashboard"
-                className="font-mono text-[11px] text-dim underline-offset-4 hover:text-strong hover:underline"
+                className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
               >
                 or sign in again →
               </Link>
@@ -222,7 +220,7 @@ export default async function DashboardPage() {
             <AddApplicationForm compact />
           </SyncBar>
           <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
-            <p className="label-mono">connected to gmail</p>
+            <p className="label-caps">connected to gmail</p>
             <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
               No application emails detected yet.
             </h2>
@@ -289,7 +287,7 @@ export default async function DashboardPage() {
       {notifPrefs.weekly && summary.total > 0 && summary.thisWeek > 0 ? (
         <div
           role="status"
-          className="rounded-xl border border-line-soft bg-surface px-4 py-3 font-mono text-[12px] text-muted"
+          className="rounded-xl border border-line-soft bg-surface px-4 py-3 text-[13px] text-muted"
         >
           <span className="text-strong">This week</span> · {summary.thisWeek} new application
           {summary.thisWeek === 1 ? "" : "s"} · {summary.inMotion} in motion · {summary.offers}{" "}

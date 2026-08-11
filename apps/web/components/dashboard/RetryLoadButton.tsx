@@ -40,7 +40,7 @@ export function RetryLoadButton() {
         {pending ? "Retrying…" : "Try again"}
       </button>
       {tried && !pending ? (
-        <span role="status" className="font-mono text-[10px] text-dim">
+        <span role="status" className="text-xs text-dim">
           still failing — the backend hasn&apos;t recovered yet
         </span>
       ) : null}

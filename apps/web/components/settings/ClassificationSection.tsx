@@ -53,7 +53,7 @@ export function ClassificationSection({ initialGate }: { initialGate: number }) 
       <div className="space-y-5">
         <div>
           <div className="flex items-baseline justify-between">
-            <span className="label-mono">auto-file gate</span>
+            <span className="label-caps">auto-file gate</span>
             <span className="tabular font-mono text-lg font-semibold text-strong">
               {gate.toFixed(2)}
             </span>
@@ -92,12 +92,12 @@ export function ClassificationSection({ initialGate }: { initialGate: number }) 
         </div>
 
         <div className="border-t border-line-soft pt-4">
-          <p className="label-mono mb-2">categories the classifier predicts</p>
+          <p className="label-caps mb-2">categories the classifier predicts</p>
           <ul className="flex flex-wrap gap-1.5">
             {CATEGORIES.map((c) => (
               <li
                 key={c}
-                className="rounded-full border border-line px-2.5 py-0.5 font-mono text-[11px] text-muted"
+                className="rounded-full border border-line px-2.5 py-0.5 text-xs text-muted"
               >
                 {c}
               </li>

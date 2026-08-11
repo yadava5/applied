@@ -47,7 +47,7 @@ function StaticApplicationCard({
       <p className="flex items-center gap-2 text-sm font-medium text-strong">
         <span className="truncate">{app.company}</span>
         {qualifier && (
-          <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+          <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
             {qualifier}
           </span>
         )}
@@ -55,7 +55,7 @@ function StaticApplicationCard({
       {/* Wraps, never ellipsizes — the role's tail is the discriminator (see
           ApplicationCard). */}
       {role ? (
-        <p title={role} className="line-clamp-2 break-words text-xs text-foreground">
+        <p title={role} className="line-clamp-2 break-words text-[13px] leading-snug text-foreground">
           {role}
         </p>
       ) : null}
@@ -306,7 +306,7 @@ export function PipelineBoard({
             </div>
           ) : null}
           {filterActive ? (
-            <span className="font-mono text-[11px] text-dim" role="status">
+            <span className="tabular text-xs text-dim" role="status">
               {filtered.length} of {applications.length} shown
             </span>
           ) : null}
@@ -324,7 +324,7 @@ export function PipelineBoard({
       ) : null}
 
       {moveError ? (
-        <p role="alert" className="font-mono text-[11px] text-reject">
+        <p role="alert" className="text-xs text-reject">
           {moveError}
         </p>
       ) : null}
@@ -368,7 +368,7 @@ export function PipelineBoard({
                 className="board-col flex flex-col rounded-xl border border-line-soft bg-surface p-3 transition-colors"
               >
                 <div className="mb-2 flex items-baseline justify-between px-1">
-                  <span className="label-mono inline-flex items-center gap-1.5">
+                  <span className="label-caps inline-flex items-center gap-1.5 text-muted">
                     <span
                       className="h-1.5 w-1.5 rounded-full"
                       style={{ background: column.color }}
@@ -380,7 +380,7 @@ export function PipelineBoard({
                 </div>
                 <ul className="space-y-2">
                   {items.length === 0 ? (
-                    <li className="rounded-lg border border-dashed border-line-soft p-3 text-center font-mono text-[11px] text-dim">
+                    <li className="rounded-lg border border-dashed border-line-soft p-3 text-center text-xs text-dim">
                       {filterActive ? "none match" : "none yet"}
                     </li>
                   ) : (
@@ -425,7 +425,7 @@ export function PipelineBoard({
                     onClick={() =>
                       setExpanded((e) => ({ ...e, [column.key]: !isExpanded }))
                     }
-                    className="mt-2 rounded-lg border border-dashed border-line px-2 py-1.5 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-strong"
+                    className="mt-2 rounded-lg border border-dashed border-line px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-line-strong hover:text-strong"
                   >
                     {isExpanded ? "show fewer" : `show all ${items.length}`}
                   </button>

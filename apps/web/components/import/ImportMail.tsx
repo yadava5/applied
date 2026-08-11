@@ -138,23 +138,23 @@ function Row({ item }: { item: Classified }) {
       >
         <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
           <p className="truncate text-sm font-medium text-strong">{item.subject}</p>
-          <p className="truncate font-mono text-[11px] text-dim">
+          <p className="truncate text-xs text-dim">
             {item.senderName ? `${item.senderName} · ` : ""}
             {item.senderEmail}
           </p>
         </div>
 
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted">
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted">
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
           {pretty(item.category)}
         </span>
 
         {item.clearsGate ? (
-          <span className="hidden w-16 font-mono text-[10px] uppercase tracking-wide text-dim sm:inline">
+          <span className="hidden w-16 text-[10px] font-semibold uppercase tracking-wide text-dim sm:inline">
             auto-filed
           </span>
         ) : (
-          <span className="rounded-full border border-review/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
+          <span className="rounded-full border border-review/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-review">
             review
           </span>
         )}
@@ -206,7 +206,7 @@ function Row({ item }: { item: Classified }) {
             </div>
           </div>
 
-          <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+          <p className="mt-3 text-xs leading-relaxed text-dim">
             {item.clearsGate
               ? `Clears the 0.85 gate — Applied would file this as “${pretty(item.category)}”.`
               : "Below the 0.85 gate — nothing is auto-filed; the message waits for a human (or the full model)."}
@@ -367,12 +367,12 @@ export function ImportMail() {
             Try a sample export
           </button>
         </div>
-        <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+        <p className="mt-3 text-xs leading-relaxed text-dim">
           Export from Gmail via{" "}
           <span className="text-muted">Google Takeout → Mail</span> (an .mbox). Up to{" "}
           {DEFAULT_MESSAGE_CAP} messages are classified per file to keep the tab responsive.
         </p>
-        {busy && <p className="mt-2 font-mono text-[11px] text-dim">reading…</p>}
+        {busy && <p className="mt-2 text-xs text-dim">reading…</p>}
       </div>
 
       {error && (
@@ -400,13 +400,13 @@ export function ImportMail() {
                 key={k}
                 className="border-b border-r border-line-soft p-4 last:border-r-0 sm:border-b-0"
               >
-                <dt className="label-mono">{k}</dt>
+                <dt className="label-caps">{k}</dt>
                 <dd className="tabular mt-1 font-mono text-sm font-semibold text-strong">{v}</dd>
               </div>
             ))}
           </dl>
 
-          <p className="font-mono text-[11px] text-dim">
+          <p className="tabular text-xs text-dim">
             {state.fileName} · {state.totalFound} message{state.totalFound === 1 ? "" : "s"} found
             {state.truncated ? ` · classified the first ${state.items.length}` : ""} · layer-1 rules,
             on-device
@@ -414,11 +414,11 @@ export function ImportMail() {
 
           <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line-soft px-4 py-3">
-              <span className="flex items-center gap-2 font-mono text-[11px] text-muted">
+              <span className="flex items-center gap-2 text-xs text-muted">
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--viz-rules)" }} />
                 layer 1 · rules · on-device
               </span>
-              <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-review">
+              <span className="ml-auto flex items-center gap-2 text-xs text-review">
                 <span className="inline-block h-2 w-2 rounded-full bg-review" /> below {GATE} → review
               </span>
             </div>
@@ -436,7 +436,7 @@ export function ImportMail() {
               setError(null);
               if (inputRef.current) inputRef.current.value = "";
             }}
-            className="font-mono text-[11px] text-dim underline-offset-4 hover:text-strong hover:underline"
+            className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
           >
             clear — nothing was stored anyway
           </button>
