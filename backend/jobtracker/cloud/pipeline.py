@@ -24,7 +24,7 @@ import re
 import urllib.parse
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 # The full category vocabulary the cloud rules classifier can emit. Kept in one
@@ -603,6 +603,153 @@ _ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+# Role named in the BODY. Real ATS confirmations put the company in the subject
+# and the role in the first sentence, which is why every one of the owner's four
+# Amazon confirmations shares the subject "Thank you for Applying to Amazon!" and
+# differs only here. Measured against the live corpus: these three patterns name
+# the role for Amazon, Roblox, DoorDash, SimpliSafe, Crusoe, Baseten, Cursor,
+# MotherDuck and Anthropic; Supabase, Twitch, Together AI and IXL genuinely name
+# no role anywhere in the mail, and must degrade to None rather than to a guess.
+#
+# Ordered most-specific first. Each capture is bounded to one clause (no ``.``,
+# ``!``, ``?`` or newline) so a runaway match cannot swallow the next sentence.
+_ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Ashby: "Thank you for applying to our role: Software Engineer I, Storage."
+    re.compile(r"\brole:\s*(?P<role>[^.!?\n]{3,90}?)\s*(?=[.!?\n]|$)", re.IGNORECASE),
+    # "...application for the <ROLE> position", "...interest in the <ROLE> position",
+    # "...applying to our <ROLE> role", "...application for the <ROLE> role"
+    re.compile(
+        r"\b(?:for|in|to)\s+(?:the|our|your|a|an)\s+"
+        r"(?P<role>[^.!?\n]{3,90}?)\s+"
+        r"(?:position|role|opening|opportunity|req)\b",
+        re.IGNORECASE,
+    ),
+    # DoorDash-shaped: "...applying to DoorDash's <ROLE> position!" — the employer
+    # sits between the verb and the title, so no article anchors the capture.
+    re.compile(
+        r"\b(?:applying|applied|application)\b[^.!?\n]{0,40}?"
+        r"(?P<role>[A-Z][^.!?\n]{3,90}?)\s+(?:position|role)\b",
+    ),
+)
+
+# A requisition id, when the employer prints one. DELIBERATELY conservative: a
+# false shared id merges two genuinely different applications, which is strictly
+# worse than having no id at all and falling back to the role token. So every
+# pattern requires an explicit label or a recognised ATS shape, and a bare number
+# (a year, a salary, "2026") never qualifies.
+_REQ_ID_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Amazon: "(ID: 3177934)". Also "Job ID 12345", "Requisition ID: R-4821".
+    re.compile(
+        r"\b(?:job\s*|requisition\s*|req\s*|posting\s*)?id[:\s#]+(?P<id>[A-Z]{0,3}-?\d{4,12})\b",
+        re.IGNORECASE,
+    ),
+    # Workday/Greenhouse style standalone requisition codes: "R-4821", "JR0093214".
+    re.compile(r"\b(?P<id>(?:R|JR|REQ)-?\d{4,10})\b"),
+)
+
+# Words a role token drops before comparison, so "Software Engineer I, Storage"
+# and "Software Engineer I - Storage" are the same application and not two.
+_ROLE_TOKEN_STRIP = re.compile(r"[^a-z0-9]+")
+
+
+def _unescape_basic_entities(text: str) -> str:
+    """Undo the handful of HTML entities Gmail snippets arrive carrying.
+
+    Snippets come back pre-escaped (``We&#39;ve received your application``), and
+    an escaped apostrophe inside a captured role would make two spellings of one
+    title compare unequal.
+    """
+
+    if "&" not in text:
+        return text
+    return (
+        text.replace("&#39;", "'")
+        .replace("&quot;", '"')
+        .replace("&amp;", "&")
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+    )
+
+
+def extract_req_id(subject: str, snippet: str = "") -> str | None:
+    """Return the employer's own requisition id for this application, or None.
+
+    This is the strongest identity signal available: two Amazon confirmations
+    with different ids are two applications no matter how similar their titles
+    read, and two messages carrying the same id are one application no matter
+    how differently they word it.
+    """
+
+    for text in (subject or "", _unescape_basic_entities(snippet or "")):
+        for pattern in _REQ_ID_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return match.group("id").upper()
+    return None
+
+
+def _clean_role(raw: str) -> str | None:
+    """Normalize a captured role, or None if the capture is not a real title."""
+
+    role = re.sub(r"\s+", " ", raw).strip(" .,;:-–—")
+    # The requisition id is identity, not part of the human-readable title.
+    role = re.sub(r"\s*\(\s*(?:job\s*|requisition\s*|req\s*)?id[:\s#][^)]*\)", "", role, flags=re.IGNORECASE)
+    # "applying to DoorDash's Software Engineer I" — the employer's possessive
+    # rides in ahead of the title because no article separates them.
+    role = re.sub(r"^\w+['’]s\s+", "", role)
+    role = role.strip(" .,;:-–—")
+    words = role.split()
+    if not words or len(role) < 3:
+        return None
+    if all(_normalize_token(w) in _ROLE_FILLER for w in words):
+        return None
+    # A real job title in an ATS template is Title Case — "Software Engineer I,
+    # Storage", "TPU Kernel Engineer". An all-lowercase capture is prose that
+    # happened to sit between the anchors, and prose must never become an
+    # identity: Supabase's "Thanks for your interest in a role with Supabase"
+    # yielded the role "interest in a", which would have keyed an application.
+    if not any(w[:1].isupper() for w in words):
+        return None
+    return role
+
+
+def role_from_message(subject: str, snippet: str = "") -> str | None:
+    """Extract the job title this message is about, or None. Never a guess.
+
+    Subject first (it is the cleaner signal when present), then the body. The
+    body half is what makes per-application tracking possible at all: ATS
+    templates repeat one subject across every role a candidate applies to.
+    """
+
+    from_subject = _role_from_subject(subject)
+    if from_subject is not None:
+        return from_subject
+
+    body = _unescape_basic_entities(snippet or "")
+    for pattern in _ROLE_BODY_PATTERNS:
+        match = pattern.search(body)
+        if not match:
+            continue
+        role = _clean_role(match.group("role"))
+        if role is not None:
+            return role
+    return None
+
+
+def normalize_role_token(role: str | None) -> str | None:
+    """Collapse a role title to a comparison key, or None.
+
+    Punctuation and spacing vary between an employer's confirmation and its own
+    later interview mail ("Software Engineer I, Storage" vs "Software Engineer I
+    - Storage"); the token has to survive that or one application becomes two.
+    """
+
+    if not role:
+        return None
+    token = _ROLE_TOKEN_STRIP.sub(" ", role.lower()).strip()
+    return token or None
+
 
 @dataclass(frozen=True)
 class MessageRef:
@@ -621,7 +768,13 @@ class MessageRef:
 
 @dataclass(frozen=True)
 class RolledApplication:
-    """One company's applications rolled into a single tracker row."""
+    """ONE application — an employer plus the specific role applied for.
+
+    Not "one company's applications rolled into a single row", which is what
+    this used to be and what made four different Amazon requisitions render as
+    one card. ``company_token`` alone is no longer an identity; the identity is
+    ``(company_token, req_id or role_token)``.
+    """
 
     company_token: str  # normalized match key (e.g. "acme")
     company_display: str  # human display (e.g. "Acme")
@@ -630,6 +783,13 @@ class RolledApplication:
     applied_at: datetime | None  # earliest application date
     last_activity: datetime | None  # most recent relevant date
     messages: tuple[MessageRef, ...] = ()  # contributing mail, newest-first
+    # Identity within the employer. ``req_id`` is the employer's own requisition
+    # number when it prints one; ``role_token`` is the normalized title. Both are
+    # None for an employer that names no role anywhere in its mail (Supabase,
+    # Twitch, Together AI in the live corpus) — that degrades to one row, which
+    # is the honest floor when the mail genuinely does not distinguish.
+    req_id: str | None = None
+    role_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -650,6 +810,12 @@ class ReviewItem:
     category: str  # the tentative lifecycle category
     confidence: float
     company_display: str | None  # best-effort; may be None (unknown employer)
+    # Carried so the persisted Email keeps its snippet. It used to be dropped
+    # here and hard-coded to "" at the two persist sites, and because the persist
+    # path assigns `body_snippet` unconditionally, a message that came back
+    # through review had its stored snippet ERASED — taking the role with it,
+    # which is the one field per-application identity depends on.
+    snippet: str = ""
 
 
 def _rank_to_status(rank: int) -> str:
@@ -823,6 +989,39 @@ def _brand_display(brand: str, sender_name: str | None) -> str:
     return brand.replace("-", " ").title()
 
 
+# "Thanks for applying to Twitch", "Thank you for applying to DoorDash" — the
+# employer, spelled by the employer, in its own subject line.
+_SUBJECT_NAMES_EMPLOYER = re.compile(
+    r"\bapply(?:ing)?\s+(?:to|with|for)\s+(?:the\s+)?(?P<name>[A-Z][\w&.\-]*(?:\s+[A-Z][\w&.\-]*){0,2})",
+)
+
+
+def _corporate_display(brand: str, subject: str, sender_name: str | None) -> str:
+    """Human display for an employer that mailed from its own domain.
+
+    The domain is the right thing to TRUST but the wrong thing to PRINT. Two
+    live rows show why: ``no-reply@twitchjobs.tv`` rendered the company as
+    "Twitchjobs" while its own subject said "Thank you for applying to Twitch",
+    and ``no-reply@doordash.com`` rendered "Doordash" because title-casing a
+    lowercase domain label cannot know where the intercap goes.
+
+    So when the subject names a company and the domain agrees with it — the
+    domain brand starts with, or is started by, the normalized subject name —
+    the subject's spelling wins. The agreement test is what keeps this from
+    picking up a company merely *mentioned* in a subject: "Your application to
+    Acme via Workday" mailed from workday.com resolves nothing here, and falls
+    through to the relay branches as before.
+    """
+
+    match = _SUBJECT_NAMES_EMPLOYER.search(subject or "")
+    if match:
+        named = _clean_company_display(match.group("name"))
+        token = _normalize_token(named).replace(" ", "")
+        if token and (brand.startswith(token) or token.startswith(brand)):
+            return named
+    return _brand_display(brand, sender_name)
+
+
 def resolve_employer(
     sender_email: str,
     subject: str = "",
@@ -872,7 +1071,7 @@ def resolve_employer(
         and not brand.isdigit()
     )
     if corporate:
-        return brand, _brand_display(brand, sender_name)
+        return brand, _corporate_display(brand, subject, sender_name)
 
     from_subject = _employer_from_subject(subject)
     if from_subject:
@@ -962,33 +1161,167 @@ def _qualifies_for_hard_row(item: PipelineItem) -> tuple[str, str] | None:
     return resolve_employer(item.sender_email, item.subject, item.sender_name)
 
 
-def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
-    """Group high-confidence lifecycle mail into one row per real employer.
+@dataclass(frozen=True)
+class _Cluster:
+    """One application's worth of gated mail, before it becomes a row."""
 
-    Only messages that clear the precision gate (:func:`_qualifies_for_hard_row`)
-    contribute: at/above the 0.85 auto-file confidence, a real lifecycle
-    category, and a nameable employer. A company's status is the furthest stage
-    its *gated* mail reached (applied < assessment < interview < offer), with a
-    gated rejection as a terminal override. Uncertain mail never lands here — it
-    goes to :func:`collect_review_items` instead — so the board shows real rows,
-    not noise parsed out of job alerts.
+    company_token: str
+    company_display: str
+    req_id: str | None
+    role_token: str | None
+    role: str | None
+    items: list[PipelineItem]
 
-    Deterministic and DB-free — the same input always yields the same rows,
-    which is what makes the downstream upsert idempotent.
+
+def partition_applications(
+    items: Iterable[PipelineItem],
+) -> tuple[list[_Cluster], list[PipelineItem]]:
+    """Split gated mail into per-application clusters, plus what it cannot place.
+
+    This is the identity resolution the whole product rests on, and it is pure so
+    it can be reasoned about and tested without a database.
+
+    Within one employer, a message is placed by the first rule that fires:
+
+    1. its requisition id matches a cluster (the strongest signal — two Amazon
+       confirmations with different ids are two applications however similar
+       their titles read);
+    2. its normalized role token matches a cluster;
+    3. it names no role at all, and the employer has exactly ONE cluster — so it
+       joins that one. This is what keeps Roblox's separate email-verification
+       message (different sender, no shared role text, no shared thread) on the
+       same application as its confirmation, and it means behaviour changes only
+       for employers with several applications.
+
+    A role-less message at an employer with SEVERAL applications is returned in
+    the second element instead of being guessed at. Guessing here is not a cosmetic
+    error: attributing a rejection to the wrong one of four Amazon rows settles a
+    live application terminally and, because ``advance_application_status`` treats
+    terminal states as final, freezes it against every later interview or offer.
+    Those messages go to the review queue for the user to assign.
+
+    A role-less message at an employer with NO other cluster mints its own
+    ``(company, None)`` cluster — which is exactly the old behaviour, so an
+    employer that genuinely never names a role (Supabase, Twitch, Together AI in
+    the live corpus) still gets one honest row.
     """
 
-    grouped: dict[str, tuple[str, list[PipelineItem]]] = {}
+    by_company: dict[str, list[tuple[PipelineItem, str, str | None, str | None, str | None]]] = {}
     for item in items:
         resolved = _qualifies_for_hard_row(item)
         if resolved is None:
             continue
         token, display = resolved
-        if token not in grouped:
-            grouped[token] = (display, [])
-        grouped[token][1].append(item)
+        role = role_from_message(item.subject, item.snippet)
+        by_company.setdefault(token, []).append(
+            (item, display, extract_req_id(item.subject, item.snippet), normalize_role_token(role), role)
+        )
+
+    clusters: list[_Cluster] = []
+    unplaced: list[PipelineItem] = []
+
+    for token, entries in by_company.items():
+        display = entries[0][1]
+        keyed: list[_Cluster] = []
+        # Two passes, so placement never depends on arrival order: every message
+        # that carries its own identity mints or joins first, and only then do the
+        # anonymous ones look for a home.
+        #
+        # Scanning the clusters rather than keying a dict on ``req_id or
+        # role_token`` is deliberate. Those are two namespaces that would
+        # otherwise never meet: a confirmation carries the requisition id, the
+        # interview invite that follows carries only the title, and a dict keyed
+        # on "whichever we have" would file one application under two keys.
+        for item, _display, req_id, role_token, role in entries:
+            if req_id is None and role_token is None:
+                continue
+            match = next(
+                (
+                    c
+                    for c in keyed
+                    if (req_id is not None and c.req_id == req_id)
+                    or (role_token is not None and c.role_token == role_token)
+                ),
+                None,
+            )
+            if match is None:
+                keyed.append(
+                    _Cluster(
+                        company_token=token,
+                        company_display=_display,
+                        req_id=req_id,
+                        role_token=role_token,
+                        role=role,
+                        items=[item],
+                    )
+                )
+                continue
+            match.items.append(item)
+            # Each message may carry the half of the identity the other lacked.
+            keyed[keyed.index(match)] = replace(
+                match,
+                req_id=match.req_id or req_id,
+                role_token=match.role_token or role_token,
+                role=match.role or role,
+                items=match.items,
+            )
+
+        anonymous = [e[0] for e in entries if e[2] is None and e[3] is None]
+        if anonymous:
+            if not keyed:
+                keyed.append(
+                    _Cluster(
+                        company_token=token,
+                        company_display=display,
+                        req_id=None,
+                        role_token=None,
+                        role=None,
+                        items=list(anonymous),
+                    )
+                )
+            elif len(keyed) == 1:
+                keyed[0].items.extend(anonymous)
+            else:
+                unplaced.extend(anonymous)
+
+        clusters.extend(keyed)
+
+    return clusters, unplaced
+
+
+def unplaceable_message_ids(items: Iterable[PipelineItem]) -> set[str]:
+    """Message ids that name no role at an employer holding several applications.
+
+    :func:`collect_review_items` promotes these into the queue so the user can
+    say which application they belong to, rather than the pipeline picking one.
+    """
+
+    _clusters, unplaced = partition_applications(items)
+    return {item.message_id for item in unplaced}
+
+
+def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
+    """Group high-confidence lifecycle mail into one row per real APPLICATION.
+
+    Only messages that clear the precision gate (:func:`_qualifies_for_hard_row`)
+    contribute: at/above the 0.85 auto-file confidence, a real lifecycle
+    category, and a nameable employer. Identity within an employer comes from
+    :func:`partition_applications`. An application's status is the furthest stage
+    *its own* gated mail reached (applied < assessment < interview < offer), with
+    a gated rejection as a terminal override — per application, so one
+    requisition's rejection can no longer settle three live ones beside it.
+    Uncertain mail never lands here — it goes to :func:`collect_review_items`
+    instead — so the board shows real rows, not noise parsed out of job alerts.
+
+    Deterministic and DB-free — the same input always yields the same rows,
+    which is what makes the downstream upsert idempotent.
+    """
+
+    clusters, _unplaced = partition_applications(items)
 
     rolled: list[RolledApplication] = []
-    for token, (display, msgs) in grouped.items():
+    for cluster in clusters:
+        token, display, msgs = cluster.company_token, cluster.company_display, cluster.items
         categories = {m.category for m in msgs}
         has_rejection = "rejection" in categories
         max_rank = max((_STAGE_RANK.get(c, 0) for c in categories), default=1)
@@ -1008,14 +1341,7 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
         )
         last_activity = max(dated) if dated else None
 
-        role = next(
-            (
-                _role_from_subject(m.subject)
-                for m in msgs
-                if _role_from_subject(m.subject)
-            ),
-            None,
-        )
+        role = cluster.role
 
         refs = sorted(
             (_message_ref(m) for m in msgs),
@@ -1032,10 +1358,15 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
                 applied_at=applied_at,
                 last_activity=last_activity,
                 messages=tuple(refs),
+                req_id=cluster.req_id,
+                role_token=cluster.role_token,
             )
         )
 
-    return sorted(rolled, key=lambda r: r.company_token)
+    # Sorted by the full identity, not just the company: several applications at
+    # one employer must come back in a stable order across syncs or the upsert
+    # stops being idempotent.
+    return sorted(rolled, key=lambda r: (r.company_token, r.req_id or "", r.role_token or ""))
 
 
 def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
@@ -1057,9 +1388,17 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
     first overall.
     """
 
+    items = list(items)
+    # Gated mail that names no role at an employer holding several applications.
+    # It clears the precision gate, so the loop below would skip it as "already a
+    # real application row" — but there is no single row it belongs to, and
+    # picking one would settle the wrong application (see
+    # :func:`partition_applications`). Asking is the only honest move.
+    unplaceable = unplaceable_message_ids(items)
+
     best: dict[str, ReviewItem] = {}
     for item in items:
-        if _qualifies_for_hard_row(item) is not None:
+        if item.message_id not in unplaceable and _qualifies_for_hard_row(item) is not None:
             continue  # already a real application row
 
         is_needs_review = item.category == "needs_review"
@@ -1085,6 +1424,7 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
             category=item.category,
             confidence=item.confidence,
             company_display=employer[1] if employer else None,
+            snippet=item.snippet,
         )
         key = item.thread_id or item.message_id
         current = best.get(key)

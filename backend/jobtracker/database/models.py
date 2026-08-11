@@ -279,6 +279,28 @@ class Application(TimestampMixin, table=True):
         description="Who removed it: 'user' (explicit dismiss) or 'resync'",
     )
 
+    # Identity WITHIN an employer. Until 2026-08-11 the identity of an
+    # application was its company alone, so four different Amazon requisitions
+    # applied for on one evening became one row and three real applications were
+    # invisible. These two are what tell them apart on the next sync:
+    # ``req_id`` is the employer's own requisition number when it prints one
+    # ("(ID: 3177934)"), ``role_token`` the normalized job title. Both NULL is
+    # legitimate and means the mail named no role anywhere — that employer keeps
+    # exactly one row, which is the honest floor rather than a guess.
+    #
+    # Deliberately NOT a unique constraint: re-applying to the same role after a
+    # rejection is a second application, and the resolver only ever matches
+    # against live rows.
+    req_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Employer's own requisition id for this application, if any",
+    )
+    role_token: Optional[str] = Field(
+        default=None,
+        description="Normalized job title, used to tell one employer's applications apart",
+    )
+
     # Relationships
     emails: list["Email"] = Relationship(back_populates="application")
     contacts: list["Contact"] = Relationship(back_populates="application")
