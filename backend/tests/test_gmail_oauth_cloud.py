@@ -3265,3 +3265,103 @@ async def test_classifying_a_thread_settles_every_message_in_it(
     assert len(rows) == 2
     assert all(e.is_reviewed for e in rows)
     assert {e.application_id for e in rows} == {app_id}
+
+
+# =============================================================================
+# What ``scanned`` is allowed to imply
+# =============================================================================
+
+
+async def test_sync_reports_what_it_lost_and_why_it_stopped(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``scanned`` alone cannot be told apart from coverage.
+
+    The full-scan path used to discard ``MessagePage.unreadable`` entirely — the
+    ids it listed and could not read back — so a scan that lost 60 of 2,000
+    messages reported 1,940 as though that were the mailbox. Now the response
+    says how many it read, how many it lost, why it stopped reading, and
+    (approximately, from Gmail's own estimate) how many the query matches.
+    """
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import MessagePage
+
+    await _connect_gmail(USER_A)
+
+    async def _fake_profile(user_id, **_kwargs):
+        return "9001"
+
+    async def _fake_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[_applied_msg()],
+            next_page_token=None,
+            unreadable=7,
+            result_size_estimate=1200,
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_mailbox_history_id", _fake_profile)
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    body = (await client.post("/gmail/sync", json={}, headers=headers)).json()
+
+    assert body["scanned"] == 1
+    assert body["unreadable"] == 7
+    assert body["stopped_by"] == "complete"  # the query ran out, not the budget
+    assert body["result_size_estimate"] == 1200
+
+
+async def test_an_incremental_sync_also_reports_what_it_lost(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The history path drops metadata the same way the full scan does.
+
+    Reporting ``unreadable: 0`` here whatever it lost would be the same defect
+    one path over — which is why ``HistoryPage`` carries the number too.
+    """
+
+    from jobtracker.cloud.gmail_client import HistoryPage
+
+    await _connect_gmail(USER_A)
+    calls = _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_applied_msg(day=1)],
+        history_results=[
+            HistoryPage(messages=[_interview_msg(day=10)], unreadable=4)
+        ],
+        profile_ids=["9001", "9100"],
+    )
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await client.post("/gmail/sync", json={}, headers=headers)
+    body = (await client.post("/gmail/sync", json={}, headers=headers)).json()
+
+    assert calls["history"] == 1
+    assert body["scanned"] == 1
+    assert body["unreadable"] == 4
+    # A usable delta IS everything since the cursor, and Gmail offers no
+    # estimate for it — so no estimate is invented.
+    assert body["stopped_by"] == "complete"
+    assert body["result_size_estimate"] is None
+
+
+async def test_a_relayed_mine_says_the_server_did_not_scan_it(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server cannot characterise a scan it did not make, and says so
+    rather than presenting the client's count as its own coverage."""
+
+    await _connect_gmail(USER_A)
+    _install_gmail_stubs(monkeypatch, profile_ids=["9001"])
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    body = (
+        await client.post(
+            "/gmail/sync", json={"items": _sync_items()}, headers=headers
+        )
+    ).json()
+
+    assert body["stopped_by"] == "relay"
+    assert body["unreadable"] == 0
+    assert body["result_size_estimate"] is None

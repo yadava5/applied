@@ -41,6 +41,9 @@ from jobtracker.auth import current_user, require_user
 from jobtracker.cloud import pipeline
 from jobtracker.database import get_session
 from jobtracker.database.models import (
+    APPLICATION_STATUSES,
+    CATEGORY_TO_STATUS,
+    DEFAULT_APPLICATION_STATUS,
     Application,
     ApplicationStatus,
     Email,
@@ -216,7 +219,9 @@ def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> boo
 
 
 # ApplicationStatus → the training label a manual correction should teach the
-# classifier (the SetFit retrain path reads ``training_data``).
+# classifier (the SetFit retrain path reads ``training_data``). Must name EVERY
+# status: a status missing here is a correction that silently trains nothing,
+# so ``test_status_vocabulary`` fails if the enum grows and this does not.
 _STATUS_TO_TRAINING_LABEL: dict[ApplicationStatus, EmailCategory] = {
     ApplicationStatus.APPLIED: EmailCategory.APPLIED,
     ApplicationStatus.INTERVIEWING: EmailCategory.INTERVIEW,
@@ -300,6 +305,31 @@ class ApplicationStatusUpdate(BaseModel):
     """Body for a user's status correction (PATCH /applications/{id})."""
 
     status: ApplicationStatus
+
+
+class StatusVocabularyResponse(BaseModel):
+    """The canonical stage vocabulary, served so no client has to restate it.
+
+    Every field is DERIVED from :class:`ApplicationStatus` /
+    :data:`CATEGORY_TO_STATUS` at import time, so this endpoint and the 422 a
+    bad ``PATCH`` earns cannot disagree. It exists because they did: the board
+    offered ``assessment``, the file-by-hand dialog offered six of the seven,
+    and the API accepted a different seven.
+
+    - ``statuses`` — the settable stages, in lifecycle order. THE list.
+    - ``default`` — what a new row starts at.
+    - ``category_to_status`` — how a classifier verdict maps onto a stage, for
+      a client that wants to show ``assessment`` mail under ``interviewing``.
+      A category absent from this map asserts no stage.
+    - ``classifier_categories`` — everything the classifier can emit. A
+      SUPERSET of the mapping's keys and NOT interchangeable with ``statuses``;
+      confusing the two is the original defect.
+    """
+
+    statuses: list[str]
+    default: str
+    category_to_status: dict[str, str]
+    classifier_categories: list[str]
 
 
 class MessageRefResponse(BaseModel):
@@ -1542,17 +1572,15 @@ async def _settle_thread_siblings(
 
 
 def _lifecycle_to_status(category: EmailCategory) -> str | None:
-    """Map a lifecycle email category to an ApplicationStatus value, or None."""
+    """Map a lifecycle email category to an ApplicationStatus value, or None.
 
-    mapping = {
-        EmailCategory.APPLIED: "applied",
-        EmailCategory.PENDING_APPLICATION: "applied",
-        EmailCategory.ASSESSMENT: "interviewing",
-        EmailCategory.INTERVIEW: "interviewing",
-        EmailCategory.OFFER: "offered",
-        EmailCategory.REJECTION: "rejected",
-    }
-    return mapping.get(category)
+    Reads the canonical :data:`CATEGORY_TO_STATUS` rather than restating it —
+    this function used to hold a second copy, which is how ``assessment`` came
+    to mean ``interviewing`` here and a settable stage in the UI.
+    """
+
+    status = CATEGORY_TO_STATUS.get(category)
+    return status.value if status is not None else None
 
 
 async def _connected_account_email(user_id: uuid.UUID) -> str | None:
@@ -1930,6 +1958,31 @@ async def classify_review_item_cloud(
         return await classify_review_item(
             session, user_id, message_id, data.category, data.company
         )
+
+
+@router.get("/statuses", response_model=StatusVocabularyResponse)
+async def application_statuses_cloud() -> StatusVocabularyResponse:
+    """The canonical stage vocabulary — the one place a client should read it.
+
+    Declared ABOVE ``GET /{application_id}`` deliberately: FastAPI matches in
+    declaration order and would otherwise try ``"statuses"`` as an int path
+    param and answer 422. Same pattern as ``/summary`` and ``/review``.
+
+    Serves what :class:`ApplicationStatus` says, not a copy of it, so a client
+    can assert its own ``<select>`` against this (or against the enum in
+    ``/openapi.json``, which is generated from the same declaration) instead of
+    hand-maintaining a fourth list that drifts.
+    """
+
+    return StatusVocabularyResponse(
+        statuses=list(APPLICATION_STATUSES),
+        default=DEFAULT_APPLICATION_STATUS.value,
+        category_to_status={
+            category.value: status.value
+            for category, status in CATEGORY_TO_STATUS.items()
+        },
+        classifier_categories=list(pipeline.CANONICAL_CATEGORIES),
+    )
 
 
 @router.get("/{application_id}", response_model=ApplicationDetailResponse)

@@ -260,11 +260,39 @@ class RemovedApplicationOut(BaseModel):
     company: str
 
 
+# Why a scan stopped, reported verbatim on the response. A bare count of what a
+# scan read cannot be distinguished from coverage unless the caller is told
+# whether it ran out of mail or ran out of budget — which is the whole defect.
+STOPPED_COMPLETE = "complete"  # the query was exhausted: this IS everything
+STOPPED_TARGET = "target"  # hit the message target; more mail matches
+STOPPED_DEADLINE = "deadline"  # ran out of the serverless time budget
+STOPPED_PAGE_LIMIT = "page_limit"  # hit the list-call safety rail
+STOPPED_DISCONNECTED = "disconnected"  # Gmail stopped answering mid-scan
+STOPPED_RELAY = "relay"  # not our scan — the client sent the items
+
+
 class SyncResponse(BaseModel):
     created: int
     updated: int
     applications: int  # LIVE application rows the user has after the sync
+    # How many messages the scan READ. NOT coverage: read it together with
+    # ``stopped_by`` (did it finish, or run out of budget?), ``unreadable``
+    # (how many it listed and lost) and ``result_size_estimate`` (roughly how
+    # many the query matches). "Scanned 41" alone is the same sentence whether
+    # the window held 41 messages or 4,100.
     scanned: int
+    # Messages this scan LISTED but could not read back — a dropped Gmail
+    # metadata sub-request, or metadata that would not parse. ``scanned`` counts
+    # only what was read, so this is the gap between the two.
+    unreadable: int = 0
+    # One of the ``STOPPED_*`` constants above.
+    stopped_by: str = STOPPED_COMPLETE
+    # Gmail's own ``resultSizeEstimate`` for the query — the largest one seen
+    # across the scan's pages, clamped to never sit below what was actually
+    # examined. An ESTIMATE and documented as approximate for large result sets:
+    # a denominator to say "41 of about 1,200", never a count. ``null`` when
+    # Gmail offered none (the incremental and relay paths never do).
+    result_size_estimate: int | None = None
     # Stale AUTO rows the rebuild removed (the "garbage gone" number) and how
     # many uncertain verdicts are waiting in the needs-classification queue.
     purged: int = 0
@@ -966,13 +994,39 @@ async def gmail_pipeline(payload: PipelineAnalyzeRequest) -> PipelineAnalyzeResp
 # sync without specifying a range.
 _SYNC_DEFAULT_RANGE_MONTHS = 12
 
-# A server-side auto sync scans a STABLE, deep-enough slice of that window:
-# up to this many messages across at most this many bounded pages. Fixed so
-# every routine run covers the same ground (durability no longer depends on
-# which messages a single 500-cap page happened to catch) while staying inside
-# the serverless time budget.
+# A server-side auto sync scans a STABLE, deep-enough slice of that window: up
+# to this many MESSAGES. Fixed so every routine run covers the same ground
+# (durability no longer depends on which messages a single 500-cap page
+# happened to catch) while staying inside the serverless time budget.
 _SYNC_DEFAULT_SCAN_TARGET = 750
-_SYNC_MAX_PAGES = 4
+
+# The scan used to stop after a fixed number of PAGES, which is the wrong bound
+# when page sizes vary — and Gmail's do. ``maxResults`` is an upper bound, not a
+# quota: the same request that yields 68 messages for ``in:inbox newer_than:3m``
+# yields 41 for ``in:inbox``, so a page-count bound accumulates LESS the wider
+# the window gets. Measured live on 2026-08-10 at page_size=100: 68 / 43 / 45 /
+# 41 for 3m / 6m / 12m / all-time, every one of them with a next-page token. The
+# user-visible result was "All time" reporting fewer scanned messages than
+# "3 months" and looking broken.
+#
+# So the bound is the MESSAGE target, and these two are only safety rails on a
+# pathological mailbox (Gmail returning a handful of ids per page forever):
+#
+# - ``_SYNC_MAX_LIST_CALLS`` — enough list calls to reach a 750-message target
+#   even at 30 messages a page, which is well below anything observed.
+# - ``_SYNC_TIME_BUDGET_SECONDS`` — the real backstop. Checked BEFORE each page
+#   is started, against a monotonic deadline taken at scan entry, so a page can
+#   never begin at 39 s and run past the 60 s function limit. Sized to leave
+#   ~30 s for what follows the scan (rollup, the additive/rebuild merge and its
+#   Supabase round-trips, the count query, the cursor write).
+#
+# Worst case is deliberately more expensive than the old 4-page bound: up to 25
+# ``messages.list`` calls plus one metadata batch each (~1 s per page in
+# practice; the inter-batch pause does not fire for a page under 100 messages),
+# i.e. ~30 s of Gmail I/O instead of ~19 s, for a scan that is finally monotonic
+# in the width of its window. Whichever rail stops it is REPORTED, never hidden.
+_SYNC_MAX_LIST_CALLS = 25
+_SYNC_TIME_BUDGET_SECONDS = 30.0
 
 
 @dataclass
@@ -982,12 +1036,20 @@ class _ScanOutcome:
     ``history_id`` is the mailbox baseline captured **before** the scan started
     (``None`` when Gmail's ``getProfile`` was unavailable — then the stored
     cursor is simply left alone and the next run is another full scan).
+
+    ``scanned`` is what the scan READ — not what the mailbox holds and not what
+    the window contains. ``unreadable``, ``stopped_by`` and
+    ``result_size_estimate`` are what make that difference statable rather than
+    implied; see :class:`SyncResponse` for what each one means.
     """
 
     items: list[Any]
     scanned: int
     incremental: bool
     history_id: str | None
+    unreadable: int = 0
+    stopped_by: str = STOPPED_COMPLETE
+    result_size_estimate: int | None = None
 
 
 async def _classify_messages(messages: list[Any], classifier: Any, pipeline: Any) -> list[Any]:
@@ -1012,6 +1074,22 @@ async def _classify_messages(messages: list[Any], classifier: Any, pipeline: Any
     return items
 
 
+@dataclass
+class _ScanRead:
+    """What one scan read, and why it stopped reading.
+
+    Shared by both server-side paths (full re-list and history delta) so the
+    handler does not have to remember which one loses which number — the way
+    ``unreadable`` was being lost here before.
+    """
+
+    items: list[Any]
+    scanned: int
+    unreadable: int = 0
+    stopped_by: str = STOPPED_COMPLETE
+    result_size_estimate: int | None = None
+
+
 async def _full_scan(
     user_id: uuid.UUID,
     *,
@@ -1019,23 +1097,53 @@ async def _full_scan(
     target: int,
     classifier: Any,
     pipeline: Any,
-) -> tuple[list[Any], int]:
+    deadline: float | None = None,
+) -> _ScanRead:
     """Re-list a STABLE, deep-enough slice of the window (the fallback path).
 
-    Unchanged behaviour, lifted out of the handler so the incremental path can
-    fall back to it verbatim: a fixed target across bounded pages so every run
-    covers the same ground and durability never depends on which messages one
-    500-cap page happened to catch.
+    Bounded by MESSAGES EXAMINED, not by page count. Gmail treats ``maxResults``
+    as an upper bound and hands back fewer messages per page as the query
+    widens, so a page-count bound made a wider window scan *less* than a
+    narrower one — see the ``_SYNC_MAX_LIST_CALLS`` commentary. Paging until the
+    target is met makes the scan monotonic in the width of its window: a wider
+    query can only ever match a superset of the mail, so it can only ever
+    examine as many messages or more.
+
+    Keeps paging through an EMPTY page that still carries a token — Gmail
+    returns those, and treating one as the end of the mailbox is the same class
+    of bug as counting pages.
+
+    ``deadline`` is a ``time.monotonic()`` value; the default takes
+    ``_SYNC_TIME_BUDGET_SECONDS`` from entry. It is checked before a page is
+    STARTED so no page can begin inside the budget and finish outside it.
     """
 
     from jobtracker.cloud.gmail_client import fetch_message_page
 
+    if deadline is None:
+        deadline = time.monotonic() + _SYNC_TIME_BUDGET_SECONDS
+
     items: list[Any] = []
     scanned = 0
+    unreadable = 0
+    estimate: int | None = None
     page_token: str | None = None
-    for page_index in range(_SYNC_MAX_PAGES):
+    stopped_by = STOPPED_COMPLETE
+
+    for page_index in range(_SYNC_MAX_LIST_CALLS):
         remaining = target - scanned
         if remaining <= 0:
+            stopped_by = STOPPED_TARGET
+            break
+        if time.monotonic() >= deadline:
+            stopped_by = STOPPED_DEADLINE
+            logger.warning(
+                "Gmail full scan for user_id=%s stopped on its %ss time budget "
+                "after %s message(s); the window is not fully covered.",
+                user_id,
+                _SYNC_TIME_BUDGET_SECONDS,
+                scanned,
+            )
             break
         page = await fetch_message_page(
             user_id,
@@ -1049,13 +1157,45 @@ async def _full_scan(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Gmail is not connected for this user. Connect it first.",
                 )
+            # Gmail answered earlier pages and not this one. Whatever we hold is
+            # a partial read of the window and must not be called complete.
+            stopped_by = STOPPED_DISCONNECTED
             break
         items.extend(await _classify_messages(page.messages, classifier, pipeline))
         scanned += len(page.messages)
+        unreadable += page.unreadable
+        if page.result_size_estimate is not None:
+            estimate = max(estimate or 0, page.result_size_estimate)
         page_token = page.next_page_token
-        if not page_token or not page.messages:
+        if not page_token:
             break
-    return items, scanned
+    else:
+        # The call ceiling ran out. It is only the REASON when it actually cut
+        # the scan short: a last page that happened to complete the target
+        # stopped on the target, and saying otherwise would report a budget
+        # failure for a scan that got everything it asked for.
+        if scanned >= target:
+            stopped_by = STOPPED_TARGET
+        else:
+            stopped_by = STOPPED_PAGE_LIMIT
+            logger.warning(
+                "Gmail full scan for user_id=%s stopped on its %s-call list "
+                "limit after %s message(s); the window is not fully covered.",
+                user_id,
+                _SYNC_MAX_LIST_CALLS,
+                scanned,
+            )
+
+    return _ScanRead(
+        items=items,
+        scanned=scanned,
+        unreadable=unreadable,
+        stopped_by=stopped_by,
+        # Never let the estimate sit below what we already read: a denominator
+        # smaller than its numerator is worse than no denominator. Stays None
+        # when Gmail offered none — a floor is not an estimate.
+        result_size_estimate=None if estimate is None else max(estimate, scanned),
+    )
 
 
 async def _incremental_scan(
@@ -1066,7 +1206,7 @@ async def _incremental_scan(
     mail_scope: str,
     classifier: Any,
     pipeline: Any,
-) -> tuple[list[Any], int] | None:
+) -> _ScanRead | None:
     """Read only what Gmail says changed since ``start_history_id``.
 
     ``None`` means "the cursor could not carry this run" — Gmail 404'd it as
@@ -1074,6 +1214,11 @@ async def _incremental_scan(
     invocation, or the account is no longer connected. In every one of those
     cases the caller full-scans and re-baselines; none of them is a user-facing
     error.
+
+    A usable delta is COMPLETE by construction: everything since the cursor, or
+    nothing (a truncated walk falls back to the full scan rather than half-
+    consuming the history). Gmail offers no ``resultSizeEstimate`` here, so the
+    estimate stays ``None`` rather than being invented.
     """
 
     from jobtracker.cloud.gmail_client import fetch_history_messages
@@ -1087,7 +1232,12 @@ async def _incremental_scan(
     if page is None or not page.usable:
         return None
     items = await _classify_messages(page.messages, classifier, pipeline)
-    return items, len(page.messages)
+    return _ScanRead(
+        items=items,
+        scanned=len(page.messages),
+        unreadable=page.unreadable,
+        stopped_by=STOPPED_COMPLETE,
+    )
 
 
 async def _history_cursor_for(
@@ -1187,16 +1337,21 @@ async def _scan_server_side(
             pipeline=pipeline,
         )
         if incremental is not None:
-            items, scanned = incremental
             return _ScanOutcome(
-                items=items, scanned=scanned, incremental=True, history_id=history_id
+                items=incremental.items,
+                scanned=incremental.scanned,
+                incremental=True,
+                history_id=history_id,
+                unreadable=incremental.unreadable,
+                stopped_by=incremental.stopped_by,
+                result_size_estimate=incremental.result_size_estimate,
             )
         logger.info(
             "Gmail history cursor unusable for user_id=%s; full scan + re-baseline.",
             user_id,
         )
 
-    items, scanned = await _full_scan(
+    read = await _full_scan(
         user_id,
         query=query,
         target=target,
@@ -1204,7 +1359,13 @@ async def _scan_server_side(
         pipeline=pipeline,
     )
     return _ScanOutcome(
-        items=items, scanned=scanned, incremental=False, history_id=history_id
+        items=read.items,
+        scanned=read.scanned,
+        incremental=False,
+        history_id=history_id,
+        unreadable=read.unreadable,
+        stopped_by=read.stopped_by,
+        result_size_estimate=read.result_size_estimate,
     )
 
 
@@ -1316,6 +1477,12 @@ async def gmail_sync(
             ]
             scanned = len(items)
             incremental = False
+            # The server did not read this mail and cannot characterise the
+            # scan behind it: how far the client got, and what it lost getting
+            # there, are the client's to report.
+            unreadable = 0
+            stopped_by = STOPPED_RELAY
+            result_size_estimate: int | None = None
             # Deliberately no baseline: the client's mine can be a NARROWER
             # window than the server's own scan, so baselining from it would
             # permanently prevent the deeper full scan from ever running again.
@@ -1330,6 +1497,9 @@ async def gmail_sync(
             scanned = outcome.scanned
             incremental = outcome.incremental
             history_id = outcome.history_id
+            unreadable = outcome.unreadable
+            stopped_by = outcome.stopped_by
+            result_size_estimate = outcome.result_size_estimate
 
         # Roll the scan up: high-confidence lifecycle mail with a nameable
         # employer becomes a hard row, the uncertain remainder feeds the
@@ -1408,7 +1578,8 @@ async def gmail_sync(
 
     logger.info(
         "Gmail sync for user_id=%s: mode=%s incremental=%s created=%s updated=%s "
-        "purged=%s needs_review=%s total=%s scanned=%s removed=%s",
+        "purged=%s needs_review=%s total=%s scanned=%s unreadable=%s stopped_by=%s "
+        "estimate=%s removed=%s",
         user_id,
         mode,
         incremental,
@@ -1418,6 +1589,9 @@ async def gmail_sync(
         needs_review,
         total,
         scanned,
+        unreadable,
+        stopped_by,
+        result_size_estimate,
         [r.company for r in merged.removed] or None,
     )
     return SyncResponse(
@@ -1425,6 +1599,9 @@ async def gmail_sync(
         updated=updated,
         applications=total,
         scanned=scanned,
+        unreadable=unreadable,
+        stopped_by=stopped_by,
+        result_size_estimate=result_size_estimate,
         purged=purged,
         needs_review=needs_review,
         removed=[

@@ -80,7 +80,16 @@ def _user_id_field(*, index_name: str | None = None) -> "Field":
 
 
 class ApplicationStatus(str, Enum):
-    """Possible statuses for a job application."""
+    """Possible statuses for a job application.
+
+    THE canonical stage vocabulary. Everything that needs the list — the API
+    body models, ``GET /applications/statuses``, the rollup's rank tables, the
+    web's ``<select>`` — derives from here rather than restating it, because
+    three hand-written copies is exactly how the board came to offer a stage
+    (``assessment``) the API answers with a 422.
+
+    ``assessment`` is deliberately NOT a member: see :data:`CATEGORY_TO_STATUS`.
+    """
 
     APPLIED = "applied"
     INTERVIEWING = "interviewing"
@@ -89,6 +98,15 @@ class ApplicationStatus(str, Enum):
     ACCEPTED = "accepted"
     WITHDRAWN = "withdrawn"
     GHOSTED = "ghosted"
+
+
+# The stage vocabulary as plain strings, in declaration order — DERIVED from the
+# enum, so it cannot drift from it. This is what the API serves and what any
+# other vocabulary (a UI select, a rank table) must be checked against.
+APPLICATION_STATUSES: tuple[str, ...] = tuple(s.value for s in ApplicationStatus)
+
+# The stage a brand-new row starts at (also ``Application.status``'s default).
+DEFAULT_APPLICATION_STATUS: ApplicationStatus = ApplicationStatus.APPLIED
 
 
 class EmailCategory(str, Enum):
@@ -103,6 +121,35 @@ class EmailCategory(str, Enum):
     FOLLOW_UP = "follow_up"
     NEEDS_REVIEW = "needs_review"  # Uncertain - human should review
     OTHER = "other"
+
+
+# What a classifier verdict means for the application it belongs to — the ONE
+# statement of the category → stage mapping.
+#
+# ``assessment`` is the interesting one, and it is a CATEGORY, not a stage. A
+# message can *be* an assessment request ("complete this take-home"), which is
+# why the classifier predicts it; the application it belongs to is at the
+# interviewing stage, which is what the tracker records. That was already the
+# behaviour in two independent places (``pipeline._STAGE_RANK`` ranks it between
+# applied and interview, and the orphan reconciler filed it as ``interviewing``)
+# and in the web's own stage grouping, which folds
+# ``interviewing``/``interview``/``assessment`` into one column. Promoting it to
+# an ``ApplicationStatus`` would mean an ``ALTER TYPE applicationstatus ADD
+# VALUE`` against live Postgres to encode a distinction the product does not
+# make. So the mapping is stated here once, and the board's <select> offers
+# stages only.
+#
+# Categories absent from this map (``follow_up``, ``needs_review``, ``other``)
+# assert no stage at all: a follow-up is chasing an application, not a stage of
+# one, and the other two are noise or a holding pen.
+CATEGORY_TO_STATUS: dict[EmailCategory, ApplicationStatus] = {
+    EmailCategory.APPLIED: ApplicationStatus.APPLIED,
+    EmailCategory.PENDING_APPLICATION: ApplicationStatus.APPLIED,
+    EmailCategory.ASSESSMENT: ApplicationStatus.INTERVIEWING,
+    EmailCategory.INTERVIEW: ApplicationStatus.INTERVIEWING,
+    EmailCategory.OFFER: ApplicationStatus.OFFERED,
+    EmailCategory.REJECTION: ApplicationStatus.REJECTED,
+}
 
 
 class ClassificationMethod(str, Enum):

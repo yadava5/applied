@@ -1,13 +1,14 @@
 import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
+import { boardColumns, cardQualifier } from "@/lib/dashboard/board";
 import { filedAt, shortDate } from "@/lib/dashboard/dates";
-import { type Application, STAGES, qualifierOf, stageOf } from "@/lib/dashboard/summary";
+import { type Application, STAGES, stageOf } from "@/lib/dashboard/summary";
 
 /**
  * Read-only card for the public demo + sample previews: no correction controls
  * (they would 401 without a session). Still honours the real received date.
  */
-function StaticApplicationCard({ app }: { app: Application }) {
-  const qualifier = qualifierOf(app.status);
+function StaticApplicationCard({ app, columnLabel }: { app: Application; columnLabel: string }) {
+  const qualifier = cardQualifier(app.status, columnLabel);
   const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
   const filed = filedAt(app);
   return (
@@ -31,12 +32,17 @@ function StaticApplicationCard({ app }: { app: Application }) {
 }
 
 /**
- * Status-grouped pipeline board. `accepted` folds into the offered column and
- * `withdrawn` into rejected, each keeping a qualifier tag so no application is
- * ever invisible.
+ * Status-grouped pipeline board. `accepted` folds into the offered column, and
+ * the resolved column carries both `rejected` and `withdrawn` — so it is headed
+ * `closed`, the word `summary.ts` already uses for that bucket, and every card
+ * in it states its own status. It used to be headed `rejected`, which told a
+ * user who withdrew (and told their screen reader, via `aria-label`) that they
+ * had been rejected. Membership is unchanged and still comes from `stageOf`;
+ * only the heading moved. See `lib/dashboard/board.ts` for why withdrawn does
+ * not get a column of its own here.
  *
  * On the real dashboard (`interactive`, the default) each row is clickable +
- * correctable (open in Gmail, change stage, dismiss/delete). The public demo
+ * correctable (open in Gmail, change stage, remove/delete). The public demo
  * and sample previews pass `interactive={false}` for a read-only board so their
  * sample rows never fire real, auth-gated mutations.
  */
@@ -58,23 +64,23 @@ export function PipelineBoard({
 }) {
   return (
     <div className="grid items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {STAGES.map((stage) => {
-        const items = applications.filter((a) => stageOf(a.status) === stage.key);
+      {boardColumns(STAGES).map((column) => {
+        const items = applications.filter((a) => stageOf(a.status) === column.key);
         const overflowing = items.length > SCROLL_AFTER;
         return (
           <section
-            key={stage.key}
-            aria-label={`${stage.label} — ${items.length}`}
+            key={column.key}
+            aria-label={`${column.label} — ${items.length}`}
             className="flex flex-col rounded-xl border border-line-soft bg-surface p-3"
           >
             <div className="mb-2 flex items-baseline justify-between px-1">
               <span className="label-mono inline-flex items-center gap-1.5">
                 <span
                   className="h-1.5 w-1.5 rounded-full"
-                  style={{ background: stage.color }}
+                  style={{ background: column.color }}
                   aria-hidden="true"
                 />
-                {stage.label}
+                {column.label}
               </span>
               <span className="inline-flex items-baseline gap-1.5">
                 {overflowing ? (
@@ -95,9 +101,9 @@ export function PipelineBoard({
                 ) : (
                   items.map((app) =>
                     interactive ? (
-                      <ApplicationCard key={app.id} app={app} />
+                      <ApplicationCard key={app.id} app={app} columnLabel={column.label} />
                     ) : (
-                      <StaticApplicationCard key={app.id} app={app} />
+                      <StaticApplicationCard key={app.id} app={app} columnLabel={column.label} />
                     ),
                   )
                 )}

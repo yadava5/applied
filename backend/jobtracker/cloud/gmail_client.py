@@ -93,11 +93,17 @@ class HistoryPage:
 
     Either flag means ``messages`` is empty and must not be treated as "nothing
     new happened".
+
+    ``unreadable`` is the same number :class:`MessagePage` carries, for the same
+    reason: ids the history walk named but whose metadata could not be read
+    back. Without it an incremental sync reports ``unreadable: 0`` however much
+    it dropped, which is the defect the full-scan path just stopped having.
     """
 
     messages: list[CloudGmailMessage]
     expired: bool = False
     truncated: bool = False
+    unreadable: int = 0
 
     @property
     def usable(self) -> bool:
@@ -617,7 +623,7 @@ def _collect_history(
     # Gmail returns history oldest-first; the full scan returns newest-first.
     # Normalize so the two paths hand the pipeline the same ordering.
     out.sort(key=_received_sort_key, reverse=True)
-    return HistoryPage(messages=out)
+    return HistoryPage(messages=out, unreadable=len(ids) - len(out))
 
 
 def _received_sort_key(message: CloudGmailMessage) -> float:
