@@ -153,7 +153,10 @@ export const DEMO_APPLICATION_COUNT = APPLICATION_SEEDS.length;
  * Callers pass the SAME clock read they render with (`useLocalToday()`), and
  * re-date the store if that read changes — the seeds are offsets, so fixtures
  * dated against one day and bucketed against another shift every deadline
- * phrase on /demo by one. Resolved during render rather than at module load: a
+ * phrase on /demo by one. Re-dating means MAPPING the rows that are there onto
+ * the new dates, never installing a fresh store over them: see `redate` in
+ * DemoDashboard, which is where the reasoning (and the session a rebuild used
+ * to throw away) lives. Resolved during render rather than at module load: a
  * module-level resolution
  * freezes at process start, which on a long-lived dev server or a warm lambda
  * means the server renders yesterday's dates into HTML the browser then

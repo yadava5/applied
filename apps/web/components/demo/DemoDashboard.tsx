@@ -12,6 +12,7 @@ import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
+import { datedById, redate } from "@/lib/demo/redate";
 
 /**
  * The demo dashboard: the REAL components — SyncBar, PipelineBoard, the cards,
@@ -80,6 +81,7 @@ function buildStore(today: string): DemoBoard {
   return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
 }
 
+
 export function DemoDashboard() {
   // The day this demo is rendered against. UTC on the server and through
   // hydration, the visitor's own day once mounted — the same read the board,
@@ -102,25 +104,40 @@ export function DemoDashboard() {
     setSnapshot(next);
   }, []);
 
-  // The store was dated with the UTC day so the server's HTML and the first
+  // The store is dated with the UTC day so the server's HTML and the first
   // client render agree; once the visitor's real day is known and it differs,
   // the fixtures are re-dated against it. They MUST be: the seeds are offsets
   // ("due in 9d", "overdue 2d") and the board now buckets them against the
   // local day, so leaving the store on the UTC day would shift every phrase on
-  // /demo by one for the width of the visitor's UTC offset. `original` is
-  // rebuilt with them, or a rebuild's Restore would put back rows dated against
-  // the day that was just discarded. This fires at most once, immediately after
-  // hydration and before any fixture can have been touched.
-  // Deferred off the effect body (the house rule, the same shape the detail
-  // sheet's reset uses): the re-dating lands in a macrotask rather than as a
-  // synchronous setState inside an effect.
+  // /demo by one for the width of the visitor's UTC offset — and Kestrel's
+  // "due in 2d" would fall out of the pulse strip's ≤2d cell for every reader
+  // west of UTC.
+  //
+  // It re-dates what is THERE (`lib/demo/redate.ts`, which owns the rules and
+  // is unit-tested) instead of installing fresh fixtures. The old version
+  // committed `buildStore(today)`, which discarded whatever the visitor had
+  // already done; no guard fixes that, because the transports await 300ms
+  // before committing, so "has anything been touched yet" is false at exactly
+  // the instant it needs to be true. Mapping has no such window: the swap can
+  // land on either side of any commit and only dates move.
+  //
+  // `original` — the pristine rows a rebuild's Restore recovers from — is
+  // rebuilt outright, which is correct: by definition it holds no edits, and
+  // its rows must come back dated against the day the board is now showing.
+  //
+  // Not once-only, deliberately: a visitor whose own midnight passes while the
+  // page is open gets a second, equally harmless re-dating. Deferred off the
+  // effect body (the house rule, the same shape the detail sheet's reset uses)
+  // so it lands in a macrotask rather than as a synchronous setState.
   useEffect(() => {
     if (datedFor === today) return;
     const id = window.setTimeout(() => {
-      const next = buildStore(today);
-      original.current = [...next.apps, ...next.pool];
+      const pristine = buildStore(today);
+      const dated = datedById([...pristine.apps, ...pristine.pool]);
+      const s = store.current;
+      original.current = [...pristine.apps, ...pristine.pool];
       setDatedFor(today);
-      commit(next);
+      commit({ ...s, apps: redate(s.apps, dated), pool: redate(s.pool, dated) });
     }, 0);
     return () => window.clearTimeout(id);
   }, [today, datedFor, commit]);
