@@ -309,9 +309,13 @@ export interface paths {
          *     - The row is retained for its EARLIEST cluster, so its id survives and every
          *       contact, interview and user correction stays attached to the application
          *       that has been on the board longest.
-         *     - Each sibling's status is recomputed from its own mail rather than
-         *       inherited. The row may already be terminal, and a terminal status is never
-         *       left, so inheriting would give every sibling one requisition's rejection.
+         *     - EVERY row's status is recomputed from its own mail rather than inherited —
+         *       the siblings' and the retained row's alike. The row may already be
+         *       terminal, and a terminal status is never left, so inheriting would give
+         *       every sibling one requisition's rejection; leaving the retained row alone
+         *       (which is what it used to do) leaves that same rejection on the one row
+         *       whose remaining mail no longer contains it. The retained row is recomputed
+         *       only when it is still sync-owned — a stage the user set survives a split.
          *     - Nothing is deleted and no mail is discarded: the messages are re-pointed,
          *       and anything that names no role stays with the retained row.
          *
