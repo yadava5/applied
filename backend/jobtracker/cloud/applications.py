@@ -880,6 +880,19 @@ async def upsert_applications_for_user(
                 )
                 if new_status != existing.status:
                     existing.status = new_status
+                # Re-take the employer's display name. The sync owns an auto
+                # row's company, and until the name resolution improved it wrote
+                # some wrong ones — "Twitchjobs" from no-reply@twitchjobs.tv,
+                # "Doordash" from a title-cased domain label. Without this, a fix
+                # to the resolver only ever reaches rows created after it, and
+                # the wrong spelling sits on the board forever. Guarded on the
+                # token so this can only ever restyle the SAME employer, never
+                # rename a row to a different one.
+                if (
+                    r.company_display != existing.company
+                    and pipeline.matches_company_token(existing.company, r.company_token)
+                ):
+                    existing.company = r.company_display
             if r.role and not existing.position:
                 existing.position = r.role
             if r.applied_at and existing.applied_date is None:
