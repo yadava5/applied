@@ -77,12 +77,13 @@ class _Messages:
         )
         idx = 0 if pageToken is None else int(pageToken)
         ids, next_token = self._s.pages[idx]
-        return _Exec(
-            {
-                "messages": [{"id": i} for i in ids[:maxResults]],
-                "nextPageToken": next_token,
-            }
-        )
+        listing: dict = {
+            "messages": [{"id": i} for i in ids[:maxResults]],
+            "nextPageToken": next_token,
+        }
+        if self._s.result_size_estimate is not None:
+            listing["resultSizeEstimate"] = self._s.result_size_estimate
+        return _Exec(listing)
 
     def get(self, *, userId: str, id: str, format: str, metadataHeaders):  # noqa: A002,N803
         return _GetRequest(id)
@@ -156,6 +157,11 @@ class _Batch:
     def execute(self) -> None:
         self._s.batch_sizes.append(len(self._items))
         for request_id, _request in self._items:
+            if request_id in self._s.batch_errors:
+                # Gmail answered this sub-request with an error; the real client
+                # hands the callback an exception and no response.
+                self._cb(request_id, None, RuntimeError("sub-request failed"))
+                continue
             self._cb(request_id, self._s.metadata.get(request_id), None)
 
 
@@ -170,12 +176,18 @@ class FakeService:
         history_pages=None,
         history_error: Exception | None = None,
         profile_history_id: str | None = None,
+        batch_errors: set | None = None,
+        result_size_estimate: object = None,
     ) -> None:
         # pages: list[(ids, next_page_token)]; metadata: {id: raw|None}
         self.pages = pages
         self.metadata = metadata
         self.list_calls: list[dict] = []
         self.batch_sizes: list[int] = []
+        # ids whose metadata sub-request fails outright (vs. answering empty)
+        self.batch_errors = batch_errors or set()
+        # Gmail's own ``resultSizeEstimate``; ``None`` omits the field entirely.
+        self.result_size_estimate = result_size_estimate
         # history_pages: list[(history_records, next_page_token)]
         self.history_pages = history_pages or []
         self.history_error = history_error
@@ -231,6 +243,116 @@ def test_collect_page_drops_failed_metadata(monkeypatch: pytest.MonkeyPatch) -> 
     page = _collect_page(service, query="in:inbox", page_size=500, page_token=None)
     assert [m.message_id for m in page.messages] == ["a", "c"]
     assert page.next_page_token is None
+
+
+def test_collect_page_counts_what_it_could_not_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shrinking page has to SAY it shrank.
+
+    Dropping failed sub-requests silently means "scanned 2" is reported for a
+    page of 3, indistinguishable from a mailbox that only held 2. Both ways a
+    message can vanish are counted: a sub-request that errored, and one that
+    answered with nothing.
+    """
+
+    monkeypatch.setattr(gc.settings, "gmail_batch_size", 100)
+    ids = ["a", "b", "c", "d"]
+    metadata = {
+        "a": _raw("a", "S", "a@corp.com", "Mon, 01 Jul 2026 12:00:00 +0000"),
+        "b": None,  # answered with nothing
+        "c": _raw("c", "S", "c@corp.com", "Mon, 01 Jul 2026 12:00:00 +0000"),
+        "d": _raw("d", "S", "d@corp.com", "Mon, 01 Jul 2026 12:00:00 +0000"),
+    }
+    service = FakeService(pages=[(ids, None)], metadata=metadata, batch_errors={"d"})
+
+    page = _collect_page(service, query="in:inbox", page_size=500, page_token=None)
+    assert [m.message_id for m in page.messages] == ["a", "c"]
+    assert page.unreadable == 2
+    # The page adds up: what came back plus what was lost is what was listed.
+    assert len(page.messages) + page.unreadable == len(ids)
+
+
+def test_batch_fetch_metadata_reports_its_own_drops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The count is derived from what came back, not from the callback's arg.
+
+    An id answered with an empty body reaches the callback with
+    ``exception=None``, so counting exceptions would report zero drops while a
+    message genuinely disappeared.
+    """
+
+    monkeypatch.setattr(gc.settings, "gmail_batch_size", 100)
+    metadata = {
+        "a": _raw("a", "S", "a@corp.com", "Mon, 01 Jul 2026 12:00:00 +0000"),
+        "b": None,
+    }
+    service = FakeService(pages=[(["a", "b"], None)], metadata=metadata)
+
+    fetched = gc._batch_fetch_metadata(
+        service, ["a", "b"], batch_size=100, pause_seconds=0.0
+    )
+    assert set(fetched.messages) == {"a"}
+    assert fetched.dropped == 1
+
+
+def test_unparseable_metadata_also_counts_as_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Metadata that arrives but will not parse shrinks the page just the same."""
+
+    monkeypatch.setattr(gc.settings, "gmail_batch_size", 100)
+    metadata = {
+        "a": _raw("a", "S", "a@corp.com", "Mon, 01 Jul 2026 12:00:00 +0000"),
+        "b": {"id": "b", "payload": "not-a-mapping"},  # parse fails → dropped
+    }
+    service = FakeService(pages=[(["a", "b"], None)], metadata=metadata)
+
+    page = _collect_page(service, query="in:inbox", page_size=500, page_token=None)
+    assert [m.message_id for m in page.messages] == ["a"]
+    assert page.unreadable == 1
+
+
+def test_collect_page_carries_gmails_result_size_estimate() -> None:
+    """The progress denominator comes through — as an estimate, coerced safely."""
+
+    metadata = {"a": _raw("a", "S", "a@c.com", "Mon, 01 Jul 2026 12:00:00 +0000")}
+    service = FakeService(
+        pages=[(["a"], "NEXT")], metadata=metadata, result_size_estimate=2000
+    )
+    page = _collect_page(service, query="in:inbox", page_size=500, page_token=None)
+    assert page.result_size_estimate == 2000
+
+    # Absent → None (never a fabricated 0, which would read as "nothing here").
+    bare = FakeService(pages=[(["a"], None)], metadata=metadata)
+    assert (
+        _collect_page(bare, query="in:inbox", page_size=500, page_token=None)
+    ).result_size_estimate is None
+
+    # Junk or negative → None / clamped, never handed on as a denominator.
+    junk = FakeService(
+        pages=[(["a"], None)], metadata=metadata, result_size_estimate="lots"
+    )
+    assert (
+        _collect_page(junk, query="in:inbox", page_size=500, page_token=None)
+    ).result_size_estimate is None
+    negative = FakeService(
+        pages=[(["a"], None)], metadata=metadata, result_size_estimate=-5
+    )
+    assert (
+        _collect_page(negative, query="in:inbox", page_size=500, page_token=None)
+    ).result_size_estimate == 0
+
+
+def test_empty_page_still_carries_the_estimate() -> None:
+    """A page with no ids returns early — and must not lose the estimate there."""
+
+    service = FakeService(pages=[([], None)], metadata={}, result_size_estimate=1200)
+    page = _collect_page(service, query="in:inbox", page_size=500, page_token=None)
+    assert page.messages == []
+    assert page.result_size_estimate == 1200
+    assert page.unreadable == 0
 
 
 def test_collect_page_empty_listing_returns_cursor_only() -> None:

@@ -337,7 +337,10 @@ export default async function DashboardPage() {
     count,
     color: stage.color,
   }));
-  const reviewNote = state.needsReview > 0 ? ` · ${state.needsReview} need classification` : "";
+  const reviewNote =
+    state.needsReview > 0
+      ? ` · ${state.needsReview} ${state.needsReview === 1 ? "needs" : "need"} classification`
+      : "";
   const subtitle = `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
   }${reviewNote}`;

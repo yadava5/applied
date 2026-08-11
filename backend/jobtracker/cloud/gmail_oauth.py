@@ -170,6 +170,16 @@ class InboxResponse(BaseModel):
     query: str
     scope: str
     range_months: int | None = None
+    # How many messages this page LISTED but could not read back (a dropped
+    # Gmail metadata sub-request, or metadata that would not parse). ``scanned``
+    # counts only what was read, so without this a page that lost 60 of 2,000
+    # messages reports 1,940 as though that were the whole mailbox.
+    unreadable: int = 0
+    # Gmail's own ``resultSizeEstimate`` for the query — an ESTIMATE, not a
+    # count. Gmail documents it as approximate and it drifts between pages of
+    # the same query, so a client using it as a progress denominator must clamp
+    # it (never below what it has already fetched) and label it as approximate.
+    result_size_estimate: int | None = None
 
 
 class PipelineItemIn(BaseModel):
@@ -230,7 +240,10 @@ class SyncRequest(BaseModel):
     - ``"rebuild"``: the destructive purge+rebuild — wipe the Gmail-derived board
       and rebuild it from this scan. Reserved for the EXPLICIT user "Re-sync"
       button (a deliberate "start clean"); manual/user-corrected rows are still
-      preserved.
+      preserved. **Server-fetch only**: ``mode="rebuild"`` together with
+      ``items`` is REJECTED with 400, because a purge may only be computed from
+      a scan the server made itself with ``scope="anywhere"``. Relayed items are
+      additive-only.
     """
 
     items: list[PipelineItemIn] | None = None
@@ -878,6 +891,8 @@ async def gmail_inbox(
         query=query,
         scope=mail_scope,
         range_months=range_months,
+        unreadable=page.unreadable,
+        result_size_estimate=page.result_size_estimate,
         note=(
             "Classified from subject + Gmail snippet using the rules-only cloud "
             "classifier (gmail.readonly). Full-body + SetFit classification runs "
@@ -1219,7 +1234,8 @@ async def gmail_sync(
     12-month window on every single visit.
 
     Persistence is ``additive`` by default (durable upsert-only) and only
-    ``rebuild`` on the explicit "Re-sync" button. Either way the upsert is
+    ``rebuild`` on the explicit "Re-sync" button — which must be a server-side
+    scan, so ``items`` + ``mode="rebuild"`` is a 400. Either way the upsert is
     idempotent (re-running never duplicates) and metadata-only (no bodies are
     stored), and the orphan reconciliation runs on BOTH paths — including an
     incremental run that found nothing, so a stranded classification can never
@@ -1242,6 +1258,39 @@ async def gmail_sync(
     # as additive so a stray param can never trigger a data-wiping rebuild.
     mode = (payload.mode or "additive").strip().lower()
     rebuild = mode == "rebuild"
+
+    # INVARIANT: a purge only ever comes from a SERVER-side scan with
+    # ``scope="anywhere"``. Relayed ``items`` are additive-only, structurally.
+    #
+    # ``_scan_server_side`` forces ``in:anywhere`` for a rebuild precisely so a
+    # scan that may REMOVE rows can see the archived mail it is judging. That
+    # guard covers the server-fetch path and nothing else: a client that relays
+    # its own ``items`` picked the window and the scope itself, and the purge
+    # would then compute its coverage from a scan the server never made and
+    # cannot characterise. A ``scope=inbox`` mine relayed as a rebuild is the
+    # 2026-08-10 data loss with an extra step.
+    #
+    # Refused rather than silently coerced to additive: no shipped client sends
+    # this combination, so nothing legitimate breaks, and a future "scan deeper"
+    # button that got its wiring wrong must fail loudly in development instead
+    # of reporting rebuild counts (``purged``, ``removed``) for a run that
+    # quietly removed nothing.
+    if rebuild and payload.items is not None:
+        logger.warning(
+            "Refused a client-relayed rebuild for user_id=%s (%s relayed items): "
+            "purges may only come from a server-side anywhere-scope scan.",
+            user_id,
+            len(payload.items),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "A rebuild cannot be run from relayed items. Only a server-side "
+                "scan (which searches all mail, including archived) may remove "
+                "applications. Send the items with mode='additive', or omit "
+                "them and let the server scan."
+            ),
+        )
 
     # The linked address keys the cursor row. ``None`` means Gmail is not
     # connected — an items-only relay can still persist, there is just nothing to

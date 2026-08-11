@@ -595,6 +595,51 @@ async def test_inbox_forwards_filters_to_query_and_pagination(
     assert body["query"] == "in:anywhere newer_than:6m"
 
 
+async def test_inbox_reports_unreadable_messages_and_the_size_estimate(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page tells the caller what it lost and roughly how much is out there.
+
+    ``scanned`` counts what was read. On its own that is a smaller number
+    presented as the whole, so ``unreadable`` travels with it — and Gmail's own
+    ``resultSizeEstimate`` comes through as the (approximate) denominator a
+    progress readout needs.
+    """
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import MessagePage
+
+    async def _fake_page(user_id, *, query, page_size, page_token):
+        return MessagePage(
+            messages=[],
+            next_page_token=None,
+            unreadable=60,
+            result_size_estimate=2000,
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    resp = await client.get(
+        "/gmail/inbox", headers={"Authorization": f"Bearer {_token_for(USER_A)}"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["unreadable"] == 60
+    assert body["result_size_estimate"] == 2000
+
+    # Defaults stay honest when the transport says nothing about either.
+    async def _quiet_page(user_id, *, query, page_size, page_token):
+        return MessagePage(messages=[], next_page_token=None)
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _quiet_page)
+    quiet = await client.get(
+        "/gmail/inbox?range=6",  # a different cache key, so not the entry above
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert quiet.json()["unreadable"] == 0
+    assert quiet.json()["result_size_estimate"] is None
+
+
 async def test_inbox_unknown_range_falls_back_to_all_time(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -980,8 +1025,29 @@ def _noise_item(mid: str, received_at: str = "2026-05-01T09:00:00+00:00") -> dic
     }
 
 
+def _noise_msg(message_id: str, day: int) -> Any:
+    """:func:`_noise_item`'s server-scan twin — the same message, re-fetched.
+
+    A rebuild can only run as a server-side scan now, so contradiction evidence
+    has to arrive as a Gmail message rather than a relayed verdict. The real
+    rules classifier calls this ``other`` at 0.50, so it rolls up to nothing and
+    is not review-worthy: it contributes exactly its id and its date to the
+    scan's coverage, which is what makes it evidence AGAINST a row filed from
+    the same id.
+    """
+
+    return _msg(
+        message_id,
+        subject="Hire pre-vetted developers",
+        sender="news@turing.com",
+        snippet="Hire pre-vetted developers from Turing, on demand.",
+        day=day,
+        name="Turing",
+    )
+
+
 async def test_auto_sync_is_additive_and_rebuild_purges_only_contradicted(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Neither sync mode may drop an app on the strength of a scan's silence.
 
@@ -990,23 +1056,30 @@ async def test_auto_sync_is_additive_and_rebuild_purges_only_contradicted(
     the reasoning that deleted two real applications on 2026-08-10, so the
     expectation is corrected here: a rebuild that never re-read m-tcs removes
     nothing, and only one that re-read it and no longer files it may clear TCS.
+
+    Every rebuild here drives the SERVER-side scan, because relayed ``items``
+    can no longer be a rebuild at all (a client picks its own scope, so its
+    coverage cannot license a purge). The additive halves still relay items —
+    that path is untouched.
     """
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
 
+    tcs_msg = _ats_msg("m-tcs", "Tata", "tcs.com", day=1)
+    aven_msg = _ats_msg("m-aven", "Aven", "aven.com", day=2)
+
     # Sync A (additive by default) files TCS.
-    respA = await client.post(
-        "/gmail/sync", json={"items": _one_app_batch("m-tcs", "tcs.com", "Tata")}, headers=headers
-    )
+    _install_gmail_stubs(monkeypatch, full_messages=[tcs_msg], profile_ids=["9001"])
+    respA = await client.post("/gmail/sync", json={}, headers=headers)
     assert respA.status_code == 200, respA.text
     listA = (await client.get("/applications", headers=headers)).json()
     assert listA["total"] == 1
     tcs_company = listA["applications"][0]["company"]
 
     # Sync B (additive) scans a DIFFERENT window — only Aven, TCS not included.
-    respB = await client.post(
-        "/gmail/sync", json={"items": _one_app_batch("m-aven", "aven.com", "Aven")}, headers=headers
-    )
+    _install_gmail_stubs(monkeypatch, full_messages=[aven_msg], profile_ids=["9002"])
+    respB = await client.post("/gmail/sync", json={}, headers=headers)
     assert respB.status_code == 200, respB.text
     assert respB.json()["purged"] == 0  # additive removes nothing
     listB = (await client.get("/applications", headers=headers)).json()
@@ -1017,11 +1090,7 @@ async def test_auto_sync_is_additive_and_rebuild_purges_only_contradicted(
 
     # A rebuild that merely fails to mention TCS removes NOTHING. Absence is
     # not evidence, whichever mode asked the question.
-    respC = await client.post(
-        "/gmail/sync",
-        json={"items": _one_app_batch("m-aven", "aven.com", "Aven"), "mode": "rebuild"},
-        headers=headers,
-    )
+    respC = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert respC.status_code == 200, respC.text
     assert respC.json()["purged"] == 0
     listC = (await client.get("/applications", headers=headers)).json()
@@ -1029,17 +1098,12 @@ async def test_auto_sync_is_additive_and_rebuild_purges_only_contradicted(
 
     # A rebuild that RE-READ m-tcs and now calls it marketing has actually
     # contradicted the row — that, and only that, clears TCS.
-    respD = await client.post(
-        "/gmail/sync",
-        json={
-            "items": [
-                *_one_app_batch("m-aven", "aven.com", "Aven"),
-                _noise_item("m-tcs"),
-            ],
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[aven_msg, _noise_msg("m-tcs", day=1)],
+        profile_ids=["9003"],
     )
+    respD = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert respD.status_code == 200, respD.text
     assert respD.json()["purged"] == 1
     # The response NAMES what it removed, so the button can say so.
@@ -1194,20 +1258,26 @@ async def test_review_item_classify_creates_sticky_application(client: AsyncClie
     assert not any(i["message_id"] == "rv1" for i in review2["items"])
 
 
-async def test_resync_purges_stale_auto_but_preserves_manual(client: AsyncClient) -> None:
+async def test_resync_purges_stale_auto_but_preserves_manual(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Rebuild clears a CONTRADICTED auto row; the manual row is untouched.
 
     The rebuild half was rewritten after the 2026-08-10 data loss: it used to
     assert that a scan omitting Airbnb clears Airbnb, which is the reasoning
-    that destroyed two real applications.
+    that destroyed two real applications. It now also runs its rebuilds through
+    the SERVER scan, because a relayed item set is refused as a rebuild.
 
-    Depends on ``_owner_batch``'s dates: the scan's coverage span runs
-    2026-05-15 … 2026-06-04, and m-airbnb (2026-05-20) has to fall inside it for
-    the row to be removable at all. Move those dates and this test quietly stops
-    testing what it says it does.
+    Every message here carries a date from ``_msg`` (July 2026), so the scan's
+    coverage span and the stored rows' dates come from one source and cannot
+    drift apart.
     """
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    stripe_msg = _ats_msg("m-stripe", "Stripe", "stripe.com", day=1)
+    airbnb_msg = _ats_msg("m-airbnb", "Airbnb", "airbnb.com", day=2)
 
     # A hand-filed application the user owns.
     manual = await client.post(
@@ -1217,24 +1287,24 @@ async def test_resync_purges_stale_auto_but_preserves_manual(client: AsyncClient
     assert manual.json()["source"] == "manual"
 
     # First sync produces Stripe + Airbnb (auto).
-    await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
+    _install_gmail_stubs(
+        monkeypatch, full_messages=[stripe_msg, airbnb_msg], profile_ids=["9001"]
+    )
+    await client.post("/gmail/sync", json={}, headers=headers)
     companies = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
     assert {"MyStartup", "Stripe", "Airbnb"} <= companies
 
-    only_stripe = [i for i in _owner_batch() if i["message_id"] != "m-airbnb"]
-
     # A routine ADDITIVE sync that no longer includes Airbnb must NOT purge it —
     # a bounded scan missing a company is not evidence the application is gone.
-    add_resp = await client.post("/gmail/sync", json={"items": only_stripe}, headers=headers)
+    _install_gmail_stubs(monkeypatch, full_messages=[stripe_msg], profile_ids=["9002"])
+    add_resp = await client.post("/gmail/sync", json={}, headers=headers)
     assert add_resp.json()["purged"] == 0
     companies_add = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
     assert "Airbnb" in companies_add  # durable — additive kept it
 
     # Neither does a REBUILD on the same silent scan — it never re-read
     # m-airbnb, so it holds no evidence about the Airbnb row at all.
-    silent = await client.post(
-        "/gmail/sync", json={"items": only_stripe, "mode": "rebuild"}, headers=headers
-    )
+    silent = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert silent.json()["purged"] == 0
     assert silent.json()["removed"] == []
     companies_silent = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
@@ -1242,14 +1312,12 @@ async def test_resync_purges_stale_auto_but_preserves_manual(client: AsyncClient
 
     # A rebuild that RE-READ m-airbnb and no longer files it does clear the
     # stale AUTO row — while the manual row survives untouched.
-    resp = await client.post(
-        "/gmail/sync",
-        json={
-            "items": [*only_stripe, _noise_item("m-airbnb", "2026-05-20T09:00:00+00:00")],
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[stripe_msg, _noise_msg("m-airbnb", day=2)],
+        profile_ids=["9003"],
     )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert resp.json()["purged"] == 1
     assert [r["company"] for r in resp.json()["removed"]] == ["Airbnb"]
     companies2 = {a["company"] for a in (await client.get("/applications", headers=headers)).json()["applications"]}
@@ -1518,12 +1586,20 @@ async def test_resync_does_not_revert_a_user_corrected_verdict(client: AsyncClie
     assert replit["status"] == "interviewing"
 
 
-async def test_rebuild_does_not_unlink_a_user_classified_email(client: AsyncClient) -> None:
+async def test_rebuild_does_not_unlink_a_user_classified_email(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A rebuild persists review items unfiltered; that must not clear a link.
 
     Without the guard, ``_persist_review_items`` writes ``application_id=None``
     over the row the user just filed, un-filing the application on the next
     explicit Re-sync.
+
+    The message is an ATS-relay interview whose employer the pipeline cannot
+    name (``no-reply@greenhouse-mail.io`` fronting a display name that is just
+    the relay). It is confidently a lifecycle mail and still unfileable, so it
+    goes to the review queue on every pass — including the rebuild's own scan,
+    which is what makes it the right probe for this guard.
     """
 
     from sqlmodel import select as sm_select
@@ -1531,24 +1607,62 @@ async def test_rebuild_does_not_unlink_a_user_classified_email(client: AsyncClie
     from jobtracker.database import get_session
     from jobtracker.database.models import Email
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
-    item = await _classify_replit_review_item(client, headers)
-    app_id = (await client.get("/applications", headers=headers)).json()["applications"][0]["id"]
 
-    # The classifier still thinks it is a 0.78 guess, so it re-enters the review
-    # set on the explicit rebuild.
-    resp = await client.post(
-        "/gmail/sync", json={"items": [item], "mode": "rebuild"}, headers=headers
+    relayed = [
+        {
+            "message_id": "rv-relay",
+            "category": "interview",
+            "sender_email": "no-reply@greenhouse-mail.io",
+            "sender_name": "Greenhouse",
+            "subject": "Interview invitation",
+            "confidence": 0.95,
+            "received_at": "2026-07-01T12:00:00+00:00",
+        }
+    ]
+    await client.post("/gmail/sync", json={"items": relayed}, headers=headers)
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    assert [i["message_id"] for i in queue["items"]] == ["rv-relay"]
+
+    # The user supplies the employer the mail never named — that files a sticky
+    # row and links the message to it.
+    classified = await client.post(
+        "/applications/review/rv-relay/classify",
+        json={"category": "interview", "company": "Replit"},
+        headers=headers,
     )
+    assert classified.status_code == 200, classified.text
+    app_id = classified.json()["application_id"]
+    assert app_id is not None
+
+    # The rebuild's own scan re-reads the same message and still cannot name the
+    # employer, so it re-enters the review set and the ref it writes carries
+    # ``application_id=None``.
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[
+            _msg(
+                "rv-relay",
+                subject="Interview invitation",
+                sender="no-reply@greenhouse-mail.io",
+                snippet="We would like to schedule a chat.",
+                day=1,
+                name="Greenhouse",
+            )
+        ],
+        profile_ids=["9001"],
+    )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert resp.status_code == 200, resp.text
 
     async with get_session() as session:
         email = (
-            await session.exec(sm_select(Email).where(Email.message_id == "rv-replit"))
+            await session.exec(sm_select(Email).where(Email.message_id == "rv-relay"))
         ).first()
     assert email is not None and email.application_id == app_id
     detail = (await client.get(f"/applications/{app_id}", headers=headers)).json()
-    assert [m["message_id"] for m in detail["messages"]] == ["rv-replit"]
+    assert [m["message_id"] for m in detail["messages"]] == ["rv-relay"]
 
 
 # =============================================================================
@@ -2314,8 +2428,76 @@ async def test_rebuild_never_deletes_rows_the_scan_could_not_see(
     assert {"m-anthropic", "m-motherduck", "m-supabase"} <= message_ids
 
 
-async def test_rebuild_does_not_destroy_review_items_the_scan_could_not_see(
+async def test_client_relayed_items_can_never_run_a_rebuild(
     client: AsyncClient,
+) -> None:
+    """``items`` + ``mode="rebuild"`` is REFUSED — the incident, re-armed.
+
+    The forced ``in:anywhere`` scope guards the server-scan path only. A client
+    that relays its own ``items`` chooses the window and the scope itself, and
+    the purge would compute its coverage from whatever that client happened to
+    read. Here Aven is filed from two messages — one still in the inbox, one
+    archived. A client scan with ``scope=inbox`` re-reads the inbox message and
+    never sees the archived one, but the archived message's date falls INSIDE
+    the span the scan reached, so date-containment alone declares the row
+    contradicted and removes it. That is precisely the 2026-08-10 deletion,
+    reachable through a different door.
+
+    Against the pre-fix code this fails twice over: the request is accepted and
+    the Aven row is purged.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    # Aven filed from TWO messages: 2026-05-10 (inbox) and 2026-05-05 (later
+    # archived by the user, so an ``in:inbox`` scan cannot return it).
+    filed = [
+        {
+            "message_id": "m-aven-inbox",
+            "category": "applied",
+            "sender_email": "careers@aven.com",
+            "subject": "Thanks for applying to the Engineer role at Aven",
+            "sender_name": "Aven",
+            "confidence": 0.95,
+            "received_at": "2026-05-10T09:00:00+00:00",
+        },
+        {
+            "message_id": "m-aven-archived",
+            "category": "interview",
+            "sender_email": "careers@aven.com",
+            "subject": "Interview with Aven",
+            "sender_name": "Aven",
+            "confidence": 0.95,
+            "received_at": "2026-05-05T09:00:00+00:00",
+        },
+    ]
+    first = await client.post("/gmail/sync", json={"items": filed}, headers=headers)
+    assert first.status_code == 200, first.text
+    assert "aven" in await _companies(client, headers)
+
+    # The client's own (inbox-scoped) scan: it re-read m-aven-inbox and no
+    # longer files it, plus one older message that widens the span to 05-01 —
+    # so 2026-05-05 sits inside a span the scan never actually reached into.
+    relayed = [
+        _noise_item("m-aven-inbox", "2026-05-10T09:00:00+00:00"),
+        *_one_app_batch("m-other", "othercorp.com", "Othercorp"),
+    ]
+    resp = await client.post(
+        "/gmail/sync", json={"items": relayed, "mode": "rebuild"}, headers=headers
+    )
+
+    # The property that matters, asserted before the status code: nothing went.
+    assert "aven" in await _companies(client, headers), (
+        "a client-relayed rebuild purged a row whose archived mail it never "
+        "read — date-span containment is not message-id membership"
+    )
+    # And the refusal itself: a relayed item set may not be a rebuild at all.
+    assert resp.status_code == 400, resp.text
+    assert "rebuild" in resp.json()["detail"].lower()
+
+
+async def test_rebuild_does_not_destroy_review_items_the_scan_could_not_see(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The same error, one table over: the queue is rebuilt, not emptied.
 
@@ -2328,6 +2510,7 @@ async def test_rebuild_does_not_destroy_review_items_the_scan_could_not_see(
     test cannot catch it).
     """
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     uncertain = {
         "message_id": "rv-archived",
@@ -2344,14 +2527,12 @@ async def test_rebuild_does_not_destroy_review_items_the_scan_could_not_see(
 
     # A rebuild whose scan never re-read rv-archived (it was archived) must not
     # decide the question was resolved.
-    resp = await client.post(
-        "/gmail/sync",
-        json={
-            "items": _one_app_batch("m-aven", "aven.com", "Aven"),
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_ats_msg("m-aven", "Aven", "aven.com", day=1)],
+        profile_ids=["9001"],
     )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert resp.status_code == 200, resp.text
     queue_after = (await client.get("/applications/review", headers=headers)).json()
     assert [i["message_id"] for i in queue_after["items"]] == ["rv-archived"], (
@@ -2360,7 +2541,7 @@ async def test_rebuild_does_not_destroy_review_items_the_scan_could_not_see(
 
 
 async def test_rebuild_clears_queue_items_the_scan_did_re_read(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The queue still gets REBUILT — for the part of it the scan re-covered.
 
@@ -2368,6 +2549,7 @@ async def test_rebuild_clears_queue_items_the_scan_did_re_read(
     scan re-read and now files confidently leaves the queue, exactly as before.
     """
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     uncertain = {
         "message_id": "rv-seen",
@@ -2381,12 +2563,14 @@ async def test_rebuild_clears_queue_items_the_scan_did_re_read(
     await client.post("/gmail/sync", json={"items": [uncertain]}, headers=headers)
     assert (await client.get("/applications/review", headers=headers)).json()["total"] == 1
 
-    # Re-read at high confidence: it becomes a real row and leaves the queue.
-    resp = await client.post(
-        "/gmail/sync",
-        json={"items": [{**uncertain, "confidence": 0.95}], "mode": "rebuild"},
-        headers=headers,
+    # Re-read by the rebuild's own scan as a confident application: it becomes a
+    # real row and leaves the queue.
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_ats_msg("rv-seen", "Replit", "replit.com", day=1)],
+        profile_ids=["9001"],
     )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert resp.status_code == 200, resp.text
     assert (await client.get("/applications/review", headers=headers)).json()["total"] == 0
     assert "replit" in await _companies(client, headers)
@@ -2438,49 +2622,38 @@ async def test_rebuild_forces_anywhere_scope_whatever_the_caller_asks_for(
 
 
 async def test_rebuild_keeps_a_row_whose_older_mail_the_scan_never_reached(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Re-reading ONE of a row's messages does not license removing the row.
 
-    Cedartech is filed from two messages: an April confirmation and a May
-    interview. A rebuild whose scan only reaches back to May re-reads the May
-    message and no longer files it — but the April message, which is the actual
-    application confirmation, is older than anything the scan saw. Removing on
-    that basis would be guessing about the half it never read.
+    Cedartech is filed from two messages: an early confirmation and a later
+    interview. A rebuild whose scan only reaches the later one re-reads it and
+    no longer files it — but the confirmation, which is the actual application
+    evidence, was never in the scan at all. Removing on that basis would be
+    guessing about the half it never read.
     """
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
 
-    def _cedartech(message_id: str, category: str, received_at: str) -> dict:
-        return {
-            "message_id": message_id,
-            "category": category,
-            "sender_email": "careers@cedartech.com",
-            "subject": f"{'We received your application to' if category == 'applied' else 'Interview with'} Cedartech",
-            "sender_name": "Cedartech",
-            "confidence": 0.95,
-            "received_at": received_at,
-        }
-
-    filed = [
-        _cedartech("m-old", "applied", "2026-04-01T09:00:00+00:00"),
-        _cedartech("m-new", "interview", "2026-05-10T09:00:00+00:00"),
-    ]
-    await client.post("/gmail/sync", json={"items": filed}, headers=headers)
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_applied_msg("m-old", day=1), _interview_msg("m-new", day=10)],
+        profile_ids=["9001"],
+    )
+    await client.post("/gmail/sync", json={}, headers=headers)
     assert "cedartech" in await _companies(client, headers)
 
-    # Scan span is [2026-05-01, 2026-05-10] — m-old (April) is out of reach.
-    shallow = await client.post(
-        "/gmail/sync",
-        json={
-            "items": [
-                *_one_app_batch("m-aven", "aven.com", "Aven"),
-                _noise_item("m-new", "2026-05-10T09:00:00+00:00"),
-            ],
-            "mode": "rebuild",
-        },
-        headers=headers,
+    # The scan re-reads m-new only; m-old was never returned.
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[
+            _ats_msg("m-aven", "Aven", "aven.com", day=11),
+            _noise_msg("m-new", day=10),
+        ],
+        profile_ids=["9002"],
     )
+    shallow = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert shallow.status_code == 200, shallow.text
     assert shallow.json()["purged"] == 0
     assert "cedartech" in await _companies(client, headers)
@@ -2488,25 +2661,23 @@ async def test_rebuild_keeps_a_row_whose_older_mail_the_scan_never_reached(
     # A scan that DID reach both messages, and files neither, has read the whole
     # case against the row — so this one removes it. (Which is what makes the
     # assertion above a real guard and not a coincidence.)
-    deep = await client.post(
-        "/gmail/sync",
-        json={
-            "items": [
-                _noise_item("m-old", "2026-04-01T09:00:00+00:00"),
-                _noise_item("m-new", "2026-05-10T09:00:00+00:00"),
-                *_one_app_batch("m-aven", "aven.com", "Aven"),
-            ],
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[
+            _noise_msg("m-old", day=1),
+            _noise_msg("m-new", day=10),
+            _ats_msg("m-aven", "Aven", "aven.com", day=11),
+        ],
+        profile_ids=["9003"],
     )
+    deep = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert deep.json()["purged"] == 1
     assert [r["company"] for r in deep.json()["removed"]] == ["Cedartech"]
     assert "cedartech" not in await _companies(client, headers)
 
 
 async def test_rebuild_keeps_an_auto_row_with_no_linked_mail(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No linked email means no evidence to re-read — staleness is unprovable."""
 
@@ -2515,6 +2686,7 @@ async def test_rebuild_keeps_an_auto_row_with_no_linked_mail(
     from jobtracker.database import get_session
     from jobtracker.database.models import Application
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
 
     async with get_session() as session:
@@ -2528,45 +2700,43 @@ async def test_rebuild_keeps_an_auto_row_with_no_linked_mail(
         )
         await session.commit()
 
-    resp = await client.post(
-        "/gmail/sync",
-        json={
-            "items": _one_app_batch("m-aven", "aven.com", "Aven"),
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_ats_msg("m-aven", "Aven", "aven.com", day=1)],
+        profile_ids=["9001"],
     )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["purged"] == 0
     assert "ghostco" in await _companies(client, headers)
 
 
 async def test_rebuild_reports_what_it_filed_and_what_it_removed(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The counts the button renders: "N filed, M removed", with the names."""
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
-    await client.post(
-        "/gmail/sync",
-        json={"items": _one_app_batch("m-tcs", "tcs.com", "Tata")},
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_ats_msg("m-tcs", "Tata", "tcs.com", day=1)],
+        profile_ids=["9001"],
     )
+    await client.post("/gmail/sync", json={}, headers=headers)
     filed_company = (await client.get("/applications", headers=headers)).json()[
         "applications"
     ][0]["company"]
 
-    resp = await client.post(
-        "/gmail/sync",
-        json={
-            "items": [
-                *_one_app_batch("m-aven", "aven.com", "Aven"),
-                _noise_item("m-tcs"),
-            ],
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[
+            _ats_msg("m-aven", "Aven", "aven.com", day=2),
+            _noise_msg("m-tcs", day=1),
+        ],
+        profile_ids=["9002"],
     )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     body = resp.json()
     assert body["created"] == 1  # Aven filed
     assert body["purged"] == 1  # Tata removed
@@ -2576,31 +2746,31 @@ async def test_rebuild_reports_what_it_filed_and_what_it_removed(
 
 
 async def test_a_row_a_resync_removed_is_restorable_not_deleted(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Removal is a state, so the wrong removal costs a click, not the data."""
 
+    await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
-    await client.post(
-        "/gmail/sync",
-        json={"items": _one_app_batch("m-tcs", "tcs.com", "Tata")},
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[_ats_msg("m-tcs", "Tata", "tcs.com", day=1)],
+        profile_ids=["9001"],
     )
+    await client.post("/gmail/sync", json={}, headers=headers)
     original = (await client.get("/applications", headers=headers)).json()[
         "applications"
     ][0]
 
-    resp = await client.post(
-        "/gmail/sync",
-        json={
-            "items": [
-                *_one_app_batch("m-aven", "aven.com", "Aven"),
-                _noise_item("m-tcs"),
-            ],
-            "mode": "rebuild",
-        },
-        headers=headers,
+    _install_gmail_stubs(
+        monkeypatch,
+        full_messages=[
+            _ats_msg("m-aven", "Aven", "aven.com", day=2),
+            _noise_msg("m-tcs", day=1),
+        ],
+        profile_ids=["9002"],
     )
+    resp = await client.post("/gmail/sync", json={"mode": "rebuild"}, headers=headers)
     removed_id = resp.json()["removed"][0]["id"]
     assert removed_id == original["id"]
 
@@ -2822,3 +2992,276 @@ async def test_manual_create_rejects_a_malformed_date_visibly(
     )
     assert ok.status_code == 201, ok.text
     assert ok.json()["applied_date"] == "2026-08-10"
+
+
+# =============================================================================
+# The duplicate-row and duplicate-queue-entry defects (2026-08-11)
+# =============================================================================
+#
+# Two things the owner saw in live data the evening after the sync fixes:
+#
+#   - "Together AI" on the board TWICE (applications 64 and 65), the older row
+#     with no linked email at all, because the only message had been re-pointed
+#     to the newer one.
+#   - "Crusoe | Application Received" in the review queue twice (emails 58 and
+#     73) — two messages of a single Gmail thread, asked about separately.
+
+
+def _together_ai_item(message_id: str, received_at: str) -> dict:
+    """One ATS confirmation for a MULTI-WORD employer, relayed by the client.
+
+    ``resolve_employer`` reduces this to the token ``together`` while the row it
+    files stores the display name "Together AI" — the mismatch the upsert used
+    to look through.
+    """
+
+    return {
+        "message_id": message_id,
+        "category": "applied",
+        "sender_email": "no-reply@ashbyhq.com",
+        "sender_name": "Together AI",
+        "subject": "Thank you for applying to Together AI",
+        "confidence": 0.95,
+        "thread_id": "th-together",
+        "received_at": received_at,
+    }
+
+
+async def _live_rows_without_mail(user_id: str) -> list[str]:
+    """Companies of LIVE applications that have no linked email at all."""
+
+    import uuid as _uuid
+
+    from sqlmodel import select as sm_select
+
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Application, Email
+
+    uid = _uuid.UUID(user_id)
+    async with get_session() as session:
+        rows = (
+            await session.exec(
+                sm_select(Application).where(
+                    Application.user_id == uid,
+                    Application.dismissed_at.is_(None),
+                    Application.source == "gmail",
+                )
+            )
+        ).all()
+        stranded = []
+        for row in rows:
+            linked = (
+                await session.exec(
+                    sm_select(Email).where(
+                        Email.user_id == uid, Email.application_id == row.id
+                    )
+                )
+            ).all()
+            if not linked:
+                stranded.append(row.company)
+    return stranded
+
+
+async def test_a_multi_word_company_files_one_row_not_one_per_sync(
+    client: AsyncClient,
+) -> None:
+    """The owner's duplicate: a second row per sync for "Together AI".
+
+    The upsert looked the row up as ``lower(company) == token``, which is only
+    ever true for a one-word company name. "Anthropic" matched itself and behaved;
+    "Together AI" (token ``together``) never matched, so every sync inserted
+    another row and moved the one linked email onto it, leaving the previous row
+    on the board with nothing behind it.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    first = await client.post(
+        "/gmail/sync",
+        json={"items": [_together_ai_item("m-together", "2026-07-01T12:00:00+00:00")]},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    board = (await client.get("/applications", headers=headers)).json()
+    assert [a["company"] for a in board["applications"]] == ["Together AI"]
+    original_id = board["applications"][0]["id"]
+
+    # The same message, re-read by a later sync.
+    second = await client.post(
+        "/gmail/sync",
+        json={"items": [_together_ai_item("m-together", "2026-07-01T12:00:00+00:00")]},
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["created"] == 0, "a repeat sync must update, not insert"
+    assert second.json()["updated"] == 1
+
+    board2 = (await client.get("/applications", headers=headers)).json()
+    assert board2["total"] == 1, "the same company was filed twice"
+    assert board2["applications"][0]["id"] == original_id
+
+    # The mail still points at the row that survived, and no live row is empty.
+    detail = (await client.get(f"/applications/{original_id}", headers=headers)).json()
+    assert [m["message_id"] for m in detail["messages"]] == ["m-together"]
+    assert await _live_rows_without_mail(USER_A) == []
+
+
+async def test_a_row_whose_last_email_moves_away_is_dismissed_not_stranded(
+    client: AsyncClient,
+) -> None:
+    """Re-pointing may empty a row; it may not leave one on the board empty.
+
+    An emptied row is the worst of the available states — visible, counted, and
+    (since a scan may only contradict a row by re-reading the row's own mail)
+    permanently unremovable, because it has no mail left to re-read. It is
+    dismissed instead: off the board, still on disk, restorable.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    filed = {
+        "message_id": "m-moves",
+        "category": "applied",
+        "sender_email": "careers@cedartech.com",
+        "sender_name": "Cedartech",
+        "subject": "We received your application to Cedartech",
+        "confidence": 0.95,
+        "received_at": "2026-07-01T12:00:00+00:00",
+    }
+    await client.post("/gmail/sync", json={"items": [filed]}, headers=headers)
+    assert "cedartech" in await _companies(client, headers)
+
+    # The same message id, now attributed to a different employer — the message
+    # moves, and Cedartech is left with nothing.
+    moved = {
+        **filed,
+        "sender_email": "careers@aven.com",
+        "sender_name": "Aven",
+        "subject": "We received your application to Aven",
+    }
+    resp = await client.post("/gmail/sync", json={"items": [moved]}, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    assert await _live_rows_without_mail(USER_A) == [], (
+        "a row was left on the board with no linked mail — it can never be "
+        "contradicted, so nothing will ever remove it"
+    )
+    assert "aven" in await _companies(client, headers)
+    assert "cedartech" not in await _companies(client, headers)
+
+    # Dismissed, not deleted: it is listed as removed and can be restored.
+    removed = (
+        await client.get("/applications?dismissed=true", headers=headers)
+    ).json()
+    assert [a["company"] for a in removed["applications"]] == ["Cedartech"]
+
+
+def _crusoe_item(message_id: str, received_at: str) -> dict:
+    """One message of the Crusoe thread, uncertain enough for the queue."""
+
+    return {
+        "message_id": message_id,
+        "category": "applied",
+        "sender_email": "no-reply@ashbyhq.com",
+        "sender_name": "Crusoe",
+        "subject": "Crusoe | Application Received",
+        "confidence": 0.78,  # below the auto-file gate → review queue
+        "thread_id": "19fed7e0706ee704",
+        "received_at": received_at,
+    }
+
+
+async def test_two_messages_of_one_thread_are_one_review_entry(
+    client: AsyncClient,
+) -> None:
+    """One conversation is one decision — the owner was asked twice.
+
+    Emails 58 and 73 are two messages of thread ``19fed7e0706ee704``, both
+    unlinked and both in the queue. The filing path had grouped this shape by
+    thread for months; the review path had not.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    resp = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                _crusoe_item("19fed7e0706ee704", "2026-08-10T20:00:00+00:00"),
+                _crusoe_item("19fedeb77e1accb3", "2026-08-11T01:00:00+00:00"),
+            ]
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    assert queue["total"] == 1, "one Gmail thread produced two queue entries"
+    # The newest message of the thread represents it.
+    assert queue["items"][0]["message_id"] == "19fedeb77e1accb3"
+
+    # The dashboard tile counts what the queue shows, not the rows behind it.
+    summary = (await client.get("/applications/summary", headers=headers)).json()
+    assert summary["needs_review"] == 1
+
+
+async def test_classifying_a_thread_settles_every_message_in_it(
+    client: AsyncClient,
+) -> None:
+    """Otherwise the sibling message comes straight back to the queue.
+
+    Both messages are persisted (an earlier sync had already queued one when the
+    second arrived), so settling has to reach the row the user never saw.
+    """
+
+    import uuid as _uuid
+
+    from sqlmodel import select as sm_select
+
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Email
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    # Two syncs, so both messages exist as separate queue rows on disk — the
+    # exact state of emails 58 and 73.
+    await client.post(
+        "/gmail/sync",
+        json={"items": [_crusoe_item("19fed7e0706ee704", "2026-08-10T20:00:00+00:00")]},
+        headers=headers,
+    )
+    await client.post(
+        "/gmail/sync",
+        json={"items": [_crusoe_item("19fedeb77e1accb3", "2026-08-11T01:00:00+00:00")]},
+        headers=headers,
+    )
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    assert queue["total"] == 1
+    representative = queue["items"][0]["message_id"]
+
+    classified = await client.post(
+        f"/applications/review/{representative}/classify",
+        json={"category": "applied"},
+        headers=headers,
+    )
+    assert classified.status_code == 200, classified.text
+    app_id = classified.json()["application_id"]
+    assert app_id is not None
+
+    # Nothing of that conversation is left to ask about.
+    assert (await client.get("/applications/review", headers=headers)).json()["total"] == 0
+    summary = (await client.get("/applications/summary", headers=headers)).json()
+    assert summary["needs_review"] == 0
+
+    async with get_session() as session:
+        rows = (
+            await session.exec(
+                sm_select(Email).where(
+                    Email.user_id == _uuid.UUID(USER_A),
+                    Email.thread_id == "19fed7e0706ee704",
+                )
+            )
+        ).all()
+    assert len(rows) == 2
+    assert all(e.is_reviewed for e in rows)
+    assert {e.application_id for e in rows} == {app_id}
