@@ -512,3 +512,55 @@ def test_a_response_that_names_no_role_still_answers_the_whole_company():
     )
 
     assert _followups(AMAZON_FOUR + [silent]) == []
+
+
+# --- the user's own answer to "which application is this about?" --------------
+
+
+async def _seed(session, rows: list[Application]) -> None:
+    for row in rows:
+        session.add(row)
+    await session.commit()
+
+
+async def test_the_users_choice_of_application_is_honoured(test_session):
+    """The review queue asks which of an employer's rows a message belongs to.
+
+    A message that names no role — "Update on your application" — belongs to
+    exactly one of four Amazon applications without saying which. The answer has
+    to actually be used, or the control is decoration.
+    """
+
+    await _seed(
+        test_session,
+        [
+            stored("Amazon", req_id="3177934", app_id=None),
+            stored("Amazon", req_id="3130865", app_id=None),
+        ],
+    )
+    rows = await apps._company_rows(test_session, USER, "amazon")
+    assert len(rows) == 2
+    target = rows[1]
+
+    picked = await apps._chosen_application(test_session, USER, target.id, "amazon")
+
+    assert picked is not None
+    assert picked.id == target.id
+
+
+async def test_a_choice_at_the_wrong_employer_is_ignored_not_obeyed(test_session):
+    """A stale id from a board that has re-synced must not misfile the message.
+
+    Falling back to ordinary resolution files it correctly; obeying the id would
+    attach an Amazon message to a Crusoe row.
+    """
+
+    await _seed(
+        test_session,
+        [stored("Amazon", req_id="3177934"), stored("Crusoe", role_token="software engineer i storage")],
+    )
+    crusoe = (await apps._company_rows(test_session, USER, "crusoe"))[0]
+
+    assert await apps._chosen_application(test_session, USER, crusoe.id, "amazon") is None
+    assert await apps._chosen_application(test_session, USER, None, "amazon") is None
+    assert await apps._chosen_application(test_session, USER, 99999, "amazon") is None
