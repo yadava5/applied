@@ -20,6 +20,7 @@ Phase 2 dashboard-persistence path. No network, no I/O, no side effects.
 
 from __future__ import annotations
 
+import html
 import re
 import urllib.parse
 from collections import defaultdict
@@ -677,24 +678,23 @@ _REQ_ID_PATTERNS: tuple[re.Pattern[str], ...] = (
 _ROLE_TOKEN_STRIP = re.compile(r"[^a-z0-9]+")
 
 
-def _unescape_basic_entities(text: str) -> str:
-    """Undo the handful of HTML entities Gmail snippets arrive carrying.
+def unescape_entities(text: str) -> str:
+    """Undo the HTML entities Gmail snippets arrive carrying.
 
-    Snippets come back pre-escaped (``We&#39;ve received your application``), and
-    an escaped apostrophe inside a captured role would make two spellings of one
-    title compare unequal.
+    Snippets come back pre-escaped (``We&#39;ve received your application``).
+    That matters twice over: an escaped apostrophe inside a captured role makes
+    two spellings of one title compare unequal, and the raw entity is also what
+    the user READS — the detail sheet rendered "Please don&#39;t be" verbatim on
+    the live board, because the snippet is stored exactly as fetched.
+
+    Uses the stdlib table rather than a hand-written handful, so every entity
+    Gmail can emit is covered rather than the six that happened to show up.
+    ``&`` is a cheap guard for the common case of no entities at all.
     """
 
-    if "&" not in text:
+    if not text or "&" not in text:
         return text
-    return (
-        text.replace("&#39;", "'")
-        .replace("&quot;", '"')
-        .replace("&amp;", "&")
-        .replace("&nbsp;", " ")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-    )
+    return html.unescape(text)
 
 
 def extract_req_id(subject: str, snippet: str = "") -> str | None:
@@ -706,7 +706,7 @@ def extract_req_id(subject: str, snippet: str = "") -> str | None:
     how differently they word it.
     """
 
-    for text in (subject or "", _unescape_basic_entities(snippet or "")):
+    for text in (subject or "", unescape_entities(snippet or "")):
         for pattern in _REQ_ID_PATTERNS:
             match = pattern.search(text)
             if match:
@@ -759,7 +759,7 @@ def role_from_message(subject: str, snippet: str = "") -> str | None:
     if from_subject is not None:
         return from_subject
 
-    body = _unescape_basic_entities(snippet or "")
+    body = unescape_entities(snippet or "")
     for pattern in _ROLE_BODY_PATTERNS:
         match = pattern.search(body)
         if not match:
