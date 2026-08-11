@@ -177,9 +177,15 @@ export function PipelinePulse({
             />
           ) : null}
         </div>
+        {/* The scope note is not optional here just because the denominator is
+            the loaded count: "120 of 200" reads as the whole account to anyone
+            who hasn't done the arithmetic, and this cell's own aria-label has
+            always said "of 200 LOADED rows". The visible line now agrees with
+            the label, and with the other two cells. */}
         <p className="tabular mt-2 text-xs text-muted">
           <span className="tabular text-strong">{autoFiled}</span> of {applications.length}{" "}
           auto-filed from mail
+          {scopeNote ? <span className="text-dim"> · {scopeNote}</span> : null}
         </p>
         {needsReview > 0 ? (
           <Link

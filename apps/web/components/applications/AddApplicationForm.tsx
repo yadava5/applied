@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Plus } from "lucide-react";
 
 import { Dialog } from "@/components/ui/Dialog";
@@ -24,6 +24,9 @@ const STATUS_OPTIONS = [
 ] as const;
 
 type Mode = "live" | "demo";
+
+/** How long the "Filed …" receipt stays on screen. */
+const CONFIRMATION_MS = 8000;
 
 function normalizeUrl(raw: string): string {
   const trimmed = raw.trim();
@@ -74,6 +77,26 @@ export function AddApplicationForm({
   const dateId = useId();
   const linkId = useId();
   const notesId = useId();
+
+  /**
+   * The confirmation is a receipt, not a status: it says what just happened
+   * and then gets out of the way. It used to be set and never cleared, so
+   * "Filed 'X' — role." sat under the `+` button for the life of the mount,
+   * outliving the filing it described and (after a `router.refresh()`) the
+   * board state it was about. It clears on a timer, and again when the form is
+   * reopened — nobody should be reading a stale receipt while filing the next
+   * one. Ample margin over any assertion that reads it right after a submit.
+   */
+  useEffect(() => {
+    if (confirmation === null) return;
+    const id = window.setTimeout(() => setConfirmation(null), CONFIRMATION_MS);
+    return () => window.clearTimeout(id);
+  }, [confirmation]);
+
+  function openForm() {
+    setConfirmation(null);
+    setOpen(true);
+  }
 
   function close() {
     setOpen(false);
@@ -148,7 +171,7 @@ export function AddApplicationForm({
       {compact ? (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={openForm}
           title="File an application by hand"
           aria-label="File an application by hand"
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line text-dim transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
@@ -156,7 +179,7 @@ export function AddApplicationForm({
           <Plus className="h-4 w-4" aria-hidden="true" />
         </button>
       ) : (
-        <button type="button" onClick={() => setOpen(true)} className={primaryBtnClass}>
+        <button type="button" onClick={openForm} className={primaryBtnClass}>
           <Plus className="h-4 w-4" aria-hidden="true" />
           File an application
         </button>

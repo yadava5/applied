@@ -184,6 +184,10 @@ interface InboxSnapshot {
   savedAt: number;
   verdicts: InboxVerdict[];
   analysis: PipelineAnalysis | null;
+  /** The analysis call failed for this mine — a null `analysis` alone cannot
+   *  say whether it failed or was simply never reached, and the follow-up
+   *  panel must not vanish silently on a rehydrated mine either. */
+  analysisFailed?: boolean;
   fetched: number;
   target: number;
 }
@@ -220,6 +224,10 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_FILTERS);
   const [verdicts, setVerdicts] = useState<InboxVerdict[]>([]);
   const [analysis, setAnalysis] = useState<PipelineAnalysis | null>(null);
+  /** The whole-set analysis failed for the current mine — the ghosting panel
+   *  says so instead of not rendering (an absent panel reads as "nobody has
+   *  ghosted you", which is a claim we cannot make without the analysis). */
+  const [analysisFailed, setAnalysisFailed] = useState(false);
   const [state, setState] = useState<FetchState>({
     phase: "loading",
     fetched: 0,
@@ -247,6 +255,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
 
     setVerdicts([]);
     setAnalysis(null);
+    setAnalysisFailed(false);
     setState({ phase: "loading", fetched: 0, target });
     // A new mine invalidates the last filing report — it described a different set.
     setFiling({ phase: "idle", note: null });
@@ -286,20 +295,36 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
 
       const pipelineItems = toPipelineItems(acc);
 
-      // Whole-set analysis (category summary + follow-up flags).
-      const analysisRes = await fetch("/api/gmail/pipeline", {
-        method: "POST",
-        cache: "no-store",
-        signal: ac.signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: pipelineItems }),
-      });
-      if (runId !== runIdRef.current) return;
+      // Whole-set analysis (category summary + follow-up flags) — in its OWN
+      // try/catch. The mine has already succeeded by this point, so a thrown
+      // analysis fetch must not fall into the outer catch and mark the whole
+      // mine failed: that would put a "we couldn't read your mail" banner over
+      // a complete, correct verdict list (and skip the snapshot, re-mining
+      // Gmail on the next visit). A failure here degrades to the per-verdict
+      // category tally, with the follow-up panel saying it is unavailable.
       let analysisData: PipelineAnalysis | null = null;
-      if (analysisRes.ok) {
-        analysisData = (await analysisRes.json()) as PipelineAnalysis;
-        setAnalysis(analysisData);
+      let analysisBroke = false;
+      try {
+        const analysisRes = await fetch("/api/gmail/pipeline", {
+          method: "POST",
+          cache: "no-store",
+          signal: ac.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: pipelineItems }),
+        });
+        if (runId !== runIdRef.current) return;
+        if (analysisRes.ok) {
+          analysisData = (await analysisRes.json()) as PipelineAnalysis;
+          setAnalysis(analysisData);
+        } else {
+          analysisBroke = true;
+        }
+      } catch {
+        // An abort is a newer mine taking over, not a failure.
+        if (ac.signal.aborted || runId !== runIdRef.current) return;
+        analysisBroke = true;
       }
+      setAnalysisFailed(analysisBroke);
       setState({ phase: "ready", fetched: acc.length, target });
 
       // Persist this mine so a remount with the same filters (e.g. navigating
@@ -309,6 +334,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         savedAt: Date.now(),
         verdicts: acc,
         analysis: analysisData,
+        analysisFailed: analysisBroke,
         fetched: acc.length,
         target,
       });
@@ -341,6 +367,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
           if (snap) {
             setVerdicts(snap.verdicts);
             setAnalysis(snap.analysis);
+            setAnalysisFailed(snap.analysisFailed === true);
             setState({ phase: "ready", fetched: snap.fetched, target: snap.target });
             return;
           }
@@ -427,6 +454,9 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
   }, [router, verdicts]);
 
   const loading = state.phase === "loading";
+  /** The MINE broke (Gmail/proxy). Distinct from `analysisFailed`, which is a
+   *  successful mine whose whole-set analysis didn't answer. */
+  const mineFailed = state.phase === "error";
   const progressPct =
     state.target > 0 ? Math.min(100, Math.round((state.fetched / state.target) * 100)) : 0;
 
@@ -549,6 +579,33 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         )}
       </div>
 
+      {/* --- A failed mine, led with --------------------------------------
+          The failure used to be a small dim line at the very BOTTOM of the
+          page, under a success-shaped empty box reading "No messages matched
+          this range" — a completed-scan verdict about a mailbox we never
+          finished reading. It now sits first, directly under the scan
+          controls, and the empty box does not render at all when nothing was
+          read. */}
+      {mineFailed ? (
+        <div role="alert" className="rounded-xl border border-reject/40 bg-surface p-6">
+          <p className="label-caps text-reject">scan failed</p>
+          <h2 className="mt-2 text-base font-medium text-strong">
+            We couldn&apos;t finish reading your mail.
+          </h2>
+          <p className="mt-1.5 text-sm text-muted">
+            {state.fetched > 0
+              ? `The scan stopped after ${state.fetched.toLocaleString()} of ${state.target.toLocaleString()} messages, so what's below is partial — not a picture of your whole mailbox.`
+              : "Nothing was read, so nothing here says anything about what your mailbox holds."}{" "}
+            Press Refresh to try again.
+          </p>
+          {state.errorStatus ? (
+            <p className="tabular mt-1 font-mono text-[11px] text-dim">
+              mail backend responded {state.errorStatus}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* --- File the mine into the pipeline ------------------------------ */}
       {state.phase === "ready" && jobRelatedTotal > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-soft bg-surface px-4 py-3">
@@ -604,8 +661,23 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         </div>
       ) : null}
 
-      {/* --- Needs follow-up (ghosting) ----------------------------------- */}
-      {followUps.length > 0 ? (
+      {/* --- Needs follow-up (ghosting) -----------------------------------
+          A missing answer is not an empty one. When the analysis call fails
+          this panel used to simply not render, and "no ghosting panel" reads
+          as "nobody has ghosted you" — a claim only the analysis can make. */}
+      {analysisFailed ? (
+        <div role="status" className="rounded-xl border border-line-soft bg-surface p-5">
+          <h2 className="flex items-center gap-2 text-base font-medium text-strong">
+            <Bell className="h-4 w-4 text-dim" aria-hidden />
+            Needs follow-up — unavailable
+          </h2>
+          <p className="mt-1 text-sm text-muted">
+            The follow-up analysis didn&apos;t answer for this mine, so we can&apos;t say who has
+            gone silent on you. This is a missing answer, not an empty one — the messages below
+            are unaffected, and Refresh runs it again.
+          </p>
+        </div>
+      ) : followUps.length > 0 ? (
         <div className="rounded-xl border border-review/40 bg-surface p-5">
           <h2 className="flex items-center gap-2 text-base font-medium text-strong">
             <Bell className="h-4 w-4 text-review" aria-hidden />
@@ -708,26 +780,19 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
             <SkeletonRow key={i} />
           ))}
         </ul>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center text-sm text-muted">
-          {verdicts.length === 0
-            ? "No messages matched this range. Widen the age window or switch to All mail."
-            : "No messages match these view filters."}
-        </div>
-      ) : (
+      ) : filtered.length > 0 ? (
         <ul className="rounded-xl border border-line-soft bg-surface px-3">
           {filtered.map((v) => (
             <VerdictRow key={v.message_id} v={v} />
           ))}
         </ul>
+      ) : mineFailed && verdicts.length === 0 ? null : (
+        <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center text-sm text-muted">
+          {verdicts.length === 0
+            ? "No messages matched this range. Widen the age window or switch to All mail."
+            : "No messages match these view filters."}
+        </div>
       )}
-
-      {state.phase === "error" ? (
-        <p className="text-xs text-review">
-          The mail backend hiccuped{state.errorStatus ? ` (${state.errorStatus})` : ""} — press
-          Refresh to try again.
-        </p>
-      ) : null}
     </div>
   );
 }

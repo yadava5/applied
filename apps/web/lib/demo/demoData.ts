@@ -3,7 +3,23 @@
  * companies and roles reuse the vocabulary of the backend's mock
  * training generator. No inbox is read; nothing here touches Supabase
  * or the API.
+ *
+ * Dates are RELATIVE, and that is load-bearing. They used to be absolute
+ * (`2026-07-15`), so the fixtures aged a day per day against a clock that kept
+ * moving: by August every applied card in the dashboard's sample preview — the
+ * one screen whose whole job is to show a healthy board — carried an amber
+ * "· quiet 27d" tag, and the momentum strip was two months from eight flat
+ * bars. Each seed carries `filedDaysAgo` instead, resolved against a single
+ * "now" per render, so the demo's SHAPE is fixed while its dates stay current.
+ *
+ * The offsets encode a deliberate ageing spread across the 11 open rows — 4
+ * under a week, 4 waiting, 3 past the quiet line (`QUIET_AFTER_DAYS`) — so all
+ * three pulse buckets draw, the quiet signal is demonstrated without the board
+ * looking abandoned, and every row lands inside the 8-week momentum window.
+ * Changing an offset changes what the e2e sees: the counts and the "quiet Nd"
+ * tag asserted in tests/e2e/demo.spec.ts are the contract.
  */
+import { todayISO } from "@/lib/dashboard/age";
 
 export type DemoStatus = "applied" | "interviewing" | "offered" | "rejected";
 
@@ -12,9 +28,16 @@ export interface DemoApplication {
   company: string;
   position: string;
   status: DemoStatus;
+  /** Calendar day filed — resolved from the seed against the render's "today". */
   appliedAt: string;
   lastSignal: string; // the most recent classified email, one line
 }
+
+/** A fixture row before its date is resolved: an age, not a calendar day. */
+type DemoSeed = Omit<DemoApplication, "appliedAt"> & {
+  /** Whole days before "today" this application was filed. */
+  filedDaysAgo: number;
+};
 
 export interface DemoReviewItem {
   subject: string;
@@ -25,6 +48,22 @@ export interface DemoReviewItem {
   needsReview: boolean;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `today` minus n whole days, as a plain calendar-day string. UTC arithmetic —
+ * exactly what `daysBetween` inverts — so a row seeded at 16 reads back as "16
+ * days old" on the server and in the browser alike, in any timezone.
+ */
+function daysBefore(today: string, days: number): string {
+  return new Date(Date.parse(`${today}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
+}
+
+function resolve(seed: DemoSeed, today: string): DemoApplication {
+  const { filedDaysAgo, ...row } = seed;
+  return { ...row, appliedAt: daysBefore(today, filedDaysAgo) };
+}
+
 /**
  * Shaped like a REAL early-search board, not a brochure: the applied column is
  * heavy (10 of 14), offered is empty, and one employer holds several
@@ -33,39 +72,66 @@ export interface DemoReviewItem {
  * does: company+role as the card identity, the "N more at …" affordance,
  * cross-column same-company cards, an applied column past the collapse
  * threshold, and an honestly empty column.
+ *
+ * Order matters as much as the dates: the applied column renders in this
+ * order, and the collapse expander test depends on Copperline and Waypoint
+ * being the two that wait behind "show all 10".
  */
-export const DEMO_APPLICATIONS: DemoApplication[] = [
+const APPLICATION_SEEDS: DemoSeed[] = [
   // Northstar Systems ×3 — one advanced, two still applied. Three cards, three
   // distinct roles, two different columns: an application is not a company.
-  { id: "a1", company: "Northstar Systems", position: "ML Engineer", status: "interviewing", appliedAt: "2026-06-28", lastSignal: "Interview availability — technical round" },
-  { id: "a2", company: "Northstar Systems", position: "ML Engineer, Platform", status: "applied", appliedAt: "2026-07-09", lastSignal: "Your application was received" },
-  { id: "a3", company: "Northstar Systems", position: "Research Engineer, Applied ML", status: "applied", appliedAt: "2026-07-09", lastSignal: "Thanks for applying" },
+  { id: "a1", company: "Northstar Systems", position: "ML Engineer", status: "interviewing", filedDaysAgo: 18, lastSignal: "Interview availability — technical round" },
+  { id: "a2", company: "Northstar Systems", position: "ML Engineer, Platform", status: "applied", filedDaysAgo: 16, lastSignal: "Your application was received" },
+  { id: "a3", company: "Northstar Systems", position: "Research Engineer, Applied ML", status: "applied", filedDaysAgo: 15, lastSignal: "Thanks for applying" },
   // Cedar Labs ×2 — one open, one already closed.
-  { id: "a4", company: "Cedar Labs", position: "Software Engineer, Platform", status: "applied", appliedAt: "2026-07-08", lastSignal: "Your application was received" },
-  { id: "a5", company: "Cedar Labs", position: "Site Reliability Engineer", status: "rejected", appliedAt: "2026-06-14", lastSignal: "Moving forward with other candidates" },
+  { id: "a4", company: "Cedar Labs", position: "Software Engineer, Platform", status: "applied", filedDaysAgo: 12, lastSignal: "Your application was received" },
+  { id: "a5", company: "Cedar Labs", position: "Site Reliability Engineer", status: "rejected", filedDaysAgo: 34, lastSignal: "Moving forward with other candidates" },
   // Single-application employers — the common case, which stays untaxed.
-  { id: "a6", company: "Harbor Analytics", position: "Backend Engineer", status: "applied", appliedAt: "2026-07-02", lastSignal: "Application under review" },
-  { id: "a7", company: "Summit Platform", position: "Full-Stack Engineer", status: "applied", appliedAt: "2026-07-10", lastSignal: "Application under review" },
-  { id: "a8", company: "Quarry Data", position: "Data Engineer", status: "applied", appliedAt: "2026-07-11", lastSignal: "Thanks for applying" },
-  { id: "a9", company: "Beacon Health", position: "ML Engineer, Risk", status: "applied", appliedAt: "2026-07-12", lastSignal: "We received your application" },
-  { id: "a10", company: "Fernworks", position: "Systems Engineer", status: "rejected", appliedAt: "2026-06-05", lastSignal: "Update on your application" },
-  { id: "a11", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", appliedAt: "2026-06-12", lastSignal: "Moving forward with other candidates" },
-  { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", appliedAt: "2026-07-13", lastSignal: "We received your application" },
-  { id: "a13", company: "Copperline", position: "Backend Engineer, Payments", status: "applied", appliedAt: "2026-07-14", lastSignal: "We received your application" },
-  { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", appliedAt: "2026-07-15", lastSignal: "Thanks for applying" },
+  { id: "a6", company: "Harbor Analytics", position: "Backend Engineer", status: "applied", filedDaysAgo: 11, lastSignal: "Application under review" },
+  { id: "a7", company: "Summit Platform", position: "Full-Stack Engineer", status: "applied", filedDaysAgo: 9, lastSignal: "Application under review" },
+  { id: "a8", company: "Quarry Data", position: "Data Engineer", status: "applied", filedDaysAgo: 8, lastSignal: "Thanks for applying" },
+  { id: "a9", company: "Beacon Health", position: "ML Engineer, Risk", status: "applied", filedDaysAgo: 6, lastSignal: "We received your application" },
+  { id: "a10", company: "Fernworks", position: "Systems Engineer", status: "rejected", filedDaysAgo: 45, lastSignal: "Update on your application" },
+  { id: "a11", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", filedDaysAgo: 38, lastSignal: "Moving forward with other candidates" },
+  { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 5, lastSignal: "We received your application" },
+  { id: "a13", company: "Copperline", position: "Backend Engineer, Payments", status: "applied", filedDaysAgo: 3, lastSignal: "We received your application" },
+  { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", filedDaysAgo: 2, lastSignal: "Thanks for applying" },
 ];
 
 /**
  * Fixture mail the demo account has NOT synced yet. Pressing `Sync` on /demo
  * files these into the board through the real SyncBar state machine, so the
  * demo demonstrates the product's actual loop (sync → new cards appear) on
- * data that is still entirely synthetic. Kept out of DEMO_APPLICATIONS so the
- * board's initial counts stay the honest 14.
+ * data that is still entirely synthetic. Kept out of the board seeds so the
+ * initial counts stay the honest 14, and dated as the newest mail there is —
+ * they are what "new since your last sync" means.
  */
-export const DEMO_UNSYNCED: DemoApplication[] = [
-  { id: "u1", company: "Twitch", position: "Software Engineer, Creator Tools", status: "applied", appliedAt: "2026-08-08", lastSignal: "Your application was received" },
-  { id: "u2", company: "DoorDash", position: "Backend Engineer, Logistics", status: "applied", appliedAt: "2026-08-09", lastSignal: "Thanks for applying" },
+const UNSYNCED_SEEDS: DemoSeed[] = [
+  { id: "u1", company: "Twitch", position: "Software Engineer, Creator Tools", status: "applied", filedDaysAgo: 1, lastSignal: "Your application was received" },
+  { id: "u2", company: "DoorDash", position: "Backend Engineer, Logistics", status: "applied", filedDaysAgo: 0, lastSignal: "Thanks for applying" },
 ];
+
+/** How many rows the demo board starts with — ids continue after these. */
+export const DEMO_APPLICATION_COUNT = APPLICATION_SEEDS.length;
+
+/**
+ * The demo board's applications, dated against one `today`.
+ *
+ * Callers pass the SAME clock read they render with (`todayISO()`), and call
+ * this during render rather than at module load: a module-level resolution
+ * freezes at process start, which on a long-lived dev server or a warm lambda
+ * means the server renders yesterday's dates into HTML the browser then
+ * hydrates with today's — a mismatch that repairs itself loudly, in the
+ * console.
+ */
+export function demoApplications(today: string = todayISO()): DemoApplication[] {
+  return APPLICATION_SEEDS.map((seed) => resolve(seed, today));
+}
+
+/** The not-yet-synced fixture mail, dated against the same `today`. */
+export function demoUnsynced(today: string = todayISO()): DemoApplication[] {
+  return UNSYNCED_SEEDS.map((seed) => resolve(seed, today));
+}
 
 export const DEMO_REVIEW_QUEUE: DemoReviewItem[] = [
   { subject: "Interview availability — technical round", from: "recruiting@northstar.dev", category: "interview", confidence: 0.991, method: "setfit", needsReview: false },

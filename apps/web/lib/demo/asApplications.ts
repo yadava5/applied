@@ -4,9 +4,19 @@
  * the signed-in dashboard's sample preview. One component tree, two data
  * sources — verifying the public demo therefore verifies the real dashboard's
  * building blocks.
+ *
+ * These are functions, not constants, because the fixture dates are relative
+ * (see `demoData.ts`): they must be resolved during a render, against the same
+ * clock read that render ages them with, not frozen at module load.
  */
+import { todayISO } from "@/lib/dashboard/age";
 import type { Application } from "@/lib/dashboard/summary";
-import { DEMO_APPLICATIONS, DEMO_UNSYNCED, type DemoApplication } from "@/lib/demo/demoData";
+import {
+  DEMO_APPLICATION_COUNT,
+  demoApplications,
+  demoUnsynced,
+  type DemoApplication,
+} from "@/lib/demo/demoData";
 
 function toApi(app: DemoApplication, id: number): Application {
   return {
@@ -25,11 +35,11 @@ function toApi(app: DemoApplication, id: number): Application {
 }
 
 /** The demo applications, projected onto the API `Application` type. */
-export const DEMO_APPLICATIONS_AS_API: Application[] = DEMO_APPLICATIONS.map((app, index) =>
-  toApi(app, index + 1),
-);
+export function demoApplicationsAsApi(today: string = todayISO()): Application[] {
+  return demoApplications(today).map((app, index) => toApi(app, index + 1));
+}
 
 /** The not-yet-synced fixture rows, ids continuing after the board's. */
-export const DEMO_UNSYNCED_AS_API: Application[] = DEMO_UNSYNCED.map((app, index) =>
-  toApi(app, DEMO_APPLICATIONS.length + index + 1),
-);
+export function demoUnsyncedAsApi(today: string = todayISO()): Application[] {
+  return demoUnsynced(today).map((app, index) => toApi(app, DEMO_APPLICATION_COUNT + index + 1));
+}

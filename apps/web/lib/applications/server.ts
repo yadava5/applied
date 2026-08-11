@@ -124,10 +124,18 @@ export function classifyReviewItem(
   messageId: string,
   category: string,
   company?: string,
+  applicationId?: number,
 ): Promise<ApiCallResult> {
   const named = company?.trim();
   return call(`/applications/review/${encodeURIComponent(messageId)}/classify`, {
     method: "POST",
-    body: named ? { category, company: named } : { category },
+    body: {
+      category,
+      ...(named ? { company: named } : {}),
+      // The user's own answer to "which application is this about?". Omitted
+      // rather than sent as null when absent, so the backend's "no choice was
+      // made" path stays distinguishable from "the choice was empty".
+      ...(applicationId !== undefined ? { application_id: applicationId } : {}),
+    },
   });
 }

@@ -12,6 +12,24 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Rendered per request, because the fixtures are dated RELATIVE to today.
+ *
+ * As a static route this page is prerendered once and the build day's dates are
+ * baked into the HTML on disk, while the client resolves "today" at view time —
+ * so the filed stamps disagree and React throws a hydration error (#418) on
+ * every day after the build. Measured: clean at +0d, mismatching at +3d, +30d
+ * and +180d, and clean again at +365d, where the stamp string happens to
+ * repeat. That last one is the proof it is the date and nothing else.
+ *
+ * Resolving the date on the server and passing it down does NOT fix this on a
+ * static route — there, "server render time" IS build time, so the demo would
+ * simply resume ageing, which is the defect the relative dates removed. Only
+ * per-request rendering collapses the window to the UTC-midnight boundary that
+ * `lib/dashboard/age.ts` already documents as accepted.
+ */
+export const dynamic = "force-dynamic";
+
+/**
  * The product, auth-free: the exact dashboard a signed-in user sees, running
  * its real components — SyncBar, the board, drag, the detail sheet — over an
  * in-memory fixture store (`DemoDashboard`). Only the transport is simulated;

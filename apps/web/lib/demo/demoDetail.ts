@@ -16,10 +16,17 @@ function slug(company: string): string {
   return company.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** `2026-07-08` + n days, kept as a plain calendar string. */
+/**
+ * The filed date + n days — never in the future, and never before the mail it
+ * follows. The clamp is load-bearing since the fixture dates went relative
+ * (`demoData.ts`): the newest board rows are now days old, not weeks, so a
+ * visitor dragging one to interviewing would otherwise open its detail sheet
+ * onto a follow-up email "received" next week.
+ */
 function daysAfter(isoDate: string, days: number): string {
-  const ms = Date.parse(`${isoDate.slice(0, 10)}T12:00:00Z`) + days * 24 * 60 * 60 * 1000;
-  return new Date(ms).toISOString();
+  const filed = Date.parse(`${isoDate.slice(0, 10)}T12:00:00Z`);
+  const shifted = filed + days * 24 * 60 * 60 * 1000;
+  return new Date(Math.max(filed, Math.min(shifted, Date.now()))).toISOString();
 }
 
 const LATEST_CATEGORY: Record<string, { category: string; confidence: number }> = {
