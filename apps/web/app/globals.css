@@ -21,23 +21,44 @@
   --surface-2: #141517;
   --foreground: #d6d8db;
   --text-strong: #f7f8f8;
-  --text-muted: #8a8f98;
-  /* Dim is the faintest step of the text ramp (captions, mono labels). Kept at
-   * ≥4.5:1 against every dark surface (background/surface/surface-2) so the
-   * .label-mono / text-[11px] captions clear WCAG AA — see globals a11y note. */
-  --text-dim: #7c8088;
+  /* The quiet half of the ramp is tuned to APCA, not WCAG 2. On near-black
+   * grounds WCAG 2's ratio over-credits mid-greys badly, and this ramp was the
+   * textbook case: the old muted #8a8f98 / dim #7c8088 read 5.62:1 / 4.61:1 on
+   * surface-2 — a clean AA pass — while measuring only Lc 41.1 / 33.8, far
+   * under the Lc 60 floor for the body-size content they actually carry (card
+   * metadata, timestamps, empty-state copy, the classifier confidence
+   * figures). The old values also left the ramp mis-stepped: a 41-point Lc
+   * chasm from foreground down to muted, then a 7-point sliver from muted to
+   * dim, so the two quiet ranks were indistinguishable from each other and
+   * both were illegible. Retuned to even, descending steps in the same cool
+   * grey family. Measured on surface-2 — the lightest ground any of this
+   * renders on, so the worst case: strong Lc 102.3, foreground Lc 82.0, muted
+   * Lc 69.9, dim Lc 60.7. WCAG AA still clears everywhere (10.44:1 / 8.76:1).
+   * Do not darken these back citing a 4.5:1 pass; that is the measurement this
+   * ramp exists to stop trusting. */
+  --text-muted: #c0c4cb;
+  --text-dim: #aeb4be;
   --line: rgb(255 255 255 / 0.09);
   --line-soft: rgb(255 255 255 / 0.055);
   --line-strong: rgb(255 255 255 / 0.2);
   --green: #4ade80;
   --amber: #f59e0b;
   --red: #f87171;
+  /* Rejection red as *text*. `--red` stays #f87171 for the borders, dots and
+   * washes that carry the semantic, but as text it measured Lc 48.3 on
+   * surface-2 and Lc 47.4 over the `bg-reject/10` wash the auth + Google
+   * sign-in errors sit on — under the Lc 60 floor for the text-sm they are set
+   * at, and, after the ramp retune above, dimmer than an ordinary caption. An
+   * error message must not be the least legible thing on the page. The 300
+   * step of the same hue measures Lc 65.7 solid / Lc 64.8 on the wash. */
+  --red-ink: #fca5a5;
   /* The resting stage's accent. Deliberately achromatic (applied is the calm
-   * state; green/purple/amber/red keep their reserved meanings) but LIGHTER
-   * than the text ramp: the old `var(--text-muted)` accent measured 2.56:1 in
-   * the card border wash — the stage holding all the data was the least
-   * visible thing on the board. Measured: 9.25:1 / APCA Lc 63.5 solid on
-   * surface-2; the 55% card-border wash lands at 3.62:1 (vs 2.56:1 before). */
+   * state; green/purple/amber/red keep their reserved meanings). Used only as
+   * a fill — the pulse/rail bar segments and the card-border wash — never as
+   * text, so it now sits inside the retuned ramp between dim and muted rather
+   * than above it, which is fine: it never competes with a text rank.
+   * Re-measured: 9.25:1 / APCA Lc 63.5 solid on surface-2; the 55% card-border
+   * wash lands at 3.62:1 (vs 2.56:1 for the --text-muted accent it replaced). */
   --stage-applied: #b3b9c2;
   /* Data-viz sub-palette — the three classifier layers get their own
    * categorical hues so the pipeline reads as data, not just mono text. */
@@ -65,14 +86,15 @@
   --surface-2: #141517;
   --foreground: #d6d8db;
   --text-strong: #f7f8f8;
-  --text-muted: #8a8f98;
-  --text-dim: #7c8088;
+  --text-muted: #c0c4cb;
+  --text-dim: #aeb4be;
   --line: rgb(255 255 255 / 0.09);
   --line-soft: rgb(255 255 255 / 0.055);
   --line-strong: rgb(255 255 255 / 0.2);
   --green: #4ade80;
   --amber: #f59e0b;
   --red: #f87171;
+  --red-ink: #fca5a5;
   --stage-applied: #b3b9c2;
   --viz-rules: #38bdf8;
   --viz-embeddings: #a78bfa;
@@ -94,8 +116,13 @@
   --foreground: #3f3f46;
   --text-strong: #18181b;
   --text-muted: #52525b;
-  /* Darkened from #9599a1 (~3.0:1) so dim captions clear WCAG AA (≥4.5:1) on
-   * the light paper surfaces too, while staying a step lighter than muted. */
+  /* Unchanged by the APCA pass that retuned the dark ramp: on paper the two
+   * formulas agree, and this end already clears both floors. Measured on
+   * surface-2 (worst ground): muted Lc 80.4 / 7.03:1, dim Lc 70.1 / 4.86:1.
+   * Darkening dim further to mirror the dark theme's step sizes would buy
+   * nothing and lightening it to match dark's Lc 60.7 would drop it under
+   * WCAG AA, so it stays. The two ramps now read far more alike than they did
+   * — dark 102/82/70/61 against light 98/88/80/70. */
   --text-dim: #676b73;
   --line: rgb(0 0 0 / 0.1);
   --line-soft: rgb(0 0 0 / 0.06);
@@ -112,6 +139,11 @@
    * measures 6.47:1 on white, 5.89:1 on surface-2, 4.98:1 / APCA Lc 63 on
    * the wash. */
   --red: #b91c1c;
+  /* Ink red on paper already clears the Lc 60 text floor (Lc 73.7 on
+   * surface-2, Lc 68.7 over the bg-reject/10 wash), so the text variant is the
+   * same value here. It is declared in both themes so `text-reject-ink`
+   * always resolves. */
+  --red-ink: #b91c1c;
   /* Ink counterpart of the dark ramp's #b3b9c2 — measured 9.93:1 on white,
    * 9.03:1 on the paper surface-2 (APCA Lc 93 / 87). */
   --stage-applied: #3f434b;
@@ -134,6 +166,7 @@
   --color-live: var(--green);
   --color-review: var(--amber);
   --color-reject: var(--red);
+  --color-reject-ink: var(--red-ink);
   --color-stage-applied: var(--stage-applied);
   --color-viz-rules: var(--viz-rules);
   --color-viz-embeddings: var(--viz-embeddings);

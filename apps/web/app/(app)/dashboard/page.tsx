@@ -219,7 +219,7 @@ export default async function DashboardPage() {
           role="alert"
           aria-live="polite"
         >
-          <p className="label-caps text-reject">load failed</p>
+          <p className="label-caps text-reject-ink">load failed</p>
           <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
             {headline}
           </h2>

@@ -212,7 +212,7 @@ export function PipelinePulse({
             <p className="tabular mt-2 text-xs text-muted">
               {/* "N overdue" turns red as a unit — a red word beside a white
                   digit would put the emphasis on the wrong half. */}
-              <span className={due.overdue > 0 ? "font-medium text-reject" : ""}>
+              <span className={due.overdue > 0 ? "font-medium text-reject-ink" : ""}>
                 <span className={due.overdue > 0 ? "tabular" : "tabular text-strong"}>
                   {due.overdue}
                 </span>{" "}
@@ -229,7 +229,7 @@ export function PipelinePulse({
                 most urgent · {due.urgent.company}{" "}
                 <span
                   className={`tabular font-mono text-[10px] ${
-                    due.urgent.daysLeft < 0 ? "text-reject" : "text-review"
+                    due.urgent.daysLeft < 0 ? "text-reject-ink" : "text-review"
                   }`}
                 >
                   {duePhrase(due.urgent.daysLeft)}
