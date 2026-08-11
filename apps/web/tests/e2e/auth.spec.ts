@@ -76,13 +76,22 @@ async function watchAuth(page: Page): Promise<AuthWatch> {
   };
 }
 
-/** Assert the form spent nothing: no attempt, and nothing on the wire. */
+/**
+ * Assert the form spent nothing: no attempt, and nothing on the wire.
+ *
+ * Polled rather than read once. A single read is only sound while a visible
+ * message is asserted first (which is what makes the page settle); polling
+ * means a request issued a beat later fails this instead of slipping past a
+ * snapshot taken too early, whatever order a future edit puts the assertions
+ * in. A passing case still costs one read.
+ */
 async function expectNoAuthTraffic(watch: AuthWatch): Promise<void> {
-  const attempts = await watch.attempts();
-  expect(attempts, `the form called the auth API: ${attempts.join(", ")}`).toEqual([]);
-  expect(watch.routeCalls, `a request reached the network: ${watch.routeCalls.join(", ")}`).toEqual(
-    [],
-  );
+  await expect
+    .poll(async () => await watch.attempts(), { message: "the form called the auth API" })
+    .toEqual([]);
+  await expect
+    .poll(() => watch.routeCalls, { message: "a request reached the network" })
+    .toEqual([]);
 }
 
 /** Forget anything the page did on load; only the submit is under test. */
