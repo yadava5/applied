@@ -26,6 +26,67 @@ function syncSurface(page: Page) {
   return page.locator("[data-sync-surface]");
 }
 
+/**
+ * Pretend this browser was here before.
+ *
+ * The demo's fixture store is rebuilt on every mount, so a real second visit
+ * is byte-identical to the first and the change ledger is honestly quiet — the
+ * product must not fabricate a prior visit to look busy. The SPEC may, because
+ * it owns the fixture: this writes the marker record the ledger reads
+ * (`lib/dashboard/lastLook.ts`) describing the same board minus two rows, with
+ * Northstar's interviewing row still at applied and Kestrel's mail-read
+ * deadline not yet known. `v` is the record version — if the shape changes and
+ * this is not updated, `parseLastLook` rejects it and the ledger renders the
+ * first-visit line, which every assertion below then fails on.
+ */
+async function seedPriorVisit(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const dueDay = (days: number) =>
+      `${new Date(Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`) + days * 86_400_000)
+        .toISOString()
+        .slice(0, 10)}T23:59:59Z`;
+    // Fixture ids 1–17 under the board's column words, minus 13 (Copperline)
+    // and 14 (Waypoint Robotics) — the two "filed" rows. Id 1 (Northstar, now
+    // interviewing) sits at applied; id 16 (Kestrel) carries no deadline yet.
+    const stages: Record<string, string> = {
+      1: "applied",
+      2: "applied",
+      3: "applied",
+      4: "applied",
+      5: "closed",
+      6: "applied",
+      7: "applied",
+      8: "applied",
+      9: "applied",
+      10: "closed",
+      11: "closed",
+      12: "applied",
+      15: "interviewing",
+      16: "interviewing",
+      17: "interviewing",
+    };
+    const rows: Record<string, { s: string; d?: string }> = {};
+    for (const [id, s] of Object.entries(stages)) rows[id] = { s };
+    rows["15"].d = dueDay(9);
+    rows["17"].d = dueDay(-2);
+    window.localStorage.setItem(
+      "applied:lastlook:demo",
+      JSON.stringify({
+        v: 1,
+        scope: "demo",
+        at: Date.now() - 15 * 60 * 60 * 1000,
+        floor: null,
+        rows,
+      }),
+    );
+  });
+}
+
+/** The change ledger, scoped so a company name matches it and not the board. */
+function ledger(page: Page) {
+  return page.getByTestId("since-last-look");
+}
+
 test.describe("live demo (/demo)", () => {
   test("renders the dashboard twin and the decision trace cleanly", async ({ page }) => {
     const watch = startConsoleWatch(page);
@@ -296,6 +357,78 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByText("19 of 19 auto-filed from mail")).toBeVisible();
   });
 
+  test("the change ledger claims nothing on a first visit", async ({ page }) => {
+    // The first visit has no "last look", so there is nothing to compare
+    // against and the 17 rows already on the board are not news. The line says
+    // exactly that instead of counting them.
+    await page.goto("/demo");
+    const band = ledger(page);
+    await expect(band).toContainText("No earlier visit recorded in this browser");
+    await expect(band).not.toContainText("filed");
+    await expect(band.getByRole("button", { name: "Mark as seen" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "since you last looked" })).toHaveCount(0);
+  });
+
+  test("a prior visit turns the ledger loud: what arrived, what moved, what gained a date", async ({
+    page,
+  }) => {
+    await seedPriorVisit(page);
+    await page.goto("/demo");
+    const band = ledger(page);
+    await expect(band.getByRole("heading", { name: "since you last looked" })).toBeVisible();
+
+    // The count IS the heading of each group — nothing restates it.
+    await expect(band.getByText("2 filed")).toBeVisible();
+    await expect(band.getByText("1 moved")).toBeVisible();
+    await expect(band.getByText("1 new deadline")).toBeVisible();
+
+    // …and every claim names the row it is about, with the column to look in.
+    await expect(band.getByText("Copperline", { exact: true })).toBeVisible();
+    await expect(band.getByText("Waypoint Robotics", { exact: true })).toBeVisible();
+    const moved = band.locator("p").filter({ hasText: "Northstar Systems" });
+    await expect(moved).toContainText("applied");
+    await expect(moved).toContainText("interviewing");
+    await expect(band.locator("p").filter({ hasText: "Kestrel Dynamics" })).toContainText(
+      "due in 2d",
+    );
+    // A row that did not change is never named.
+    await expect(band).not.toContainText("Harbor Analytics");
+
+    // The two voices hold here too: names are language, the deadline is data.
+    await expect(band.getByText("Copperline", { exact: true })).toHaveCSS(
+      "font-family",
+      /atkinson/i,
+    );
+    await expect(band.getByText("due in 2d")).toHaveCSS("font-family", /Geist Mono/);
+
+    // Marking it seen is the only thing that advances the marker, and it holds
+    // across a reload — the fixture board is identical on every mount, so any
+    // reappearance would be the ledger re-deriving from a stale snapshot.
+    await band.getByRole("button", { name: "Mark as seen" }).click();
+    await expect(band).toContainText("Nothing new since");
+    await expect(band.getByText("2 filed")).toHaveCount(0);
+    await page.reload();
+    await expect(ledger(page)).toContainText("Nothing new since");
+  });
+
+  test("a stage change the visitor makes is never reported back as news", async ({ page }) => {
+    // First visit lays the baseline; the second has an unchanged board.
+    await page.goto("/demo");
+    await expect(ledger(page)).toContainText("No earlier visit recorded");
+    await page.reload();
+    const band = ledger(page);
+    await expect(band).toContainText("Nothing new since");
+
+    await page.getByLabel("Change stage for Quarry Data").selectOption("interviewing");
+    await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
+
+    // The card moved. The ledger stays silent — it reports what happened while
+    // you were away, and it must not report a move in the WRONG direction
+    // while the board catches up with the write either.
+    await expect(band).toContainText("Nothing new since");
+    await expect(band).not.toContainText("moved");
+  });
+
   test("assessment deadlines render in all three states — and only where a date exists", async ({
     page,
   }) => {
@@ -427,6 +560,9 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
     await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    // The change ledger carries no animation at all, so there is nothing for
+    // this mode to collapse — its sentence is simply present.
+    await expect(ledger(page)).toContainText("No earlier visit recorded in this browser");
     // The deadline surfaces are content, not motion: all three tags and the
     // pulse counts render statically too.
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
