@@ -35,8 +35,18 @@ export const STAGES: StageDef[] = [
   { key: "offered", label: "offered", statuses: ["offered", "offer", "accepted"], color: "var(--green)" },
   {
     key: "rejected",
-    label: "rejected",
-    statuses: ["rejected", "rejection", "withdrawn"],
+    // Labelled "closed" because the bucket is not only rejections: a withdrawal
+    // is the user's own decision and a ghosting is nobody's. `PipelineSummary`
+    // has always called this `closed` (see :111), so this makes the board agree
+    // with the summary rather than the two using different words for one thing.
+    // The key stays `rejected` because it is the counts object's shape.
+    label: "closed",
+    // `ghosted` belongs here explicitly. It is a real `ApplicationStatus` and it
+    // was in no stage at all, so `stageOf` fell through to its `?? "applied"`
+    // default and a ghosted application was counted as applied AND as in-motion.
+    // Harmless while nothing could set it; it became reachable the moment the
+    // stage vocabulary was corrected to include it.
+    statuses: ["rejected", "rejection", "withdrawn", "ghosted"],
     color: "var(--red)",
   },
 ];
@@ -51,10 +61,15 @@ export function stageOf(status: string): StageKey {
   return STATUS_TO_STAGE.get(status.toLowerCase()) ?? "applied";
 }
 
-/** A status that is a terminal qualifier we tag on the card (accepted/withdrawn). */
+/**
+ * A status that is a terminal qualifier we tag on the card. These are statuses
+ * whose stage does not tell you what happened: "closed" covers a rejection, a
+ * withdrawal and a ghosting, and "offered" covers both an open offer and an
+ * accepted one, so the card has to say which.
+ */
 export function qualifierOf(status: string): string | null {
   const s = status.toLowerCase();
-  return s === "accepted" || s === "withdrawn" ? s : null;
+  return s === "accepted" || s === "withdrawn" || s === "ghosted" ? s : null;
 }
 
 export interface PipelineSummary {

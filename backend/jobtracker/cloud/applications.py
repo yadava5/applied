@@ -41,6 +41,9 @@ from jobtracker.auth import current_user, require_user
 from jobtracker.cloud import pipeline
 from jobtracker.database import get_session
 from jobtracker.database.models import (
+    APPLICATION_STATUSES,
+    CATEGORY_TO_STATUS,
+    DEFAULT_APPLICATION_STATUS,
     Application,
     ApplicationStatus,
     Email,
@@ -185,22 +188,40 @@ def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> boo
     2. No linked email — there is no evidence to re-read, so staleness is
        unprovable by construction. (Includes rows filed before this column
        existed and rows whose mail was pruned.)
-    3. A linked email the scan never re-read: either its id is absent from
-       everything the scan returned, or it predates/postdates the span the scan
-       actually reached. A row is only removable when EVERY one of its emails
-       was inside that span — one archived, out-of-window message is enough to
-       make the removal a guess.
+    3. ANY linked email whose id is missing from what the scan returned. The
+       test is MEMBERSHIP, not dates: a scan that read one of a row's messages
+       has read one of a row's messages, and the rest are as unobserved as they
+       would be after an empty scan.
+
+    Why membership rather than the date span
+    ----------------------------------------
+
+    This used to accept "every email falls between the oldest and newest thing
+    the scan returned" as proof the scan had covered them. It is not. An
+    ARCHIVED message sits at a date like any other, so a scan that could never
+    return it (``in:inbox``, or any bounded window) still reports its date as
+    "covered" — which is how the 2026-08-10 rebuild concluded it had re-read
+    mail it had not, and removed two real applications.
+
+    The span clause is KEPT, as the stricter half of an AND, not as the test.
+    It still refuses one case membership alone would allow: a message whose id
+    the scan returned but whose ``Date`` header it could not parse contributes
+    an id and no date, so a row dated outside everything the scan DID date is
+    removable by membership and blocked here. Blocking a removal is the safe
+    direction, so the conjunction stands.
     """
 
     if coverage is None or not emails:
         return False
-    if not any(e.message_id in coverage.message_ids for e in emails):
+    if not all(e.message_id in coverage.message_ids for e in emails):
         return False
     return all(coverage.covers(e.received_at) for e in emails)
 
 
 # ApplicationStatus → the training label a manual correction should teach the
-# classifier (the SetFit retrain path reads ``training_data``).
+# classifier (the SetFit retrain path reads ``training_data``). Must name EVERY
+# status: a status missing here is a correction that silently trains nothing,
+# so ``test_status_vocabulary`` fails if the enum grows and this does not.
 _STATUS_TO_TRAINING_LABEL: dict[ApplicationStatus, EmailCategory] = {
     ApplicationStatus.APPLIED: EmailCategory.APPLIED,
     ApplicationStatus.INTERVIEWING: EmailCategory.INTERVIEW,
@@ -284,6 +305,31 @@ class ApplicationStatusUpdate(BaseModel):
     """Body for a user's status correction (PATCH /applications/{id})."""
 
     status: ApplicationStatus
+
+
+class StatusVocabularyResponse(BaseModel):
+    """The canonical stage vocabulary, served so no client has to restate it.
+
+    Every field is DERIVED from :class:`ApplicationStatus` /
+    :data:`CATEGORY_TO_STATUS` at import time, so this endpoint and the 422 a
+    bad ``PATCH`` earns cannot disagree. It exists because they did: the board
+    offered ``assessment``, the file-by-hand dialog offered six of the seven,
+    and the API accepted a different seven.
+
+    - ``statuses`` — the settable stages, in lifecycle order. THE list.
+    - ``default`` — what a new row starts at.
+    - ``category_to_status`` — how a classifier verdict maps onto a stage, for
+      a client that wants to show ``assessment`` mail under ``interviewing``.
+      A category absent from this map asserts no stage.
+    - ``classifier_categories`` — everything the classifier can emit. A
+      SUPERSET of the mapping's keys and NOT interchangeable with ``statuses``;
+      confusing the two is the original defect.
+    """
+
+    statuses: list[str]
+    default: str
+    category_to_status: dict[str, str]
+    classifier_categories: list[str]
 
 
 class MessageRefResponse(BaseModel):
@@ -378,18 +424,65 @@ class ApplicationSummaryResponse(BaseModel):
 async def _find_application_by_token(
     session, user_id: uuid.UUID, token: str
 ) -> Application | None:
-    """Locate one user's application row for a normalized company token."""
+    """Locate one user's application row for a normalized company token.
 
-    return (
+    Matching is by TOKEN on both sides (:func:`pipeline.matches_company_token`),
+    not by ``lower(company) == token``. The stored side is a display name and
+    the rolled side is a match key; for any company whose display name is more
+    than one word they are simply different strings, so the lookup missed, the
+    upsert inserted, and the board grew a second row per sync. "Together AI"
+    (applications 64 and 65, 2026-08-11) is that bug in production; "Anthropic"
+    never showed it because a one-word name happens to be its own token.
+
+    Two queries, so the common case stays index-assisted: exact equality first,
+    then a prefix scan over the leading normalized word, confirmed in Python.
+    The prefix is a superset of what can match, save for a display name that
+    starts with punctuation — those fall back to inserting a row, which is the
+    old behaviour and not a regression.
+
+    ORDER MATTERS: a LIVE row before a dismissed one (a dismissed duplicate must
+    not shadow the row actually on the board), then oldest first. That is what
+    makes "the second sync updates the first row" a property rather than luck —
+    without it the winner is whatever the database happened to return.
+    """
+
+    live_first = (
+        Application.dismissed_at.is_(None).desc(),
+        Application.created_at.asc(),
+        Application.id.asc(),
+    )
+
+    exact = (
         await session.exec(
             select(Application)
             .where(
                 Application.user_id == user_id,
                 func.lower(Application.company) == token,
             )
+            .order_by(*live_first)
             .limit(1)
         )
     ).first()
+    if exact is not None:
+        return exact
+
+    prefix = pipeline.normalize_company_name(token).split(" ")[0]
+    if not prefix:
+        return None
+    candidates = (
+        await session.exec(
+            select(Application)
+            .where(
+                Application.user_id == user_id,
+                func.lower(Application.company).like(f"{prefix}%"),
+            )
+            .order_by(*live_first)
+        )
+    ).all()
+    for row in candidates:
+        if pipeline.matches_company_token(row.company, token):
+            return row
+    return None
 
 
 async def _persist_message_refs(
@@ -397,7 +490,7 @@ async def _persist_message_refs(
     user_id: uuid.UUID,
     application_id: int | None,
     refs,
-) -> None:
+) -> set[int]:
     """Upsert metadata-only Email rows for a set of message refs (no bodies).
 
     Idempotent on ``(user_id, message_id)``: a re-sync updates the link and
@@ -416,8 +509,18 @@ async def _persist_message_refs(
     For the same reason a ``None`` ``application_id`` never CLEARS an existing
     link: the rebuild path persists review items unfiltered, which would
     otherwise un-link (and so un-file) an application the user just created.
+
+    RETURNS the ids of the applications it moved an email AWAY from. Re-pointing
+    is right — the newest resolution of a message's employer wins — but it can
+    leave the previous row with no linked mail at all, which is how application
+    64 ("Together AI") ended up on the owner's board with nothing behind it. The
+    caller has to decide what happens to those rows; see
+    :func:`_dismiss_rows_left_without_mail`. It cannot be decided here, because
+    a row emptied by one rolled company may be re-filled by the next one in the
+    same sync.
     """
 
+    moved_from: set[int] = set()
     for ref in refs:
         # Naive-UTC: the Email.received_at column is TIMESTAMP WITHOUT TIME ZONE;
         # asyncpg refuses an aware datetime (from parsedate_to_datetime) here.
@@ -437,6 +540,11 @@ async def _persist_message_refs(
         category = _safe_category(ref.category)
         if existing is not None:
             if application_id is not None:
+                if (
+                    existing.application_id is not None
+                    and existing.application_id != application_id
+                ):
+                    moved_from.add(existing.application_id)
                 existing.application_id = application_id
             existing.subject = ref.subject or existing.subject
             existing.sender_name = ref.sender_name
@@ -468,6 +576,79 @@ async def _persist_message_refs(
                 )
             )
 
+    return moved_from
+
+
+async def _dismiss_rows_left_without_mail(
+    session, user_id: uuid.UUID, application_ids: set[int]
+) -> list[RemovedApplication]:
+    """Take off the board any AUTO row whose LAST linked email moved elsewhere.
+
+    When a message is re-attributed to a different application, the row it came
+    from can be left with nothing behind it. That state is worse than either of
+    the two it could have had: the row is still on the board, still counted in
+    the summary, and — since 2026-08-10 — permanently unremovable, because a
+    scan can only contradict a row by re-reading the row's OWN mail and there is
+    none left to re-read. Application 64 ("Together AI") is exactly that row.
+
+    So the emptied row is dismissed: off the board, off the summary, still on
+    disk, restorable, and re-filed automatically by
+    :func:`upsert_applications_for_user` if fresh mail ever names the company
+    again. Only ``gmail``-auto rows are eligible — a manual row may legitimately
+    have never had mail, and a user-settled row is the user's, not the sync's.
+
+    Deliberately NOT reported as ``purged``: that count renders as "cleared N
+    stale" beside the names, and naming a company as removed while it is still
+    on the board under the row its mail moved to would be a worse lie than
+    saying nothing. It is logged instead.
+    """
+
+    if not application_ids:
+        return []
+
+    await session.flush()
+    removed: list[RemovedApplication] = []
+    now = datetime.utcnow()
+    for application_id in sorted(application_ids):
+        remaining = (
+            await session.exec(
+                select(func.count())
+                .select_from(Email)
+                .where(
+                    Email.user_id == user_id,
+                    Email.application_id == application_id,
+                )
+            )
+        ).one()
+        if remaining:
+            continue
+        row = (
+            await session.exec(
+                select(Application).where(
+                    Application.user_id == user_id,
+                    Application.id == application_id,
+                )
+            )
+        ).first()
+        if row is None or row.dismissed_at is not None or not _is_auto_row(row.source):
+            continue
+        row.dismissed_at = now
+        row.dismissed_reason = DISMISSED_BY_RESYNC
+        row.updated_at = now
+        session.add(row)
+        removed.append(RemovedApplication(id=row.id, company=row.company))
+
+    if removed:
+        await session.flush()
+        logger.info(
+            "Sync left %s auto row(s) with no linked mail for user_id=%s and "
+            "dismissed them (restorable): %s",
+            len(removed),
+            user_id,
+            ", ".join(f"{r.company} (id={r.id})" for r in removed),
+        )
+    return removed
+
 
 def _safe_category(value: str) -> EmailCategory | None:
     try:
@@ -486,7 +667,13 @@ async def upsert_applications_for_user(
     For each company (keyed by the normalized ``company_token``) it updates the
     existing row or inserts a new one — scoped strictly to ``user_id`` from the
     verified JWT, never a client-supplied id. Re-running with the same input
-    creates no duplicates: the match is ``lower(company) == company_token``.
+    creates no duplicates: the match is :func:`_find_application_by_token`,
+    which compares TOKENS on both sides rather than the stored display name.
+
+    A message that changes hands (re-attributed to a different employer) can
+    strand the row it left. Those rows are collected across the whole loop and
+    resolved once at the end (:func:`_dismiss_rows_left_without_mail`), never
+    per company — a row emptied by one company may be re-filled by the next.
 
     Stickiness: a mail signal only advances an AUTO row (``source == 'gmail'``).
     A row the user created or corrected (manual / gmail_user) keeps its status
@@ -502,6 +689,7 @@ async def upsert_applications_for_user(
 
     created = 0
     updated = 0
+    emptied: set[int] = set()
     for r in rolled:
         existing = await _find_application_by_token(session, user_id, r.company_token)
         deeplink = _rolled_deeplink(r)
@@ -527,7 +715,9 @@ async def upsert_applications_for_user(
             existing.updated_at = datetime.utcnow()
             session.add(existing)
             await session.flush()
-            await _persist_message_refs(session, user_id, existing.id, r.messages)
+            emptied |= await _persist_message_refs(
+                session, user_id, existing.id, r.messages
+            )
             updated += 1
         else:
             app = Application(
@@ -541,8 +731,14 @@ async def upsert_applications_for_user(
             )
             session.add(app)
             await session.flush()
-            await _persist_message_refs(session, user_id, app.id, r.messages)
+            emptied |= await _persist_message_refs(
+                session, user_id, app.id, r.messages
+            )
             created += 1
+
+    # Once, after every company has had its say — a row emptied by one of them
+    # may have been re-filled by another.
+    await _dismiss_rows_left_without_mail(session, user_id, emptied)
 
     await session.commit()
     return created, updated
@@ -721,6 +917,17 @@ async def _reset_review_queue(
     (:func:`_persist_review_items` puts back the ones that are still uncertain);
     one the scan never reached is simply unexamined. With no coverage, nothing
     is cleared.
+
+    Scoped by MESSAGE id, deliberately, even though the queue itself is grouped
+    by thread. Widening this DELETE to "every message of a thread the scan
+    touched" would destroy ``emails`` rows the scan never read on the strength
+    of having read a sibling — the 2026-08-10 reasoning, one table over and one
+    field along. The thread grouping is applied where it is safe (when the queue
+    is read, and when a decision is recorded), not where it deletes.
+
+    It does still tidy the duplicates: a rebuild whose scan re-read BOTH
+    messages of a thread clears both rows and
+    :func:`pipeline.collect_review_items` restates the thread once.
     """
 
     if coverage is None or not coverage.message_ids:
@@ -770,6 +977,12 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
     user already classified (linked to an application) or dismissed (reviewed):
     those are excluded up front so a subsequent low-confidence re-scan cannot
     un-link them. Returns the number of dated items surfaced this pass.
+
+    Settled is judged per THREAD as well as per message. A conversation the user
+    has already decided about must not come back to the queue because a later
+    message arrived on it — that is the same "classify this application twice"
+    the thread grouping in :func:`pipeline.collect_review_items` removes, only
+    spread across two syncs instead of one.
     """
 
     refs = [
@@ -787,23 +1000,36 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
         for item in review
     ]
 
+    scoped = []
     msg_ids = [r.message_id for r in refs if r.message_id]
+    thread_ids = [r.thread_id for r in refs if r.thread_id]
     if msg_ids:
-        settled = set(
-            (
-                await session.exec(
-                    select(Email.message_id).where(
-                        Email.user_id == user_id,
-                        Email.message_id.in_(msg_ids),
-                        or_(
-                            Email.application_id.is_not(None),
-                            Email.is_reviewed == True,  # noqa: E712 — SQL boolean
-                        ),
-                    )
+        scoped.append(Email.message_id.in_(msg_ids))
+    if thread_ids:
+        scoped.append(Email.thread_id.in_(thread_ids))
+    if scoped:
+        rows = (
+            await session.exec(
+                select(Email.message_id, Email.thread_id).where(
+                    Email.user_id == user_id,
+                    or_(*scoped),
+                    or_(
+                        Email.application_id.is_not(None),
+                        Email.is_reviewed == True,  # noqa: E712 — SQL boolean
+                    ),
                 )
-            ).all()
-        )
-        refs = [r for r in refs if r.message_id not in settled]
+            )
+        ).all()
+        settled_messages = {message_id for message_id, _thread_id in rows}
+        settled_threads = {
+            thread_id for _message_id, thread_id in rows if thread_id
+        }
+        refs = [
+            r
+            for r in refs
+            if r.message_id not in settled_messages
+            and (r.thread_id is None or r.thread_id not in settled_threads)
+        ]
 
     await _persist_message_refs(session, user_id, None, refs)
     return sum(1 for r in refs if r.received_at is not None)
@@ -828,9 +1054,20 @@ async def sync_gmail_pipeline_additive(
     purge+rebuild is reserved for the explicit user "Re-sync" button.
 
     Idempotent and user-scoped. Returns a :class:`MergeResult` whose ``purged``
-    is always 0 and whose ``removed`` is always empty, because an additive sync
-    removes nothing. ``created`` includes any application recovered by
-    :func:`reconcile_orphaned_classifications`.
+    is always 0 and whose ``removed`` is always empty. ``created`` includes any
+    application recovered by :func:`reconcile_orphaned_classifications`.
+
+    ONE row can still leave the board on this path, and the counts do not name
+    it: an AUTO row whose LAST linked email was re-attributed to another
+    application is dismissed by :func:`_dismiss_rows_left_without_mail` (called
+    from the upsert, so it applies to both merge paths). That is not the removal
+    this function promises never to make — nothing is dropped for being absent
+    from a bounded scan; a row is retired because its own evidence now belongs
+    to a different row, which is the alternative to leaving it stranded and
+    permanently unremovable. It is logged, listed under ``?dismissed=true``, and
+    restorable. It is deliberately NOT counted in ``purged``, because that
+    number renders as "cleared N stale (names)" and the company in question is
+    still on the board under the row its mail moved to.
     """
 
     created, updated = await upsert_applications_for_user(session, user_id, rolled)
@@ -883,6 +1120,15 @@ async def purge_and_rebuild_gmail_pipeline(
     them, and even then it is only hidden. ``coverage=None`` (a caller that
     cannot say what it looked at) therefore removes nothing.
 
+    INVARIANT — where ``coverage`` may come from. Only a SERVER-side scan with
+    ``scope="anywhere"``. That scope is forced in ``gmail_oauth._scan_server_side``
+    so a rebuild can see archived mail; coverage built from client-relayed
+    ``items`` carries whatever window and scope that client chose, which is not
+    a thing this function can verify. ``POST /gmail/sync`` therefore REFUSES
+    ``items`` together with ``mode="rebuild"`` outright — client-relayed scans
+    are structurally additive-only, and every caller of this function comes
+    from the server-scan branch.
+
     Manual and user-corrected rows (and anything the user classified) are never
     touched. Idempotent and user-scoped. Returns a :class:`MergeResult` naming
     what was removed.
@@ -905,7 +1151,11 @@ async def purge_and_rebuild_gmail_pipeline(
     now = datetime.utcnow()
     removed: list[RemovedApplication] = []
     for row in auto_rows:
-        if row.company.lower() in keep_tokens:
+        # Token matching, not ``lower(company) in keep_tokens``: a stored
+        # display name is not its own token unless it happens to be one word,
+        # so "Together AI" was never recognised as a company this scan had just
+        # re-filed — it fell through to the contradiction test on every rebuild.
+        if any(pipeline.matches_company_token(row.company, t) for t in keep_tokens):
             continue
         linked = (
             await session.exec(
@@ -1264,22 +1514,73 @@ async def classify_review_item(
 
     session.add(email)
     await _add_training_example(session, user_id, email, category)
+    # One decision settles the whole conversation, because the queue offers one
+    # entry per conversation.
+    await _settle_thread_siblings(
+        session, user_id, email, category, result["application_id"]
+    )
     await session.commit()
     return result
 
 
-def _lifecycle_to_status(category: EmailCategory) -> str | None:
-    """Map a lifecycle email category to an ApplicationStatus value, or None."""
+async def _settle_thread_siblings(
+    session,
+    user_id: uuid.UUID,
+    email: Email,
+    category: EmailCategory,
+    application_id: object,
+) -> int:
+    """Settle the other messages of a classified message's Gmail THREAD.
 
-    mapping = {
-        EmailCategory.APPLIED: "applied",
-        EmailCategory.PENDING_APPLICATION: "applied",
-        EmailCategory.ASSESSMENT: "interviewing",
-        EmailCategory.INTERVIEW: "interviewing",
-        EmailCategory.OFFER: "offered",
-        EmailCategory.REJECTION: "rejected",
-    }
-    return mapping.get(category)
+    The queue shows one entry per conversation (see
+    :func:`review_queue_cloud`), so classifying that entry has to settle every
+    message behind it — otherwise the sibling messages stay unlinked and
+    un-reviewed, and the very next scan puts the same application back in front
+    of the user. Emails 58 and 73 on the owner's account are one thread asked
+    about twice.
+
+    Narrow on purpose: only siblings that are still unlinked AND un-reviewed are
+    touched, so a message already filed elsewhere or already decided is left
+    alone. They are marked reviewed, given the chosen category and linked to the
+    same application — but NOT flagged ``user_corrected``, and no training
+    example is written for them: the human read one message, and only that one
+    is honest evidence of what they were labelling.
+    """
+
+    if not email.thread_id:
+        return 0
+
+    siblings = (
+        await session.exec(
+            select(Email).where(
+                Email.user_id == user_id,
+                Email.thread_id == email.thread_id,
+                Email.message_id != email.message_id,
+                Email.application_id.is_(None),
+                Email.is_reviewed == False,  # noqa: E712 — SQL boolean
+            )
+        )
+    ).all()
+
+    for sibling in siblings:
+        sibling.is_reviewed = True
+        sibling.classified_as = category
+        if isinstance(application_id, int):
+            sibling.application_id = application_id
+        session.add(sibling)
+    return len(siblings)
+
+
+def _lifecycle_to_status(category: EmailCategory) -> str | None:
+    """Map a lifecycle email category to an ApplicationStatus value, or None.
+
+    Reads the canonical :data:`CATEGORY_TO_STATUS` rather than restating it —
+    this function used to hold a second copy, which is how ``assessment`` came
+    to mean ``interviewing`` here and a settable stage in the UI.
+    """
+
+    status = CATEGORY_TO_STATUS.get(category)
+    return status.value if status is not None else None
 
 
 async def _connected_account_email(user_id: uuid.UUID) -> str | None:
@@ -1473,9 +1774,18 @@ async def application_summary_cloud(
             )
         ).one()
 
+        # Counted per THREAD, exactly like the queue this number links to —
+        # otherwise the tile says "2 need classification" for one conversation
+        # the queue shows once, and the two disagree in the UI.
         needs_review = (
             await session.exec(
-                select(func.count())
+                select(
+                    func.count(
+                        func.distinct(
+                            func.coalesce(Email.thread_id, Email.message_id)
+                        )
+                    )
+                )
                 .select_from(Email)
                 .where(
                     Email.user_id == user_id,
@@ -1572,6 +1882,15 @@ async def review_queue_cloud(
     These are the metadata-only Email rows the sync flagged ``needs_review``
     (unlinked, un-reviewed) — the real target of the dashboard's "N need
     classification" number, which is otherwise a dead count. Newest-first.
+
+    ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being
+    asked about it twice is being asked to do the same work twice: the owner's
+    queue listed "Crusoe | Application Received" as two items (emails 58 and 73,
+    thread ``19fed7e0706ee704``). The newest message of a thread represents it,
+    and classifying it settles the rest (:func:`_settle_thread_siblings`).
+    Collapsing happens here rather than in SQL so the fix also covers the
+    duplicate rows earlier syncs already persisted; ``limit`` therefore bounds
+    the rows READ, and the queue can return fewer entries than that.
     """
 
     async with get_session() as session:
@@ -1590,24 +1909,31 @@ async def review_queue_cloud(
         ).all()
 
     account_email = await _connected_account_email(user_id)
-    items = [
-        ReviewItemResponse(
-            message_id=e.message_id,
-            thread_id=e.thread_id,
-            subject=e.subject,
-            sender_name=e.sender_name,
-            sender_email=e.sender_email,
-            received_at=e.received_at.isoformat() if e.received_at else None,
-            snippet=e.body_snippet,
-            confidence=e.classification_confidence,
-            gmail_link=pipeline.gmail_deeplink(
-                thread_id=e.thread_id,
+    items: list[ReviewItemResponse] = []
+    seen_threads: set[str] = set()
+    for e in rows:
+        # Mail with no thread id stands alone under its own message id.
+        key = e.thread_id or e.message_id
+        if key in seen_threads:
+            continue
+        seen_threads.add(key)
+        items.append(
+            ReviewItemResponse(
                 message_id=e.message_id,
-                account_email=account_email,
-            ),
+                thread_id=e.thread_id,
+                subject=e.subject,
+                sender_name=e.sender_name,
+                sender_email=e.sender_email,
+                received_at=e.received_at.isoformat() if e.received_at else None,
+                snippet=e.body_snippet,
+                confidence=e.classification_confidence,
+                gmail_link=pipeline.gmail_deeplink(
+                    thread_id=e.thread_id,
+                    message_id=e.message_id,
+                    account_email=account_email,
+                ),
+            )
         )
-        for e in rows
-    ]
     return ReviewQueueResponse(items=items, total=len(items))
 
 
@@ -1632,6 +1958,31 @@ async def classify_review_item_cloud(
         return await classify_review_item(
             session, user_id, message_id, data.category, data.company
         )
+
+
+@router.get("/statuses", response_model=StatusVocabularyResponse)
+async def application_statuses_cloud() -> StatusVocabularyResponse:
+    """The canonical stage vocabulary — the one place a client should read it.
+
+    Declared ABOVE ``GET /{application_id}`` deliberately: FastAPI matches in
+    declaration order and would otherwise try ``"statuses"`` as an int path
+    param and answer 422. Same pattern as ``/summary`` and ``/review``.
+
+    Serves what :class:`ApplicationStatus` says, not a copy of it, so a client
+    can assert its own ``<select>`` against this (or against the enum in
+    ``/openapi.json``, which is generated from the same declaration) instead of
+    hand-maintaining a fourth list that drifts.
+    """
+
+    return StatusVocabularyResponse(
+        statuses=list(APPLICATION_STATUSES),
+        default=DEFAULT_APPLICATION_STATUS.value,
+        category_to_status={
+            category.value: status.value
+            for category, status in CATEGORY_TO_STATUS.items()
+        },
+        classifier_categories=list(pipeline.CANONICAL_CATEGORIES),
+    )
 
 
 @router.get("/{application_id}", response_model=ApplicationDetailResponse)

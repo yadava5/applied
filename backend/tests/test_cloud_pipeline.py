@@ -644,3 +644,83 @@ def test_empty_scan_covers_nothing() -> None:
     coverage = ScanCoverage.from_items([])
     assert coverage.message_ids == frozenset()
     assert not coverage.covers(datetime(2026, 5, 10, 9, 0, 0))
+
+
+# --- _scan_contradicts: membership, not date containment --------------------
+#
+# ``_scan_contradicts`` only reads ``.message_id`` and ``.received_at`` off each
+# row, so these drive it with plain stand-ins and keep this module DB-free.
+
+
+class _StoredEmail:
+    """The two fields ``_scan_contradicts`` reads off a linked Email row."""
+
+    def __init__(self, message_id: str, received_at: datetime | None) -> None:
+        self.message_id = message_id
+        self.received_at = received_at
+
+
+def test_a_message_the_scan_never_read_blocks_removal_even_inside_the_span() -> None:
+    """Date containment is not membership — the 2026-08-10 deletion, in one call.
+
+    The row has two messages: one the scan re-read and no longer files, one that
+    was archived and so never appeared in the scan at all. Its date falls inside
+    the span the scan reached, which is exactly what made span-containment say
+    "covered" about a message nobody looked at.
+    """
+
+    from jobtracker.cloud.applications import ScanCoverage, _scan_contradicts
+
+    coverage = ScanCoverage.from_items(
+        [
+            _scanned_item("m-inbox", datetime(2026, 5, 10, 9, 0, 0)),
+            _scanned_item("m-other", datetime(2026, 5, 1, 9, 0, 0)),
+        ]
+    )
+    emails = [
+        _StoredEmail("m-inbox", datetime(2026, 5, 10, 9, 0, 0)),
+        _StoredEmail("m-archived", datetime(2026, 5, 5, 9, 0, 0)),  # never read
+    ]
+    assert coverage.covers(emails[1].received_at)  # the old test said "covered"
+    assert _scan_contradicts(emails, coverage) is False
+
+
+def test_a_scan_that_re_read_every_message_of_a_row_does_contradict_it() -> None:
+    """The counterpart that keeps the rule above honest: full re-reading purges."""
+
+    from jobtracker.cloud.applications import ScanCoverage, _scan_contradicts
+
+    coverage = ScanCoverage.from_items(
+        [
+            _scanned_item("m-inbox", datetime(2026, 5, 10, 9, 0, 0)),
+            _scanned_item("m-archived", datetime(2026, 5, 5, 9, 0, 0)),
+        ]
+    )
+    emails = [
+        _StoredEmail("m-inbox", datetime(2026, 5, 10, 9, 0, 0)),
+        _StoredEmail("m-archived", datetime(2026, 5, 5, 9, 0, 0)),
+    ]
+    assert _scan_contradicts(emails, coverage) is True
+
+
+def test_span_still_blocks_a_removal_when_the_scans_copy_had_no_date() -> None:
+    """Why the span test survives id-membership: it is the stricter of the two.
+
+    An undated message (an unparseable ``Date`` header) contributes its id to
+    the coverage but nothing to the span, so a row whose stored date predates
+    everything the scan dated is outside the span even though its id was read.
+    Membership alone would remove it; the span clause keeps it, and keeping a
+    row is the safe direction.
+    """
+
+    from jobtracker.cloud.applications import ScanCoverage, _scan_contradicts
+
+    coverage = ScanCoverage.from_items(
+        [
+            _scanned_item("m1", None),  # re-read, but Gmail's Date was unusable
+            _scanned_item("m2", datetime(2026, 5, 10, 9, 0, 0)),
+        ]
+    )
+    assert coverage.message_ids == {"m1", "m2"}
+    emails = [_StoredEmail("m1", datetime(2026, 5, 1, 9, 0, 0))]
+    assert _scan_contradicts(emails, coverage) is False

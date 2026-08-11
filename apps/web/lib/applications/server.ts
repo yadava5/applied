@@ -63,7 +63,24 @@ export function dismissApplication(id: number): Promise<ApiCallResult> {
   return call(`/applications/${id}/dismiss`, { method: "POST", body: {} });
 }
 
-/** DELETE /applications/{id} — hard-delete the row and its linked emails. */
+/**
+ * POST /applications/{id}/restore — undo a dismissal.
+ *
+ * The counterpart to `dismissApplication`, and the reason a dismissal is safe
+ * to offer without a confirmation dialog: the row and its emails stay on disk,
+ * so this puts them back. A re-sync's own removals are dismissals too, which is
+ * what makes the removals it reports auditable rather than final.
+ */
+export function restoreApplication(id: number): Promise<ApiCallResult> {
+  return call(`/applications/${id}/restore`, { method: "POST", body: {} });
+}
+
+/**
+ * DELETE /applications/{id} — hard-delete the row and its linked emails.
+ *
+ * There is no undo for this one, which is why it is the only row action behind
+ * a confirmation. Prefer `dismissApplication` for anything reversible.
+ */
 export function deleteApplication(id: number): Promise<ApiCallResult> {
   return call(`/applications/${id}`, { method: "DELETE" });
 }

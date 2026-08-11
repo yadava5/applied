@@ -293,6 +293,49 @@ def company_key(
     return brand or "unknown"
 
 
+def normalize_company_name(value: str) -> str:
+    """Public form of the internal token normalizer.
+
+    Lowercase, collapse to ``[a-z0-9]`` words, single-space joined. Exposed so
+    the persistence layer can normalize a STORED company name with exactly the
+    same rules the tokens were minted under, instead of inventing a fifth
+    spelling of "the same company" (``lower(company)``, which is what filed a
+    second "Together AI" row on every sync).
+    """
+
+    return _normalize_token(value or "")
+
+
+def matches_company_token(company_name: str, token: str) -> bool:
+    """Does a stored row's company NAME identify the employer ``token`` names?
+
+    The two sides are minted differently and cannot simply be compared:
+
+    - a row stores the human DISPLAY name (``"Together AI"``, ``"Y Combinator"``);
+    - a rollup carries the match TOKEN, which is either the sender's domain
+      brand (``"tcs"``, ``"y-combinator"``) or the normalized FIRST WORD of a
+      display name (``"together"``).
+
+    So ``lower("Together AI") == "together"`` is false and the upsert filed a
+    duplicate — twice on the owner's board (applications 64 and 65), with the
+    only linked email re-pointed to the newer row and the older one stranded.
+
+    Matching normalizes both sides and accepts either a full match or a match on
+    the leading word, which is the same grouping :func:`roll_up_applications`
+    already applies when it collapses a company's mail under one token. Two
+    employers sharing a first word therefore merge — but they would have shared
+    a rolled row anyway, whereas the alternative is the duplicate above.
+    """
+
+    left = _normalize_token(company_name or "")
+    right = _normalize_token(token or "")
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    return left.split(" ")[0] == right.split(" ")[0]
+
+
 def summarize(items: Iterable[PipelineItem]) -> dict[str, int]:
     """Count messages per canonical category (every bucket present, 0-filled)."""
 
@@ -1005,7 +1048,13 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
         be named (skipping is better than inventing a company).
 
     Anything below the review floor, or plain ``other`` noise, is omitted.
-    Deduplicated by ``message_id`` (newest wins), newest-first.
+
+    Deduplicated by THREAD (newest message wins), falling back to ``message_id``
+    for mail with no thread id. One Gmail conversation is one decision: the
+    owner's queue asked them to classify "Crusoe | Application Received" twice
+    (emails 58 and 73 — two messages, one thread ``19fed7e0706ee704``), while
+    the filing path had grouped the same shape correctly for months. Newest-
+    first overall.
     """
 
     best: dict[str, ReviewItem] = {}
@@ -1037,13 +1086,18 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
             confidence=item.confidence,
             company_display=employer[1] if employer else None,
         )
-        best[item.message_id] = candidate
+        key = item.thread_id or item.message_id
+        current = best.get(key)
+        if current is None or _review_sort_key(candidate) >= _review_sort_key(current):
+            best[key] = candidate
 
-    return sorted(
-        best.values(),
-        key=lambda r: _as_utc(r.received_at) if r.received_at else _EPOCH,
-        reverse=True,
-    )
+    return sorted(best.values(), key=_review_sort_key, reverse=True)
+
+
+def _review_sort_key(item: ReviewItem) -> datetime:
+    """Newest-first ordering key that never compares aware to naive."""
+
+    return _as_utc(item.received_at) if item.received_at else _EPOCH
 
 
 def gmail_deeplink(

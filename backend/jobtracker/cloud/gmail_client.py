@@ -93,17 +93,39 @@ class HistoryPage:
 
     Either flag means ``messages`` is empty and must not be treated as "nothing
     new happened".
+
+    ``unreadable`` is the same number :class:`MessagePage` carries, for the same
+    reason: ids the history walk named but whose metadata could not be read
+    back. Without it an incremental sync reports ``unreadable: 0`` however much
+    it dropped, which is the defect the full-scan path just stopped having.
     """
 
     messages: list[CloudGmailMessage]
     expired: bool = False
     truncated: bool = False
+    unreadable: int = 0
 
     @property
     def usable(self) -> bool:
         """True when this page can stand in for a full scan."""
 
         return not (self.expired or self.truncated)
+
+
+@dataclass
+class MetadataBatch:
+    """What one batched ``messages.get`` round actually brought back.
+
+    ``dropped`` is the number of requested ids that produced NO metadata — a
+    failed sub-request, an empty response, or an id Gmail simply did not answer
+    for. It exists because dropping them silently makes a scan shrink without
+    saying so: the caller reports the smaller number as if it were the whole
+    page, and "scanned 1,940" reads identically whether the mailbox held 1,940
+    messages or 2,000 with 60 unreadable.
+    """
+
+    messages: dict[str, dict]
+    dropped: int = 0
 
 
 @dataclass
@@ -114,11 +136,28 @@ class MessagePage:
     the query is exhausted. ``list_pages_walked`` is the number of
     ``messages.list`` calls this page made (always 1 with the default
     page-size = list-ceiling alignment) — surfaced for observability/tests.
+
+    ``unreadable`` is how many ids this page LISTED but could not turn into a
+    message (a dropped metadata sub-request, or metadata that would not parse).
+    ``len(messages) + unreadable`` is what the page set out to fetch, so a
+    caller can say "1,940 of 2,000, 60 unreadable" instead of quietly reporting
+    1,940 as the whole.
+
+    ``result_size_estimate`` is Gmail's own ``resultSizeEstimate`` for the
+    query. It is an ESTIMATE and is documented as unreliable for large result
+    sets — it moves between pages of the same query. Anything using it as a
+    progress denominator must clamp it (never let it fall below what has
+    already been fetched, never present it as a count).
     """
 
     messages: list[CloudGmailMessage]
     next_page_token: Optional[str]
     list_pages_walked: int = 1
+    unreadable: int = 0
+    # PEP 604 rather than this module's older ``Optional[...]`` habit: the
+    # project's ruff config selects UP, and new lines should not add to the
+    # advisory count it is trying to drive to zero.
+    result_size_estimate: int | None = None
 
 
 def build_gmail_query(
@@ -210,7 +249,7 @@ def _batch_fetch_metadata(
     *,
     batch_size: int,
     pause_seconds: float,
-) -> dict[str, dict]:
+) -> MetadataBatch:
     """Fetch Subject/From/Date + snippet for ``ids`` via Gmail batch requests.
 
     Instead of one ``messages.get`` round-trip per id (which turns a 1000-id
@@ -220,9 +259,12 @@ def _batch_fetch_metadata(
     quota units, so we sleep ``pause_seconds`` between batches to stay under
     the per-user ~250 units/sec limit.
 
-    Returns a ``{message_id: raw_metadata_response}`` map. Individual failed
-    sub-requests are dropped (logged by type only), never raised — one bad
-    message must not sink the whole page.
+    Returns the ``{message_id: raw_metadata_response}`` map AND the number of
+    requested ids it could not produce one for. Individual failed sub-requests
+    are still dropped (logged by type only) rather than raised — one bad
+    message must not sink the whole page — but they are no longer silent: the
+    count is derived from what came back, not from the callback's exception
+    argument, so an id answered with an empty body counts as lost too.
     """
 
     results: dict[str, dict] = {}
@@ -256,7 +298,18 @@ def _batch_fetch_metadata(
         if pause_seconds and (start + chunk) < len(ids):
             time.sleep(pause_seconds)
 
-    return results
+    # Count against the DISTINCT ids asked for: the results map is keyed by id,
+    # so a repeated id could otherwise manufacture a phantom drop.
+    dropped = len(set(ids)) - len(results)
+    if dropped > 0:
+        logger.warning(
+            "Gmail metadata fetch lost %s of %s message(s); the scan is that "
+            "much smaller than the mailbox.",
+            dropped,
+            len(set(ids)),
+        )
+
+    return MetadataBatch(messages=results, dropped=dropped)
 
 
 def _collect_page(
@@ -273,6 +326,10 @@ def _collect_page(
     collection + ordering without a token. ``page_size`` is clamped to Gmail's
     500-id ``messages.list`` ceiling, so exactly one list call feeds one page
     and Gmail's ``nextPageToken`` becomes our cursor.
+
+    The page reports what it LOST as well as what it got (``unreadable``) and
+    carries Gmail's ``resultSizeEstimate`` through untouched — see
+    :class:`MessagePage` for what may and may not be concluded from either.
     """
 
     limit = max(1, min(page_size, _GMAIL_LIST_PAGE_MAX))
@@ -285,11 +342,14 @@ def _collect_page(
     refs = listing.get("messages", []) or []
     ids = [ref["id"] for ref in refs[:limit] if ref.get("id")]
     next_token = listing.get("nextPageToken")
+    estimate = _result_size_estimate(listing)
 
     if not ids:
-        return MessagePage(messages=[], next_page_token=next_token)
+        return MessagePage(
+            messages=[], next_page_token=next_token, result_size_estimate=estimate
+        )
 
-    metadata = _batch_fetch_metadata(
+    fetched = _batch_fetch_metadata(
         service,
         ids,
         batch_size=settings.gmail_batch_size,
@@ -300,14 +360,42 @@ def _collect_page(
     # failed rather than emitting a hollow row.
     out: list[CloudGmailMessage] = []
     for message_id in ids:
-        raw = metadata.get(message_id)
+        raw = fetched.messages.get(message_id)
         if raw is None:
             continue
         parsed = _parse_metadata_message(raw)
         if parsed is not None:
             out.append(parsed)
 
-    return MessagePage(messages=out, next_page_token=next_token)
+    # Everything listed but not emitted: the batch's own losses PLUS metadata
+    # that came back and would not parse. Both shrink the page identically, so
+    # reporting only the first would still understate the gap.
+    return MessagePage(
+        messages=out,
+        next_page_token=next_token,
+        unreadable=len(ids) - len(out),
+        result_size_estimate=estimate,
+    )
+
+
+def _result_size_estimate(listing: dict) -> int | None:
+    """Gmail's ``resultSizeEstimate`` for a listing, as a non-negative int.
+
+    An ESTIMATE, and a famously loose one for large result sets — it changes
+    between pages of the same query and can differ from the number of messages
+    that actually come back. Passed through because a progress denominator has
+    to start somewhere, coerced defensively because a denominator that arrives
+    as a string or a negative number is worse than none at all.
+    """
+
+    raw = listing.get("resultSizeEstimate")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(value, 0)
 
 
 async def fetch_message_page(
@@ -517,7 +605,7 @@ def _collect_history(
     # Same batched metadata fetch the full scan uses — which also drops ids
     # whose ``get`` failed, and ``messagesAdded`` can name a message the user
     # has since deleted.
-    metadata = _batch_fetch_metadata(
+    fetched = _batch_fetch_metadata(
         service,
         ids,
         batch_size=settings.gmail_batch_size,
@@ -525,7 +613,7 @@ def _collect_history(
     )
     out: list[CloudGmailMessage] = []
     for message_id in ids:
-        raw = metadata.get(message_id)
+        raw = fetched.messages.get(message_id)
         if raw is None:
             continue
         parsed = _parse_metadata_message(raw)
@@ -535,7 +623,7 @@ def _collect_history(
     # Gmail returns history oldest-first; the full scan returns newest-first.
     # Normalize so the two paths hand the pipeline the same ordering.
     out.sort(key=_received_sort_key, reverse=True)
-    return HistoryPage(messages=out)
+    return HistoryPage(messages=out, unreadable=len(ids) - len(out))
 
 
 def _received_sort_key(message: CloudGmailMessage) -> float:
