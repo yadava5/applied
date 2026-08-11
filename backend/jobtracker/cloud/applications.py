@@ -1716,8 +1716,16 @@ async def classify_review_item(
     """Classify a needs-review email into a category — persist + train.
 
     Marks the email reviewed, records a training example, and — when the chosen
-    category is a real lifecycle stage with a nameable employer — creates (or
-    advances) a STICKY, user-owned application from it. Scoped to the owner.
+    category is a real lifecycle stage with a nameable employer — files the mail
+    against an application. Scoped to the owner.
+
+    A row it MINTS is user-owned and sticky outright. A row it lands on is
+    advanced through the same gate the sync uses (forward-only, and a terminal
+    status is settled), and becomes user-owned only if the stage actually moved.
+    Both halves are deliberate and neither is decorative: the question the user
+    answered is "what is this MESSAGE?", so a stray "thank you for applying"
+    must not drag a row at ``interviewing`` back to ``applied``, and a stage
+    that did not move is not a decision about the stage worth making sticky.
 
     NEVER REPORTS SUCCESS WHILE CREATING NOTHING. When the category *is* a
     filing status but the employer cannot be named (and the caller supplied no
@@ -1829,11 +1837,27 @@ async def classify_review_item(
                 # Only a stage that actually MOVED is a decision about the
                 # stage, and only then does the row become user-owned. Flipping
                 # ``source`` unconditionally is the other half of the same bug:
-                # it froze a row at whatever stage it happened to hold (the
-                # advance gate at :func:`upsert_applications_for_user` can never
-                # re-advance a ``gmail_user`` row), and it also took the row's
-                # company and role away from the sync — over a claim the user
-                # never made.
+                # it froze the row at whatever stage it happened to hold, since
+                # the advance gate in :func:`upsert_applications_for_user` can
+                # never re-advance a ``gmail_user`` row.
+                #
+                # ``source`` carries four consequences, and this choice is a
+                # trade across all four rather than three. Staying ``gmail``
+                # keeps the row (a) advanceable by mail, (b) restyled when the
+                # employer resolver improves, (c) re-roled when extraction
+                # improves — all correct, because the user labelled a MESSAGE
+                # and asserted nothing about the row's stage, company or title.
+                # It also leaves the row (d) PURGEABLE: a rebuild that re-reads
+                # every one of its linked messages and still concludes no
+                # application may dismiss it (:func:`_merge_rolled_into_board`,
+                # which selects on ``source == SOURCE_GMAIL_AUTO``), where the
+                # old unconditional flip would have excluded it. Accepted
+                # knowingly: that dismissal is reversible, is reported to the
+                # user with a ``resync`` reason and an undo, and requires the
+                # scan to have actually re-read the row's own evidence. Freezing
+                # a wrong stage forever is not reversible, which is why (d) is
+                # the one that gives. Decoupling the two properly needs a second
+                # column, not a different reading of this one.
                 app.status = new_status
                 app.source = SOURCE_GMAIL_USER
             session.add(app)
