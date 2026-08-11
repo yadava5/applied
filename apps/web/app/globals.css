@@ -849,6 +849,20 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Board column widths (components/dashboard/PipelineBoard.tsx). At desktop,
+ * space follows content: the component writes per-column tracks into
+ * `--board-cols` (populated 3fr, empty a compressed readable floor), because
+ * a real search is one heavy column and three near-empty ones — an even
+ * four-way split starves the only column that holds cards. Below `lg` the
+ * Tailwind sm:grid-cols-2 flow applies and this rule is inert.
+ * ------------------------------------------------------------------------- */
+@media (min-width: 64rem) {
+  .board-grid {
+    grid-template-columns: var(--board-cols, repeat(4, minmax(0, 1fr)));
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Board drag-and-drop (components/dashboard/PipelineBoard.tsx). The dragged
  * card dims in place; a column being hovered as a drop target raises its
  * border and washes its surface. Pure state styling — no keyframes, so there

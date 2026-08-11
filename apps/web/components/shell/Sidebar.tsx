@@ -90,9 +90,16 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
           </ul>
         </nav>
 
-        <div className="mt-5 px-3">
-          <RailPipeline pipeline={rail.pipeline} />
-        </div>
+        {/* The pipeline snapshot is for the pages that DON'T show the
+            pipeline (inbox, settings, import) — glanceable truth plus the
+            needs-review deep link. On /dashboard the real board is on screen,
+            and a miniature of it beside itself is the count-duplication this
+            redesign removed from the page; so here, it yields. */}
+        {isNavItemActive(pathname, "/dashboard") ? null : (
+          <div className="mt-5 px-3">
+            <RailPipeline pipeline={rail.pipeline} />
+          </div>
+        )}
       </div>
 
       <div className="shrink-0 border-t border-line-soft px-3 py-3">
