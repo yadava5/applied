@@ -98,6 +98,12 @@ ATS_RELAY_DOMAINS: frozenset[str] = frozenset(
         "avature",
         "phenom",
         "paradox",
+        # Rippling fronts other employers' careers mail from ats.rippling.com.
+        # Observed live: "Thank You for Applying to Supernova Technology" sent by
+        # no-reply@ats.rippling.com filed an application at *Rippling*, which is
+        # not a company the owner applied to. The sender display name already
+        # said "Supernova Technology"; the domain overrode it.
+        "rippling",
         "pageuppeople",
         "pageup",
         "jobs",

@@ -692,3 +692,24 @@ async def test_a_role_the_user_wrote_is_never_overwritten(test_session):
 
     rows = await apps._company_rows(test_session, USER, "path")
     assert [r.position for r in rows] == ["SWE (C#) — the one Dana referred me for"]
+
+
+def test_an_ats_relay_subdomain_does_not_become_the_employer():
+    """Observed live: a "Rippling" row the owner never applied to.
+
+    "Thank You for Applying to Supernova Technology", sent by
+    no-reply@ats.rippling.com, filed an application at Rippling — the ATS — while
+    the sender display name said Supernova Technology all along. A relay's own
+    brand is never the employer.
+    """
+
+    resolved = p.resolve_employer(
+        "no-reply@ats.rippling.com",
+        "Thank You for Applying to Supernova Technology",
+        "Supernova Technology",
+    )
+
+    assert resolved is not None
+    token, display = resolved
+    assert token != "rippling"
+    assert display.startswith("Supernova")
