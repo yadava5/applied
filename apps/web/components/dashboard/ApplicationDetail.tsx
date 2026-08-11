@@ -356,6 +356,16 @@ export function ApplicationDetail({
       <div className="space-y-5">
         {/* --- The row's own facts + the working stage control ------------- */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {/* Not isolated behind `memo` the way the card's control is (see
+              `StageSelect` in ApplicationCard for why a controlled select can
+              lose a choice made while a render is pending). It does not need to
+              be: this sheet is unmounted until a visitor opens a card, which is
+              long after the reader's-day swap has landed, so there is no
+              systematic pending render for a selection here to race. Everything
+              below `if (!shown) return null` is also past the hook region, so
+              `onStageChange` cannot be a `useCallback` without restructuring
+              the component — worth doing only if this control ever does start
+              losing changes. */}
           <div className="flex items-center gap-2">
             <label className="sr-only" htmlFor={`detail-status-${active.id}`}>
               Change stage for {active.company}
