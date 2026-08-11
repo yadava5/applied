@@ -753,3 +753,36 @@ async def test_company_rows_puts_live_before_dismissed_across_both_queries(test_
     rows = await apps._company_rows(test_session, USER, "ixl")
 
     assert [r.company for r in rows] == ["IXL Learning", "IXL"]
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject"),
+    [
+        ("jobs@ixl.com", "Thank you for applying to IXL Learning!"),
+        ("no-reply@twitchjobs.tv", "Thank you for applying to Twitch"),
+        ("no-reply@doordash.com", "Thank you for applying to DoorDash"),
+        ("careers@torc.ai", "Thank you for applying to Torc Robotics"),
+    ],
+)
+def test_a_resolved_employer_can_always_find_its_own_stored_row(sender, subject):
+    """The invariant that ties the two halves of identity together.
+
+    `_company_rows` finds a stored row by running `matches_company_token` over
+    its display name. If `resolve_employer` ever returns a token that does not
+    match the display it returned alongside it, the lookup misses its own row
+    and the upsert mints another — every sync, forever.
+
+    That is not hypothetical: a multi-word name was space-stripped into
+    "ixllearning", which matches the stored "IXL Learning" under no rule, and the
+    owner's board grew a fresh "IXL Learning" and "Torc Robotics" row on every
+    single rebuild.
+    """
+
+    resolved = p.resolve_employer(sender, subject)
+
+    assert resolved is not None
+    token, display = resolved
+    assert p.matches_company_token(display, token), (
+        f"resolve_employer returned token {token!r} for display {display!r}, "
+        "which cannot find its own row"
+    )

@@ -1059,7 +1059,14 @@ def _corporate_identity(
     match = _SUBJECT_NAMES_EMPLOYER.search(subject or "")
     if match:
         named = _clean_company_display(match.group("name"))
-        token = _normalize_token(named).replace(" ", "")
+        # The FIRST normalized word, not the whole name space-stripped. Every
+        # other token in this module is a single word, and
+        # `matches_company_token` compares normalized names word-wise — so a
+        # concatenated "ixllearning" matches the stored "IXL Learning" under no
+        # rule at all. It cost the owner's board a fresh row per rebuild: the
+        # lookup never found the existing one, the upsert minted another, and the
+        # emptied predecessor was dismissed, forever.
+        token = _normalize_token(named).split(" ")[0]
         if token and (brand.startswith(token) or token.startswith(brand)):
             return token, named
     return brand, _brand_display(brand, sender_name)
