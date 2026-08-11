@@ -218,9 +218,9 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByText(/last 4 wk/)).toBeVisible();
 
     // Ageing: the fixture board's open rows are weeks old, so the quiet share
-    // is non-zero (the exact count drifts as real time passes — assert the
-    // signal, not today's number).
-    await expect(pulse.getByText(/\d+ quiet ≥2 wk/)).toBeVisible();
+    // is non-zero. `\d+` would also match "0 quiet", which is the claim this
+    // is here to make — so require a non-zero leading digit.
+    await expect(pulse.getByText(/[1-9]\d* quiet ≥2 wk/)).toBeVisible();
 
     // Classifier: every fixture row is source="gmail", and nothing is held.
     await expect(pulse.getByText("14 of 14 auto-filed from mail")).toBeVisible();
@@ -270,12 +270,41 @@ test.describe("live demo (/demo)", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/demo");
     await expect(page.getByText("Beacon Health", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("pipeline-pulse")).toBeVisible();
+
+    // `toBeVisible()` on a bordered, padded <section> passes on an EMPTY strip,
+    // so assert the content itself — the three derived signals and eight drawn
+    // bars — exactly as the motion-on test does. A guard that survives its own
+    // component rendering nothing is the shape this estate keeps producing.
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
+    await expect(pulse.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    // A bar with zero drawn height would satisfy the count above.
+    const barHeights = await pulse.getByTestId("pulse-week").evaluateAll((els) =>
+      els.map((el) => el.getBoundingClientRect().height),
+    );
+    expect(Math.max(...barHeights)).toBeGreaterThan(0);
+
+    // The board's own row-actions menu must keep its accessible name. Branching
+    // element type on `useReducedMotion` desynced the server and client trees,
+    // which shifted every descendant `useId` and left `aria-labelledby` pointing
+    // at an id that no longer existed — for exactly the people this mode serves.
+    const trigger = page.getByRole("button", { name: /^Row actions for / }).first();
+    await trigger.click();
+    const menu = page.getByRole("menu").first();
+    await expect(menu).toBeVisible();
+    const labelledBy = await menu.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    await expect(page.locator(`#${CSS.escape(labelledBy!)}`)).toHaveCount(1);
+    await page.keyboard.press("Escape");
+
     await page
       .getByRole("button", { name: "Show all applications at Northstar Systems" })
       .first()
       .click();
-    await expect(page.getByTestId("company-band")).toBeVisible();
+    const band = page.getByTestId("company-band");
+    await expect(band.getByText("Northstar Systems")).toBeVisible();
+    await expect(band.getByText(/3 applications/)).toBeVisible();
     // The set view keeps only Northstar cards, so open one of those.
     await page
       .getByRole("button", { name: "Open Northstar Systems — ML Engineer, Platform" })

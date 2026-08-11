@@ -131,14 +131,28 @@ function BoardCell({
   children: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
-  if (reduceMotion) return <li>{children}</li>;
+  // ONE element type in every case, and the same one the server rendered.
+  //
+  // Returning a plain `<li>` under reduced motion looked equivalent and was not:
+  // `useReducedMotion` cannot read a media query during SSR, so the server always
+  // took the `motion.li` branch while a reduced-motion client took the other one.
+  // The differing tree shape shifts every descendant `useId`, and production
+  // React does not repair a server-rendered `id` attribute — so
+  // `RowActionsMenu`'s `aria-labelledby` pointed at an id that no longer existed
+  // on every card, for exactly the people reduced motion exists to serve.
+  //
+  // Reduced motion is now expressed by neutralising the animation PROPS, which
+  // changes nothing about the tree. `layout={false}` disables the shared-layout
+  // glide; the zero duration makes the remaining opacity settle instant.
   return (
     <motion.li
-      layout
+      layout={!reduceMotion}
       layoutId={`app-${id}`}
-      initial={entering ? { opacity: 0, y: 6 } : false}
+      initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      transition={
+        reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
+      }
     >
       {children}
     </motion.li>
