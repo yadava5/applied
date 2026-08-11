@@ -565,13 +565,28 @@ def _pick_application(
 
     if req_id is None and role_token is None:
         # Rule 4. Deliberately looks at ALL rows, not just the identity-less
-        # ones: role-less mail at an employer with exactly one known application
-        # belongs to it. With several, there is nothing to choose between them.
-        return rows[0] if len(rows) == 1 else None
+        # ones, and always returns one rather than minting.
+        #
+        # A cluster reaches here only when the scan found NO role for this
+        # employer in ANY of its mail (`partition_applications` gives anonymous
+        # messages their own cluster only when nothing else at the employer is
+        # identified), so there is no keyed sibling it could be confused with.
+        # Returning None instead would mint a fresh row on EVERY sync at any
+        # employer that already has two rows — the same unbounded growth PR #76
+        # fixed for a different reason. `_company_rows` orders live-first then
+        # oldest-first, so the choice is stable across syncs.
+        return rows[0]
 
     # Rule 3 — adopt the employer's single pre-identity row, in place.
     unidentified = [row for row in rows if row.req_id is None and row.role_token is None]
-    return unidentified[0] if len(unidentified) == 1 else None
+    if len(unidentified) == 1:
+        return unidentified[0]
+    # With several, prefer the one the SYNC made. A manual row is a human's own
+    # entry and may legitimately duplicate what the mail says; adopting it would
+    # rewrite their record. An auto row is the sync's own and is exactly what
+    # this identity belongs on.
+    auto = [row for row in unidentified if _is_auto_row(row.source)]
+    return auto[0] if len(auto) == 1 else None
 
 
 async def _resolve_application_for_email(

@@ -378,3 +378,88 @@ def test_a_company_merely_mentioned_in_a_subject_does_not_rename_the_relay():
     resolved = p.resolve_employer("no-reply@us.greenhouse-mail.io", "Thank you for applying to Anthropic")
     assert resolved is not None
     assert resolved[1] == "Anthropic"
+
+
+# --- resolving a cluster onto a stored row ------------------------------------
+#
+# The rules above are pure; these are the persistent half. Both cases below were
+# found by predicting what a real sync would do to the owner's live rows, and
+# both would have been visible damage.
+
+import uuid as _uuid  # noqa: E402
+
+from jobtracker.cloud import applications as apps  # noqa: E402
+from jobtracker.database.models import Application, ApplicationStatus  # noqa: E402
+
+USER = _uuid.UUID("7d8676d9-6f45-4466-a1b1-fa63575b2ff5")
+
+
+def stored(
+    company: str,
+    *,
+    req_id: str | None = None,
+    role_token: str | None = None,
+    source: str | None = "gmail",
+    app_id: int | None = None,
+) -> Application:
+    return Application(
+        id=app_id,
+        user_id=USER,
+        company=company,
+        position="",
+        status=ApplicationStatus.APPLIED,
+        source=source,
+        req_id=req_id,
+        role_token=role_token,
+    )
+
+
+def test_a_cluster_that_names_no_role_never_mints_beside_existing_rows():
+    """Idempotence at an employer that already has two rows.
+
+    Returning None here would mint a fresh row on every single sync — the same
+    unbounded growth PR #76 fixed by a different route. The owner's live board
+    carries exactly this shape: two "Together AI" rows, and Together AI's mail
+    names no role anywhere.
+    """
+
+    rows = [stored("Together AI", app_id=64), stored("Together AI", app_id=65)]
+
+    picked = apps._pick_application(rows, None, None)
+
+    assert picked is not None
+    assert picked.id == 64  # live-first, then oldest — stable across syncs
+
+
+def test_an_identified_cluster_adopts_the_syncs_own_row_not_the_users():
+    """A manual row is a human's entry and must not be rewritten.
+
+    Live shape: Amazon holds one auto row from the sync and one filed by hand.
+    Exactly one of them is the sync's to claim.
+    """
+
+    auto = stored("Amazon", source="gmail", app_id=69)
+    manual = stored("Amazon", source="manual", app_id=75)
+
+    picked = apps._pick_application(
+        [auto, manual], "3177934", "software development engineer 2026 us"
+    )
+
+    assert picked is auto
+
+
+def test_a_second_requisition_mints_rather_than_stealing_the_adopted_row():
+    """Once a row carries an identity, a different requisition is a new row."""
+
+    adopted = stored("Amazon", req_id="3177934", source="gmail", app_id=69)
+
+    assert (
+        apps._pick_application(
+            [adopted], "3183020", "software development engineer embedded systems"
+        )
+        is None
+    )
+    assert (
+        apps._pick_application([adopted], "3177934", "software development engineer 2026 us")
+        is adopted
+    )
