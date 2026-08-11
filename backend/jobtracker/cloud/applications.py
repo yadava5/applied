@@ -59,6 +59,12 @@ logger = logging.getLogger(__name__)
 # owner saw on every row.
 _NO_ROLE = ""
 
+# Who set a deadline. A `user` one is a decision and the sync never overwrites
+# it; a `mail` one is a reading of the latest message that stated a date, and a
+# newer message may legitimately supersede it.
+DUE_FROM_USER = "user"
+DUE_FROM_MAIL = "mail"
+
 # ``Application.source`` doubles as an origin+ownership tag so a re-sync can
 # safely REPLACE the Gmail-derived pipeline while preserving anything the user
 # touched:
@@ -299,12 +305,27 @@ class CloudApplicationResponse(BaseModel):
     # UI render an "removed by re-sync — undo" affordance over ?dismissed=true.
     dismissed_at: str | None = None
     dismissed_reason: str | None = None
+    # When something is due on this application, and who said so. Both null
+    # together — a deadline with no origin would be a claim nobody made.
+    due_at: str | None = None
+    due_source: str | None = None
 
 
 class ApplicationStatusUpdate(BaseModel):
     """Body for a user's status correction (PATCH /applications/{id})."""
 
     status: ApplicationStatus
+
+
+class ApplicationDeadlineUpdate(BaseModel):
+    """Body for setting or clearing an application's deadline.
+
+    ``None`` clears it. There is deliberately no separate delete endpoint: set
+    and clear are the same decision, and splitting them invites a UI that offers
+    one without the other.
+    """
+
+    due_at: datetime | None = None
 
 
 class StatusVocabularyResponse(BaseModel):
@@ -947,6 +968,13 @@ async def upsert_applications_for_user(
                 or (_is_auto_row(existing.source) and r.role != existing.position)
             ):
                 existing.position = r.role
+            # A deadline the mail states refreshes one the mail previously
+            # stated — a rescheduled assessment is real news. It never touches
+            # one the user typed: that is a decision, and the sync does not get
+            # to overrule it.
+            if r.due_at is not None and existing.due_source != DUE_FROM_USER:
+                existing.due_at = r.due_at
+                existing.due_source = DUE_FROM_MAIL
             if r.applied_at and existing.applied_date is None:
                 existing.applied_date = r.applied_at.date()
             if deeplink and not existing.url:
@@ -969,6 +997,8 @@ async def upsert_applications_for_user(
                 url=deeplink,
                 req_id=r.req_id,
                 role_token=r.role_token,
+                due_at=r.due_at,
+                due_source=DUE_FROM_MAIL if r.due_at is not None else None,
             )
             session.add(app)
             await session.flush()
@@ -1974,6 +2004,8 @@ def _serialize(
         url=pipeline.retarget_gmail_deeplink(app.url, account_email),
         dismissed_at=app.dismissed_at.isoformat() if app.dismissed_at else None,
         dismissed_reason=app.dismissed_reason,
+        due_at=app.due_at.isoformat() if app.due_at else None,
+        due_source=app.due_source if app.due_at else None,
     )
 
 
@@ -2527,6 +2559,44 @@ async def update_application_status_cloud(
             status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
         )
     return _serialize(app)
+
+
+@router.put("/{application_id}/deadline", response_model=CloudApplicationResponse)
+async def set_application_deadline_cloud(
+    application_id: int,
+    data: ApplicationDeadlineUpdate,
+    user_id: uuid.UUID = Depends(current_user),
+) -> CloudApplicationResponse:
+    """Set or clear when something is due on this application.
+
+    A date written here is the USER's, and is marked as such: later syncs will
+    refresh a deadline that came from mail as newer mail supersedes it, and will
+    never touch this one. Sending ``null`` clears both the date and its origin,
+    because a source without a date is a claim about nothing.
+
+    404 when the row is not the caller's.
+    """
+
+    async with get_session() as session:
+        app = (
+            await session.exec(
+                select(Application).where(
+                    Application.user_id == user_id, Application.id == application_id
+                )
+            )
+        ).first()
+        if app is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
+            )
+        due = pipeline.to_naive_utc(data.due_at) if data.due_at is not None else None
+        app.due_at = due
+        app.due_source = DUE_FROM_USER if due is not None else None
+        app.updated_at = datetime.utcnow()
+        session.add(app)
+        await session.commit()
+        await session.refresh(app)
+        return _serialize(app)
 
 
 @router.post("/{application_id}/dismiss", response_model=dict)
