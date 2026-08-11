@@ -212,7 +212,7 @@ body {
 /* Caps label — the product's structural voice: board column headers, form
  * labels, settings field labels, rail headings. Semibold because Atkinson
  * at this size needs the weight to hold uppercase; in the components layer
- * so a per-use utility (`text-reject`, `text-viz-rules`) can override the
+ * so a per-use utility (`text-reject-ink`, `text-viz-rules`) can override the
  * color, which unlayered `.label-mono` never allowed. */
 @layer components {
   .label-caps {
