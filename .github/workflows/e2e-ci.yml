@@ -6,6 +6,9 @@ on:
       - "apps/web/**"
       - "backend/**"
       - "api/**"
+      # The schema drift gate's generator. A change to it that is not also a
+      # change under apps/web or backend would otherwise never be exercised.
+      - "scripts/generate_api_schema.sh"
       - ".github/workflows/e2e-ci.yml"
   push:
     branches:
@@ -15,6 +18,9 @@ on:
       - "apps/web/**"
       - "backend/**"
       - "api/**"
+      # The schema drift gate's generator. A change to it that is not also a
+      # change under apps/web or backend would otherwise never be exercised.
+      - "scripts/generate_api_schema.sh"
       - ".github/workflows/e2e-ci.yml"
   workflow_dispatch:
 
@@ -79,6 +85,39 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
+
+      # -----------------------------------------------------------------------
+      # API SCHEMA DRIFT GATE
+      #
+      # `apps/web/lib/api/schema.d.ts` is the ONLY compile-time contract the web
+      # app has with the backend, and for months it was not generated at all: a
+      # 180-line file written by hand, covering 4 of the 20 paths the cloud app
+      # serves. Regenerating produced 2018 lines, i.e. total drift — and one of
+      # the shapes it got wrong (`split_candidates[].position`, which nobody
+      # sends; the field is `role`) had already shipped a feature that could
+      # never render (#100).
+      #
+      # This job is where the gate is cheap: Python 3.11, the backend
+      # dependencies and `openapi-typescript` are all installed above, so it
+      # costs seconds. It runs BEFORE the Playwright browser download so a
+      # stale contract fails fast.
+      #
+      # Generated from `jobtracker.main_cloud` — the app `api/index.py` serves
+      # on Vercel — NOT the desktop `jobtracker.main` this job boots on :8000
+      # for the browser tests. Those are different contracts.
+      #
+      # If a fastapi / pydantic upgrade changes the emitted document this goes
+      # red. Regenerate and commit the result; do not suppress it.
+      # -----------------------------------------------------------------------
+      - name: Regenerate the web API schema from the cloud app
+        run: ./scripts/generate_api_schema.sh
+
+      - name: Fail if the committed API schema drifted
+        run: |
+          if ! git diff --exit-code apps/web/lib/api/schema.d.ts; then
+            echo "::error file=apps/web/lib/api/schema.d.ts::The committed OpenAPI bindings no longer match jobtracker.main_cloud. Run 'pnpm -C apps/web api:gen' and commit the result."
+            exit 1
+          fi
 
       - name: Install Playwright browsers
         working-directory: apps/web

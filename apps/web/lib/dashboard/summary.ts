@@ -10,7 +10,14 @@
 import type { components } from "@/lib/api/schema";
 import { filedAt } from "@/lib/dashboard/dates";
 
-export type Application = components["schemas"]["Application"];
+/**
+ * A board row, as the cloud backend actually serves it. The name on the wire is
+ * `CloudApplicationResponse` (`backend/jobtracker/cloud/applications.py`); the
+ * old alias pointed at a hand-written `Application` schema that no endpoint has
+ * ever returned, so `status` read as a free `string` and the row's
+ * `dismissed_at` / `dismissed_reason` fields were invisible to the compiler.
+ */
+export type Application = components["schemas"]["CloudApplicationResponse"];
 
 /** The four pipeline stages, in flow order, with their semantic accent. */
 export type StageKey = "applied" | "interviewing" | "offered" | "rejected";
