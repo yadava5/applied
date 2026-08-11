@@ -48,8 +48,10 @@ function InboxShell({
   children?: React.ReactNode;
   lede: React.ReactNode;
 }) {
+  // Measure capped for readability, but aligned to the shell's shared left
+  // edge (no `mx-auto`): every authed page starts at the same x.
   return (
-    <section className="mx-auto max-w-3xl space-y-6">
+    <section className="max-w-3xl space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
         <p className="mt-1 text-sm text-muted">{lede}</p>
@@ -87,7 +89,7 @@ export default async function InboxPage() {
 
     if (configured && connected) {
       return (
-        <section className="mx-auto max-w-3xl space-y-6">
+        <section className="max-w-3xl space-y-6">
           <header>
             <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
             <p className="mt-1 text-sm text-muted">

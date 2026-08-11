@@ -2,7 +2,7 @@
 
 import { Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
@@ -14,9 +14,21 @@ import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboar
 /**
  * Read-only card for the public demo + sample previews: no correction controls
  * (they would 401 without a session). Still honours the real received date and
- * the application-first anatomy (role under company).
+ * the application-first anatomy (role under company) — and keeps the
+ * same-company affordance, because filtering is not a mutation and the demo's
+ * contract is to be the real thing.
  */
-function StaticApplicationCard({ app, columnLabel }: { app: Application; columnLabel: string }) {
+function StaticApplicationCard({
+  app,
+  columnLabel,
+  sameCompanyCount = 0,
+  onFilterCompany,
+}: {
+  app: Application;
+  columnLabel: string;
+  sameCompanyCount?: number;
+  onFilterCompany?: (company: string) => void;
+}) {
   const qualifier = cardQualifier(app.status, columnLabel);
   const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
   const filed = filedAt(app);
@@ -35,6 +47,16 @@ function StaticApplicationCard({ app, columnLabel }: { app: Application; columnL
         )}
       </p>
       {role ? <p className="truncate text-xs text-foreground">{role}</p> : null}
+      {sameCompanyCount > 0 && onFilterCompany ? (
+        <button
+          type="button"
+          onClick={() => onFilterCompany(app.company)}
+          aria-label={`Show all applications at ${app.company}`}
+          className="mt-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
+        >
+          {sameCompanyCount} more at {app.company} →
+        </button>
+      ) : null}
       {app.notes && <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-dim">{app.notes}</p>}
       <p className="mt-2 font-mono text-[10px] text-dim">filed {shortDate(filed)}</p>
     </li>
@@ -94,20 +116,17 @@ export function PipelineBoard({
   const [moveError, setMoveError] = useState<string | null>(null);
 
   // Server data caught up with an optimistic move → drop the overlay entry and
-  // let the row's own status speak.
-  useEffect(() => {
-    setPendingMoves((moves) => {
-      let changed = false;
-      const next = { ...moves };
-      for (const app of applications) {
-        if (next[app.id] !== undefined && app.status === next[app.id]) {
-          delete next[app.id];
-          changed = true;
-        }
-      }
-      return changed ? next : moves;
-    });
-  }, [applications]);
+  // let the row's own status speak. Render-adjustment (guarded, so it settles
+  // in one extra render), the same pattern ApplicationCard uses for its own
+  // optimistic stage.
+  const settled = applications.filter(
+    (app) => pendingMoves[app.id] !== undefined && app.status === pendingMoves[app.id],
+  );
+  if (settled.length > 0) {
+    const next = { ...pendingMoves };
+    for (const app of settled) delete next[app.id];
+    setPendingMoves(next);
+  }
 
   /** How many OTHER cards share each company — drives the "N more at" link. */
   const companyCounts = useMemo(() => {
@@ -289,7 +308,13 @@ export function PipelineBoard({
                         }}
                       />
                     ) : (
-                      <StaticApplicationCard key={app.id} app={app} columnLabel={column.label} />
+                      <StaticApplicationCard
+                        key={app.id}
+                        app={app}
+                        columnLabel={column.label}
+                        sameCompanyCount={(companyCounts.get(app.company) ?? 1) - 1}
+                        onFilterCompany={setCompanyFilter}
+                      />
                     ),
                   )
                 )}

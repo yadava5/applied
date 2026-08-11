@@ -50,7 +50,8 @@ export default async function ImportPage() {
   if (user) {
     return (
       <AppShell userEmail={user.email ?? null}>
-        <div className="mx-auto max-w-3xl space-y-8">
+        {/* Measure capped, but on the shell's shared left edge (no mx-auto). */}
+        <div className="max-w-3xl space-y-8">
           {intro}
           <ImportMail />
           <p className="border-t border-line-soft pt-6 text-center font-mono text-[11px] leading-relaxed text-dim">

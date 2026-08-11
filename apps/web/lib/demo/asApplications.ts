@@ -1,9 +1,9 @@
 /**
  * Adapts the synthetic demo fixtures to the backend's `Application` shape so
- * the exact same dashboard components (StatTiles, pipeline board, recent
- * activity) render on the public `/demo` twin and inside the signed-in
- * dashboard's sample preview. One component tree, two data sources — verifying
- * the public demo therefore verifies the real dashboard's building blocks.
+ * the exact same pipeline board renders on the public `/demo` twin and inside
+ * the signed-in dashboard's sample preview. One component tree, two data
+ * sources — verifying the public demo therefore verifies the real dashboard's
+ * building blocks.
  */
 import type { Application } from "@/lib/dashboard/summary";
 import { DEMO_APPLICATIONS } from "@/lib/demo/demoData";

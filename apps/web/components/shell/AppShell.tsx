@@ -30,7 +30,16 @@ export async function AppShell({ children, userEmail }: AppShellProps) {
       <Sidebar rail={rail} userEmail={userEmail} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar userEmail={userEmail} />
-        <main className="flex-1 overflow-y-auto px-6 py-6">{children}</main>
+        {/* ONE page geometry for every authed surface: a shared centred column
+            with a common left edge. The dashboard fills it; narrower pages
+            (settings, inbox) cap their own measure inside it but start at the
+            same x — previously /dashboard was full-bleed while /inbox and
+            /settings centred a 730px column behind a ~280px dead gutter.
+            (`overflow-y-auto` is gone: it was inert — the column has no height
+            bound, so the page body is, and should be, the scroll context.) */}
+        <main className="flex-1 px-6 py-6">
+          <div className="mx-auto w-full max-w-6xl">{children}</div>
+        </main>
       </div>
     </div>
   );

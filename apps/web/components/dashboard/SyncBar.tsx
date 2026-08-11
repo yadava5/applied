@@ -162,6 +162,8 @@ export function SyncBar({
   const lastRebuild = useRef<{ depth: RebuildDepth; range: RebuildRange } | null>(null);
 
   const connected = gmail?.connected === true;
+  const hasCursor = gmail?.hasCursor === true;
+  const lastSyncAt = gmail?.lastSyncAt ?? null;
   const busy = phase.kind === "syncing" || phase.kind === "rebuilding";
 
   const runSync = useCallback(async () => {
@@ -187,7 +189,7 @@ export function SyncBar({
       // window it never checked.
       const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
       const note =
-        nothingFiled && gmail?.hasCursor
+        nothingFiled && hasCursor
           ? "no new application mail since your last sync"
           : filedSummary(data);
       setPhase({ kind: "synced", note });
@@ -195,7 +197,7 @@ export function SyncBar({
     } catch {
       setPhase({ kind: "failed", op: "sync", notConnected: false });
     }
-  }, [gmail?.hasCursor, router]);
+  }, [hasCursor, router]);
 
   const runRebuild = useCallback(
     async (d: RebuildDepth, r: RebuildRange) => {
@@ -232,11 +234,16 @@ export function SyncBar({
     if (autoRan.current) return;
     autoRan.current = true;
     if (!connected) return;
-    if (!isStale(gmail?.lastSyncAt ?? null, Date.now()) || recentlyAutoSynced()) return;
-    // Stamp before the request so a rapid re-navigation cannot double-fire.
-    markAutoSynced();
-    void runSync();
-  }, [connected, gmail?.lastSyncAt, runSync]);
+    // Deferred off the effect body (house rule — no synchronous setState in an
+    // effect): the staleness check and the sync kick off in a macrotask.
+    const id = window.setTimeout(() => {
+      if (!isStale(lastSyncAt, Date.now()) || recentlyAutoSynced()) return;
+      // Stamp before the request so a rapid re-navigation cannot double-fire.
+      markAutoSynced();
+      void runSync();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [connected, lastSyncAt, runSync]);
 
   // The empty state's "Choose a window" button opens the same dialog.
   useEffect(() => onRebuildRequest(() => setDialogOpen(true)), []);
@@ -246,8 +253,9 @@ export function SyncBar({
   // beside it already carries the state.
   useEffect(() => {
     if (!busy) return;
+    // No synchronous tick: the first paint of a fresh run computes a ≤0
+    // elapsed, which formatElapsed clamps to 0:00 — no stale value shows.
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
-    setNowMs(Date.now());
     return () => window.clearInterval(id);
   }, [busy]);
 

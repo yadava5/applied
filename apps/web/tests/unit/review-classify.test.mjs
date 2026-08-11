@@ -33,6 +33,7 @@ import {
   classifyRequestBody,
   employerPromptFor,
   readClassifyOutcome,
+  reviewCandidates,
   rowStaysInQueue,
 } from "../../lib/dashboard/review.ts";
 
@@ -148,6 +149,91 @@ test("needs_employer is honoured only when it is literally true", () => {
       `readClassifyOutcome(true, ${JSON.stringify(body)})`,
     );
   }
+});
+
+test("the assign-to-application choice rides the body only when it is a real id", () => {
+  // One employer can hold several applications; the picker's choice is sent as
+  // `application_id`. TODO(backend): ignored until ReviewClassifyRequest
+  // accepts it — these assert the wire shape is ready the day it does.
+  assert.deepEqual(classifyRequestBody("rejection", "", 42), {
+    category: "rejection",
+    application_id: 42,
+  });
+  assert.deepEqual(classifyRequestBody("rejection", "Amazon", 42), {
+    category: "rejection",
+    company: "Amazon",
+    application_id: 42,
+  });
+  // "not one of these", absent, or garbage → the field is simply not sent.
+  for (const empty of [undefined, null, 0, -1, 1.5, Number.NaN]) {
+    assert.deepEqual(
+      classifyRequestBody("rejection", "", empty),
+      { category: "rejection" },
+      `classifyRequestBody("rejection", "", ${String(empty)})`,
+    );
+  }
+});
+
+/** A board shaped like the owner's: several applications at one employer. */
+const BOARD = [
+  { id: 1, company: "Amazon", position: "SDE II, 2026", status: "applied" },
+  { id: 2, company: "Amazon", position: "SDE, Database Services", status: "applied" },
+  { id: 3, company: "Amazon", position: "SDE, AWS Data", status: "interviewing" },
+  { id: 4, company: "Crusoe", position: "Software Engineer", status: "applied" },
+  { id: 5, company: "GE", position: "Controls Engineer", status: "applied" },
+];
+
+test("reviewCandidates matches by company in sender/subject, conservatively", () => {
+  // A rejection from amazon.jobs matches all three Amazon rows — the picker's
+  // whole reason to exist — and nothing else.
+  const matched = reviewCandidates(
+    {
+      sender_email: "no-reply@amazon.jobs",
+      sender_name: "Amazon Jobs",
+      subject: "Update on your application",
+    },
+    BOARD,
+  );
+  assert.deepEqual(
+    matched.map((a) => a.id),
+    [1, 2, 3],
+  );
+
+  // Nothing in the message names a company on the board → no question asked.
+  assert.deepEqual(
+    reviewCandidates(
+      { sender_email: "noreply@lever.co", sender_name: null, subject: "Interview availability" },
+      BOARD,
+    ),
+    [],
+  );
+
+  // Subject-only mentions count too (ATS mail often hides the employer there).
+  assert.equal(
+    reviewCandidates(
+      { sender_email: "no-reply@myworkday.com", sender_name: null, subject: "Crusoe | Application Received" },
+      BOARD,
+    )[0]?.id,
+    4,
+  );
+});
+
+test("two-character companies only match the sender's domain label exactly", () => {
+  // "GE" as a substring would match half an inbox ("get", "manager", …).
+  assert.deepEqual(
+    reviewCandidates(
+      { sender_email: "recruiting@ge.com", sender_name: null, subject: "Your application" },
+      BOARD,
+    ).map((a) => a.id),
+    [5],
+  );
+  assert.deepEqual(
+    reviewCandidates(
+      { sender_email: "noreply@greenhouse.io", sender_name: null, subject: "Getting started" },
+      BOARD,
+    ),
+    [],
+  );
 });
 
 test("a rejected request reports the backend's reason and keeps the row", () => {

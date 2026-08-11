@@ -72,7 +72,7 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
                   <p className="text-reject">
                     The last sync attempt failed
                     {status.sync_error ? ` (${status.sync_error})` : ""} — the time above is the
-                    last one that succeeded. Re-sync from the pipeline to retry.
+                    last one that succeeded. Press Sync on the dashboard to retry.
                   </p>
                 ) : null}
               </div>

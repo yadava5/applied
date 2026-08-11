@@ -201,9 +201,14 @@ export function ApplicationDetail({
 
   useEffect(() => {
     if (!app) return;
-    setOptimistic(null);
-    setStageError(null);
-    void load(app.id);
+    // Deferred off the effect body (the house rule — see BetaBanner): the
+    // reset + fetch kick off in a macrotask, never a synchronous setState.
+    const id = window.setTimeout(() => {
+      setOptimistic(null);
+      setStageError(null);
+      void load(app.id);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [app, load]);
 
   if (!app) return null;

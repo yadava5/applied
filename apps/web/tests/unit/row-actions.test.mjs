@@ -28,6 +28,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  REMOVE_HINT,
+  REMOVE_TRAINS_HINT,
   UNDO_WINDOW_SECONDS,
   createMenuRegistry,
   deletedMessage,
@@ -69,6 +71,17 @@ test("a stage change PATCHes the chosen status and nothing else", () => {
 test("the undo window is long enough to notice and short enough to be honest", () => {
   assert.ok(Number.isInteger(UNDO_WINDOW_SECONDS), "the countdown is rendered per second");
   assert.ok(UNDO_WINDOW_SECONDS >= 5 && UNDO_WINDOW_SECONDS <= 10, `got ${UNDO_WINDOW_SECONDS}`);
+});
+
+test("the menu hints state the undo window in seconds, never 'undoable'", () => {
+  // "undoable" reads equally as "can be undone" and "cannot be done" — on a
+  // removal action that is exactly the wrong word. The hint derives from the
+  // constant so the copy can never drift from the timer.
+  for (const hint of [REMOVE_HINT, REMOVE_TRAINS_HINT]) {
+    assert.doesNotMatch(hint, /undoable/i);
+    assert.match(hint, new RegExp(`${UNDO_WINDOW_SECONDS} s to undo`));
+  }
+  assert.match(REMOVE_TRAINS_HINT, /trains the model/);
 });
 
 test("the pending-removal message names the row, the undo and the time left", () => {

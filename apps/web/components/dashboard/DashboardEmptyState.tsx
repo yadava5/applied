@@ -3,8 +3,6 @@ import { Inbox, Mail, Upload, type LucideIcon } from "lucide-react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { StatTiles } from "@/components/dashboard/StatTiles";
-import { StageFunnel } from "@/components/viz/StageFunnel";
 import { DEMO_APPLICATIONS_AS_API } from "@/lib/demo/asApplications";
 import { summarize } from "@/lib/dashboard/summary";
 
@@ -67,11 +65,6 @@ export function ForwardRoutes() {
  */
 export function SamplePreview() {
   const summary = summarize(DEMO_APPLICATIONS_AS_API);
-  const funnelStages = summary.stages.map(({ stage, count }) => ({
-    label: stage.label,
-    count,
-    color: stage.color,
-  }));
 
   return (
     <section aria-label="Sample dashboard preview" className="space-y-4">
@@ -87,14 +80,14 @@ export function SamplePreview() {
         </span>
         <span className="h-px flex-1 bg-line-soft" aria-hidden="true" />
       </div>
+      {/* The board IS the preview — the same subtitle-plus-board hierarchy the
+          real dashboard has, so the sample demonstrates the product it mirrors
+          (no tiles, no funnel: those left the dashboard too). */}
       <div className="pointer-events-none select-none space-y-4 opacity-70">
-        <StatTiles summary={summary} />
-        <StageFunnel
-          stages={funnelStages}
-          total={summary.total}
-          caption={`pipeline distribution · ${summary.total} applications`}
-          highlight={`${summary.advancedPct}% advanced past applied`}
-        />
+        <p className="font-mono text-xs text-dim">
+          {summary.total} filed · {summary.inMotion} in motion · {summary.offers} offer
+          {summary.offers === 1 ? "" : "s"}
+        </p>
         <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} interactive={false} />
       </div>
     </section>
