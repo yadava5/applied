@@ -5,32 +5,30 @@ import { useEffect, useState } from "react";
 import {
   NOT_SYNCED_YET,
   absoluteInstant,
-  absoluteSyncLabel,
   relativeSyncLabel,
 } from "@/lib/gmail/sync-state";
 
 /**
  * "last synced 3 minutes ago" — the one place the sync instant is rendered.
  *
- * Hydration-safe by construction. Relative time is a function of `now`, and the
- * server's `now` is minutes stale by the time the browser hydrates, so
- * computing it during SSR (or in a `useState` initializer, which runs during
- * hydration) mismatches the server HTML — the class of mistake that produced
- * React #418 in production here.
+ * ONE format, everywhere: relative. This component used to server-render the
+ * absolute UTC form and swap to relative after mount (hydration-safe, but the
+ * live header was observed holding "last synced 2026-08-11 06:42 UTC" beside
+ * a rail reading "34 minutes ago" — same fact, two formats, one screen). Now
+ * nothing visible is rendered until the browser knows `now`: the server (and
+ * the client's hydration pass) emit the bare <time> shell, and the first
+ * effect fills in the relative label. That is hydration-safe by construction
+ * — both sides render identical empty content — and makes a stuck absolute
+ * form impossible, because the absolute string only ever appears in `title`
+ * (hover) and `dateTime` (machines).
  *
- * So the first render — server AND client — is the ABSOLUTE instant, which is a
- * pure function of the ISO string's characters and therefore identical in both.
- * Only after `useEffect` (which never runs on the server, and runs after
- * hydration has already committed) does the label become relative. The absolute
- * form stays reachable on hover via `title`, and the machine-readable instant
- * stays in `dateTime`.
- *
- * The minute ticker matters more than it looks: this chip lives in the app
+ * The minute ticker matters more than it looks: this renders in the app
  * shell, and a long-open tab that still reads "just now" an hour later is the
  * same lie the product told before it had any sync memory at all.
  */
 export function LastSynced({ at, className }: { at: string | null; className?: string }) {
-  const [label, setLabel] = useState(() => absoluteSyncLabel(at));
+  /** `null` until mounted — the server has no honest `now` to compute from. */
+  const [label, setLabel] = useState<string | null>(null);
 
   useEffect(() => {
     const tick = () => setLabel(relativeSyncLabel(at, Date.now()));

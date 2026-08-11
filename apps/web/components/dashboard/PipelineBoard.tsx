@@ -46,7 +46,13 @@ function StaticApplicationCard({
           </span>
         )}
       </p>
-      {role ? <p className="truncate text-xs text-foreground">{role}</p> : null}
+      {/* Wraps, never ellipsizes — the role's tail is the discriminator (see
+          ApplicationCard). */}
+      {role ? (
+        <p title={role} className="line-clamp-2 break-words text-xs text-foreground">
+          {role}
+        </p>
+      ) : null}
       {sameCompanyCount > 0 && onFilterCompany ? (
         <button
           type="button"
@@ -178,6 +184,25 @@ export function PipelineBoard({
 
   const showSearch = applications.length > SEARCH_AFTER;
 
+  // --- Column widths: space follows content --------------------------------
+  // A real search's board is one heavy column and three near-empty ones, and
+  // an even four-way split hands three quarters of the width to "none yet"
+  // while the column holding every card is the narrowest it can be — which is
+  // how four real Amazon roles ended up ellipsized into identical text.
+  // Populated columns take 3fr, empty ones compress to a readable floor
+  // (desktop only — `.board-grid` in globals.css; narrower widths keep the
+  // stacked/two-up flow). The weight is binary (has cards / hasn't) and reads
+  // the UNFILTERED counts, so typing a search or dragging between two
+  // populated columns never reflows the widths; only genuinely emptying or
+  // populating a column does.
+  const boardCols = boardColumns(STAGES)
+    .map((column) =>
+      applications.some((app) => stageOf(shownStatus(app)) === column.key)
+        ? "minmax(0, 3fr)"
+        : "minmax(8rem, 1fr)",
+    )
+    .join(" ");
+
   return (
     <div className="space-y-3">
       {/* --- Board filters ------------------------------------------------- */}
@@ -225,7 +250,10 @@ export function PipelineBoard({
       ) : null}
 
       {/* --- Columns -------------------------------------------------------- */}
-      <div className="grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div
+        className="board-grid grid items-start gap-3 sm:grid-cols-2"
+        style={{ ["--board-cols" as string]: boardCols }}
+      >
         {boardColumns(STAGES).map((column) => {
           const items = filtered.filter((a) => stageOf(shownStatus(a)) === column.key);
           const isExpanded = expanded[column.key] === true;

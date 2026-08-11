@@ -297,7 +297,17 @@ export function ApplicationCard({
                 </span>
               )}
             </span>
-            {role ? <span className="block truncate text-xs text-foreground">{role}</span> : null}
+            {/* The role WRAPS (two lines) instead of ellipsizing: a job title's
+                discriminating part is its tail — "…, AWS Data Services - 2026"
+                — which is exactly what a one-line truncate eats. Four real
+                Amazon roles measured 244–353px against a 198px box and
+                rendered as identical text. `title` is the floor, not the fix:
+                the board must read without hovering. */}
+            {role ? (
+              <span title={role} className="line-clamp-2 break-words text-xs text-foreground">
+                {role}
+              </span>
+            ) : null}
           </button>
         ) : (
           <div className="min-w-0">
@@ -309,7 +319,11 @@ export function ApplicationCard({
                 </span>
               )}
             </p>
-            {role ? <p className="truncate text-xs text-foreground">{role}</p> : null}
+            {role ? (
+              <p title={role} className="line-clamp-2 break-words text-xs text-foreground">
+                {role}
+              </p>
+            ) : null}
           </div>
         )}
         <div className="flex shrink-0 items-center gap-1">

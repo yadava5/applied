@@ -75,6 +75,24 @@ test.describe("live demo (/demo)", () => {
     );
   });
 
+  test("the populated column claims the space empty ones don't use", async ({ page }) => {
+    // A real search is one heavy column and three near-empty ones. An even
+    // split starved the only column with cards until four real Amazon roles
+    // ellipsized into identical text; now space follows content at desktop.
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.goto("/demo");
+    const applied = await page.getByRole("region", { name: /applied — 10/i }).boundingBox();
+    const offered = await page.getByRole("region", { name: /offered — 0/i }).boundingBox();
+    expect(applied, "applied column renders").not.toBeNull();
+    expect(offered, "offered column renders").not.toBeNull();
+    expect(applied!.width).toBeGreaterThan(offered!.width * 1.5);
+
+    // And the full role is always reachable on the card itself: it wraps to
+    // two lines rather than ellipsizing its discriminating tail, with the
+    // complete text in `title` as the floor.
+    await expect(page.getByTitle("ML Engineer, Platform")).toBeVisible();
+  });
+
   test("a card moves between stages by drag, and by its select", async ({ page }) => {
     await page.goto("/demo");
     await expect(page.getByRole("region", { name: /interviewing — 1/i })).toBeVisible();
