@@ -162,3 +162,105 @@ jobs:
         run: |
           if [ -n "${FRONTEND_PID:-}" ]; then kill "$FRONTEND_PID" 2>/dev/null || true; fi
           if [ -n "${BACKEND_PID:-}" ]; then kill "$BACKEND_PID" 2>/dev/null || true; fi
+
+  # ---------------------------------------------------------------------------
+  # The job above proves the app works under `next dev`. Users never load that.
+  #
+  # A dev server renders every route per request, so it cannot reproduce the
+  # static-prerender path — which is precisely where the `/demo` hydration
+  # defect (#418) lived: the build day's dates were frozen into the HTML while
+  # the client resolved "today" at view time. CI ran a browser and still could
+  # not see it; it took a manual pass. This job closes that gap by building the
+  # app the way Vercel does and driving the real server.
+  #
+  # Deliberately no backend here. Every route this job visits either is public
+  # or redirects at the protected layout before any API call, so booting FastAPI
+  # (and installing torch) would add minutes to catch nothing. If a route ever
+  # does need it, it will 500 and `production.spec.ts` fails on the 5xx hook.
+  # ---------------------------------------------------------------------------
+  playwright-production:
+    name: playwright (production build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+      BACKEND_API_URL: http://localhost:8000
+      PLAYWRIGHT_BASE_URL: http://localhost:3000
+      # The switch that un-skips tests/e2e/production.spec.ts.
+      PLAYWRIGHT_PROD_BUILD: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: "pnpm"
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build (production)
+        working-directory: apps/web
+        run: pnpm build
+
+      - name: Boot Next.js (production server)
+        working-directory: apps/web
+        run: |
+          nohup pnpm start --port 3000 > ../../frontend-prod.log 2>&1 &
+          echo "FRONTEND_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:3000/login >/dev/null 2>&1; then
+              echo "production server up after $i attempts"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "production server failed to boot; tailing log:"
+          tail -n 200 frontend-prod.log || true
+          exit 1
+
+      - name: Run Playwright against the production build
+        working-directory: apps/web
+        run: pnpm exec playwright test --project=chromium
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-production
+          path: apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload production server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs-production
+          path: frontend-prod.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "${FRONTEND_PID:-}" ]; then kill "$FRONTEND_PID" 2>/dev/null || true; fi
