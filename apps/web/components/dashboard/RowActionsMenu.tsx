@@ -209,7 +209,7 @@ export function RowActionsMenu({
                 index > 0 ? "border-t border-line-soft" : ""
               } ${
                 item.tone === "danger"
-                  ? "text-reject hover:bg-reject/10"
+                  ? "text-reject-ink hover:bg-reject/10"
                   : "text-muted hover:bg-surface-2 hover:text-strong"
               }`}
             >

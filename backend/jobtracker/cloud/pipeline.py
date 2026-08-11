@@ -497,10 +497,15 @@ REVIEW_FLOOR = 0.70  # [floor, gate) → needs human review; below → dropped
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 # EmailCategory → lifecycle stage rank. Higher = further along.
+#
+# ``follow_up`` is deliberately absent. :func:`_qualifies_for_hard_row` drops
+# follow-ups before any rank is consulted, so the entry that used to sit here
+# was unreachable — and it read as if a nudge asserted ``applied``, which is a
+# claim the pipeline does not make. (Behaviourally inert either way: the lookup
+# defaults to 0 and :func:`_rank_to_status` bottoms out at ``applied``.)
 _STAGE_RANK: dict[str, int] = {
     "applied": 1,
     "pending_application": 1,
-    "follow_up": 1,
     "assessment": 2,
     "interview": 3,
     "offer": 4,
@@ -1378,11 +1383,22 @@ def _role_from_subject(subject: str) -> str | None:
 def advance_application_status(current: str, incoming: str) -> str:
     """Return the status a stored row should hold given an incoming signal.
 
-    Monotonic and safe: a mail signal only moves an *in-flight* application
-    forward (applied → interviewing → offered) or, on a rejection, to the
-    terminal ``rejected``. It never downgrades a row and never overrides a
-    status the user already settled (rejected/accepted/withdrawn/ghosted), so
-    re-syncing cannot clobber a manual decision.
+    Decided from ``current`` and ``incoming`` alone, and it guarantees exactly
+    two things:
+
+    - a TERMINAL status (rejected/accepted/withdrawn/ghosted) is never left, and
+    - an in-flight row only moves FORWARD (applied → interviewing → offered),
+      or to ``rejected`` on a rejection. It never downgrades.
+
+    What it does NOT know is who owns the row. "Never overrides a status the
+    USER settled" is a separate rule that lives entirely in the callers, all in
+    ``jobtracker.cloud.applications``: ``upsert_applications_for_user``,
+    ``split_application_cloud`` and ``reconcile_orphaned_classifications`` each
+    check ``_is_auto_row(row.source)`` before writing anything, and
+    ``classify_review_item`` — where the human IS the signal, so the check would
+    be wrong — instead flips ``source`` to ``gmail_user`` on the way out, but
+    only when the stage actually moved. Claiming that invariant here is how the
+    orphan catch-up came to omit it: the docstring made it look already handled.
     """
 
     if current in _TERMINAL_STATUSES:

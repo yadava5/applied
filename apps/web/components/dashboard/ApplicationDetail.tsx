@@ -61,7 +61,7 @@ function pct(n: number): string {
 /** The sheet's deadline phrase ink, by state — measured in both themes (red
  * 6.89:1 dark / 6.47:1 light on the sheet surface; amber 8.87:1 / 5.02:1). */
 const DUE_TEXT_CLASS: Record<DueState, string> = {
-  overdue: "text-reject",
+  overdue: "text-reject-ink",
   soon: "text-review",
   ahead: "text-muted",
 };
@@ -207,7 +207,7 @@ function SplitPrompt({
         </button>
       </div>
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-reject">
+        <p role="alert" className="mt-2 text-xs text-reject-ink">
           {error}
         </p>
       ) : null}
@@ -396,7 +396,7 @@ export function ApplicationDetail({
             role="alert"
             className="flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
           >
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
             <span>{stageError}</span>
           </p>
         ) : null}
@@ -500,7 +500,7 @@ export function ApplicationDetail({
             role="alert"
             className="flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
           >
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
             <span>{dueError}</span>
           </p>
         ) : null}

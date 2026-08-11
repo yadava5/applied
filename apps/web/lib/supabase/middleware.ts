@@ -5,6 +5,7 @@ import {
 } from "@supabase/ssr";
 
 import { publicEnv } from "@/lib/env";
+import { isProtectedPath } from "@/lib/supabase/protectedRoutes";
 
 /**
  * Paths under this prefix require an authenticated Supabase session. In the
@@ -15,15 +16,7 @@ import { publicEnv } from "@/lib/env";
  * that way, the proxy keeps running on all app routes but only *redirects*
  * for known-protected ones.
  */
-const PROTECTED_PREFIXES = ["/dashboard"];
-
 const PUBLIC_AUTH_PATHS = new Set(["/login", "/signup", "/callback"]);
-
-function isProtectedPath(pathname: string): boolean {
-  return PROTECTED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-}
 
 /**
  * `updateSession` is called from `proxy.ts` for every request that matches

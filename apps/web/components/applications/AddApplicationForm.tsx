@@ -237,7 +237,7 @@ export function AddApplicationForm({
           </label>
 
           {error ? (
-            <p role="alert" className="text-xs text-reject sm:col-span-2">
+            <p role="alert" className="text-xs text-reject-ink sm:col-span-2">
               {error}
             </p>
           ) : null}

@@ -52,7 +52,7 @@ export function DataSection() {
         </Link>
       </div>
       {state === "error" ? (
-        <p role="alert" className="mt-3 text-xs text-reject">
+        <p role="alert" className="mt-3 text-xs text-reject-ink">
           Couldn’t prepare the export — the backend may be unreachable. Try again shortly.
         </p>
       ) : (

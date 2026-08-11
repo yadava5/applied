@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerApiClient } from "@/lib/api/server";
+import { collectApplications } from "@/lib/applications/export";
 import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/status";
 
 /**
@@ -7,52 +8,46 @@ import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/statu
  * your data" action. Forwards to the backend with the caller's Supabase JWT
  * (from cookies) so the token and `BACKEND_API_URL` never reach the browser,
  * and returns the raw list JSON the client turns into a download.
+ *
+ * PAGINATED, because the export claims to be everything. This used to make one
+ * unparameterised call, which the backend answers with its DEFAULT_PAGE_SIZE of
+ * 100 — so a user with 250 applications silently got 100 of them, a
+ * data-loss-shaped defect in the one feature whose entire job is handing the
+ * user their data back. It never fired here because this account has 25.
+ *
+ * The loop itself lives in `lib/applications/export.ts` as a pure function over
+ * a page-fetcher, so it can be executed by a test. Inline here it needed the
+ * Next runtime and a Supabase cookie jar, which is why it shipped covered by
+ * types and review only.
  */
-/** The backend's own ceiling (`MAX_PAGE_SIZE`); asking for more is a 422. */
-const EXPORT_PAGE_SIZE = 500;
-/** Bounds the loop so a bad `total` can never spin it forever. 50k rows. */
-const EXPORT_MAX_PAGES = 100;
-
 export async function GET() {
   try {
     const api = await createServerApiClient();
 
-    // PAGINATED, because the export claims to be everything.
-    //
-    // This used to make one unparameterised call, which the backend answers with
-    // its DEFAULT_PAGE_SIZE of 100. Settings offers to "export everything Applied
-    // holds for you" and a user with 250 applications silently got 100 of them —
-    // a data-loss-shaped defect in the one feature whose entire job is to hand
-    // the user their data back. It never fired here because this account has 25.
-    const first = await api.GET("/applications", {
-      params: { query: { page: 1, page_size: EXPORT_PAGE_SIZE } },
-    });
-    if (first.error || !first.data) {
-      return NextResponse.json(
-        { detail: first.error ?? "Backend rejected the request" },
-        { status: first.response.status || 502 },
-      );
-    }
-
-    const applications = [...first.data.applications];
-    const total = first.data.total;
-
-    for (let page = 2; applications.length < total && page <= EXPORT_MAX_PAGES; page += 1) {
-      const next = await api.GET("/applications", {
-        params: { query: { page, page_size: EXPORT_PAGE_SIZE } },
+    const result = await collectApplications(async (page, pageSize) => {
+      const res = await api.GET("/applications", {
+        params: { query: { page, page_size: pageSize } },
       });
-      // A mid-export failure must not hand back a short file that looks whole.
-      if (next.error || !next.data) {
-        return NextResponse.json(
-          { detail: next.error ?? `Export failed while reading page ${page}` },
-          { status: next.response.status || 502 },
-        );
+      if (res.error || !res.data) {
+        return {
+          ok: false as const,
+          status: res.response.status || 502,
+          detail: String(res.error ?? `Export failed while reading page ${page}`),
+        };
       }
-      if (next.data.applications.length === 0) break; // defensive: no progress
-      applications.push(...next.data.applications);
-    }
+      return {
+        ok: true as const,
+        page: { applications: res.data.applications, total: res.data.total },
+      };
+    });
 
-    return NextResponse.json({ applications, total }, { status: 200 });
+    if (!result.ok) {
+      return NextResponse.json({ detail: result.detail }, { status: result.status });
+    }
+    return NextResponse.json(
+      { applications: result.applications, total: result.total },
+      { status: 200 },
+    );
   } catch {
     return NextResponse.json({ detail: "Backend unreachable" }, { status: 502 });
   }
