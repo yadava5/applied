@@ -347,9 +347,22 @@ test.describe("live demo (/demo)", () => {
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
 
-    // Cedar Labs (applied) has no deadline; give it one 5 days out. The date
-    // is computed the way the app computes everything: UTC calendar days.
-    const dayISO = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // Cedar Labs (applied) has no deadline; give it one 5 days out.
+    //
+    // LOCAL calendar days, not UTC. A date input holds what the user typed,
+    // and the card now buckets it against the reader's own midnight — so a
+    // UTC-derived day here reads as `due in 6d` against this `due in 5d`
+    // whenever the browser sits in the UTC-offset window (New York after
+    // 20:00, Tokyo before 09:00). The old comment claimed UTC was "the way
+    // the app computes everything", which is exactly the assumption the
+    // local-day fix removed.
+    //
+    // `Intl("en-CA")` yields YYYY-MM-DD in the browser's zone and is computed
+    // independently of the app's own helper, so this stays an oracle rather
+    // than a restatement of the code under test.
+    const dayISO = new Intl.DateTimeFormat("en-CA").format(
+      new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+    );
     const cedar = page
       .locator("li")
       .filter({ has: page.getByText("Software Engineer, Platform", { exact: true }) });

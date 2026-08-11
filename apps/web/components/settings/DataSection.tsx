@@ -6,6 +6,7 @@ import { Download, Upload } from "lucide-react";
 
 import { SettingsSection } from "./SettingsSection";
 import { secondaryBtnClass } from "@/components/ui/formStyles";
+import { localTodayISO } from "@/lib/dashboard/age";
 
 type ExportState = "idle" | "working" | "error";
 
@@ -28,7 +29,11 @@ export function DataSection() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `applied-applications-${new Date().toISOString().slice(0, 10)}.json`;
+      // The user's own day, not UTC. `toISOString()` here put tomorrow's date
+      // on the file for anyone west of Greenwich after their evening cutoff —
+      // a New York export at 9pm was stamped with the next day. Same defect as
+      // the deadline bucketing, in a filename rather than a card.
+      a.download = `applied-applications-${localTodayISO()}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
