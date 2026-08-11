@@ -7,6 +7,7 @@ import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { todayISO } from "@/lib/dashboard/age";
+import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
@@ -97,6 +98,15 @@ export function DemoDashboard() {
     () => ({
       async changeStatus(id, status) {
         await delay(300);
+        // The wire contract is an ENUM (`ApplicationStatus`), not a free
+        // string — `BoardTransport` still says `string`, so without this the
+        // demo would happily write a value the live backend answers with a
+        // 422 into a row typed as the backend's own response. The controls
+        // only ever offer canonical statuses, so this never fires from the
+        // UI; it fires if one of them ever drifts, which is the point.
+        if (!isApplicationStatus(status)) {
+          return { ok: false, detail: `“${status}” is not a status the API accepts` };
+        }
         const s = store.current;
         commit({
           ...s,

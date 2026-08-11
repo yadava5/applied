@@ -1,8 +1,26 @@
 /**
  * Typed API client factory.
  *
- * Wraps `openapi-fetch` with our generated (or seed) `paths` type so every
- * `.GET` / `.POST` call is narrowed against the backend's OpenAPI schema.
+ * Wraps `openapi-fetch` with the generated `paths` type so every `.GET` /
+ * `.POST` call is narrowed against the backend's OpenAPI schema.
+ *
+ * WHERE `lib/api/schema.d.ts` COMES FROM
+ * --------------------------------------
+ * It is GENERATED — never hand-edited — from `jobtracker.main_cloud`, the app
+ * Vercel actually serves:
+ *
+ *     pnpm -C apps/web api:gen        # → scripts/generate_api_schema.sh
+ *
+ * `.github/workflows/e2e-ci.yml` runs the same script and fails the build on
+ * any diff, so the committed file cannot drift from the backend again.
+ *
+ * It used to be a 180-line file hand-written by us, covering 4 of the 20
+ * endpoints the cloud app serves and describing response shapes nobody sent.
+ * Everything outside those 4 paths was therefore unchecked — which is how
+ * the detail sheet came to read `split_candidates[].position` when the
+ * backend has only ever sent `role`, silently dropping every candidate and
+ * making the split feature unreachable in the product (#100). A contract the
+ * compiler cannot see is not a contract.
  * The factory is environment-agnostic — it does not touch cookies or
  * Supabase directly. Pass `token` explicitly from whichever context can
  * read it:

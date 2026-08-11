@@ -11,8 +11,8 @@
     "test:unit": "node --test \"tests/unit/**/*.test.mjs\"",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
-    "api:gen": "openapi-typescript $BACKEND_API_URL/openapi.json -o lib/api/schema.d.ts",
-    "api:gen:local": "openapi-typescript http://localhost:8000/openapi.json -o lib/api/schema.d.ts"
+    "api:gen": "../../scripts/generate_api_schema.sh",
+    "api:gen:local": "../../scripts/generate_api_schema.sh"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
