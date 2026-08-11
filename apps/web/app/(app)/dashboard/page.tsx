@@ -7,12 +7,9 @@ import { GmailSyncTrigger } from "@/components/dashboard/GmailSyncTrigger";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { ClassifierContext, StatTiles } from "@/components/dashboard/StatTiles";
-import {
-  DashboardEmptyState,
-  ForwardRoutes,
-  SamplePreview,
-} from "@/components/dashboard/DashboardEmptyState";
+import { DashboardEmptyState, ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
 import { ReSyncButton } from "@/components/dashboard/ReSyncButton";
+import { RetryLoadButton } from "@/components/dashboard/RetryLoadButton";
 import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
 import { StageFunnel } from "@/components/viz/StageFunnel";
 import { getReviewQueue } from "@/lib/applications/server";
@@ -31,9 +28,10 @@ import type { NotificationPrefs } from "@/components/settings/NotificationsSecti
  * row just to compute the tiles.
  *
  * Failure modes stay first-class: an unreachable or unauthorized backend
- * degrades to a labelled state that still routes the user forward and previews
- * the product, never a blank page or a crash (the shell above already
- * guarantees auth).
+ * degrades to a labelled error state that names what went wrong, offers a
+ * retry, and still routes the user forward — never a blank page, never a crash,
+ * and never sample rows dressed up as the user's own pipeline (the shell above
+ * already guarantees auth).
  */
 
 /**
@@ -212,27 +210,66 @@ export default async function DashboardPage() {
   // A user who has connected Gmail (or imported) is a REAL user: never show
   // them the "sample data · not yours" preview, even when empty or degraded.
   const connected = gmailStatus.kind === "ok" && gmailStatus.status.connected;
+  // Sync cursor state, for the auto-sync's staleness rule. Unknown status (a
+  // failed probe) leaves these null/false, which reads as "stale" — but the
+  // trigger only renders under `connected`, which that same failure clears.
+  const lastSyncAt = gmailStatus.kind === "ok" ? gmailStatus.status.last_sync_at : null;
+  const hasCursor = gmailStatus.kind === "ok" && gmailStatus.status.has_cursor === true;
 
   // --- Honest degradation: unreachable / rejected backend --------------------
+  //
+  // This branch renders NO sample data, and deliberately does not consult
+  // `connected`. It used to: a failed load plus `!connected` showed a signed-in
+  // user ten fictional companies under an <h1> reading "Pipeline". But
+  // `connected` comes from `getGmailStatus()`, which calls the SAME backend and
+  // returns non-ok on any 401/403/503/network failure — so a single outage
+  // flipped both flags together and the guard could never hold. A user whose
+  // own board failed to load gets the failure, a retry, and the routes forward;
+  // fixtures are only ever shown to an account we KNOW is empty (below).
   if (state.kind !== "ok") {
-    const message =
+    const headline =
       state.kind === "unauthorized"
-        ? `The backend rejected the session: ${state.message}`
-        : `The backend is unreachable — your board renders the moment it answers. (${state.message})`;
+        ? "We couldn't load your pipeline."
+        : "We couldn't reach the server.";
+    const detail =
+      state.kind === "unauthorized"
+        ? `The backend rejected this session: ${state.message}. Signing in again usually clears it.`
+        : `The backend didn't answer: ${state.message}. Nothing is lost — your board renders the moment it responds.`;
     return (
       <section className="space-y-8">
-        <DashboardHeader
-          subtitle={connected ? "connection issue" : "connection issue · showing a preview"}
-        />
+        <DashboardHeader subtitle="connection issue · your data could not be loaded" />
         <div
-          className="rounded-xl border border-line-soft bg-surface px-4 py-3 font-mono text-sm text-muted"
-          role="status"
+          className="rounded-2xl border border-reject/40 bg-surface p-6 sm:p-8"
+          role="alert"
+          aria-live="polite"
         >
-          {message}
+          {/* The `.label-mono` rule in globals.css is UNLAYERED, so it beats
+              any layered Tailwind colour utility — hence the metrics are
+              restated here rather than composed, so the reject hue applies. */}
+          <p className="font-mono text-[0.68rem] uppercase tracking-[0.09em] text-reject">
+            load failed
+          </p>
+          <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
+            {headline}
+          </h2>
+          <p className="mt-2 max-w-xl text-sm text-muted">{detail}</p>
+          <p className="mt-2 max-w-xl font-mono text-[11px] text-dim">
+            This is a loading failure, not an empty pipeline — nothing below is your data, because
+            we have none to show yet.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <RetryLoadButton />
+            {state.kind === "unauthorized" ? (
+              <Link
+                href="/login?redirect=/dashboard"
+                className="font-mono text-[11px] text-dim underline-offset-4 hover:text-strong hover:underline"
+              >
+                or sign in again →
+              </Link>
+            ) : null}
+          </div>
         </div>
         <ForwardRoutes />
-        {/* Only a genuinely fresh (not-connected) user sees the sample scaffold. */}
-        {connected ? null : <SamplePreview />}
       </section>
     );
   }
@@ -248,7 +285,9 @@ export default async function DashboardPage() {
       // board (otherwise the "N need classification" items are stranded).
       const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
       const reviewNote =
-        state.needsReview > 0 ? ` · ${state.needsReview} need classification` : "";
+        state.needsReview > 0
+          ? ` · ${state.needsReview} ${state.needsReview === 1 ? "needs" : "need"} classification`
+          : "";
       return (
         <section className="space-y-6">
           <DashboardHeader
@@ -268,7 +307,7 @@ export default async function DashboardPage() {
               — or file an application by hand.
             </p>
             <div className="mt-4">
-              <GmailSyncTrigger />
+              <GmailSyncTrigger lastSyncAt={lastSyncAt} hasCursor={hasCursor} />
             </div>
             <div className="mt-5">
               <AddApplicationForm align="start" />
@@ -309,6 +348,13 @@ export default async function DashboardPage() {
   return (
     <section className="space-y-6">
       <DashboardHeader subtitle={subtitle} connected={connected} />
+
+      {/* A populated board keeps itself current too: this is silent unless the
+          board is stale (30 min), in which case it folds new mail in and says
+          what it found. Renders nothing at all when Gmail is not connected. */}
+      {connected ? (
+        <GmailSyncTrigger lastSyncAt={lastSyncAt} hasCursor={hasCursor} variant="quiet" />
+      ) : null}
 
       <NotificationCues
         prefs={notifPrefs}

@@ -78,10 +78,22 @@ export function getReviewQueue(): Promise<ApiCallResult> {
   return call(`/applications/review`, { method: "GET" });
 }
 
-/** POST /applications/review/{messageId}/classify — classify + persist + train. */
-export function classifyReviewItem(messageId: string, category: string): Promise<ApiCallResult> {
+/**
+ * POST /applications/review/{messageId}/classify — classify + persist + train.
+ *
+ * `company` is the second half of the `needs_employer` round trip: the backend
+ * consults it ONLY when it cannot name the employer from the mail itself, so we
+ * send it only when the user has actually supplied one. A 2xx here does not
+ * imply a row was filed — the caller must read `needs_employer` off the body.
+ */
+export function classifyReviewItem(
+  messageId: string,
+  category: string,
+  company?: string,
+): Promise<ApiCallResult> {
+  const named = company?.trim();
   return call(`/applications/review/${encodeURIComponent(messageId)}/classify`, {
     method: "POST",
-    body: { category },
+    body: named ? { category, company: named } : { category },
   });
 }

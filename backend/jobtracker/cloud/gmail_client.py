@@ -31,13 +31,14 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Any, Literal, Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from jobtracker.config import settings
 from jobtracker.credentials.cloud import (
@@ -75,6 +76,34 @@ class CloudGmailMessage:
     sender_email: str
     snippet: str
     received_at: Optional[datetime]
+
+
+@dataclass
+class HistoryPage:
+    """What ``users.history.list`` yielded for a stored ``historyId`` cursor.
+
+    ``expired`` — Gmail keeps mailbox history for roughly a week; past that a
+    ``startHistoryId`` is answered with **404**. That is documented, normal
+    operation (the user simply did not sync for a while), not a failure: the
+    caller re-baselines with a full scan.
+
+    ``truncated`` — more mail arrived since the cursor than one invocation is
+    willing to walk. Also a full-scan signal: partially consuming the history
+    and then advancing the cursor would silently skip the remainder.
+
+    Either flag means ``messages`` is empty and must not be treated as "nothing
+    new happened".
+    """
+
+    messages: list[CloudGmailMessage]
+    expired: bool = False
+    truncated: bool = False
+
+    @property
+    def usable(self) -> bool:
+        """True when this page can stand in for a full scan."""
+
+        return not (self.expired or self.truncated)
 
 
 @dataclass
@@ -330,6 +359,234 @@ async def fetch_recent_messages(
     if page is None:
         return None
     return page.messages
+
+
+# =============================================================================
+# Incremental read: mailbox historyId + users.history.list
+# =============================================================================
+#
+# A full scan re-lists a fixed 12-month window on every sync — the reason the
+# product "never remembers" it already synced. Gmail's own incremental
+# primitive is the mailbox ``historyId``: store it once, then ask
+# ``users.history.list(startHistoryId=…)`` for just what changed.
+
+# Bounds on the history walk. Gmail returns history in ascending pages; a
+# mailbox left unsynced for days can have a long tail, and one serverless
+# invocation must not turn into an unbounded crawl. Blowing either bound is a
+# ``truncated`` result → the caller full-scans instead (which is bounded too).
+_HISTORY_MAX_PAGES = 10
+_HISTORY_PAGE_SIZE = 500
+
+# ``messagesAdded`` covers everything that entered the mailbox, including our
+# own sends, drafts and junk. Filter those out so the incremental path sees the
+# same kind of mail the ``in:inbox`` full scan does.
+_HISTORY_EXCLUDED_LABELS = frozenset({"DRAFT", "SENT", "SPAM", "TRASH", "CHAT"})
+
+
+def _is_history_expired(exc: HttpError) -> bool:
+    """True when Gmail rejected ``startHistoryId`` as too old (HTTP 404).
+
+    Gmail's documented signal that the stored cursor has aged out of the
+    ~1-week history window. The caller must fall back to a full scan and
+    re-baseline; surfacing it as an error would be wrong.
+    """
+
+    return getattr(getattr(exc, "resp", None), "status", None) == 404
+
+
+def _mailbox_history_id(service: Any) -> Optional[str]:
+    """Read the mailbox's CURRENT ``historyId`` via ``users.getProfile``."""
+
+    profile = service.users().getProfile(userId="me").execute()
+    value = profile.get("historyId")
+    return str(value) if value else None
+
+
+async def fetch_mailbox_history_id(user_id: uuid.UUID) -> Optional[str]:
+    """Return the mailbox's current ``historyId`` for ``user_id``, or ``None``.
+
+    ``None`` when Gmail is not connected *or* the profile read failed — the
+    caller then simply does not advance its cursor, which costs one more full
+    scan and never skips mail.
+
+    Callers must capture this **before** they start reading messages: a message
+    that lands mid-scan then falls after the recorded cursor and is picked up by
+    the next run. Capturing it afterwards would silently skip it.
+    """
+
+    creds = await load_valid_credentials(user_id)
+    if creds is None:
+        return None
+
+    loop = asyncio.get_event_loop()
+
+    def _run() -> Optional[str]:
+        try:
+            service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+            return _mailbox_history_id(service)
+        except Exception as exc:  # noqa: BLE001 — a profile read must never sink a sync
+            logger.warning("Gmail getProfile failed: %s", type(exc).__name__)
+            return None
+
+    return await loop.run_in_executor(None, _run)
+
+
+def _collect_history_ids(
+    service: Any,
+    *,
+    start_history_id: str,
+    max_messages: int,
+    scope: MailScope,
+) -> tuple[list[str], bool, bool]:
+    """Walk ``users.history.list`` and return ``(ids, expired, truncated)``.
+
+    Pure with respect to Gmail *transport* like :func:`_collect_page`, so tests
+    drive it with a fake service — including one that raises a 404 ``HttpError``
+    for an aged-out cursor.
+    """
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    page_token: Optional[str] = None
+
+    for _ in range(_HISTORY_MAX_PAGES):
+        try:
+            batch = (
+                service.users()
+                .history()
+                .list(
+                    userId="me",
+                    startHistoryId=start_history_id,
+                    historyTypes=["messageAdded"],
+                    maxResults=_HISTORY_PAGE_SIZE,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            if _is_history_expired(exc):
+                logger.info(
+                    "Gmail history cursor expired (404); falling back to a full scan."
+                )
+                return [], True, False
+            raise
+
+        for record in batch.get("history", []) or []:
+            for added in record.get("messagesAdded", []) or []:
+                message = added.get("message") or {}
+                message_id = message.get("id")
+                if not message_id or message_id in seen:
+                    continue
+                labels = set(message.get("labelIds") or [])
+                if labels & _HISTORY_EXCLUDED_LABELS:
+                    continue
+                if scope != "anywhere" and "INBOX" not in labels:
+                    continue
+                seen.add(message_id)
+                ids.append(message_id)
+                if len(ids) > max_messages:
+                    return ids[:max_messages], False, True
+
+        page_token = batch.get("nextPageToken")
+        if not page_token:
+            return ids, False, False
+
+    return ids, False, True
+
+
+def _collect_history(
+    service: Any,
+    *,
+    start_history_id: str,
+    max_messages: int,
+    scope: MailScope,
+) -> HistoryPage:
+    """Resolve the ids added since ``start_history_id`` into full messages."""
+
+    ids, expired, truncated = _collect_history_ids(
+        service,
+        start_history_id=start_history_id,
+        max_messages=max_messages,
+        scope=scope,
+    )
+    if expired or truncated:
+        return HistoryPage(messages=[], expired=expired, truncated=truncated)
+    if not ids:
+        return HistoryPage(messages=[])
+
+    # Same batched metadata fetch the full scan uses — which also drops ids
+    # whose ``get`` failed, and ``messagesAdded`` can name a message the user
+    # has since deleted.
+    metadata = _batch_fetch_metadata(
+        service,
+        ids,
+        batch_size=settings.gmail_batch_size,
+        pause_seconds=settings.gmail_batch_pause_seconds,
+    )
+    out: list[CloudGmailMessage] = []
+    for message_id in ids:
+        raw = metadata.get(message_id)
+        if raw is None:
+            continue
+        parsed = _parse_metadata_message(raw)
+        if parsed is not None:
+            out.append(parsed)
+
+    # Gmail returns history oldest-first; the full scan returns newest-first.
+    # Normalize so the two paths hand the pipeline the same ordering.
+    out.sort(key=_received_sort_key, reverse=True)
+    return HistoryPage(messages=out)
+
+
+def _received_sort_key(message: CloudGmailMessage) -> float:
+    """Epoch-seconds sort key that never compares aware to naive datetimes.
+
+    ``Date`` headers arrive both with and without a zone, and sorting a mix of
+    aware and naive ``datetime`` objects raises. Undated mail sorts last.
+    """
+
+    received = message.received_at
+    if received is None:
+        return float("-inf")
+    try:
+        if received.tzinfo is None:
+            received = received.replace(tzinfo=UTC)
+        return received.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return float("-inf")
+
+
+async def fetch_history_messages(
+    user_id: uuid.UUID,
+    *,
+    start_history_id: str,
+    max_messages: int,
+    scope: MailScope = "inbox",
+) -> Optional[HistoryPage]:
+    """Fetch the messages added since ``start_history_id`` for ``user_id``.
+
+    Returns ``None`` when Gmail is not connected. Otherwise a
+    :class:`HistoryPage` — possibly empty (nothing new), possibly flagged
+    ``expired``/``truncated``, in which case the caller must full-scan.
+    Read-only and metadata-only, exactly like the full-scan path.
+    """
+
+    creds = await load_valid_credentials(user_id)
+    if creds is None:
+        return None
+
+    loop = asyncio.get_event_loop()
+
+    def _run() -> HistoryPage:
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        return _collect_history(
+            service,
+            start_history_id=start_history_id,
+            max_messages=max_messages,
+            scope=scope,
+        )
+
+    return await loop.run_in_executor(None, _run)
 
 
 def _parse_metadata_message(raw: dict) -> Optional[CloudGmailMessage]:

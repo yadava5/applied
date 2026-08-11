@@ -1,12 +1,6 @@
 import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
+import { filedAt, shortDate } from "@/lib/dashboard/dates";
 import { type Application, STAGES, qualifierOf, stageOf } from "@/lib/dashboard/summary";
-
-/** Locale-stable short date ("Jul 14") — deterministic across server/client. */
-function filedOn(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 
 /**
  * Read-only card for the public demo + sample previews: no correction controls
@@ -15,7 +9,7 @@ function filedOn(iso: string): string {
 function StaticApplicationCard({ app }: { app: Application }) {
   const qualifier = qualifierOf(app.status);
   const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
-  const filed = app.applied_date ?? app.created_at;
+  const filed = filedAt(app);
   return (
     <li
       className="rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
@@ -31,7 +25,7 @@ function StaticApplicationCard({ app }: { app: Application }) {
       </p>
       {app.position ? <p className="truncate text-xs text-muted">{app.position}</p> : null}
       {app.notes && <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-dim">{app.notes}</p>}
-      <p className="mt-2 font-mono text-[10px] text-dim">filed {filedOn(filed)}</p>
+      <p className="mt-2 font-mono text-[10px] text-dim">filed {shortDate(filed)}</p>
     </li>
   );
 }

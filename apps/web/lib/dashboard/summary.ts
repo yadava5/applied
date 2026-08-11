@@ -8,6 +8,7 @@
  * has exactly one implementation to audit.
  */
 import type { components } from "@/lib/api/schema";
+import { filedAt } from "@/lib/dashboard/dates";
 
 export type Application = components["schemas"]["Application"];
 
@@ -136,9 +137,15 @@ export function summarize(applications: Application[], now: number = Date.now())
   return summarizeCounts(statusCounts, applications.length, thisWeek);
 }
 
-/** Most-recently-filed applications first — drives the recent-activity feed. */
+/**
+ * Most-recently-filed applications first — drives the recent-activity feed.
+ *
+ * Ordered by the SAME field the feed displays (`filedAt`: the mail's received
+ * date, falling back to the row's creation time). Sorting by `created_at` while
+ * rendering `applied_date` would let the feed show "Aug 12" above "Aug 10".
+ */
 export function recentApplications(applications: Application[], limit = 6): Application[] {
   return [...applications]
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .sort((a, b) => Date.parse(filedAt(b)) - Date.parse(filedAt(a)))
     .slice(0, limit);
 }

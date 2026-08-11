@@ -30,7 +30,14 @@ export async function GET() {
  * server-side — the client never learns either.
  */
 export async function POST(request: Request) {
-  let payload: { company?: string; position?: string; status?: string; notes?: string };
+  let payload: {
+    company?: string;
+    position?: string;
+    status?: string;
+    notes?: string;
+    applied_date?: string;
+    url?: string;
+  };
   try {
     payload = await request.json();
   } catch {
@@ -45,12 +52,18 @@ export async function POST(request: Request) {
 
   try {
     const api = await createServerApiClient();
+    // This handler REBUILDS the body rather than forwarding it, so any field it
+    // does not name is silently dropped. That is how the inbox relay lost
+    // `confidence` and persisted nothing for weeks — name every field the
+    // backend accepts, or it does not arrive.
     const { data, error, response } = await api.POST("/applications", {
       body: {
         company,
         position,
         status: payload.status ?? "applied",
         notes: payload.notes?.trim() || null,
+        applied_date: payload.applied_date?.trim() || null,
+        url: payload.url?.trim() || null,
       },
     });
     if (error || !data) {

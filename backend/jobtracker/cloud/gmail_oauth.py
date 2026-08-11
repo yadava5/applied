@@ -59,7 +59,9 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import jwt
 from cryptography.fernet import InvalidToken
@@ -97,11 +99,30 @@ _STATE_AUDIENCE = "jobtracker:gmail-oauth-state"
 
 
 class GmailStatusResponse(BaseModel):
-    """Whether the deployment can offer Gmail, and whether this user linked it."""
+    """Whether the deployment can offer Gmail, and whether this user linked it.
+
+    Also carries the caller's sync cursor state. The web app had nothing to
+    render for "last synced …" — which is precisely why the product felt like it
+    never synced and invited another manual re-sync on every visit. These fields
+    are additive; ``configured=False`` short-circuits before any DB read, so an
+    unconfigured deployment still answers without touching Postgres.
+
+    - ``last_sync_at`` — ISO-8601 of the last *successful* sync, never an
+      attempt. ``null`` until one succeeds.
+    - ``has_cursor`` — a Gmail ``historyId`` is stored, so the next sync can be
+      incremental. ``false`` means the next sync is a full scan (first sync,
+      post-disconnect, or an items-relay-only user).
+    - ``sync_status`` / ``sync_error`` — the last recorded state
+      (``idle``/``syncing``/``error``) and, on error, the failure's type name.
+    """
 
     configured: bool
     connected: bool
     email: str | None = None
+    last_sync_at: str | None = None
+    has_cursor: bool = False
+    sync_status: str | None = None
+    sync_error: str | None = None
 
 
 class GmailAuthorizeResponse(BaseModel):
@@ -219,15 +240,27 @@ class SyncRequest(BaseModel):
     mode: str | None = None
 
 
+class RemovedApplicationOut(BaseModel):
+    """One row a rebuild took off the board, named so the UI can say which."""
+
+    id: int
+    company: str
+
+
 class SyncResponse(BaseModel):
     created: int
     updated: int
-    applications: int  # total application rows the user has after the sync
+    applications: int  # LIVE application rows the user has after the sync
     scanned: int
-    # Stale AUTO rows removed by the rebuild (the "garbage gone" number) and how
+    # Stale AUTO rows the rebuild removed (the "garbage gone" number) and how
     # many uncertain verdicts are waiting in the needs-classification queue.
     purged: int = 0
     needs_review: int = 0
+    # WHICH rows were removed — id + company. A re-sync that silently changes
+    # the board is unreviewable: this is what lets the button report "3 filed,
+    # 2 removed (MotherDuck, Supabase)" and offer an undo, since a removal is a
+    # dismissal that ``POST /applications/{id}/restore`` reverses.
+    removed: list[RemovedApplicationOut] = []
 
 
 # =============================================================================
@@ -465,20 +498,36 @@ def _require_configured() -> None:
 async def gmail_status(
     user_id: uuid.UUID = Depends(current_user),
 ) -> GmailStatusResponse:
-    """Report whether Gmail is available and whether this user has connected.
+    """Report whether Gmail is available, connected, and when it last synced.
 
     Always 200 so the web UI can render an honest state (including "not yet
     configured by the operator") without treating it as an error.
+
+    Sync state is served from **here** rather than a second endpoint on purpose:
+    the web already fetches this on the settings and inbox screens, "last synced
+    3 minutes ago" belongs directly beside "connected as <address>", and the two
+    are not independently meaningful — a cursor without a connection is nothing
+    to render. One round trip, one user scope, one cache policy.
     """
 
     if not settings.gmail_oauth_configured:
         return GmailStatusResponse(configured=False, connected=False)
 
     stored = await get_gmail_credentials(user_id)
+    if stored is None:
+        return GmailStatusResponse(configured=True, connected=False)
+
+    from jobtracker.cloud.sync_state import read_gmail_sync_state
+
+    state = await read_gmail_sync_state(user_id, stored.email)
     return GmailStatusResponse(
         configured=True,
-        connected=stored is not None,
-        email=stored.email if stored else None,
+        connected=True,
+        email=stored.email,
+        last_sync_at=_iso_utc(state.last_sync_at if state is not None else None),
+        has_cursor=bool(state is not None and state.gmail_history_id),
+        sync_status=state.status if state is not None else None,
+        sync_error=state.error_message if state is not None else None,
     )
 
 
@@ -607,9 +656,19 @@ async def _exchange_and_store(
 async def gmail_disconnect(
     user_id: uuid.UUID = Depends(current_user),
 ) -> GmailDisconnectResponse:
-    """Revoke the grant at Google and delete the stored (encrypted) token."""
+    """Revoke the grant at Google, delete the stored token, drop the cursor.
+
+    The cursor is cleared FIRST and unconditionally — before the
+    "was not connected" early return — because a ``historyId`` only means
+    anything against the mailbox that issued it. A row surviving a disconnect
+    would hand a re-linked (possibly different) account someone else's baseline,
+    and an incremental sync from a foreign baseline skips mail.
+    """
+
+    from jobtracker.cloud.sync_state import clear_gmail_sync_state
 
     stored = await get_gmail_credentials(user_id)
+    await clear_gmail_sync_state(user_id)
     if stored is None:
         return GmailDisconnectResponse(revoked=False, message="Gmail was not connected.")
 
@@ -682,6 +741,22 @@ def _parse_scope(value: str | None) -> str:
     """``"anywhere"`` searches all mail (incl. archived); default ``"inbox"``."""
 
     return "anywhere" if (value or "").strip().lower() == "anywhere" else "inbox"
+
+
+def _iso_utc(value: datetime | None) -> str | None:
+    """Serialize a stored timestamp as ISO-8601 with an EXPLICIT UTC offset.
+
+    ``sync_state.last_sync_at`` is a naive column holding UTC
+    (``datetime.utcnow()``). Emitting it naive would make the browser's
+    ``new Date(...)`` read it as *local* time — so a sync that just finished
+    would render as "in 4 hours" for the owner in US Eastern. Getting that
+    number right is the entire point of exposing it.
+    """
+
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return aware.isoformat()
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -885,6 +960,239 @@ _SYNC_DEFAULT_SCAN_TARGET = 750
 _SYNC_MAX_PAGES = 4
 
 
+@dataclass
+class _ScanOutcome:
+    """What one server-side scan produced, plus the cursor to record.
+
+    ``history_id`` is the mailbox baseline captured **before** the scan started
+    (``None`` when Gmail's ``getProfile`` was unavailable — then the stored
+    cursor is simply left alone and the next run is another full scan).
+    """
+
+    items: list[Any]
+    scanned: int
+    incremental: bool
+    history_id: str | None
+
+
+async def _classify_messages(messages: list[Any], classifier: Any, pipeline: Any) -> list[Any]:
+    """Run each fetched message through the classifier into a PipelineItem."""
+
+    items: list[Any] = []
+    for msg in messages:
+        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        items.append(
+            pipeline.PipelineItem(
+                message_id=msg.message_id,
+                category=result.category.value,
+                sender_email=msg.sender_email,
+                subject=msg.subject,
+                sender_name=msg.sender_name,
+                received_at=msg.received_at,
+                confidence=result.confidence,
+                thread_id=msg.thread_id,
+                snippet=msg.snippet,
+            )
+        )
+    return items
+
+
+async def _full_scan(
+    user_id: uuid.UUID,
+    *,
+    query: str,
+    target: int,
+    classifier: Any,
+    pipeline: Any,
+) -> tuple[list[Any], int]:
+    """Re-list a STABLE, deep-enough slice of the window (the fallback path).
+
+    Unchanged behaviour, lifted out of the handler so the incremental path can
+    fall back to it verbatim: a fixed target across bounded pages so every run
+    covers the same ground and durability never depends on which messages one
+    500-cap page happened to catch.
+    """
+
+    from jobtracker.cloud.gmail_client import fetch_message_page
+
+    items: list[Any] = []
+    scanned = 0
+    page_token: str | None = None
+    for page_index in range(_SYNC_MAX_PAGES):
+        remaining = target - scanned
+        if remaining <= 0:
+            break
+        page = await fetch_message_page(
+            user_id,
+            query=query,
+            page_size=min(settings.gmail_fetch_page_size, remaining),
+            page_token=page_token,
+        )
+        if page is None:
+            if page_index == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Gmail is not connected for this user. Connect it first.",
+                )
+            break
+        items.extend(await _classify_messages(page.messages, classifier, pipeline))
+        scanned += len(page.messages)
+        page_token = page.next_page_token
+        if not page_token or not page.messages:
+            break
+    return items, scanned
+
+
+async def _incremental_scan(
+    user_id: uuid.UUID,
+    *,
+    start_history_id: str,
+    target: int,
+    mail_scope: str,
+    classifier: Any,
+    pipeline: Any,
+) -> tuple[list[Any], int] | None:
+    """Read only what Gmail says changed since ``start_history_id``.
+
+    ``None`` means "the cursor could not carry this run" — Gmail 404'd it as
+    aged out (normal after ~a week), too much arrived to walk in one
+    invocation, or the account is no longer connected. In every one of those
+    cases the caller full-scans and re-baselines; none of them is a user-facing
+    error.
+    """
+
+    from jobtracker.cloud.gmail_client import fetch_history_messages
+
+    page = await fetch_history_messages(
+        user_id,
+        start_history_id=start_history_id,
+        max_messages=target,
+        scope=mail_scope,  # type: ignore[arg-type]
+    )
+    if page is None or not page.usable:
+        return None
+    items = await _classify_messages(page.messages, classifier, pipeline)
+    return items, len(page.messages)
+
+
+async def _history_cursor_for(
+    user_id: uuid.UUID,
+    payload: SyncRequest,
+    *,
+    rebuild: bool,
+    account_email: str | None,
+) -> str | None:
+    """The stored ``historyId`` to sync from, or ``None`` to full-scan.
+
+    Incremental is deliberately narrow. It is skipped when:
+
+    - Gmail is not connected (no address to key the cursor row on);
+    - ``mode="rebuild"`` — the explicit "Re-sync" button means *start clean*;
+      handing its purge-and-rebuild a three-message delta would wipe every auto
+      row whose company was not in that delta;
+    - the caller named a ``range`` or ``count`` — they asked for a specific
+      window, so scan it;
+    - no cursor is stored yet (first sync, or a fresh reconnect).
+    """
+
+    if account_email is None or rebuild:
+        return None
+    if payload.range is not None or payload.count is not None:
+        return None
+
+    from jobtracker.cloud.sync_state import read_gmail_sync_state
+
+    state = await read_gmail_sync_state(user_id, account_email)
+    return state.gmail_history_id if state is not None else None
+
+
+async def _scan_server_side(
+    user_id: uuid.UUID,
+    payload: SyncRequest,
+    *,
+    rebuild: bool,
+    account_email: str | None,
+) -> _ScanOutcome:
+    """Fetch + classify the caller's mail, incrementally when we can."""
+
+    from jobtracker.classifier import get_classifier
+    from jobtracker.cloud import pipeline
+    from jobtracker.cloud.gmail_client import build_gmail_query, fetch_mailbox_history_id
+
+    # Not-provided range → default backfill window; explicit "all" → no bound.
+    range_months = (
+        _SYNC_DEFAULT_RANGE_MONTHS
+        if payload.range is None
+        else _parse_range_months(payload.range)
+    )
+    # A scan that can REMOVE rows must be able to see everything it is judging,
+    # so a rebuild always searches ``in:anywhere`` and the caller does not get a
+    # say. ``_parse_scope`` defaults to ``in:inbox``, which does not search
+    # archived mail: on 2026-08-10 that is why a rebuild found one job-related
+    # message where the same account holds four, and deleted the two
+    # applications whose ATS confirmations had been filed away. Honouring a
+    # caller-supplied ``scope`` here would let a stale client, a cached form
+    # value or a typo re-arm that. (The purge itself no longer trusts absence
+    # either — see ``applications._scan_contradicts`` — but a destructive path
+    # should not be reading half the mailbox in the first place.)
+    mail_scope = "anywhere" if rebuild else _parse_scope(payload.scope)
+    query = build_gmail_query(range_months, mail_scope)  # type: ignore[arg-type]
+    target = max(
+        1, min(payload.count or _SYNC_DEFAULT_SCAN_TARGET, settings.gmail_fetch_hard_cap)
+    )
+    classifier = get_classifier()
+
+    # Capture the mailbox baseline BEFORE reading a single message. Taking it
+    # afterwards would silently swallow everything that arrived while the scan
+    # ran; taking it early only ever re-reads a message, which every write here
+    # is idempotent against.
+    history_id = await fetch_mailbox_history_id(user_id)
+    if history_id is None:
+        # ``fetch_mailbox_history_id`` degrades to None on ANY profile failure so
+        # a bad read can never sink a sync. The cost is that a deployment where
+        # getProfile fails persistently would full-scan forever while reporting
+        # ``status='idle'`` — the original complaint, silently restored. Say so
+        # out loud: no cursor can be written on this run.
+        logger.warning(
+            "Gmail baseline historyId unavailable for user_id=%s; this sync "
+            "cannot advance the cursor and the next one will be a full scan.",
+            user_id,
+        )
+
+    cursor = await _history_cursor_for(
+        user_id, payload, rebuild=rebuild, account_email=account_email
+    )
+    if cursor:
+        incremental = await _incremental_scan(
+            user_id,
+            start_history_id=cursor,
+            target=target,
+            mail_scope=mail_scope,
+            classifier=classifier,
+            pipeline=pipeline,
+        )
+        if incremental is not None:
+            items, scanned = incremental
+            return _ScanOutcome(
+                items=items, scanned=scanned, incremental=True, history_id=history_id
+            )
+        logger.info(
+            "Gmail history cursor unusable for user_id=%s; full scan + re-baseline.",
+            user_id,
+        )
+
+    items, scanned = await _full_scan(
+        user_id,
+        query=query,
+        target=target,
+        classifier=classifier,
+        pipeline=pipeline,
+    )
+    return _ScanOutcome(
+        items=items, scanned=scanned, incremental=False, history_id=history_id
+    )
+
+
 @router.post("/gmail/sync", response_model=SyncResponse)
 async def gmail_sync(
     payload: SyncRequest,
@@ -898,17 +1206,35 @@ async def gmail_sync(
     terminal) and idempotently upserted, scoped to the JWT's user.
 
     Input source (see :class:`SyncRequest`): persist the client's already-mined
-    ``items``, or — when omitted — fetch a bounded, STABLE recent window
-    server-side and classify it. Persistence is ``additive`` by default (durable
-    upsert-only) and only ``rebuild`` on the explicit "Re-sync" button. Either
-    way the upsert is idempotent (re-running never duplicates) and metadata-only
-    (no bodies are stored).
+    ``items``, or — when omitted — fetch server-side and classify. The
+    server-side fetch is INCREMENTAL whenever a Gmail ``historyId`` cursor is on
+    file (``users.history.list`` from the stored baseline), and falls back to the
+    bounded, STABLE full window otherwise: first sync, a fresh reconnect, an
+    aged-out (404) cursor, an explicit range/count, or the "Re-sync" rebuild.
+
+    Every successful run records the caller's ``sync_state`` row —
+    ``last_sync_at``, ``status`` and (server-fetch only) the mailbox baseline
+    captured before the scan began. That row is what ``GET /auth/gmail/status``
+    renders as "last synced …", and what stops the product from re-scanning a
+    12-month window on every single visit.
+
+    Persistence is ``additive`` by default (durable upsert-only) and only
+    ``rebuild`` on the explicit "Re-sync" button. Either way the upsert is
+    idempotent (re-running never duplicates) and metadata-only (no bodies are
+    stored), and the orphan reconciliation runs on BOTH paths — including an
+    incremental run that found nothing, so a stranded classification can never
+    become unreachable just because the sync got cheaper.
     """
 
     from jobtracker.cloud import pipeline
     from jobtracker.cloud.applications import (
+        ScanCoverage,
         purge_and_rebuild_gmail_pipeline,
         sync_gmail_pipeline_additive,
+    )
+    from jobtracker.cloud.sync_state import (
+        note_gmail_sync_failure,
+        record_gmail_sync_success,
     )
 
     # Default to the durable additive merge; only an explicit "rebuild" (the
@@ -917,129 +1243,133 @@ async def gmail_sync(
     mode = (payload.mode or "additive").strip().lower()
     rebuild = mode == "rebuild"
 
-    if payload.items is not None:
-        items = [
-            pipeline.PipelineItem(
-                message_id=item.message_id,
-                category=item.category,
-                sender_email=item.sender_email,
-                subject=item.subject,
-                sender_name=item.sender_name,
-                received_at=_parse_iso(item.received_at),
-                confidence=item.confidence,
-                thread_id=item.thread_id,
-                snippet=item.snippet,
-            )
-            for item in payload.items[: settings.gmail_fetch_hard_cap]
-        ]
-        scanned = len(items)
-    else:
-        _require_configured()
-        from jobtracker.classifier import get_classifier
-        from jobtracker.cloud.gmail_client import build_gmail_query, fetch_message_page
+    # The linked address keys the cursor row. ``None`` means Gmail is not
+    # connected — an items-only relay can still persist, there is just nothing to
+    # key a cursor on.
+    stored = await get_gmail_credentials(user_id)
+    account_email = stored.email if stored else None
 
-        # Not-provided range → default backfill window; explicit "all" → no bound.
-        range_months = (
-            _SYNC_DEFAULT_RANGE_MONTHS
-            if payload.range is None
-            else _parse_range_months(payload.range)
-        )
-        mail_scope = _parse_scope(payload.scope)
-        query = build_gmail_query(range_months, mail_scope)  # type: ignore[arg-type]
-
-        # Scan a fixed, deep-enough target across bounded pages so a routine
-        # auto-sync reliably finds the user's whole recent pipeline and every run
-        # covers the same ground — no longer leaving durability to whichever
-        # messages one 500-cap page happened to catch.
-        target = max(
-            1, min(payload.count or _SYNC_DEFAULT_SCAN_TARGET, settings.gmail_fetch_hard_cap)
-        )
-
-        classifier = get_classifier()
-        items = []
-        scanned = 0
-        page_token: str | None = None
-        for page_index in range(_SYNC_MAX_PAGES):
-            remaining = target - scanned
-            if remaining <= 0:
-                break
-            page = await fetch_message_page(
-                user_id,
-                query=query,
-                page_size=min(settings.gmail_fetch_page_size, remaining),
-                page_token=page_token,
-            )
-            if page is None:
-                if page_index == 0:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="Gmail is not connected for this user. Connect it first.",
-                    )
-                break
-            for msg in page.messages:
-                result = await classifier.classify(
-                    msg.subject, msg.snippet, msg.sender_email
+    try:
+        if payload.items is not None:
+            items = [
+                pipeline.PipelineItem(
+                    message_id=item.message_id,
+                    category=item.category,
+                    sender_email=item.sender_email,
+                    subject=item.subject,
+                    sender_name=item.sender_name,
+                    received_at=_parse_iso(item.received_at),
+                    confidence=item.confidence,
+                    thread_id=item.thread_id,
+                    snippet=item.snippet,
                 )
-                items.append(
-                    pipeline.PipelineItem(
-                        message_id=msg.message_id,
-                        category=result.category.value,
-                        sender_email=msg.sender_email,
-                        subject=msg.subject,
-                        sender_name=msg.sender_name,
-                        received_at=msg.received_at,
-                        confidence=result.confidence,
-                        thread_id=msg.thread_id,
-                        snippet=msg.snippet,
-                    )
-                )
-            scanned += len(page.messages)
-            page_token = page.next_page_token
-            if not page_token or not page.messages:
-                break
-
-    # Roll the scan up: high-confidence lifecycle mail with a nameable employer
-    # becomes a hard row, the uncertain remainder feeds the needs-classification
-    # queue. How that merges into the board depends on ``mode``: additive
-    # accumulates (durable, the default), rebuild REPLACES (explicit Re-sync).
-    # Manual / user-corrected rows are preserved either way.
-    rolled = pipeline.roll_up_applications(items)
-    review = pipeline.collect_review_items(items)
-
-    from sqlalchemy import func as sa_func
-    from sqlmodel import select as sm_select
-
-    from jobtracker.database import get_session
-    from jobtracker.database.models import Application
-
-    async with get_session() as session:
-        if rebuild:
-            created, updated, purged, needs_review = await purge_and_rebuild_gmail_pipeline(
-                session, user_id, rolled, review
-            )
+                for item in payload.items[: settings.gmail_fetch_hard_cap]
+            ]
+            scanned = len(items)
+            incremental = False
+            # Deliberately no baseline: the client's mine can be a NARROWER
+            # window than the server's own scan, so baselining from it would
+            # permanently prevent the deeper full scan from ever running again.
+            # The run still stamps ``last_sync_at``.
+            history_id: str | None = None
         else:
-            created, updated, purged, needs_review = await sync_gmail_pipeline_additive(
-                session, user_id, rolled, review
+            _require_configured()
+            outcome = await _scan_server_side(
+                user_id, payload, rebuild=rebuild, account_email=account_email
             )
-        total = (
-            await session.exec(
-                sm_select(sa_func.count())
-                .select_from(Application)
-                .where(Application.user_id == user_id)
-            )
-        ).one()
+            items = outcome.items
+            scanned = outcome.scanned
+            incremental = outcome.incremental
+            history_id = outcome.history_id
+
+        # Roll the scan up: high-confidence lifecycle mail with a nameable
+        # employer becomes a hard row, the uncertain remainder feeds the
+        # needs-classification queue. How that merges into the board depends on
+        # ``mode``: additive accumulates (durable, the default), rebuild REPLACES
+        # (explicit Re-sync). Manual / user-corrected rows are preserved either
+        # way. An empty incremental delta is NOT short-circuited — it still runs
+        # the merge so reconciliation happens.
+        rolled = pipeline.roll_up_applications(items)
+        review = pipeline.collect_review_items(items)
+
+        from sqlalchemy import func as sa_func
+        from sqlmodel import select as sm_select
+
+        from jobtracker.database import get_session
+        from jobtracker.database.models import Application
+
+        async with get_session() as session:
+            if rebuild:
+                # What this scan can honestly be said to have READ. The rebuild
+                # may only remove a row this coverage contradicts; it is built
+                # from ALL classified items (noise included) because a message
+                # the scan re-read and no longer files IS the contradiction.
+                merged = await purge_and_rebuild_gmail_pipeline(
+                    session,
+                    user_id,
+                    rolled,
+                    review,
+                    ScanCoverage.from_items(items),
+                )
+            else:
+                merged = await sync_gmail_pipeline_additive(
+                    session, user_id, rolled, review
+                )
+            created = merged.created
+            updated = merged.updated
+            purged = merged.purged
+            needs_review = merged.needs_review
+
+            # Cursor LAST, after the scanned mail is durably persisted. The
+            # merge functions commit internally, so this cannot be one atomic
+            # unit with them — but the ordering gives the property that matters:
+            # the only way to fail is with the cursor NOT advanced, which costs
+            # one more full scan and can never skip a message.
+            if account_email is not None:
+                await record_gmail_sync_success(
+                    session,
+                    user_id,
+                    account_email=account_email,
+                    history_id=history_id,
+                )
+                await session.commit()
+
+            # LIVE rows only — a dismissed row is off the board, so counting it
+            # here would make the dashboard's total disagree with the list.
+            total = (
+                await session.exec(
+                    sm_select(sa_func.count())
+                    .select_from(Application)
+                    .where(
+                        Application.user_id == user_id,
+                        Application.dismissed_at.is_(None),
+                    )
+                )
+            ).one()
+    except HTTPException:
+        # 409 not-connected / 503 not-configured are the caller's problem to
+        # fix, not a sync failure worth recording against the mailbox.
+        raise
+    except Exception as exc:
+        if account_email is not None:
+            # Type name only — this module never puts a token-bearing repr into
+            # a log or a stored field.
+            await note_gmail_sync_failure(user_id, account_email, type(exc).__name__)
+        raise
 
     logger.info(
-        "Gmail sync for user_id=%s: mode=%s created=%s updated=%s purged=%s "
-        "needs_review=%s total=%s scanned=%s",
+        "Gmail sync for user_id=%s: mode=%s incremental=%s created=%s updated=%s "
+        "purged=%s needs_review=%s total=%s scanned=%s removed=%s",
         user_id,
         mode,
+        incremental,
         created,
         updated,
         purged,
         needs_review,
         total,
         scanned,
+        [r.company for r in merged.removed] or None,
     )
     return SyncResponse(
         created=created,
@@ -1048,4 +1378,7 @@ async def gmail_sync(
         scanned=scanned,
         purged=purged,
         needs_review=needs_review,
+        removed=[
+            RemovedApplicationOut(id=r.id, company=r.company) for r in merged.removed
+        ],
     )

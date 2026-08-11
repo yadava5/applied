@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { LastSynced } from "@/components/gmail/LastSynced";
+import { filedSummary, type SyncCounts } from "@/lib/gmail/sync-state";
 import type { RailGmailData } from "@/lib/shell/rail";
 
 /**
@@ -13,11 +15,17 @@ import type { RailGmailData } from "@/lib/shell/rail";
  *
  * Connection chip — three honest states:
  *   - connected     → live emerald dot (`.beta-dot` ping), the account email,
- *                     and a compact re-sync control.
+ *                     when the board was last built, and a compact re-sync
+ *                     control.
  *   - not connected → a quiet chip that links to Settings, where connecting
  *                     actually lives.
  *   - unknown       → chip omitted entirely (a failed status probe is not a
  *                     disconnection; never show a guessed state).
+ *
+ * "Last synced" lives here because this is where the connection state already
+ * lives, and because it is the answer to the question that drove the repeated
+ * manual re-syncs: *did this thing ever run?* The ephemeral button note below
+ * it says what the LAST press did; the timestamp survives navigation.
  *
  * Re-sync here is the ADDITIVE path (`POST /api/gmail/sync` with `{}`) — new
  * mail folds in, existing rows are upserted, nothing is purged. The
@@ -56,8 +64,11 @@ function GmailChip({ gmail }: { gmail: RailGmailData }) {
         setBusy(false);
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { created?: number };
-      setNote(data.created && data.created > 0 ? `+${data.created} filed` : "up to date");
+      // One reading of the counts, shared with the inbox's "file these" action
+      // and the dashboard's auto-sync, so the three can never phrase the same
+      // outcome differently.
+      const data = (await res.json().catch(() => ({}))) as Partial<SyncCounts>;
+      setNote(filedSummary(data));
       router.refresh();
       setBusy(false);
     } catch {
@@ -92,6 +103,16 @@ function GmailChip({ gmail }: { gmail: RailGmailData }) {
           {gmail.email ? (
             <p title={gmail.email} className="truncate font-mono text-[11px] text-muted">
               {gmail.email}
+            </p>
+          ) : null}
+          {/* Whether the last sync SUCCEEDED and when are two different facts:
+              the backend leaves `last_sync_at` on the last good run when one
+              fails, so both are shown rather than one overwriting the other.
+              `sync_error` is an exception type name — a reference code. */}
+          <LastSynced at={gmail.lastSyncAt} className="block truncate font-mono text-[10px] text-dim" />
+          {gmail.syncStatus === "error" ? (
+            <p className="truncate font-mono text-[10px] text-reject">
+              last sync failed{gmail.syncError ? ` · ${gmail.syncError}` : ""}
             </p>
           ) : null}
         </div>

@@ -1,10 +1,5 @@
+import { filedAt, longDate } from "@/lib/dashboard/dates";
 import { type Application, STAGES, recentApplications, stageOf } from "@/lib/dashboard/summary";
-
-function filedOn(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
 
 /**
  * The most-recently-filed applications as a compact activity feed. It reads
@@ -44,6 +39,10 @@ export function RecentActivity({ applications, limit = 6 }: { applications: Appl
         <ul className="scroll-area max-h-[22rem] overflow-y-auto [scrollbar-gutter:auto]">
         {recent.map((app) => {
           const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
+          // Gmail-sourced rows often carry no role at all (`position: ""`), so
+          // the middot separator is rendered WITH the role or not at all —
+          // never a dangling "Supabase ·". An absent role shows nothing.
+          const role = app.position.trim();
           return (
             <li
               key={app.id}
@@ -57,8 +56,14 @@ export function RecentActivity({ applications, limit = 6 }: { applications: Appl
                 />
                 <div className="min-w-0">
                   <p className="truncate text-sm text-strong">
-                    {app.company} <span className="text-dim">·</span>{" "}
-                    <span className="text-muted">{app.position}</span>
+                    {app.company}
+                    {role ? (
+                      <>
+                        {" "}
+                        <span className="text-dim">·</span>{" "}
+                        <span className="text-muted">{role}</span>
+                      </>
+                    ) : null}
                   </p>
                 </div>
               </div>
@@ -69,7 +74,7 @@ export function RecentActivity({ applications, limit = 6 }: { applications: Appl
                 >
                   {stage.label}
                 </span>
-                <span className="tabular w-24 font-mono text-[11px] text-dim">{filedOn(app.created_at)}</span>
+                <span className="tabular w-24 font-mono text-[11px] text-dim">{longDate(filedAt(app))}</span>
               </div>
             </li>
           );

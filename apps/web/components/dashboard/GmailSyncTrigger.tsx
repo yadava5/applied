@@ -4,22 +4,46 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
+
 /**
- * Auto-populates the dashboard from connected Gmail.
+ * Keeps the dashboard current with connected Gmail, without the user asking.
  *
- * Rendered only in the "connected but no applications yet" state. It fires one
- * bounded server-side sync (`POST /api/gmail/sync`, a full purge/rebuild) — but
- * at most ONCE per cooldown window per tab session, not on every dashboard
- * navigation. Each visit remounts this component, so a per-mount `useRef` guard
- * alone still re-scanned Gmail on every Inbox → Dashboard hop; the cooldown
- * stamp in `sessionStorage` is what makes repeat visits cheap. If a sync
- * persists applications it calls `router.refresh()` so the server dashboard
- * re-renders with the real board; if it finds no job mail it leaves the honest
- * empty state in place. The backend upsert is idempotent, so this never
- * duplicates rows.
+ * The rule used to be `total === 0`: this only ever rendered on an EMPTY board,
+ * so an account with rows never auto-synced and new mail never appeared until
+ * the user pressed Re-sync — which re-scanned a 12-month window from scratch.
+ * That is the "I have to re-sync again and again, and again when a new email
+ * arrives" complaint. The rule is now STALENESS: if the backend's
+ * `last_sync_at` is older than `STALE_AFTER_MS` (30 minutes), one additive
+ * sync runs on this visit. Never synced counts as stale, so the connect-time
+ * backfill still happens.
+ *
+ * Two gates keep that cheap:
+ *   - the staleness check itself, against server truth (`last_sync_at`), so a
+ *     board another tab just synced is not synced again;
+ *   - the existing per-tab `sessionStorage` cooldown, which covers the window
+ *     between "we synced" and "a server render reflects it" — a fast navigator
+ *     cannot fire twice inside it.
+ *
+ * The sync is `mode: "additive"` and carries NO `count`/`range`: either of those
+ * makes the backend treat the call as an explicit window request and disable
+ * incremental sync (`_history_cursor_for`), which would restore the full rescan
+ * this work exists to remove. The destructive purge/rebuild stays exclusive to
+ * the user's own Re-sync button.
+ *
+ * What this does NOT do: it will not surface mail while the page sits open.
+ * "New mail appears on my next visit (or within 30 minutes of navigating)" is
+ * the property implemented here; push/polling was not in scope.
  */
 
-type State = "syncing" | "empty" | "error";
+type Phase = "idle" | "syncing" | "done" | "empty" | "error";
+
+/**
+ * `empty` — the connected-but-nothing-filed board, where this component is the
+ * page's only explanation of what is happening. `quiet` — a populated board,
+ * where it must be invisible unless it has something to report.
+ */
+type Variant = "empty" | "quiet";
 
 /** Cooldown so the auto-sync runs at most once per window per tab session. */
 const AUTOSYNC_KEY = "applied:dashboard:autosync:lastAt";
@@ -44,68 +68,115 @@ function markAutoSynced(): void {
   }
 }
 
-export function GmailSyncTrigger() {
+export function GmailSyncTrigger({
+  lastSyncAt,
+  hasCursor = false,
+  variant = "empty",
+}: {
+  /** Backend `last_sync_at` — an instant with an explicit UTC offset, or null. */
+  lastSyncAt: string | null;
+  /** True when the last scan was cursored, i.e. the next one is incremental. */
+  hasCursor?: boolean;
+  variant?: Variant;
+}) {
   const router = useRouter();
   const ran = useRef(false);
-  const [state, setState] = useState<State>("syncing");
+  const [phase, setPhase] = useState<Phase>(variant === "empty" ? "syncing" : "idle");
+  const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
+    // `router.refresh()` below re-renders this component with a FRESH
+    // `lastSyncAt`, which re-runs this effect. The ref is what stops that from
+    // being a loop — one attempt per mount, whatever the props do afterwards.
     if (ran.current) return;
     ran.current = true;
 
     let cancelled = false;
     (async () => {
-      // Already auto-synced recently in this session → show the honest empty
-      // state instead of re-scanning Gmail on this navigation.
-      if (recentlyAutoSynced()) {
-        if (!cancelled) setState("empty");
+      // Fresh enough, or already tried in this tab recently → say nothing new.
+      if (!isStale(lastSyncAt, Date.now()) || recentlyAutoSynced()) {
+        if (!cancelled) setPhase(variant === "empty" ? "empty" : "idle");
         return;
       }
-      // Stamp before the request so a rapid re-navigation can't double-fire the
-      // purge/rebuild while the first one is still in flight.
+      // Stamp before the request so a rapid re-navigation cannot double-fire
+      // while the first one is still in flight.
       markAutoSynced();
+      if (!cancelled) setPhase("syncing");
       try {
         const res = await fetch("/api/gmail/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // Additive (durable): connect-time backfill must never purge rows a
-          // bounded scan missed. Only the explicit Re-sync button rebuilds.
+          // Additive (durable): a routine sync must never purge rows a bounded
+          // scan missed. NO count/range — they disable the incremental path.
           body: JSON.stringify({ mode: "additive" }),
           cache: "no-store",
         });
         if (cancelled) return;
         if (!res.ok) {
-          setState("error");
+          setPhase("error");
           return;
         }
-        const data = (await res.json()) as { applications?: number };
+        const data = (await res.json().catch(() => ({}))) as Partial<SyncCounts>;
         if (cancelled) return;
-        if ((data.applications ?? 0) > 0) {
-          router.refresh();
-        } else {
-          setState("empty");
-        }
+        setNote(filedSummary(data));
+        setPhase((data.applications ?? 0) > 0 ? "done" : "empty");
+        // Refresh even when nothing was filed: the server render is what carries
+        // the new `last_sync_at` into the rail, and leaving it stale is exactly
+        // the "did this ever run?" doubt that caused the manual re-syncs.
+        router.refresh();
       } catch {
-        if (!cancelled) setState("error");
+        if (!cancelled) setPhase("error");
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, lastSyncAt, variant]);
+
+  const line = "flex items-center gap-2 font-mono text-[11px] text-dim";
+
+  if (variant === "quiet") {
+    // A populated board says nothing unless there is something to say.
+    if (phase === "idle" || phase === "empty") return null;
+    return (
+      <p className={line} role="status">
+        {phase === "syncing" ? (
+          <>
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            checking Gmail for new mail…
+          </>
+        ) : phase === "error" ? (
+          <>Couldn&apos;t reach Gmail just now — your board is unchanged.</>
+        ) : (
+          <>{note ?? "up to date"}</>
+        )}
+      </p>
+    );
+  }
 
   return (
-    <p className="flex items-center gap-2 font-mono text-[11px] text-dim" role="status">
-      {state === "syncing" ? (
+    <p className={line} role="status">
+      {phase === "syncing" ? (
         <>
           <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
           scanning your connected Gmail for applications…
         </>
-      ) : state === "empty" ? (
-        <>No application emails detected in the last 12 months yet.</>
-      ) : (
+      ) : phase === "error" ? (
         <>Couldn&apos;t reach Gmail to sync — file one by hand, or try again shortly.</>
+      ) : phase === "done" ? (
+        // Transient: the refresh this triggered re-renders the board as
+        // populated and unmounts us. Until it lands, report the real outcome
+        // rather than the "nothing found" copy below, which is now false.
+        <>{note ?? "filed from Gmail"}</>
+      ) : hasCursor ? (
+        // A cursored scan only looked at what arrived since the last one, so
+        // "nothing in the last 12 months" would be a claim it never checked.
+        <>No new application emails since your last sync.</>
+      ) : (
+        // The uncursored server scan really is bounded to 12 months
+        // (`_SYNC_DEFAULT_RANGE_MONTHS`).
+        <>No application emails detected in the last 12 months yet.</>
       )}
     </p>
   );

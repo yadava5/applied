@@ -4,6 +4,7 @@ import { ExternalLink, Loader2, MoreHorizontal } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { filedAt, shortDate } from "@/lib/dashboard/dates";
 import { type Application, STAGES, qualifierOf, stageOf } from "@/lib/dashboard/summary";
 
 /** The statuses a user can set from the board (a superset of the four stages). */
@@ -16,13 +17,6 @@ const STATUS_CHOICES = [
   "rejected",
   "withdrawn",
 ] as const;
-
-/** Locale-stable short date ("Jul 14") — deterministic across server/client. */
-function shortDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 
 /**
  * One pipeline row — now clickable + correctable.
@@ -45,7 +39,7 @@ export function ApplicationCard({ app }: { app: Application }) {
   const qualifier = qualifierOf(app.status);
   const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
   // Real received date from the mail; fall back to the row's filed date.
-  const filed = app.applied_date ?? app.created_at;
+  const filed = filedAt(app);
   const fromGmail = app.source === "gmail" || app.source === "gmail_user";
 
   async function mutate(run: () => Promise<Response>, failMsg: string) {

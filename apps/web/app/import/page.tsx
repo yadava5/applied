@@ -7,7 +7,7 @@ import { Logo } from "@/components/brand/Logo";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
-  title: "Import your mail — Applied",
+  title: "Import your mail",
   description:
     "Classify your own job-search mail with no Google connection and no sign-in. Your file is parsed and classified entirely in your browser — nothing is uploaded.",
 };

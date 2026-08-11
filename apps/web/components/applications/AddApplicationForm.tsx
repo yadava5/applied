@@ -25,14 +25,6 @@ const STATUS_OPTIONS = [
 
 type Mode = "live" | "demo";
 
-/** Compose the optional applied-date + link into the notes the backend stores,
- * so no field the user filled in is silently dropped by the leaner API shape. */
-function composeNotes(notes: string, applied: string, link: string): string | null {
-  const meta = [applied ? `applied ${applied}` : "", link ? link : ""].filter(Boolean).join(" · ");
-  const composed = [meta, notes.trim()].filter(Boolean).join(" — ");
-  return composed || null;
-}
-
 function normalizeUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
@@ -111,7 +103,7 @@ export function AddApplicationForm({
       return;
     }
 
-    const composedNotes = composeNotes(notes, applied, link);
+    const trimmedNotes = notes.trim();
 
     if (mode === "demo") {
       setConfirmation(`Filed “${company}” — demo only, not saved.`);
@@ -120,10 +112,23 @@ export function AddApplicationForm({
     }
 
     setBusy(true);
+    // `applied_date` and `url` are real columns now, so they are sent as
+    // themselves. They used to be stringified into `notes` because the create
+    // model had no fields for them — which meant a hand-filed application
+    // landed with a null date and a link that was never a link, while every
+    // Gmail-sourced row had both. `applied_date` takes YYYY-MM-DD, exactly
+    // what a native date input produces.
     const res = await fetch("/api/applications", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ company, position, status, notes: composedNotes ?? undefined }),
+      body: JSON.stringify({
+        company,
+        position,
+        status,
+        applied_date: applied || undefined,
+        url: link || undefined,
+        notes: trimmedNotes || undefined,
+      }),
     });
     setBusy(false);
 

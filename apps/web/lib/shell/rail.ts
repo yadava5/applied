@@ -9,9 +9,10 @@
  *   - `GET /applications/summary` via the typed client — counts only, O(1)
  *     transfer, folded through `summarizeCounts` so the rail can never show a
  *     number derived differently from the dashboard's tiles.
- *   - `getGmailStatus()` — connected + account email, with its labelled
- *     failure modes collapsed to "unknown" here (the rail is a glance, not a
- *     diagnostic surface; Settings owns the detailed story).
+ *   - `getGmailStatus()` — connected + account email + the sync cursor state
+ *     ("last synced …"), with its labelled failure modes collapsed to
+ *     "unknown" here (the rail is a glance, not a diagnostic surface; Settings
+ *     owns the detailed story).
  *
  * Both fetches run in parallel and every failure degrades to `null` rather
  * than throwing, so a broken backend can never take the app shell down with
@@ -38,6 +39,14 @@ export interface RailPipelineData {
 export interface RailGmailData {
   connected: boolean;
   email: string | null;
+  /** Instant of the last successful sync (explicit UTC offset), or `null`. */
+  lastSyncAt: string | null;
+  /** The next server-side sync can be incremental. Not claimed in the UI when false. */
+  hasCursor: boolean;
+  /** `idle` | `error` | `null` — the cloud path never writes `syncing`. */
+  syncStatus: string | null;
+  /** On `error`, the failure's type name — a reference code, not an explanation. */
+  syncError: string | null;
 }
 
 export interface RailData {
@@ -67,6 +76,12 @@ async function loadGmail(): Promise<RailGmailData | null> {
   return {
     connected: result.status.configured && result.status.connected,
     email: result.status.email,
+    // Sync state rides along on the SAME probe — the rail already made this
+    // call, and "last synced 3 minutes ago" belongs beside "connected as …".
+    lastSyncAt: result.status.last_sync_at ?? null,
+    hasCursor: result.status.has_cursor === true,
+    syncStatus: result.status.sync_status ?? null,
+    syncError: result.status.sync_error ?? null,
   };
 }
 

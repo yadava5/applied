@@ -217,6 +217,21 @@ class Application(TimestampMixin, table=True):
     url: Optional[str] = Field(default=None, description="Job posting URL")
     notes: Optional[str] = Field(default=None, description="Personal notes")
 
+    # Removal is RECOVERABLE, never a DELETE. Nothing automated may destroy an
+    # application: the re-sync rebuild and the user's "not an application"
+    # dismiss both set these instead, which hides the row from the board while
+    # the row and its emails stay on disk for an undo. ``NULL`` = live.
+    # ``dismissed_reason`` records WHO removed it (``user`` / ``resync``) —
+    # fresh mail may resurrect an automated removal, but never a human's.
+    dismissed_at: Optional[datetime] = Field(
+        default=None,
+        description="When the row was removed from the board (NULL = live)",
+    )
+    dismissed_reason: Optional[str] = Field(
+        default=None,
+        description="Who removed it: 'user' (explicit dismiss) or 'resync'",
+    )
+
     # Relationships
     emails: list["Email"] = Relationship(back_populates="application")
     contacts: list["Contact"] = Relationship(back_populates="application")
@@ -239,6 +254,13 @@ class Email(TimestampMixin, table=True):
     __tablename__ = "emails"
     __table_args__ = (
         sa.Index("ix_emails_user_id_received_at", "user_id", "received_at"),
+        # Uniqueness of a provider message id is PER OWNER, not global. Every
+        # lookup in the cloud path is already scoped ``(user_id, message_id)``;
+        # a global UNIQUE meant the second user to receive the same Gmail
+        # message id would hit a unique violation and 500 their whole sync.
+        # Same shape of de-globalization that revision ``6e64c46d32fd`` applied
+        # to ``sync_state.account_email``.
+        sa.Index("ix_emails_user_id_message_id", "user_id", "message_id", unique=True),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -256,7 +278,9 @@ class Email(TimestampMixin, table=True):
 
     # Email metadata
     source_account: EmailSource = Field(index=True, description="Gmail or iCloud")
-    message_id: str = Field(unique=True, index=True, description="Email Message-ID header")
+    # Indexed but NOT globally unique — uniqueness is the composite
+    # ``(user_id, message_id)`` index declared in ``__table_args__``.
+    message_id: str = Field(index=True, description="Email Message-ID header")
     thread_id: Optional[str] = Field(default=None, description="Gmail thread ID")
 
     # Email content

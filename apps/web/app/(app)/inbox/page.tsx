@@ -7,7 +7,7 @@ import { InboxWorkbench } from "@/components/gmail/InboxWorkbench";
 import { getGmailStatus } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
-  title: "Classified inbox — Applied",
+  title: "Classified inbox",
   description: "Mine your Gmail for your real job-search pipeline, one classifier verdict per message.",
 };
 

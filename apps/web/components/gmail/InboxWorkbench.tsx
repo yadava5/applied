@@ -2,10 +2,12 @@
 
 import { Bell, Loader2, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { selectClass } from "@/components/ui/formStyles";
+import { filedSummary, type SyncCounts } from "@/lib/gmail/sync-state";
 import {
   buildInboxParams,
   CATEGORY_META,
@@ -35,6 +37,14 @@ import { cn } from "@/lib/utils";
  * `/api/gmail/pipeline` for the whole-set category summary + "no response /
  * follow-up" flags. Token/`BACKEND_API_URL` stay server-side (the proxy routes
  * add the JWT from cookies); the client only ever sees verdict metadata.
+ *
+ * Mining and FILING are separate, and both are visible. The mine is read-only;
+ * an explicit "File N into pipeline" control persists it and then reports what
+ * the sync actually did ("3 filed, 1 already known"). Previously this component
+ * relayed the mine to `/gmail/sync` fire-and-forget, so the one thing the user
+ * wanted — their pipeline filled from the mail they were looking at — happened
+ * invisibly or not at all, and the only visible route to a filled board was the
+ * dashboard's full re-scan.
  */
 
 type Phase = "loading" | "ready" | "not_connected" | "auth" | "error";
@@ -44,6 +54,47 @@ interface FetchState {
   fetched: number;
   target: number;
   errorStatus?: number;
+}
+
+/** The "file these into my pipeline" action's own state — never the mine's. */
+interface FileState {
+  phase: "idle" | "filing" | "done" | "error";
+  /** What the sync reported, in the user's terms ("3 filed, 1 already known"). */
+  note: string | null;
+}
+
+/** The minimal shape `/gmail/pipeline` and `/gmail/sync` need for one message. */
+interface PipelineItem {
+  message_id: string;
+  category: string;
+  sender_email: string;
+  subject: string;
+  sender_name: string | null;
+  received_at: string | null;
+  confidence: number;
+}
+
+/**
+ * Reduce mined verdicts to what the pipeline/sync endpoints consume.
+ *
+ * `confidence` is NOT optional here: the backend's `PipelineItemIn` defaults it
+ * to 0.0, and `/gmail/sync` gates persistence on it (auto-file at 0.85, review
+ * floor at 0.70). Omitting it meant every relayed item scored 0.0, fell below
+ * both gates, and nothing was ever filed — the relay rolled up zero
+ * applications while the server-scan path found them. It travels with the
+ * verdict already (it is the percentage shown on each row), so relaying it is
+ * free.
+ */
+function toPipelineItems(verdicts: InboxVerdict[]): PipelineItem[] {
+  return verdicts.map((v) => ({
+    message_id: v.message_id,
+    category: v.category,
+    sender_email: v.sender_email,
+    subject: v.subject,
+    sender_name: v.sender_name,
+    received_at: v.received_at,
+    confidence: v.confidence,
+  }));
 }
 
 function Segmented<T extends string>({
@@ -133,8 +184,10 @@ function SkeletonRow() {
  * Per-visit snapshot cache (tab `sessionStorage`), keyed by the active filters.
  *
  * Every navigation to /inbox remounts this component; without a cache the mount
- * effect re-mined Gmail on each visit — many paged `/api/gmail/inbox` calls plus
- * a purge/rebuild `/api/gmail/sync` — which is the "re-scans on every visit" bug.
+ * effect re-mined Gmail on each visit — many paged `/api/gmail/inbox` calls, and
+ * (until filing became explicit) an unreported `/api/gmail/sync` behind them —
+ * which is the "re-scans on every visit" bug. The snapshot also survives the
+ * `router.refresh()` the file action triggers, so filing cannot cause a re-mine.
  * Instead we persist the last successful mine and, on remount with the SAME
  * filters, hydrate from it: repeat visits are instant and hit neither Gmail nor
  * the classifier. Changing a filter or pressing Refresh still re-mines (and
@@ -181,6 +234,7 @@ function writeSnapshot(snap: InboxSnapshot): void {
 }
 
 export function InboxWorkbench({ email }: { email?: string | null }) {
+  const router = useRouter();
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_FILTERS);
   const [verdicts, setVerdicts] = useState<InboxVerdict[]>([]);
   const [analysis, setAnalysis] = useState<PipelineAnalysis | null>(null);
@@ -189,6 +243,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
     fetched: 0,
     target: DEFAULT_FILTERS.count,
   });
+  const [filing, setFiling] = useState<FileState>({ phase: "idle", note: null });
 
   // View filters (client-side, no refetch).
   const [search, setSearch] = useState("");
@@ -211,6 +266,8 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
     setVerdicts([]);
     setAnalysis(null);
     setState({ phase: "loading", fetched: 0, target });
+    // A new mine invalidates the last filing report — it described a different set.
+    setFiling({ phase: "idle", note: null });
 
     const acc: InboxVerdict[] = [];
     let token: string | null | undefined;
@@ -245,15 +302,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         if (!token || page.verdicts.length === 0) break;
       }
 
-      // Reduce to the minimal shape the pipeline + sync endpoints need.
-      const pipelineItems = acc.map((v) => ({
-        message_id: v.message_id,
-        category: v.category,
-        sender_email: v.sender_email,
-        subject: v.subject,
-        sender_name: v.sender_name,
-        received_at: v.received_at,
-      }));
+      const pipelineItems = toPipelineItems(acc);
 
       // Whole-set analysis (category summary + follow-up flags).
       const analysisRes = await fetch("/api/gmail/pipeline", {
@@ -282,16 +331,11 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         target,
       });
 
-      // Opportunistically persist the mined pipeline so the dashboard shows the
-      // real board. Fire-and-forget: the inbox view never blocks on it, the
-      // backend upsert is idempotent, and mode:"additive" means relaying a
-      // narrow mine never wipes applications a broader one already found.
-      void fetch("/api/gmail/sync", {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: pipelineItems, mode: "additive" }),
-      }).catch(() => {});
+      // NOTE: the mine deliberately does NOT persist anything by itself. It
+      // used to fire a `/api/gmail/sync` relay here and never report the
+      // result, so a user could watch it scan 200 messages, read "applied 4",
+      // and have no idea whether any of it reached their pipeline. Filing is
+      // now the explicit action below, which says what actually happened.
     } catch {
       if (ac.signal.aborted || runId !== runIdRef.current) return;
       setState({ phase: "error", fetched: acc.length, target });
@@ -352,6 +396,53 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
     () => JOB_RELATED_CATEGORIES.reduce((sum, c) => sum + (summary[c] ?? 0), 0),
     [summary],
   );
+
+  /**
+   * File the mined set into the pipeline — the action the inbox never had.
+   *
+   * Every message goes to the backend, not just the job-related ones: it is the
+   * backend's roll-up that decides what becomes an application row and what
+   * feeds the review queue, and `scanned` should reflect what we actually
+   * looked at. `mode: "additive"` so relaying a narrow mine can never wipe
+   * applications a broader scan already found, and the upsert is idempotent, so
+   * pressing this twice is harmless. Deliberately NO `count`/`range` in the
+   * body: either would make the backend treat this as a windowed request and
+   * skip the incremental path.
+   *
+   * `router.refresh()` on success is what makes the sidebar's pipeline counts
+   * and "last synced" catch up immediately. It reconciles the server tree
+   * rather than remounting this component, so it cannot re-mine Gmail — and
+   * even a remount would hydrate from the session snapshot written above.
+   */
+  const fileThese = useCallback(async () => {
+    const items = toPipelineItems(verdicts);
+    if (items.length === 0) return;
+
+    setFiling({ phase: "filing", note: null });
+    try {
+      const res = await fetch("/api/gmail/sync", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items, mode: "additive" }),
+      });
+      if (!res.ok) {
+        setFiling({
+          phase: "error",
+          note:
+            res.status === 409
+              ? "Gmail isn't connected — nothing was filed."
+              : `Couldn't file these (${res.status}) — nothing was changed.`,
+        });
+        return;
+      }
+      const outcome = (await res.json().catch(() => ({}))) as Partial<SyncCounts>;
+      setFiling({ phase: "done", note: filedSummary(outcome) });
+      router.refresh();
+    } catch {
+      setFiling({ phase: "error", note: "Couldn't reach the server — nothing was filed." });
+    }
+  }, [router, verdicts]);
 
   const loading = state.phase === "loading";
   const progressPct =
@@ -475,6 +566,61 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
           </p>
         )}
       </div>
+
+      {/* --- File the mine into the pipeline ------------------------------ */}
+      {state.phase === "ready" && jobRelatedTotal > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-soft bg-surface px-4 py-3">
+          <div className="min-w-0">
+            <p className="font-mono text-[11px] text-muted">
+              <span className="text-strong">{jobRelatedTotal.toLocaleString()}</span> job-related of{" "}
+              {verdicts.length.toLocaleString()} scanned
+            </p>
+            {filing.note ? (
+              <p
+                role="status"
+                className={cn(
+                  "mt-1 font-mono text-[11px]",
+                  filing.phase === "error" ? "text-reject" : "text-dim",
+                )}
+              >
+                {filing.note}
+                {filing.phase === "done" ? (
+                  <>
+                    {" · "}
+                    <Link
+                      href="/dashboard"
+                      className="underline-offset-4 hover:text-strong hover:underline"
+                    >
+                      view pipeline →
+                    </Link>
+                  </>
+                ) : null}
+              </p>
+            ) : (
+              <p className="mt-1 font-mono text-[11px] text-dim">
+                filing adds these to your pipeline — nothing is removed, and filing twice is harmless
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void fileThese()}
+            disabled={filing.phase === "filing"}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-strong px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {filing.phase === "filing" ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                Filing…
+              </>
+            ) : filing.phase === "done" ? (
+              "File again"
+            ) : (
+              `File ${jobRelatedTotal.toLocaleString()} into pipeline`
+            )}
+          </button>
+        </div>
+      ) : null}
 
       {/* --- Needs follow-up (ghosting) ----------------------------------- */}
       {followUps.length > 0 ? (

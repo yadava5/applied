@@ -204,7 +204,14 @@ class TestEmailModel:
         assert email.application_id == app.id
 
     async def test_email_unique_message_id(self, test_session):
-        """Test that message_id must be unique."""
+        """Test that message_id must be unique *for one owner*.
+
+        Both rows take the default local-user sentinel for ``user_id``, so the
+        composite ``(user_id, message_id)`` unique index still rejects the
+        duplicate — which is why this test kept passing when uniqueness was
+        de-globalized. ``test_email_message_id_is_unique_per_user_not_globally``
+        below is the direct proof of the scoped behaviour.
+        """
         email1 = Email(
             source_account=EmailSource.GMAIL,
             message_id="<unique@test.com>",
@@ -222,6 +229,61 @@ class TestEmailModel:
         test_session.add(email2)
 
         with pytest.raises(Exception):  # IntegrityError
+            await test_session.commit()
+
+    async def test_email_message_id_is_unique_per_user_not_globally(self, test_session):
+        """Two DIFFERENT users may hold the same provider message id.
+
+        Gmail message ids are unique per mailbox, not per universe: the same
+        recruiter blast, a shared mailbox or a forwarded thread can land the
+        same id in two accounts. Under the old global UNIQUE the second user's
+        INSERT raised a unique violation and 500'd their entire sync, even
+        though every lookup in the cloud path is already scoped
+        ``(user_id, message_id)``.
+        """
+        import uuid
+
+        from sqlalchemy.exc import IntegrityError
+
+        user_a = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        user_b = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        shared_id = "<shared-blast@ashbyhq.com>"
+
+        test_session.add(
+            Email(
+                user_id=user_a,
+                source_account=EmailSource.GMAIL,
+                message_id=shared_id,
+                received_at=datetime.utcnow(),
+            )
+        )
+        test_session.add(
+            Email(
+                user_id=user_b,
+                source_account=EmailSource.GMAIL,
+                message_id=shared_id,
+                received_at=datetime.utcnow(),
+            )
+        )
+        await test_session.commit()
+
+        rows = (
+            await test_session.exec(
+                select(Email).where(Email.message_id == shared_id)
+            )
+        ).all()
+        assert {r.user_id for r in rows} == {user_a, user_b}
+
+        # ...but the SAME user still cannot hold it twice.
+        test_session.add(
+            Email(
+                user_id=user_a,
+                source_account=EmailSource.GMAIL,
+                message_id=shared_id,
+                received_at=datetime.utcnow(),
+            )
+        )
+        with pytest.raises(IntegrityError):
             await test_session.commit()
 
 
