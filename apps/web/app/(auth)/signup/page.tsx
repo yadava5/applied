@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 
 import {
   AuthOrDivider,
@@ -10,6 +10,11 @@ import {
 } from "@/components/auth/GoogleSignInButton";
 import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
+import {
+  SIGNUP_MIN_PASSWORD,
+  credentialProblem,
+  type CredentialField,
+} from "@/lib/auth/credentials";
 import { createClient } from "@/lib/supabase/client";
 
 export default function SignupPage() {
@@ -18,28 +23,44 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Which field the current error is about — null for a server-side one. */
+  const [invalidField, setInvalidField] = useState<CredentialField | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const errorId = useId();
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setInfoMessage(null);
 
-    // The form sets `noValidate`, which disables the input's native minLength,
-    // so enforce the "At least 8 characters" hint here — otherwise Supabase's
-    // own 6-character floor would silently accept a shorter password than the
-    // UI promises (JT-2). Kept in lockstep with the minLength={8} + hint below.
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+    // The form sets `noValidate` — deliberately, so the app owns its error
+    // copy — which also disables `required`, `type="email"` and `minLength`.
+    // Every one of those rules is re-asserted here, before the network, by the
+    // same predicate `/login` runs (`lib/auth/credentials.ts`). The password
+    // floor was already checked by hand; the EMAIL was not, so a malformed
+    // address still cost a real POST /auth/v1/signup. Supabase's own floor is
+    // 6 characters, so without SIGNUP_MIN_PASSWORD the product would accept a
+    // shorter password than the hint below promises (JT-2).
+    const address = email.trim();
+    const problem = credentialProblem(address, password, SIGNUP_MIN_PASSWORD);
+    if (problem) {
+      setError(problem.message);
+      setInvalidField(problem.field);
+      (problem.field === "email" ? emailRef : passwordRef).current?.focus();
       return;
     }
 
+    setInvalidField(null);
     setIsSubmitting(true);
 
     const supabase = createClient();
     const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
+      // The trimmed address, which is what was validated — and what a native
+      // email input would itself have submitted.
+      email: address,
       password,
       options: {
         // Supabase will email a confirmation link to this URL. The handler
@@ -94,11 +115,18 @@ export default function SignupPage() {
               <label htmlFor="email" className="block text-sm font-medium">
                 Email
               </label>
+              {/* `required` / `type` / `minLength` stay as the declaration of
+                  intent even though `noValidate` makes them inert — they are
+                  the rules `credentialProblem` mirrors, and they still
+                  describe the field to assistive tech. */}
               <input
                 id="email"
+                ref={emailRef}
                 type="email"
                 autoComplete="email"
                 required
+                aria-invalid={invalidField === "email"}
+                aria-describedby={invalidField === "email" ? errorId : undefined}
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
@@ -111,19 +139,23 @@ export default function SignupPage() {
               </label>
               <input
                 id="password"
+                ref={passwordRef}
                 type="password"
                 autoComplete="new-password"
                 required
-                minLength={8}
+                minLength={SIGNUP_MIN_PASSWORD}
+                aria-invalid={invalidField === "password"}
+                aria-describedby={invalidField === "password" ? errorId : undefined}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
               />
-              <p className="text-xs text-dim">At least 8 characters.</p>
+              <p className="text-xs text-dim">At least {SIGNUP_MIN_PASSWORD} characters.</p>
             </div>
 
             {error ? (
               <p
+                id={errorId}
                 role="alert"
                 className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject-ink"
               >

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState, type FormEvent } from "react";
+import { Suspense, useId, useRef, useState, type FormEvent } from "react";
 
 import {
   AuthOrDivider,
@@ -10,6 +10,11 @@ import {
 } from "@/components/auth/GoogleSignInButton";
 import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
+import {
+  LOGIN_MIN_PASSWORD,
+  credentialProblem,
+  type CredentialField,
+} from "@/lib/auth/credentials";
 import { createClient } from "@/lib/supabase/client";
 
 /**
@@ -89,16 +94,40 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(() =>
     humaniseAuthError(searchParams.get("error")),
   );
+  /** Which field the current error is about — null for a server-side one. */
+  const [invalidField, setInvalidField] = useState<CredentialField | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const errorId = useId();
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    // The form owns its validation. `noValidate` is deliberate — the app
+    // writes its own error copy rather than showing browser bubbles — so the
+    // rules the markup declares (`required`, `type="email"`, `minLength`) are
+    // re-asserted here, before the network. A submit the page can already see
+    // is wrong must cost nothing: this one used to spend a real
+    // POST /auth/v1/token, and say nothing until the server answered.
+    const address = email.trim();
+    const problem = credentialProblem(address, password, LOGIN_MIN_PASSWORD);
+    if (problem) {
+      setError(problem.message);
+      setInvalidField(problem.field);
+      (problem.field === "email" ? emailRef : passwordRef).current?.focus();
+      return;
+    }
+
     setError(null);
+    setInvalidField(null);
     setIsSubmitting(true);
 
     const supabase = createClient();
     const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
+      // The trimmed address, which is what was validated — and what a native
+      // email input would itself have submitted.
+      email: address,
       password,
     });
 
@@ -121,11 +150,18 @@ function LoginForm() {
           <label htmlFor="email" className="block text-sm font-medium">
             Email
           </label>
+          {/* `required` / `type` / `minLength` stay as the declaration of
+              intent even though `noValidate` makes them inert — they are the
+              rules `credentialProblem` mirrors, and they still describe the
+              field to assistive tech. */}
           <input
             id="email"
+            ref={emailRef}
             type="email"
             autoComplete="email"
             required
+            aria-invalid={invalidField === "email"}
+            aria-describedby={invalidField === "email" ? errorId : undefined}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
@@ -138,10 +174,13 @@ function LoginForm() {
           </label>
           <input
             id="password"
+            ref={passwordRef}
             type="password"
             autoComplete="current-password"
             required
-            minLength={6}
+            minLength={LOGIN_MIN_PASSWORD}
+            aria-invalid={invalidField === "password"}
+            aria-describedby={invalidField === "password" ? errorId : undefined}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
@@ -150,6 +189,7 @@ function LoginForm() {
 
         {error ? (
           <p
+            id={errorId}
             role="alert"
             className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject-ink"
           >
