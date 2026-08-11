@@ -155,6 +155,90 @@ export function rebuildMemoryLine(memory: RebuildMemory): string {
   return `your last rebuild scanned ${formatCount(memory.scanned)} messages in ${seconds} s`;
 }
 
+// --- How the scan ended -------------------------------------------------------
+//
+// A scan is bounded (message target, serverless time budget, page limit), so
+// "the request returned" does not mean "the mailbox was covered". The backend
+// says which with `stopped_by` (gmail_oauth.py `STOPPED_*`), and the UI must
+// never render a finished state over a partial scan: converging a real board
+// once took six presses, each reported as completion, because nothing read
+// this field.
+
+/** What the end state means for the user. */
+export type StopKind = "complete" | "partial" | "broken";
+
+/**
+ * Classify a `stopped_by` value. Absent (an older backend) reads as complete —
+ * the behaviour that response actually had. An unrecognised value reads as
+ * PARTIAL, never complete: an end state we cannot vouch for must not claim
+ * the mailbox was covered.
+ */
+export function stopKind(stoppedBy: string | null | undefined): StopKind {
+  const reason = typeof stoppedBy === "string" ? stoppedBy.trim().toLowerCase() : "";
+  if (reason === "" || reason === "complete") return "complete";
+  if (reason === "disconnected" || reason === "relay") return "broken";
+  return "partial";
+}
+
+/**
+ * The reason in the user's terms — what stopped the scan, not the enum.
+ * Deliberately number-free: "its 30-second budget" would rot the day the
+ * backend tunes the deadline.
+ */
+export function stopReasonPhrase(stoppedBy: string | null | undefined): string {
+  switch (typeof stoppedBy === "string" ? stoppedBy.trim().toLowerCase() : "") {
+    case "target":
+      return "hit its message limit";
+    case "deadline":
+      return "ran out of scan time";
+    case "page_limit":
+      return "hit Gmail's page limit";
+    case "disconnected":
+      return "lost its Gmail connection partway";
+    case "relay":
+      return "answered in an unexpected mode";
+    default:
+      return "stopped before finishing";
+  }
+}
+
+/**
+ * How far a partial scan got. `result_size_estimate` is Gmail's own estimate
+ * and is documented as approximate, so it is worded as one — never turned
+ * into a percentage or a bar (the same honesty rule as the elapsed clock).
+ */
+export function scanProgressLine(scanned: number, estimate: number | null): string {
+  return estimate !== null && estimate > 0
+    ? `scanned ${formatCount(scanned)} of roughly ${formatCount(estimate)}`
+    : `scanned ${formatCount(scanned)} so far`;
+}
+
+/** The end-state facts of any sync/rebuild response, read defensively. */
+export interface ScanEnd {
+  stoppedBy: string;
+  scanned: number;
+  estimate: number | null;
+}
+
+export function readScanEnd(body: unknown): ScanEnd {
+  const data = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  const scanned =
+    typeof data.scanned === "number" && Number.isFinite(data.scanned) && data.scanned > 0
+      ? Math.floor(data.scanned)
+      : 0;
+  const estimate =
+    typeof data.result_size_estimate === "number" &&
+    Number.isFinite(data.result_size_estimate) &&
+    data.result_size_estimate > 0
+      ? Math.floor(data.result_size_estimate)
+      : null;
+  return {
+    stoppedBy: typeof data.stopped_by === "string" ? data.stopped_by : "complete",
+    scanned,
+    estimate,
+  };
+}
+
 // --- Reading the response -----------------------------------------------------
 
 /** One row a rebuild removed — id + company, exactly what the backend names. */
@@ -172,6 +256,12 @@ export interface RebuildOutcome {
   scanned: number;
   purged: number;
   removed: RemovedRow[];
+  /** How the scan ended (`stopped_by`) — a rebuild that removed rows AND
+   *  stopped early judged those removals against a partial scan, and the
+   *  receipt must say so. */
+  stoppedBy: string;
+  /** Gmail's approximate match count, when it offered one. */
+  estimate: number | null;
 }
 
 function count(value: unknown): number {
@@ -194,12 +284,15 @@ export function readRebuildOutcome(body: unknown): RebuildOutcome {
       removed.push({ id: row.id, company: row.company });
     }
   }
+  const end = readScanEnd(body);
   return {
     created: count(data.created),
     updated: count(data.updated),
     scanned: count(data.scanned),
     purged: count(data.purged),
     removed,
+    stoppedBy: end.stoppedBy,
+    estimate: end.estimate,
   };
 }
 

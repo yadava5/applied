@@ -33,8 +33,11 @@ test.describe("live demo (/demo)", () => {
 
     await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
     await expect(page.getByRole("heading", { name: /decision trace/i })).toBeVisible();
-    // Pipeline columns render the fixture applications.
-    await expect(page.getByText("Beacon Health")).toBeVisible();
+    // Pipeline columns render the fixture applications. (`exact` everywhere a
+    // company is asserted visible: each interactive card also carries an
+    // sr-only "Change stage for {company}" label, which substring matching
+    // resolves as a second element and trips strict mode.)
+    await expect(page.getByText("Beacon Health", { exact: true })).toBeVisible();
     // The one honest frame for the simulated sync surface.
     await expect(page.getByText("simulated account · nothing is read")).toBeVisible();
 
@@ -82,7 +85,7 @@ test.describe("live demo (/demo)", () => {
       .selectOption("interviewing");
     await expect(page.getByRole("region", { name: /interviewing — 2/i })).toBeVisible();
     await expect(
-      page.getByRole("region", { name: /interviewing/i }).getByText("Quarry Data"),
+      page.getByRole("region", { name: /interviewing/i }).getByText("Quarry Data", { exact: true }),
     ).toBeVisible();
 
     // The pointer path: drag a card into another column.
@@ -93,7 +96,9 @@ test.describe("live demo (/demo)", () => {
     await card.dragTo(page.getByRole("region", { name: /interviewing/i }));
     await expect(page.getByRole("region", { name: /interviewing — 3/i })).toBeVisible();
     await expect(
-      page.getByRole("region", { name: /interviewing/i }).getByText("Harbor Analytics"),
+      page
+        .getByRole("region", { name: /interviewing/i })
+        .getByText("Harbor Analytics", { exact: true }),
     ).toBeVisible();
   });
 
@@ -149,6 +154,40 @@ test.describe("live demo (/demo)", () => {
     await expect(
       page.getByRole("region", { name: /closed/i }).getByText("Fernworks", { exact: true }),
     ).toBeVisible();
+  });
+
+  test("a scan that stops early never claims completion", async ({ page }) => {
+    // The defect shape this guards: a bounded scan gave up early and the UI
+    // reported "up to date" anyway — converging a real board once took six
+    // presses, each reported as completion. A shallow depth-100 rebuild in the
+    // simulation stops at its message limit, and the receipt must say so, show
+    // how far it got, warn that removals were judged against a partial scan,
+    // and offer continue — never the finished heading.
+    await page.goto("/demo");
+    await page.getByRole("button", { name: "Sync options" }).click();
+    await page.getByRole("menuitem", { name: /rebuild from gmail/i }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Number of messages to scan").selectOption("100");
+    await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
+
+    const surface = syncSurface(page);
+    await expect(surface.getByText("rebuild stopped early · just now")).toBeVisible({
+      timeout: 6000,
+    });
+    await expect(surface.getByText(/the scan hit its message limit/)).toBeVisible();
+    // Gmail's match count is an estimate and is worded as one — no percentage,
+    // no bar, same honesty rule as the elapsed clock.
+    await expect(surface.getByText(/scanned 100 of roughly 240/)).toBeVisible();
+    await expect(surface.getByText("removals were judged against this partial scan")).toBeVisible();
+    await expect(surface.getByText(/rebuild finished/)).toHaveCount(0);
+    await expect(surface).not.toContainText("%");
+
+    // Continue re-runs the same window; only the pass that actually completed
+    // may say finished — and it confirms the board rather than claiming work.
+    await surface.getByRole("button", { name: "continue the scan" }).click();
+    await expect(surface.getByText("rebuild finished · just now")).toBeVisible({ timeout: 6000 });
+    await expect(surface.getByText(/nothing changed · 140 scanned/)).toBeVisible();
+    await expect(surface.getByText(/stopped early/)).toHaveCount(0);
   });
 
   test("the decision trace rows expand on click (real effect)", async ({ page }) => {

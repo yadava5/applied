@@ -84,7 +84,9 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     await expect(page.getByText("Harbor Analytics")).toHaveCount(0);
     // …and the filter chip clears it.
     await page.getByRole("button", { name: /stop filtering by Northstar Systems/i }).click();
-    await expect(page.getByText("Harbor Analytics")).toBeVisible();
+    // (`exact` on every visible-company assertion: the interactive cards'
+    // sr-only "Change stage for {company}" labels otherwise trip strict mode.)
+    await expect(page.getByText("Harbor Analytics", { exact: true })).toBeVisible();
   });
 
   test("board search narrows by company or role, live", async ({ page }) => {
@@ -93,11 +95,11 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     const search = page.getByRole("searchbox", { name: /search the board/i });
     await search.fill("engineer, payments");
     await expect(page.getByText("1 of 14 shown")).toBeVisible();
-    await expect(page.getByText("Copperline")).toBeVisible();
+    await expect(page.getByText("Copperline", { exact: true })).toBeVisible();
     await expect(page.getByText("Quarry Data")).toHaveCount(0);
 
     await search.fill("");
-    await expect(page.getByText("Quarry Data")).toBeVisible();
+    await expect(page.getByText("Quarry Data", { exact: true })).toBeVisible();
   });
 
   test("a tall column expands on the page instead of scrolling inside it", async ({ page }) => {
@@ -107,7 +109,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     // expander rather than behind a nested scrollbar.
     await expect(page.getByText("Waypoint Robotics")).toHaveCount(0);
     await page.getByRole("button", { name: "show all 10" }).click();
-    await expect(page.getByText("Waypoint Robotics")).toBeVisible();
+    await expect(page.getByText("Waypoint Robotics", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "show fewer" }).click();
     await expect(page.getByText("Waypoint Robotics")).toHaveCount(0);
   });

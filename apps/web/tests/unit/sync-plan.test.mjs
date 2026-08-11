@@ -27,11 +27,15 @@ import {
   formatElapsed,
   parseRebuildMemory,
   readRebuildOutcome,
+  readScanEnd,
   rebuildConfirmLabel,
   rebuildMemoryLine,
   rebuildRequestBody,
   rebuildScopeLine,
   receiptBodyLine,
+  scanProgressLine,
+  stopKind,
+  stopReasonPhrase,
 } from "../../lib/gmail/sync-plan.ts";
 
 test("the default rebuild reproduces the old hardwired button exactly", () => {
@@ -110,12 +114,78 @@ test("the receipt reads only what the response said, and drops malformed rows", 
       { id: 7, company: "MotherDuck" },
       { id: 9, company: "Supabase" },
     ],
+    // No stopped_by in the body → an older backend → the behaviour that
+    // response actually had (it always completed or threw).
+    stoppedBy: "complete",
+    estimate: null,
   });
   assert.equal(receiptBodyLine(outcome), "41 filed · 2 updated · 512 scanned");
 
   // A body that says nothing renders as nothing having happened — never NaN.
   const empty = readRebuildOutcome("<html>502</html>");
-  assert.deepEqual(empty, { created: 0, updated: 0, scanned: 0, purged: 0, removed: [] });
+  assert.deepEqual(empty, {
+    created: 0,
+    updated: 0,
+    scanned: 0,
+    purged: 0,
+    removed: [],
+    stoppedBy: "complete",
+    estimate: null,
+  });
+});
+
+test("how the scan ended: partial and broken states never read as complete", () => {
+  // The six-presses incident: a bounded scan stopped early on every press and
+  // the UI reported completion each time, because nothing read `stopped_by`.
+  assert.equal(stopKind("complete"), "complete");
+  assert.equal(stopKind(undefined), "complete");
+  assert.equal(stopKind(null), "complete");
+  for (const partial of ["target", "deadline", "page_limit"]) {
+    assert.equal(stopKind(partial), "partial", partial);
+  }
+  // An end state we cannot vouch for must not claim coverage either.
+  assert.equal(stopKind("some_future_reason"), "partial");
+  for (const broken of ["disconnected", "relay"]) {
+    assert.equal(stopKind(broken), "broken", broken);
+  }
+});
+
+test("the stop reason is the user's terms, never the enum, never a stale number", () => {
+  assert.equal(stopReasonPhrase("target"), "hit its message limit");
+  assert.equal(stopReasonPhrase("deadline"), "ran out of scan time");
+  assert.equal(stopReasonPhrase("page_limit"), "hit Gmail's page limit");
+  assert.equal(stopReasonPhrase("disconnected"), "lost its Gmail connection partway");
+  assert.equal(stopReasonPhrase("some_future_reason"), "stopped before finishing");
+  for (const raw of ["target", "deadline", "page_limit", "disconnected", "relay"]) {
+    const phrase = stopReasonPhrase(raw);
+    assert.doesNotMatch(phrase, /_/, "no enum leaks into copy");
+    assert.doesNotMatch(phrase, /\d/, "no tunable number is hardcoded into copy");
+  }
+});
+
+test("scan progress is worded as an estimate — never a percentage", () => {
+  assert.equal(scanProgressLine(750, 2400), "scanned 750 of roughly 2,400");
+  assert.equal(scanProgressLine(750, null), "scanned 750 so far");
+  assert.doesNotMatch(scanProgressLine(750, 2400), /%/);
+});
+
+test("readScanEnd reads the end-state facts defensively", () => {
+  assert.deepEqual(
+    readScanEnd({ stopped_by: "deadline", scanned: 312, result_size_estimate: 1200 }),
+    { stoppedBy: "deadline", scanned: 312, estimate: 1200 },
+  );
+  // Absent, malformed, or non-positive fields degrade, never invent.
+  assert.deepEqual(readScanEnd({}), { stoppedBy: "complete", scanned: 0, estimate: null });
+  assert.deepEqual(readScanEnd({ stopped_by: "target", result_size_estimate: -5 }), {
+    stoppedBy: "target",
+    scanned: 0,
+    estimate: null,
+  });
+  assert.deepEqual(readScanEnd("<html>502</html>"), {
+    stoppedBy: "complete",
+    scanned: 0,
+    estimate: null,
+  });
 });
 
 test("a rebuild that changed nothing says so outright", () => {

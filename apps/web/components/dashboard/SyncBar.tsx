@@ -23,14 +23,19 @@ import {
   formatElapsed,
   parseRebuildMemory,
   readRebuildOutcome,
+  readScanEnd,
   rebuildConfirmLabel,
   rebuildMemoryLine,
   rebuildRequestBody,
   rebuildScopeLine,
   receiptBodyLine,
+  scanProgressLine,
+  stopKind,
+  stopReasonPhrase,
   type RebuildDepth,
   type RebuildOutcome,
   type RebuildRange,
+  type ScanEnd,
 } from "@/lib/gmail/sync-plan";
 import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
 
@@ -74,9 +79,12 @@ export interface SyncGmailState {
 type SyncPhase =
   | { kind: "idle" }
   | { kind: "syncing"; startedAt: number }
-  | { kind: "synced"; note: string }
+  /** Additive finished — `end` says HOW. A partial end never renders as done. */
+  | { kind: "synced"; note: string; end: ScanEnd }
   | { kind: "rebuilding"; startedAt: number; scopeLine: string }
   | { kind: "receipt"; outcome: RebuildOutcome }
+  /** Additive scan broke mid-flight (disconnected / unexpected mode). */
+  | { kind: "interrupted"; end: ScanEnd }
   | { kind: "failed"; op: "sync" | "rebuild"; notConnected: boolean };
 
 /** Cooldown so the staleness auto-sync runs at most once per window per tab. */
@@ -186,15 +194,24 @@ export function SyncBar({
       return;
     }
     const data = res.body as Partial<SyncCounts>;
+    const end = readScanEnd(res.body);
+    // Disconnected / unexpected mid-scan is not "press again" — it is
+    // "something is wrong", and it gets the alert, not a resting note.
+    if (stopKind(end.stoppedBy) === "broken") {
+      setPhase({ kind: "interrupted", end });
+      router.refresh();
+      return;
+    }
     // Cursored zero case: the scan only looked at what arrived since the
     // last one, so "nothing to file · N scanned" would imply a claim about a
-    // window it never checked.
+    // window it never checked. Only a COMPLETE scan may say it — a partial
+    // one cannot vouch that nothing new exists.
     const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
     const note =
-      nothingFiled && hasCursor
+      nothingFiled && hasCursor && stopKind(end.stoppedBy) === "complete"
         ? "no new application mail since your last sync"
         : filedSummary(data);
-    setPhase({ kind: "synced", note });
+    setPhase({ kind: "synced", note, end });
     router.refresh();
   }, [hasCursor, router, transport]);
 
@@ -308,7 +325,28 @@ export function SyncBar({
       </>
     );
   } else if (phase.kind === "synced") {
-    statusContent = <>{phase.note}</>;
+    // A partial scan must never read as a resting "done": it says it stopped,
+    // why, how far it got, and offers continue as the one action — the state
+    // that used to cost six presses, each reported as completion.
+    statusContent =
+      stopKind(phase.end.stoppedBy) === "partial" ? (
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>{phase.note}</span>
+          <span className="text-review">
+            · the scan {stopReasonPhrase(phase.end.stoppedBy)} ·{" "}
+            {scanProgressLine(phase.end.scanned, phase.end.estimate)}
+          </span>
+          <button
+            type="button"
+            onClick={() => void runSync()}
+            className="rounded border border-review/50 px-2 py-0.5 font-mono text-[11px] text-strong transition-colors hover:border-review"
+          >
+            continue the scan
+          </button>
+        </span>
+      ) : (
+        <>{phase.note}</>
+      );
   } else if (phase.kind === "idle" && connected && gmail?.syncStatus === "error") {
     // Resting after a failed run: the backend keeps `last_sync_at` at the last
     // good sync, so recency and this line are two facts, both shown.
@@ -324,6 +362,25 @@ export function SyncBar({
         </button>
       </span>
     );
+  }
+
+  if (phase.kind === "interrupted") {
+    alertContent =
+      phase.end.stoppedBy === "disconnected" ? (
+        <>
+          the scan lost its Gmail connection partway · what it found so far is filed{" "}
+          <Link
+            href="/settings"
+            className="text-muted underline-offset-2 hover:text-strong hover:underline"
+          >
+            reconnect in settings →
+          </Link>
+        </>
+      ) : (
+        // `relay` (or anything else broken): this surface never relays items,
+        // so the response shape itself is wrong — retrying will not help.
+        <>the scan answered in an unexpected mode · your board shows what was filed so far</>
+      );
   }
 
   if (phase.kind === "failed") {
@@ -454,6 +511,11 @@ export function SyncBar({
           transport={transport}
           onDismiss={() => setPhase({ kind: "idle" })}
           onRestored={restoreSucceeded}
+          onContinue={() => {
+            if (lastRebuild.current) {
+              void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
+            }
+          }}
         />
       ) : null}
 
@@ -530,20 +592,28 @@ export function SyncBar({
  * A rebuild that removed rows must say WHICH, and every removal must be
  * reversible right here: each row is a dismissal the backend can restore
  * (`POST /applications/{id}/restore`), which is what makes the purge
- * auditable rather than final. Amber border when rows were removed (needs
- * attention; nothing failed), quiet otherwise. No entrance animation — this
- * panel's job is to be read.
+ * auditable rather than final. Amber border when rows were removed or the
+ * scan stopped early (needs attention; nothing failed), red when it broke,
+ * quiet otherwise. No entrance animation — this panel's job is to be read.
+ *
+ * The heading is the end state, not a pleasantry: a rebuild that stopped
+ * early did NOT finish, and one that removed rows on a partial scan judged
+ * those removals against mail it never read — both are said outright, with
+ * continue as the one action.
  */
 function RebuildReceipt({
   outcome,
   transport,
   onDismiss,
   onRestored,
+  onContinue,
 }: {
   outcome: RebuildOutcome;
   transport: SyncTransport;
   onDismiss: () => void;
   onRestored: (id: number) => void;
+  /** Re-runs the same rebuild (same window and depth). */
+  onContinue: () => void;
 }) {
   const [restoringId, setRestoringId] = useState<number | null>(null);
   const [failedId, setFailedId] = useState<number | null>(null);
@@ -565,16 +635,58 @@ function RebuildReceipt({
   }
 
   const removedRows = outcome.removed;
+  const endKind = stopKind(outcome.stoppedBy);
+  const border =
+    endKind === "broken"
+      ? "border-reject/40"
+      : endKind === "partial" || outcome.purged > 0
+        ? "border-review/40"
+        : "border-line-soft";
   return (
-    <div
-      className={`rounded-xl border bg-surface px-4 py-3 ${
-        outcome.purged > 0 ? "border-review/40" : "border-line-soft"
-      }`}
-    >
+    <div className={`rounded-xl border bg-surface px-4 py-3 ${border}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-mono text-[11px] text-live">rebuild finished · just now</p>
+          {endKind === "complete" ? (
+            <p className="font-mono text-[11px] text-live">rebuild finished · just now</p>
+          ) : endKind === "partial" ? (
+            <p className="font-mono text-[11px] text-review">rebuild stopped early · just now</p>
+          ) : (
+            <p className="font-mono text-[11px] text-reject">
+              rebuild interrupted · the scan {stopReasonPhrase(outcome.stoppedBy)}
+            </p>
+          )}
           <p className="mt-1 font-mono text-[11px] text-muted">{receiptBodyLine(outcome)}</p>
+          {endKind === "partial" ? (
+            <div className="mt-1 space-y-1">
+              <p className="font-mono text-[11px] text-muted">
+                the scan {stopReasonPhrase(outcome.stoppedBy)} ·{" "}
+                {scanProgressLine(outcome.scanned, outcome.estimate)}
+              </p>
+              {outcome.purged > 0 ? (
+                <p className="font-mono text-[11px] text-review">
+                  removals were judged against this partial scan
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={onContinue}
+                className="rounded border border-review/50 px-2 py-0.5 font-mono text-[11px] text-strong transition-colors hover:border-review"
+              >
+                continue the scan
+              </button>
+            </div>
+          ) : null}
+          {endKind === "broken" && outcome.stoppedBy === "disconnected" ? (
+            <p className="mt-1 font-mono text-[11px] text-muted">
+              what it found so far is kept ·{" "}
+              <Link
+                href="/settings"
+                className="underline-offset-2 hover:text-strong hover:underline"
+              >
+                reconnect in settings →
+              </Link>
+            </p>
+          ) : null}
         </div>
         <button
           type="button"

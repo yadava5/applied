@@ -46,8 +46,19 @@ interface DemoBoard {
 /** The stale row a rebuild detects and removes (its mail no longer matches). */
 const STALE_COMPANY = "Fernworks";
 
-/** Every simulated scan reads the same fixed fixture window. */
-const SCAN_SIZE = 24;
+/**
+ * The simulated mailbox's shape, kept coherent across runs: roughly
+ * {@link ESTIMATE} job-related matches in total; an incremental sync reads
+ * {@link ADDITIVE_SCAN}; a full rebuild reads {@link REBUILD_SCAN}; a shallow
+ * depth-100 rebuild hits its message limit at {@link PARTIAL_SCAN} — which is
+ * how the demo exercises the stopped-early truth-telling: choose the 100
+ * message depth and the scan reports `stopped_by: "target"` instead of
+ * claiming the mailbox was covered.
+ */
+const ADDITIVE_SCAN = 24;
+const REBUILD_SCAN = 140;
+const PARTIAL_SCAN = 100;
+const ESTIMATE = 240;
 
 const DEMO_GMAIL: SyncGmailState = {
   connected: true,
@@ -130,23 +141,31 @@ export function DemoDashboard() {
             ...s.apps.filter((app) => app.id !== stale?.id),
           ];
           commit({ ...s, apps: nextApps, pool: [] });
+          const changed = filed.length > 0 || removed.length > 0;
+          // A shallow scan that still had work to do stops at its message
+          // limit — the second pass (via "continue the scan") finds nothing
+          // left and is the one allowed to report completion.
+          const partial = body.count === 100 && changed;
           return {
             ok: true,
             status: 200,
             body: {
               created: filed.length,
-              updated: s.apps.length - removed.length,
-              scanned: SCAN_SIZE,
+              updated: changed ? s.apps.length - removed.length : 0,
+              scanned: partial ? PARTIAL_SCAN : REBUILD_SCAN,
               purged: removed.length,
               removed,
               applications: nextApps.length,
               needs_review: 0,
+              stopped_by: partial ? "target" : "complete",
+              result_size_estimate: ESTIMATE,
             },
           };
         }
 
         // Additive: file the unsynced pool at the top of the board (newest
-        // first, like the live list) and never remove anything.
+        // first, like the live list) and never remove anything. Incremental
+        // scans never carry a size estimate, matching the live backend.
         commit({ ...s, apps: [...filed, ...s.apps], pool: [] });
         return {
           ok: true,
@@ -154,8 +173,10 @@ export function DemoDashboard() {
           body: {
             created: filed.length,
             updated: filed.length > 0 ? 3 : 0,
-            scanned: SCAN_SIZE,
+            scanned: ADDITIVE_SCAN,
             applications: s.apps.length + filed.length,
+            stopped_by: "complete",
+            result_size_estimate: null,
           },
         };
       },
