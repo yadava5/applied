@@ -431,7 +431,7 @@ export function ApplicationCard({
               type="button"
               aria-describedby={confirmId}
               onClick={() => void onDeleteConfirmed()}
-              className="rounded border border-reject/60 px-2 py-1 text-xs text-reject transition-colors hover:bg-reject/15"
+              className="rounded border border-reject/60 px-2 py-1 text-xs text-reject-ink transition-colors hover:bg-reject/15"
             >
               {DELETE_CONFIRM_LABEL}
             </button>
@@ -444,7 +444,7 @@ export function ApplicationCard({
           role="alert"
           className="mt-2 flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
         >
-          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
           <span>{error}</span>
         </p>
       ) : null}

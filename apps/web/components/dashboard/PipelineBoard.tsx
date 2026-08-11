@@ -365,7 +365,7 @@ export function PipelineBoard({
       ) : null}
 
       {moveError ? (
-        <p role="alert" className="text-xs text-reject">
+        <p role="alert" className="text-xs text-reject-ink">
           {moveError}
         </p>
       ) : null}

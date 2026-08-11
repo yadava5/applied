@@ -50,7 +50,7 @@ export function SaveStatus({ state }: { state: "idle" | "saving" | "saved" | "er
   const map = {
     saving: { text: "Saving…", cls: "text-dim" },
     saved: { text: "Saved", cls: "text-live" },
-    error: { text: "Couldn’t save — try again.", cls: "text-reject" },
+    error: { text: "Couldn’t save — try again.", cls: "text-reject-ink" },
   } as const;
   const { text, cls } = map[state];
   return (

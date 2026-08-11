@@ -588,7 +588,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
           read. */}
       {mineFailed ? (
         <div role="alert" className="rounded-xl border border-reject/40 bg-surface p-6">
-          <p className="label-caps text-reject">scan failed</p>
+          <p className="label-caps text-reject-ink">scan failed</p>
           <h2 className="mt-2 text-base font-medium text-strong">
             We couldn&apos;t finish reading your mail.
           </h2>
@@ -619,7 +619,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
                 role="status"
                 className={cn(
                   "mt-1 text-xs",
-                  filing.phase === "error" ? "text-reject" : "text-dim",
+                  filing.phase === "error" ? "text-reject-ink" : "text-dim",
                 )}
               >
                 {filing.note}
