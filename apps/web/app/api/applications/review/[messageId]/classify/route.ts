@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { readClassifyBody } from "@/lib/applications/classify-request";
 import { classifyReviewItem } from "@/lib/applications/server";
 
 /**
@@ -31,29 +32,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ detail: "Invalid message id" }, { status: 400 });
   }
 
-  let body: { category?: unknown; company?: unknown; application_id?: unknown } = {};
+  let raw: unknown;
   try {
-    body = (await req.json()) as {
-      category?: unknown;
-      company?: unknown;
-      application_id?: unknown;
-    };
+    raw = await req.json();
   } catch {
     return NextResponse.json({ detail: "Invalid JSON body" }, { status: 400 });
   }
-  const category = typeof body.category === "string" ? body.category.trim() : "";
-  if (!category) return NextResponse.json({ detail: "category is required" }, { status: 422 });
-  const company = typeof body.company === "string" ? body.company.trim() : "";
-  const applicationId =
-    typeof body.application_id === "number" && Number.isInteger(body.application_id)
-      ? body.application_id
-      : undefined;
+
+  // The narrowing lives in `lib/applications/classify-request.ts` so a test can
+  // execute it — in here it needed the Next runtime and was covered by types
+  // and review only, which is exactly how a dropped field goes unnoticed.
+  const parsed = readClassifyBody(raw);
+  if (!parsed.ok) {
+    return NextResponse.json({ detail: parsed.detail }, { status: parsed.status });
+  }
 
   const r = await classifyReviewItem(
     messageId,
-    category,
-    company || undefined,
-    applicationId,
+    parsed.category,
+    parsed.company,
+    parsed.applicationId,
   );
   return NextResponse.json(r.data ?? {}, { status: r.status });
 }
