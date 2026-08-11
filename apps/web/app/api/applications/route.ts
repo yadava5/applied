@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerApiClient } from "@/lib/api/server";
+import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/status";
 
 /**
  * Server-side proxy for listing applications — used by the Settings "export
@@ -84,6 +85,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: "company and position are required" }, { status: 422 });
   }
 
+  // `status` is an ENUM on the wire (`ApplicationStatus`), not a free string.
+  // This proxy used to forward whatever the browser sent, so an unknown value
+  // travelled all the way to the backend and came back as a raw pydantic 422
+  // that the form showed verbatim. Rejecting it here says the same thing in
+  // this app's words, and — now that the schema is generated — the compiler
+  // is what forces the check to exist at all.
+  const status = payload.status?.trim() || "applied";
+  if (!isApplicationStatus(status)) {
+    return NextResponse.json(
+      { detail: `status must be one of: ${APPLICATION_STATUSES.join(", ")}` },
+      { status: 422 },
+    );
+  }
+
   try {
     const api = await createServerApiClient();
     // This handler REBUILDS the body rather than forwarding it, so any field it
@@ -94,7 +109,7 @@ export async function POST(request: Request) {
       body: {
         company,
         position,
-        status: payload.status ?? "applied",
+        status,
         notes: payload.notes?.trim() || null,
         applied_date: payload.applied_date?.trim() || null,
         url: payload.url?.trim() || null,

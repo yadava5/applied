@@ -4,9 +4,15 @@
  * These talk to the FastAPI backend's cloud `/applications` endpoints carrying
  * the caller's Supabase JWT — the token and `BACKEND_API_URL` never reach the
  * browser. They mirror `lib/gmail/server.ts`: plain `fetch` (not the typed
- * openapi-fetch client) so these endpoints don't need to be baked into the
- * committed seed schema, and every call returns a normalized result instead of
+ * openapi-fetch client), and every call returns a normalized result instead of
  * throwing so the proxy route handlers can map it to an honest status.
+ *
+ * The original reason for the untyped `fetch` — "these endpoints aren't in the
+ * committed seed schema" — is gone: `lib/api/schema.d.ts` is now generated from
+ * `main_cloud` and covers all 20 paths. These helpers still hand back `unknown`
+ * and the readers (`lib/dashboard/detail.ts`, `review.ts`) still parse it
+ * defensively, which is what caught nothing when `split_candidates[].role` was
+ * read as `position`. Moving them onto the typed client is a follow-up.
  *
  * Everything here is user-scoped on the backend (the JWT's `sub`), and each
  * write both updates the row AND records a training example — the correction
