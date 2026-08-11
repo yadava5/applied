@@ -37,8 +37,8 @@ export default async function ImportPage() {
     <div className="space-y-3">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
-        {/* Header voice shared by every tab: h1 + one mono line of state. */}
-        <p className="mt-1 font-mono text-xs text-dim">
+        {/* Header voice shared by every tab: h1 + one quiet line of state. */}
+        <p className="mt-1 text-[13px] text-muted">
           on-device · classified in your browser · nothing is uploaded
         </p>
       </header>
@@ -60,7 +60,7 @@ export default async function ImportPage() {
         <div className="max-w-3xl space-y-8">
           {intro}
           <ImportMail />
-          <p className="border-t border-line-soft pt-6 text-center font-mono text-[11px] leading-relaxed text-dim">
+          <p className="border-t border-line-soft pt-6 text-center text-xs leading-relaxed text-dim">
             Prefer to connect the source directly?{" "}
             <Link
               href="/settings"
@@ -105,7 +105,7 @@ export default async function ImportPage() {
         <ImportMail />
       </div>
 
-      <p className="mt-10 text-center font-mono text-[11px] leading-relaxed text-dim">
+      <p className="mt-10 text-center text-xs leading-relaxed text-dim">
         Prefer to connect the source directly?{" "}
         <Link href="/login?redirect=/settings" className="text-muted underline-offset-4 hover:text-strong hover:underline">
           Sign in and connect Gmail read-only

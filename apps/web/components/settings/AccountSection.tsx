@@ -90,8 +90,8 @@ export function AccountSection({ email }: { email: string }) {
       >
         <div className="space-y-4">
           <label className="grid gap-1">
-            <span className="label-mono">
-              type <span className="text-reject">{CONFIRM_WORD}</span> to confirm
+            <span className="label-caps">
+              type <span className="font-mono text-reject">{CONFIRM_WORD}</span> to confirm
             </span>
             <input
               value={confirm}
@@ -103,7 +103,7 @@ export function AccountSection({ email }: { email: string }) {
           </label>
 
           {error ? (
-            <p role="alert" className="font-mono text-xs text-reject">
+            <p role="alert" className="text-xs text-reject">
               {error}
             </p>
           ) : null}

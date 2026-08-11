@@ -70,13 +70,13 @@ function TrailMessage({ message, isLast }: { message: DetailData["messages"][num
         // The verdict, in the DecisionTrace's vocabulary: category, then the
         // confidence drawn against the 0.85 gate — green cleared it, amber
         // waited for a human. The number stays as the accessible value.
-        <p className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-dim">
+        <p className="mt-0.5 flex items-center gap-2 text-[11px] text-dim">
           {meta.label}
           {typeof message.confidence === "number" ? (
             <>
               <GateMeter confidence={message.confidence} className="w-12" />
               <span
-                className="tabular"
+                className="tabular font-mono text-[10px]"
                 style={{
                   color:
                     message.confidence >= AUTO_FILE_GATE ? "var(--green)" : "var(--amber)",
@@ -96,7 +96,7 @@ function TrailMessage({ message, isLast }: { message: DetailData["messages"][num
           href={message.gmail_link}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
+          className="mt-1 inline-flex items-center gap-1 text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
         >
           <ExternalLink className="h-3 w-3" aria-hidden />
           open in gmail
@@ -159,12 +159,12 @@ function SplitPrompt({
       </p>
       <ul className="mt-2 space-y-1">
         {candidates.map((c) => (
-          <li key={c.position} className="font-mono text-[11px] text-muted">
+          <li key={c.position} className="text-xs text-muted">
             {company} · {c.position}
           </li>
         ))}
       </ul>
-      <p className="mt-2 font-mono text-[10px] text-dim">
+      <p className="mt-2 text-[11px] text-dim">
         each becomes its own card · your edits stay on this one
       </p>
       <div className="mt-2 flex items-center gap-2">
@@ -172,13 +172,13 @@ function SplitPrompt({
           type="button"
           onClick={() => void split()}
           disabled={busy}
-          className="rounded border border-review/50 px-2 py-1 font-mono text-[11px] text-strong transition-colors hover:border-review disabled:opacity-50"
+          className="rounded border border-review/50 px-2 py-1 text-xs font-medium text-strong transition-colors hover:border-review disabled:opacity-50"
         >
           {busy ? "splitting…" : `Split into ${candidates.length}`}
         </button>
       </div>
       {error ? (
-        <p role="alert" className="mt-2 font-mono text-[10px] text-reject">
+        <p role="alert" className="mt-2 text-xs text-reject">
           {error}
         </p>
       ) : null}
@@ -277,7 +277,7 @@ export function ApplicationDetail({
               value={statusSelectValue(shownStatus)}
               disabled={stageBusy}
               onChange={(e) => void onStageChange(e.target.value)}
-              className="rounded border border-line bg-surface-2 px-2 py-1 font-mono text-[11px] outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
+              className="rounded border border-line bg-surface-2 px-2 py-1 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
               style={{ color: stage.color }}
             >
               {statusOptions(shownStatus).map((option) => (
@@ -296,7 +296,7 @@ export function ApplicationDetail({
               href={active.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-mono text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
+              className="inline-flex items-center gap-1 text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
             >
               <ExternalLink className="h-3 w-3" aria-hidden />
               open in gmail
@@ -322,9 +322,9 @@ export function ApplicationDetail({
 
         {/* --- The verdict trail ------------------------------------------- */}
         <div>
-          <p className="label-mono mb-3">the mail behind this card</p>
+          <p className="label-caps mb-3">the mail behind this card</p>
           {state.kind === "loading" ? (
-            <p className="flex items-center gap-2 font-mono text-[11px] text-dim" role="status">
+            <p className="flex items-center gap-2 text-xs text-dim" role="status">
               <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
               loading the mail trail…
             </p>
@@ -334,13 +334,13 @@ export function ApplicationDetail({
               <button
                 type="button"
                 onClick={() => void load(active.id)}
-                className="mt-2 rounded border border-line px-2 py-1 font-mono text-[11px] text-foreground transition-colors hover:border-line-strong hover:text-strong"
+                className="mt-2 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong"
               >
                 try again
               </button>
             </div>
           ) : state.detail.messages.length === 0 ? (
-            <p className="font-mono text-[11px] text-dim">
+            <p className="text-xs text-dim">
               no linked mail — this row was filed by hand
             </p>
           ) : (
@@ -369,7 +369,7 @@ export function ApplicationDetail({
         ) : null}
 
         {active.source ? (
-          <p className="border-t border-line-soft pt-3 font-mono text-[10px] text-dim">
+          <p className="border-t border-line-soft pt-3 text-[11px] text-dim">
             source · {active.source === "gmail" ? "filed automatically from gmail" : active.source}
           </p>
         ) : null}

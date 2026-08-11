@@ -81,7 +81,7 @@ export default async function SettingsPage({
     <section className="max-w-3xl space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Settings</h1>
-        <p className="mt-1 font-mono text-xs text-dim">Your account, appearance, mail, and data.</p>
+        <p className="mt-1 text-[13px] text-muted">Your account, appearance, mail, and data.</p>
       </header>
 
       {banner ? (

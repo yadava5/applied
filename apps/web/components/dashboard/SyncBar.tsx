@@ -306,7 +306,7 @@ export function SyncBar({
         {elapsed >= SLOW_SYNC_AFTER_MS ? (
           <>
             still checking
-            <span className="tabular" aria-hidden>
+            <span className="tabular font-mono text-[11px]" aria-hidden>
               {" "}
               · {formatElapsed(elapsed)}
             </span>
@@ -321,7 +321,7 @@ export function SyncBar({
       <>
         <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
         rebuilding · {phase.scopeLine}
-        <span className="tabular" aria-hidden>
+        <span className="tabular font-mono text-[11px]" aria-hidden>
           · {formatElapsed(nowMs - phase.startedAt)}
         </span>
       </>
@@ -341,7 +341,7 @@ export function SyncBar({
           <button
             type="button"
             onClick={() => void runSync()}
-            className="rounded border border-review/50 px-2 py-0.5 font-mono text-[11px] text-strong transition-colors hover:border-review"
+            className="rounded border border-review/50 px-2 py-0.5 text-xs font-medium text-strong transition-colors hover:border-review"
           >
             continue the scan
           </button>
@@ -430,14 +430,14 @@ export function SyncBar({
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
-          <p className="mt-1 font-mono text-xs text-dim">{subtitle}</p>
+          <p className="tabular mt-1 text-[13px] text-muted">{subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {connected ? (
             <>
               {showRecency ? (
                 simulated ? (
-                  <span className="font-mono text-[11px] text-dim">
+                  <span className="text-xs text-dim">
                     simulated account · nothing is read
                   </span>
                 ) : (
@@ -481,7 +481,7 @@ export function SyncBar({
             // renders nothing rather than a guessed state.
             <Link
               href="/settings"
-              className="font-mono text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
+              className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline"
             >
               gmail not connected · connect in settings →
             </Link>
@@ -497,7 +497,7 @@ export function SyncBar({
       <p
         role="status"
         aria-live="polite"
-        className={`font-mono text-[11px] text-muted ${statusContent === null ? "sr-only" : ""}`}
+        className={`text-xs text-muted ${statusContent === null ? "sr-only" : ""}`}
       >
         <motion.span
           key={phase.kind}
@@ -511,7 +511,7 @@ export function SyncBar({
       </p>
       <p
         role="alert"
-        className={`font-mono text-[11px] text-reject ${alertContent === null ? "sr-only" : ""}`}
+        className={`text-xs text-reject ${alertContent === null ? "sr-only" : ""}`}
       >
         {alertContent}
       </p>
@@ -538,7 +538,7 @@ export function SyncBar({
       >
         <div className="space-y-4">
           <div className="flex flex-col gap-1.5">
-            <span className="label-mono">window</span>
+            <span className="label-caps">window</span>
             <Segmented<RebuildRange>
               ariaLabel="Time window"
               options={REBUILD_RANGE_OPTIONS}
@@ -547,7 +547,7 @@ export function SyncBar({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="label-mono" htmlFor="rebuild-depth">
+            <label className="label-caps" htmlFor="rebuild-depth">
               depth
             </label>
             <select
@@ -568,10 +568,10 @@ export function SyncBar({
               that can remove rows must see everything it judges (an
               inbox-scoped rebuild once deleted two applications whose ATS
               confirmations were archived). So this is stated, not offered. */}
-          <p className="font-mono text-[11px] text-muted">
+          <p className="text-xs text-muted">
             scans all mail, including archive — a rebuild must see everything it judges
           </p>
-          {memoryLine ? <p className="font-mono text-[11px] text-dim">{memoryLine}</p> : null}
+          {memoryLine ? <p className="text-xs text-dim">{memoryLine}</p> : null}
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-soft pt-4">
             <button
               type="button"
@@ -666,37 +666,37 @@ function RebuildReceipt({
       <div className="flex items-start justify-between gap-3">
         <div>
           {endKind === "complete" ? (
-            <p className="font-mono text-[11px] text-live">rebuild finished · just now</p>
+            <p className="text-xs text-live">rebuild finished · just now</p>
           ) : endKind === "partial" ? (
-            <p className="font-mono text-[11px] text-review">rebuild stopped early · just now</p>
+            <p className="text-xs text-review">rebuild stopped early · just now</p>
           ) : (
-            <p className="font-mono text-[11px] text-reject">
+            <p className="text-xs text-reject">
               rebuild interrupted · the scan {stopReasonPhrase(outcome.stoppedBy)}
             </p>
           )}
-          <p className="mt-1 font-mono text-[11px] text-muted">{receiptBodyLine(outcome)}</p>
+          <p className="mt-1 text-xs text-muted">{receiptBodyLine(outcome)}</p>
           {endKind === "partial" ? (
             <div className="mt-1 space-y-1">
-              <p className="font-mono text-[11px] text-muted">
+              <p className="text-xs text-muted">
                 the scan {stopReasonPhrase(outcome.stoppedBy)} ·{" "}
                 {scanProgressLine(outcome.scanned, outcome.estimate)}
               </p>
               {outcome.purged > 0 ? (
-                <p className="font-mono text-[11px] text-review">
+                <p className="text-xs text-review">
                   removals were judged against this partial scan
                 </p>
               ) : null}
               <button
                 type="button"
                 onClick={onContinue}
-                className="rounded border border-review/50 px-2 py-0.5 font-mono text-[11px] text-strong transition-colors hover:border-review"
+                className="rounded border border-review/50 px-2 py-0.5 text-xs font-medium text-strong transition-colors hover:border-review"
               >
                 continue the scan
               </button>
             </div>
           ) : null}
           {endKind === "broken" && outcome.stoppedBy === "disconnected" ? (
-            <p className="mt-1 font-mono text-[11px] text-muted">
+            <p className="mt-1 text-xs text-muted">
               what it found so far is kept ·{" "}
               <Link
                 href="/settings"
@@ -721,13 +721,13 @@ function RebuildReceipt({
           {removedRows.map((row) => (
             <li key={row.id} className="flex items-center gap-3 py-0.5">
               <span className="min-w-0 truncate text-sm text-strong">{row.company}</span>
-              <span className="font-mono text-[11px] text-dim">removed</span>
+              <span className="text-xs text-dim">removed</span>
               {row.restored ? (
-                <span className="ml-auto font-mono text-[11px] text-dim">restored</span>
+                <span className="ml-auto text-xs text-dim">restored</span>
               ) : (
                 <span className="ml-auto flex items-center gap-2">
                   {failedId === row.id ? (
-                    <span role="alert" className="font-mono text-[11px] text-reject">
+                    <span role="alert" className="text-xs text-reject">
                       couldn&apos;t restore — still removed
                     </span>
                   ) : null}
@@ -736,7 +736,7 @@ function RebuildReceipt({
                     onClick={() => void restore(row.id)}
                     disabled={restoringId !== null}
                     aria-label={`Restore ${row.company}`}
-                    className="font-mono text-[11px] text-muted underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
+                    className="text-xs font-medium text-muted underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
                   >
                     {restoringId === row.id ? "restoring…" : "restore"}
                   </button>

@@ -143,10 +143,10 @@ function ReviewRow({
           no employer could be named — two different questions for the user,
           so the line says which one this is. */}
       {typeof item.confidence === "number" ? (
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-dim">
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-dim">
           <GateMeter confidence={item.confidence} className="w-12" />
           <span
-            className="tabular"
+            className="tabular font-mono"
             style={{
               color: item.confidence >= AUTO_FILE_GATE ? "var(--green)" : "var(--amber)",
             }}
@@ -176,7 +176,7 @@ function ReviewRow({
             setCategory(e.target.value);
             setApplicationId(null);
           }}
-          className="rounded border border-line-soft bg-surface px-1.5 py-1 font-mono text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+          className="rounded border border-line-soft bg-surface px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
         >
           <option value={PLACEHOLDER} disabled>
             choose a stage…
@@ -191,7 +191,7 @@ function ReviewRow({
           type="button"
           onClick={classify}
           disabled={busy || !hasChosen}
-          className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 font-mono text-[11px] text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
           classify
@@ -201,7 +201,7 @@ function ReviewRow({
             href={item.gmail_link}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
+            className="inline-flex items-center gap-1 text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
           >
             <ExternalLink className="h-3 w-3" aria-hidden />
             open in gmail
@@ -214,14 +214,14 @@ function ReviewRow({
           employer is ambiguous until the user says which role it answers. */}
       {showPicker ? (
         <fieldset className="mt-2 rounded border border-line px-2.5 py-2">
-          <legend className="px-1 font-mono text-[10px] text-muted">
+          <legend className="px-1 text-[11px] text-muted">
             which application is this about?
           </legend>
           <div className="space-y-1">
             {candidates.map((candidate) => (
               <label
                 key={candidate.id}
-                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 font-mono text-[11px] text-muted hover:text-strong"
+                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-muted hover:text-strong"
               >
                 <input
                   type="radio"
@@ -237,7 +237,7 @@ function ReviewRow({
                 </span>
               </label>
             ))}
-            <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 font-mono text-[11px] text-muted hover:text-strong">
+            <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-muted hover:text-strong">
               <input
                 type="radio"
                 name={`assign-${item.message_id}`}
@@ -263,7 +263,7 @@ function ReviewRow({
           }}
           className="mt-2 rounded border border-review/40 bg-surface px-2.5 py-2"
         >
-          <p role="status" className="font-mono text-[10px] leading-relaxed text-review">
+          <p role="status" className="text-xs leading-relaxed text-review">
             {employerPrompt}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -278,12 +278,12 @@ function ReviewRow({
               placeholder="company name"
               autoComplete="organization"
               spellCheck={false}
-              className="min-w-0 flex-1 rounded border border-line-soft bg-surface-2 px-1.5 py-1 font-mono text-[11px] text-strong outline-none transition-colors placeholder:text-dim hover:border-line focus:border-line-strong disabled:opacity-50"
+              className="min-w-0 flex-1 rounded border border-line-soft bg-surface-2 px-1.5 py-1 text-xs text-strong outline-none transition-colors placeholder:text-dim hover:border-line focus:border-line-strong disabled:opacity-50"
             />
             <button
               type="submit"
               disabled={busy || !canFile}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-review/50 px-2 py-1 font-mono text-[11px] text-strong transition-colors hover:border-review disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-review/50 px-2 py-1 text-xs font-medium text-strong transition-colors hover:border-review disabled:opacity-50"
             >
               {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
               file it
@@ -293,7 +293,7 @@ function ReviewRow({
       ) : null}
 
       {error ? (
-        <p role="alert" className="mt-1.5 font-mono text-[10px] text-reject">
+        <p role="alert" className="mt-1.5 text-xs text-reject">
           {error}
         </p>
       ) : null}
@@ -357,7 +357,7 @@ export function ReviewQueue({
         </h2>
         {/* Where the confidence gate's existence is told to the user — in
             terms of what it does for them, not as a CI metric. */}
-        <span className="shrink-0 font-mono text-[11px] text-dim">
+        <span className="shrink-0 text-xs text-dim">
           held under the confidence gate · your decision trains the classifier
         </span>
       </div>
@@ -370,7 +370,7 @@ export function ReviewQueue({
         <button
           type="button"
           onClick={() => setExpandedList((v) => !v)}
-          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-strong"
+          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:border-line-strong hover:text-strong"
         >
           {expandedList ? "show fewer" : `show all ${items.length}`}
         </button>

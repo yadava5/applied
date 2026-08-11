@@ -60,20 +60,20 @@ export function CompanyBand({
       <Layers className="h-4 w-4 shrink-0 text-muted" aria-hidden />
       <div className="min-w-0">
         <p className="truncate text-base font-medium leading-tight text-strong">{company}</p>
-        <p className="font-mono text-[11px] text-dim">
+        <p className="tabular text-xs text-dim">
           {apps.length} application{apps.length === 1 ? "" : "s"} · {span}
         </p>
       </div>
       <ul className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1">
         {byStage.map(({ stage, count }) => (
-          <li key={stage.key} className="flex items-center gap-1.5 font-mono text-[11px]">
+          <li key={stage.key} className="flex items-center gap-1.5 text-xs">
             <span
               aria-hidden="true"
               className="h-1.5 w-1.5 rounded-full"
               style={{ background: stage.color }}
             />
             <span className="text-muted">{stage.label}</span>
-            <span className="tabular text-strong">{count}</span>
+            <span className="tabular font-mono text-[11px] text-strong">{count}</span>
           </li>
         ))}
       </ul>
@@ -81,7 +81,7 @@ export function CompanyBand({
         type="button"
         onClick={onClear}
         aria-label={`Stop filtering by ${company}`}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-1 font-mono text-[11px] text-strong transition-colors hover:border-line-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs font-medium text-strong transition-colors hover:border-line-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
       >
         clear
         <X className="h-3 w-3" aria-hidden />

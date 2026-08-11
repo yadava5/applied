@@ -74,7 +74,7 @@ export default function DemoInboxPage() {
         <SampleInbox />
       </div>
 
-      <p className="mt-10 text-center font-mono text-[11px] leading-relaxed text-dim">
+      <p className="mt-10 text-center text-xs leading-relaxed text-dim">
         Want this on your own mail?{" "}
         <Link href="/login" className="text-muted underline-offset-4 hover:text-strong hover:underline">
           Sign in

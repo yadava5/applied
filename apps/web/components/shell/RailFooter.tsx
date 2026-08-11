@@ -47,8 +47,8 @@ function GmailChip({ gmail }: { gmail: RailGmailData }) {
       >
         <span aria-hidden="true" className="h-[0.45rem] w-[0.45rem] shrink-0 rounded-full bg-line-strong" />
         <span className="min-w-0">
-          <span className="label-mono block">gmail · not connected</span>
-          <span className="block truncate font-mono text-[11px] text-muted transition-colors group-hover:text-strong">
+          <span className="label-caps block">gmail · not connected</span>
+          <span className="block truncate text-xs text-muted transition-colors group-hover:text-strong">
             connect in settings <span aria-hidden="true">→</span>
           </span>
         </span>
@@ -64,15 +64,15 @@ function GmailChip({ gmail }: { gmail: RailGmailData }) {
     >
       <span className="beta-dot" aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        <span className="label-mono block">gmail · connected</span>
+        <span className="label-caps block">gmail · connected</span>
         {gmail.email ? (
-          <span title={gmail.email} className="block truncate font-mono text-[11px] text-muted">
+          <span title={gmail.email} className="block truncate text-xs text-muted">
             {gmail.email}
           </span>
         ) : null}
         <LastSynced at={gmail.lastSyncAt} className="block truncate font-mono text-[10px] text-dim" />
         {gmail.syncStatus === "error" ? (
-          <span className="block truncate font-mono text-[10px] text-reject">
+          <span className="block truncate text-[11px] text-reject">
             last sync failed{gmail.syncError ? ` · ${gmail.syncError}` : ""}
           </span>
         ) : null}
@@ -94,18 +94,18 @@ export function RailFooter({ gmail, userEmail }: FooterProps) {
       >
         <span
           aria-hidden="true"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-surface-2 font-mono text-sm text-strong"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-surface-2 text-sm font-semibold text-strong"
         >
           {initial}
         </span>
         <span className="min-w-0">
           <span
             title={userEmail ?? undefined}
-            className="block truncate font-mono text-[11px] text-muted transition-colors group-hover:text-strong"
+            className="block truncate text-xs text-muted transition-colors group-hover:text-strong"
           >
             {userEmail ?? "account"}
           </span>
-          <span className="label-mono block">signed in</span>
+          <span className="label-caps block">signed in</span>
         </span>
       </Link>
     </div>

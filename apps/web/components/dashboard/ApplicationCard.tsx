@@ -240,7 +240,7 @@ export function ApplicationCard({
   if (removalPending) {
     return (
       <div className="rounded-lg border border-dashed border-line bg-surface-2/60 p-3">
-        <p role="status" className="font-mono text-[11px] leading-snug text-muted">
+        <p role="status" className="text-xs leading-snug text-muted">
           {removalPendingMessage(app.company, secondsLeft ?? 0)}
         </p>
         <button
@@ -264,7 +264,7 @@ export function ApplicationCard({
   if (removed) {
     return (
       <div className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 p-3">
-        <p role="status" className="font-mono text-[11px] text-dim">
+        <p role="status" className="text-xs text-dim">
           {removed === "deleted" ? deletedMessage(app.company) : removedMessage(app.company)}
         </p>
       </div>
@@ -299,7 +299,7 @@ export function ApplicationCard({
                 {app.company}
               </span>
               {qualifier && (
-                <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
                   {qualifier}
                 </span>
               )}
@@ -311,7 +311,7 @@ export function ApplicationCard({
                 rendered as identical text. `title` is the floor, not the fix:
                 the board must read without hovering. */}
             {role ? (
-              <span title={role} className="line-clamp-2 break-words text-xs text-foreground">
+              <span title={role} className="line-clamp-2 break-words text-[13px] leading-snug text-foreground">
                 {role}
               </span>
             ) : null}
@@ -321,13 +321,13 @@ export function ApplicationCard({
             <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
               <span className="truncate">{app.company}</span>
               {qualifier && (
-                <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
                   {qualifier}
                 </span>
               )}
             </p>
             {role ? (
-              <p title={role} className="line-clamp-2 break-words text-xs text-foreground">
+              <p title={role} className="line-clamp-2 break-words text-[13px] leading-snug text-foreground">
                 {role}
               </p>
             ) : null}
@@ -360,7 +360,7 @@ export function ApplicationCard({
           disabled={busy !== null}
           aria-busy={busy === "status"}
           onChange={(e) => void onStatusChange(e.target.value)}
-          className="max-w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+          className="max-w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 py-0.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
         >
           {statusOptions(shownStatus).map((option) => (
             <option key={option.value} value={option.value} disabled={option.disabled}>
@@ -372,7 +372,7 @@ export function ApplicationCard({
       </div>
 
       {busy === "status" || optimistic ? (
-        <p role="status" className="mt-1 font-mono text-[10px] text-dim">
+        <p role="status" className="mt-1 text-[11px] text-dim">
           {busy === "status" ? `moving to ${shownStatus}…` : "board updating…"}
         </p>
       ) : null}
@@ -382,7 +382,7 @@ export function ApplicationCard({
           href={app.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-1.5 inline-flex items-center gap-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
+          className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
         >
           <ExternalLink className="h-3 w-3" aria-hidden />
           open in gmail

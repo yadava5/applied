@@ -144,7 +144,7 @@ function ExpandedTrace({ email }: { email: SampleEmail }) {
         </div>
       </div>
 
-      <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
+      <p className="mt-3 text-xs leading-relaxed text-dim">
         {needsReview
           ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and the correction becomes new SetFit training data."
           : `Confidence clears the 0.85 gate, so Applied files this as “${pretty(category)}” automatically.`}
@@ -195,20 +195,20 @@ function InboxRow({
       >
         <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
           <p className="truncate text-sm font-medium text-strong">{email.subject}</p>
-          <p className="truncate font-mono text-[11px] text-dim">
+          <p className="truncate text-xs text-dim">
             {email.senderName} · {email.senderEmail}
           </p>
         </div>
 
         <LayerTrack trace={verdict.trace} />
 
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted">
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted">
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
           {pretty(verdict.category)}
         </span>
 
         {verdict.needsReview ? (
-          <span className="rounded-full border border-review/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
+          <span className="rounded-full border border-review/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-review">
             review
           </span>
         ) : (

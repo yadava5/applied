@@ -4,7 +4,7 @@ export default function AppError({ reset }: { error: Error; reset: () => void })
   return (
     <section className="grid min-h-[50vh] place-items-center text-center">
       <div>
-        <p className="label-mono">something broke</p>
+        <p className="label-caps">something broke</p>
         <h1 className="mt-2 text-2xl font-semibold text-strong">The board hit an error.</h1>
         <button
           type="button"

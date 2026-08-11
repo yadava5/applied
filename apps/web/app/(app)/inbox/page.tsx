@@ -91,12 +91,12 @@ export default async function InboxPage() {
       // The connected inbox is a data surface: it spans the shell's full
       // column like the dashboard board does (the capped reading measure is
       // for the prose/CTA states below). Header voice matches every tab —
-      // h1 + one mono line of state.
+      // h1 + one quiet line of state.
       return (
         <section className="space-y-6">
           <header>
             <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
-            <p className="mt-1 font-mono text-xs text-dim">
+            <p className="mt-1 text-[13px] text-muted">
               read-only mine · one verdict per message · unanswered applications get flagged
             </p>
           </header>
@@ -169,8 +169,8 @@ export default async function InboxPage() {
           >
             Sign in again <span aria-hidden>→</span>
           </Link>
-          <p className="mt-3 font-mono text-[11px] text-dim">
-            reference: backend responded {result.status}
+          <p className="mt-3 text-xs text-dim">
+            reference: backend responded <span className="font-mono">{result.status}</span>
           </p>
         </div>
       ) : null}

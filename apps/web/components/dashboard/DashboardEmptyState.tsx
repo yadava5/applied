@@ -74,8 +74,8 @@ export function SamplePreview() {
           a strong border, not a 10px dim whisper. Same mono/uppercase language
           as the rest of the labels. */}
       <div className="flex items-center gap-3">
-        <span className="label-mono">preview</span>
-        <span className="rounded-full border border-line-strong bg-surface-2 px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-wider text-strong">
+        <span className="label-caps">preview</span>
+        <span className="rounded-full border border-line-strong bg-surface-2 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-strong">
           sample data · not yours
         </span>
         <span className="h-px flex-1 bg-line-soft" aria-hidden="true" />
@@ -84,7 +84,7 @@ export function SamplePreview() {
           real dashboard has, so the sample demonstrates the product it mirrors
           (no tiles, no funnel: those left the dashboard too). */}
       <div className="pointer-events-none select-none space-y-4 opacity-70">
-        <p className="font-mono text-xs text-dim">
+        <p className="tabular text-[13px] text-muted">
           {summary.total} filed · {summary.inMotion} in motion · {summary.offers} offer
           {summary.offers === 1 ? "" : "s"}
         </p>
@@ -104,7 +104,7 @@ export function DashboardEmptyState() {
   return (
     <div className="space-y-8">
       <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
-        <p className="label-mono">nothing filed yet</p>
+        <p className="label-caps">nothing filed yet</p>
         <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
           Your pipeline is empty — let&apos;s fill it.
         </h2>

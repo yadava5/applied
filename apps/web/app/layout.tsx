@@ -1,12 +1,35 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { BetaBanner } from "@/components/beta/BetaBanner";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+/**
+ * The product's two voices (see the type-system note in globals.css):
+ *
+ *  - Atkinson Hyperlegible Next — everything read as language. The Braille
+ *    Institute's face, designed so no two letterforms can be confused — the
+ *    tagline ("your inbox, made legible") applied to the UI itself, and the
+ *    case that matters here: four near-identical role strings on one board.
+ *    One variable file (wght 200–800), latin subset, upright only: 34 KB.
+ *    Vendored (app/fonts/) rather than pulled through next/font/google
+ *    because Next has no fallback-metrics entry for this family — the local
+ *    route reads metrics from the file itself and emits a size-adjusted
+ *    Arial fallback, so a slow first load cannot shift layout. It also
+ *    removes the build-time fetch to Google.
+ *  - Geist Mono — kept, but demoted from default voice to data notation:
+ *    timestamps, counts, confidence figures, ids, code literals.
+ *
+ * `next/font` self-hosts both: files are served from this origin as
+ * immutable static assets — no runtime request to any font CDN, which the
+ * CSP forbids and the privacy posture depends on.
+ */
+const atkinson = localFont({
+  src: "./fonts/atkinson-hyperlegible-next-latin-wght.woff2",
+  weight: "200 800",
+  style: "normal",
+  variable: "--font-atkinson",
 });
 
 const geistMono = Geist_Mono({
@@ -56,7 +79,7 @@ export default function RootLayout({
       lang="en"
       data-theme="dark"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${atkinson.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
         {/* Apply the saved theme before paint — no flash, pages stay static. */}

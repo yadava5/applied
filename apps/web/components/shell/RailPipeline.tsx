@@ -30,7 +30,7 @@ function ReviewNudge({ count }: { count: number }) {
   return (
     <Link
       href="/dashboard#needs-classification"
-      className="group mt-3 flex items-center gap-1.5 rounded-lg border border-review/40 px-2.5 py-1.5 font-mono text-[11px] text-review transition-colors hover:border-review focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
+      className="group mt-3 flex items-center gap-1.5 rounded-lg border border-review/40 px-2.5 py-1.5 text-xs font-medium text-review transition-colors hover:border-review focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
     >
       <span className="tabular">{count}</span>
       <span>need{count === 1 ? "s" : ""} review</span>
@@ -52,8 +52,8 @@ export function RailPipeline({ pipeline }: { pipeline: RailPipelineData | null }
         aria-label="Pipeline snapshot"
         className="rounded-xl border border-line-soft p-3"
       >
-        <h2 className="label-mono">pipeline</h2>
-        <p className="mt-2 font-mono text-[11px] text-dim">backend unreachable</p>
+        <h2 className="label-caps">pipeline</h2>
+        <p className="mt-2 text-xs text-dim">backend unreachable</p>
       </section>
     );
   }
@@ -66,11 +66,11 @@ export function RailPipeline({ pipeline }: { pipeline: RailPipelineData | null }
       aria-label="Pipeline snapshot"
       className="rounded-xl border border-line-soft p-3 transition-colors hover:border-line"
     >
-      <h2 className="label-mono">pipeline</h2>
+      <h2 className="label-caps">pipeline</h2>
       <p className="tabular mt-2 font-mono text-2xl font-semibold leading-none text-strong">
         {total}
       </p>
-      <p className="mt-1 font-mono text-[11px] text-dim">
+      <p className="mt-1 text-xs text-dim">
         {total === 0
           ? "nothing filed yet"
           : thisWeek > 0
@@ -106,14 +106,14 @@ export function RailPipeline({ pipeline }: { pipeline: RailPipelineData | null }
 
           <ul className="mt-3 space-y-1.5">
             {stages.map(({ stage, count }) => (
-              <li key={stage.key} className="flex items-center gap-2 font-mono text-[11px]">
+              <li key={stage.key} className="flex items-center gap-2 text-xs">
                 <span
                   aria-hidden="true"
                   className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ backgroundColor: stage.color }}
                 />
                 <span className="text-muted">{stage.label}</span>
-                <span className="tabular ml-auto text-strong">{count}</span>
+                <span className="tabular ml-auto font-mono text-[11px] text-strong">{count}</span>
               </li>
             ))}
           </ul>

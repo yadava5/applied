@@ -215,7 +215,7 @@ export function RowActionsMenu({
             >
               {item.label}
               {item.hint ? (
-                <span className="mt-0.5 block font-mono text-[9px] leading-tight text-dim">
+                <span className="mt-0.5 block text-[10px] leading-tight text-dim">
                   {item.hint}
                 </span>
               ) : null}
