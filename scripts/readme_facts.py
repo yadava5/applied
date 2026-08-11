@@ -694,7 +694,11 @@ FACTS: dict[str, dict] = {
         "kind": "static",
         "describe": "test_*.py modules under backend/tests/",
         "compute": lambda: len(test_modules()),
-        "sites": [r"across (\d+) modules both at", r"# (\d+) modules"],
+        # Anchored on "at HEAD" because the same sentence also states the module
+        # count at the original commit ("the same 25 modules at `37dd805`"). An
+        # unanchored `across (\d+) modules` would match both and could not tell
+        # the current figure from the historical one.
+        "sites": [r"across (\d+) modules at HEAD", r"# (\d+) modules"],
     },
     "testFunctions": {
         # NOTE for --write: the sentence carrying this number also asserts the
@@ -723,7 +727,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"tests-(\d+)%20collected",
             r"\*\*(\d+) tests collected, \d+ skipped\.\*\*",
-            r"the difference from (\d+) coming from parametrization",
+            r"The remaining difference from (\d+) is parametrization",
         ],
     },
     "testsSkipped": {
