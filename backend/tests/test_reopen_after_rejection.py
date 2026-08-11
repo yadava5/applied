@@ -446,6 +446,45 @@ async def test_two_full_rebuilds_of_the_whole_corpus_leave_one_row(test_session)
     assert len(await _all_rows(test_session)) == 1
 
 
+async def test_a_rebuild_reopens_a_row_the_scan_itself_sees_re_applied(
+    test_session, caplog
+):
+    """The OTHER half of the evidence — the one a full rebuild uses.
+
+    A rebuild re-reads the whole history, so the rejection and the second
+    application arrive in the same cluster and the comparison never touches the
+    database. The two branches are deliberately exclusive: when the cluster
+    names a rejection, the row's own stored mail is not consulted at all, or a
+    scan that has just watched an application END could be overruled by an older
+    rejection still linked to the row. Without this test that rule is
+    unobserved — the suite stays green with the whole branch stubbed out.
+    """
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([CONF, REJ]), [])
+    seeded = await _live_rows(test_session)
+    assert [r.status for r in seeded] == [ApplicationStatus.REJECTED]
+    row_id = seeded[0].id
+
+    coverage = apps.ScanCoverage.from_items(CORPUS)
+    with caplog.at_level(logging.INFO, logger="jobtracker.cloud.applications"):
+        result = await apps.purge_and_rebuild_gmail_pipeline(
+            test_session, USER, _rolled(CORPUS), p.collect_review_items(CORPUS), coverage
+        )
+
+    assert (result.created, result.purged, result.removed) == (0, 0, ())
+    rows = await _live_rows(test_session)
+    assert [r.id for r in rows] == [row_id]
+    assert rows[0].status == ApplicationStatus.APPLIED
+    assert await _linked(test_session, row_id) == {"k1", "k2", "k3"}
+    # Both instants are the CLUSTER's, which is what says the cluster-side
+    # branch ran rather than the row-side fallback.
+    assert any(
+        str(at(100)) in rec.getMessage() and str(at(200)) in rec.getMessage()
+        for rec in caplog.records
+        if "Reopened" in rec.getMessage()
+    )
+
+
 # --- 6. replay without a re-application ---------------------------------------
 
 
