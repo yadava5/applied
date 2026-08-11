@@ -76,6 +76,26 @@ export function restoreApplication(id: number): Promise<ApiCallResult> {
 }
 
 /**
+ * PUT /applications/{id}/deadline — set or clear when something is due.
+ *
+ * A date written through here is the USER's and is marked as such, so later
+ * syncs never overwrite it. A deadline read out of mail is refreshed when newer
+ * mail supersedes it; a deadline a person typed is a decision.
+ *
+ * `null` clears both the date and its origin — a source with no date would be a
+ * claim about nothing.
+ */
+export function setApplicationDeadline(
+  id: number,
+  dueAt: string | null,
+): Promise<ApiCallResult> {
+  return call(`/applications/${id}/deadline`, {
+    method: "PUT",
+    body: { due_at: dueAt },
+  });
+}
+
+/**
  * POST /applications/{id}/split — turn a merged row into the applications its
  * own stored mail describes.
  *

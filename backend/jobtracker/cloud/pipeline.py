@@ -26,7 +26,7 @@ import urllib.parse
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 # The full category vocabulary the cloud rules classifier can emit. Kept in one
 # place so a summary always reports every bucket (a category with zero hits is
@@ -697,6 +697,217 @@ def unescape_entities(text: str) -> str:
     return html.unescape(text)
 
 
+# ── deadlines ────────────────────────────────────────────────────────────────
+#
+# The product's landing page opens by promising that an assessment's 48-hour
+# deadline will not pass unseen. Everything below is what makes that true, and
+# the governing rule is that a deadline is REPORTED, never inferred: if the mail
+# does not state one, the application does not have one. A fabricated deadline
+# is worse than none — it would have someone drop what they are doing for a date
+# nobody set.
+#
+# So every pattern requires an explicit deadline cue ("complete by", "expires",
+# "within 48 hours"). A date merely mentioned in passing — an interview slot, a
+# start date, a copyright year — never qualifies.
+
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        (
+            "january february march april may june july august september "
+            "october november december"
+        ).split(),
+        start=1,
+    )
+}
+_MONTHS.update(
+    {m[:3]: i for m, i in list(_MONTHS.items())}
+)
+
+_MONTH_ALT = "|".join(sorted(_MONTHS, key=len, reverse=True))
+
+# The cue that a date is a DEADLINE and not just a date.
+_DEADLINE_CUE = (
+    r"(?:complete|submit|finish|respond|reply|return|accept|schedule)?[^.!?\n]{0,30}?"
+    r"\b(?:due|deadline|expires?|expiring|by|before|no later than|within)\b"
+)
+
+# "within 48 hours", "you have 5 days", "48-hour window".
+_RELATIVE_DEADLINE = re.compile(
+    r"\b(?:within|in|you\s+have|have)\s+(?P<n>\d{1,3})\s*(?:-|\s)?\s*"
+    r"(?P<unit>hours?|hrs?|days?|business\s+days?)\b",
+    re.IGNORECASE,
+)
+_HYPHEN_WINDOW = re.compile(
+    r"\b(?P<n>\d{1,3})\s*-\s*(?P<unit>hour|day)\s+(?:window|deadline|limit|period)\b",
+    re.IGNORECASE,
+)
+
+# "by August 15, 2026", "before Aug 15", "expires on 08/15/2026".
+_ABSOLUTE_WORD_DATE = re.compile(
+    rf"\b(?P<month>{_MONTH_ALT})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?"
+    rf"(?:,?\s*(?P<year>20\d{{2}}))?",
+    re.IGNORECASE,
+)
+_ABSOLUTE_NUMERIC_DATE = re.compile(
+    r"\b(?P<month>\d{1,2})/(?P<day>\d{1,2})(?:/(?P<year>20\d{2}|\d{2}))?\b"
+)
+
+# How far out a stated deadline may plausibly sit. Beyond this the parse is far
+# likelier to be wrong than the employer is to mean it.
+_MAX_DEADLINE_DAYS = 180
+
+
+# A window belongs to the COMPANY, not the candidate. "We will get back to you
+# within 5 business days" is the single most common sentence in application mail
+# and it is not a deadline — it is a promise about them. Reading it as one would
+# have put a fabricated due date on very nearly every card on the board.
+_COMPANY_PROMISE = re.compile(
+    r"\b(?:we(?:'|’)?ll|we\s+will|we\s+aim|our\s+team\s+will|the\s+team\s+will|"
+    r"you(?:'|’)?ll\s+hear|you\s+will\s+hear|hear\s+(?:back\s+)?from\s+us|"
+    r"get\s+back\s+to\s+you|be\s+in\s+touch|respond\s+to\s+(?:you|all)|"
+    r"review\s+your\s+application)\b",
+    re.IGNORECASE,
+)
+
+# The window belongs to the CANDIDATE: an instruction addressed to the reader.
+_RECIPIENT_TASK = re.compile(
+    r"\b(?:please|kindly|complete|submit|finish|return|accept|schedule|confirm|"
+    r"you\s+(?:have|must|need|should)|your\s+(?:assessment|challenge|exercise|"
+    r"take[-\s]?home|invitation|link))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_recipient_task(context: str) -> bool:
+    """Is this clause telling the READER to do something by a time?
+
+    Both halves are required. The promise test alone lets through a bare date
+    with no owner; the task test alone lets through "we will review your
+    application within 5 days", which contains "your application".
+    """
+
+    if _COMPANY_PROMISE.search(context):
+        return False
+    return bool(_RECIPIENT_TASK.search(context))
+
+
+def _cue_window(text: str) -> list[str]:
+    """The clauses that carry a deadline cue, so a stray date can't be read."""
+
+    out: list[str] = []
+    for match in re.finditer(_DEADLINE_CUE, text, re.IGNORECASE):
+        # From the cue to the end of its clause — a deadline is stated forward
+        # ("by August 15"), never backward — plus the run-up, which is where the
+        # sentence says whose deadline it is.
+        clause = text[match.start() : match.start() + 90]
+        if _is_recipient_task(text[max(0, match.start() - 80) : match.start() + 90]):
+            out.append(clause)
+    return out
+
+
+def extract_deadline(
+    subject: str, snippet: str, received_at: datetime | None
+) -> datetime | None:
+    """The deadline a message STATES, in naive UTC — or None.
+
+    Anchored to ``received_at`` because "within 48 hours" is meaningless without
+    it, and because a parsed calendar date is only believable if it lands after
+    the mail that announced it. Returns None for anything ambiguous: no cue, no
+    anchor, a date that resolves into the past, or one absurdly far out.
+    """
+
+    if received_at is None:
+        return None
+    anchor = to_naive_utc(received_at)
+    if anchor is None:
+        return None
+
+    text = unescape_entities(f"{subject or ''}. {snippet or ''}")
+
+    # Relative windows first — they are unambiguous and the common case for
+    # assessments ("complete within 48 hours").
+    for pattern in (_RELATIVE_DEADLINE, _HYPHEN_WINDOW):
+        for match in pattern.finditer(text):
+            if not _is_recipient_task(
+                text[max(0, match.start() - 80) : match.end() + 40]
+            ):
+                continue  # the company's promise about itself, not your deadline
+            break
+        else:
+            continue
+        n = int(match.group("n"))
+        unit = match.group("unit").lower()
+        if n == 0:
+            continue
+        if unit.startswith(("hour", "hr")):
+            due = anchor + timedelta(hours=n)
+        elif "business" in unit:
+            # Weekends are not working days; step over them rather than
+            # pretending a 5-business-day window is 5 calendar days.
+            due = anchor
+            remaining = n
+            while remaining > 0:
+                due += timedelta(days=1)
+                if due.weekday() < 5:
+                    remaining -= 1
+        else:
+            due = anchor + timedelta(days=n)
+        if 0 < (due - anchor).total_seconds() <= _MAX_DEADLINE_DAYS * 86400:
+            return due
+
+    # Absolute dates, but only inside a clause that carries a deadline cue.
+    for clause in _cue_window(text):
+        for match in _ABSOLUTE_WORD_DATE.finditer(clause):
+            month = _MONTHS.get(match.group("month").lower())
+            if month is None:
+                continue
+            due = _resolve_calendar_date(
+                anchor, month, int(match.group("day")), match.group("year")
+            )
+            if due is not None:
+                return due
+        for match in _ABSOLUTE_NUMERIC_DATE.finditer(clause):
+            due = _resolve_calendar_date(
+                anchor,
+                int(match.group("month")),
+                int(match.group("day")),
+                match.group("year"),
+            )
+            if due is not None:
+                return due
+    return None
+
+
+def _resolve_calendar_date(
+    anchor: datetime, month: int, day: int, year: str | None
+) -> datetime | None:
+    """A stated calendar date as an end-of-day UTC deadline, or None.
+
+    A year-less date takes the next occurrence at or after the mail — "complete
+    by August 15" in a December message means the following August, not eight
+    months ago. End of day because a date without a time is a whole day, and
+    treating it as midnight would mark it overdue a day early.
+    """
+
+    if not 1 <= month <= 12 or not 1 <= day <= 31:
+        return None
+    years = (
+        [int(year) if len(year) == 4 else 2000 + int(year)]
+        if year
+        else [anchor.year, anchor.year + 1]
+    )
+    for candidate_year in years:
+        try:
+            due = datetime(candidate_year, month, day, 23, 59, 59)
+        except ValueError:
+            continue  # e.g. Feb 30
+        delta = (due - anchor).total_seconds()
+        if 0 < delta <= _MAX_DEADLINE_DAYS * 86400:
+            return due
+    return None
+
+
 def extract_req_id(subject: str, snippet: str = "") -> str | None:
     """Return the employer's own requisition id for this application, or None.
 
@@ -823,6 +1034,9 @@ class RolledApplication:
     # is the honest floor when the mail genuinely does not distinguish.
     req_id: str | None = None
     role_token: str | None = None
+    # The deadline this application's mail STATES, if any. None is the common
+    # and correct case — most mail states nothing, and nothing is what it gets.
+    due_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -1393,6 +1607,15 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
 
         role = cluster.role
 
+        # The LATEST stated deadline wins: a rescheduled assessment supersedes
+        # the original, and the newest message is the one that knows.
+        stated = [
+            (to_naive_utc(m.received_at), extract_deadline(m.subject, m.snippet, m.received_at))
+            for m in msgs
+        ]
+        dated = [(seen, due) for seen, due in stated if due is not None and seen is not None]
+        due_at = max(dated, key=lambda pair: pair[0])[1] if dated else None
+
         refs = sorted(
             (_message_ref(m) for m in msgs),
             key=lambda r: _as_utc(r.received_at) if r.received_at else _EPOCH,
@@ -1410,6 +1633,7 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
                 messages=tuple(refs),
                 req_id=cluster.req_id,
                 role_token=cluster.role_token,
+                due_at=due_at,
             )
         )
 

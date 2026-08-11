@@ -301,6 +301,23 @@ class Application(TimestampMixin, table=True):
         description="Normalized job title, used to tell one employer's applications apart",
     )
 
+    # When something is DUE — the assessment window, the take-home deadline, the
+    # date an offer must be answered by. NULL means no deadline is known, which
+    # is the honest default: a deadline is only ever recorded because a message
+    # stated one or a human typed one. It is never inferred.
+    due_at: Optional[datetime] = Field(
+        default=None,
+        index=True,
+        description="When this application's next obligation is due (UTC)",
+    )
+    # Who put it there: 'mail' (extracted from an explicit statement) or 'user'.
+    # The distinction is load-bearing — a sync may refresh a 'mail' deadline as
+    # later mail supersedes it, and must never touch one a human set.
+    due_source: Optional[str] = Field(
+        default=None,
+        description="Origin of due_at: 'mail' (extracted) or 'user' (typed)",
+    )
+
     # Relationships
     emails: list["Email"] = Relationship(back_populates="application")
     contacts: list["Contact"] = Relationship(back_populates="application")

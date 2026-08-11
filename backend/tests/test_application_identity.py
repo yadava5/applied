@@ -942,3 +942,133 @@ def test_a_role_extracted_from_a_decoded_snippet_is_unchanged():
         AMAZON_SUBJECT, decoded
     )
     assert p.extract_req_id(AMAZON_SUBJECT, decoded) == "3177934"
+
+
+# --- deadlines ----------------------------------------------------------------
+#
+# The product's landing page opens by promising an assessment's 48-hour deadline
+# will not pass unseen. These are the tests that keep that promise honest — and
+# the ones that matter most are the refusals, because a fabricated deadline
+# would have someone drop what they are doing for a date nobody set.
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_days"),
+    [
+        ("Please complete the assessment within 48 hours.", 2),
+        ("Kindly finish your take-home within 3 days.", 3),
+        # Weekends are not working days: Tue + 5 business days is the next Tuesday.
+        ("You have 5 business days to complete your take-home.", 7),
+    ],
+)
+def test_a_stated_window_is_anchored_to_the_message(body, expected_days):
+    sent = datetime.datetime(2026, 8, 11, 14, 0)  # a Tuesday
+
+    due = p.extract_deadline("Your assessment", body, sent)
+
+    assert due is not None
+    assert (due - sent).days == expected_days
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Your challenge link expires on August 15, 2026.",
+        "Please submit your exercise no later than Aug 15.",
+        "Kindly complete by 08/15/2026 to move forward.",
+    ],
+)
+def test_a_stated_calendar_date_becomes_an_end_of_day_deadline(body):
+    """End of day, because a date with no time is a whole day.
+
+    Treating it as midnight would mark the application overdue a full day early,
+    which for this feature is the same class of error as inventing one.
+    """
+
+    due = p.extract_deadline("Assessment", body, datetime.datetime(2026, 8, 11, 14, 0))
+
+    assert due == datetime.datetime(2026, 8, 15, 23, 59, 59)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # THE case. This sentence appears in almost every application
+        # confirmation ever sent, and reading it as a deadline would have put a
+        # fabricated due date on very nearly every card on the board.
+        "We will get back to you within 5 business days.",
+        "Our team will review and respond within 48 hours.",
+        "You will hear from us within 7 days.",
+        "We will review your application within 10 days.",
+        "We aim to respond by August 20, 2026.",
+        # A date, but not a deadline.
+        "Your interview is scheduled for August 20, 2026 at 2pm.",
+        "Thanks for applying. We received it on August 11, 2026.",
+        "Copyright 2026. Unsubscribe here.",
+        # Cue present, but the window is nonsense or already past.
+        "Please complete within 0 hours.",
+        "Please complete by August 1, 2026.",
+    ],
+)
+def test_a_deadline_is_never_invented(body):
+    assert p.extract_deadline("Update on your application", body, datetime.datetime(2026, 8, 11, 14, 0)) is None
+
+
+def test_no_deadline_without_an_anchor():
+    """"Within 48 hours" of what? Undated mail cannot say."""
+
+    assert p.extract_deadline("Assessment", "Please complete within 48 hours.", None) is None
+
+
+def test_the_latest_stated_deadline_wins():
+    """A rescheduled assessment supersedes the original."""
+
+    first = item(
+        "d1",
+        "Your Roblox assessment",
+        "assessment@email.roblox.com",
+        "Please complete the assessment within 48 hours.",
+        category="assessment",
+        minutes=0,
+    )
+    rescheduled = item(
+        "d2",
+        "Your Roblox assessment — extended",
+        "assessment@email.roblox.com",
+        "Good news: please complete the assessment within 7 days.",
+        category="assessment",
+        minutes=60,
+    )
+
+    rolled = p.roll_up_applications([first, rescheduled])
+
+    assert len(rolled) == 1
+    assert rolled[0].due_at == BASE + datetime.timedelta(minutes=60, days=7)
+
+
+def test_the_owners_real_mail_produces_no_deadlines():
+    """22 real application confirmations, zero invented deadlines.
+
+    Kept as a corpus test rather than prose because "it doesn't fire on real
+    mail" is the only claim that matters, and it is the one a future pattern
+    tweak is most likely to break.
+    """
+
+    corpus = [
+        ("Crusoe | Application Received", "Thank you for applying to our role: Software Engineer I, Storage. We will review your application shortly."),
+        ("Thanks for applying to Cursor!", "We appreciate your interest in joining the team. We will review your application and get back"),
+        ("Thank you for applying with MotherDuck!", "Our team will review your application and will"),
+        ("Thank you for applying to Together AI", "Your application has been received and we will review it right away."),
+        ("Thank you for applying to Supabase!", "We respond to all candidates and will be in touch."),
+        ("Thank you for Applying to Amazon!", "We've received your application for the Software Development Engineer - 2026 (US) (ID: 3177934) position. What happens next?"),
+        ("Thank you for applying to IXL Learning!", "Our hiring team will review your resume soon! Please note, due to the high volume of applications we receive"),
+        ("Your application has been received!", "Our team is reviewing your application and will be in touch if we think you're a potential match"),
+        ("Thank You for Applying to Supernova Technology", "We have received your application and will review it promptly."),
+    ]
+    sent = datetime.datetime(2026, 8, 11, 5, 0)
+
+    invented = [
+        subject for subject, body in corpus if p.extract_deadline(subject, body, sent) is not None
+    ]
+
+    assert invented == []
