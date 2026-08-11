@@ -347,11 +347,26 @@ class MessageRefResponse(BaseModel):
     gmail_link: str | None = None
 
 
+class SplitCandidateResponse(BaseModel):
+    """One application hiding inside a row that was filed before identity existed."""
+
+    role: str | None = None
+    req_id: str | None = None
+    message_ids: list[str]
+    # True for the cluster that would KEEP this row's id (and everything hanging
+    # off it) if the user accepts the split. Exactly one candidate has it.
+    retains_row: bool = False
+
+
 class ApplicationDetailResponse(BaseModel):
     """An application plus the metadata-only mail it was derived from."""
 
     application: CloudApplicationResponse
     messages: list[MessageRefResponse]
+    # Present (length >= 2) only when this row's OWN linked mail describes more
+    # than one application — a row merged before applications were told apart
+    # within an employer. Empty is the normal case and means nothing to offer.
+    split_candidates: list[SplitCandidateResponse] = []
 
 
 class ReviewItemResponse(BaseModel):
@@ -1814,6 +1829,95 @@ async def _settle_thread_siblings(
     return len(siblings)
 
 
+@dataclass
+class _MailCluster:
+    """One application's worth of a stored row's linked mail."""
+
+    req_id: str | None
+    role_token: str | None
+    role: str | None
+    emails: list[Email]
+
+    @property
+    def earliest(self) -> datetime:
+        dated = [e.received_at for e in self.emails if e.received_at is not None]
+        return min(dated) if dated else datetime.max
+
+
+def cluster_stored_mail(emails: list[Email]) -> list[_MailCluster]:
+    """Group one row's OWN linked mail into the applications it describes.
+
+    The database-only twin of :func:`pipeline.partition_applications`, and the
+    reason a merged row can be split without going back to Gmail: every
+    contributing message was persisted with its subject and snippet, so the
+    requisition ids and role titles that tell them apart are already on disk.
+
+    Returns fewer than two clusters when there is nothing to offer — either the
+    mail names no role anywhere (the honest one-row case) or it all names the
+    same one. Callers must treat "< 2" as "no split available", never as an
+    error.
+
+    Messages that name no role are kept with the earliest cluster rather than
+    dropped or guessed at: they are real mail belonging to this employer, and
+    the retained row is the conservative home for anything unattributable.
+    """
+
+    keyed: list[_MailCluster] = []
+    anonymous: list[Email] = []
+
+    for email in emails:
+        subject, snippet = email.subject or "", email.body_snippet or ""
+        req_id = pipeline.extract_req_id(subject, snippet)
+        role = pipeline.role_from_message(subject, snippet)
+        role_token = pipeline.normalize_role_token(role)
+        if req_id is None and role_token is None:
+            anonymous.append(email)
+            continue
+        match = next(
+            (
+                c
+                for c in keyed
+                if (req_id is not None and c.req_id == req_id)
+                or (role_token is not None and c.role_token == role_token)
+            ),
+            None,
+        )
+        if match is None:
+            keyed.append(_MailCluster(req_id, role_token, role, [email]))
+            continue
+        match.emails.append(email)
+        match.req_id = match.req_id or req_id
+        match.role_token = match.role_token or role_token
+        match.role = match.role or role
+
+    if len(keyed) < 2:
+        return []
+
+    keyed.sort(key=lambda c: c.earliest)
+    if anonymous:
+        keyed[0].emails.extend(anonymous)
+    return keyed
+
+
+def _status_from_mail(emails: list[Email]) -> str:
+    """The stage a cluster's own mail reaches — recomputed, never inherited.
+
+    Deliberately derived from scratch. The row being split may already hold a
+    TERMINAL status, and `advance_application_status` never leaves one, so
+    inheriting it would hand every sibling a rejection that belonged to one
+    requisition — which is the exact damage the identity work exists to undo.
+    """
+
+    status = DEFAULT_APPLICATION_STATUS.value
+    for email in sorted(emails, key=lambda e: e.received_at or datetime.min):
+        if email.classified_as is None:
+            continue
+        incoming = _lifecycle_to_status(email.classified_as)
+        if incoming is not None:
+            status = pipeline.advance_application_status(status, incoming)
+    return status
+
+
 def _lifecycle_to_status(category: EmailCategory) -> str | None:
     """Map a lifecycle email category to an ApplicationStatus value, or None.
 
@@ -2268,8 +2372,130 @@ async def application_detail_cloud(
         ).all()
         serialized = _serialize(app, account_email)
         messages = [_message_ref_response(e, account_email) for e in emails]
+        clusters = cluster_stored_mail(list(emails))
+        candidates = [
+            SplitCandidateResponse(
+                role=c.role,
+                req_id=c.req_id,
+                message_ids=[e.message_id for e in c.emails],
+                retains_row=(index == 0),
+            )
+            for index, c in enumerate(clusters)
+        ]
 
-    return ApplicationDetailResponse(application=serialized, messages=messages)
+    return ApplicationDetailResponse(
+        application=serialized, messages=messages, split_candidates=candidates
+    )
+
+
+@router.post("/{application_id}/split", response_model=list[CloudApplicationResponse])
+async def split_application_cloud(
+    application_id: int,
+    user_id: uuid.UUID = Depends(current_user),
+) -> list[CloudApplicationResponse]:
+    """Split a merged row into the applications its own mail describes.
+
+    The migration path for rows filed before an application was identified by
+    employer AND role. It reads only what is already stored — every contributing
+    message kept its subject and snippet — so it needs no Gmail call, no scan
+    budget, and no rebuild. That matters: a rebuild is the only other route, it
+    reads as destructive, and a bounded scan may not even reach the mail in
+    question.
+
+    Conservative by construction:
+
+    - The row is retained for its EARLIEST cluster, so its id survives and every
+      contact, interview and user correction stays attached to the application
+      that has been on the board longest.
+    - Each sibling's status is recomputed from its own mail rather than
+      inherited. The row may already be terminal, and a terminal status is never
+      left, so inheriting would give every sibling one requisition's rejection.
+    - Nothing is deleted and no mail is discarded: the messages are re-pointed,
+      and anything that names no role stays with the retained row.
+
+    409 when there is nothing to split, which is the common case and not an
+    error the caller should treat as a failure.
+    """
+
+    account_email = await _connected_account_email(user_id)
+
+    async with get_session() as session:
+        app = (
+            await session.exec(
+                select(Application).where(
+                    Application.user_id == user_id, Application.id == application_id
+                )
+            )
+        ).first()
+        if app is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
+            )
+
+        emails = (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == user_id, Email.application_id == application_id
+                )
+            )
+        ).all()
+        clusters = cluster_stored_mail(list(emails))
+        if len(clusters) < 2:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="This application's mail describes a single application.",
+            )
+
+        retained, siblings = clusters[0], clusters[1:]
+
+        app.req_id = retained.req_id
+        app.role_token = retained.role_token
+        if retained.role:
+            app.position = retained.role
+        app.updated_at = datetime.utcnow()
+        session.add(app)
+
+        created: list[Application] = []
+        for cluster in siblings:
+            row = Application(
+                user_id=user_id,
+                company=app.company,
+                position=cluster.role or _NO_ROLE,
+                status=ApplicationStatus(_status_from_mail(cluster.emails)),
+                applied_date=(
+                    cluster.earliest.date() if cluster.earliest != datetime.max else None
+                ),
+                # The split is a decision the user made, so the siblings are
+                # user-owned and sticky — a later sync advances them from mail
+                # but never rewrites the stage.
+                source=SOURCE_GMAIL_USER,
+                url=pipeline.gmail_deeplink(
+                    thread_id=cluster.emails[0].thread_id,
+                    message_id=cluster.emails[0].message_id,
+                ),
+                req_id=cluster.req_id,
+                role_token=cluster.role_token,
+            )
+            session.add(row)
+            await session.flush()
+            for email in cluster.emails:
+                email.application_id = row.id
+                session.add(email)
+            created.append(row)
+
+        await session.commit()
+        for row in created:
+            await session.refresh(row)
+        await session.refresh(app)
+
+        logger.info(
+            "Split application_id=%s for user_id=%s into %s applications (retained %s)",
+            application_id,
+            user_id,
+            len(created) + 1,
+            app.id,
+        )
+        return [_serialize(row, account_email) for row in (app, *created)]
 
 
 @router.patch("/{application_id}", response_model=CloudApplicationResponse)

@@ -76,6 +76,23 @@ export function restoreApplication(id: number): Promise<ApiCallResult> {
 }
 
 /**
+ * POST /applications/{id}/split — turn a merged row into the applications its
+ * own stored mail describes.
+ *
+ * Reads nothing from Gmail: the identity (requisition id, role title) is in the
+ * subject and snippet already persisted for every contributing message. The row
+ * is retained for its earliest cluster, so its id — and every contact,
+ * interview and correction hanging off it — stays with the application that has
+ * been on the board longest.
+ *
+ * A 409 means "this row's mail describes one application". That is the common
+ * case and not a failure.
+ */
+export function splitApplication(id: number): Promise<ApiCallResult> {
+  return call(`/applications/${id}/split`, { method: "POST", body: {} });
+}
+
+/**
  * DELETE /applications/{id} — hard-delete the row and its linked emails.
  *
  * There is no undo for this one, which is why it is the only row action behind
