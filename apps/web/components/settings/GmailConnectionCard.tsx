@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
+import { LastSynced } from "@/components/gmail/LastSynced";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
 /**
@@ -11,11 +12,17 @@ import type { GmailStatusResult } from "@/lib/gmail/server";
  * browser. Failure modes stay DISTINCT and honest (auth rejection vs. not
  * enabled vs. transient backend error), and every state routes forward (the
  * import fallback, the sample inbox) so the card is never a dead end.
+ *
+ * A connected account also gets its sync state: when the board was last built,
+ * whether the last attempt failed, and — only when a cursor actually exists —
+ * that the next sync resumes from it. With `has_cursor` false the next sync is
+ * a full scan, so nothing is claimed about it beyond the time.
  */
 export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
-  const connected = result.kind === "ok" && result.status.connected;
-  const configured = result.kind === "ok" && result.status.configured;
-  const email = result.kind === "ok" ? result.status.email : null;
+  const status = result.kind === "ok" ? result.status : null;
+  const connected = status?.connected === true;
+  const configured = status?.configured === true;
+  const email = status?.email ?? null;
   const needsSignin = result.kind === "unauthenticated" || result.kind === "auth";
 
   return (
@@ -52,6 +59,24 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
                 <span className="text-muted">Not enabled on this deployment yet</span>
               )}
             </div>
+
+            {connected ? (
+              <div className="mt-2 space-y-1 font-mono text-[11px] text-dim">
+                <p>
+                  <LastSynced at={status?.last_sync_at ?? null} />
+                  {status?.has_cursor ? (
+                    <span> · next sync resumes from where that one stopped</span>
+                  ) : null}
+                </p>
+                {status?.sync_status === "error" ? (
+                  <p className="text-reject">
+                    The last sync attempt failed
+                    {status.sync_error ? ` (${status.sync_error})` : ""} — the time above is the
+                    last one that succeeded. Re-sync from the pipeline to retry.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
@@ -140,7 +165,16 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
         <h3 className="label-mono mb-3">a note on scale — the honest version</h3>
         <p className="text-sm text-muted">
           <code className="text-strong">gmail.readonly</code> is a Google{" "}
-          <span className="text-strong">restricted</span> scope. Until this app completes Google&apos;s
+          {/* The space is an explicit expression because a literal one does not survive the
+              build. Production rendered "restrictedscope"; building this file's own committed
+              source with our toolchain compiles the children to `restricted"}),"scope. Until`,
+              so the bundler drops the leading whitespace of this text node. The sibling
+              paragraph below keeps its space, and the difference is the entity: a JSX text node
+              containing &apos; loses its leading space, one without keeps it. This was the only
+              such node in the app — see the landing page, where `</span> int8-ONNX` and
+              `</span> to classify` both survive. Do not "simplify" this back to a plain space. */}
+          <span className="text-strong">restricted</span>{" "}
+          scope. Until this app completes Google&apos;s
           OAuth verification and an independent CASA security assessment, it can authorize at most{" "}
           <span className="text-strong">100 test users</span> added on the OAuth consent screen. So
           direct Gmail linking works, but is intentionally gated to invited testers.

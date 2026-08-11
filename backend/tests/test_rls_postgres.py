@@ -639,7 +639,10 @@ async def test_aware_received_at_persists_as_naive_utc(pg_app: AsyncEngine) -> N
     from sqlmodel import select
 
     from jobtracker.cloud import pipeline
-    from jobtracker.cloud.applications import purge_and_rebuild_gmail_pipeline
+    from jobtracker.cloud.applications import (
+        ScanCoverage,
+        purge_and_rebuild_gmail_pipeline,
+    )
     from jobtracker.database import get_session, user_id_scope
     from jobtracker.database.models import Application, Email
 
@@ -672,10 +675,11 @@ async def test_aware_received_at_persists_as_naive_utc(pg_app: AsyncEngine) -> N
     with user_id_scope(USER_B):
         async with get_session() as s:
             # Before the fix this commit raised asyncpg DataError → HTTP 500.
-            created, updated, purged, needs_review = await purge_and_rebuild_gmail_pipeline(
-                s, USER_B, rolled, review
+            merged = await purge_and_rebuild_gmail_pipeline(
+                s, USER_B, rolled, review, ScanCoverage.from_items(items)
             )
-        assert (created, needs_review) == (1, 1)
+        assert (merged.created, merged.needs_review) == (1, 1)
+        assert merged.purged == 0 and merged.removed == ()
 
         async with get_session() as s:
             apps = (await s.exec(select(Application))).all()
@@ -690,6 +694,85 @@ async def test_aware_received_at_persists_as_naive_utc(pg_app: AsyncEngine) -> N
     for e in emails:
         assert e.received_at is not None
         assert e.received_at.tzinfo is None, "received_at must be naive UTC"
+
+
+async def test_sync_state_writes_are_rls_scoped_and_fail_closed(
+    pg_app: AsyncEngine,
+) -> None:
+    """``sync_state`` gets the same RLS proof the other tables have.
+
+    ``sync_state`` was in ``_ENTITY_TABLES`` — so the policies were CREATED for
+    it — but no test body ever wrote to it, so the ``WITH CHECK`` path was
+    unexercised. That is where every sync now records its cursor
+    (``jobtracker/cloud/sync_state.py``), which makes it the newest untested
+    write surface in the cloud app: one row per user per mailbox, holding the
+    linked address and the Gmail ``historyId``.
+
+    Drives the real production writer rather than a raw INSERT, and asserts the
+    three things RLS is there for: the write lands under the owner's GUC, a
+    second user cannot see it, and a write with no GUC at all is REJECTED
+    rather than silently stored.
+    """
+
+    from sqlmodel import select
+
+    from jobtracker.cloud.sync_state import record_gmail_sync_success
+    from jobtracker.database import get_session, user_id_scope
+    from jobtracker.database.models import SyncState
+
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            await record_gmail_sync_success(
+                s, USER_A, account_email="a@example.test", history_id="9001"
+            )
+            await s.commit()
+
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            await record_gmail_sync_success(
+                s, USER_B, account_email="b@example.test", history_id="7001"
+            )
+            await s.commit()
+
+    # Each owner sees exactly their own cursor row — never the other's mailbox
+    # address, which is the sensitive part of this table.
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            rows_a = (await s.exec(select(SyncState))).all()
+    assert {r.account_email for r in rows_a} == {"a@example.test"}
+    assert {r.gmail_history_id for r in rows_a} == {"9001"}
+
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            rows_b = (await s.exec(select(SyncState))).all()
+    assert {r.account_email for r in rows_b} == {"b@example.test"}
+
+    # Fail-closed: no GUC → auth.uid() is NULL → WITH CHECK rejects the insert.
+    with pytest.raises(DBAPIError):
+        async with get_session() as s:
+            await record_gmail_sync_success(
+                s, USER_A, account_email="ghost@example.test", history_id="1"
+            )
+            await s.commit()
+
+    # And a row cannot be written on another user's behalf even WITH a GUC:
+    # the WITH CHECK compares the column to auth.uid(), not to the caller's
+    # claim about who they are writing for.
+    with pytest.raises(DBAPIError), user_id_scope(USER_B):
+        async with get_session() as s:
+            s.add(
+                SyncState(
+                    user_id=USER_A,  # not the GUC's user
+                    account_type="gmail",
+                    account_email="forged@example.test",
+                )
+            )
+            await s.commit()
+
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            after = (await s.exec(select(SyncState))).all()
+    assert {r.account_email for r in after} == {"a@example.test"}
 
 
 async def test_credential_save_read_is_scoped_and_cross_user_blocked(

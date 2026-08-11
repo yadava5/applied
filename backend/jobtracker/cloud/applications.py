@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
@@ -65,11 +67,136 @@ SOURCE_GMAIL_AUTO = "gmail"
 SOURCE_GMAIL_USER = "gmail_user"
 SOURCE_MANUAL = "manual"
 
+# ``Application.dismissed_reason`` — WHO removed a row from the board. Nothing
+# here is a delete: a dismissed row and its emails stay on disk and can be
+# restored. The distinction matters on the next sync:
+#   - ``user``   : a human said "this is not an application". Fresh mail must
+#                  NOT argue with that, so the row stays dismissed.
+#   - ``resync`` : the rebuild removed it automatically. Fresh mail naming the
+#                  same company is better evidence than the removal was, so the
+#                  row comes back.
+DISMISSED_BY_USER = "user"
+DISMISSED_BY_RESYNC = "resync"
+
 
 def _is_auto_row(source: str | None) -> bool:
     """Only rows explicitly tagged as unedited Gmail-auto are purge/advance-able."""
 
     return source == SOURCE_GMAIL_AUTO
+
+
+class RemovedApplication(NamedTuple):
+    """One row a rebuild took off the board — named so the UI can say which."""
+
+    id: int
+    company: str
+
+
+class MergeResult(NamedTuple):
+    """What one merge of a scan into the board actually did.
+
+    ``purged`` counts rows the rebuild removed; ``removed`` names them. They are
+    populated from exactly the same rows, so the button can report "3 filed, 2
+    removed (MotherDuck, Supabase)" instead of silently changing the board —
+    and can offer an undo, because a removal is now a reversible state.
+    """
+
+    created: int
+    updated: int
+    purged: int
+    needs_review: int
+    removed: tuple[RemovedApplication, ...] = ()
+
+
+@dataclass(frozen=True)
+class ScanCoverage:
+    """What one scan can HONESTLY be said to have looked at.
+
+    A Gmail scan is bounded three ways at once — by ``in:inbox`` vs
+    ``in:anywhere``, by ``newer_than:<N>m``, and by a message/page cap — so the
+    set of messages it returns is never the set of messages that exist. This
+    records the part that is actually knowable:
+
+    - ``message_ids`` — the messages the scan demonstrably READ. Nothing else
+      about the mailbox is observable from a scan.
+    - ``oldest`` / ``newest`` — the span those messages occupy. Derived from the
+      data rather than from the requested ``range``, because a scan truncated by
+      the message cap covers far less than the range it asked for, and Gmail
+      returns newest-first so the truncation is always at the old end.
+
+    All instants are naive UTC to match ``Email.received_at`` (the column is
+    TIMESTAMP WITHOUT TIME ZONE), so an aware timestamp relayed by a client can
+    never raise "can't compare offset-naive and offset-aware datetimes" in the
+    middle of a purge.
+    """
+
+    message_ids: frozenset[str]
+    oldest: datetime | None = None
+    newest: datetime | None = None
+
+    @classmethod
+    def from_items(cls, items) -> ScanCoverage:
+        """Build coverage from the classified messages one scan returned.
+
+        Takes ALL scanned items, not just the ones that rolled up: a message the
+        scan re-read and classified as noise is precisely the evidence that
+        contradicts a stale row, and it appears in neither the rolled set nor
+        the review queue.
+        """
+
+        ids: set[str] = set()
+        dates: list[datetime] = []
+        for item in items:
+            message_id = getattr(item, "message_id", None)
+            if message_id:
+                ids.add(message_id)
+            received_at = pipeline.to_naive_utc(getattr(item, "received_at", None))
+            if received_at is not None:
+                dates.append(received_at)
+        return cls(
+            message_ids=frozenset(ids),
+            oldest=min(dates) if dates else None,
+            newest=max(dates) if dates else None,
+        )
+
+    def covers(self, received_at: datetime | None) -> bool:
+        """Was this instant inside the span the scan actually reached?"""
+
+        moment = pipeline.to_naive_utc(received_at)
+        if moment is None or self.oldest is None or self.newest is None:
+            return False
+        return self.oldest <= moment <= self.newest
+
+
+def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> bool:
+    """Did this scan READ a row's own evidence and disagree with it?
+
+    The one honest test for "this application is stale". The caller has already
+    established that the freshly-rolled set does not name the row's company;
+    that on its own is worth nothing, because a scan that cannot see a message
+    reports the same emptiness as a mailbox that no longer contains it. What
+    turns silence into evidence is the scan having re-read the very messages the
+    row was filed from and no longer concluding an application from them — a
+    classifier correction, which is the case the rebuild exists to clean up.
+
+    Three ways a row survives, each one a thing the scan cannot prove:
+
+    1. No coverage at all (an empty scan) — it observed nothing.
+    2. No linked email — there is no evidence to re-read, so staleness is
+       unprovable by construction. (Includes rows filed before this column
+       existed and rows whose mail was pruned.)
+    3. A linked email the scan never re-read: either its id is absent from
+       everything the scan returned, or it predates/postdates the span the scan
+       actually reached. A row is only removable when EVERY one of its emails
+       was inside that span — one archived, out-of-window message is enough to
+       make the removal a guess.
+    """
+
+    if coverage is None or not emails:
+        return False
+    if not any(e.message_id in coverage.message_ids for e in emails):
+        return False
+    return all(coverage.covers(e.received_at) for e in emails)
 
 
 # ApplicationStatus → the training label a manual correction should teach the
@@ -106,12 +233,26 @@ _THIS_WEEK_WINDOW = timedelta(days=7)
 
 
 class CloudApplicationCreate(BaseModel):
-    """Request body for the cloud POST /applications endpoint."""
+    """Request body for the cloud POST /applications endpoint.
+
+    ``applied_date`` and ``url`` mirror the names :class:`CloudApplicationResponse`
+    emits, so a hand-filed row round-trips through the same keys it came back
+    under. Before they existed the dialog collected both and the API dropped
+    both, and the web form worked around it by stringifying them into ``notes``.
+
+    ``applied_date`` is an ISO-8601 date — ``YYYY-MM-DD``, what the response
+    returns. A full ISO datetime (``2026-08-10T14:03:00Z``, i.e. what
+    ``Date.toISOString()`` produces) is accepted and truncated to its date;
+    anything else is REJECTED with a 422 rather than silently dropped, which is
+    the failure being fixed.
+    """
 
     company: str
     position: str
     status: ApplicationStatus = ApplicationStatus.APPLIED
     notes: str | None = None
+    applied_date: str | None = None
+    url: str | None = None
 
 
 class CloudApplicationResponse(BaseModel):
@@ -132,6 +273,11 @@ class CloudApplicationResponse(BaseModel):
     source: str | None = None
     # Gmail deep link to the underlying conversation (click-through), if known.
     url: str | None = None
+    # Set only on a row that has been taken OFF the board (never deleted), with
+    # who took it off — ``user`` or ``resync``. Live rows carry nulls. Lets the
+    # UI render an "removed by re-sync — undo" affordance over ?dismissed=true.
+    dismissed_at: str | None = None
+    dismissed_reason: str | None = None
 
 
 class ApplicationStatusUpdate(BaseModel):
@@ -184,9 +330,16 @@ class ReviewQueueResponse(BaseModel):
 
 
 class ReviewClassifyRequest(BaseModel):
-    """Body for classifying a review item into a category."""
+    """Body for classifying a review item into a category.
+
+    ``company`` is optional and only consulted when the pipeline cannot name the
+    employer from the mail itself. That is the second half of the round trip the
+    ``needs_employer`` response opens: the caller is told what is missing and
+    re-sends the same classification with the company filled in.
+    """
 
     category: EmailCategory
+    company: str | None = None
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -247,11 +400,22 @@ async def _persist_message_refs(
 ) -> None:
     """Upsert metadata-only Email rows for a set of message refs (no bodies).
 
-    Idempotent on ``message_id`` (globally unique): a re-sync updates the link
-    and classification rather than duplicating. Undated messages are skipped —
-    the Email row requires a receive time and we never fabricate one. Linking to
+    Idempotent on ``(user_id, message_id)``: a re-sync updates the link and
+    classification rather than duplicating. Undated messages are skipped — the
+    Email row requires a receive time and we never fabricate one. Linking to
     ``application_id`` is what powers the click-through detail view; leaving it
     ``None`` (for review items) is what powers the needs-classification queue.
+
+    SETTLED VERDICTS ARE PRESERVED. A message the user reviewed or corrected
+    keeps its category/confidence/method: the classifier's opinion must not
+    overwrite a human's on the next scan. This is the same guard
+    :func:`_persist_review_items_additive` applies before it even builds its
+    refs, but it has to live here too because the rolled-application path
+    reaches this function without passing through that filter — so a corrected
+    message reverted to the classifier's verdict as soon as it got linked.
+    For the same reason a ``None`` ``application_id`` never CLEARS an existing
+    link: the rebuild path persists review items unfiltered, which would
+    otherwise un-link (and so un-file) an application the user just created.
     """
 
     for ref in refs:
@@ -272,15 +436,17 @@ async def _persist_message_refs(
         ).first()
         category = _safe_category(ref.category)
         if existing is not None:
-            existing.application_id = application_id
+            if application_id is not None:
+                existing.application_id = application_id
             existing.subject = ref.subject or existing.subject
             existing.sender_name = ref.sender_name
             existing.sender_email = ref.sender_email
             existing.received_at = received_at
             existing.body_snippet = (ref.snippet or "")[:500]
-            existing.classified_as = category
-            existing.classification_confidence = ref.confidence
-            existing.classification_method = "rules"
+            if not (existing.user_corrected or existing.is_reviewed):
+                existing.classified_as = category
+                existing.classification_confidence = ref.confidence
+                existing.classification_method = "rules"
             existing.thread_id = ref.thread_id
             session.add(existing)
         else:
@@ -326,6 +492,12 @@ async def upsert_applications_for_user(
     A row the user created or corrected (manual / gmail_user) keeps its status
     untouched forever — the re-sync attaches fresh mail refs and fills an empty
     role, but never rewrites a human decision. Returns ``(created, updated)``.
+
+    Dismissed rows are matched by the same company token rather than duplicated.
+    Fresh mail RESURRECTS one the rebuild removed automatically — better
+    evidence than the removal that hid it — but never one a human dismissed:
+    "this is not an application" is a decision, and re-filing it every sync is
+    how the row the user just cleared keeps coming back.
     """
 
     created = 0
@@ -335,6 +507,11 @@ async def upsert_applications_for_user(
         deeplink = _rolled_deeplink(r)
 
         if existing is not None:
+            if existing.dismissed_at is not None:
+                if existing.dismissed_reason == DISMISSED_BY_USER:
+                    continue  # a human said no; not counted as updated either
+                existing.dismissed_at = None
+                existing.dismissed_reason = None
             if _is_auto_row(existing.source):
                 new_status = ApplicationStatus(
                     pipeline.advance_application_status(existing.status.value, r.status)
@@ -371,6 +548,37 @@ async def upsert_applications_for_user(
     return created, updated
 
 
+def _parse_applied_date(value: str | None) -> date | None:
+    """ISO-8601 ``YYYY-MM-DD`` (or a full ISO datetime) → ``date``; else 422.
+
+    Deliberately loud. The whole reason this exists is that the create endpoint
+    used to accept no date at all, so the dialog's value vanished — a parse that
+    quietly returned ``None`` on bad input would reproduce that failure with
+    extra steps. ``url`` gets no such treatment: nothing else in this codebase
+    validates a stored URL, and inventing a rule here would reject links the
+    Gmail-derived rows already store.
+    """
+
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:  # tolerate a full ISO timestamp (Date.toISOString()) and its Z suffix
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"applied_date must be an ISO-8601 date (YYYY-MM-DD); got {value!r}."
+            ),
+        ) from exc
+
+
 def _rolled_deeplink(r: pipeline.RolledApplication) -> str | None:
     """Gmail deep link for a rolled row's most-recent message, if any."""
 
@@ -382,13 +590,141 @@ def _rolled_deeplink(r: pipeline.RolledApplication) -> str | None:
     )
 
 
-async def _reset_review_queue(session, user_id: uuid.UUID) -> None:
-    """Delete the user's prior UNreviewed Gmail review items (rebuilt each sync).
+# The email categories that imply a filed application — exactly the keys
+# ``_lifecycle_to_status`` maps to a real ApplicationStatus. Kept next to the
+# reconciliation that consumes them so the two cannot drift apart.
+_FILING_CATEGORIES: tuple[EmailCategory, ...] = (
+    EmailCategory.APPLIED,
+    EmailCategory.PENDING_APPLICATION,
+    EmailCategory.ASSESSMENT,
+    EmailCategory.INTERVIEW,
+    EmailCategory.OFFER,
+    EmailCategory.REJECTION,
+)
+
+
+async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int:
+    """File applications for SETTLED emails that were left without one.
+
+    A message the user classified into a filing status is supposed to produce an
+    application. When it didn't — the endpoint's employer lookup failed and the
+    decision was swallowed — the row is stranded: reviewed, unlinked, invisible
+    on the board and gone from the queue. This is the catch-up that un-strands
+    it on the next sync, now that :func:`pipeline.resolve_employer` can name the
+    employer from an ATS display-name / subject lead.
+
+    Scoped to ``user_id`` like every other query here. Deliberately narrow: only
+    rows the user actually settled (``user_corrected`` or ``is_reviewed``) with
+    a filing category and no ``application_id``. An un-reviewed auto-classified
+    row is excluded on purpose — by design it is either already linked or in the
+    review queue, and sweeping those up would re-open the "fabricate a row from
+    a low-confidence guess" bug the precision gate exists to prevent.
+
+    Idempotent: a reconciled email gains an ``application_id``, so the very
+    predicate that selected it no longer matches on the next run. Two orphans
+    for one employer collapse into a single application within one pass, and an
+    existing row is only ever ADVANCED (never downgraded, never un-settled).
+    Returns the number of applications CREATED.
+    """
+
+    orphans = (
+        await session.exec(
+            select(Email)
+            .where(
+                Email.user_id == user_id,
+                Email.application_id.is_(None),
+                Email.classified_as.in_(_FILING_CATEGORIES),
+                or_(
+                    Email.user_corrected == True,  # noqa: E712 — SQL boolean
+                    Email.is_reviewed == True,  # noqa: E712 — SQL boolean
+                ),
+            )
+            .order_by(Email.received_at)
+        )
+    ).all()
+
+    created = 0
+    for email in orphans:
+        status_value = _lifecycle_to_status(email.classified_as)
+        if status_value is None:  # defensive: category outside the filing set
+            continue
+        employer = pipeline.resolve_employer(
+            email.sender_email or "", email.subject or "", email.sender_name
+        )
+        if employer is None:
+            continue  # still unnameable — never invent a company
+        token, display = employer
+
+        app = await _find_application_by_token(session, user_id, token)
+        if app is None:
+            app = Application(
+                user_id=user_id,
+                company=display,
+                position=_NO_ROLE,
+                status=ApplicationStatus(status_value),
+                applied_date=email.received_at.date() if email.received_at else None,
+                source=SOURCE_GMAIL_USER,  # came from a human decision → sticky
+                url=pipeline.gmail_deeplink(
+                    thread_id=email.thread_id, message_id=email.message_id
+                ),
+            )
+            session.add(app)
+            await session.flush()
+            created += 1
+        else:
+            # A human classified this message INTO a filing category, which is
+            # the newest decision on record — so it restores a dismissed row
+            # (either kind) rather than filing a duplicate beside it.
+            if app.dismissed_at is not None:
+                app.dismissed_at = None
+                app.dismissed_reason = None
+                app.updated_at = datetime.utcnow()
+                session.add(app)
+            # Advance-only: a catch-up must never downgrade or un-settle a row.
+            new_status = ApplicationStatus(
+                pipeline.advance_application_status(app.status.value, status_value)
+            )
+            if new_status != app.status:
+                app.status = new_status
+                app.updated_at = datetime.utcnow()
+                session.add(app)
+        email.application_id = app.id
+        session.add(email)
+
+    if orphans:
+        await session.flush()
+    if created:
+        logger.info(
+            "Reconciled %s orphaned classification(s) into applications for "
+            "user_id=%s",
+            created,
+            user_id,
+        )
+    return created
+
+
+async def _reset_review_queue(
+    session, user_id: uuid.UUID, coverage: ScanCoverage | None = None
+) -> None:
+    """Clear the review items THIS SCAN re-read, so the rebuild can restate them.
 
     Only unlinked (``application_id IS NULL``), un-reviewed, gmail-sourced rows
-    are cleared — a review item the user already classified became a real
+    are eligible — a review item the user already classified became a real
     application (linked) or was marked reviewed, and is preserved.
+
+    And only messages the scan actually re-read. This used to clear the whole
+    queue, which is the incident's reasoning applied one table over: an
+    uncertain message surfaced by an earlier, wider scan was DELETED outright by
+    any later rebuild whose window missed it — an ``emails`` row destroyed,
+    never linked to an application, so the row-level protections never saw it.
+    A queue item the scan re-read and no longer flags is genuinely resolved
+    (:func:`_persist_review_items` puts back the ones that are still uncertain);
+    one the scan never reached is simply unexamined. With no coverage, nothing
+    is cleared.
     """
+
+    if coverage is None or not coverage.message_ids:
+        return
 
     await session.exec(
         sa_delete(Email).where(
@@ -396,6 +732,7 @@ async def _reset_review_queue(session, user_id: uuid.UUID) -> None:
             Email.source_account == EmailSource.GMAIL,
             Email.application_id.is_(None),
             Email.is_reviewed == False,  # noqa: E712 — SQL boolean, not identity
+            Email.message_id.in_(coverage.message_ids),
         )
     )
 
@@ -477,7 +814,7 @@ async def sync_gmail_pipeline_additive(
     user_id: uuid.UUID,
     rolled: list[pipeline.RolledApplication],
     review: list,
-) -> tuple[int, int, int, int]:
+) -> MergeResult:
     """ADDITIVELY merge a freshly-scanned Gmail pipeline — the durable sync.
 
     The non-destructive path used by routine/auto syncs (the dashboard
@@ -490,15 +827,20 @@ async def sync_gmail_pipeline_additive(
     applications appearing then vanishing run-to-run. The destructive
     purge+rebuild is reserved for the explicit user "Re-sync" button.
 
-    Idempotent and user-scoped. Returns ``(created, updated, purged=0,
-    needs_review)`` — ``purged`` is always 0 because an additive sync removes
-    nothing.
+    Idempotent and user-scoped. Returns a :class:`MergeResult` whose ``purged``
+    is always 0 and whose ``removed`` is always empty, because an additive sync
+    removes nothing. ``created`` includes any application recovered by
+    :func:`reconcile_orphaned_classifications`.
     """
 
     created, updated = await upsert_applications_for_user(session, user_id, rolled)
+    # Catch up on anything the user classified that never got an application.
+    created += await reconcile_orphaned_classifications(session, user_id)
     needs_review = await _persist_review_items_additive(session, user_id, review)
     await session.commit()
-    return created, updated, 0, needs_review
+    return MergeResult(
+        created=created, updated=updated, purged=0, needs_review=needs_review
+    )
 
 
 async def purge_and_rebuild_gmail_pipeline(
@@ -506,25 +848,44 @@ async def purge_and_rebuild_gmail_pipeline(
     user_id: uuid.UUID,
     rolled: list[pipeline.RolledApplication],
     review: list,
-) -> tuple[int, int, int, int]:
+    coverage: ScanCoverage | None = None,
+) -> MergeResult:
     """REPLACE the Gmail-derived pipeline for one user, preserving edits.
 
-    DESTRUCTIVE — reserved for the EXPLICIT user "Re-sync" button (a deliberate
-    "start clean"), never a routine/auto sync. Auto syncs use
-    :func:`sync_gmail_pipeline_additive` so they can't wipe a real application
-    the current bounded scan simply didn't re-include. This is what a re-sync
-    runs so the owner's 21 garbage rows are wiped and the board is rebuilt from
-    the corrected rollup. It:
+    Reserved for the EXPLICIT user "Re-sync" button (a deliberate "start
+    clean"), never a routine/auto sync. Auto syncs use
+    :func:`sync_gmail_pipeline_additive`, which removes nothing at all. This is
+    what a re-sync runs so the owner's garbage rows are cleared and the board is
+    rebuilt from the corrected rollup. It:
 
-      1. Deletes AUTO rows (``source == 'gmail'``) whose company is no longer in
-         the freshly-rolled set — i.e. the stale noise — along with their emails.
+      1. Removes AUTO rows (``source == 'gmail'``) that this scan CONTRADICTS —
+         see :func:`_scan_contradicts`. Removal is a dismissal, not a delete:
+         the row and its emails stay on disk and can be restored.
       2. Upserts the fresh rolled set (continuing companies keep their id and
          filed date; new ones are inserted).
-      3. Rebuilds the needs-classification queue from the review items.
+      3. Reconciles any settled-but-unlinked classification into an application
+         (:func:`reconcile_orphaned_classifications`).
+      4. Rebuilds the needs-classification queue from the review items.
+
+    What changed, and why
+    ---------------------
+
+    This function used to DELETE every auto row whose company was missing from
+    the freshly-rolled set, along with its emails. That is a reasoning error:
+    the rolled set comes from a scan bounded by scope, date range and message
+    count, and a scan that cannot see a message reports exactly what a mailbox
+    that no longer contains it reports. On 2026-08-10 it destroyed two real
+    applications whose ATS confirmations had been archived — invisible to an
+    ``in:inbox`` scan — and the rows plus their emails were gone from Postgres.
+
+    So absence is no longer evidence. A row is only removed when the scan
+    re-read the row's own messages and stopped concluding an application from
+    them, and even then it is only hidden. ``coverage=None`` (a caller that
+    cannot say what it looked at) therefore removes nothing.
 
     Manual and user-corrected rows (and anything the user classified) are never
-    touched. Idempotent and user-scoped. Returns
-    ``(created, updated, purged, needs_review)``.
+    touched. Idempotent and user-scoped. Returns a :class:`MergeResult` naming
+    what was removed.
     """
 
     keep_tokens = {r.company_token for r in rolled}
@@ -534,30 +895,58 @@ async def purge_and_rebuild_gmail_pipeline(
             select(Application).where(
                 Application.user_id == user_id,
                 Application.source == SOURCE_GMAIL_AUTO,
+                # Already off the board — re-dismissing would double-count it
+                # and re-report it to the user as newly removed.
+                Application.dismissed_at.is_(None),
             )
         )
     ).all()
 
-    purged = 0
+    now = datetime.utcnow()
+    removed: list[RemovedApplication] = []
     for row in auto_rows:
         if row.company.lower() in keep_tokens:
             continue
-        await session.exec(
-            sa_delete(Email).where(
-                Email.user_id == user_id, Email.application_id == row.id
+        linked = (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == user_id, Email.application_id == row.id
+                )
             )
-        )
-        await session.delete(row)
-        purged += 1
+        ).all()
+        if not _scan_contradicts(list(linked), coverage):
+            continue  # unseen, not disproven — the row stays
+        row.dismissed_at = now
+        row.dismissed_reason = DISMISSED_BY_RESYNC
+        session.add(row)
+        removed.append(RemovedApplication(id=row.id, company=row.company))
     await session.flush()
 
     created, updated = await upsert_applications_for_user(session, user_id, rolled)
+    # Catch up on anything the user classified that never got an application.
+    # Runs AFTER the upsert so an orphan whose employer is also in the fresh
+    # rollup joins that row instead of creating a duplicate.
+    created += await reconcile_orphaned_classifications(session, user_id)
 
-    await _reset_review_queue(session, user_id)
+    await _reset_review_queue(session, user_id, coverage)
     needs_review = await _persist_review_items(session, user_id, review)
 
     await session.commit()
-    return created, updated, purged, needs_review
+    if removed:
+        logger.info(
+            "Re-sync removed %s contradicted auto row(s) for user_id=%s: %s "
+            "(dismissed, not deleted — restorable)",
+            len(removed),
+            user_id,
+            ", ".join(r.company for r in removed),
+        )
+    return MergeResult(
+        created=created,
+        updated=updated,
+        purged=len(removed),
+        needs_review=needs_review,
+        removed=tuple(removed),
+    )
 
 
 async def _add_training_example(
@@ -625,6 +1014,11 @@ async def record_status_correction(
     overwrite it) and, for every linked email, writes a training example
     labelled with the category implied by the new status. Scoped to the owner;
     returns the updated row or None when it does not exist for this user.
+
+    Setting a status on a REMOVED row restores it. Otherwise the correction
+    would land on a row nobody can see — user-owned, sticky and invisible —
+    which is a worse state than either of the two it came from. Someone
+    deciding what stage an application is at is telling you they want it.
     """
 
     app = (
@@ -637,6 +1031,8 @@ async def record_status_correction(
     if app is None:
         return None
 
+    app.dismissed_at = None
+    app.dismissed_reason = None
     app.status = new_status
     if _is_auto_row(app.source):
         app.source = SOURCE_GMAIL_USER  # gmail-derived but now user-settled
@@ -666,11 +1062,14 @@ async def record_status_correction(
 async def dismiss_application(
     session, user_id: uuid.UUID, application_id: int
 ) -> bool:
-    """Mark a row 'not an application' — remove it and teach the model it was noise.
+    """Mark a row 'not an application' — take it off the board, teach the model.
 
     Records each linked email as an ``other`` training example (so the classifier
-    learns it was wrongly filed), then deletes the emails and the row. Scoped to
-    the owner. Returns False when the row does not exist for this user.
+    learns it was wrongly filed), then DISMISSES the row: it disappears from the
+    board and the summary, but the row and its emails stay on disk so
+    :func:`restore_application` can put it back. It used to delete both, which
+    made a misclick as final as the re-sync bug was. Scoped to the owner.
+    Returns False when the row does not exist for this user.
     """
 
     app = (
@@ -694,12 +1093,44 @@ async def dismiss_application(
         await _add_training_example(
             session, user_id, email, EmailCategory.OTHER
         )
-    for email in emails:
-        await session.delete(email)
 
-    await session.delete(app)
+    app.dismissed_at = datetime.utcnow()
+    app.dismissed_reason = DISMISSED_BY_USER
+    app.updated_at = datetime.utcnow()
+    session.add(app)
     await session.commit()
     return True
+
+
+async def restore_application(
+    session, user_id: uuid.UUID, application_id: int
+) -> Application | None:
+    """Undo a dismissal — put the row (and its mail) back on the board.
+
+    The other half of making removal recoverable: whether the row was dismissed
+    by the user or taken off by a re-sync, this returns it verbatim — same id,
+    same status, same filed date, same linked emails — because nothing was ever
+    deleted. Idempotent on an already-live row. Scoped to the owner; ``None``
+    when the row is not theirs.
+    """
+
+    app = (
+        await session.exec(
+            select(Application).where(
+                Application.user_id == user_id, Application.id == application_id
+            )
+        )
+    ).first()
+    if app is None:
+        return None
+    if app.dismissed_at is not None:
+        app.dismissed_at = None
+        app.dismissed_reason = None
+        app.updated_at = datetime.utcnow()
+        session.add(app)
+        await session.commit()
+        await session.refresh(app)
+    return app
 
 
 async def delete_application(
@@ -731,12 +1162,26 @@ async def classify_review_item(
     user_id: uuid.UUID,
     message_id: str,
     category: EmailCategory,
+    company: str | None = None,
 ) -> dict[str, object]:
     """Classify a needs-review email into a category — persist + train.
 
     Marks the email reviewed, records a training example, and — when the chosen
     category is a real lifecycle stage with a nameable employer — creates (or
     advances) a STICKY, user-owned application from it. Scoped to the owner.
+
+    NEVER REPORTS SUCCESS WHILE CREATING NOTHING. When the category *is* a
+    filing status but the employer cannot be named (and the caller supplied no
+    ``company``), the decision is not swallowed: the email is left in the review
+    queue exactly as it was — un-reviewed, still ``needs_review`` — and the
+    response carries ``needs_employer: True`` naming what the caller must
+    supply. The training example is still written, because the user's label is
+    valuable regardless of whether a row could be filed from it.
+
+    (Previously this branch marked the email reviewed, wrote the training row,
+    created no application and returned ``{"application_id": null}`` with a
+    2xx — so the item vanished from the queue and never reached the board.
+    ``training_data`` id 4 / ``emails`` id 58 in production are that bug.)
     """
 
     email = (
@@ -749,16 +1194,50 @@ async def classify_review_item(
     if email is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Review item not found.")
 
+    status_value = _lifecycle_to_status(category)
+    employer = None
+    if status_value is not None:
+        employer = pipeline.resolve_employer(
+            email.sender_email or "", email.subject or "", email.sender_name
+        )
+        if employer is None and company:
+            employer = pipeline.employer_from_text(company)
+
+    if status_value is not None and employer is None:
+        # Visible failure: keep the label for training, keep the item in the
+        # queue, and tell the caller what is missing.
+        await _add_training_example(session, user_id, email, category)
+        await session.commit()
+        logger.warning(
+            "Review classify for user_id=%s message_id=%s needs an employer: "
+            "category=%s sender=%s subject=%r",
+            user_id,
+            message_id,
+            category.value,
+            email.sender_email,
+            email.subject,
+        )
+        return {
+            "classified_as": category.value,
+            "application_id": None,
+            "needs_employer": True,
+            "message_id": message_id,
+            "detail": (
+                "Could not identify the employer for this email. Re-send the "
+                "same classification with a 'company' to file it."
+            ),
+        }
+
     email.classified_as = category
     email.is_reviewed = True
     email.user_corrected = True
 
-    result: dict[str, object] = {"classified_as": category.value, "application_id": None}
+    result: dict[str, object] = {
+        "classified_as": category.value,
+        "application_id": None,
+        "needs_employer": False,
+    }
 
-    status_value = _lifecycle_to_status(category)
-    employer = pipeline.resolve_employer(
-        email.sender_email or "", email.subject or "", email.sender_name
-    )
     if status_value is not None and employer is not None:
         token, display = employer
         app = await _find_application_by_token(session, user_id, token)
@@ -845,6 +1324,8 @@ def _serialize(
         applied_date=app.applied_date.isoformat() if app.applied_date else None,
         source=app.source,
         url=pipeline.retarget_gmail_deeplink(app.url, account_email),
+        dismissed_at=app.dismissed_at.isoformat() if app.dismissed_at else None,
+        dismissed_reason=app.dismissed_reason,
     )
 
 
@@ -867,6 +1348,13 @@ async def list_applications_cloud(
     search: str | None = Query(
         None, description="Case-insensitive substring match on company/position/notes."
     ),
+    dismissed: bool = Query(
+        False,
+        description=(
+            "Return the REMOVED rows instead of the live board — what a re-sync "
+            "took off and what the user dismissed, so either can be restored."
+        ),
+    ),
 ) -> CloudApplicationListResponse:
     """List applications owned by the authenticated Supabase user, paginated.
 
@@ -882,9 +1370,18 @@ async def list_applications_cloud(
     honest "X of Y" without a second request. Server-side ``LIMIT``/``OFFSET``
     keeps the transferred payload bounded regardless of account size; the
     default page size still fits a typical whole board in one response.
+
+    Dismissed rows are excluded by default: removal hides a row, it no longer
+    deletes it. ``dismissed=true`` returns exactly those instead, which is the
+    list an "undo" surface reads.
     """
 
     filters = [Application.user_id == user_id]
+    filters.append(
+        Application.dismissed_at.is_not(None)
+        if dismissed
+        else Application.dismissed_at.is_(None)
+    )
     if status is not None:
         filters.append(Application.status == status)
     if company:
@@ -949,10 +1446,16 @@ async def application_summary_cloud(
     week_ago = now - _THIS_WEEK_WINDOW
 
     async with get_session() as session:
+        # Dismissed rows are off the board, so they are out of every tile too —
+        # otherwise the funnel would keep counting an application the user (or a
+        # re-sync) removed, and the stat tiles would disagree with the list.
         grouped = (
             await session.exec(
                 select(Application.status, func.count())
-                .where(Application.user_id == user_id)
+                .where(
+                    Application.user_id == user_id,
+                    Application.dismissed_at.is_(None),
+                )
                 .group_by(Application.status)
             )
         ).all()
@@ -963,6 +1466,7 @@ async def application_summary_cloud(
                 .select_from(Application)
                 .where(
                     Application.user_id == user_id,
+                    Application.dismissed_at.is_(None),
                     Application.created_at >= week_ago,
                     Application.created_at <= now,
                 )
@@ -1010,7 +1514,14 @@ async def create_application_cloud(
     RLS ``WITH CHECK`` clause would reject a mismatched insert as well,
     but checking here first avoids the round-trip on misconfigured
     clients.
+
+    ``applied_date`` and ``url`` are persisted when supplied. A malformed date
+    is a visible 422: dropping it silently is exactly the bug that made the
+    dialog's date and link disappear into ``notes``.
     """
+
+    applied_date = _parse_applied_date(data.applied_date)
+    url = (data.url or "").strip() or None
 
     async with get_session() as session:
         app = Application(
@@ -1019,6 +1530,8 @@ async def create_application_cloud(
             position=data.position,
             status=data.status,
             notes=data.notes,
+            applied_date=applied_date,
+            url=url,
             source=SOURCE_MANUAL,  # hand-filed → sticky, never auto-touched
         )
         session.add(app)
@@ -1108,10 +1621,17 @@ async def classify_review_item_cloud(
 
     A lifecycle category with a nameable employer becomes a sticky, user-owned
     application; every choice records a training example (SetFit retrain path).
+
+    A 2xx does NOT on its own mean a row was filed: when the employer cannot be
+    named the response carries ``needs_employer: true`` and the item stays in
+    the queue. Callers must branch on that flag (and may re-POST with
+    ``company``) rather than assuming success.
     """
 
     async with get_session() as session:
-        return await classify_review_item(session, user_id, message_id, data.category)
+        return await classify_review_item(
+            session, user_id, message_id, data.category, data.company
+        )
 
 
 @router.get("/{application_id}", response_model=ApplicationDetailResponse)
@@ -1187,7 +1707,11 @@ async def dismiss_application_cloud(
     application_id: int,
     user_id: uuid.UUID = Depends(current_user),
 ) -> dict[str, object]:
-    """'Not an application / dismiss' — remove the row + train it was misfiled."""
+    """'Not an application / dismiss' — take the row off the board + train it.
+
+    Reversible: the row leaves the board and the summary but is not deleted, so
+    ``POST /applications/{id}/restore`` brings it back intact.
+    """
 
     async with get_session() as session:
         ok = await dismiss_application(session, user_id, application_id)
@@ -1195,7 +1719,28 @@ async def dismiss_application_cloud(
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
         )
-    return {"dismissed": True}
+    return {"dismissed": True, "restorable": True}
+
+
+@router.post("/{application_id}/restore", response_model=CloudApplicationResponse)
+async def restore_application_cloud(
+    application_id: int,
+    user_id: uuid.UUID = Depends(current_user),
+) -> CloudApplicationResponse:
+    """Undo a removal — put a dismissed row back on the board, intact.
+
+    Works for both kinds of removal (a user dismiss and a re-sync's automatic
+    one), because neither deletes anything. 404 when the row is not the
+    caller's. Idempotent on a row that is already live.
+    """
+
+    async with get_session() as session:
+        app = await restore_application(session, user_id, application_id)
+    if app is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
+        )
+    return _serialize(app)
 
 
 @router.delete("/{application_id}", response_model=dict)

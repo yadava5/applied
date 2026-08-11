@@ -75,9 +75,14 @@ export function SamplePreview() {
 
   return (
     <section aria-label="Sample dashboard preview" className="space-y-4">
+      {/* The "not yours" disclaimer is the only thing standing between a
+          fixture board and a user reading it as their own pipeline, so it is
+          sized and contrasted to be READ: text-strong on a raised surface with
+          a strong border, not a 10px dim whisper. Same mono/uppercase language
+          as the rest of the labels. */}
       <div className="flex items-center gap-3">
         <span className="label-mono">preview</span>
-        <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dim">
+        <span className="rounded-full border border-line-strong bg-surface-2 px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-wider text-strong">
           sample data · not yours
         </span>
         <span className="h-px flex-1 bg-line-soft" aria-hidden="true" />

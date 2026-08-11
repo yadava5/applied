@@ -32,10 +32,29 @@ import { serverEnv } from "@/lib/env";
 import type { InboxPage, PipelineAnalysis } from "@/lib/gmail/types";
 import { getAccessToken } from "@/lib/supabase/auth";
 
+/**
+ * `GET /auth/gmail/status` — availability, linkage, and the caller's sync
+ * cursor state. Mirrors the backend `GmailStatusResponse` field-for-field
+ * (`cloud/gmail_oauth.py`); the last four are what the web renders as
+ * "last synced …" so the product stops feeling like it never synced.
+ */
 export interface GmailStatus {
   configured: boolean;
   connected: boolean;
   email: string | null;
+  /**
+   * ISO-8601 of the last *successful* sync, WITH an explicit UTC offset (the
+   * backend's `_iso_utc`, so `new Date()` cannot read it as local time), or
+   * `null` until one succeeds. An instant — parse it through
+   * `lib/gmail/sync-state`, never through the calendar-date helper.
+   */
+  last_sync_at: string | null;
+  /** A Gmail `historyId` is stored, so the next server-side sync is incremental. */
+  has_cursor: boolean;
+  /** Last recorded state. The cloud path only ever writes `idle` or `error`. */
+  sync_status: string | null;
+  /** On error, the failure's type name (a reference code, not a message). */
+  sync_error: string | null;
 }
 
 /** Why an authenticated backend call did not succeed. */

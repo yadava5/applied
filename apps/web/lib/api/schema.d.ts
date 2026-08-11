@@ -70,6 +70,9 @@ export interface components {
       position: string;
       status?: string;
       notes?: string | null;
+      /** ISO `YYYY-MM-DD`. A full ISO datetime is accepted and truncated to its date. */
+      applied_date?: string | null;
+      url?: string | null;
     };
     ApplicationSummaryResponse: {
       total: number;

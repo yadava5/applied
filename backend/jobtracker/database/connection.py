@@ -211,7 +211,15 @@ def get_engine() -> AsyncEngine:
         if _is_sqlite_url(url):
             # Ensure database directory exists for on-disk SQLite.
             settings.ensure_directories()
-            logger.info(f"Creating SQLite database engine: {settings.database_path}")
+            # Log the URL actually in use — NEVER ``settings.database_path``.
+            # Under ``environment=test`` the engine is ``:memory:`` while
+            # ``database_path`` still resolves to the real desktop database, so
+            # the old line made every test run announce that it had opened
+            # ~/Library/Application Support/JobTracker/jobtracker.db. That is
+            # false, and it has already caused a green test run to be diagnosed
+            # as writing to the user's production data. A SQLite URL carries no
+            # credentials, so it is safe to log verbatim.
+            logger.info(f"Creating SQLite database engine: {url}")
 
             engine_kwargs["connect_args"] = {
                 "check_same_thread": False,  # Required for async

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
+import { Logo } from "@/components/brand/Logo";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { ClassifierContext, StatTiles } from "@/components/dashboard/StatTiles";
@@ -11,7 +12,7 @@ import { DEMO_APPLICATIONS_AS_API } from "@/lib/demo/asApplications";
 import { summarize } from "@/lib/dashboard/summary";
 
 export const metadata: Metadata = {
-  title: "Live demo — Applied",
+  title: "Live demo",
   description:
     "The Applied dashboard and classifier decision trace, on fixture data. No inbox is read.",
 };
@@ -38,9 +39,10 @@ export default function DemoPage() {
           <div className="flex flex-wrap items-center gap-3">
             <Link
               href="/"
-              className="inline-flex min-h-11 items-center font-mono text-sm font-semibold text-strong"
+              className="brand-logo-link inline-flex min-h-11 items-center text-strong"
+              aria-label="Applied — go to landing"
             >
-              job<span className="text-dim">_</span>tracker
+              <Logo className="h-6 w-auto" />
             </Link>
             <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
               demo · fixture data · no inbox read

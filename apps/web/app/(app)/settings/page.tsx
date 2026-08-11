@@ -13,7 +13,7 @@ import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
-  title: "Settings — Applied",
+  title: "Settings",
   description: "Manage your profile, appearance, notifications, classification, data, and Gmail.",
 };
 

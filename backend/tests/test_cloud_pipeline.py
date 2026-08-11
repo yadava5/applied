@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from jobtracker.cloud import pipeline as p
 
 # --- company_key ------------------------------------------------------------
@@ -300,6 +302,124 @@ def test_resolve_employer_ignores_edu_and_person_and_fragments() -> None:
     assert p.resolve_employer("news@mail.joinhandshake.com", "The Software you wanted", "The") is None
 
 
+# --- resolve_employer: the four REAL production sender/subject pairs ----------
+#
+# These are the exact senders + subjects sitting in the owner's production
+# ``emails`` table. Three already resolved; the fourth ("Crusoe | Application
+# Received") did not, and a user classifying it created NOTHING while the API
+# reported success. Pinned here as a set so a future precision tweak cannot
+# regress one while fixing another.
+
+PRODUCTION_ATS_PAIRS = [
+    (
+        "no-reply@us.greenhouse-mail.io",
+        "Thank you for applying to Anthropic",
+        None,
+        ("anthropic", "Anthropic"),
+    ),
+    (
+        "no-reply@ashbyhq.com",
+        "Thank you for applying with MotherDuck!",
+        "Team Talent @ MotherDuck",
+        ("motherduck", "MotherDuck"),
+    ),
+    (
+        "no-reply@ashbyhq.com",
+        "Thanks for applying to Supabase 🚀",
+        "Supabase Hiring Team",
+        ("supabase", "Supabase"),
+    ),
+    (
+        "no-reply@ashbyhq.com",
+        "Crusoe | Application Received",
+        "Crusoe Hiring Team",
+        ("crusoe", "Crusoe"),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("sender_email", "subject", "sender_name", "expected"), PRODUCTION_ATS_PAIRS
+)
+def test_resolve_employer_names_every_real_production_ats_mail(
+    sender_email: str, subject: str, sender_name: str | None, expected: tuple[str, str]
+) -> None:
+    assert p.resolve_employer(sender_email, subject, sender_name) == expected
+
+
+def test_resolve_employer_falls_back_to_ats_sender_display_name() -> None:
+    # Role-ish TAIL words are stripped, one pass per word.
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Application update", "Crusoe Hiring Team") == (
+        "crusoe",
+        "Crusoe",
+    )
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Application update", "Acme Talent Acquisition") == (
+        "acme",
+        "Acme",
+    )
+    # "<something> @ <Company>" — the company follows the at-sign.
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Application update", "Team Talent @ MotherDuck") == (
+        "motherduck",
+        "MotherDuck",
+    )
+    assert p.resolve_employer("no-reply@lever.co", "We received your submission", "Initech Recruiting") == (
+        "initech",
+        "Initech",
+    )
+
+
+def test_resolve_employer_falls_back_to_subject_lead_segment() -> None:
+    # "<Company> | <anything>" and "<Company> - <anything>" — the ATS subject
+    # shape with no at/with/to connective for the anchored pattern to use.
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Crusoe | Application Received", None) == (
+        "crusoe",
+        "Crusoe",
+    )
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Globex — Interview scheduled", None) == (
+        "globex",
+        "Globex",
+    )
+    # A separator that is NOT the leading segment cannot invent a company.
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Re: your note | thanks", None) is None
+
+
+def test_resolve_employer_fallbacks_never_name_a_relay_or_a_person() -> None:
+    # The courier is not the company — neither by relay vocabulary...
+    assert p.resolve_employer("alerts@mail.joinhandshake.com", "New jobs for you", "Handshake") is None
+    # ...nor by the actual sending brand ("Ashby" for ashbyhq.com).
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Application update", "Ashby") is None
+    # A display name that is really an address names the relay, not an employer.
+    assert (
+        p.resolve_employer("no-reply@ashbyhq.com", "Application Received", "no-reply@ashbyhq.com")
+        is None
+    )
+    # Consumer webmail is excluded from the name fallback entirely: a display
+    # name there is a PERSON. This is the "Julee Johnson → OFFERED" row.
+    assert p.resolve_employer("julee.johnson@gmail.com", "You have an offer", "Julee Johnson") is None
+    # A .edu never reaches the fallbacks (it fails the corporate test, and is
+    # not an ATS relay), so a university display name still yields nothing.
+    assert p.resolve_employer("noreply@miamioh.edu", "Online Onboarding", "Miami OH") is None
+
+
+def test_relay_domain_sets_partition_without_drift() -> None:
+    # RELAY_DOMAINS is composed from the two subsets, so a domain can never be
+    # in the "never an employer" list yet missing from both halves.
+    assert p.RELAY_DOMAINS == p.ATS_RELAY_DOMAINS | p.CONSUMER_WEBMAIL_DOMAINS
+    assert not (p.ATS_RELAY_DOMAINS & p.CONSUMER_WEBMAIL_DOMAINS)
+    assert "ashbyhq" in p.ATS_RELAY_DOMAINS and "ashbyhq" in p.RELAY_DOMAINS
+    assert "gmail" in p.CONSUMER_WEBMAIL_DOMAINS and "gmail" in p.RELAY_DOMAINS
+
+
+def test_employer_from_text_validates_a_user_supplied_company() -> None:
+    assert p.employer_from_text("Crusoe") == ("crusoe", "Crusoe")
+    assert p.employer_from_text("  Globex Inc. ") == ("globex", "Globex")
+    # A blank or stopword-only string still cannot manufacture a row.
+    assert p.employer_from_text("") is None
+    assert p.employer_from_text(None) is None
+    assert p.employer_from_text("the") is None
+    assert p.employer_from_text("Careers") is None
+
+
 # --- roll_up precision gate --------------------------------------------------
 
 
@@ -470,3 +590,57 @@ def test_rollup_and_review_emit_naive_datetimes_from_aware_input() -> None:
     review = p.collect_review_items(items)
     assert len(review) == 1
     assert review[0].received_at is not None and review[0].received_at.tzinfo is None
+
+
+# --- ScanCoverage: what a bounded scan can honestly claim to have seen -------
+
+
+def _scanned_item(message_id: str, received_at: datetime | None) -> p.PipelineItem:
+    return p.PipelineItem(
+        message_id=message_id,
+        category="other",
+        sender_email="news@example.com",
+        subject="Newsletter",
+        received_at=received_at,
+    )
+
+
+def test_scan_coverage_spans_only_what_the_scan_returned() -> None:
+    from jobtracker.cloud.applications import ScanCoverage
+
+    naive = datetime(2026, 5, 10, 9, 0, 0)
+    coverage = ScanCoverage.from_items(
+        [_scanned_item("m1", naive), _scanned_item("m2", naive + timedelta(days=5))]
+    )
+    assert coverage.message_ids == {"m1", "m2"}
+    assert coverage.covers(naive) and coverage.covers(naive + timedelta(days=5))
+    # Older than the oldest message the scan reached, and newer than its newest:
+    # in both directions the scan simply did not get there.
+    assert not coverage.covers(naive - timedelta(seconds=1))
+    assert not coverage.covers(naive + timedelta(days=5, seconds=1))
+    assert not coverage.covers(None)
+
+
+def test_scan_coverage_compares_aware_and_naive_without_blowing_up() -> None:
+    """A relayed aware timestamp vs a naive stored column must not raise.
+
+    ``Email.received_at`` is TIMESTAMP WITHOUT TIME ZONE while a client relays
+    ISO-8601 with an offset. Mixing the two in a comparison is a TypeError, and
+    it would be raised in the middle of deciding what to remove.
+    """
+
+    from jobtracker.cloud.applications import ScanCoverage
+
+    aware = datetime(2026, 5, 10, 20, 4, 21, tzinfo=UTC)
+    coverage = ScanCoverage.from_items([_scanned_item("m1", aware)])
+    assert coverage.oldest is not None and coverage.oldest.tzinfo is None
+    assert coverage.covers(datetime(2026, 5, 10, 20, 4, 21))  # naive, same instant
+    assert coverage.covers(aware)
+
+
+def test_empty_scan_covers_nothing() -> None:
+    from jobtracker.cloud.applications import ScanCoverage
+
+    coverage = ScanCoverage.from_items([])
+    assert coverage.message_ids == frozenset()
+    assert not coverage.covers(datetime(2026, 5, 10, 9, 0, 0))

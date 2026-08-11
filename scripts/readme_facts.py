@@ -694,7 +694,11 @@ FACTS: dict[str, dict] = {
         "kind": "static",
         "describe": "test_*.py modules under backend/tests/",
         "compute": lambda: len(test_modules()),
-        "sites": [r"across (\d+) modules both at", r"# (\d+) modules"],
+        # Anchored on "at HEAD" because the same sentence also states the module
+        # count at the original commit ("the same 25 modules at `37dd805`"). An
+        # unanchored `across (\d+) modules` would match both and could not tell
+        # the current figure from the historical one.
+        "sites": [r"across (\d+) modules at HEAD", r"# (\d+) modules"],
     },
     "testFunctions": {
         # NOTE for --write: the sentence carrying this number also asserts the
@@ -723,7 +727,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"tests-(\d+)%20collected",
             r"\*\*(\d+) tests collected, \d+ skipped\.\*\*",
-            r"the difference from (\d+) coming from parametrization",
+            r"The remaining difference from (\d+) is parametrization",
         ],
     },
     "testsSkipped": {
@@ -1104,6 +1108,25 @@ def run(mode: str) -> None:
                 f"the README says the recorded figures were taken on {dm.group(1)}, but "
                 f"{ARTIFACT.relative_to(REPO)} was recorded {artifact['recordedAt']}."
             )
+
+    # The recorded figures are only worth anything if the run that produced them
+    # passed. `--record` writes `suiteOutcome` and warns when it is red, but a
+    # warning is not a gate: nothing stopped a red run's numbers from being
+    # written and then agreeing with the README forever after. That is the same
+    # shape as a claim site matching zero times — a check that cannot fail.
+    outcome = artifact.get("suiteOutcome") or {}
+    if not outcome:
+        problems.append(
+            f"{ARTIFACT.relative_to(REPO)} carries no suiteOutcome, so there is no "
+            "evidence the run behind these figures passed. Re-run --record."
+        )
+    elif not outcome.get("allGreen"):
+        problems.append(
+            "the recorded figures came from a suite that did not pass "
+            f"(exit {outcome.get('exitCode')}, {outcome.get('failed')} failed, "
+            f"{outcome.get('skipped')} skipped). Numbers from a red run are not "
+            "evidence. Fix the suite, then re-run --record."
+        )
 
     if mode == "write":
         written = []

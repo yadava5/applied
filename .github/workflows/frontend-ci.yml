@@ -48,7 +48,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: "pnpm"
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
@@ -60,6 +60,14 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      # Node 22+ is required, not incidental: these tests import `.ts` helpers
+      # directly and rely on the runtime's built-in type stripping (>= 22.6) and
+      # the built-in glob (>= 21). On the Node 20 this job used to pin they
+      # failed with ERR_UNKNOWN_FILE_EXTENSION, so the tests existed while no
+      # job ran them — a check that could not fail.
+      - name: Unit tests
+        run: pnpm test:unit
 
       - name: Build
         run: pnpm build

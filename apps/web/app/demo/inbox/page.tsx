@@ -5,7 +5,7 @@ import { SampleInbox } from "@/components/demo/SampleInbox";
 import { Logo } from "@/components/brand/Logo";
 
 export const metadata: Metadata = {
-  title: "Sample inbox — Applied",
+  title: "Sample inbox",
   description:
     "See the Applied classifier's real verdicts on a set of sample job-search emails — no Google connection, no inbox read.",
 };

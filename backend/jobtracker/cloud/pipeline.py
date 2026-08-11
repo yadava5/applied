@@ -63,11 +63,11 @@ RESPONSE_CATEGORIES: frozenset[str] = frozenset(
     {"interview", "assessment", "offer", "rejection"}
 )
 
-# Domains that relay mail on behalf of MANY employers (applicant tracking
-# systems, job boards, generic mailbox providers). Grouping by these would
-# wrongly merge unrelated companies, so for a sender on one of these we derive
-# the company from the subject / sender display-name instead of the domain.
-RELAY_DOMAINS: frozenset[str] = frozenset(
+# Domains that relay mail on behalf of MANY EMPLOYERS: applicant tracking
+# systems, job boards and the generic ESPs that front them. The domain does not
+# identify the employer, but the *message* still comes from one — so the sender
+# display-name and the subject are legitimate places to look for the company.
+ATS_RELAY_DOMAINS: frozenset[str] = frozenset(
     {
         # Applicant tracking systems / recruiting relays (front many employers).
         "lever",
@@ -120,20 +120,6 @@ RELAY_DOMAINS: frozenset[str] = frozenset(
         "builtin",
         "lensa",
         "simplyhired",
-        # Consumer webmail (never identify an employer).
-        "gmail",
-        "googlemail",
-        "outlook",
-        "hotmail",
-        "live",
-        "yahoo",
-        "ymail",
-        "aol",
-        "icloud",
-        "me",
-        "proton",
-        "protonmail",
-        "zoho",
         # Generic mail-relay / ESP brands that front many senders.
         "sendgrid",
         "mailgun",
@@ -149,6 +135,34 @@ RELAY_DOMAINS: frozenset[str] = frozenset(
         "messaging",
     }
 )
+
+# Consumer webmail. Also a relay in the sense that the domain never identifies
+# an employer — but unlike an ATS relay there is no employer behind it at all:
+# a display-name here is a PERSON ("Julee Johnson"), which is exactly how the
+# board once grew a "Julee Johnson → OFFERED" row. Kept as its own set so the
+# display-name/subject fallbacks in :func:`resolve_employer` can be applied to
+# ATS mail WITHOUT ever being applied to a human's personal mail.
+CONSUMER_WEBMAIL_DOMAINS: frozenset[str] = frozenset(
+    {
+        "gmail",
+        "googlemail",
+        "outlook",
+        "hotmail",
+        "live",
+        "yahoo",
+        "ymail",
+        "aol",
+        "icloud",
+        "me",
+        "proton",
+        "protonmail",
+        "zoho",
+    }
+)
+
+# Every domain whose brand must NOT be used as the employer. Composed from the
+# two sets above so membership can never drift between them.
+RELAY_DOMAINS: frozenset[str] = ATS_RELAY_DOMAINS | CONSUMER_WEBMAIL_DOMAINS
 
 # Corporate/recruiting noise words stripped from a sender display-name before
 # it is used as a company token ("Acme Recruiting" / "Acme via Lever" → "acme").
@@ -489,6 +503,31 @@ _EMPLOYER_ON_BEHALF = re.compile(
 )
 _EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
 
+# The employer named by the LEADING segment of an ATS subject, before a "|" or a
+# spaced dash: "Crusoe | Application Received", "Acme — Interview scheduled".
+# Anchored to the start so a separator later in the line cannot invent a company,
+# and the capture stays case-sensitive so only a Capitalized proper noun is taken.
+_EMPLOYER_LEAD_SEGMENT = re.compile(
+    r"^\s*(" + _COMPANY_CAPTURE + r")\s*(?:\||\s[-–—]\s)"
+)
+
+# Role-ish tails an ATS sender's display name carries AFTER the company name:
+# "Crusoe Hiring Team", "Supabase Recruiting", "Acme Talent Acquisition".
+# Anchored to the END (and applied repeatedly) so a company whose own name
+# contains one of these words — "People Data Labs", "Team Liquid" — is not
+# shredded from the middle out the way a global substitution would do it.
+_NAME_ROLE_TAIL = re.compile(
+    r"(?:\s|^)(?:hiring|recruit(?:ing|ment|er|ers)?|talent|careers?|jobs?|hr|"
+    r"people|team|notifications?|no[-\s]?reply|noreply|support|"
+    r"acquisition|ops|operations)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+# A display name that is really an email address ("no-reply@ashbyhq.com"), which
+# names the relay, never the employer.
+_NAME_IS_ADDRESS = re.compile(r"^\S+@\S+\.\S+$")
+
 # Pure filler that is never itself a role title (kept SEPARATE from the company
 # stopwords, which reject legitimate title words like "Software"/"Engineer").
 _ROLE_FILLER: frozenset[str] = frozenset(
@@ -620,6 +659,117 @@ def _employer_from_subject(subject: str) -> str | None:
     return None
 
 
+def _clean_sender_display_name(raw: str) -> str:
+    """Trim an ATS sender display-name down to the employer it fronts.
+
+    Drops a "via Lever" / "(Greenhouse)" relay tail, then strips trailing
+    role-ish words repeatedly ("Crusoe Hiring Team" → "Crusoe Hiring" →
+    "Crusoe"). Only the TAIL is touched, so a company whose name legitimately
+    contains one of those words keeps it.
+    """
+
+    text = _VIA_TAIL.sub("", raw or "").strip()
+    for _ in range(4):  # bounded: "Acme Talent Acquisition" needs two passes
+        stripped = _NAME_ROLE_TAIL.sub("", text).strip(" ,.-&|")
+        if stripped == text:
+            break
+        text = stripped
+    return re.sub(r"\s+", " ", text).strip(" ,.-&|")
+
+
+def _names_the_relay(token: str, relay_brand: str) -> bool:
+    """True when a candidate names the RELAY itself, not the employer behind it.
+
+    "Handshake", "Greenhouse", "Ashby" are the courier, not the company — a row
+    built from one of those is exactly the garbage the precision gate exists to
+    prevent. Matched both against the known relay vocabulary and against the
+    actual sending brand (so "Ashby" is rejected for ``ashbyhq.com``).
+    """
+
+    first = token.split(" ")[0] if token else ""
+    if not first:
+        return True
+    if first in RELAY_DOMAINS:
+        return True
+    return bool(
+        relay_brand
+        and (relay_brand.startswith(first) or first.startswith(relay_brand))
+    )
+
+
+def _employer_from_sender_name(
+    sender_name: str | None, relay_brand: str
+) -> tuple[str, str] | None:
+    """Employer named by an ATS sender's DISPLAY NAME, or None.
+
+    Handles the two shapes ATS mail actually uses:
+      - ``"Crusoe Hiring Team"`` → ``Crusoe`` (role-ish tail stripped)
+      - ``"Team Talent @ MotherDuck"`` → ``MotherDuck`` (company after the ``@``)
+    """
+
+    raw = (sender_name or "").strip().strip('"')
+    if not raw or _NAME_IS_ADDRESS.match(raw):
+        return None
+
+    candidates: list[str] = []
+    if "@" in raw:
+        tail = raw.rsplit("@", 1)[1].strip()
+        # A dot in the tail means it is a hostname ("…@ashbyhq.com"), not a name.
+        if tail and "." not in tail:
+            candidates.append(tail)
+    candidates.append(raw)
+
+    for candidate in candidates:
+        display = _clean_sender_display_name(candidate)
+        if not display:
+            continue
+        token = _normalize_token(display.split(" ")[0])
+        if not _valid_company_token(token) or _names_the_relay(token, relay_brand):
+            continue
+        return token, display
+    return None
+
+
+def _employer_from_subject_segment(
+    subject: str, relay_brand: str
+) -> tuple[str, str] | None:
+    """Employer named by the leading segment of an ATS subject, or None.
+
+    ``"Crusoe | Application Received"`` → ``Crusoe``. This is the shape that has
+    no ``at``/``with``/``to`` connective for :data:`_EMPLOYER_ANCHORED` to hang
+    off, which is why a real production classification silently created nothing.
+    """
+
+    match = _EMPLOYER_LEAD_SEGMENT.match(subject or "")
+    if not match:
+        return None
+    display = _clean_company_display(match.group(1))
+    if not display:
+        return None
+    token = _normalize_token(display.split(" ")[0])
+    if not _valid_company_token(token) or _names_the_relay(token, relay_brand):
+        return None
+    return token, display
+
+
+def employer_from_text(raw: str | None) -> tuple[str, str] | None:
+    """Resolve a caller-supplied company string to ``(token, display)`` or None.
+
+    Used when the pipeline cannot name the employer itself and the USER supplies
+    it (``POST /applications/review/{id}/classify`` with a ``company``). Cleaned
+    and validated with exactly the same rules as an extracted name, so a blank
+    or stopword-only string still cannot manufacture a row.
+    """
+
+    display = _clean_company_display(raw or "")
+    if not display:
+        return None
+    token = _normalize_token(display.split(" ")[0])
+    if not _valid_company_token(token):
+        return None
+    return token, display
+
+
 def _brand_display(brand: str, sender_name: str | None) -> str:
     """Human display for an employer identified by its own mail domain."""
 
@@ -649,6 +799,19 @@ def resolve_employer(
          or a ``.edu`` host (a student's university is not an employer here).
       2. An employer named explicitly in the subject ("... at <Company>",
          "on behalf of <Company>"). This is the relay case (Lever/Greenhouse).
+      3. (ATS relays only) the sender DISPLAY NAME — "Crusoe Hiring Team" →
+         Crusoe, "Team Talent @ MotherDuck" → MotherDuck.
+      4. (ATS relays only) the subject's leading segment before a ``|`` or a
+         spaced dash — "Crusoe | Application Received" → Crusoe.
+
+    Steps 3 and 4 are deliberately LAST and deliberately restricted to ATS /
+    job-board / ESP relays: an ATS message really is sent on behalf of one
+    employer, so its display name and subject lead are honest signals. Consumer
+    webmail is excluded because a display name there is a person, and a ``.edu``
+    (or any other host that already failed step 1) is excluded because it never
+    reaches these branches at all. Without 3 and 4 a real production
+    classification of "Crusoe | Application Received" resolved to None and the
+    endpoint created nothing while reporting success.
     """
 
     domain = ""
@@ -673,6 +836,14 @@ def resolve_employer(
         token = _normalize_token(from_subject.split(" ")[0])
         if _valid_company_token(token):
             return token, from_subject
+
+    if brand in ATS_RELAY_DOMAINS:
+        from_name = _employer_from_sender_name(sender_name, brand)
+        if from_name is not None:
+            return from_name
+        from_segment = _employer_from_subject_segment(subject, brand)
+        if from_segment is not None:
+            return from_segment
 
     return None
 
