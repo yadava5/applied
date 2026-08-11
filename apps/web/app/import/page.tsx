@@ -35,7 +35,13 @@ export default async function ImportPage() {
 
   const intro = (
     <div className="space-y-3">
-      <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
+        {/* Header voice shared by every tab: h1 + one mono line of state. */}
+        <p className="mt-1 font-mono text-xs text-dim">
+          on-device · classified in your browser · nothing is uploaded
+        </p>
+      </header>
       <p className="max-w-2xl text-muted">
         Classify your own job-search mail without connecting Gmail and without signing in. Export
         your mail from <span className="text-strong">Google Takeout</span> (or drop a single{" "}

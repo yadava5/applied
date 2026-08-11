@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createServerApiClient } from "@/lib/api/server";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
+import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { DashboardEmptyState, ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
 import { RetryLoadButton } from "@/components/dashboard/RetryLoadButton";
 import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
@@ -24,6 +25,12 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  * recent-activity feed are gone: each was a second (or sixth) rendering of a
  * number already on screen, and the classifier strip was CI provenance shown
  * to somebody trying to find a job.
+ *
+ * The pulse strip (`PipelinePulse`) is not those coming back: every cell on it
+ * is DERIVED signal the subtitle and the columns cannot express — filed-per-
+ * week momentum, the age distribution of open rows, and how much of the board
+ * the classifier built / is holding — each computed once, in `lib/dashboard/
+ * age.ts`, from the same rows the board renders.
  *
  * Data path unchanged: the counts come from the O(1) `GET
  * /applications/summary`, the board from one bounded page of
@@ -110,13 +117,13 @@ async function loadDashboard(): Promise<LoadState> {
   }
 }
 
-/** The page's one prose data line — its only rendering of the totals. */
-function buildSubtitle(summary: PipelineSummary, needsReview: number): string {
-  const reviewNote =
-    needsReview > 0 ? ` · ${needsReview} need${needsReview === 1 ? "s" : ""} review` : "";
+/** The page's one prose data line — its only rendering of the totals. The
+ *  needs-review count is NOT here anymore: the pulse strip's classifier cell
+ *  owns it (with the deep link), so the number renders once. */
+function buildSubtitle(summary: PipelineSummary): string {
   return `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
-  }${reviewNote}`;
+  }`;
 }
 
 export default async function DashboardPage() {
@@ -251,7 +258,7 @@ export default async function DashboardPage() {
 
   // --- Populated dashboard ---------------------------------------------------
   const { summary } = state;
-  const subtitle = buildSubtitle(summary, state.needsReview);
+  const subtitle = buildSubtitle(summary);
 
   // Only fetch the queue's rows when the summary says there is something to show.
   const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
@@ -266,6 +273,15 @@ export default async function DashboardPage() {
       <SyncBar subtitle={subtitle} gmail={gmail}>
         <AddApplicationForm compact />
       </SyncBar>
+
+      {/* The three signals the rows carry that the board can't show as
+          columns: momentum over time, how the open pipeline is ageing, and
+          what the classifier built/held (see PipelinePulse). */}
+      <PipelinePulse
+        applications={state.applications}
+        total={state.total}
+        needsReview={state.needsReview}
+      />
 
       {/* The in-app weekly digest — pref-gated, and only when there is a week
           to report. The review half of the old NotificationCues banner is gone:

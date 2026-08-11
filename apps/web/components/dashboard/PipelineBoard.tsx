@@ -1,13 +1,17 @@
 "use client";
 
 import { Search } from "lucide-react";
+import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
+import { FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
+import { CompanyBand } from "@/components/dashboard/CompanyBand";
+import { todayISO } from "@/lib/dashboard/age";
 import { boardColumns, cardQualifier } from "@/lib/dashboard/board";
-import { filedAt, shortDate } from "@/lib/dashboard/dates";
+import { filedAt } from "@/lib/dashboard/dates";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 
@@ -21,11 +25,13 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
 function StaticApplicationCard({
   app,
   columnLabel,
+  today,
   sameCompanyCount = 0,
   onFilterCompany,
 }: {
   app: Application;
   columnLabel: string;
+  today: string;
   sameCompanyCount?: number;
   onFilterCompany?: (company: string) => void;
 }) {
@@ -34,7 +40,7 @@ function StaticApplicationCard({
   const filed = filedAt(app);
   const role = app.position.trim();
   return (
-    <li
+    <div
       className="rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
@@ -54,18 +60,13 @@ function StaticApplicationCard({
         </p>
       ) : null}
       {sameCompanyCount > 0 && onFilterCompany ? (
-        <button
-          type="button"
-          onClick={() => onFilterCompany(app.company)}
-          aria-label={`Show all applications at ${app.company}`}
-          className="mt-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
-        >
-          {sameCompanyCount} more at {app.company} →
-        </button>
+        <SameCompanyChip company={app.company} count={sameCompanyCount} onFilter={onFilterCompany} />
       ) : null}
       {app.notes && <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-dim">{app.notes}</p>}
-      <p className="mt-2 font-mono text-[10px] text-dim">filed {shortDate(filed)}</p>
-    </li>
+      <p className="mt-2">
+        <FiledStamp filed={filed} status={app.status} today={today} />
+      </p>
+    </div>
   );
 }
 
@@ -75,8 +76,20 @@ function StaticApplicationCard({
  * A card is an APPLICATION, not a company: one employer can hold several cards
  * (four Amazon roles in one evening is the proven case), they can sit in
  * different columns simultaneously, and the role line is the discriminator.
- * Company stays an attribute — the only company-level affordance is the light
- * "N more at Amazon" link on a card, which filters the board.
+ * Company stays an attribute — the company-level affordances are the "+N at
+ * Amazon" chip on a card and the set view it opens: the board filters to the
+ * employer and a `CompanyBand` names the set (count, stage spread, filing
+ * span). While that filter is active the chip is suppressed — "3 more at
+ * Amazon" inside Amazon's own set view was a bug, not information.
+ *
+ * Motion (the `motion` library): every card cell is a `motion.li` with a
+ * shared `layoutId`, so search/filter changes glide survivors into place, a
+ * card dropped (or selected) into another column visibly travels there, and
+ * clearing a filter gathers the board back. Entrances only run for cards that
+ * appear AFTER hydration (`entering` below) — server HTML is never hidden
+ * behind an animation — exits are instant (a filter must feel like a filter,
+ * not a curtain call), and `useReducedMotion` collapses the whole layer to
+ * static rendering.
  *
  * Density rules, deliberately without a nested scroller: the page is the one
  * scroll context. A tall column shows its first {@link COLLAPSED_COUNT} cards
@@ -103,6 +116,35 @@ const COLLAPSED_COUNT = 8;
 /** Below this many rows, search would be chrome without a job. */
 const SEARCH_AFTER = 5;
 
+/**
+ * One board cell: the layout-animated `li` around a card. `layoutId` is what
+ * lets a card travel between columns as one continuous element; `entering`
+ * gates the fade-in to post-hydration appearances only.
+ */
+function BoardCell({
+  id,
+  entering,
+  children,
+}: {
+  id: number;
+  entering: boolean;
+  children: ReactNode;
+}) {
+  const reduceMotion = useReducedMotion();
+  if (reduceMotion) return <li>{children}</li>;
+  return (
+    <motion.li
+      layout
+      layoutId={`app-${id}`}
+      initial={entering ? { opacity: 0, y: 6 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {children}
+    </motion.li>
+  );
+}
+
 export function PipelineBoard({
   applications,
   interactive = true,
@@ -123,6 +165,17 @@ export function PipelineBoard({
   /** Optimistic overlay: id → the status a drop just chose, until the server confirms. */
   const [pendingMoves, setPendingMoves] = useState<Record<number, string>>({});
   const [moveError, setMoveError] = useState<string | null>(null);
+  /** False for the server-rendered pass — entrance animations start only after
+   *  hydration, so no card is ever server-rendered invisible. Deferred off the
+   *  effect body (house rule — no synchronous setState in an effect). */
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setHydrated(true), 0);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  /** One clock read per render — every card's age tag derives from it. */
+  const today = todayISO();
 
   // Server data caught up with an optimistic move → drop the overlay entry and
   // let the row's own status speak. Render-adjustment (guarded, so it settles
@@ -137,7 +190,7 @@ export function PipelineBoard({
     setPendingMoves(next);
   }
 
-  /** How many OTHER cards share each company — drives the "N more at" link. */
+  /** How many OTHER cards share each company — drives the "+N at" chip. */
   const companyCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const app of applications) {
@@ -155,6 +208,20 @@ export function PipelineBoard({
     if (q !== "" && !`${app.company} ${app.position}`.toLowerCase().includes(q)) return false;
     return true;
   });
+
+  /** The active employer's FULL set — what the band describes. */
+  const companySet =
+    companyFilter !== null
+      ? applications.filter((app) => app.company === companyFilter)
+      : null;
+
+  /**
+   * The chip is suppressed for the company the board is already filtered to —
+   * "N more at Amazon" while looking at exactly Amazon's set was the bug this
+   * argument exists to keep fixed.
+   */
+  const sameCompanyCount = (app: Application) =>
+    companyFilter === app.company ? 0 : (companyCounts.get(app.company) ?? 1) - 1;
 
   async function moveTo(appId: number, stageKey: StageKey) {
     const app = applications.find((a) => a.id === appId);
@@ -206,7 +273,7 @@ export function PipelineBoard({
   return (
     <div className="space-y-3">
       {/* --- Board filters ------------------------------------------------- */}
-      {showSearch || companyFilter !== null ? (
+      {showSearch || filterActive ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {showSearch ? (
             <div className="relative flex-1 basis-56">
@@ -224,23 +291,22 @@ export function PipelineBoard({
               />
             </div>
           ) : null}
-          {companyFilter !== null ? (
-            <button
-              type="button"
-              onClick={() => setCompanyFilter(null)}
-              aria-label={`Stop filtering by ${companyFilter}`}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line-strong px-3 py-1 font-mono text-[11px] text-strong transition-colors hover:border-line"
-            >
-              {companyFilter}
-              <span aria-hidden>×</span>
-            </button>
-          ) : null}
           {filterActive ? (
             <span className="font-mono text-[11px] text-dim" role="status">
               {filtered.length} of {applications.length} shown
             </span>
           ) : null}
         </div>
+      ) : null}
+
+      {/* --- The employer's set, named ------------------------------------- */}
+      {companyFilter !== null && companySet !== null ? (
+        <CompanyBand
+          company={companyFilter}
+          apps={companySet}
+          statusOf={shownStatus}
+          onClear={() => setCompanyFilter(null)}
+        />
       ) : null}
 
       {moveError ? (
@@ -250,107 +316,111 @@ export function PipelineBoard({
       ) : null}
 
       {/* --- Columns -------------------------------------------------------- */}
-      <div
-        className="board-grid grid items-start gap-3 sm:grid-cols-2"
-        style={{ ["--board-cols" as string]: boardCols }}
-      >
-        {boardColumns(STAGES).map((column) => {
-          const items = filtered.filter((a) => stageOf(shownStatus(a)) === column.key);
-          const isExpanded = expanded[column.key] === true;
-          const visible = isExpanded ? items : items.slice(0, COLLAPSED_COUNT);
-          const hidden = items.length - visible.length;
-          return (
-            <section
-              key={column.key}
-              aria-label={`${column.label} — ${items.length}`}
-              data-drop={dropStage === column.key || undefined}
-              onDragOver={
-                interactive && draggingId !== null
-                  ? (event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                      setDropStage(column.key);
+      <LayoutGroup>
+        <div
+          className="board-grid grid items-start gap-3 sm:grid-cols-2"
+          style={{ ["--board-cols" as string]: boardCols }}
+        >
+          {boardColumns(STAGES).map((column) => {
+            const items = filtered.filter((a) => stageOf(shownStatus(a)) === column.key);
+            const isExpanded = expanded[column.key] === true;
+            const visible = isExpanded ? items : items.slice(0, COLLAPSED_COUNT);
+            const hidden = items.length - visible.length;
+            return (
+              <section
+                key={column.key}
+                aria-label={`${column.label} — ${items.length}`}
+                data-drop={dropStage === column.key || undefined}
+                onDragOver={
+                  interactive && draggingId !== null
+                    ? (event) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setDropStage(column.key);
+                      }
+                    : undefined
+                }
+                onDrop={
+                  interactive
+                    ? (event) => {
+                        event.preventDefault();
+                        const id = Number(event.dataTransfer.getData("text/plain"));
+                        setDropStage(null);
+                        setDraggingId(null);
+                        if (Number.isInteger(id) && id > 0) void moveTo(id, column.key);
+                      }
+                    : undefined
+                }
+                className="board-col flex flex-col rounded-xl border border-line-soft bg-surface p-3 transition-colors"
+              >
+                <div className="mb-2 flex items-baseline justify-between px-1">
+                  <span className="label-mono inline-flex items-center gap-1.5">
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ background: column.color }}
+                      aria-hidden="true"
+                    />
+                    {column.label}
+                  </span>
+                  <span className="tabular font-mono text-xs text-muted">{items.length}</span>
+                </div>
+                <ul className="space-y-2">
+                  {items.length === 0 ? (
+                    <li className="rounded-lg border border-dashed border-line-soft p-3 text-center font-mono text-[11px] text-dim">
+                      {filterActive ? "none match" : "none yet"}
+                    </li>
+                  ) : (
+                    visible.map((app) => (
+                      <BoardCell key={app.id} id={app.id} entering={hydrated}>
+                        {interactive ? (
+                          <ApplicationCard
+                            app={app}
+                            columnLabel={column.label}
+                            today={today}
+                            transport={transport}
+                            onOpenDetail={setDetailApp}
+                            sameCompanyCount={sameCompanyCount(app)}
+                            onFilterCompany={setCompanyFilter}
+                            dragging={draggingId === app.id}
+                            onDragStart={(event) => {
+                              event.dataTransfer.setData("text/plain", String(app.id));
+                              event.dataTransfer.effectAllowed = "move";
+                              setDraggingId(app.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingId(null);
+                              setDropStage(null);
+                            }}
+                          />
+                        ) : (
+                          <StaticApplicationCard
+                            app={app}
+                            columnLabel={column.label}
+                            today={today}
+                            sameCompanyCount={sameCompanyCount(app)}
+                            onFilterCompany={setCompanyFilter}
+                          />
+                        )}
+                      </BoardCell>
+                    ))
+                  )}
+                </ul>
+                {hidden > 0 || isExpanded ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpanded((e) => ({ ...e, [column.key]: !isExpanded }))
                     }
-                  : undefined
-              }
-              onDrop={
-                interactive
-                  ? (event) => {
-                      event.preventDefault();
-                      const id = Number(event.dataTransfer.getData("text/plain"));
-                      setDropStage(null);
-                      setDraggingId(null);
-                      if (Number.isInteger(id) && id > 0) void moveTo(id, column.key);
-                    }
-                  : undefined
-              }
-              className="board-col flex flex-col rounded-xl border border-line-soft bg-surface p-3 transition-colors"
-            >
-              <div className="mb-2 flex items-baseline justify-between px-1">
-                <span className="label-mono inline-flex items-center gap-1.5">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ background: column.color }}
-                    aria-hidden="true"
-                  />
-                  {column.label}
-                </span>
-                <span className="tabular font-mono text-xs text-muted">{items.length}</span>
-              </div>
-              <ul className="space-y-2">
-                {items.length === 0 ? (
-                  <li className="rounded-lg border border-dashed border-line-soft p-3 text-center font-mono text-[11px] text-dim">
-                    {filterActive ? "none match" : "none yet"}
-                  </li>
-                ) : (
-                  visible.map((app) =>
-                    interactive ? (
-                      <ApplicationCard
-                        key={app.id}
-                        app={app}
-                        columnLabel={column.label}
-                        transport={transport}
-                        onOpenDetail={setDetailApp}
-                        sameCompanyCount={(companyCounts.get(app.company) ?? 1) - 1}
-                        onFilterCompany={setCompanyFilter}
-                        dragging={draggingId === app.id}
-                        onDragStart={(event) => {
-                          event.dataTransfer.setData("text/plain", String(app.id));
-                          event.dataTransfer.effectAllowed = "move";
-                          setDraggingId(app.id);
-                        }}
-                        onDragEnd={() => {
-                          setDraggingId(null);
-                          setDropStage(null);
-                        }}
-                      />
-                    ) : (
-                      <StaticApplicationCard
-                        key={app.id}
-                        app={app}
-                        columnLabel={column.label}
-                        sameCompanyCount={(companyCounts.get(app.company) ?? 1) - 1}
-                        onFilterCompany={setCompanyFilter}
-                      />
-                    ),
-                  )
-                )}
-              </ul>
-              {hidden > 0 || isExpanded ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExpanded((e) => ({ ...e, [column.key]: !isExpanded }))
-                  }
-                  className="mt-2 rounded-lg border border-dashed border-line px-2 py-1.5 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-strong"
-                >
-                  {isExpanded ? "show fewer" : `show all ${items.length}`}
-                </button>
-              ) : null}
-            </section>
-          );
-        })}
-      </div>
+                    className="mt-2 rounded-lg border border-dashed border-line px-2 py-1.5 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-strong"
+                  >
+                    {isExpanded ? "show fewer" : `show all ${items.length}`}
+                  </button>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      </LayoutGroup>
 
       {interactive ? (
         <ApplicationDetail app={detailApp} onClose={() => setDetailApp(null)} transport={transport} />

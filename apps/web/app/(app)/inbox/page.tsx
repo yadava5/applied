@@ -88,13 +88,16 @@ export default async function InboxPage() {
     const { configured, connected, email } = result.status;
 
     if (configured && connected) {
+      // The connected inbox is a data surface: it spans the shell's full
+      // column like the dashboard board does (the capped reading measure is
+      // for the prose/CTA states below). Header voice matches every tab —
+      // h1 + one mono line of state.
       return (
-        <section className="max-w-3xl space-y-6">
+        <section className="space-y-6">
           <header>
             <h1 className="text-2xl font-semibold tracking-tight text-strong">Classified inbox</h1>
-            <p className="mt-1 text-sm text-muted">
-              Mine your mail for your real pipeline. Pick a range and volume — every message gets one
-              verdict, and applications no one answered are flagged to follow up.
+            <p className="mt-1 font-mono text-xs text-dim">
+              read-only mine · one verdict per message · unanswered applications get flagged
             </p>
           </header>
           <InboxWorkbench email={email} />
