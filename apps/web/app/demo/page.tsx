@@ -80,16 +80,24 @@ export default function DemoPage() {
             <h2 id="queue-title" className="label-caps">
               decision trace — click an email to open its verdict
             </h2>
+            {/* The qualifier is load-bearing and matches the landing's pill:
+                0.979 is the RULES stage, and this line sits directly above a
+                trace of the three-layer cascade, where an unqualified number
+                reads as the cascade's. It is not — the full cascade scores
+                0.958 on the same 96-email set (README, "Classifier
+                evaluation"). This figure has drifted before. */}
             <span className="font-mono text-[11px] text-dim">
-              CI-gated at 0.95 macro-F1 · 0.979 measured
+              CI-gated at 0.95 macro-F1 · rules stage 0.979
             </span>
           </div>
           <DecisionTrace />
           <p className="mt-3 text-xs leading-relaxed text-dim">
             Each verdict is traced through three layers — regex rules strike first, e5 embeddings
             arbitrate, a SetFit head renders the call. Below the 0.85 gate nothing is auto-filed;
-            the email waits for a human and the correction becomes new training data. 0.979 macro-F1
-            on the committed eval set, gated in CI at 0.95.
+            the email waits for a human and the correction becomes new training data. To be precise
+            about what the score measures: 0.979 macro-F1 is the <strong>rules stage</strong> on the
+            committed 96-email benchmark, gated in CI at 0.95. The full cascade scores 0.958 on that
+            same set.
           </p>
           <Link
             href="/demo/inbox"
