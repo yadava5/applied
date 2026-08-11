@@ -564,3 +564,73 @@ async def test_a_choice_at_the_wrong_employer_is_ignored_not_obeyed(test_session
     assert await apps._chosen_application(test_session, USER, crusoe.id, "amazon") is None
     assert await apps._chosen_application(test_session, USER, None, "amazon") is None
     assert await apps._chosen_application(test_session, USER, 99999, "amazon") is None
+
+
+async def test_a_stored_employer_name_is_restyled_when_the_resolver_improves(test_session):
+    """A fix to name resolution has to reach the rows already on the board.
+
+    "Doordash" was live — a title-cased domain label that cannot know where the
+    intercap goes. Restyling only happens when the new spelling still answers to
+    the same token, so the row stays findable on the next sync.
+    """
+
+    row = stored("Doordash", source="gmail")
+    await _seed(test_session, [row])
+
+    rolled = p.RolledApplication(
+        company_token="doordash",
+        company_display="DoorDash",
+        role=None,
+        status="applied",
+        applied_at=None,
+        last_activity=None,
+    )
+    created, updated = await apps.upsert_applications_for_user(test_session, USER, [rolled])
+
+    assert (created, updated) == (0, 1)
+    rows = await apps._company_rows(test_session, USER, "doordash")
+    assert [r.company for r in rows] == ["DoorDash"]
+
+
+async def test_a_user_owned_row_keeps_the_name_the_user_gave_it(test_session):
+    """The sync owns an auto row's company. It does not own a human's."""
+
+    await _seed(test_session, [stored("My Own Label", source="manual")])
+    rolled = p.RolledApplication(
+        company_token="my",
+        company_display="My Corp",
+        role=None,
+        status="applied",
+        applied_at=None,
+        last_activity=None,
+    )
+
+    await apps.upsert_applications_for_user(test_session, USER, [rolled])
+
+    rows = await apps._company_rows(test_session, USER, "my")
+    assert [r.company for r in rows] == ["My Own Label"]
+
+
+def test_the_match_token_moves_with_the_display_name():
+    """Otherwise a restyled row becomes unfindable and the sync duplicates it.
+
+    `matches_company_token` compares leading words, so a row displayed as
+    "Twitch" cannot be found by the token "twitchjobs". Returning one without
+    the other is how a rename turns into a duplicate.
+    """
+
+    resolved = p.resolve_employer("no-reply@twitchjobs.tv", "Thank you for applying to Twitch")
+
+    assert resolved == ("twitch", "Twitch")
+    assert p.matches_company_token(resolved[1], resolved[0])
+
+
+def test_a_domain_that_disagrees_with_the_subject_keeps_its_own_token():
+    """The agreement test is the whole safety of taking a name from a subject."""
+
+    resolved = p.resolve_employer(
+        "careers@stripe.com", "Your application to Acme was received"
+    )
+
+    assert resolved is not None
+    assert resolved[0] == "stripe"
