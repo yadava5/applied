@@ -22,6 +22,13 @@
   --green: #4ade80;
   --amber: #f59e0b;
   --red: #f87171;
+  /* The resting stage's accent. Deliberately achromatic (applied is the calm
+   * state; green/purple/amber/red keep their reserved meanings) but LIGHTER
+   * than the text ramp: the old `var(--text-muted)` accent measured 2.56:1 in
+   * the card border wash — the stage holding all the data was the least
+   * visible thing on the board. Measured: 9.25:1 / APCA Lc 63.5 solid on
+   * surface-2; the 55% card-border wash lands at 3.62:1 (vs 2.56:1 before). */
+  --stage-applied: #b3b9c2;
   /* Data-viz sub-palette — the three classifier layers get their own
    * categorical hues so the pipeline reads as data, not just mono text. */
   --viz-rules: #38bdf8; /* layer 1 — regex rules, instant */
@@ -56,6 +63,7 @@
   --green: #4ade80;
   --amber: #f59e0b;
   --red: #f87171;
+  --stage-applied: #b3b9c2;
   --viz-rules: #38bdf8;
   --viz-embeddings: #a78bfa;
   --viz-setfit: #34d399;
@@ -84,6 +92,9 @@
   --green: #16a34a;
   --amber: #b45309;
   --red: #dc2626;
+  /* Ink counterpart of the dark ramp's #b3b9c2 — measured 9.93:1 on white,
+   * 9.03:1 on the paper surface-2 (APCA Lc 93 / 87). */
+  --stage-applied: #3f434b;
   --viz-rules: #0284c7;
   --viz-embeddings: #7c3aed;
   --viz-setfit: #059669;
@@ -103,6 +114,7 @@
   --color-live: var(--green);
   --color-review: var(--amber);
   --color-reject: var(--red);
+  --color-stage-applied: var(--stage-applied);
   --color-viz-rules: var(--viz-rules);
   --color-viz-embeddings: var(--viz-embeddings);
   --color-viz-setfit: var(--viz-setfit);
@@ -842,6 +854,51 @@ body {
   .rail-seg {
     animation: none !important;
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Application detail sheet (components/dashboard/ApplicationDetail.tsx) — the
+ * side panel slides in from the right edge. Enhancement only: collapses to a
+ * static, fully visible panel under prefers-reduced-motion; the content is
+ * present either way (never gated on the animation).
+ * ------------------------------------------------------------------------- */
+.sheet-panel {
+  animation: sheet-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-panel {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Board drag-and-drop (components/dashboard/PipelineBoard.tsx). The dragged
+ * card dims in place; a column being hovered as a drop target raises its
+ * border and washes its surface. Pure state styling — no keyframes, so there
+ * is nothing to collapse under reduced motion.
+ * ------------------------------------------------------------------------- */
+.board-col[data-drop="true"] {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.board-card[data-dragging="true"] {
+  opacity: 0.4;
+}
+.board-card[draggable="true"] {
+  cursor: grab;
+}
+.board-card[draggable="true"]:active {
+  cursor: grabbing;
 }
 
 /* ---------------------------------------------------------------------------

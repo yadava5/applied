@@ -25,17 +25,34 @@ export interface DemoReviewItem {
   needsReview: boolean;
 }
 
+/**
+ * Shaped like a REAL early-search board, not a brochure: the applied column is
+ * heavy (10 of 14), offered is empty, and one employer holds several
+ * applications in different stages — the owner's own board has four Amazon
+ * requisitions, so the fixtures must exercise the same truths the live board
+ * does: company+role as the card identity, the "N more at …" affordance,
+ * cross-column same-company cards, an applied column past the collapse
+ * threshold, and an honestly empty column.
+ */
 export const DEMO_APPLICATIONS: DemoApplication[] = [
+  // Northstar Systems ×3 — one advanced, two still applied. Three cards, three
+  // distinct roles, two different columns: an application is not a company.
   { id: "a1", company: "Northstar Systems", position: "ML Engineer", status: "interviewing", appliedAt: "2026-06-28", lastSignal: "Interview availability — technical round" },
-  { id: "a2", company: "Harbor Analytics", position: "Backend Engineer", status: "interviewing", appliedAt: "2026-07-02", lastSignal: "Next step: online assessment" },
-  { id: "a3", company: "Cedar Labs", position: "Software Engineer, Platform", status: "applied", appliedAt: "2026-07-08", lastSignal: "Your application was received" },
-  { id: "a4", company: "Summit Platform", position: "Full-Stack Engineer", status: "applied", appliedAt: "2026-07-10", lastSignal: "Application under review" },
-  { id: "a5", company: "Quarry Data", position: "Data Engineer", status: "applied", appliedAt: "2026-07-11", lastSignal: "Thanks for applying" },
-  { id: "a6", company: "Beacon Health", position: "ML Engineer, Risk", status: "offered", appliedAt: "2026-05-30", lastSignal: "Congratulations — offer details inside" },
-  { id: "a7", company: "Fernworks", position: "Systems Engineer", status: "rejected", appliedAt: "2026-06-05", lastSignal: "Update on your application" },
-  { id: "a8", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", appliedAt: "2026-06-12", lastSignal: "Moving forward with other candidates" },
-  { id: "a9", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "interviewing", appliedAt: "2026-06-20", lastSignal: "Schedule your onsite loop" },
-  { id: "a10", company: "Copperline", position: "Backend Engineer, Payments", status: "applied", appliedAt: "2026-07-14", lastSignal: "We received your application" },
+  { id: "a2", company: "Northstar Systems", position: "ML Engineer, Platform", status: "applied", appliedAt: "2026-07-09", lastSignal: "Your application was received" },
+  { id: "a3", company: "Northstar Systems", position: "Research Engineer, Applied ML", status: "applied", appliedAt: "2026-07-09", lastSignal: "Thanks for applying" },
+  // Cedar Labs ×2 — one open, one already closed.
+  { id: "a4", company: "Cedar Labs", position: "Software Engineer, Platform", status: "applied", appliedAt: "2026-07-08", lastSignal: "Your application was received" },
+  { id: "a5", company: "Cedar Labs", position: "Site Reliability Engineer", status: "rejected", appliedAt: "2026-06-14", lastSignal: "Moving forward with other candidates" },
+  // Single-application employers — the common case, which stays untaxed.
+  { id: "a6", company: "Harbor Analytics", position: "Backend Engineer", status: "applied", appliedAt: "2026-07-02", lastSignal: "Application under review" },
+  { id: "a7", company: "Summit Platform", position: "Full-Stack Engineer", status: "applied", appliedAt: "2026-07-10", lastSignal: "Application under review" },
+  { id: "a8", company: "Quarry Data", position: "Data Engineer", status: "applied", appliedAt: "2026-07-11", lastSignal: "Thanks for applying" },
+  { id: "a9", company: "Beacon Health", position: "ML Engineer, Risk", status: "applied", appliedAt: "2026-07-12", lastSignal: "We received your application" },
+  { id: "a10", company: "Fernworks", position: "Systems Engineer", status: "rejected", appliedAt: "2026-06-05", lastSignal: "Update on your application" },
+  { id: "a11", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", appliedAt: "2026-06-12", lastSignal: "Moving forward with other candidates" },
+  { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", appliedAt: "2026-07-13", lastSignal: "We received your application" },
+  { id: "a13", company: "Copperline", position: "Backend Engineer, Payments", status: "applied", appliedAt: "2026-07-14", lastSignal: "We received your application" },
+  { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", appliedAt: "2026-07-15", lastSignal: "Thanks for applying" },
 ];
 
 export const DEMO_REVIEW_QUEUE: DemoReviewItem[] = [

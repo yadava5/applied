@@ -68,10 +68,30 @@ interface SendResult {
 export function ApplicationCard({
   app,
   columnLabel,
+  onOpenDetail,
+  sameCompanyCount = 0,
+  onFilterCompany,
+  dragging = false,
+  onDragStart,
+  onDragEnd,
 }: {
   app: Application;
   /** The heading of the column this card is rendered in (see `board.ts`). */
   columnLabel?: string;
+  /** Opens the detail sheet (the mail behind this card). */
+  onOpenDetail?: (app: Application) => void;
+  /**
+   * How many OTHER applications share this company. A card is an application,
+   * not a company — one employer can hold several — so this is a light
+   * affordance ("3 more at Amazon"), never a grouping.
+   */
+  sameCompanyCount?: number;
+  /** Filters the board to this card's company. */
+  onFilterCompany?: (company: string) => void;
+  /** True while this card is the one being dragged. */
+  dragging?: boolean;
+  onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void;
+  onDragEnd?: () => void;
 }) {
   const router = useRouter();
   const confirmId = `confirm-delete-${useId()}`;
@@ -269,27 +289,60 @@ export function ApplicationCard({
     );
   }
 
+  const role = app.position.trim();
+
   return (
     <li
       aria-busy={busy !== null}
-      className="group/card relative rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
+      draggable={onDragStart ? true : undefined}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      data-dragging={dragging || undefined}
+      className="board-card group/card relative rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
-          <span className="truncate">{app.company}</span>
-          {qualifier && (
-            <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
-              {qualifier}
+        {/* A card is an APPLICATION: company anchors it, the role discriminates
+            it (four Amazon cards must read as four different rows), and the
+            block itself opens the mail behind the card. */}
+        {onOpenDetail ? (
+          <button
+            type="button"
+            onClick={() => onOpenDetail(app)}
+            aria-label={`Open ${app.company}${role ? ` — ${role}` : ""}`}
+            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+          >
+            <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
+              <span className="truncate underline-offset-2 group-hover/card:underline">
+                {app.company}
+              </span>
+              {qualifier && (
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+                  {qualifier}
+                </span>
+              )}
             </span>
-          )}
-        </p>
+            {role ? <span className="block truncate text-xs text-foreground">{role}</span> : null}
+          </button>
+        ) : (
+          <div className="min-w-0">
+            <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
+              <span className="truncate">{app.company}</span>
+              {qualifier && (
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+                  {qualifier}
+                </span>
+              )}
+            </p>
+            {role ? <p className="truncate text-xs text-foreground">{role}</p> : null}
+          </div>
+        )}
         <div className="flex shrink-0 items-center gap-1">
           {busy !== null || optimistic ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-dim" aria-hidden />
           ) : null}
           <RowActionsMenu
-            label={`Row actions for ${app.company}`}
+            label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
             items={menuItems}
             disabled={busy !== null}
             triggerRef={triggerRef}
@@ -297,7 +350,16 @@ export function ApplicationCard({
         </div>
       </div>
 
-      {app.position ? <p className="truncate text-xs text-muted">{app.position}</p> : null}
+      {sameCompanyCount > 0 && onFilterCompany ? (
+        <button
+          type="button"
+          onClick={() => onFilterCompany(app.company)}
+          aria-label={`Show all applications at ${app.company}`}
+          className="mt-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
+        >
+          {sameCompanyCount} more at {app.company} →
+        </button>
+      ) : null}
 
       <div className="mt-2 flex items-center justify-between gap-2">
         <label className="sr-only" htmlFor={`status-${app.id}`}>

@@ -47,6 +47,12 @@ export interface ClassifyRequestBody {
   category: string;
   /** Only consulted when the backend cannot resolve the employer itself. */
   company?: string;
+  /**
+   * Which existing application the message answers, when one employer holds
+   * several. TODO(backend): not in `ReviewClassifyRequest` yet — sent and
+   * ignored until the entity-model branch lands (see `reviewCandidates`).
+   */
+  application_id?: number;
 }
 
 /**
@@ -64,13 +70,19 @@ export type ClassifyOutcome =
   | { kind: "needs-employer"; messageId: string | null; detail: string | null }
   | { kind: "failed"; detail: string };
 
-/** Build the request body, sending `company` only when there is one to send. */
+/** Build the request body; optional fields are sent only when they carry a value. */
 export function classifyRequestBody(
   category: string,
   company?: string | null,
+  applicationId?: number | null,
 ): ClassifyRequestBody {
   const named = typeof company === "string" ? company.trim() : "";
-  return named ? { category, company: named } : { category };
+  const body: ClassifyRequestBody = { category };
+  if (named) body.company = named;
+  if (typeof applicationId === "number" && Number.isInteger(applicationId) && applicationId > 0) {
+    body.application_id = applicationId;
+  }
+  return body;
 }
 
 /** True once the user has typed enough for a re-submit to be worth making. */
@@ -130,4 +142,63 @@ export function rowStaysInQueue(
  */
 export function employerPromptFor(attemptedCompany: string): string {
   return attemptedCompany.trim() ? NEEDS_EMPLOYER_RETRY : NEEDS_EMPLOYER_PROMPT;
+}
+
+// --- Assign-to-application candidates ----------------------------------------
+
+/**
+ * The board slice the picker needs — structural, so this module stays free of
+ * the generated API schema (same rule as `filedAt` in `dates.ts`).
+ */
+export interface CandidateApplication {
+  id: number;
+  company: string;
+  position: string;
+  status: string;
+}
+
+/**
+ * Which of the user's applications could this review item belong to?
+ *
+ * One company can now hold several applications (four Amazon roles in one
+ * evening is the proven case), so a rejection from `amazon.jobs` is ambiguous
+ * until the user says which role it answers. This is the conservative,
+ * client-side half of that surface: an application is a candidate when its
+ * company name appears in the message's sender or subject. Deliberately
+ * strict — a false "which of these?" question is worse than no question —
+ * and two-character names must match the sender's domain label exactly, or
+ * "GE" would match half an inbox.
+ *
+ * The picker renders only when TWO OR MORE candidates match (one match is not
+ * a question), and the chosen id rides the classify request as
+ * `application_id`.
+ *
+ * TODO(backend): `ReviewClassifyRequest` does not accept `application_id` yet
+ * — the field is sent and ignored (Pydantic drops unknown fields) until the
+ * entity-model branch lands. The truly robust version of this matching also
+ * belongs server-side, where the message's resolved employer token exists.
+ */
+export function reviewCandidates(
+  item: { sender_email?: string | null; sender_name?: string | null; subject?: string | null },
+  applications: readonly CandidateApplication[],
+): CandidateApplication[] {
+  const haystack = [item.sender_email, item.sender_name, item.subject]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ")
+    .toLowerCase();
+  if (!haystack) return [];
+
+  const senderDomainLabel = (() => {
+    const email = typeof item.sender_email === "string" ? item.sender_email : "";
+    const at = email.lastIndexOf("@");
+    if (at === -1) return "";
+    return email.slice(at + 1).toLowerCase().split(".")[0] ?? "";
+  })();
+
+  return applications.filter((app) => {
+    const name = app.company.trim().toLowerCase();
+    if (name.length < 2) return false;
+    if (name.length === 2) return senderDomainLabel === name;
+    return haystack.includes(name);
+  });
 }
