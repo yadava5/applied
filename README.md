@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-441%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-443%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/rules%20macro--F1-0.9791%20(CI%20floor%200.95)-2b9348" alt="Rules macro-F1">
   <img src="https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs&logoColor=white" alt="Next.js">
   <img src="https://img.shields.io/badge/React-19.2-61dafb?logo=react&logoColor=black" alt="React">
@@ -373,7 +373,7 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --o
 
 ## Testing
 
-**441 tests collected, 0 skipped.** These figures were recorded on 2026-08-11 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 415 `test_*` functions across 28 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity and RLS work, three of which brought their own module. The remaining difference from 441 is parametrization. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**443 tests collected, 0 skipped.** These figures were recorded on 2026-08-11 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 417 `test_*` functions across 28 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity and RLS work, three of which brought their own module. The remaining difference from 443 is parametrization. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The 11 that used to skip are the Postgres row-level-security module — the only thing in the repo that can demonstrate the isolation the product claims. They waited on a database URL no workflow set, and a skip is green, so as of 2026-08-02 they had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 

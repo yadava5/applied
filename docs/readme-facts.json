@@ -4,7 +4,7 @@
   "machine": "Darwin-arm64, 3.11.14",
   "facts": {
     "testsCollected": {
-      "value": 441,
+      "value": 443,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "testsSkipped": {
@@ -53,7 +53,7 @@
     }
   },
   "suiteOutcome": {
-    "passed": 441,
+    "passed": 443,
     "failed": 0,
     "skipped": 0,
     "errors": 0,
