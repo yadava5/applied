@@ -713,3 +713,43 @@ def test_an_ats_relay_subdomain_does_not_become_the_employer():
     token, display = resolved
     assert token != "rippling"
     assert display.startswith("Supernova")
+
+
+async def test_an_exactly_named_row_does_not_hide_its_own_siblings(test_session):
+    """The bug that grew six rows for one employer on the live board.
+
+    A row named exactly "IXL" answers the exact-match query for token `ixl`, so
+    the early return meant the rows named "IXL Learning" — same employer, same
+    token — were never seen. The resolver read one row where there were three,
+    and every rebuild minted another.
+
+    Renaming a row is what makes the two sets diverge, so the rename feature and
+    the early return were unsafe together and only the second one revealed it.
+    """
+
+    await _seed(
+        test_session,
+        [
+            stored("IXL", source="gmail"),
+            stored("IXL Learning", source="gmail"),
+            stored("IXL Learning", source="gmail"),
+        ],
+    )
+
+    rows = await apps._company_rows(test_session, USER, "ixl")
+
+    assert len(rows) == 3
+    assert {r.company for r in rows} == {"IXL", "IXL Learning"}
+
+
+async def test_company_rows_puts_live_before_dismissed_across_both_queries(test_session):
+    """The union must not let query order decide which row gets adopted."""
+
+    dismissed = stored("IXL", source="gmail")
+    dismissed.dismissed_at = datetime.datetime(2026, 8, 11, 5, 0)
+    live = stored("IXL Learning", source="gmail")
+    await _seed(test_session, [dismissed, live])
+
+    rows = await apps._company_rows(test_session, USER, "ixl")
+
+    assert [r.company for r in rows] == ["IXL Learning", "IXL"]
