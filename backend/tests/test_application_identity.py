@@ -398,7 +398,13 @@ def test_a_company_merely_mentioned_in_a_subject_does_not_rename_the_relay():
 import uuid as _uuid  # noqa: E402
 
 from jobtracker.cloud import applications as apps  # noqa: E402
-from jobtracker.database.models import Application, ApplicationStatus  # noqa: E402
+from jobtracker.database.models import (  # noqa: E402
+    Application,
+    ApplicationStatus,
+    Email,
+    EmailCategory,
+    EmailSource,
+)
 
 USER = _uuid.UUID("7d8676d9-6f45-4466-a1b1-fa63575b2ff5")
 
@@ -786,3 +792,112 @@ def test_a_resolved_employer_can_always_find_its_own_stored_row(sender, subject)
         f"resolve_employer returned token {token!r} for display {display!r}, "
         "which cannot find its own row"
     )
+
+
+# --- splitting a merged row from stored mail alone -----------------------------
+
+
+def mail(
+    message_id: str,
+    subject: str,
+    snippet: str,
+    *,
+    application_id: int | None = None,
+    category=None,
+    minutes: int = 0,
+) -> Email:
+    return Email(
+        user_id=USER,
+        application_id=application_id,
+        source_account=EmailSource.GMAIL,
+        message_id=message_id,
+        subject=subject,
+        sender_email=AMAZON_SENDER,
+        body_snippet=snippet,
+        received_at=BASE + datetime.timedelta(minutes=minutes),
+        classified_as=category or EmailCategory.APPLIED,
+        classification_confidence=0.9,
+    )
+
+
+def amazon_mail(message_id: str, role: str, req: str, minutes: int, **kw) -> Email:
+    return mail(
+        message_id,
+        AMAZON_SUBJECT,
+        f"Amazon.jobs Hi Ayush, Thanks for applying to Amazon! We&#39;ve received your "
+        f"application for the {role} (ID: {req}) position. What ha",
+        minutes=minutes,
+        **kw,
+    )
+
+
+def test_a_merged_row_offers_its_own_mail_as_a_split():
+    """No Gmail call needed — the identity is already on disk.
+
+    Every contributing message kept its subject and snippet, so the requisition
+    ids that tell four Amazon applications apart can be read straight back out.
+    That is what makes splitting possible without a rebuild, which is the only
+    other route and reads as destructive.
+    """
+
+    clusters = apps.cluster_stored_mail(
+        [
+            amazon_mail("m1", "Software Development Engineer - 2026 (US)", "3177934", 0),
+            amazon_mail("m2", "Software Development Engineer – Database 2026 (US)", "3130865", 5),
+            amazon_mail("m3", "Software Development Engineer, AWS Data Services - 2026 (US)", "10414316", 3),
+        ]
+    )
+
+    assert len(clusters) == 3
+    assert {c.req_id for c in clusters} == {"3177934", "3130865", "10414316"}
+    # Earliest first — that cluster is the one that keeps the row's id.
+    assert clusters[0].req_id == "3177934"
+
+
+def test_a_row_whose_mail_names_one_application_offers_no_split():
+    """"Fewer than two" is the normal case and must not read as an error."""
+
+    assert apps.cluster_stored_mail([]) == []
+    assert (
+        apps.cluster_stored_mail(
+            [
+                mail("s1", "Thanks for applying to Supabase", "Hi Ayush, Thanks for applying to Supabase."),
+                mail("s2", "Thank you for applying to Supabase!", "Hey Ayush, we confirm your application."),
+            ]
+        )
+        == []
+    )
+
+
+def test_mail_that_names_no_role_stays_with_the_retained_row():
+    """Real mail for this employer, unattributable — kept, never dropped."""
+
+    clusters = apps.cluster_stored_mail(
+        [
+            amazon_mail("m1", "Software Development Engineer - 2026 (US)", "3177934", 0),
+            amazon_mail("m2", "Software Development Engineer – Database 2026 (US)", "3130865", 5),
+            mail("m3", "Update on your Amazon application", "Hi Ayush, we have an update.", minutes=90),
+        ]
+    )
+
+    assert len(clusters) == 2
+    assert "m3" in {e.message_id for e in clusters[0].emails}
+    assert sum(len(c.emails) for c in clusters) == 3
+
+
+def test_a_siblings_status_is_recomputed_not_inherited():
+    """The row being split may already be terminal.
+
+    `advance_application_status` never leaves a terminal state, so inheriting
+    would hand every sibling one requisition's rejection — the exact damage the
+    identity work exists to undo.
+    """
+
+    live = [amazon_mail("m1", "SDE - 2026 (US)", "3177934", 0)]
+    rejected = [
+        amazon_mail("m2", "SDE – Database 2026 (US)", "3130865", 5),
+        amazon_mail("m3", "SDE – Database 2026 (US)", "3130865", 400, category=EmailCategory.REJECTION),
+    ]
+
+    assert apps._status_from_mail(live) == "applied"
+    assert apps._status_from_mail(rejected) == "rejected"
