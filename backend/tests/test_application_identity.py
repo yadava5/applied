@@ -463,3 +463,52 @@ def test_a_second_requisition_mints_rather_than_stealing_the_adopted_row():
         apps._pick_application([adopted], "3177934", "software development engineer 2026 us")
         is adopted
     )
+
+
+# --- ghost nudges are per application too -------------------------------------
+
+
+def _followups(items, days: int = 40):
+    return p.flag_follow_ups(items, now=BASE + datetime.timedelta(days=days), stale_days=21)
+
+
+def test_a_rejection_for_one_role_does_not_silence_the_nudge_for_another():
+    """Grouping the ghost check by company hides a genuinely ignored application.
+
+    Two Amazon requisitions; one is rejected, the other never answered. The
+    un-answered one is exactly what a follow-up nudge is for.
+    """
+
+    rejected = amazon("f2", "Software Development Engineer – Database 2026 (US)", "3130865", 1)
+    rejection = p.PipelineItem(
+        **{
+            **amazon("f3", "Software Development Engineer – Database 2026 (US)", "3130865", 5).__dict__,
+            "category": "rejection",
+        }
+    )
+
+    flags = _followups([AMAZON_FOUR[0], rejected, rejection])
+
+    assert len(flags) == 1
+    # The flagged one is the requisition nobody answered, not the rejected one.
+    assert flags[0].message_id == "a1"
+
+
+def test_a_response_that_names_no_role_still_answers_the_whole_company():
+    """The conservative direction, on purpose.
+
+    "Update on your application" cannot be attributed to one of four
+    requisitions. Suppressing a nudge is a small annoyance; telling someone a
+    company has ignored them when it has already written back is not.
+    """
+
+    silent = item(
+        "f4",
+        "Update on your application",
+        AMAZON_SENDER,
+        "Hi Ayush, we have an update for you.",
+        category="rejection",
+        minutes=60,
+    )
+
+    assert _followups(AMAZON_FOUR + [silent]) == []
