@@ -481,6 +481,18 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
         Application.id.asc(),
     )
 
+    # BOTH queries, unioned — never "exact first, and stop if it found anything".
+    #
+    # That early return is how the owner's board grew six rows each for "IXL
+    # Learning" and "Torc Robotics". A stored row named exactly "IXL" answered the
+    # exact query for token `ixl`, so the four rows named "IXL Learning" — which
+    # match the same token and are the same employer — were never returned. The
+    # resolver then saw one row where there were five, and every rebuild minted
+    # another. Renaming a row (which the sync now does when the resolver's naming
+    # improves) is exactly what makes the two sets diverge, so the two changes
+    # were unsafe together and only the second one showed it.
+    seen: dict[int, Application] = {}
+
     exact = (
         await session.exec(
             select(Application)
@@ -491,23 +503,38 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
             .order_by(*live_first)
         )
     ).all()
-    if exact:
-        return list(exact)
+    for row in exact:
+        seen[row.id] = row
 
     prefix = pipeline.normalize_company_name(token).split(" ")[0]
-    if not prefix:
-        return []
-    candidates = (
-        await session.exec(
-            select(Application)
-            .where(
-                Application.user_id == user_id,
-                func.lower(Application.company).like(f"{prefix}%"),
+    if prefix:
+        candidates = (
+            await session.exec(
+                select(Application)
+                .where(
+                    Application.user_id == user_id,
+                    func.lower(Application.company).like(f"{prefix}%"),
+                )
+                .order_by(*live_first)
             )
-            .order_by(*live_first)
-        )
-    ).all()
-    return [row for row in candidates if pipeline.matches_company_token(row.company, token)]
+        ).all()
+        for row in candidates:
+            if row.id not in seen and pipeline.matches_company_token(row.company, token):
+                seen[row.id] = row
+
+    # Re-apply the ordering across the union: a live row before a dismissed one
+    # (a dismissed duplicate must never shadow the row actually on the board),
+    # then oldest first. Without this the adoption target would depend on which
+    # query happened to find a row, which is how "the second sync updates the
+    # first row" stops being a property and becomes luck.
+    return sorted(
+        seen.values(),
+        key=lambda row: (
+            row.dismissed_at is not None,
+            row.created_at or datetime.max,
+            row.id or 0,
+        ),
+    )
 
 
 async def _resolve_application(
