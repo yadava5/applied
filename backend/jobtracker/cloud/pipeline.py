@@ -1042,6 +1042,16 @@ class RolledApplication:
     # The deadline this application's mail STATES, if any. None is the common
     # and correct case — most mail states nothing, and nothing is what it gets.
     due_at: datetime | None = None
+    # The evidence behind ``status`` when a rejection is involved, carried so the
+    # persistent half can tell a genuine re-application from a rejection the
+    # scan's window simply did not reach. ``latest_rejection_at`` is the newest
+    # DATED rejection in the cluster (None when there is none, or when the only
+    # rejection carries no date); ``latest_applied_signal_at`` is the newest
+    # dated applied/pending_application signal. Both are cluster-wide maxima
+    # rather than segment-scoped, because ``upsert_applications_for_user`` needs
+    # the applied signal even on a cluster whose rejection it never saw.
+    latest_rejection_at: datetime | None = None
+    latest_applied_signal_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -1380,6 +1390,17 @@ def _role_from_subject(subject: str) -> str | None:
     return None
 
 
+def is_terminal_status(value: str) -> bool:
+    """Is this a status a mail signal may never override on its own?
+
+    Exported so ``jobtracker.cloud.applications`` can ask the question without
+    keeping a second copy of the set. A second copy is how ``assessment`` once
+    came to mean ``interviewing`` in one place and a settable stage in another.
+    """
+
+    return value in _TERMINAL_STATUSES
+
+
 def advance_application_status(current: str, incoming: str) -> str:
     """Return the status a stored row should hold given an incoming signal.
 
@@ -1593,6 +1614,21 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
     Uncertain mail never lands here — it goes to :func:`collect_review_items`
     instead — so the board shows real rows, not noise parsed out of job alerts.
 
+    That override is scoped to the LATEST JOURNEY SEGMENT. Applying again to a
+    role you were rejected for is a second application, and it does not get a
+    second row: the resolver keys on ``(employer, req_id or role_token)`` and
+    matches terminal rows too, so the new confirmation lands on the settled one.
+    Reading the status from the mail strictly newer than the newest dated
+    rejection is what makes that row show the application the user actually
+    made. ``latest_rejection_at`` and ``latest_applied_signal_at`` carry the
+    evidence to :func:`~jobtracker.cloud.applications.upsert_applications_for_user`,
+    which is the only place a stored terminal status may be left.
+
+    A cluster with no applied signal after its newest dated rejection rolls up
+    EXACTLY as it did before segments existed, undated rejections included. That
+    is the whole compatibility claim, and ``backend/tests/test_reopen_after_rejection.py``
+    asserts it field-for-field against a verbatim copy of the old algorithm.
+
     Deterministic and DB-free — the same input always yields the same rows,
     which is what makes the downstream upsert idempotent.
     """
@@ -1605,7 +1641,6 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
         categories = {m.category for m in msgs}
         has_rejection = "rejection" in categories
         max_rank = max((_STAGE_RANK.get(c, 0) for c in categories), default=1)
-        status = "rejected" if has_rejection else _rank_to_status(max_rank)
 
         # Normalize to naive UTC FIRST, so min()/max() never compares a mix of
         # aware and naive datetimes (which raises), and the result persists into
@@ -1620,6 +1655,51 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
             min(applied_dates) if applied_dates else (min(dated) if dated else None)
         )
         last_activity = max(dated) if dated else None
+
+        # SEGMENTS. A rejection ends one; mail strictly newer than the newest
+        # DATED rejection begins the next. Status is read from the latest
+        # segment, so re-applying to a role you were turned down for shows the
+        # application you actually made instead of the one that ended.
+        #
+        # Deliberately a set filter and not a chronological walk. A walk reads
+        # as "the last message wins", which would downgrade an interviewing row
+        # the moment a duplicate confirmation arrived after it; only a REJECTION
+        # starts a segment, and within one the rollup is the same order-blind
+        # maximum it has always been. Nothing here depends on the order mail
+        # arrives in, so no tie-break is needed for a rebuild to be stable.
+        #
+        # Every ambiguity resolves toward STAY-REJECTED, because a false stay is
+        # one visible bug a human can correct while a false reopen recurs on
+        # every rebuild: an undated rejection cannot be ordered and so falls back
+        # to the old rule wholesale; undated mail is never in a segment; and the
+        # comparison is strict, so a confirmation at the rejection's own instant
+        # does not reopen anything.
+        latest_rejection_at = max(
+            (
+                to_naive_utc(m.received_at)
+                for m in msgs
+                if m.category == "rejection" and m.received_at is not None
+            ),
+            default=None,
+        )
+        latest_applied_signal_at = max(applied_dates, default=None)
+
+        segment = (
+            [
+                m
+                for m in msgs
+                if m.received_at is not None
+                and to_naive_utc(m.received_at) > latest_rejection_at
+            ]
+            if latest_rejection_at is not None
+            else []
+        )
+        if any(m.category in ("applied", "pending_application") for m in segment):
+            status = _rank_to_status(
+                max((_STAGE_RANK.get(m.category, 0) for m in segment), default=1)
+            )
+        else:
+            status = "rejected" if has_rejection else _rank_to_status(max_rank)
 
         role = cluster.role
 
@@ -1650,6 +1730,8 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
                 req_id=cluster.req_id,
                 role_token=cluster.role_token,
                 due_at=due_at,
+                latest_rejection_at=latest_rejection_at,
+                latest_applied_signal_at=latest_applied_signal_at,
             )
         )
 
