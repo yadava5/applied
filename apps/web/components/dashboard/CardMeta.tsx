@@ -29,7 +29,7 @@ export function FiledStamp({
   /** ISO date/timestamp the card treats as its filed moment (`filedAt`). */
   filed: string;
   status: string;
-  /** `todayISO()` — computed once per board render, threaded down. */
+  /** `useLocalToday()` — computed once per board render, threaded down. */
   today: string;
 }) {
   const age = daysBetween(filed, today);
@@ -80,7 +80,7 @@ export function DeadlineTag({
 }: {
   /** The row's `due_at` — ISO datetime, or null/undefined for "no deadline". */
   dueAt: string | null | undefined;
-  /** `todayISO()` — the board's one clock read, threaded down. */
+  /** `useLocalToday()` — the board's one clock read, threaded down. */
   today: string;
 }) {
   const due = dueInfo(dueAt, today);

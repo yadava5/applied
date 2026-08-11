@@ -73,8 +73,11 @@ export function ApplicationCard({
   app: Application;
   /** The heading of the column this card is rendered in (see `board.ts`). */
   columnLabel?: string;
-  /** Today's UTC calendar day — the board threads one read of the clock down
-   *  so every card's age tag derives from the same instant. */
+  /** Today's calendar day — the board threads one read of the clock down so
+   *  every card's age tag and deadline state derive from the same instant
+   *  (`useLocalToday`: UTC for the server pass, the reader's own day once
+   *  mounted). The UTC default only stands in for a caller that renders a card
+   *  outside the board; the board always passes its own. */
   today?: string;
   /** Opens the detail sheet (the mail behind this card). */
   onOpenDetail?: (app: Application) => void;

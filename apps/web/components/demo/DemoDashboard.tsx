@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { todayISO } from "@/lib/dashboard/age";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
@@ -74,16 +75,24 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** The whole fixture store, dated against one day — board and pool alike. */
+function buildStore(today: string): DemoBoard {
+  return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
+}
+
 export function DemoDashboard() {
-  // ONE clock read for the whole mount: the fixture dates are relative, so
-  // every row in this store — board and unsynced pool alike — is aged against
-  // the same "today" the board renders with. Resolving them here rather than
-  // at module load is what keeps a long-lived server's HTML and the browser's
+  // The day this demo is rendered against. UTC on the server and through
+  // hydration, the visitor's own day once mounted — the same read the board,
+  // the cards and the pulse strip make for themselves (`useLocalToday`).
+  const today = useLocalToday();
+
+  // ONE clock read per dating of the store: the fixture dates are relative, so
+  // every row here — board and unsynced pool alike — is aged against the same
+  // day the board renders with. Resolving them during render rather than at
+  // module load is what keeps a long-lived server's HTML and the browser's
   // hydration agreeing on what "16 days ago" means.
-  const [snapshot, setSnapshot] = useState<DemoBoard>(() => {
-    const today = todayISO();
-    return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
-  });
+  const [datedFor, setDatedFor] = useState(todayISO);
+  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor));
   /** The pristine fixtures, kept for `restore` — the rows this board began
    *  with, before any drag, dismissal or rebuild touched them. */
   const original = useRef<Application[]>([...snapshot.apps, ...snapshot.pool]);
@@ -92,6 +101,29 @@ export function DemoDashboard() {
     store.current = next;
     setSnapshot(next);
   }, []);
+
+  // The store was dated with the UTC day so the server's HTML and the first
+  // client render agree; once the visitor's real day is known and it differs,
+  // the fixtures are re-dated against it. They MUST be: the seeds are offsets
+  // ("due in 9d", "overdue 2d") and the board now buckets them against the
+  // local day, so leaving the store on the UTC day would shift every phrase on
+  // /demo by one for the width of the visitor's UTC offset. `original` is
+  // rebuilt with them, or a rebuild's Restore would put back rows dated against
+  // the day that was just discarded. This fires at most once, immediately after
+  // hydration and before any fixture can have been touched.
+  // Deferred off the effect body (the house rule, the same shape the detail
+  // sheet's reset uses): the re-dating lands in a macrotask rather than as a
+  // synchronous setState inside an effect.
+  useEffect(() => {
+    if (datedFor === today) return;
+    const id = window.setTimeout(() => {
+      const next = buildStore(today);
+      original.current = [...next.apps, ...next.pool];
+      setDatedFor(today);
+      commit(next);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [today, datedFor, commit]);
 
   const boardTransport = useMemo<BoardTransport>(
     () => ({

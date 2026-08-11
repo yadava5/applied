@@ -150,8 +150,11 @@ export const DEMO_APPLICATION_COUNT = APPLICATION_SEEDS.length;
 /**
  * The demo board's applications, dated against one `today`.
  *
- * Callers pass the SAME clock read they render with (`todayISO()`), and call
- * this during render rather than at module load: a module-level resolution
+ * Callers pass the SAME clock read they render with (`useLocalToday()`), and
+ * re-date the store if that read changes — the seeds are offsets, so fixtures
+ * dated against one day and bucketed against another shift every deadline
+ * phrase on /demo by one. Resolved during render rather than at module load: a
+ * module-level resolution
  * freezes at process start, which on a long-lived dev server or a warm lambda
  * means the server renders yesterday's dates into HTML the browser then
  * hydrates with today's — a mismatch that repairs itself loudly, in the

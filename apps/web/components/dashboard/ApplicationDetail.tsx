@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Dialog } from "@/components/ui/Dialog";
 import { AUTO_FILE_GATE, GateMeter } from "@/components/viz/GateMeter";
-import { todayISO } from "@/lib/dashboard/age";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt, longDate, shortDate } from "@/lib/dashboard/dates";
 import {
   DEADLINE_ADD_LABEL,
@@ -239,6 +239,10 @@ export function ApplicationDetail({
   const [dueBusy, setDueBusy] = useState<null | "save" | "clear">(null);
   const [dueError, setDueError] = useState<string | null>(null);
 
+  /** The day this sheet measures deadlines against — the reader's own once
+   *  mounted. Read here, above the early return, because it is a hook. */
+  const today = useLocalToday();
+
   const load = useCallback(
     async (id: number) => {
       setState({ kind: "loading" });
@@ -281,9 +285,11 @@ export function ApplicationDetail({
   const stage = STAGES.find((s) => s.key === stageOf(shownStatus))!;
   const role = active.position.trim();
   // The deadline the sheet asserts: the row's own, unless a write here already
-  // moved it. UTC calendar-day math, same clock rule as the board.
+  // moved it. Calendar-day math against the reader's own day, the same clock
+  // rule as the board — so a date picked as "today" in the control below can
+  // never come back from it reading as overdue.
   const due = dueOverride ?? { at: active.due_at ?? null, source: active.due_source ?? null };
-  const dueState = dueInfo(due.at, todayISO());
+  const dueState = dueInfo(due.at, today);
   const dueSource = dueSourceLabel(due.source);
 
   async function onStageChange(next: string) {
