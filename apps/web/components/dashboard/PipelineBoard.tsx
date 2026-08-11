@@ -107,9 +107,19 @@ function StaticApplicationCard({
  * `rejected`/`withdrawn`/`ghosted`, so it is headed `closed` and every card in
  * it states its own status (see `lib/dashboard/board.ts`).
  *
- * The public demo and sample previews pass `interactive={false}` for read-only
- * cards whose mutations never fire — search and filters still work there,
- * because `/demo` renders this same component on fixtures.
+ * `interactive={false}` is the INERT board: the sample preview inside the
+ * dashboard's empty state, which sits under `pointer-events-none`. It renders
+ * read-only cards (mutations there would 401 without a session) and no search
+ * field — a search input a user cannot focus is chrome that invites typing and
+ * eats nothing. `/demo` is NOT that board: it renders this component fully
+ * interactive over fixtures, and only the transport is simulated, which is
+ * what gives the session-gated surfaces their executing e2e coverage.
+ *
+ * Scope honesty: the signed-in board is ONE bounded page of a possibly larger
+ * account, so it takes the account's true `total` and says which slice it is
+ * showing when the two differ — the same rule and phrasing as the pulse strip.
+ * Everything derived from the loaded rows (the "+N at" chip, the company band)
+ * is then explicitly counted from that slice, never claimed as the whole.
  */
 const COLLAPSED_COUNT = 8;
 
@@ -161,10 +171,15 @@ function BoardCell({
 
 export function PipelineBoard({
   applications,
+  total,
   interactive = true,
   transport = liveBoardTransport,
 }: {
   applications: Application[];
+  /** The account's true row count, when the caller knows it and it can exceed
+   *  what was loaded. Omitted where the given rows ARE everything (the demo
+   *  store, the sample fixtures) — then there is no slice to disclose. */
+  total?: number;
   interactive?: boolean;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
@@ -204,7 +219,18 @@ export function PipelineBoard({
     setPendingMoves(next);
   }
 
-  /** How many OTHER cards share each company — drives the "+N at" chip. */
+  /**
+   * True when these rows are one page of a bigger account. Everything the
+   * board derives — the column counts, the "+N at" chip, the company band —
+   * then describes the LOADED rows only, and says so rather than passing
+   * itself off as the account.
+   */
+  const truncated = total !== undefined && applications.length < total;
+  const scopeNote = truncated ? `newest ${applications.length} of ${total}` : null;
+
+  /** How many OTHER cards share each company ON THIS BOARD — drives the "+N
+   *  at" chip. Under truncation an employer can hold rows that never loaded,
+   *  so the chip is a floor, not a census; the band states the same scope. */
   const companyCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const app of applications) {
@@ -223,7 +249,7 @@ export function PipelineBoard({
     return true;
   });
 
-  /** The active employer's FULL set — what the band describes. */
+  /** The active employer's rows ON THIS BOARD — what the band describes. */
   const companySet =
     companyFilter !== null
       ? applications.filter((app) => app.company === companyFilter)
@@ -263,7 +289,11 @@ export function PipelineBoard({
     router.refresh();
   }
 
-  const showSearch = applications.length > SEARCH_AFTER;
+  // Never on the inert preview: `interactive={false}` renders inside
+  // `pointer-events-none`, where 14 fixtures cleared this threshold and put a
+  // search box on a brand-new user's first dashboard that they could not type
+  // into.
+  const showSearch = interactive && applications.length > SEARCH_AFTER;
 
   // --- Column widths: space follows content --------------------------------
   // A real search's board is one heavy column and three near-empty ones, and
@@ -287,7 +317,7 @@ export function PipelineBoard({
   return (
     <div className="space-y-3">
       {/* --- Board filters ------------------------------------------------- */}
-      {showSearch || filterActive ? (
+      {showSearch || filterActive || scopeNote ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {showSearch ? (
             <div className="relative flex-1 basis-56">
@@ -310,6 +340,14 @@ export function PipelineBoard({
               {filtered.length} of {applications.length} shown
             </span>
           ) : null}
+          {/* The subtitle counts the whole account; these four columns can
+              only count what loaded. Without this line "250 filed" sat above
+              columns summing to 200 and neither number explained the other. */}
+          {scopeNote ? (
+            <span className="tabular text-xs text-dim">
+              board shows the {scopeNote} · older rows aren&apos;t loaded
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -319,6 +357,7 @@ export function PipelineBoard({
           company={companyFilter}
           apps={companySet}
           statusOf={shownStatus}
+          partial={truncated}
           onClear={() => setCompanyFilter(null)}
         />
       ) : null}

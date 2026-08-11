@@ -2056,7 +2056,14 @@ async def list_applications_cloud(
         stmt = (
             select(Application)
             .where(*filters)
-            .order_by(Application.created_at.desc())
+            # `id` breaks the tie, and it has to. A first Gmail rebuild writes
+            # hundreds of rows inside the same second, so ordering on
+            # `created_at` alone leaves them tied en masse and Postgres is free
+            # to return them in a different order per request. Paging through a
+            # non-deterministic order silently drops and repeats rows across
+            # pages — which the export now walks, and which the board's "newest
+            # 200 of 250" claim depends on being true.
+            .order_by(Application.created_at.desc(), Application.id.desc())
             .offset(offset)
             .limit(page_size)
         )

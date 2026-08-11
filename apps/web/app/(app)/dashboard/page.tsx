@@ -47,6 +47,14 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  */
 const BOARD_PAGE_SIZE = 200;
 
+/**
+ * Why the board isn't rendering. The three failures are kept apart because the
+ * user's next step differs for each — the same discrimination
+ * `lib/gmail/server.ts` makes (`classifyBadResponse`), and for the same reason:
+ * collapsing them told everyone their session was the problem. A 500 is not a
+ * sign-in problem, and offering "sign in again" for one sends a user round a
+ * loop that cannot help.
+ */
 type LoadState =
   | {
       kind: "ok";
@@ -55,7 +63,11 @@ type LoadState =
       total: number;
       needsReview: number;
     }
-  | { kind: "unauthorized"; message: string }
+  /** The backend rejected the JWT (401/403) — expired session or JWKS misconfig. */
+  | { kind: "auth"; message: string }
+  /** Any other non-2xx: a backend fault. The session is fine; retrying is the move. */
+  | { kind: "backend"; message: string; status: number }
+  /** The request never completed (network / DNS / timeout). */
   | { kind: "offline"; message: string };
 
 /**
@@ -80,6 +92,18 @@ function failureMessage(error: unknown, status: number): string {
     : `Backend responded ${status}`;
 }
 
+/**
+ * A non-2xx from either dashboard call, labelled by what it actually means.
+ * 401/403 are the only statuses a fresh sign-in can fix; everything else
+ * (500, 502, 503, 429…) is ours to answer for and is said as such.
+ */
+function failureState(error: unknown, status: number): LoadState {
+  const message = failureMessage(error, status);
+  return status === 401 || status === 403
+    ? { kind: "auth", message }
+    : { kind: "backend", message, status };
+}
+
 async function loadDashboard(): Promise<LoadState> {
   try {
     const api = await createServerApiClient();
@@ -91,10 +115,10 @@ async function loadDashboard(): Promise<LoadState> {
     ]);
 
     if (summaryRes.error || !summaryRes.data) {
-      return { kind: "unauthorized", message: failureMessage(summaryRes.error, summaryRes.response.status) };
+      return failureState(summaryRes.error, summaryRes.response.status);
     }
     if (listRes.error || !listRes.data) {
-      return { kind: "unauthorized", message: failureMessage(listRes.error, listRes.response.status) };
+      return failureState(listRes.error, listRes.response.status);
     }
 
     const summary = summarizeCounts(
@@ -150,6 +174,22 @@ export default async function DashboardPage() {
       : null;
   const connected = gmail?.connected === true;
 
+  // Has a scan actually COMPLETED? "No application emails detected yet" is a
+  // verdict about the mailbox, and only a finished scan can deliver it. The
+  // backend holds `last_sync_at` at the last SUCCESSFUL sync and flips
+  // `sync_status` to "error" when one fails, so both facts are needed: a user
+  // whose first sync errored was being told the scan ran and found nothing,
+  // directly above the SyncBar's alert saying it failed.
+  //
+  // The two not-completed cases are kept apart because their next step is not
+  // the same, and because only ONE of them puts a line in the SyncBar: a
+  // failed run renders "last sync failed · try again", while a never-attempted
+  // one leaves that live region empty (the arrival auto-sync is bounded by a
+  // per-tab cooldown), so pointing at a retry line that isn't there would be
+  // the very thing this fix is about.
+  const scanFailed = connected && gmail?.syncStatus === "error";
+  const scanCompleted = connected && gmail?.lastSyncAt != null && !scanFailed;
+
   // --- Honest degradation: unreachable / rejected backend --------------------
   //
   // This branch renders NO sample data, and deliberately does not consult
@@ -158,13 +198,17 @@ export default async function DashboardPage() {
   // failure, a retry, and the routes forward.
   if (state.kind !== "ok") {
     const headline =
-      state.kind === "unauthorized"
-        ? "We couldn't load your pipeline."
-        : "We couldn't reach the server.";
+      state.kind === "offline"
+        ? "We couldn't reach the server."
+        : "We couldn't load your pipeline.";
+    // Only an auth rejection is a session problem. A 500 told through the same
+    // words sent people to sign in again — a loop that could not help them.
     const detail =
-      state.kind === "unauthorized"
+      state.kind === "auth"
         ? `The backend rejected this session: ${state.message}. Signing in again usually clears it.`
-        : `The backend didn't answer: ${state.message}. Nothing is lost — your board renders the moment it responds.`;
+        : state.kind === "backend"
+          ? `The backend answered ${state.status}: ${state.message}. That's a fault on our side, not a problem with your session or your account — try again in a moment.`
+          : `The backend didn't answer: ${state.message}. Nothing is lost — your board renders the moment it responds.`;
     return (
       <section className="space-y-8">
         <SyncBar subtitle="connection issue · your data could not be loaded" gmail={null}>
@@ -186,7 +230,7 @@ export default async function DashboardPage() {
           </p>
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <RetryLoadButton />
-            {state.kind === "unauthorized" ? (
+            {state.kind === "auth" ? (
               <Link
                 href="/login?redirect=/dashboard"
                 className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
@@ -216,17 +260,29 @@ export default async function DashboardPage() {
           : "";
       return (
         <section className="space-y-6">
-          <SyncBar subtitle={`connected · no applications detected yet${reviewNote}`} gmail={gmail}>
+          <SyncBar
+            subtitle={`connected · ${
+              scanCompleted ? "no applications detected yet" : "no applications filed yet"
+            }${reviewNote}`}
+            gmail={gmail}
+          >
             <AddApplicationForm compact />
           </SyncBar>
           <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
-            <p className="label-caps">connected to gmail</p>
+            <p className="label-caps">
+              {scanCompleted ? "connected to gmail" : "no completed scan yet"}
+            </p>
             <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
-              No application emails detected yet.
+              {scanCompleted
+                ? "No application emails detected yet."
+                : "We haven't completed a scan of your mail yet."}
             </h2>
             <p className="mt-2 max-w-xl text-sm text-muted">
-              We scan your recent mail when you arrive. If your applications are older than 12
-              months, rebuild from a wider window.
+              {scanCompleted
+                ? "We scan your recent mail when you arrive. If your applications are older than 12 months, rebuild from a wider window."
+                : scanFailed
+                  ? "Nothing is filed because nothing has been read successfully — this is not a verdict that your mailbox holds no applications. The line above says how the last attempt failed and offers a retry; you can also rebuild from a wider window."
+                  : "Nothing is filed because your mail hasn't been read yet — this is not a verdict that your mailbox holds no applications. Sync, or choose a window, to run the first scan."}
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <RebuildWindowButton />
@@ -300,7 +356,11 @@ export default async function DashboardPage() {
           Settings toggle describes, kept real. */}
       {notifPrefs.reviewAlerts ? queue : null}
 
-      <PipelineBoard applications={state.applications} />
+      {/* `total` is the account's true count, not the page's: past
+          BOARD_PAGE_SIZE the board says which slice it is showing, so the
+          subtitle's "250 filed" and four columns summing to 200 stop
+          contradicting each other. */}
+      <PipelineBoard applications={state.applications} total={state.total} />
 
       {!notifPrefs.reviewAlerts ? queue : null}
     </section>

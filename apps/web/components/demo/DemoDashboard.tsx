@@ -6,9 +6,10 @@ import { AddApplicationForm } from "@/components/applications/AddApplicationForm
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
+import { todayISO } from "@/lib/dashboard/age";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
-import { DEMO_APPLICATIONS_AS_API, DEMO_UNSYNCED_AS_API } from "@/lib/demo/asApplications";
+import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 
 /**
@@ -74,11 +75,18 @@ function delay(ms: number): Promise<void> {
 }
 
 export function DemoDashboard() {
-  const [snapshot, setSnapshot] = useState<DemoBoard>(() => ({
-    apps: DEMO_APPLICATIONS_AS_API,
-    pool: DEMO_UNSYNCED_AS_API,
-    touched: [],
-  }));
+  // ONE clock read for the whole mount: the fixture dates are relative, so
+  // every row in this store — board and unsynced pool alike — is aged against
+  // the same "today" the board renders with. Resolving them here rather than
+  // at module load is what keeps a long-lived server's HTML and the browser's
+  // hydration agreeing on what "16 days ago" means.
+  const [snapshot, setSnapshot] = useState<DemoBoard>(() => {
+    const today = todayISO();
+    return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
+  });
+  /** The pristine fixtures, kept for `restore` — the rows this board began
+   *  with, before any drag, dismissal or rebuild touched them. */
+  const original = useRef<Application[]>([...snapshot.apps, ...snapshot.pool]);
   const store = useRef(snapshot);
   const commit = useCallback((next: DemoBoard) => {
     store.current = next;
@@ -185,13 +193,12 @@ export function DemoDashboard() {
         await delay(300);
         const s = store.current;
         // The removed row is not in `apps` anymore; recover it from the
-        // fixtures (its edits died with the removal, as a real dismissal's
-        // board row does — restore brings back the row, not the session).
-        const original =
-          DEMO_APPLICATIONS_AS_API.find((app) => app.id === id) ??
-          DEMO_UNSYNCED_AS_API.find((app) => app.id === id);
-        if (!original) return false;
-        commit({ ...s, apps: [...s.apps, original] });
+        // fixtures this mount started with (its edits died with the removal,
+        // as a real dismissal's board row does — restore brings back the row,
+        // not the session).
+        const row = original.current.find((app) => app.id === id);
+        if (!row) return false;
+        commit({ ...s, apps: [...s.apps, row] });
         return true;
       },
     }),
@@ -208,15 +215,18 @@ export function DemoDashboard() {
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
       </SyncBar>
-      {/* Same strip as the signed-in dashboard, over the fixture store: the
-          fixtures are the full board, so total is exact and the momentum /
-          ageing / classifier cells derive from what is actually on screen —
-          press Sync and the fresh rows move the bars. */}
-      <PipelinePulse
-        applications={snapshot.apps}
-        total={snapshot.apps.length}
-        needsReview={0}
-      />
+      {/* Same strip as the signed-in dashboard, over the fixture store.
+          `total` is the store's own length because on this board it IS the
+          whole account — the strip's scope note ("newest N of M") therefore
+          never fires here by construction, not by omission; the live
+          dashboard is where a bounded page makes it real.
+          `needsReview` is 0 deliberately, not a stub: /demo mounts no review
+          queue for a held verdict to point at, and the cell's non-zero branch
+          deep-links to /dashboard#needs-classification — an auth-gated route
+          that would dead-end an anonymous visitor. The fixture queue
+          (DEMO_REVIEW_QUEUE) does hold one sub-gate message; the DecisionTrace
+          lower down this page is where it is shown and explained. */}
+      <PipelinePulse applications={snapshot.apps} total={snapshot.apps.length} needsReview={0} />
       <PipelineBoard applications={snapshot.apps} transport={boardTransport} />
     </section>
   );

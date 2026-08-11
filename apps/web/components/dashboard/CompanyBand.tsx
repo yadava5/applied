@@ -14,23 +14,29 @@ import { STAGES, stageOf, type Application } from "@/lib/dashboard/summary";
  * gathers them (the cards glide together via the shared layout animation) and
  * this band states what the set is.
  *
- * Facts are computed from the company's FULL row set (never the search-
- * narrowed one), so the band describes the employer even while a search
- * narrows what is visible. The clear control carries the same accessible name
- * the old filter chip did ("Stop filtering by …"), so the affordance's
- * contract is unchanged.
+ * Facts are computed from the company's rows ON THE BOARD, never the
+ * search-narrowed subset — so the band keeps describing the employer while a
+ * search narrows what is visible. It does NOT claim to describe the employer's
+ * whole history: the signed-in board is one bounded page, and when that page
+ * is a slice of a larger account `partial` makes the band say which rows it
+ * counted rather than implying an older application never existed. The clear
+ * control carries the same accessible name the old filter chip did ("Stop
+ * filtering by …"), so the affordance's contract is unchanged.
  */
 export function CompanyBand({
   company,
   apps,
   statusOf,
+  partial = false,
   onClear,
 }: {
   company: string;
-  /** Every board row at this company, unfiltered. */
+  /** This company's rows as loaded on the board — not narrowed by search. */
   apps: Application[];
   /** Status resolver — the board passes its optimistic-overlay-aware one. */
   statusOf: (app: Application) => string;
+  /** The board itself is truncated, so these facts cover the loaded rows only. */
+  partial?: boolean;
   onClear: () => void;
 }) {
   const reduceMotion = useReducedMotion();
@@ -62,6 +68,7 @@ export function CompanyBand({
         <p className="truncate text-base font-medium leading-tight text-strong">{company}</p>
         <p className="tabular text-xs text-dim">
           {apps.length} application{apps.length === 1 ? "" : "s"} · {span}
+          {partial ? " · counted from the rows loaded on this board" : ""}
         </p>
       </div>
       <ul className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1">

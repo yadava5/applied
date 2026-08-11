@@ -7,17 +7,51 @@ import { createServerApiClient } from "@/lib/api/server";
  * (from cookies) so the token and `BACKEND_API_URL` never reach the browser,
  * and returns the raw list JSON the client turns into a download.
  */
+/** The backend's own ceiling (`MAX_PAGE_SIZE`); asking for more is a 422. */
+const EXPORT_PAGE_SIZE = 500;
+/** Bounds the loop so a bad `total` can never spin it forever. 50k rows. */
+const EXPORT_MAX_PAGES = 100;
+
 export async function GET() {
   try {
     const api = await createServerApiClient();
-    const { data, error, response } = await api.GET("/applications");
-    if (error || !data) {
+
+    // PAGINATED, because the export claims to be everything.
+    //
+    // This used to make one unparameterised call, which the backend answers with
+    // its DEFAULT_PAGE_SIZE of 100. Settings offers to "export everything Applied
+    // holds for you" and a user with 250 applications silently got 100 of them —
+    // a data-loss-shaped defect in the one feature whose entire job is to hand
+    // the user their data back. It never fired here because this account has 25.
+    const first = await api.GET("/applications", {
+      params: { query: { page: 1, page_size: EXPORT_PAGE_SIZE } },
+    });
+    if (first.error || !first.data) {
       return NextResponse.json(
-        { detail: error ?? "Backend rejected the request" },
-        { status: response.status || 502 },
+        { detail: first.error ?? "Backend rejected the request" },
+        { status: first.response.status || 502 },
       );
     }
-    return NextResponse.json(data, { status: 200 });
+
+    const applications = [...first.data.applications];
+    const total = first.data.total;
+
+    for (let page = 2; applications.length < total && page <= EXPORT_MAX_PAGES; page += 1) {
+      const next = await api.GET("/applications", {
+        params: { query: { page, page_size: EXPORT_PAGE_SIZE } },
+      });
+      // A mid-export failure must not hand back a short file that looks whole.
+      if (next.error || !next.data) {
+        return NextResponse.json(
+          { detail: next.error ?? `Export failed while reading page ${page}` },
+          { status: next.response.status || 502 },
+        );
+      }
+      if (next.data.applications.length === 0) break; // defensive: no progress
+      applications.push(...next.data.applications);
+    }
+
+    return NextResponse.json({ applications, total }, { status: 200 });
   } catch {
     return NextResponse.json({ detail: "Backend unreachable" }, { status: 502 });
   }

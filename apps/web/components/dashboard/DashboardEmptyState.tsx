@@ -3,7 +3,7 @@ import { Inbox, Mail, Upload, type LucideIcon } from "lucide-react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { DEMO_APPLICATIONS_AS_API } from "@/lib/demo/asApplications";
+import { demoApplicationsAsApi } from "@/lib/demo/asApplications";
 import { summarize } from "@/lib/dashboard/summary";
 
 const ROUTES: { href: string; title: string; body: string; icon: LucideIcon }[] = [
@@ -62,9 +62,16 @@ export function ForwardRoutes() {
  * A labelled preview built from sample data. Clearly tagged "not yours" and
  * inert, it lets any no-board state still demonstrate exactly what a populated
  * dashboard looks like.
+ *
+ * The fixtures are dated relative to now (see `lib/demo/demoData.ts`) and
+ * resolved HERE, at render, on the server: this is a server component, so the
+ * rows travel to the client as props and the browser never re-derives them.
+ * What the preview must show is a healthy board — it used to show one where
+ * every card had gone quiet, because the fixture dates were frozen in July.
  */
 export function SamplePreview() {
-  const summary = summarize(DEMO_APPLICATIONS_AS_API);
+  const applications = demoApplicationsAsApi();
+  const summary = summarize(applications);
 
   return (
     <section aria-label="Sample dashboard preview" className="space-y-4">
@@ -88,7 +95,7 @@ export function SamplePreview() {
           {summary.total} filed · {summary.inMotion} in motion · {summary.offers} offer
           {summary.offers === 1 ? "" : "s"}
         </p>
-        <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} interactive={false} />
+        <PipelineBoard applications={applications} interactive={false} />
       </div>
     </section>
   );
