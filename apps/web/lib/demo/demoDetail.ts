@@ -9,6 +9,7 @@
  * Gmail deep links are invented — the sheet simply renders no link, exactly as
  * it does for a hand-filed row.
  */
+import { longDate } from "@/lib/dashboard/dates";
 import type { Application } from "@/lib/dashboard/summary";
 
 /** `Beacon Health` → `beaconhealth`. */
@@ -40,7 +41,13 @@ const LATEST_CATEGORY: Record<string, { category: string; confidence: number }> 
 export function demoDetailBody(app: Application): Record<string, unknown> {
   const sender_email = `talent@${slug(app.company)}.example`;
   const filed = app.created_at;
-  const latest = LATEST_CATEGORY[app.status] ?? LATEST_CATEGORY.applied;
+  // A mail-extracted deadline exists because a message STATED it, so the row's
+  // latest signal is that assessment mail — and its snippet spells the date
+  // out, demonstrating the extraction rule: the claim is in the mail, read it.
+  const assessment = app.due_at != null && app.due_source === "mail";
+  const latest = assessment
+    ? { category: "assessment", confidence: 0.97 }
+    : (LATEST_CATEGORY[app.status] ?? LATEST_CATEGORY.applied);
 
   const messages: Record<string, unknown>[] = [];
   // Advanced or closed rows carry their latest signal ABOVE the original
@@ -52,7 +59,9 @@ export function demoDetailBody(app: Application): Record<string, unknown> {
       sender_name: `${app.company} Talent`,
       sender_email,
       received_at: daysAfter(filed, 9),
-      snippet: `Regarding your application for ${app.position}.`,
+      snippet: assessment
+        ? `Complete your ${app.position} assessment by ${longDate(app.due_at)}.`
+        : `Regarding your application for ${app.position}.`,
       category: latest.category,
       confidence: latest.confidence,
       gmail_link: null,

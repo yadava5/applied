@@ -105,7 +105,7 @@ test.describe("live demo (/demo)", () => {
     // …and the board actually gained the two filed fixture rows.
     await expect(page.getByRole("region", { name: /applied — 12/i })).toBeVisible();
     await expect(page.getByText("Twitch", { exact: true })).toBeVisible();
-    await expect(page.getByText("16 filed · 13 in motion · 0 offers")).toBeVisible();
+    await expect(page.getByText("19 filed · 16 in motion · 0 offers")).toBeVisible();
 
     // A second sync has nothing new, and the cursored zero case says exactly
     // that — never a claim about a window it did not check.
@@ -135,13 +135,13 @@ test.describe("live demo (/demo)", () => {
 
   test("a card moves between stages by drag, and by its select", async ({ page }) => {
     await page.goto("/demo");
-    await expect(page.getByRole("region", { name: /interviewing — 1/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
 
     // The accessible path: the per-card stage select.
     await page
       .getByLabel("Change stage for Quarry Data")
       .selectOption("interviewing");
-    await expect(page.getByRole("region", { name: /interviewing — 2/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
     await expect(
       page.getByRole("region", { name: /interviewing/i }).getByText("Quarry Data", { exact: true }),
     ).toBeVisible();
@@ -151,8 +151,18 @@ test.describe("live demo (/demo)", () => {
       .locator("li")
       .filter({ has: page.getByText("Harbor Analytics", { exact: true }) })
       .first();
-    await card.dragTo(page.getByRole("region", { name: /interviewing/i }));
-    await expect(page.getByRole("region", { name: /interviewing — 3/i })).toBeVisible();
+    // Drop near the TOP of the column, not its centre. Hovering the centre of a
+    // 2249px-tall board scrolls the page ~147px between mouse-down and the first
+    // move, so the HTML5 `dragstart` fires on whichever card has slid under the
+    // cursor — Summit Platform moved while Harbor stayed put, and the count
+    // assertion above was satisfied by the wrong card. A real drag has no
+    // programmatic scroll between press and move; this is the harness, not the
+    // product. The assertion below must keep naming Harbor: asserting whichever
+    // card actually moved would restore green by deleting the coverage.
+    await card.dragTo(page.getByRole("region", { name: /interviewing/i }), {
+      targetPosition: { x: 140, y: 20 },
+    });
+    await expect(page.getByRole("region", { name: /interviewing — 6/i })).toBeVisible();
     await expect(
       page
         .getByRole("region", { name: /interviewing/i })
@@ -248,7 +258,7 @@ test.describe("live demo (/demo)", () => {
     await expect(surface.getByText(/stopped early/)).toHaveCount(0);
   });
 
-  test("the pulse strip renders all three derived signals over the fixtures", async ({ page }) => {
+  test("the pulse strip renders all four derived signals over the fixtures", async ({ page }) => {
     await page.goto("/demo");
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toBeVisible();
@@ -262,8 +272,14 @@ test.describe("live demo (/demo)", () => {
     // is here to make — so require a non-zero leading digit.
     await expect(pulse.getByText(/[1-9]\d* quiet ≥2 wk/)).toBeVisible();
 
+    // Deadlines: the three fixture states, counted, and the most urgent row
+    // named. The counts derive from the same `dueInfo` that inks the cards.
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/most urgent · Tidewater Labs/)).toBeVisible();
+    await expect(pulse.getByText("overdue 2d", { exact: true })).toBeVisible();
+
     // Classifier: every fixture row is source="gmail", and nothing is held.
-    await expect(pulse.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
 
     // The card-level ageing tag agrees with the strip's threshold.
@@ -272,12 +288,104 @@ test.describe("live demo (/demo)", () => {
 
   test("the pulse strip moves when Sync files fresh mail", async ({ page }) => {
     await page.goto("/demo");
-    await expect(page.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await expect(page.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
     // Two fixture rows arrive → the classifier fraction re-derives from the
     // new board. (No assertion on the ageing buckets here: the fixture dates
     // are static while real time passes, so any exact bucket count would rot.)
-    await expect(page.getByText("16 of 16 auto-filed from mail")).toBeVisible();
+    await expect(page.getByText("19 of 19 auto-filed from mail")).toBeVisible();
+  });
+
+  test("assessment deadlines render in all three states — and only where a date exists", async ({
+    page,
+  }) => {
+    await page.goto("/demo");
+    const tag = (state: string) =>
+      page.locator(`[data-testid="deadline-tag"][data-due-state="${state}"]`);
+
+    // One fixture per state, phrase + calendar day, derived from the relative
+    // offsets in demoData.ts (dueInDays 9 / 2 / -2).
+    await expect(tag("ahead")).toHaveCount(1);
+    await expect(tag("ahead")).toContainText("due in 9d");
+    await expect(tag("soon")).toHaveCount(1);
+    await expect(tag("soon")).toContainText("due in 2d");
+    await expect(tag("overdue")).toHaveCount(1);
+    await expect(tag("overdue")).toContainText("overdue 2d");
+    await expect(tag("overdue")).toContainText("was due");
+
+    // A deadline is data: the tag speaks mono, like every date stamp.
+    await expect(tag("overdue")).toHaveCSS("font-family", /Geist Mono/);
+
+    // The tags sit on the rows that own them…
+    const kestrel = page
+      .locator("li")
+      .filter({ has: page.getByText("Kestrel Dynamics", { exact: true }) });
+    await expect(kestrel.locator('[data-testid="deadline-tag"]')).toContainText("due in 2d");
+    // …and a row without a due_at renders NOTHING — no placeholder, no prompt.
+    const harbor = page
+      .locator("li")
+      .filter({ has: page.getByText("Harbor Analytics", { exact: true }) });
+    await expect(harbor.locator('[data-testid="deadline-tag"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
+
+    // The sheet states the deadline's provenance: this one was extracted from
+    // mail — and the mail it came from, right below, spells the date out.
+    await page
+      .getByRole("button", { name: "Open Kestrel Dynamics — Software Engineer, Simulation" })
+      .click();
+    const sheet = page.getByRole("dialog");
+    await expect(sheet.getByText("from your mail")).toBeVisible();
+    await expect(sheet.getByText(/Complete your .* assessment by/)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+  });
+
+  test("setting a deadline updates the card and the pulse; clearing removes both", async ({
+    page,
+  }) => {
+    await page.goto("/demo");
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
+
+    // Cedar Labs (applied) has no deadline; give it one 5 days out. The date
+    // is computed the way the app computes everything: UTC calendar days.
+    const dayISO = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const cedar = page
+      .locator("li")
+      .filter({ has: page.getByText("Software Engineer, Platform", { exact: true }) });
+    await expect(cedar.locator('[data-testid="deadline-tag"]')).toHaveCount(0);
+
+    await page
+      .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
+      .click();
+    const sheet = page.getByRole("dialog");
+    const deadline = sheet.getByTestId("detail-deadline");
+    await deadline.getByRole("button", { name: "Add a deadline" }).click();
+    await deadline.getByLabel(/Deadline date/).fill(dayISO);
+    await deadline.getByRole("button", { name: "Save deadline" }).click();
+
+    // The sheet shows the new claim and WHOSE claim it is.
+    await expect(deadline.getByText("due in 5d", { exact: false })).toBeVisible();
+    await expect(deadline.getByText("set by you")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+
+    // The card gained the tag; the pulse cell re-derived.
+    await expect(cedar.locator('[data-testid="deadline-tag"]')).toContainText("due in 5d");
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 2 later/)).toBeVisible();
+
+    // Clearing is one click, obviously reversible — the Add control returns —
+    // and both surfaces drop the date.
+    await page
+      .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
+      .click();
+    await deadline.getByRole("button", { name: /Clear the deadline/ }).click();
+    await expect(deadline.getByRole("button", { name: "Add a deadline" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+
+    await expect(cedar.locator('[data-testid="deadline-tag"]')).toHaveCount(0);
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
   });
 
   test("a company opens as a set: band on, chips suppressed, clear restores", async ({ page }) => {
@@ -317,8 +425,12 @@ test.describe("live demo (/demo)", () => {
     // component rendering nothing is the shape this estate keeps producing.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
-    await expect(pulse.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    // The deadline surfaces are content, not motion: all three tags and the
+    // pulse counts render statically too.
+    await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
     // A bar with zero drawn height would satisfy the count above.
     const barHeights = await pulse.getByTestId("pulse-week").evaluateAll((els) =>
       els.map((el) => el.getBoundingClientRect().height),

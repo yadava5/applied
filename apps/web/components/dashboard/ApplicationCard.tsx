@@ -4,7 +4,7 @@ import { ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
-import { FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
+import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
 import { cardQualifier } from "@/lib/dashboard/board";
 import { todayISO } from "@/lib/dashboard/age";
@@ -349,6 +349,10 @@ export function ApplicationCard({
       {sameCompanyCount > 0 && onFilterCompany ? (
         <SameCompanyChip company={app.company} count={sameCompanyCount} onFilter={onFilterCompany} />
       ) : null}
+
+      {/* Renders nothing unless the row carries a due_at — the tag never
+          prompts, and never guesses (see DeadlineTag). */}
+      <DeadlineTag dueAt={app.due_at} today={today} />
 
       <div className="mt-2 flex items-center justify-between gap-2">
         <label className="sr-only" htmlFor={`status-${app.id}`}>

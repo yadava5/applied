@@ -17,6 +17,7 @@
  * asserted in `tests/unit/row-actions.test.mjs` keep holding here.
  */
 import {
+  deadlineChangeRequest,
   permanentDeleteRequest,
   removeFromBoardRequest,
   statusChangeRequest,
@@ -35,6 +36,10 @@ export interface SendResult {
 /** Row-level operations the board's cards and detail sheet perform. */
 export interface BoardTransport {
   changeStatus(id: number, status: string): Promise<SendResult>;
+  /** Set (`ISO datetime`) or clear (`null`) the row's deadline — always a
+   *  user write, so the backend marks it `due_source: "user"` and sync
+   *  never overwrites it. */
+  setDeadline(id: number, dueAt: string | null): Promise<SendResult>;
   /** The RECOVERABLE removal ("Not an application") — never the hard delete. */
   dismiss(id: number): Promise<SendResult>;
   /** The hard delete — the one behind a confirmation. */
@@ -86,6 +91,7 @@ async function send(req: ProxyRequest): Promise<SendResult> {
 /** The default: the same-origin proxy routes (JWT stays server-side). */
 export const liveBoardTransport: BoardTransport = {
   changeStatus: (id, status) => send(statusChangeRequest(id, status)),
+  setDeadline: (id, dueAt) => send(deadlineChangeRequest(id, dueAt)),
   dismiss: (id) => send(removeFromBoardRequest(id)),
   deleteRow: (id) => send(permanentDeleteRequest(id)),
   async detail(id) {

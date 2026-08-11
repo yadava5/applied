@@ -33,14 +33,14 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     await page.goto("/demo");
 
     await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
-    // The one prose data line — 14 fixtures, 11 in motion (10 applied + 1
+    // The one prose data line — 17 fixtures, 14 in motion (10 applied + 4
     // interviewing), 0 offers. The page's only rendering of the totals.
-    await expect(page.getByText("14 filed · 11 in motion · 0 offers")).toBeVisible();
+    await expect(page.getByText("17 filed · 14 in motion · 0 offers")).toBeVisible();
 
     // Board columns carry the per-stage counts (the fixtures are shaped like a
     // real early search: applied-heavy, offered honestly empty).
     await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();
-    await expect(page.getByRole("region", { name: /interviewing — 1/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
     await expect(page.getByRole("region", { name: /offered — 0/i })).toBeVisible();
     await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
     await expect(page.getByText("none yet")).toBeVisible();
@@ -80,7 +80,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
       .getByRole("button", { name: /show all applications at Northstar Systems/i })
       .first()
       .click();
-    await expect(page.getByText("3 of 14 shown")).toBeVisible();
+    await expect(page.getByText("3 of 17 shown")).toBeVisible();
     await expect(page.getByText("Harbor Analytics")).toHaveCount(0);
     // …and the filter chip clears it.
     await page.getByRole("button", { name: /stop filtering by Northstar Systems/i }).click();
@@ -94,7 +94,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
 
     const search = page.getByRole("searchbox", { name: /search the board/i });
     await search.fill("engineer, payments");
-    await expect(page.getByText("1 of 14 shown")).toBeVisible();
+    await expect(page.getByText("1 of 17 shown")).toBeVisible();
     await expect(page.getByText("Copperline", { exact: true })).toBeVisible();
     await expect(page.getByText("Quarry Data")).toHaveCount(0);
 

@@ -1,18 +1,34 @@
 "use client";
 
-import { ExternalLink, Loader2, TriangleAlert } from "lucide-react";
+import { CalendarClock, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Dialog } from "@/components/ui/Dialog";
 import { AUTO_FILE_GATE, GateMeter } from "@/components/viz/GateMeter";
+import { todayISO } from "@/lib/dashboard/age";
 import { filedAt, longDate, shortDate } from "@/lib/dashboard/dates";
+import {
+  DEADLINE_ADD_LABEL,
+  DEADLINE_CHANGE_LABEL,
+  DEADLINE_CLEAR_FAILED,
+  DEADLINE_CLEAR_HINT,
+  DEADLINE_CLEAR_LABEL,
+  DEADLINE_PICK_FIRST,
+  DEADLINE_SAVE_FAILED,
+  DEADLINE_SAVE_LABEL,
+  dueDayISO,
+  dueInfo,
+  duePhrase,
+  dueSourceLabel,
+  type DueState,
+} from "@/lib/dashboard/deadline";
 import {
   readApplicationDetail,
   type ApplicationDetail as DetailData,
   type SplitCandidate,
 } from "@/lib/dashboard/detail";
-import { statusChangeFailure } from "@/lib/dashboard/rowActions";
+import { CANCEL_LABEL, statusChangeFailure } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { STAGES, stageOf, type Application } from "@/lib/dashboard/summary";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
@@ -41,6 +57,14 @@ type LoadState =
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
+
+/** The sheet's deadline phrase ink, by state — measured in both themes (red
+ * 6.89:1 dark / 6.47:1 light on the sheet surface; amber 8.87:1 / 5.02:1). */
+const DUE_TEXT_CLASS: Record<DueState, string> = {
+  overdue: "text-reject",
+  soon: "text-review",
+  ahead: "text-muted",
+};
 
 function TrailMessage({ message, isLast }: { message: DetailData["messages"][number]; isLast: boolean }) {
   const meta = message.category
@@ -203,6 +227,17 @@ export function ApplicationDetail({
   const [stageError, setStageError] = useState<string | null>(null);
   /** The stage the user just picked here, shown before the server confirms. */
   const [optimistic, setOptimistic] = useState<string | null>(null);
+  /** The deadline a write here just committed, shown until the row prop
+   *  catches up (`app` is the board's snapshot and survives `router.refresh`). */
+  const [dueOverride, setDueOverride] = useState<{
+    at: string | null;
+    source: string | null;
+  } | null>(null);
+  const [dueEditing, setDueEditing] = useState(false);
+  /** The date input's draft, `YYYY-MM-DD`. */
+  const [dueDraft, setDueDraft] = useState("");
+  const [dueBusy, setDueBusy] = useState<null | "save" | "clear">(null);
+  const [dueError, setDueError] = useState<string | null>(null);
 
   const load = useCallback(
     async (id: number) => {
@@ -224,6 +259,10 @@ export function ApplicationDetail({
     const id = window.setTimeout(() => {
       setOptimistic(null);
       setStageError(null);
+      setDueOverride(null);
+      setDueEditing(false);
+      setDueError(null);
+      setDueBusy(null);
       void load(app.id);
     }, 0);
     return () => window.clearTimeout(id);
@@ -241,6 +280,11 @@ export function ApplicationDetail({
   const shownStatus = optimistic ?? active.status;
   const stage = STAGES.find((s) => s.key === stageOf(shownStatus))!;
   const role = active.position.trim();
+  // The deadline the sheet asserts: the row's own, unless a write here already
+  // moved it. UTC calendar-day math, same clock rule as the board.
+  const due = dueOverride ?? { at: active.due_at ?? null, source: active.due_source ?? null };
+  const dueState = dueInfo(due.at, todayISO());
+  const dueSource = dueSourceLabel(due.source);
 
   async function onStageChange(next: string) {
     if (next === shownStatus) return;
@@ -254,6 +298,44 @@ export function ApplicationDetail({
       setStageError(statusChangeFailure(next, active.status, result.detail));
       return;
     }
+    router.refresh();
+  }
+
+  // NOT optimistic, unlike the stage control: the sheet stays on the old value
+  // with a busy state until the server answers, so the date it asserts is never
+  // one the backend may still refuse. Cheap here — the sheet is already open
+  // and the row is not travelling between columns.
+  async function onDeadlineSave() {
+    const iso = dueDayISO(dueDraft);
+    if (!iso) {
+      setDueError(DEADLINE_PICK_FIRST);
+      return;
+    }
+    setDueError(null);
+    setDueBusy("save");
+    const result = await transport.setDeadline(active.id, iso);
+    setDueBusy(null);
+    if (!result.ok) {
+      setDueError(result.detail ? `${DEADLINE_SAVE_FAILED} ${result.detail}` : DEADLINE_SAVE_FAILED);
+      return;
+    }
+    // Any write through the deadline endpoint is the user's word — the
+    // backend marks it "user" and sync keeps its hands off it.
+    setDueOverride({ at: iso, source: "user" });
+    setDueEditing(false);
+    router.refresh();
+  }
+
+  async function onDeadlineClear() {
+    setDueError(null);
+    setDueBusy("clear");
+    const result = await transport.setDeadline(active.id, null);
+    setDueBusy(null);
+    if (!result.ok) {
+      setDueError(result.detail ? `${DEADLINE_CLEAR_FAILED} ${result.detail}` : DEADLINE_CLEAR_FAILED);
+      return;
+    }
+    setDueOverride({ at: null, source: null });
     router.refresh();
   }
 
@@ -311,6 +393,110 @@ export function ApplicationDetail({
           >
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
             <span>{stageError}</span>
+          </p>
+        ) : null}
+
+        {/* --- The deadline: set, change, clear — and whose claim it is ----- */}
+        {/* Quick on purpose: one native date input (the OS picker on a phone),
+            an explicit Save so a half-typed date is never PUT, and a Clear that
+            is visibly reversible — the Add control it returns to sits in the
+            same slot. The date is data (mono, state ink); the words around it
+            are not (Atkinson, dim). */}
+        <div data-testid="detail-deadline" className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <CalendarClock className="h-3.5 w-3.5 shrink-0 text-dim" aria-hidden />
+          {dueEditing ? (
+            <>
+              <label className="sr-only" htmlFor={`deadline-date-${active.id}`}>
+                Deadline date for {active.company}
+              </label>
+              <input
+                id={`deadline-date-${active.id}`}
+                type="date"
+                value={dueDraft}
+                onChange={(e) => setDueDraft(e.target.value)}
+                disabled={dueBusy !== null}
+                className="rounded border border-line bg-surface-2 px-2 py-1 font-mono text-xs text-strong outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => void onDeadlineSave()}
+                disabled={dueBusy !== null}
+                className="rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+              >
+                {dueBusy === "save" ? "saving…" : DEADLINE_SAVE_LABEL}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDueEditing(false);
+                  setDueError(null);
+                }}
+                disabled={dueBusy !== null}
+                className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
+              >
+                {CANCEL_LABEL}
+              </button>
+            </>
+          ) : due.at && dueState ? (
+            <>
+              <span className={`tabular font-mono text-[11px] ${DUE_TEXT_CLASS[dueState.state]}`}>
+                {duePhrase(dueState.daysLeft)} ·{" "}
+                {dueState.state === "overdue" ? `was due ${shortDate(due.at)}` : shortDate(due.at)}
+              </span>
+              {/* Who set it — two different claims, stated quietly, never guessed. */}
+              {dueSource ? <span className="text-[11px] text-dim">{dueSource}</span> : null}
+              <button
+                type="button"
+                aria-label={`Change the deadline for ${active.company}`}
+                onClick={() => {
+                  setDueDraft(due.at ? due.at.slice(0, 10) : "");
+                  setDueError(null);
+                  setDueEditing(true);
+                }}
+                disabled={dueBusy !== null}
+                className="rounded border border-line px-2 py-1 text-xs text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+              >
+                {DEADLINE_CHANGE_LABEL}
+              </button>
+              <button
+                type="button"
+                aria-label={`Clear the deadline for ${active.company}`}
+                title={DEADLINE_CLEAR_HINT}
+                onClick={() => void onDeadlineClear()}
+                disabled={dueBusy !== null}
+                className="rounded border border-line px-2 py-1 text-xs text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+              >
+                {dueBusy === "clear" ? "clearing…" : DEADLINE_CLEAR_LABEL}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setDueDraft("");
+                  setDueError(null);
+                  setDueEditing(true);
+                }}
+                className="rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong"
+              >
+                {DEADLINE_ADD_LABEL}
+              </button>
+              <span className="text-[11px] text-dim">for assessment and take-home windows</span>
+            </>
+          )}
+          {dueBusy !== null ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none" aria-hidden />
+          ) : null}
+        </div>
+
+        {dueError ? (
+          <p
+            role="alert"
+            className="flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
+          >
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
+            <span>{dueError}</span>
           </p>
         ) : null}
 

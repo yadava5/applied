@@ -12,14 +12,19 @@
  * bars. Each seed carries `filedDaysAgo` instead, resolved against a single
  * "now" per render, so the demo's SHAPE is fixed while its dates stay current.
  *
- * The offsets encode a deliberate ageing spread across the 11 open rows — 4
- * under a week, 4 waiting, 3 past the quiet line (`QUIET_AFTER_DAYS`) — so all
+ * The offsets encode a deliberate ageing spread across the 14 open rows — 6
+ * under a week, 5 waiting, 3 past the quiet line (`QUIET_AFTER_DAYS`) — so all
  * three pulse buckets draw, the quiet signal is demonstrated without the board
  * looking abandoned, and every row lands inside the 8-week momentum window.
- * Changing an offset changes what the e2e sees: the counts and the "quiet Nd"
- * tag asserted in tests/e2e/demo.spec.ts are the contract.
+ * Deadlines (`dueInDays`) are relative for the same reason the filed dates
+ * are: an absolute due date is "comfortably ahead" for exactly as long as the
+ * calendar allows and then silently becomes a fourth overdue row, changing
+ * every count the e2e asserts. Changing an offset changes what the e2e sees:
+ * the counts, the "quiet Nd" tag and the deadline phrases asserted in
+ * tests/e2e/demo.spec.ts are the contract.
  */
 import { todayISO } from "@/lib/dashboard/age";
+import { dueDayISO } from "@/lib/dashboard/deadline";
 
 export type DemoStatus = "applied" | "interviewing" | "offered" | "rejected";
 
@@ -31,12 +36,18 @@ export interface DemoApplication {
   /** Calendar day filed — resolved from the seed against the render's "today". */
   appliedAt: string;
   lastSignal: string; // the most recent classified email, one line
+  /** ISO instant the row is due by (end of its calendar day, UTC — the same
+   *  shape the deadline control writes), when its mail stated one. */
+  dueAt?: string;
 }
 
 /** A fixture row before its date is resolved: an age, not a calendar day. */
-type DemoSeed = Omit<DemoApplication, "appliedAt"> & {
+type DemoSeed = Omit<DemoApplication, "appliedAt" | "dueAt"> & {
   /** Whole days before "today" this application was filed. */
   filedDaysAgo: number;
+  /** Whole days after "today" this row's assessment is due (negative =
+   *  already missed). Only rows whose mail states a deadline carry one. */
+  dueInDays?: number;
 };
 
 export interface DemoReviewItem {
@@ -60,13 +71,22 @@ function daysBefore(today: string, days: number): string {
 }
 
 function resolve(seed: DemoSeed, today: string): DemoApplication {
-  const { filedDaysAgo, ...row } = seed;
-  return { ...row, appliedAt: daysBefore(today, filedDaysAgo) };
+  const { filedDaysAgo, dueInDays, ...row } = seed;
+  return {
+    ...row,
+    appliedAt: daysBefore(today, filedDaysAgo),
+    // `dueDayISO` is what the deadline control PUTs, so fixture deadlines and
+    // user-set ones are byte-identical in shape. `?? undefined` can't fire —
+    // `daysBefore` always yields a valid day — it just keeps the type honest.
+    ...(dueInDays !== undefined
+      ? { dueAt: dueDayISO(daysBefore(today, -dueInDays)) ?? undefined }
+      : {}),
+  };
 }
 
 /**
  * Shaped like a REAL early-search board, not a brochure: the applied column is
- * heavy (10 of 14), offered is empty, and one employer holds several
+ * heavy (10 of 17), offered is empty, and one employer holds several
  * applications in different stages — the owner's own board has four Amazon
  * requisitions, so the fixtures must exercise the same truths the live board
  * does: company+role as the card identity, the "N more at …" affordance,
@@ -96,6 +116,19 @@ const APPLICATION_SEEDS: DemoSeed[] = [
   { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 5, lastSignal: "We received your application" },
   { id: "a13", company: "Copperline", position: "Backend Engineer, Payments", status: "applied", filedDaysAgo: 3, lastSignal: "We received your application" },
   { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", filedDaysAgo: 2, lastSignal: "Thanks for applying" },
+  // Assessments with deadlines ×3 — the landing's own opening problem ("its
+  // 48-hour deadline passes unseen") demonstrated in all three states: one
+  // comfortably ahead, one inside the DUE_SOON_DAYS window, one already
+  // missed. Status is `interviewing` (an assessment mail advances the row;
+  // `assessment` is a classifier category, not an API status — see
+  // lib/dashboard/status.ts), and every deadline here is mail-extracted
+  // (`due_source: "mail"` via the adapter): this account is auto-filed, and
+  // the e2e sets/clears the one "user" deadline through the sheet instead.
+  // The offsets are the contract demo.spec.ts asserts (due in 9d / due in 2d /
+  // overdue 2d) — change them and the spec's phrases change with them.
+  { id: "a15", company: "Meridian Grid", position: "Software Engineer, Energy", status: "interviewing", filedDaysAgo: 1, dueInDays: 9, lastSignal: "Online assessment — complete within two weeks" },
+  { id: "a16", company: "Kestrel Dynamics", position: "Software Engineer, Simulation", status: "interviewing", filedDaysAgo: 3, dueInDays: 2, lastSignal: "Next step: online assessment (90 min)" },
+  { id: "a17", company: "Tidewater Labs", position: "Platform Engineer", status: "interviewing", filedDaysAgo: 7, dueInDays: -2, lastSignal: "Take-home exercise — 72 hour window" },
 ];
 
 /**

@@ -9,10 +9,11 @@ import {
   weeklyCounts,
 } from "@/lib/dashboard/age";
 import { filedAt } from "@/lib/dashboard/dates";
+import { DUE_SOON_DAYS, deadlinePulse, duePhrase } from "@/lib/dashboard/deadline";
 import { stageOf, type Application } from "@/lib/dashboard/summary";
 
 /**
- * The pulse strip — the three signals the rows actually carry, drawn instead
+ * The pulse strip — the four signals the rows actually carry, drawn instead
  * of restated. Sits under the SyncBar; everything on it is NEW information the
  * subtitle and the board don't already say:
  *
@@ -22,6 +23,13 @@ import { stageOf, type Application } from "@/lib/dashboard/summary";
  *   - **ageing** — the open (applied + interviewing) rows bucketed by days
  *     since filed; the ≥{@link QUIET_AFTER_DAYS}-day share is the amber
  *     "quiet" signal, the same threshold that tags individual cards;
+ *   - **deadlines** — the rows carrying a `due_at`, bucketed
+ *     overdue / due ≤{@link DUE_SOON_DAYS}d / later by the same derivation
+ *     that inks the card tags (`lib/dashboard/deadline.ts`), plus the single
+ *     most urgent row BY NAME — the one thing on this strip a user should act
+ *     on today. When nothing carries a deadline the cell says so and says
+ *     where deadlines come from, instead of drawing an empty bar or inventing
+ *     urgency: most boards, most of the time, honestly have nothing due;
  *   - **classifier** — how much of this pipeline the classifier built
  *     (source = "gmail" rows) and what it is holding under the 0.85 gate,
  *     deep-linked to the review queue.
@@ -70,6 +78,9 @@ export function PipelinePulse({
   const ages = bucketAges(openAges);
   const openTotal = ages.fresh + ages.waiting + ages.quiet;
 
+  // --- deadlines (rows carrying a due_at; no due date, no claim) -------------
+  const due = deadlinePulse(applications, today);
+
   // --- classifier -----------------------------------------------------------
   const autoFiled = applications.filter((app) => app.source === "gmail").length;
 
@@ -79,10 +90,10 @@ export function PipelinePulse({
     <section
       aria-label="Pipeline pulse"
       data-testid="pipeline-pulse"
-      className="grid overflow-hidden rounded-xl border border-line-soft bg-surface sm:grid-cols-3"
+      className="grid overflow-hidden rounded-xl border border-line-soft bg-surface sm:grid-cols-2 lg:grid-cols-4"
     >
       {/* --- momentum -------------------------------------------------------- */}
-      <div className="border-b border-line-soft p-4 sm:border-b-0 sm:border-r">
+      <div className="border-b border-line-soft p-4 sm:border-r lg:border-b-0">
         <h2 className="label-caps">momentum · filed per wk</h2>
         <div
           role="img"
@@ -115,7 +126,7 @@ export function PipelinePulse({
       </div>
 
       {/* --- ageing ---------------------------------------------------------- */}
-      <div className="border-b border-line-soft p-4 sm:border-b-0 sm:border-r">
+      <div className="border-b border-line-soft p-4 lg:border-b-0 lg:border-r">
         <h2 className="label-caps">open · age since filed</h2>
         {openTotal === 0 ? (
           <p className="mt-3 text-xs text-dim">no open applications</p>
@@ -154,6 +165,77 @@ export function PipelinePulse({
               </span>
               {scopeNote ? <span className="text-dim"> · {scopeNote}</span> : null}
             </p>
+          </>
+        )}
+      </div>
+
+      {/* --- deadlines ------------------------------------------------------- */}
+      <div className="border-b border-line-soft p-4 sm:border-b-0 sm:border-r">
+        <h2 className="label-caps">deadlines · time left</h2>
+        {due.total === 0 ? (
+          <>
+            {/* The state most users see most of the time, so it earns real
+                copy: what the cell measures, and where a deadline comes from —
+                never a nag, never a bar drawn at zero. */}
+            <p className="mt-3 text-xs text-dim">nothing due — no loaded row carries a deadline</p>
+            <p className="mt-1 text-[11px] leading-snug text-dim">
+              filed from mail when one is stated · or set one in a card&apos;s detail
+            </p>
+          </>
+        ) : (
+          <>
+            <div
+              role="img"
+              aria-label={`Deadlines on loaded rows: ${due.overdue} overdue, ${due.soon} due within ${DUE_SOON_DAYS} days, ${due.later} later`}
+              className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-surface-2"
+            >
+              {(
+                [
+                  [due.overdue, "var(--red)"],
+                  [due.soon, "var(--amber)"],
+                  [due.later, "var(--stage-applied)"],
+                ] as const
+              )
+                .filter(([count]) => count > 0)
+                .map(([count, color], i) => (
+                  <span
+                    key={color}
+                    className="pulse-seg-x h-full"
+                    style={{
+                      width: `${(count / due.total) * 100}%`,
+                      background: color,
+                      ["--i" as string]: i,
+                    }}
+                  />
+                ))}
+            </div>
+            <p className="tabular mt-2 text-xs text-muted">
+              {/* "N overdue" turns red as a unit — a red word beside a white
+                  digit would put the emphasis on the wrong half. */}
+              <span className={due.overdue > 0 ? "font-medium text-reject" : ""}>
+                <span className={due.overdue > 0 ? "tabular" : "tabular text-strong"}>
+                  {due.overdue}
+                </span>{" "}
+                overdue
+              </span>{" "}
+              · <span className="tabular">{due.soon}</span> due ≤{DUE_SOON_DAYS}d ·{" "}
+              <span className="tabular">{due.later}</span> later
+              {scopeNote ? <span className="text-dim"> · {scopeNote}</span> : null}
+            </p>
+            {/* The one to act on today, by name — smallest days-left wins, so an
+                overdue row outranks everything until it is dealt with. */}
+            {due.urgent ? (
+              <p className="mt-1 text-xs text-muted">
+                most urgent · {due.urgent.company}{" "}
+                <span
+                  className={`tabular font-mono text-[10px] ${
+                    due.urgent.daysLeft < 0 ? "text-reject" : "text-review"
+                  }`}
+                >
+                  {duePhrase(due.urgent.daysLeft)}
+                </span>
+              </p>
+            ) : null}
           </>
         )}
       </div>
