@@ -295,7 +295,11 @@ test.describe("live demo (/demo)", () => {
     await expect(menu).toBeVisible();
     const labelledBy = await menu.getAttribute("aria-labelledby");
     expect(labelledBy).toBeTruthy();
-    await expect(page.locator(`#${CSS.escape(labelledBy!)}`)).toHaveCount(1);
+    // Attribute selector, not `#${CSS.escape(id)}` — `CSS` is a browser global
+    // and this runs in the Node test context, where referencing it throws
+    // before the assertion can mean anything. React's `useId` values also
+    // contain characters that are not valid bare CSS id selectors.
+    await expect(page.locator(`[id="${labelledBy}"]`)).toHaveCount(1);
     await page.keyboard.press("Escape");
 
     await page
