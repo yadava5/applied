@@ -307,6 +307,15 @@ def test_a_role_less_rejection_at_a_single_application_employer_still_settles_it
             "&amp; Inference role at Cursor!",
             "Software Engineer, Model Routing & Inference",
         ),
+        # Two preposition+article pairs in one sentence. A regex matches
+        # leftmost-first, so this shipped to the live board as the role
+        # "interest in the Software Engineer, C#".
+        (
+            "Path Robotics update",
+            "Dear Ayush, Thank you for your interest in the Software Engineer, C# "
+            "position at Path Robotics. We have successfully received your online application.",
+            "Software Engineer, C#",
+        ),
         # Names no role anywhere. Must stay None rather than become a guess.
         (
             "Thank you for applying to Twitch",

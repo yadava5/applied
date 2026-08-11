@@ -717,6 +717,14 @@ def _clean_role(raw: str) -> str | None:
     # "applying to DoorDash's Software Engineer I" — the employer's possessive
     # rides in ahead of the title because no article separates them.
     role = re.sub(r"^\w+['’]s\s+", "", role)
+    # A regex matches leftmost-first, so a sentence with two preposition+article
+    # pairs hands back the prose between them: "Thank you for your interest in
+    # the Software Engineer, C# position" captured on "for your …" and yielded
+    # "interest in the Software Engineer, C#", which shipped to the live board.
+    # Cutting at the LAST such pair keeps the innermost, which is the title.
+    # Deliberately narrow — it only fires when the capture itself still contains
+    # a preposition + article, which a real job title does not.
+    role = re.sub(r"^.*\b(?:in|for|to|at|with)\s+(?:the|our|your|a|an)\s+", "", role, flags=re.IGNORECASE)
     role = role.strip(" .,;:-–—")
     words = role.split()
     if not words or len(role) < 3:
