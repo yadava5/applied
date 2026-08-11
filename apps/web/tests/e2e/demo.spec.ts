@@ -151,7 +151,17 @@ test.describe("live demo (/demo)", () => {
       .locator("li")
       .filter({ has: page.getByText("Harbor Analytics", { exact: true }) })
       .first();
-    await card.dragTo(page.getByRole("region", { name: /interviewing/i }));
+    // Drop near the TOP of the column, not its centre. Hovering the centre of a
+    // 2249px-tall board scrolls the page ~147px between mouse-down and the first
+    // move, so the HTML5 `dragstart` fires on whichever card has slid under the
+    // cursor — Summit Platform moved while Harbor stayed put, and the count
+    // assertion above was satisfied by the wrong card. A real drag has no
+    // programmatic scroll between press and move; this is the harness, not the
+    // product. The assertion below must keep naming Harbor: asserting whichever
+    // card actually moved would restore green by deleting the coverage.
+    await card.dragTo(page.getByRole("region", { name: /interviewing/i }), {
+      targetPosition: { x: 140, y: 20 },
+    });
     await expect(page.getByRole("region", { name: /interviewing — 6/i })).toBeVisible();
     await expect(
       page
