@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
-import { FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
+import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { CompanyBand } from "@/components/dashboard/CompanyBand";
 import { todayISO } from "@/lib/dashboard/age";
 import { boardColumns, cardQualifier } from "@/lib/dashboard/board";
@@ -62,6 +62,8 @@ function StaticApplicationCard({
       {sameCompanyCount > 0 && onFilterCompany ? (
         <SameCompanyChip company={app.company} count={sameCompanyCount} onFilter={onFilterCompany} />
       ) : null}
+      {/* Same rule as the interactive card: nothing unless the row has a due_at. */}
+      <DeadlineTag dueAt={app.due_at} today={today} />
       {app.notes && <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-dim">{app.notes}</p>}
       <p className="mt-2">
         <FiledStamp filed={filed} status={app.status} today={today} />

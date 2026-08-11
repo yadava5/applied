@@ -58,6 +58,16 @@ export function updateApplicationStatus(id: number, status: string): Promise<Api
   return call(`/applications/${id}`, { method: "PATCH", body: { status } });
 }
 
+/**
+ * PUT /applications/{id}/deadline — set or clear the row's due date. `null`
+ * clears it. Every write through here becomes `due_source: "user"`, which a
+ * later sync never overwrites — only mail-extracted dates are the sync's to
+ * move.
+ */
+export function updateApplicationDeadline(id: number, dueAt: string | null): Promise<ApiCallResult> {
+  return call(`/applications/${id}/deadline`, { method: "PUT", body: { due_at: dueAt } });
+}
+
 /** POST /applications/{id}/dismiss — "not an application"; removes + trains "other". */
 export function dismissApplication(id: number): Promise<ApiCallResult> {
   return call(`/applications/${id}/dismiss`, { method: "POST", body: {} });

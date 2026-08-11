@@ -31,6 +31,11 @@ function toApi(app: DemoApplication, id: number): Application {
     // Every fixture row is "from Gmail" in the simulation, so the rebuild's
     // stale-row semantics apply to them the way they would on a real board.
     source: "gmail",
+    // Fixture deadlines are all mail-extracted — `due_source: "user"` only
+    // ever appears here after a visitor writes one through the sheet, exactly
+    // as on a live board. null iff due_at is null, matching the API contract.
+    due_at: app.dueAt ?? null,
+    due_source: app.dueAt ? "mail" : null,
   };
 }
 

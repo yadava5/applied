@@ -27,13 +27,22 @@
 export interface ProxyRequest {
   /** Same-origin proxy path; the Supabase JWT is attached server-side. */
   path: string;
-  method: "PATCH" | "POST" | "DELETE";
+  method: "PATCH" | "PUT" | "POST" | "DELETE";
   body?: Record<string, unknown>;
 }
 
 /** PATCH the row's stage. Sticky + trains; also restores a dismissed row. */
 export function statusChangeRequest(id: number, status: string): ProxyRequest {
   return { path: `/api/applications/${id}`, method: "PATCH", body: { status } };
+}
+
+/**
+ * PUT the row's deadline; `null` clears it. Any write through this endpoint
+ * makes `due_source` `"user"`, which a later sync never overwrites — only
+ * mail-extracted dates are the sync's to move.
+ */
+export function deadlineChangeRequest(id: number, dueAt: string | null): ProxyRequest {
+  return { path: `/api/applications/${id}/deadline`, method: "PUT", body: { due_at: dueAt } };
 }
 
 /**

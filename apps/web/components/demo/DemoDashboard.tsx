@@ -105,6 +105,24 @@ export function DemoDashboard() {
         });
         return { ok: true, status };
       },
+      async setDeadline(id, dueAt) {
+        await delay(300);
+        const s = store.current;
+        commit({
+          ...s,
+          apps: s.apps.map((app) =>
+            app.id === id
+              ? // The live backend's exact semantics: any write through the
+                // deadline endpoint is the user's word (`due_source: "user"`),
+                // and null clears both fields together.
+                { ...app, due_at: dueAt, due_source: dueAt === null ? null : ("user" as const) }
+              : app,
+          ),
+          // A hand-set deadline is a correction — a rebuild keeps the row.
+          touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
+        });
+        return { ok: true };
+      },
       async dismiss(id) {
         await delay(300);
         const s = store.current;

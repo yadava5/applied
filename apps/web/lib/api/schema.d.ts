@@ -60,6 +60,11 @@ export interface components {
       source?: string | null;
       /** Gmail deep link to the underlying conversation (click-through). */
       url?: string | null;
+      /** Assessment/take-home deadline, ISO-8601 UTC. null = no deadline known. */
+      due_at?: string | null;
+      /** Who set it: "user" (sticky — sync never overwrites) or "mail"
+       * (extracted from an explicit statement). null iff due_at is null. */
+      due_source?: "user" | "mail" | null;
     };
     ApplicationListResponse: {
       applications: components["schemas"]["Application"][];
