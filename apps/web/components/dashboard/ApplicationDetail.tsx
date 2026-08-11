@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Dialog } from "@/components/ui/Dialog";
+import { AUTO_FILE_GATE, GateMeter } from "@/components/viz/GateMeter";
 import { filedAt, longDate, shortDate } from "@/lib/dashboard/dates";
 import {
   readApplicationDetail,
@@ -66,10 +67,24 @@ function TrailMessage({ message, isLast }: { message: DetailData["messages"][num
       </div>
       <p className="truncate text-xs text-muted">{sender}</p>
       {meta ? (
+        // The verdict, in the DecisionTrace's vocabulary: category, then the
+        // confidence drawn against the 0.85 gate — green cleared it, amber
+        // waited for a human. The number stays as the accessible value.
         <p className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-dim">
           {meta.label}
           {typeof message.confidence === "number" ? (
-            <span className="tabular">{pct(message.confidence)}</span>
+            <>
+              <GateMeter confidence={message.confidence} className="w-12" />
+              <span
+                className="tabular"
+                style={{
+                  color:
+                    message.confidence >= AUTO_FILE_GATE ? "var(--green)" : "var(--amber)",
+                }}
+              >
+                {pct(message.confidence)}
+              </span>
+            </>
           ) : null}
         </p>
       ) : null}
@@ -214,22 +229,29 @@ export function ApplicationDetail({
     return () => window.clearTimeout(id);
   }, [app, load]);
 
-  if (!app) return null;
+  // The card last inspected, retained through close: the Dialog's exit
+  // animation plays over real content instead of a blank panel (guarded
+  // render-adjustment — the same pattern the board's optimistic overlay uses).
+  const [shown, setShown] = useState<Application | null>(app);
+  if (app && app !== shown) setShown(app);
 
-  const shownStatus = optimistic ?? app.status;
+  if (!shown) return null;
+  const active = shown;
+
+  const shownStatus = optimistic ?? active.status;
   const stage = STAGES.find((s) => s.key === stageOf(shownStatus))!;
-  const role = app.position.trim();
+  const role = active.position.trim();
 
   async function onStageChange(next: string) {
-    if (!app || next === shownStatus) return;
+    if (next === shownStatus) return;
     setStageError(null);
     setOptimistic(next);
     setStageBusy(true);
-    const result = await transport.changeStatus(app.id, next);
+    const result = await transport.changeStatus(active.id, next);
     setStageBusy(false);
     if (!result.ok) {
       setOptimistic(null);
-      setStageError(statusChangeFailure(next, app.status, result.detail));
+      setStageError(statusChangeFailure(next, active.status, result.detail));
       return;
     }
     router.refresh();
@@ -237,21 +259,21 @@ export function ApplicationDetail({
 
   return (
     <Dialog
-      open
+      open={app !== null}
       onClose={onClose}
       variant="sheet"
-      title={app.company}
+      title={active.company}
       description={role || "role not captured yet"}
     >
       <div className="space-y-5">
         {/* --- The row's own facts + the working stage control ------------- */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex items-center gap-2">
-            <label className="sr-only" htmlFor={`detail-status-${app.id}`}>
-              Change stage for {app.company}
+            <label className="sr-only" htmlFor={`detail-status-${active.id}`}>
+              Change stage for {active.company}
             </label>
             <select
-              id={`detail-status-${app.id}`}
+              id={`detail-status-${active.id}`}
               value={statusSelectValue(shownStatus)}
               disabled={stageBusy}
               onChange={(e) => void onStageChange(e.target.value)}
@@ -268,10 +290,10 @@ export function ApplicationDetail({
               <Loader2 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none" aria-hidden />
             ) : null}
           </div>
-          <span className="tabular font-mono text-[11px] text-dim">filed {longDate(filedAt(app))}</span>
-          {app.url ? (
+          <span className="tabular font-mono text-[11px] text-dim">filed {longDate(filedAt(active))}</span>
+          {active.url ? (
             <a
-              href={app.url}
+              href={active.url}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 font-mono text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
@@ -292,9 +314,9 @@ export function ApplicationDetail({
           </p>
         ) : null}
 
-        {app.notes ? (
+        {active.notes ? (
           <p className="rounded-lg border border-line-soft bg-surface-2 p-3 text-[12px] leading-relaxed text-muted">
-            {app.notes}
+            {active.notes}
           </p>
         ) : null}
 
@@ -311,7 +333,7 @@ export function ApplicationDetail({
               <p className="text-xs text-strong">Couldn&apos;t load the mail behind this card.</p>
               <button
                 type="button"
-                onClick={() => void load(app.id)}
+                onClick={() => void load(active.id)}
                 className="mt-2 rounded border border-line px-2 py-1 font-mono text-[11px] text-foreground transition-colors hover:border-line-strong hover:text-strong"
               >
                 try again
@@ -336,8 +358,8 @@ export function ApplicationDetail({
 
         {state.kind === "ready" ? (
           <SplitPrompt
-            applicationId={app.id}
-            company={app.company}
+            applicationId={active.id}
+            company={active.company}
             candidates={state.detail.splitCandidates}
             onSplit={() => {
               onClose();
@@ -346,9 +368,9 @@ export function ApplicationDetail({
           />
         ) : null}
 
-        {app.source ? (
+        {active.source ? (
           <p className="border-t border-line-soft pt-3 font-mono text-[10px] text-dim">
-            source · {app.source === "gmail" ? "filed automatically from gmail" : app.source}
+            source · {active.source === "gmail" ? "filed automatically from gmail" : active.source}
           </p>
         ) : null}
       </div>

@@ -4,9 +4,11 @@ import { ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
+import { FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
 import { cardQualifier } from "@/lib/dashboard/board";
-import { filedAt, shortDate } from "@/lib/dashboard/dates";
+import { todayISO } from "@/lib/dashboard/age";
+import { filedAt } from "@/lib/dashboard/dates";
 import {
   CANCEL_LABEL,
   DELETE_CONFIRM_LABEL,
@@ -59,6 +61,7 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
 export function ApplicationCard({
   app,
   columnLabel,
+  today = todayISO(),
   onOpenDetail,
   sameCompanyCount = 0,
   onFilterCompany,
@@ -70,19 +73,23 @@ export function ApplicationCard({
   app: Application;
   /** The heading of the column this card is rendered in (see `board.ts`). */
   columnLabel?: string;
+  /** Today's UTC calendar day — the board threads one read of the clock down
+   *  so every card's age tag derives from the same instant. */
+  today?: string;
   /** Opens the detail sheet (the mail behind this card). */
   onOpenDetail?: (app: Application) => void;
   /**
    * How many OTHER applications share this company. A card is an application,
    * not a company — one employer can hold several — so this is a light
-   * affordance ("3 more at Amazon"), never a grouping.
+   * affordance ("+3 at Amazon"), never a merge. The board passes 0 while its
+   * active filter already IS this company.
    */
   sameCompanyCount?: number;
-  /** Filters the board to this card's company. */
+  /** Filters the board to this card's company (opens the set view). */
   onFilterCompany?: (company: string) => void;
   /** True while this card is the one being dragged. */
   dragging?: boolean;
-  onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void;
+  onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd?: () => void;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
@@ -232,7 +239,7 @@ export function ApplicationCard({
   // --- Pending removal: the row is still here, and one click keeps it --------
   if (removalPending) {
     return (
-      <li className="rounded-lg border border-dashed border-line bg-surface-2/60 p-3">
+      <div className="rounded-lg border border-dashed border-line bg-surface-2/60 p-3">
         <p role="status" className="font-mono text-[11px] leading-snug text-muted">
           {removalPendingMessage(app.company, secondsLeft ?? 0)}
         </p>
@@ -248,7 +255,7 @@ export function ApplicationCard({
           <Undo2 className="h-3.5 w-3.5" aria-hidden />
           {UNDO_LABEL}
         </button>
-      </li>
+      </div>
     );
   }
 
@@ -256,18 +263,18 @@ export function ApplicationCard({
   // WHICH of the two happened — one is still on disk, the other is gone. -----
   if (removed) {
     return (
-      <li className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 p-3">
+      <div className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 p-3">
         <p role="status" className="font-mono text-[11px] text-dim">
           {removed === "deleted" ? deletedMessage(app.company) : removedMessage(app.company)}
         </p>
-      </li>
+      </div>
     );
   }
 
   const role = app.position.trim();
 
   return (
-    <li
+    <div
       aria-busy={busy !== null}
       draggable={onDragStart ? true : undefined}
       onDragStart={onDragStart}
@@ -340,14 +347,7 @@ export function ApplicationCard({
       </div>
 
       {sameCompanyCount > 0 && onFilterCompany ? (
-        <button
-          type="button"
-          onClick={() => onFilterCompany(app.company)}
-          aria-label={`Show all applications at ${app.company}`}
-          className="mt-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
-        >
-          {sameCompanyCount} more at {app.company} →
-        </button>
+        <SameCompanyChip company={app.company} count={sameCompanyCount} onFilter={onFilterCompany} />
       ) : null}
 
       <div className="mt-2 flex items-center justify-between gap-2">
@@ -368,7 +368,7 @@ export function ApplicationCard({
             </option>
           ))}
         </select>
-        <span className="tabular font-mono text-[10px] text-dim">{shortDate(filed)}</span>
+        <FiledStamp filed={filed} status={shownStatus} today={today} />
       </div>
 
       {busy === "status" || optimistic ? (
@@ -444,6 +444,6 @@ export function ApplicationCard({
           <span>{error}</span>
         </p>
       ) : null}
-    </li>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, MoreHorizontal, RefreshCw, X } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -178,6 +179,7 @@ export function SyncBar({
   const connected = gmail?.connected === true;
   const hasCursor = gmail?.hasCursor === true;
   const lastSyncAt = gmail?.lastSyncAt ?? null;
+  const reduceMotion = useReducedMotion();
   const simulated = transport.mode === "simulated";
   const memoryKey = simulated ? REBUILD_MEMORY_DEMO_KEY : REBUILD_MEMORY_KEY;
   const busy = phase.kind === "syncing" || phase.kind === "rebuilding";
@@ -488,15 +490,24 @@ export function SyncBar({
         </div>
       </header>
 
-      {/* Persistent live regions — visually empty when idle. */}
+      {/* Persistent live regions — visually empty when idle. The inner span is
+          keyed by the machine's state so each transition (idle → syncing →
+          synced…) slides its sentence in — the state CHANGE is visible, not
+          just the state. Reduced motion renders each state statically. */}
       <p
         role="status"
         aria-live="polite"
-        className={`flex items-center gap-2 font-mono text-[11px] text-muted ${
-          statusContent === null ? "sr-only" : ""
-        }`}
+        className={`font-mono text-[11px] text-muted ${statusContent === null ? "sr-only" : ""}`}
       >
-        {statusContent}
+        <motion.span
+          key={phase.kind}
+          initial={reduceMotion ? false : { opacity: 0, y: 3 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+          className="flex items-center gap-2"
+        >
+          {statusContent}
+        </motion.span>
       </p>
       <p
         role="alert"
@@ -594,7 +605,9 @@ export function SyncBar({
  * (`POST /applications/{id}/restore`), which is what makes the purge
  * auditable rather than final. Amber border when rows were removed or the
  * scan stopped early (needs attention; nothing failed), red when it broke,
- * quiet otherwise. No entrance animation — this panel's job is to be read.
+ * quiet otherwise. The entrance is a fast fade-rise (0.18s) that pulls the
+ * eye to the receipt without ever delaying reading it; reduced motion
+ * renders it statically.
  *
  * The heading is the end state, not a pleasantry: a rebuild that stopped
  * early did NOT finish, and one that removed rows on a partial scan judged
@@ -617,6 +630,7 @@ function RebuildReceipt({
 }) {
   const [restoringId, setRestoringId] = useState<number | null>(null);
   const [failedId, setFailedId] = useState<number | null>(null);
+  const reduceMotion = useReducedMotion();
 
   async function restore(id: number) {
     setRestoringId(id);
@@ -643,7 +657,12 @@ function RebuildReceipt({
         ? "border-review/40"
         : "border-line-soft";
   return (
-    <div className={`rounded-xl border bg-surface px-4 py-3 ${border}`}>
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className={`rounded-xl border bg-surface px-4 py-3 ${border}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           {endKind === "complete" ? (
@@ -727,6 +746,6 @@ function RebuildReceipt({
           ))}
         </ul>
       ) : null}
-    </div>
+    </motion.div>
   );
 }

@@ -208,6 +208,112 @@ test.describe("live demo (/demo)", () => {
     await expect(surface.getByText(/stopped early/)).toHaveCount(0);
   });
 
+  test("the pulse strip renders all three derived signals over the fixtures", async ({ page }) => {
+    await page.goto("/demo");
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse).toBeVisible();
+
+    // Momentum: exactly 8 week-bars plus the delta sentence derived from them.
+    await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
+    await expect(pulse.getByText(/last 4 wk/)).toBeVisible();
+
+    // Ageing: the fixture board's open rows are weeks old, so the quiet share
+    // is non-zero. `\d+` would also match "0 quiet", which is the claim this
+    // is here to make — so require a non-zero leading digit.
+    await expect(pulse.getByText(/[1-9]\d* quiet ≥2 wk/)).toBeVisible();
+
+    // Classifier: every fixture row is source="gmail", and nothing is held.
+    await expect(pulse.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+
+    // The card-level ageing tag agrees with the strip's threshold.
+    await expect(page.getByText(/quiet \d+d/).first()).toBeVisible();
+  });
+
+  test("the pulse strip moves when Sync files fresh mail", async ({ page }) => {
+    await page.goto("/demo");
+    await expect(page.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
+    // Two fixture rows arrive → the classifier fraction re-derives from the
+    // new board. (No assertion on the ageing buckets here: the fixture dates
+    // are static while real time passes, so any exact bucket count would rot.)
+    await expect(page.getByText("16 of 16 auto-filed from mail")).toBeVisible();
+  });
+
+  test("a company opens as a set: band on, chips suppressed, clear restores", async ({ page }) => {
+    await page.goto("/demo");
+    // Three Northstar cards each carry the "+2 at" chip while unfiltered.
+    const chips = page.getByRole("button", { name: "Show all applications at Northstar Systems" });
+    await expect(chips).toHaveCount(3);
+
+    await chips.first().click();
+    // The band names the set…
+    const band = page.getByTestId("company-band");
+    await expect(band).toBeVisible();
+    await expect(band.getByText("Northstar Systems")).toBeVisible();
+    await expect(band.getByText(/3 applications/)).toBeVisible();
+    // …and the chip must NOT render while the active filter already is this
+    // company ("2 more at Northstar" inside Northstar's own set was the bug).
+    await expect(chips).toHaveCount(0);
+    await expect(page.getByText(/at Northstar Systems/)).toHaveCount(0);
+
+    // Clear via the band restores the board and the chips.
+    await page.getByRole("button", { name: "Stop filtering by Northstar Systems" }).click();
+    await expect(page.getByText("Harbor Analytics", { exact: true })).toBeVisible();
+    await expect(chips).toHaveCount(3);
+  });
+
+  test("with reduced motion, every surface is fully present — nothing gated", async ({ page }) => {
+    // The motion layer (board layout glides, band/dialog entrances, pulse bar
+    // draws) must be pure enhancement: under prefers-reduced-motion the same
+    // content renders statically, immediately.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/demo");
+    await expect(page.getByText("Beacon Health", { exact: true })).toBeVisible();
+
+    // `toBeVisible()` on a bordered, padded <section> passes on an EMPTY strip,
+    // so assert the content itself — the three derived signals and eight drawn
+    // bars — exactly as the motion-on test does. A guard that survives its own
+    // component rendering nothing is the shape this estate keeps producing.
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
+    await expect(pulse.getByText("14 of 14 auto-filed from mail")).toBeVisible();
+    await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    // A bar with zero drawn height would satisfy the count above.
+    const barHeights = await pulse.getByTestId("pulse-week").evaluateAll((els) =>
+      els.map((el) => el.getBoundingClientRect().height),
+    );
+    expect(Math.max(...barHeights)).toBeGreaterThan(0);
+
+    // The board's own row-actions menu must keep its accessible name. Branching
+    // element type on `useReducedMotion` desynced the server and client trees,
+    // which shifted every descendant `useId` and left `aria-labelledby` pointing
+    // at an id that no longer existed — for exactly the people this mode serves.
+    const trigger = page.getByRole("button", { name: /^Row actions for / }).first();
+    await trigger.click();
+    const menu = page.getByRole("menu").first();
+    await expect(menu).toBeVisible();
+    const labelledBy = await menu.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    await expect(page.locator(`#${CSS.escape(labelledBy!)}`)).toHaveCount(1);
+    await page.keyboard.press("Escape");
+
+    await page
+      .getByRole("button", { name: "Show all applications at Northstar Systems" })
+      .first()
+      .click();
+    const band = page.getByTestId("company-band");
+    await expect(band.getByText("Northstar Systems")).toBeVisible();
+    await expect(band.getByText(/3 applications/)).toBeVisible();
+    // The set view keeps only Northstar cards, so open one of those.
+    await page
+      .getByRole("button", { name: "Open Northstar Systems — ML Engineer, Platform" })
+      .click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+  });
+
   test("the decision trace rows expand on click (real effect)", async ({ page }) => {
     await page.goto("/demo");
     // The first trace row is open by default; open another and assert its

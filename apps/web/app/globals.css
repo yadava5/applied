@@ -89,7 +89,11 @@
   --line: rgb(0 0 0 / 0.1);
   --line-soft: rgb(0 0 0 / 0.06);
   --line-strong: rgb(0 0 0 / 0.24);
-  --green: #16a34a;
+  /* Darkened from #16a34a, which measured 3.30:1 (APCA Lc 60) on white — a
+   * WCAG AA failure for every small green text use (the confidence
+   * percentages, "rebuild finished", the live dot's label). #15803d measures
+   * 5.02:1 / Lc 74 on white and 4.56:1 / Lc 68 on the paper surface-2. */
+  --green: #15803d;
   --amber: #b45309;
   --red: #dc2626;
   /* Ink counterpart of the dark ramp's #b3b9c2 — measured 9.93:1 on white,
@@ -824,26 +828,33 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
- * Application detail sheet (components/dashboard/ApplicationDetail.tsx) — the
- * side panel slides in from the right edge. Enhancement only: collapses to a
- * static, fully visible panel under prefers-reduced-motion; the content is
- * present either way (never gated on the animation).
+ * Pulse strip (components/dashboard/PipelinePulse.tsx) — the momentum bars
+ * rise from the baseline and the distribution segments grow left-to-right on
+ * mount, staggered, echoing the rail's `.rail-seg` entrance. Transform-only
+ * (the numbers beside them are the content), so nothing is ever hidden and
+ * both collapse to the fully-drawn state under prefers-reduced-motion.
  * ------------------------------------------------------------------------- */
-.sheet-panel {
-  animation: sheet-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+.pulse-seg {
+  transform-origin: bottom;
+  animation: pulse-seg-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 50ms);
 }
-@keyframes sheet-in {
+@keyframes pulse-seg-in {
   from {
-    opacity: 0;
-    transform: translateX(1.5rem);
+    transform: scaleY(0);
   }
   to {
-    opacity: 1;
-    transform: none;
+    transform: scaleY(1);
   }
 }
+.pulse-seg-x {
+  transform-origin: left;
+  animation: rail-seg-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
 @media (prefers-reduced-motion: reduce) {
-  .sheet-panel {
+  .pulse-seg,
+  .pulse-seg-x {
     animation: none !important;
   }
 }
@@ -882,38 +893,7 @@ body {
   cursor: grabbing;
 }
 
-/* ---------------------------------------------------------------------------
- * Modal dialog (components/ui/Dialog.tsx) — a quick fade for the scrim and a
- * spring rise for the panel. Enhancement only: collapses to a static, fully
- * visible state under prefers-reduced-motion.
- * ------------------------------------------------------------------------- */
-.dialog-overlay {
-  animation: dialog-fade 0.16s ease both;
-}
-.dialog-panel {
-  animation: dialog-rise 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@keyframes dialog-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes dialog-rise {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dialog-overlay,
-  .dialog-panel {
-    animation: none !important;
-  }
-}
+/* Modal/sheet motion note: the Dialog's scrim fade, panel rise and the detail
+ * sheet's slide (plus their exits) live in components/ui/Dialog.tsx via the
+ * motion library now — one implementation for enter AND exit, collapsed to
+ * instant under prefers-reduced-motion there (`useReducedMotion`). */

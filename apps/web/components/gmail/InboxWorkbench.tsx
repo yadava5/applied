@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { selectClass } from "@/components/ui/formStyles";
 import { Segmented } from "@/components/ui/Segmented";
+import { GateMeter } from "@/components/viz/GateMeter";
+import { shortDate } from "@/lib/dashboard/dates";
 import { filedSummary, type SyncCounts } from "@/lib/gmail/sync-state";
 import {
   buildInboxParams,
@@ -102,31 +104,48 @@ function pct(n: number) {
   return `${Math.round(n * 100)}%`;
 }
 
+/**
+ * One classified message — the verdict rendered as the product's own visual,
+ * not debug output: category chip, the confidence drawn against the 0.85
+ * auto-file gate (the landing DecisionTrace's meter, via `GateMeter`), the
+ * percentage in the cleared/held hue, and the receipt date. Fixed column
+ * widths keep the meters aligned down the list so confidence reads as a
+ * column, not a scatter.
+ */
 function VerdictRow({ v }: { v: InboxVerdict }) {
   const meta = CATEGORY_META[v.category] ?? { label: v.category, dot: "bg-dim" };
   return (
-    <li className="flex items-start justify-between gap-4 border-b border-line-soft px-1 py-3 last:border-b-0">
-      <div className="min-w-0">
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line-soft px-1 py-3 last:border-b-0">
+      {/* basis-full on mobile gives the subject its own line; sm+ restores the
+          single-row layout (same rule as the landing trace rows). */}
+      <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
         <p className="truncate text-sm font-medium text-strong">{v.subject}</p>
         <p className="truncate font-mono text-[11px] text-dim">
           {v.sender_name ? `${v.sender_name} · ` : ""}
           {v.sender_email}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-3 text-right">
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted">
-          <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} aria-hidden />
-          {meta.label}
+      <span className="inline-flex w-24 items-center gap-1.5 font-mono text-[11px] text-muted">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
+        <span className="truncate">{meta.label}</span>
+      </span>
+      <GateMeter confidence={v.confidence} className="hidden sm:inline-block" />
+      <span
+        className="tabular w-10 text-right font-mono text-[11px]"
+        style={{ color: v.needs_review ? "var(--amber)" : "var(--green)" }}
+      >
+        {pct(v.confidence)}
+      </span>
+      {v.needs_review ? (
+        <span className="rounded-full border border-review/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
+          review
         </span>
-        <span className="tabular w-10 font-mono text-[11px] text-dim">{pct(v.confidence)}</span>
-        {v.needs_review ? (
-          <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-review">
-            review
-          </span>
-        ) : (
-          <span className="w-[52px]" aria-hidden />
-        )}
-      </div>
+      ) : (
+        <span className="w-[52px]" aria-hidden />
+      )}
+      <span className="tabular hidden w-12 shrink-0 text-right font-mono text-[10px] text-dim md:inline">
+        {v.received_at ? shortDate(v.received_at) : ""}
+      </span>
     </li>
   );
 }

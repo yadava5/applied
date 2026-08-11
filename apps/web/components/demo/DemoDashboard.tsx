@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
+import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
@@ -207,6 +208,15 @@ export function DemoDashboard() {
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
       </SyncBar>
+      {/* Same strip as the signed-in dashboard, over the fixture store: the
+          fixtures are the full board, so total is exact and the momentum /
+          ageing / classifier cells derive from what is actually on screen —
+          press Sync and the fresh rows move the bars. */}
+      <PipelinePulse
+        applications={snapshot.apps}
+        total={snapshot.apps.length}
+        needsReview={0}
+      />
       <PipelineBoard applications={snapshot.apps} transport={boardTransport} />
     </section>
   );

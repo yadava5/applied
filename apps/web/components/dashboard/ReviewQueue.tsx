@@ -4,6 +4,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { AUTO_FILE_GATE, GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
 import {
   CLASSIFY_FAILED,
@@ -136,6 +137,27 @@ function ReviewRow({
         </span>
       </div>
       <p className="truncate text-xs text-muted">{sender}</p>
+      {/* WHY this email is here, in the classifier's own numbers: its
+          confidence drawn against the auto-file gate. Most held mail sits
+          under the gate; a confident verdict in this queue was held because
+          no employer could be named — two different questions for the user,
+          so the line says which one this is. */}
+      {typeof item.confidence === "number" ? (
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-dim">
+          <GateMeter confidence={item.confidence} className="w-12" />
+          <span
+            className="tabular"
+            style={{
+              color: item.confidence >= AUTO_FILE_GATE ? "var(--green)" : "var(--amber)",
+            }}
+          >
+            {Math.round(item.confidence * 100)}%
+          </span>
+          {item.confidence >= AUTO_FILE_GATE
+            ? "cleared the gate · held for a missing employer name"
+            : `below the ${AUTO_FILE_GATE} gate · your call decides it`}
+        </p>
+      ) : null}
       {item.snippet ? (
         <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-dim">{item.snippet}</p>
       ) : null}
