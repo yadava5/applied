@@ -452,6 +452,28 @@ async def _find_application_by_token(
         Application.id.asc(),
     )
 
+    rows = await _company_rows(session, user_id, token)
+    return rows[0] if rows else None
+
+
+async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Application]:
+    """Every one of this user's applications at the employer named by ``token``.
+
+    One employer can now hold several applications, so the lookup returns the
+    whole set and :func:`_resolve_application` decides which one a given piece of
+    mail belongs to. The single-row ``.first()`` this replaced silently picked
+    one of four Amazon rows and let the other three drift.
+
+    Two queries, so the common case stays index-assisted: exact equality first,
+    then a prefix scan over the leading normalized word, confirmed in Python.
+    """
+
+    live_first = (
+        Application.dismissed_at.is_(None).desc(),
+        Application.created_at.asc(),
+        Application.id.asc(),
+    )
+
     exact = (
         await session.exec(
             select(Application)
@@ -460,15 +482,14 @@ async def _find_application_by_token(
                 func.lower(Application.company) == token,
             )
             .order_by(*live_first)
-            .limit(1)
         )
-    ).first()
-    if exact is not None:
-        return exact
+    ).all()
+    if exact:
+        return list(exact)
 
     prefix = pipeline.normalize_company_name(token).split(" ")[0]
     if not prefix:
-        return None
+        return []
     candidates = (
         await session.exec(
             select(Application)
@@ -479,10 +500,96 @@ async def _find_application_by_token(
             .order_by(*live_first)
         )
     ).all()
-    for row in candidates:
-        if pipeline.matches_company_token(row.company, token):
-            return row
-    return None
+    return [row for row in candidates if pipeline.matches_company_token(row.company, token)]
+
+
+async def _resolve_application(
+    session,
+    user_id: uuid.UUID,
+    rolled: pipeline.RolledApplication,
+) -> Application | None:
+    """Which stored application, if any, this rolled cluster is — or None to mint.
+
+    The employer narrows the field; these rules pick the row inside it. They are
+    the persistent mirror of :func:`pipeline.partition_applications`, and the
+    order is the whole point:
+
+    1. **Requisition id.** The employer's own number. Nothing outranks it.
+    2. **Role token.** The normalized title.
+    3. **A row that has no identity yet** — one minted before applications were
+       told apart within an employer — is ADOPTED by the cluster, in place, so
+       the migration keeps the row id and everything hanging off it. Only when
+       it is the sole such row: with two anonymous rows there is no way to know
+       which is which, and guessing would move a user's status onto the wrong
+       application.
+    4. **A cluster that names no role at all** joins the employer's only row if
+       there is exactly one, and otherwise mints nothing and matches nothing —
+       :func:`pipeline.collect_review_items` has already routed that message to
+       the queue for the user to assign.
+
+    Live rows are preferred over dismissed ones throughout (``_company_rows``
+    orders them first), so a dismissed duplicate can never shadow the row that is
+    actually on the board.
+    """
+
+    rows = await _company_rows(session, user_id, rolled.company_token)
+    return _pick_application(rows, rolled.req_id, rolled.role_token)
+
+
+def _pick_application(
+    rows: list[Application],
+    req_id: str | None,
+    role_token: str | None,
+) -> Application | None:
+    """The cascade itself, over rows already narrowed to one employer.
+
+    Split out from :func:`_resolve_application` because three call sites need it
+    and they arrive at ``(req_id, role_token)`` differently: the sync computes it
+    for a whole cluster, while the review-classify and orphan-reconcile paths
+    compute it from one message. Before this existed those two paths called
+    ``.first()``, which — the moment an employer holds more than one application
+    — files a user's own classification against an arbitrary sibling.
+    """
+
+    if not rows:
+        return None
+
+    if req_id is not None:
+        for row in rows:
+            if row.req_id and row.req_id == req_id:
+                return row
+    if role_token is not None:
+        for row in rows:
+            if row.role_token and row.role_token == role_token:
+                return row
+
+    if req_id is None and role_token is None:
+        # Rule 4. Deliberately looks at ALL rows, not just the identity-less
+        # ones: role-less mail at an employer with exactly one known application
+        # belongs to it. With several, there is nothing to choose between them.
+        return rows[0] if len(rows) == 1 else None
+
+    # Rule 3 — adopt the employer's single pre-identity row, in place.
+    unidentified = [row for row in rows if row.req_id is None and row.role_token is None]
+    return unidentified[0] if len(unidentified) == 1 else None
+
+
+async def _resolve_application_for_email(
+    session,
+    user_id: uuid.UUID,
+    token: str,
+    email: Email,
+) -> Application | None:
+    """Resolve the application ONE stored message belongs to, or None to mint."""
+
+    rows = await _company_rows(session, user_id, token)
+    subject = email.subject or ""
+    snippet = email.body_snippet or ""
+    return _pick_application(
+        rows,
+        pipeline.extract_req_id(subject, snippet),
+        pipeline.normalize_role_token(pipeline.role_from_message(subject, snippet)),
+    )
 
 
 async def _persist_message_refs(
@@ -550,7 +657,18 @@ async def _persist_message_refs(
             existing.sender_name = ref.sender_name
             existing.sender_email = ref.sender_email
             existing.received_at = received_at
-            existing.body_snippet = (ref.snippet or "")[:500]
+            # Only ever ADD a snippet, never blank one. A ref that carries no
+            # snippet means "this pass did not fetch one", not "this message has
+            # none" — and the unconditional assignment that used to be here is
+            # how the stored snippet was erased for every message that came back
+            # through the review queue. The role lives in the snippet, so erasing
+            # it erases the identity the board groups by.
+            if ref.snippet:
+                existing.body_snippet = ref.snippet[:500]
+            # A thread id, likewise: a metadata fetch that omits it must not
+            # unlink a message from its conversation.
+            if ref.thread_id:
+                existing.thread_id = ref.thread_id
             if not (existing.user_corrected or existing.is_reviewed):
                 existing.classified_as = category
                 existing.classification_confidence = ref.confidence
@@ -690,11 +808,24 @@ async def upsert_applications_for_user(
     created = 0
     updated = 0
     emptied: set[int] = set()
-    for r in rolled:
-        existing = await _find_application_by_token(session, user_id, r.company_token)
+    # Earliest-applied first WITHIN a company. When several applications at one
+    # employer meet a single pre-identity row, the earliest is the one that
+    # adopts it — so the row that has been on the board (and any status the user
+    # set on it) stays with the application it was actually about, and the later
+    # ones are minted fresh. Across companies the order is irrelevant.
+    for r in sorted(rolled, key=lambda x: (x.company_token, x.applied_at or datetime.max)):
+        existing = await _resolve_application(session, user_id, r)
         deeplink = _rolled_deeplink(r)
 
         if existing is not None:
+            # Stamp the identity on whatever row we landed on. For a row minted
+            # before this concept existed this is the migration: it happens on
+            # the next sync, in place, keeping the row id and therefore every
+            # contact, interview and user correction hanging off it.
+            if existing.req_id is None and r.req_id is not None:
+                existing.req_id = r.req_id
+            if existing.role_token is None and r.role_token is not None:
+                existing.role_token = r.role_token
             if existing.dismissed_at is not None:
                 if existing.dismissed_reason == DISMISSED_BY_USER:
                     continue  # a human said no; not counted as updated either
@@ -728,6 +859,8 @@ async def upsert_applications_for_user(
                 applied_date=r.applied_at.date() if r.applied_at else None,
                 source=SOURCE_GMAIL_AUTO,
                 url=deeplink,
+                req_id=r.req_id,
+                role_token=r.role_token,
             )
             session.add(app)
             await session.flush()
@@ -851,18 +984,24 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             continue  # still unnameable — never invent a company
         token, display = employer
 
-        app = await _find_application_by_token(session, user_id, token)
+        app = await _resolve_application_for_email(session, user_id, token, email)
         if app is None:
+            # Stamp the identity the message carries onto the row it mints, so
+            # the next sync recognises this application instead of filing a
+            # second one beside it.
+            role = pipeline.role_from_message(email.subject or "", email.body_snippet or "")
             app = Application(
                 user_id=user_id,
                 company=display,
-                position=_NO_ROLE,
+                position=role or _NO_ROLE,
                 status=ApplicationStatus(status_value),
                 applied_date=email.received_at.date() if email.received_at else None,
                 source=SOURCE_GMAIL_USER,  # came from a human decision → sticky
                 url=pipeline.gmail_deeplink(
                     thread_id=email.thread_id, message_id=email.message_id
                 ),
+                req_id=pipeline.extract_req_id(email.subject or "", email.body_snippet or ""),
+                role_token=pipeline.normalize_role_token(role),
             )
             session.add(app)
             await session.flush()
@@ -960,7 +1099,7 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
             received_at=item.received_at,
             category="needs_review",
             confidence=item.confidence,
-            snippet="",
+            snippet=item.snippet,
         )
         for item in review
     ]
@@ -995,7 +1134,7 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             received_at=item.received_at,
             category="needs_review",
             confidence=item.confidence,
-            snippet="",
+            snippet=item.snippet,
         )
         for item in review
     ]
@@ -1490,18 +1629,21 @@ async def classify_review_item(
 
     if status_value is not None and employer is not None:
         token, display = employer
-        app = await _find_application_by_token(session, user_id, token)
+        app = await _resolve_application_for_email(session, user_id, token, email)
         if app is None:
+            role = pipeline.role_from_message(email.subject or "", email.body_snippet or "")
             app = Application(
                 user_id=user_id,
                 company=display,
-                position=_NO_ROLE,
+                position=role or _NO_ROLE,
                 status=ApplicationStatus(status_value),
                 applied_date=email.received_at.date() if email.received_at else None,
                 source=SOURCE_GMAIL_USER,  # human-classified → sticky
                 url=pipeline.gmail_deeplink(
                     thread_id=email.thread_id, message_id=email.message_id
                 ),
+                req_id=pipeline.extract_req_id(email.subject or "", email.body_snippet or ""),
+                role_token=pipeline.normalize_role_token(role),
             )
             session.add(app)
             await session.flush()
