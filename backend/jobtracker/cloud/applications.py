@@ -1092,6 +1092,13 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
     for one employer collapse into a single application within one pass, and an
     existing row is only ever ADVANCED (never downgraded, never un-settled).
     Returns the number of applications CREATED.
+
+    Stickiness, the same rule :func:`upsert_applications_for_user` enforces: a
+    row the user created or corrected keeps its stage, and the orphan is filed
+    against it WITHOUT rewriting the status. Rows this pass minted are exempt —
+    reconcile tags what it creates ``gmail_user``, so without the carve-out the
+    second orphan of a pass could not roll up onto the row the first one just
+    caused to exist.
     """
 
     orphans = (
@@ -1111,6 +1118,10 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
     ).all()
 
     created = 0
+    # Row ids THIS pass minted. They carry ``gmail_user`` because they came from
+    # a human decision, but they are not a *standing* correction — they are
+    # three lines old — so the stickiness gate below does not apply to them.
+    minted: set[int] = set()
     for email in orphans:
         status_value = _lifecycle_to_status(email.classified_as)
         if status_value is None:  # defensive: category outside the filing set
@@ -1143,6 +1154,7 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             )
             session.add(app)
             await session.flush()
+            minted.add(app.id)
             created += 1
         else:
             # A human classified this message INTO a filing category, which is
@@ -1153,14 +1165,23 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
                 app.dismissed_reason = None
                 app.updated_at = datetime.utcnow()
                 session.add(app)
-            # Advance-only: a catch-up must never downgrade or un-settle a row.
-            new_status = ApplicationStatus(
-                pipeline.advance_application_status(app.status.value, status_value)
-            )
-            if new_status != app.status:
-                app.status = new_status
-                app.updated_at = datetime.utcnow()
-                session.add(app)
+            # Advance-only AND only on a row automation still owns — the same
+            # two-part rule the sync upsert applies. ``advance_application_status``
+            # alone stops a downgrade and protects a terminal state; it knows
+            # nothing about who owns the row, so the ``_is_auto_row`` half has to
+            # be here. Without it one stranded settled email could overwrite a
+            # standing human correction — once, silently, and to a terminal
+            # state nothing could then move. A row this pass minted is exempt so
+            # the documented "two orphans collapse into one application within
+            # one pass" still rolls their stages up.
+            if _is_auto_row(app.source) or app.id in minted:
+                new_status = ApplicationStatus(
+                    pipeline.advance_application_status(app.status.value, status_value)
+                )
+                if new_status != app.status:
+                    app.status = new_status
+                    app.updated_at = datetime.utcnow()
+                    session.add(app)
         email.application_id = app.id
         session.add(email)
 
@@ -1794,8 +1815,27 @@ async def classify_review_item(
             session.add(app)
             await session.flush()
         else:
-            app.source = SOURCE_GMAIL_USER
-            app.status = ApplicationStatus(status_value)
+            # The user is answering "what is this MESSAGE?", not "what stage is
+            # this application at now?". So the stage goes through the same
+            # choke point the sync uses — forward-only, terminal is settled —
+            # rather than being assigned verbatim. A verbatim write here snapped
+            # a row already at ``interviewing`` back to ``applied`` off one
+            # stray role-less "thank you for applying", and silently reopened
+            # settled rows.
+            new_status = ApplicationStatus(
+                pipeline.advance_application_status(app.status.value, status_value)
+            )
+            if new_status != app.status:
+                # Only a stage that actually MOVED is a decision about the
+                # stage, and only then does the row become user-owned. Flipping
+                # ``source`` unconditionally is the other half of the same bug:
+                # it froze a row at whatever stage it happened to hold (the
+                # advance gate at :func:`upsert_applications_for_user` can never
+                # re-advance a ``gmail_user`` row), and it also took the row's
+                # company and role away from the sync — over a claim the user
+                # never made.
+                app.status = new_status
+                app.source = SOURCE_GMAIL_USER
             session.add(app)
         email.application_id = app.id
         result["application_id"] = app.id
@@ -1936,10 +1976,17 @@ def _status_from_mail(emails: list[Email]) -> str:
     TERMINAL status, and `advance_application_status` never leaves one, so
     inheriting it would hand every sibling a rejection that belonged to one
     requisition — which is the exact damage the identity work exists to undo.
+
+    The result is ORDER-INDEPENDENT, and not because anything is sorted. From a
+    non-terminal start the fold is a commutative max-by-stage-rank, and a
+    rejection absorbs whatever follows it, so no permutation of the same
+    messages can yield a different stage. This used to sort chronologically,
+    which reads as "the latest message wins" — a guarantee it never made and
+    does not need.
     """
 
     status = DEFAULT_APPLICATION_STATUS.value
-    for email in sorted(emails, key=lambda e: e.received_at or datetime.min):
+    for email in emails:
         if email.classified_as is None:
             continue
         incoming = _lifecycle_to_status(email.classified_as)
@@ -2446,9 +2493,13 @@ async def split_application_cloud(
     - The row is retained for its EARLIEST cluster, so its id survives and every
       contact, interview and user correction stays attached to the application
       that has been on the board longest.
-    - Each sibling's status is recomputed from its own mail rather than
-      inherited. The row may already be terminal, and a terminal status is never
-      left, so inheriting would give every sibling one requisition's rejection.
+    - EVERY row's status is recomputed from its own mail rather than inherited —
+      the siblings' and the retained row's alike. The row may already be
+      terminal, and a terminal status is never left, so inheriting would give
+      every sibling one requisition's rejection; leaving the retained row alone
+      (which is what it used to do) leaves that same rejection on the one row
+      whose remaining mail no longer contains it. The retained row is recomputed
+      only when it is still sync-owned — a stage the user set survives a split.
     - Nothing is deleted and no mail is discarded: the messages are re-pointed,
       and anything that names no role stays with the retained row.
 
@@ -2491,6 +2542,16 @@ async def split_application_cloud(
         app.role_token = retained.role_token
         if retained.role:
             app.position = retained.role
+        # The retained row's stage is recomputed from its OWN remaining mail for
+        # exactly the reason each sibling's is. A merged row is ``rejected`` if
+        # ANY of its linked mail is a rejection, so splitting off the requisition
+        # the rejection actually belonged to used to leave the retained row
+        # terminally rejected with no rejection of its own — and a terminal
+        # status is never left, so no later sync could repair it. Gated like
+        # every other automated stage write: a stage the user set is theirs, and
+        # a split does not get to overrule it.
+        if _is_auto_row(app.source):
+            app.status = ApplicationStatus(_status_from_mail(retained.emails))
         app.updated_at = datetime.utcnow()
         session.add(app)
 
