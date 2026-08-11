@@ -1015,8 +1015,10 @@ _SUBJECT_NAMES_EMPLOYER = re.compile(
 )
 
 
-def _corporate_display(brand: str, subject: str, sender_name: str | None) -> str:
-    """Human display for an employer that mailed from its own domain.
+def _corporate_identity(
+    brand: str, subject: str, sender_name: str | None
+) -> tuple[str, str]:
+    """``(token, display)`` for an employer that mailed from its own domain.
 
     The domain is the right thing to TRUST but the wrong thing to PRINT. Two
     live rows show why: ``no-reply@twitchjobs.tv`` rendered the company as
@@ -1030,6 +1032,14 @@ def _corporate_display(brand: str, subject: str, sender_name: str | None) -> str
     picking up a company merely *mentioned* in a subject: "Your application to
     Acme via Workday" mailed from workday.com resolves nothing here, and falls
     through to the relay branches as before.
+
+    The TOKEN moves with the display, deliberately. Returning "Twitch" for
+    display while keeping "twitchjobs" as the match key would make the row
+    unfindable by its own token on the next sync — `matches_company_token`
+    compares leading words, and "twitch" is not "twitchjobs" — so the sync would
+    file a duplicate. Keeping them consistent means the old mis-named row is
+    simply left without mail and dismissed as an auto row, which is recoverable
+    and self-healing.
     """
 
     match = _SUBJECT_NAMES_EMPLOYER.search(subject or "")
@@ -1037,8 +1047,8 @@ def _corporate_display(brand: str, subject: str, sender_name: str | None) -> str
         named = _clean_company_display(match.group("name"))
         token = _normalize_token(named).replace(" ", "")
         if token and (brand.startswith(token) or token.startswith(brand)):
-            return named
-    return _brand_display(brand, sender_name)
+            return token, named
+    return brand, _brand_display(brand, sender_name)
 
 
 def resolve_employer(
@@ -1090,7 +1100,7 @@ def resolve_employer(
         and not brand.isdigit()
     )
     if corporate:
-        return brand, _corporate_display(brand, subject, sender_name)
+        return _corporate_identity(brand, subject, sender_name)
 
     from_subject = _employer_from_subject(subject)
     if from_subject:
