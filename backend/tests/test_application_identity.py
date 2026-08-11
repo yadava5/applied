@@ -643,3 +643,52 @@ def test_a_domain_that_disagrees_with_the_subject_keeps_its_own_token():
 
     assert resolved is not None
     assert resolved[0] == "stripe"
+
+
+async def test_a_stored_role_is_re_taken_when_extraction_improves(test_session):
+    """The same gap as the company name, one field over.
+
+    Filling only an EMPTY position means an extraction fix reaches new rows and
+    never the ones already on the board. "Path Robotics · interest in the
+    Software Engineer, C#" outlived the fix that stopped producing it.
+    """
+
+    row = stored("Path Robotics", source="gmail", role_token="software engineer c")
+    row.position = "interest in the Software Engineer, C#"
+    await _seed(test_session, [row])
+
+    rolled = p.RolledApplication(
+        company_token="path",
+        company_display="Path Robotics",
+        role="Software Engineer, C#",
+        status="applied",
+        applied_at=None,
+        last_activity=None,
+        role_token="software engineer c",
+    )
+    await apps.upsert_applications_for_user(test_session, USER, [rolled])
+
+    rows = await apps._company_rows(test_session, USER, "path")
+    assert [r.position for r in rows] == ["Software Engineer, C#"]
+
+
+async def test_a_role_the_user_wrote_is_never_overwritten(test_session):
+    """A hand-filed row's title is the human's, and the sync does not own it."""
+
+    row = stored("Path Robotics", source="manual", role_token="software engineer c")
+    row.position = "SWE (C#) — the one Dana referred me for"
+    await _seed(test_session, [row])
+
+    rolled = p.RolledApplication(
+        company_token="path",
+        company_display="Path Robotics",
+        role="Software Engineer, C#",
+        status="applied",
+        applied_at=None,
+        last_activity=None,
+        role_token="software engineer c",
+    )
+    await apps.upsert_applications_for_user(test_session, USER, [rolled])
+
+    rows = await apps._company_rows(test_session, USER, "path")
+    assert [r.position for r in rows] == ["SWE (C#) — the one Dana referred me for"]

@@ -893,7 +893,17 @@ async def upsert_applications_for_user(
                     and pipeline.matches_company_token(existing.company, r.company_token)
                 ):
                     existing.company = r.company_display
-            if r.role and not existing.position:
+            if r.role and (
+                not existing.position
+                # An auto row's role belongs to the sync, exactly as its company
+                # does. Filling only an EMPTY position means every improvement to
+                # role extraction reaches new rows and never the ones already on
+                # the board: "Path Robotics · interest in the Software Engineer,
+                # C#" survived the fix that stopped producing it, because the
+                # wrong string was already stored. A user-corrected or manual row
+                # keeps whatever the human wrote.
+                or (_is_auto_row(existing.source) and r.role != existing.position)
+            ):
                 existing.position = r.role
             if r.applied_at and existing.applied_date is None:
                 existing.applied_date = r.applied_at.date()
