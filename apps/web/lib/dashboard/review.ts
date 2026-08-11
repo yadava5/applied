@@ -49,8 +49,8 @@ export interface ClassifyRequestBody {
   company?: string;
   /**
    * Which existing application the message answers, when one employer holds
-   * several. TODO(backend): not in `ReviewClassifyRequest` yet — sent and
-   * ignored until the entity-model branch lands (see `reviewCandidates`).
+   * several — accepted and validated by `ReviewClassifyRequest` since the
+   * entity-model change landed (see `reviewCandidates`).
    */
   application_id?: number;
 }
@@ -171,12 +171,10 @@ export interface CandidateApplication {
  *
  * The picker renders only when TWO OR MORE candidates match (one match is not
  * a question), and the chosen id rides the classify request as
- * `application_id`.
- *
- * TODO(backend): `ReviewClassifyRequest` does not accept `application_id` yet
- * — the field is sent and ignored (Pydantic drops unknown fields) until the
- * entity-model branch lands. The truly robust version of this matching also
- * belongs server-side, where the message's resolved employer token exists.
+ * `application_id` — accepted and validated by the backend since the
+ * entity-model change landed. The truly robust version of this matching still
+ * belongs server-side, where the message's resolved employer token exists;
+ * this client-side pass is the conservative floor.
  */
 export function reviewCandidates(
   item: { sender_email?: string | null; sender_name?: string | null; subject?: string | null },

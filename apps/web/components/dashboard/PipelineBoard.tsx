@@ -8,8 +8,8 @@ import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
 import { boardColumns, cardQualifier } from "@/lib/dashboard/board";
 import { filedAt, shortDate } from "@/lib/dashboard/dates";
-import { statusChangeRequest } from "@/lib/dashboard/rowActions";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
+import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 
 /**
  * Read-only card for the public demo + sample previews: no correction controls
@@ -100,9 +100,12 @@ const SEARCH_AFTER = 5;
 export function PipelineBoard({
   applications,
   interactive = true,
+  transport = liveBoardTransport,
 }: {
   applications: Application[];
   interactive?: boolean;
+  /** How mutations reach data — the live proxy by default, fixtures on /demo. */
+  transport?: BoardTransport;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -156,36 +159,21 @@ export function PipelineBoard({
     const target: string = stageKey;
     setMoveError(null);
     setPendingMoves((m) => ({ ...m, [appId]: target }));
-    const req = statusChangeRequest(appId, target);
-    try {
-      const res = await fetch(req.path, {
-        method: req.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-        setPendingMoves((m) => {
-          const next = { ...m };
-          delete next[appId];
-          return next;
-        });
-        setMoveError(
-          `Couldn't move ${app.company} to “${target}” — it is still “${app.status}”.${
-            typeof body.detail === "string" ? ` ${body.detail}` : ""
-          }`,
-        );
-        return;
-      }
-      router.refresh();
-    } catch {
+    const result = await transport.changeStatus(appId, target);
+    if (!result.ok) {
       setPendingMoves((m) => {
         const next = { ...m };
         delete next[appId];
         return next;
       });
-      setMoveError(`Couldn't move ${app.company} — it is still “${app.status}”.`);
+      setMoveError(
+        `Couldn't move ${app.company} to “${target}” — it is still “${app.status}”.${
+          result.detail ? ` ${result.detail}` : ""
+        }`,
+      );
+      return;
     }
+    router.refresh();
   }
 
   const showSearch = applications.length > SEARCH_AFTER;
@@ -293,6 +281,7 @@ export function PipelineBoard({
                         key={app.id}
                         app={app}
                         columnLabel={column.label}
+                        transport={transport}
                         onOpenDetail={setDetailApp}
                         sameCompanyCount={(companyCounts.get(app.company) ?? 1) - 1}
                         onFilterCompany={setCompanyFilter}
@@ -335,7 +324,9 @@ export function PipelineBoard({
         })}
       </div>
 
-      {interactive ? <ApplicationDetail app={detailApp} onClose={() => setDetailApp(null)} /> : null}
+      {interactive ? (
+        <ApplicationDetail app={detailApp} onClose={() => setDetailApp(null)} transport={transport} />
+      ) : null}
     </div>
   );
 }

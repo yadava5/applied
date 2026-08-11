@@ -11,10 +11,12 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Segmented } from "@/components/ui/Segmented";
 import { selectClass } from "@/components/ui/formStyles";
 import { onRebuildRequest, requestRebuild } from "@/lib/dashboard/rebuild-bus";
+import { liveSyncTransport, type SyncTransport } from "@/lib/dashboard/transport";
 import {
   REBUILD_DEFAULT_DEPTH,
   REBUILD_DEFAULT_RANGE,
   REBUILD_DEPTH_OPTIONS,
+  REBUILD_MEMORY_DEMO_KEY,
   REBUILD_MEMORY_KEY,
   REBUILD_RANGE_OPTIONS,
   formatCount,
@@ -101,17 +103,17 @@ function markAutoSynced(): void {
   }
 }
 
-function readRebuildMemoryFromStorage() {
+function readRebuildMemoryFromStorage(key: string) {
   try {
-    return parseRebuildMemory(window.localStorage.getItem(REBUILD_MEMORY_KEY));
+    return parseRebuildMemory(window.localStorage.getItem(key));
   } catch {
     return null;
   }
 }
 
-function writeRebuildMemory(ms: number, scanned: number): void {
+function writeRebuildMemory(key: string, ms: number, scanned: number): void {
   try {
-    window.localStorage.setItem(REBUILD_MEMORY_KEY, JSON.stringify({ ms, scanned, at: Date.now() }));
+    window.localStorage.setItem(key, JSON.stringify({ ms, scanned, at: Date.now() }));
   } catch {
     // Memory is a nicety; the dialog simply shows nothing next time.
   }
@@ -143,12 +145,16 @@ export function SyncBar({
   subtitle,
   gmail,
   children,
+  transport = liveSyncTransport,
 }: {
   /** The page's one honest line of state — `214 filed · 32 in motion · 1 offer`. */
   subtitle: string;
   gmail: SyncGmailState | null;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
+  /** How sync requests reach data — Gmail via the proxy by default; the demo
+   *  passes a simulated transport so this same state machine runs on fixtures. */
+  transport?: SyncTransport;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<SyncPhase>({ kind: "idle" });
@@ -164,66 +170,50 @@ export function SyncBar({
   const connected = gmail?.connected === true;
   const hasCursor = gmail?.hasCursor === true;
   const lastSyncAt = gmail?.lastSyncAt ?? null;
+  const simulated = transport.mode === "simulated";
+  const memoryKey = simulated ? REBUILD_MEMORY_DEMO_KEY : REBUILD_MEMORY_KEY;
   const busy = phase.kind === "syncing" || phase.kind === "rebuilding";
 
   const runSync = useCallback(async () => {
     setPhase({ kind: "syncing", startedAt: Date.now() });
-    try {
-      const res = await fetch("/api/gmail/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Additive, and deliberately NO `count`/`range`: either of those makes
-        // the backend treat the call as an explicit window request and disable
-        // the incremental cursor (`_history_cursor_for`), restoring the full
-        // rescan this surface exists to remove.
-        body: JSON.stringify({ mode: "additive" }),
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        setPhase({ kind: "failed", op: "sync", notConnected: res.status === 409 });
-        return;
-      }
-      const data = (await res.json().catch(() => ({}))) as Partial<SyncCounts>;
-      // Cursored zero case: the scan only looked at what arrived since the
-      // last one, so "nothing to file · N scanned" would imply a claim about a
-      // window it never checked.
-      const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
-      const note =
-        nothingFiled && hasCursor
-          ? "no new application mail since your last sync"
-          : filedSummary(data);
-      setPhase({ kind: "synced", note });
-      router.refresh();
-    } catch {
-      setPhase({ kind: "failed", op: "sync", notConnected: false });
+    // Additive, and deliberately NO `count`/`range`: either of those makes
+    // the backend treat the call as an explicit window request and disable
+    // the incremental cursor (`_history_cursor_for`), restoring the full
+    // rescan this surface exists to remove.
+    const res = await transport.sync({ mode: "additive" });
+    if (!res.ok) {
+      setPhase({ kind: "failed", op: "sync", notConnected: res.status === 409 });
+      return;
     }
-  }, [hasCursor, router]);
+    const data = res.body as Partial<SyncCounts>;
+    // Cursored zero case: the scan only looked at what arrived since the
+    // last one, so "nothing to file · N scanned" would imply a claim about a
+    // window it never checked.
+    const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
+    const note =
+      nothingFiled && hasCursor
+        ? "no new application mail since your last sync"
+        : filedSummary(data);
+    setPhase({ kind: "synced", note });
+    router.refresh();
+  }, [hasCursor, router, transport]);
 
   const runRebuild = useCallback(
     async (d: RebuildDepth, r: RebuildRange) => {
       lastRebuild.current = { depth: d, range: r };
       const startedAt = Date.now();
       setPhase({ kind: "rebuilding", startedAt, scopeLine: rebuildScopeLine(d, r) });
-      try {
-        const res = await fetch("/api/gmail/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(rebuildRequestBody(d, r)),
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          setPhase({ kind: "failed", op: "rebuild", notConnected: res.status === 409 });
-          return;
-        }
-        const outcome = readRebuildOutcome(await res.json().catch(() => ({})));
-        writeRebuildMemory(Date.now() - startedAt, outcome.scanned);
-        setPhase({ kind: "receipt", outcome });
-        router.refresh();
-      } catch {
-        setPhase({ kind: "failed", op: "rebuild", notConnected: false });
+      const res = await transport.sync(rebuildRequestBody(d, r));
+      if (!res.ok) {
+        setPhase({ kind: "failed", op: "rebuild", notConnected: res.status === 409 });
+        return;
       }
+      const outcome = readRebuildOutcome(res.body);
+      writeRebuildMemory(memoryKey, Date.now() - startedAt, outcome.scanned);
+      setPhase({ kind: "receipt", outcome });
+      router.refresh();
     },
-    [router],
+    [memoryKey, router, transport],
   );
 
   // The staleness auto-sync (absorbed from the old GmailSyncTrigger): one
@@ -233,7 +223,9 @@ export function SyncBar({
   useEffect(() => {
     if (autoRan.current) return;
     autoRan.current = true;
-    if (!connected) return;
+    // The demo's simulated account never auto-syncs: a visitor should pull the
+    // lever themselves, and the e2e walks the states from a known idle start.
+    if (!connected || simulated) return;
     // Deferred off the effect body (house rule — no synchronous setState in an
     // effect): the staleness check and the sync kick off in a macrotask.
     const id = window.setTimeout(() => {
@@ -243,7 +235,7 @@ export function SyncBar({
       void runSync();
     }, 0);
     return () => window.clearTimeout(id);
-  }, [connected, lastSyncAt, runSync]);
+  }, [connected, simulated, lastSyncAt, runSync]);
 
   // The empty state's "Choose a window" button opens the same dialog.
   useEffect(() => onRebuildRequest(() => setDialogOpen(true)), []);
@@ -261,7 +253,7 @@ export function SyncBar({
 
   function openDialog() {
     setMemoryLine(() => {
-      const memory = readRebuildMemoryFromStorage();
+      const memory = readRebuildMemoryFromStorage(memoryKey);
       return memory ? rebuildMemoryLine(memory) : null;
     });
     setDialogOpen(true);
@@ -367,11 +359,15 @@ export function SyncBar({
     );
   }
 
-  // Recency and the status line never say two things at once.
+  // Recency and the status line never say two things at once. The simulated
+  // surface has no recency to claim, so its slot carries the one honest frame
+  // instead — every other sentence in the machine stays the product's own.
   const showRecency = connected && statusContent === null && alertContent === null;
 
   return (
-    <div className="space-y-2">
+    // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
+    // the sync UI") to this surface without leaning on copy or classes.
+    <div className="space-y-2" data-sync-surface="">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
@@ -381,7 +377,13 @@ export function SyncBar({
           {connected ? (
             <>
               {showRecency ? (
-                <LastSynced at={gmail?.lastSyncAt ?? null} className="font-mono text-[11px] text-dim" />
+                simulated ? (
+                  <span className="font-mono text-[11px] text-dim">
+                    simulated account · nothing is read
+                  </span>
+                ) : (
+                  <LastSynced at={gmail?.lastSyncAt ?? null} className="font-mono text-[11px] text-dim" />
+                )
               ) : null}
               <button
                 type="button"
@@ -449,6 +451,7 @@ export function SyncBar({
       {phase.kind === "receipt" ? (
         <RebuildReceipt
           outcome={phase.outcome}
+          transport={transport}
           onDismiss={() => setPhase({ kind: "idle" })}
           onRestored={restoreSucceeded}
         />
@@ -533,10 +536,12 @@ export function SyncBar({
  */
 function RebuildReceipt({
   outcome,
+  transport,
   onDismiss,
   onRestored,
 }: {
   outcome: RebuildOutcome;
+  transport: SyncTransport;
   onDismiss: () => void;
   onRestored: (id: number) => void;
 }) {
@@ -547,8 +552,7 @@ function RebuildReceipt({
     setRestoringId(id);
     setFailedId(null);
     try {
-      const res = await fetch(`/api/applications/${id}/restore`, { method: "POST" });
-      if (!res.ok) {
+      if (!(await transport.restore(id))) {
         setFailedId(id);
         return;
       }

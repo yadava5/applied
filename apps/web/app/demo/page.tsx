@@ -1,12 +1,9 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { Logo } from "@/components/brand/Logo";
-import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
+import { DemoDashboard } from "@/components/demo/DemoDashboard";
 import { DecisionTrace } from "@/components/viz/DecisionTrace";
-import { DEMO_APPLICATIONS_AS_API } from "@/lib/demo/asApplications";
-import { summarize } from "@/lib/dashboard/summary";
 
 export const metadata: Metadata = {
   title: "Live demo",
@@ -15,12 +12,12 @@ export const metadata: Metadata = {
 };
 
 /**
- * The product, auth-free: the exact dashboard a signed-in user sees — the same
- * header hierarchy and the same `PipelineBoard` component (search, company
- * filter, column expanders all live) — rendered from fixtures so a visitor
- * sees it in one click. The file-application form runs in `demo` mode
- * (validated, never saved). Cards are read-only because their corrections
- * would 401 without a session; everything else is the real thing.
+ * The product, auth-free: the exact dashboard a signed-in user sees, running
+ * its real components — SyncBar, the board, drag, the detail sheet — over an
+ * in-memory fixture store (`DemoDashboard`). Only the transport is simulated;
+ * every interaction is the genuine state machine, which is both the "demo is
+ * the real thing" contract and what gives the session-gated surfaces their
+ * executing e2e coverage.
  *
  * What the signed-in dashboard dropped, this twin drops too: no stat tiles,
  * no classifier-context strip, no distribution bars, no recent-activity feed.
@@ -28,11 +25,6 @@ export const metadata: Metadata = {
  * the landing links to, not a dashboard component.
  */
 export default function DemoPage() {
-  const summary = summarize(DEMO_APPLICATIONS_AS_API);
-  const subtitle = `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
-    summary.offers === 1 ? "" : "s"
-  }`;
-
   return (
     <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
@@ -57,19 +49,10 @@ export default function DemoPage() {
           </Link>
         </header>
 
-        {/* --- 01 · the dashboard, verbatim ------------------------------- */}
-        <section aria-labelledby="board-title" className="mt-8 space-y-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 id="board-title" className="text-2xl font-semibold tracking-tight text-strong">
-                Pipeline
-              </h2>
-              <p className="mt-1 font-mono text-xs text-dim">{subtitle}</p>
-            </div>
-            <AddApplicationForm mode="demo" />
-          </div>
-          <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} interactive={false} />
-        </section>
+        {/* --- the dashboard, verbatim ------------------------------------ */}
+        <div className="mt-8">
+          <DemoDashboard />
+        </div>
 
         {/* --- the decision trace ----------------------------------------- */}
         {/* No 01/02 numbering: the page is a dashboard twin plus one showcase,

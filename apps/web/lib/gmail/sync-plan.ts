@@ -116,6 +116,13 @@ export interface RebuildMemory {
 /** localStorage key for {@link RebuildMemory}. */
 export const REBUILD_MEMORY_KEY = "applied:rebuild:last";
 
+/**
+ * The simulated (demo) surface remembers its rebuilds under its own key, so a
+ * signed-in owner who visits /demo never has a fixture run reported back to
+ * them as their own last rebuild.
+ */
+export const REBUILD_MEMORY_DEMO_KEY = "applied:rebuild:last:demo";
+
 /** Parse a stored memory record; anything malformed is no record at all. */
 export function parseRebuildMemory(raw: string | null | undefined): RebuildMemory | null {
   if (typeof raw !== "string" || raw === "") return null;

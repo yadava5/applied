@@ -55,6 +55,18 @@ export const DEMO_APPLICATIONS: DemoApplication[] = [
   { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", appliedAt: "2026-07-15", lastSignal: "Thanks for applying" },
 ];
 
+/**
+ * Fixture mail the demo account has NOT synced yet. Pressing `Sync` on /demo
+ * files these into the board through the real SyncBar state machine, so the
+ * demo demonstrates the product's actual loop (sync → new cards appear) on
+ * data that is still entirely synthetic. Kept out of DEMO_APPLICATIONS so the
+ * board's initial counts stay the honest 14.
+ */
+export const DEMO_UNSYNCED: DemoApplication[] = [
+  { id: "u1", company: "Twitch", position: "Software Engineer, Creator Tools", status: "applied", appliedAt: "2026-08-08", lastSignal: "Your application was received" },
+  { id: "u2", company: "DoorDash", position: "Backend Engineer, Logistics", status: "applied", appliedAt: "2026-08-09", lastSignal: "Thanks for applying" },
+];
+
 export const DEMO_REVIEW_QUEUE: DemoReviewItem[] = [
   { subject: "Interview availability — technical round", from: "recruiting@northstar.dev", category: "interview", confidence: 0.991, method: "setfit", needsReview: false },
   { subject: "Next step: online assessment (90 min)", from: "talent@harboranalytics.com", category: "assessment", confidence: 0.968, method: "rules", needsReview: false },

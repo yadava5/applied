@@ -131,15 +131,7 @@ test.describe("dashboard (signed in — needs a session)", () => {
     await expect(page.getByRole("heading", { name: /pipeline/i })).toBeVisible();
   });
 
-  test("sync vocabulary: one Sync button, no control named Re-sync", async ({ page }) => {
-    await reachDashboardOrSkip(page);
-    // "Re-sync" is retired everywhere — its two controls did opposite things.
-    await expect(page.getByRole("button", { name: /re-sync/i })).toHaveCount(0);
-    // When Gmail is connected the additive Sync and the options menu render;
-    // when it is not, the header carries the connect link instead. Either way
-    // the page must say which.
-    const sync = page.getByRole("button", { name: /sync new mail from gmail/i });
-    const connectLink = page.getByText(/gmail not connected/i);
-    await expect(sync.or(connectLink).first()).toBeVisible();
-  });
+  // The "Re-sync is retired" vocabulary guard lives in demo.spec.ts, where it
+  // executes on every run — here it would sit behind a session skip CI can
+  // never satisfy, which is a check that cannot fail.
 });

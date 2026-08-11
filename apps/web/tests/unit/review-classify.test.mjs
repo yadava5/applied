@@ -153,8 +153,7 @@ test("needs_employer is honoured only when it is literally true", () => {
 
 test("the assign-to-application choice rides the body only when it is a real id", () => {
   // One employer can hold several applications; the picker's choice is sent as
-  // `application_id`. TODO(backend): ignored until ReviewClassifyRequest
-  // accepts it — these assert the wire shape is ready the day it does.
+  // `application_id`, which ReviewClassifyRequest accepts and validates.
   assert.deepEqual(classifyRequestBody("rejection", "", 42), {
     category: "rejection",
     application_id: 42,

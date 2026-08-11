@@ -11,9 +11,10 @@ import {
   type ApplicationDetail as DetailData,
   type SplitCandidate,
 } from "@/lib/dashboard/detail";
-import { statusChangeFailure, statusChangeRequest } from "@/lib/dashboard/rowActions";
+import { statusChangeFailure } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { STAGES, stageOf, type Application } from "@/lib/dashboard/summary";
+import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 import { CATEGORY_META } from "@/lib/gmail/types";
 
 /**
@@ -173,10 +174,13 @@ function SplitPrompt({
 export function ApplicationDetail({
   app,
   onClose,
+  transport = liveBoardTransport,
 }: {
   /** The card being inspected; `null` keeps the sheet closed. */
   app: Application | null;
   onClose: () => void;
+  /** How reads/mutations reach data — the live proxy by default, fixtures on /demo. */
+  transport?: BoardTransport;
 }) {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -185,19 +189,18 @@ export function ApplicationDetail({
   /** The stage the user just picked here, shown before the server confirms. */
   const [optimistic, setOptimistic] = useState<string | null>(null);
 
-  const load = useCallback(async (id: number) => {
-    setState({ kind: "loading" });
-    try {
-      const res = await fetch(`/api/applications/${id}`, { cache: "no-store" });
+  const load = useCallback(
+    async (id: number) => {
+      setState({ kind: "loading" });
+      const res = await transport.detail(id);
       if (!res.ok) {
         setState({ kind: "error" });
         return;
       }
-      setState({ kind: "ready", detail: readApplicationDetail(await res.json()) });
-    } catch {
-      setState({ kind: "error" });
-    }
-  }, []);
+      setState({ kind: "ready", detail: readApplicationDetail(res.body) });
+    },
+    [transport],
+  );
 
   useEffect(() => {
     if (!app) return;
@@ -222,27 +225,14 @@ export function ApplicationDetail({
     setStageError(null);
     setOptimistic(next);
     setStageBusy(true);
-    try {
-      const res = await fetch(statusChangeRequest(app.id, next).path, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: next }),
-      });
-      setStageBusy(false);
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-        setOptimistic(null);
-        setStageError(
-          statusChangeFailure(next, app.status, typeof body.detail === "string" ? body.detail : undefined),
-        );
-        return;
-      }
-      router.refresh();
-    } catch {
-      setStageBusy(false);
+    const result = await transport.changeStatus(app.id, next);
+    setStageBusy(false);
+    if (!result.ok) {
       setOptimistic(null);
-      setStageError(statusChangeFailure(next, app.status));
+      setStageError(statusChangeFailure(next, app.status, result.detail));
+      return;
     }
+    router.refresh();
   }
 
   return (

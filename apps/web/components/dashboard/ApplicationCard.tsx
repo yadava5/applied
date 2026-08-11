@@ -21,24 +21,13 @@ import {
   UNDO_LABEL,
   UNDO_WINDOW_SECONDS,
   deletedMessage,
-  permanentDeleteRequest,
   removalPendingMessage,
-  removeFromBoardRequest,
   removedMessage,
   statusChangeFailure,
-  statusChangeRequest,
-  type ProxyRequest,
 } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { type Application, STAGES, stageOf } from "@/lib/dashboard/summary";
-
-interface SendResult {
-  ok: boolean;
-  /** The backend's own reason, when it gave one. */
-  detail?: string;
-  /** The status the server says the row now holds, when it echoed one. */
-  status?: string;
-}
+import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 
 /**
  * One pipeline row — clickable, correctable, and no longer able to lose an
@@ -62,8 +51,10 @@ interface SendResult {
  *     `lib/dashboard/status.ts`, mirroring the API's enum, so the dropdown
  *     cannot again offer a value the API answers 422 to.
  *
- * Every mutation posts to a same-origin proxy (the JWT stays server-side) and,
- * on success, `router.refresh()` re-renders the server board from fresh data.
+ * Every mutation goes through the board transport (the live default posts to
+ * the same-origin proxy, so the JWT stays server-side; `/demo` passes an
+ * in-memory one so this exact component runs on fixtures) and, on success,
+ * `router.refresh()` re-renders the server board from fresh data.
  */
 export function ApplicationCard({
   app,
@@ -74,6 +65,7 @@ export function ApplicationCard({
   dragging = false,
   onDragStart,
   onDragEnd,
+  transport = liveBoardTransport,
 }: {
   app: Application;
   /** The heading of the column this card is rendered in (see `board.ts`). */
@@ -92,6 +84,8 @@ export function ApplicationCard({
   dragging?: boolean;
   onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void;
   onDragEnd?: () => void;
+  /** How mutations reach data — the live proxy by default, fixtures on /demo. */
+  transport?: BoardTransport;
 }) {
   const router = useRouter();
   const confirmId = `confirm-delete-${useId()}`;
@@ -128,32 +122,13 @@ export function ApplicationCard({
   const fromGmail = app.source === "gmail" || app.source === "gmail_user";
   const removalPending = secondsLeft !== null;
 
-  const send = useCallback(async (req: ProxyRequest): Promise<SendResult> => {
-    try {
-      const res = await fetch(req.path, {
-        method: req.method,
-        ...(req.body
-          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body) }
-          : {}),
-      });
-      const body = (await res.json().catch(() => ({}))) as { detail?: unknown; status?: unknown };
-      return {
-        ok: res.ok,
-        detail: typeof body.detail === "string" ? body.detail : undefined,
-        status: typeof body.status === "string" ? body.status : undefined,
-      };
-    } catch {
-      return { ok: false };
-    }
-  }, []);
-
   async function onStatusChange(next: string) {
     const current = statusSelectValue(app.status);
     if (next === (optimistic?.to ?? app.status)) return;
     setError(null);
     setOptimistic({ from: app.status, to: next });
     setBusy("status");
-    const result = await send(statusChangeRequest(app.id, next));
+    const result = await transport.changeStatus(app.id, next);
     // Cleared on success AND on failure: the old code left `busy` latched on
     // success, so a change that did not move the card to another column (it
     // stays mounted, and `router.refresh()` preserves client state) left the
@@ -175,7 +150,7 @@ export function ApplicationCard({
     committing.current = true;
     setSecondsLeft(null);
     setBusy("removing");
-    const result = await send(removeFromBoardRequest(app.id));
+    const result = await transport.dismiss(app.id);
     committing.current = false;
     setBusy(null);
     if (!result.ok) {
@@ -184,7 +159,7 @@ export function ApplicationCard({
     }
     setRemoved("dismissed");
     router.refresh();
-  }, [app.id, router, send]);
+  }, [app.id, router, transport]);
 
   // The undo window. The request is sent only when it runs out, so unmounting
   // (navigation, tab close) cancels the removal rather than committing it —
@@ -221,7 +196,7 @@ export function ApplicationCard({
     setConfirmingDelete(false);
     setError(null);
     setBusy("deleting");
-    const result = await send(permanentDeleteRequest(app.id));
+    const result = await transport.deleteRow(app.id);
     setBusy(null);
     if (!result.ok) {
       setError(result.detail ? `${DELETE_FAILED} ${result.detail}` : DELETE_FAILED);

@@ -67,8 +67,10 @@ test.describe("file an application (via /demo)", () => {
     await dialog.getByRole("button", { name: /file it/i }).click();
 
     await expect(page.getByRole("dialog")).toBeHidden();
-    await expect(page.getByRole("status")).toContainText(/Acme Robotics/);
-    await expect(page.getByRole("status")).toContainText(/demo only, not saved/i);
+    // Scoped by text: /demo now mounts SyncBar's persistent live regions too,
+    // so a bare role=status locator resolves to several elements.
+    const confirmation = page.getByRole("status").filter({ hasText: /Acme Robotics/ });
+    await expect(confirmation).toContainText(/demo only, not saved/i);
   });
 
   test("no overflow with the dialog open on mobile", async ({ page }) => {
