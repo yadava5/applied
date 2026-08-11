@@ -68,7 +68,7 @@ export function dismissApplication(id: number): Promise<ApiCallResult> {
  *
  * The counterpart to `dismissApplication`, and the reason a dismissal is safe
  * to offer without a confirmation dialog: the row and its emails stay on disk,
- * so this puts them back. A re-sync's own removals are dismissals too, which is
+ * so this puts them back. A rebuild's own removals are dismissals too, which is
  * what makes the removals it reports auditable rather than final.
  */
 export function restoreApplication(id: number): Promise<ApiCallResult> {

@@ -32,8 +32,14 @@ import {
 
 const DISMISS_KEY = "jobtracker:beta-banner-dismissed:v1";
 
-/** Surfaces that already carry the full beta card, or are too interaction-dense for a pill. */
-const HIDE_ON = ["/settings", "/inbox", "/demo/inbox"];
+/**
+ * Surfaces that already carry the full beta card, say "beta" in their own
+ * copy, or are work surfaces a fixed pill would sit on top of. The pill is
+ * `position: fixed`, so on a dense page it overlaps real content (it used to
+ * cover board rows on /dashboard) — it now shows only on the narrative
+ * surfaces (landing, /demo) that were designed around it.
+ */
+const HIDE_ON = ["/settings", "/inbox", "/demo", "/dashboard", "/import"];
 
 export function BetaBanner() {
   const pathname = usePathname();

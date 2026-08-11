@@ -22,6 +22,7 @@ export function Dialog({
   description,
   children,
   className = "",
+  variant = "center",
 }: {
   open: boolean;
   onClose: () => void;
@@ -29,6 +30,12 @@ export function Dialog({
   description?: ReactNode;
   children: ReactNode;
   className?: string;
+  /**
+   * `center` — the classic modal. `sheet` — a full-height panel pinned to the
+   * right edge (the application detail view); same focus trap, Escape,
+   * backdrop and scroll lock, different geometry and entrance.
+   */
+  variant?: "center" | "sheet";
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -80,9 +87,20 @@ export function Dialog({
 
   if (!open) return null;
 
+  const overlayClass =
+    variant === "sheet"
+      ? "dialog-overlay fixed inset-0 z-[100] flex justify-end bg-background/70 backdrop-blur-sm"
+      : "dialog-overlay fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-background/70 p-4 backdrop-blur-sm sm:items-center sm:p-6";
+  const panelClass =
+    variant === "sheet"
+      ? // The sheet owns its scroll: the page behind is scroll-locked while it
+        // is open, so this is the only scroll context on screen.
+        `sheet-panel relative h-dvh w-full max-w-xl overflow-y-auto border-l border-line-strong bg-surface p-5 shadow-[0_0_80px_-24px_rgba(0,0,0,0.85)] outline-none sm:p-6 ${className}`.trim()
+      : `dialog-panel relative my-auto w-full max-w-lg rounded-2xl border border-line-strong bg-surface p-5 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.85)] outline-none sm:p-6 ${className}`.trim();
+
   return (
     <div
-      className="dialog-overlay fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-background/70 p-4 backdrop-blur-sm sm:items-center sm:p-6"
+      className={overlayClass}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -94,7 +112,7 @@ export function Dialog({
         aria-labelledby={titleId}
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
-        className={`dialog-panel relative my-auto w-full max-w-lg rounded-2xl border border-line-strong bg-surface p-5 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.85)] outline-none sm:p-6 ${className}`.trim()}
+        className={panelClass}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0">

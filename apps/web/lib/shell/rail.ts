@@ -18,7 +18,7 @@
  * than throwing, so a broken backend can never take the app shell down with
  * it — the rail simply renders its honest fallback. No client polling: the
  * snapshot re-fetches on server render / `router.refresh()` (which the
- * re-sync affordances already trigger).
+ * dashboard's sync affordances already trigger).
  *
  * The exported types are plain serializable objects so the client `Sidebar`
  * can receive them as props; client modules must import them with

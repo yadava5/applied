@@ -52,11 +52,12 @@ function Toggle({
 
 /**
  * Notification preferences. The choices persist to the Supabase user's metadata
- * immediately (so they survive reloads) AND drive real in-app cues on the
- * dashboard: `reviewAlerts` surfaces the "held for review" banner, `weekly`
- * surfaces the in-app this-week digest (see `NotificationCues` in the dashboard
- * page). Email delivery isn't wired on this deployment yet — the caption says so
- * plainly rather than implying a toggle sends mail it can't.
+ * immediately (so they survive reloads) AND drive real in-app behaviour on the
+ * dashboard: `reviewAlerts` decides whether the Needs-review queue interrupts
+ * the board (above it) or waits under it, and `weekly` surfaces the in-app
+ * this-week digest (both wired in the dashboard page). Email delivery isn't
+ * wired on this deployment yet — the caption says so plainly rather than
+ * implying a toggle sends mail it can't.
  */
 export function NotificationsSection({ initial }: { initial: NotificationPrefs }) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
@@ -86,7 +87,7 @@ export function NotificationsSection({ initial }: { initial: NotificationPrefs }
           checked={prefs.reviewAlerts}
           onChange={(v) => persist({ ...prefs, reviewAlerts: v })}
           label="Needs-review alerts"
-          description="Surface a banner on your dashboard when the classifier isn’t confident and mail is held for review."
+          description="Held mail interrupts your board — the Needs review queue sits above it. Off, it waits quietly below."
         />
       </div>
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-line-soft pt-4">

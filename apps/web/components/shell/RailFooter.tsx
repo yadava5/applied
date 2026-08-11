@@ -1,12 +1,6 @@
-"use client";
-
-import { Loader2, RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
 
 import { LastSynced } from "@/components/gmail/LastSynced";
-import { filedSummary, type SyncCounts } from "@/lib/gmail/sync-state";
 import type { RailGmailData } from "@/lib/shell/rail";
 
 /**
@@ -15,23 +9,24 @@ import type { RailGmailData } from "@/lib/shell/rail";
  *
  * Connection chip — three honest states:
  *   - connected     → live emerald dot (`.beta-dot` ping), the account email,
- *                     when the board was last built, and a compact re-sync
- *                     control.
+ *                     when the board was last built. Links to the dashboard,
+ *                     where sync now lives.
  *   - not connected → a quiet chip that links to Settings, where connecting
  *                     actually lives.
  *   - unknown       → chip omitted entirely (a failed status probe is not a
  *                     disconnection; never show a guessed state).
  *
- * "Last synced" lives here because this is where the connection state already
- * lives, and because it is the answer to the question that drove the repeated
- * manual re-syncs: *did this thing ever run?* The ephemeral button note below
- * it says what the LAST press did; the timestamp survives navigation.
+ * The re-sync icon button is GONE — it was the fourth sync trigger, an
+ * unlabelled icon that did something different from the identically-iconed
+ * header button. The rail keeps what a rail is for: glanceable truth. Sync is
+ * one click away (chip → dashboard → `Sync`), and this component is now a
+ * server component — no fetch, no state, just what it was handed.
  *
- * Re-sync here is the ADDITIVE path (`POST /api/gmail/sync` with `{}`) — new
- * mail folds in, existing rows are upserted, nothing is purged. The
- * destructive purge-and-rebuild stays exclusive to the dashboard's
- * `ReSyncButton`, which explains itself before running. On success we
- * `router.refresh()` so the server-rendered rail + board pick up the new rows.
+ * "Last synced" lives here because the connection state already does, and it
+ * is the answer to the question that drove the repeated manual re-syncs:
+ * *did this thing ever run?* Whether the last sync SUCCEEDED and when are two
+ * different facts: the backend leaves `last_sync_at` at the last good run when
+ * one fails, so both render rather than one overwriting the other.
  *
  * User chip — identity lives bottom-left (the Linear/Notion convention): a
  * monogram tile plus the truncated email, linking to Settings. Sign-out stays
@@ -44,39 +39,6 @@ type FooterProps = {
 };
 
 function GmailChip({ gmail }: { gmail: RailGmailData }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-
-  async function resync() {
-    setBusy(true);
-    setNote(null);
-    try {
-      // Additive sync only — never the destructive rebuild (dashboard-only).
-      const res = await fetch("/api/gmail/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        setNote(res.status === 409 ? "not connected" : "sync failed");
-        setBusy(false);
-        return;
-      }
-      // One reading of the counts, shared with the inbox's "file these" action
-      // and the dashboard's auto-sync, so the three can never phrase the same
-      // outcome differently.
-      const data = (await res.json().catch(() => ({}))) as Partial<SyncCounts>;
-      setNote(filedSummary(data));
-      router.refresh();
-      setBusy(false);
-    } catch {
-      setNote("sync failed");
-      setBusy(false);
-    }
-  }
-
   if (!gmail.connected) {
     return (
       <Link
@@ -95,48 +57,27 @@ function GmailChip({ gmail }: { gmail: RailGmailData }) {
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-2.5 rounded-lg border border-line-soft px-2.5 py-2">
-        <span className="beta-dot" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="label-mono">gmail · connected</p>
-          {gmail.email ? (
-            <p title={gmail.email} className="truncate font-mono text-[11px] text-muted">
-              {gmail.email}
-            </p>
-          ) : null}
-          {/* Whether the last sync SUCCEEDED and when are two different facts:
-              the backend leaves `last_sync_at` on the last good run when one
-              fails, so both are shown rather than one overwriting the other.
-              `sync_error` is an exception type name — a reference code. */}
-          <LastSynced at={gmail.lastSyncAt} className="block truncate font-mono text-[10px] text-dim" />
-          {gmail.syncStatus === "error" ? (
-            <p className="truncate font-mono text-[10px] text-reject">
-              last sync failed{gmail.syncError ? ` · ${gmail.syncError}` : ""}
-            </p>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          onClick={resync}
-          disabled={busy}
-          aria-label="Re-sync Gmail"
-          title="Scan new mail into the pipeline (additive — never removes rows)"
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          )}
-        </button>
-      </div>
-      {note ? (
-        <p role="status" className="mt-1 px-2.5 font-mono text-[10px] text-dim">
-          {note}
-        </p>
-      ) : null}
-    </div>
+    <Link
+      href="/dashboard"
+      aria-label="Gmail connected — open dashboard"
+      className="group flex items-center gap-2.5 rounded-lg border border-line-soft px-2.5 py-2 transition-colors hover:border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
+    >
+      <span className="beta-dot" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="label-mono block">gmail · connected</span>
+        {gmail.email ? (
+          <span title={gmail.email} className="block truncate font-mono text-[11px] text-muted">
+            {gmail.email}
+          </span>
+        ) : null}
+        <LastSynced at={gmail.lastSyncAt} className="block truncate font-mono text-[10px] text-dim" />
+        {gmail.syncStatus === "error" ? (
+          <span className="block truncate font-mono text-[10px] text-reject">
+            last sync failed{gmail.syncError ? ` · ${gmail.syncError}` : ""}
+          </span>
+        ) : null}
+      </span>
+    </Link>
   );
 }
 

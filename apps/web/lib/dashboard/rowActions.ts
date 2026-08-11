@@ -94,8 +94,13 @@ function rowName(company: string): string {
 // --- Copy -------------------------------------------------------------------
 
 export const REMOVE_LABEL = "Not an application";
-export const REMOVE_HINT = "takes it off the board · undoable";
-export const REMOVE_TRAINS_HINT = "takes it off the board · undoable · trains the model";
+/**
+ * "undoable" is gone from these hints: on a removal action it reads equally as
+ * "can be undone" and "cannot be done". The window is stated in seconds, and
+ * derived from the constant so the copy can never drift from the timer.
+ */
+export const REMOVE_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo`;
+export const REMOVE_TRAINS_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo · trains the model`;
 export const DELETE_LABEL = "Delete permanently";
 export const DELETE_HINT = "erases the row and its emails";
 export const DELETE_CONFIRM_QUESTION =

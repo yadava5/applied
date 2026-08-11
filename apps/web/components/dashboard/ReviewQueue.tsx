@@ -2,7 +2,7 @@
 
 import { ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { shortDate } from "@/lib/dashboard/dates";
 import {
@@ -11,8 +11,11 @@ import {
   classifyRequestBody,
   employerPromptFor,
   readClassifyOutcome,
+  reviewCandidates,
   rowStaysInQueue,
+  type CandidateApplication,
 } from "@/lib/dashboard/review";
+import type { Application } from "@/lib/dashboard/summary";
 
 /** One uncertain verdict awaiting a human decision (from GET /applications/review). */
 export interface ReviewItem {
@@ -26,24 +29,54 @@ export interface ReviewItem {
   gmail_link?: string | null;
 }
 
-/** Category choices → backend EmailCategory values. "other" dismisses + trains. */
+/**
+ * Category choices → backend EmailCategory values. "other" dismisses + trains.
+ * The list starts with a disabled placeholder: the queue exists because the
+ * classifier was NOT sure, so the control must not answer for the user — a
+ * preselected `applied` meant every absent-minded "classify" click silently
+ * filed the row as applied and fed that back as a training example.
+ */
 const CATEGORY_CHOICES: { value: string; label: string }[] = [
   { value: "applied", label: "applied" },
   { value: "interview", label: "interviewing" },
   { value: "assessment", label: "assessment" },
   { value: "offer", label: "offer" },
   { value: "rejection", label: "rejection" },
-  { value: "other", label: "not job-related" },
+  { value: "other", label: "not job related" },
 ];
 
-function ReviewRow({ item }: { item: ReviewItem }) {
+const PLACEHOLDER = "";
+
+/** Categories that answer an EXISTING application rather than opening one. */
+const LIFECYCLE_ANSWERS = new Set(["interview", "assessment", "offer", "rejection"]);
+
+function truncate(value: string, max = 60): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function ReviewRow({
+  item,
+  candidates,
+}: {
+  item: ReviewItem;
+  /** Applications this message could belong to (same employer, several roles). */
+  candidates: CandidateApplication[];
+}) {
   const router = useRouter();
-  const [category, setCategory] = useState("applied");
+  const [category, setCategory] = useState(PLACEHOLDER);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Set when the backend filed nothing because it couldn't name the employer. */
   const [employerPrompt, setEmployerPrompt] = useState<string | null>(null);
   const [company, setCompany] = useState("");
+  /** The application this verdict answers, when one employer holds several. */
+  const [applicationId, setApplicationId] = useState<number | null>(null);
+
+  // The picker is a question, and one candidate is not a question: it renders
+  // only when the message matches SEVERAL applications and the chosen category
+  // answers an existing one (a rejection belongs to one of the four Amazon
+  // rows; "applied" opens a new row and "not job related" opens nothing).
+  const showPicker = candidates.length >= 2 && LIFECYCLE_ANSWERS.has(category);
 
   /**
    * Send the decision. A 2xx is NOT success on its own: `needs_employer: true`
@@ -60,7 +93,9 @@ function ReviewRow({ item }: { item: ReviewItem }) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(classifyRequestBody(category, named)),
+          body: JSON.stringify(
+            classifyRequestBody(category, named, showPicker ? applicationId : null),
+          ),
         },
       );
       const outcome = readClassifyOutcome(res.ok, await res.json().catch(() => ({})));
@@ -86,6 +121,7 @@ function ReviewRow({ item }: { item: ReviewItem }) {
 
   const sender = item.sender_name || item.sender_email || "unknown sender";
   const canFile = canNameCompany(company);
+  const hasChosen = category !== PLACEHOLDER;
 
   return (
     <li className="rounded-lg border border-line-soft bg-surface-2 p-3">
@@ -105,16 +141,24 @@ function ReviewRow({ item }: { item: ReviewItem }) {
       ) : null}
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
+        {/* Unique per row: three selects all announcing "Classify this email"
+            were indistinguishable to a screen reader. */}
         <label className="sr-only" htmlFor={`cat-${item.message_id}`}>
-          Classify this email
+          Classify &ldquo;{truncate(item.subject || "(no subject)")}&rdquo; from {sender}
         </label>
         <select
           id={`cat-${item.message_id}`}
           value={category}
           disabled={busy}
-          onChange={(e) => setCategory(e.target.value)}
+          onChange={(e) => {
+            setCategory(e.target.value);
+            setApplicationId(null);
+          }}
           className="rounded border border-line-soft bg-surface px-1.5 py-1 font-mono text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
         >
+          <option value={PLACEHOLDER} disabled>
+            choose a stage…
+          </option>
           {CATEGORY_CHOICES.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label}
@@ -124,10 +168,10 @@ function ReviewRow({ item }: { item: ReviewItem }) {
         <button
           type="button"
           onClick={classify}
-          disabled={busy}
+          disabled={busy || !hasChosen}
           className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 font-mono text-[11px] text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
         >
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+          {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
           classify
         </button>
         {item.gmail_link ? (
@@ -142,6 +186,49 @@ function ReviewRow({ item }: { item: ReviewItem }) {
           </a>
         ) : null}
       </div>
+
+      {/* --- Which application is this about? ------------------------------
+          One employer can hold several applications, so a rejection from that
+          employer is ambiguous until the user says which role it answers. */}
+      {showPicker ? (
+        <fieldset className="mt-2 rounded border border-line px-2.5 py-2">
+          <legend className="px-1 font-mono text-[10px] text-muted">
+            which application is this about?
+          </legend>
+          <div className="space-y-1">
+            {candidates.map((candidate) => (
+              <label
+                key={candidate.id}
+                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 font-mono text-[11px] text-muted hover:text-strong"
+              >
+                <input
+                  type="radio"
+                  name={`assign-${item.message_id}`}
+                  checked={applicationId === candidate.id}
+                  onChange={() => setApplicationId(candidate.id)}
+                  disabled={busy}
+                  className="h-3 w-3 accent-[var(--text-strong)]"
+                />
+                <span className="min-w-0 truncate">
+                  {candidate.position.trim() || "role not captured"}
+                  <span className="text-dim"> · {candidate.status}</span>
+                </span>
+              </label>
+            ))}
+            <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 font-mono text-[11px] text-muted hover:text-strong">
+              <input
+                type="radio"
+                name={`assign-${item.message_id}`}
+                checked={applicationId === null}
+                onChange={() => setApplicationId(null)}
+                disabled={busy}
+                className="h-3 w-3 accent-[var(--text-strong)]"
+              />
+              <span>not one of these</span>
+            </label>
+          </div>
+        </fieldset>
+      ) : null}
 
       {/* The correction affordance for a decision the backend accepted but
           could not file: amber (the needs-review hue), not red — nothing broke,
@@ -176,7 +263,7 @@ function ReviewRow({ item }: { item: ReviewItem }) {
               disabled={busy || !canFile}
               className="inline-flex shrink-0 items-center gap-1 rounded border border-review/50 px-2 py-1 font-mono text-[11px] text-strong transition-colors hover:border-review disabled:opacity-50"
             >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+              {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
               file it
             </button>
           </div>
@@ -193,51 +280,79 @@ function ReviewRow({ item }: { item: ReviewItem }) {
 }
 
 /**
- * The needs-classification queue — the real destination of the dashboard's
- * "N need classification" number. Each uncertain verdict (0.70–0.85 band, or a
- * confident one whose employer couldn't be named) gets a one-click category
- * decision that both persists (a lifecycle choice becomes a sticky application)
- * and trains the model. Choosing "not job-related" removes it from the queue.
+ * The needs-review queue — what needs the user, so it leads the page (or, when
+ * the Settings "Needs review alerts" toggle is off, waits under the board).
+ * Each uncertain verdict (the 0.70–0.85 band, or a confident one whose
+ * employer couldn't be named) gets a category decision that both persists and
+ * trains the model. Choosing "not job related" removes it from the queue.
  *
- * A decision the backend accepts but cannot file — `needs_employer: true`, the
- * employer isn't nameable from the message — keeps its row right here and asks
- * for the company inline, because a 2xx that filed nothing used to look
- * identical to one that worked ("Crusoe | Application Received" in production).
+ * Naming: this one queue was called "needs classification", "need review" and
+ * "held for your review" on one screen. It is the review family everywhere
+ * now — the amber token is literally named `--color-review`. The section
+ * anchor stays `needs-classification` so existing deep links keep resolving.
+ *
+ * Density follows the board's rule — no scroller nested inside the scrolling
+ * page. A long queue shows its first {@link COLLAPSED_COUNT} rows and a
+ * "show all N" expander that grows the page.
  */
-/**
- * Past this many rows the queue overflows its fixed height and scrolls
- * internally rather than running the page down — the taller review rows fit
- * ~4 before the `max-h-[30rem]` cap engages, so the "scroll" hint + bottom
- * fade appear from the 5th on.
- */
-const SCROLL_AFTER = 4;
+const COLLAPSED_COUNT = 4;
 
-export function ReviewQueue({ items }: { items: ReviewItem[] }) {
+export function ReviewQueue({
+  items,
+  applications = [],
+}: {
+  items: ReviewItem[];
+  /** The board rows, for the assign-to-application picker. */
+  applications?: Application[];
+}) {
+  const [expandedList, setExpandedList] = useState(false);
+
+  // The picker's candidate pool — id/company/position/status is all it needs.
+  const candidatePool = useMemo<CandidateApplication[]>(
+    () =>
+      applications.map((app) => ({
+        id: app.id,
+        company: app.company,
+        position: app.position,
+        status: app.status,
+      })),
+    [applications],
+  );
+
   if (items.length === 0) return null;
-  const overflowing = items.length > SCROLL_AFTER;
+  const visible = expandedList ? items : items.slice(0, COLLAPSED_COUNT);
+  const hidden = items.length - visible.length;
+
   return (
-    <section id="needs-classification" aria-label="Needs classification" className="scroll-mt-6 rounded-2xl border border-line-soft bg-surface p-4 sm:p-5">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-semibold tracking-tight text-strong">Needs classification</h2>
+    <section
+      id="needs-classification"
+      aria-label="Needs review"
+      className="scroll-mt-6 rounded-2xl border border-review/40 bg-surface p-4 sm:p-5"
+    >
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-sm font-semibold tracking-tight text-strong">
+          Needs review ({items.length})
+        </h2>
+        {/* Where the confidence gate's existence is told to the user — in
+            terms of what it does for them, not as a CI metric. */}
         <span className="shrink-0 font-mono text-[11px] text-dim">
-          {items.length} uncertain{overflowing ? " · scroll" : ""} · classifying trains the model
+          held under the confidence gate · your decision trains the classifier
         </span>
       </div>
-      {/* Capped, internally-scrolling list so a long queue never extends the
-       * whole page; the wrapper anchors the bottom fade affordance. */}
-      <div className="relative">
-        <ul className="scroll-area max-h-[30rem] space-y-2 overflow-y-auto">
-          {items.map((item) => (
-            <ReviewRow key={item.message_id} item={item} />
-          ))}
-        </ul>
-        {overflowing ? (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent"
-          />
-        ) : null}
-      </div>
+      <ul className="space-y-2">
+        {visible.map((item) => (
+          <ReviewRow key={item.message_id} item={item} candidates={reviewCandidates(item, candidatePool)} />
+        ))}
+      </ul>
+      {hidden > 0 || expandedList ? (
+        <button
+          type="button"
+          onClick={() => setExpandedList((v) => !v)}
+          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 font-mono text-[11px] text-muted transition-colors hover:border-line-strong hover:text-strong"
+        >
+          {expandedList ? "show fewer" : `show all ${items.length}`}
+        </button>
+      ) : null}
     </section>
   );
 }

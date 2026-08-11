@@ -75,8 +75,10 @@ export default async function SettingsPage({
       })
     : null;
 
+  // Measure capped for form readability, but aligned to the shell's shared
+  // left edge (no `mx-auto`): every authed page starts at the same x.
   return (
-    <section className="mx-auto max-w-3xl space-y-6">
+    <section className="max-w-3xl space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Settings</h1>
         <p className="mt-1 font-mono text-xs text-dim">Your account, appearance, mail, and data.</p>

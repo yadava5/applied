@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { selectClass } from "@/components/ui/formStyles";
+import { Segmented } from "@/components/ui/Segmented";
 import { filedSummary, type SyncCounts } from "@/lib/gmail/sync-state";
 import {
   buildInboxParams,
@@ -95,44 +96,6 @@ function toPipelineItems(verdicts: InboxVerdict[]): PipelineItem[] {
     received_at: v.received_at,
     confidence: v.confidence,
   }));
-}
-
-function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-  ariaLabel,
-}: {
-  options: readonly { value: T; label: string }[];
-  value: T;
-  onChange: (value: T) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label={ariaLabel}
-      className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5"
-    >
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            aria-pressed={active}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              active ? "bg-strong text-background" : "text-muted hover:text-strong",
-            )}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 function pct(n: number) {

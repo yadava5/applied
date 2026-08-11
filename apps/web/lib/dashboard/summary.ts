@@ -25,7 +25,11 @@ export interface StageDef {
 }
 
 export const STAGES: StageDef[] = [
-  { key: "applied", label: "applied", statuses: ["applied"], color: "var(--text-muted)" },
+  // `--stage-applied`, not `--text-muted`: the resting stage stays achromatic
+  // on purpose, but the old text-ramp value measured 2.56:1 in the card-border
+  // wash — dimmer than the chrome around it. The dedicated token is a
+  // luminance fix only (measured 9.25:1 solid, 3.62:1 at the 55% wash).
+  { key: "applied", label: "applied", statuses: ["applied"], color: "var(--stage-applied)" },
   {
     key: "interviewing",
     label: "interviewing",

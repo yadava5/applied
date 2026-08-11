@@ -4,7 +4,7 @@ import { restoreApplication } from "@/lib/applications/server";
 
 /**
  * Same-origin proxy for "undo a removal": puts back a row that was dismissed,
- * either by the user or by a re-sync. Scoped to the verified user on the
+ * either by the user or by a rebuild. Scoped to the verified user on the
  * backend, so one account can never restore another's row.
  *
  * This exists so that no removal in the product has to be final. A dismissal

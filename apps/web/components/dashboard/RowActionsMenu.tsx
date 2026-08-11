@@ -54,6 +54,8 @@ export function RowActionsMenu({
   items,
   disabled = false,
   triggerRef: externalTriggerRef,
+  triggerClassName,
+  triggerContent,
 }: {
   /** Accessible name for the trigger, e.g. `Row actions for Acme`. */
   label: string;
@@ -61,6 +63,13 @@ export function RowActionsMenu({
   disabled?: boolean;
   /** Optional handle so the card can return focus here after its own actions. */
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  /**
+   * Overrides the card-row trigger styling (hidden until hover) for reuse
+   * outside the board — e.g. the SyncBar's always-visible `⋯` button.
+   */
+  triggerClassName?: string;
+  /** Overrides the default `⋯` glyph. */
+  triggerContent?: React.ReactNode;
 }) {
   const uid = useId();
   const triggerId = `row-actions-trigger-${uid}`;
@@ -148,9 +157,14 @@ export function RowActionsMenu({
           if (open) focusItem(intent === "last" ? Math.max(items.length - 1, 0) : 0);
           else openMenu(intent);
         }}
-        className="rounded p-0.5 text-dim opacity-0 transition-opacity hover:text-strong focus-visible:opacity-100 disabled:opacity-30 group-hover/card:opacity-100 aria-expanded:opacity-100"
+        className={
+          // `pointer-coarse:opacity-100`: hover-revealed is no affordance at
+          // all on touch, so a coarse pointer always sees the trigger.
+          triggerClassName ??
+          "rounded p-0.5 text-dim opacity-0 transition-opacity hover:text-strong focus-visible:opacity-100 disabled:opacity-30 group-hover/card:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100"
+        }
       >
-        <MoreHorizontal className="h-4 w-4" aria-hidden />
+        {triggerContent ?? <MoreHorizontal className="h-4 w-4" aria-hidden />}
       </button>
 
       {open ? (

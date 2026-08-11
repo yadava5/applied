@@ -1,15 +1,9 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { Logo } from "@/components/brand/Logo";
-import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { RecentActivity } from "@/components/dashboard/RecentActivity";
-import { ClassifierContext, StatTiles } from "@/components/dashboard/StatTiles";
+import { DemoDashboard } from "@/components/demo/DemoDashboard";
 import { DecisionTrace } from "@/components/viz/DecisionTrace";
-import { StageFunnel } from "@/components/viz/StageFunnel";
-import { DEMO_APPLICATIONS_AS_API } from "@/lib/demo/asApplications";
-import { summarize } from "@/lib/dashboard/summary";
 
 export const metadata: Metadata = {
   title: "Live demo",
@@ -18,20 +12,19 @@ export const metadata: Metadata = {
 };
 
 /**
- * The product, auth-free: the exact dashboard a signed-in user sees — the same
- * StatTiles, pipeline funnel, board, and recent-activity components — rendered
- * from fixtures so a visitor sees it in one click. The file-application form is
- * live too, in `demo` mode (validated, never saved), so the full UX is
- * exercisable without an account. Read-only by design.
+ * The product, auth-free: the exact dashboard a signed-in user sees, running
+ * its real components — SyncBar, the board, drag, the detail sheet — over an
+ * in-memory fixture store (`DemoDashboard`). Only the transport is simulated;
+ * every interaction is the genuine state machine, which is both the "demo is
+ * the real thing" contract and what gives the session-gated surfaces their
+ * executing e2e coverage.
+ *
+ * What the signed-in dashboard dropped, this twin drops too: no stat tiles,
+ * no classifier-context strip, no distribution bars, no recent-activity feed.
+ * The decision trace stays as the demo's own second act — it is the showcase
+ * the landing links to, not a dashboard component.
  */
 export default function DemoPage() {
-  const summary = summarize(DEMO_APPLICATIONS_AS_API);
-  const funnelStages = summary.stages.map(({ stage, count }) => ({
-    label: stage.label,
-    count,
-    color: stage.color,
-  }));
-
   return (
     <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
@@ -56,36 +49,18 @@ export default function DemoPage() {
           </Link>
         </header>
 
-        <div className="mt-8 space-y-4">
-          <StatTiles summary={summary} />
-          <ClassifierContext />
+        {/* --- the dashboard, verbatim ------------------------------------ */}
+        <div className="mt-8">
+          <DemoDashboard />
         </div>
 
-        <section aria-labelledby="board-title" className="mt-10">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 id="board-title" className="label-mono">
-              01 · pipeline
-            </h2>
-            <AddApplicationForm mode="demo" />
-          </div>
-          <StageFunnel
-            stages={funnelStages}
-            total={summary.total}
-            caption={`pipeline distribution · ${summary.total} applications`}
-            highlight={`${summary.advancedPct}% advanced past applied`}
-          />
-          <div className="mt-4">
-            <PipelineBoard applications={DEMO_APPLICATIONS_AS_API} interactive={false} />
-          </div>
-          <div className="mt-4">
-            <RecentActivity applications={DEMO_APPLICATIONS_AS_API} limit={5} />
-          </div>
-        </section>
-
+        {/* --- the decision trace ----------------------------------------- */}
+        {/* No 01/02 numbering: the page is a dashboard twin plus one showcase,
+            not a sequence. */}
         <section aria-labelledby="queue-title" className="mt-12">
           <div className="mb-3 flex items-baseline justify-between">
             <h2 id="queue-title" className="label-mono">
-              02 · decision trace — click an email to open its verdict
+              decision trace — click an email to open its verdict
             </h2>
             <span className="font-mono text-[11px] text-dim">
               CI-gated at 0.95 macro-F1 · 0.979 measured
@@ -106,6 +81,12 @@ export default function DemoPage() {
             <span aria-hidden>→</span>
           </Link>
         </section>
+
+        {/* In flow, not floating: the fixed beta pill used to sit on top of
+            board content here, so the demo carries its beta note statically. */}
+        <p className="mt-12 border-t border-line-soft pt-6 text-center font-mono text-[11px] text-dim">
+          beta · direct Gmail connection is invite-only — the sample inbox needs no seat
+        </p>
       </div>
     </main>
   );

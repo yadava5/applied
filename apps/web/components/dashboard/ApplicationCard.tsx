@@ -21,24 +21,13 @@ import {
   UNDO_LABEL,
   UNDO_WINDOW_SECONDS,
   deletedMessage,
-  permanentDeleteRequest,
   removalPendingMessage,
-  removeFromBoardRequest,
   removedMessage,
   statusChangeFailure,
-  statusChangeRequest,
-  type ProxyRequest,
 } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { type Application, STAGES, stageOf } from "@/lib/dashboard/summary";
-
-interface SendResult {
-  ok: boolean;
-  /** The backend's own reason, when it gave one. */
-  detail?: string;
-  /** The status the server says the row now holds, when it echoed one. */
-  status?: string;
-}
+import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 
 /**
  * One pipeline row — clickable, correctable, and no longer able to lose an
@@ -62,16 +51,41 @@ interface SendResult {
  *     `lib/dashboard/status.ts`, mirroring the API's enum, so the dropdown
  *     cannot again offer a value the API answers 422 to.
  *
- * Every mutation posts to a same-origin proxy (the JWT stays server-side) and,
- * on success, `router.refresh()` re-renders the server board from fresh data.
+ * Every mutation goes through the board transport (the live default posts to
+ * the same-origin proxy, so the JWT stays server-side; `/demo` passes an
+ * in-memory one so this exact component runs on fixtures) and, on success,
+ * `router.refresh()` re-renders the server board from fresh data.
  */
 export function ApplicationCard({
   app,
   columnLabel,
+  onOpenDetail,
+  sameCompanyCount = 0,
+  onFilterCompany,
+  dragging = false,
+  onDragStart,
+  onDragEnd,
+  transport = liveBoardTransport,
 }: {
   app: Application;
   /** The heading of the column this card is rendered in (see `board.ts`). */
   columnLabel?: string;
+  /** Opens the detail sheet (the mail behind this card). */
+  onOpenDetail?: (app: Application) => void;
+  /**
+   * How many OTHER applications share this company. A card is an application,
+   * not a company — one employer can hold several — so this is a light
+   * affordance ("3 more at Amazon"), never a grouping.
+   */
+  sameCompanyCount?: number;
+  /** Filters the board to this card's company. */
+  onFilterCompany?: (company: string) => void;
+  /** True while this card is the one being dragged. */
+  dragging?: boolean;
+  onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void;
+  onDragEnd?: () => void;
+  /** How mutations reach data — the live proxy by default, fixtures on /demo. */
+  transport?: BoardTransport;
 }) {
   const router = useRouter();
   const confirmId = `confirm-delete-${useId()}`;
@@ -108,32 +122,13 @@ export function ApplicationCard({
   const fromGmail = app.source === "gmail" || app.source === "gmail_user";
   const removalPending = secondsLeft !== null;
 
-  const send = useCallback(async (req: ProxyRequest): Promise<SendResult> => {
-    try {
-      const res = await fetch(req.path, {
-        method: req.method,
-        ...(req.body
-          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body) }
-          : {}),
-      });
-      const body = (await res.json().catch(() => ({}))) as { detail?: unknown; status?: unknown };
-      return {
-        ok: res.ok,
-        detail: typeof body.detail === "string" ? body.detail : undefined,
-        status: typeof body.status === "string" ? body.status : undefined,
-      };
-    } catch {
-      return { ok: false };
-    }
-  }, []);
-
   async function onStatusChange(next: string) {
     const current = statusSelectValue(app.status);
     if (next === (optimistic?.to ?? app.status)) return;
     setError(null);
     setOptimistic({ from: app.status, to: next });
     setBusy("status");
-    const result = await send(statusChangeRequest(app.id, next));
+    const result = await transport.changeStatus(app.id, next);
     // Cleared on success AND on failure: the old code left `busy` latched on
     // success, so a change that did not move the card to another column (it
     // stays mounted, and `router.refresh()` preserves client state) left the
@@ -155,7 +150,7 @@ export function ApplicationCard({
     committing.current = true;
     setSecondsLeft(null);
     setBusy("removing");
-    const result = await send(removeFromBoardRequest(app.id));
+    const result = await transport.dismiss(app.id);
     committing.current = false;
     setBusy(null);
     if (!result.ok) {
@@ -164,7 +159,7 @@ export function ApplicationCard({
     }
     setRemoved("dismissed");
     router.refresh();
-  }, [app.id, router, send]);
+  }, [app.id, router, transport]);
 
   // The undo window. The request is sent only when it runs out, so unmounting
   // (navigation, tab close) cancels the removal rather than committing it —
@@ -201,7 +196,7 @@ export function ApplicationCard({
     setConfirmingDelete(false);
     setError(null);
     setBusy("deleting");
-    const result = await send(permanentDeleteRequest(app.id));
+    const result = await transport.deleteRow(app.id);
     setBusy(null);
     if (!result.ok) {
       setError(result.detail ? `${DELETE_FAILED} ${result.detail}` : DELETE_FAILED);
@@ -269,27 +264,60 @@ export function ApplicationCard({
     );
   }
 
+  const role = app.position.trim();
+
   return (
     <li
       aria-busy={busy !== null}
-      className="group/card relative rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
+      draggable={onDragStart ? true : undefined}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      data-dragging={dragging || undefined}
+      className="board-card group/card relative rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
-          <span className="truncate">{app.company}</span>
-          {qualifier && (
-            <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
-              {qualifier}
+        {/* A card is an APPLICATION: company anchors it, the role discriminates
+            it (four Amazon cards must read as four different rows), and the
+            block itself opens the mail behind the card. */}
+        {onOpenDetail ? (
+          <button
+            type="button"
+            onClick={() => onOpenDetail(app)}
+            aria-label={`Open ${app.company}${role ? ` — ${role}` : ""}`}
+            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+          >
+            <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
+              <span className="truncate underline-offset-2 group-hover/card:underline">
+                {app.company}
+              </span>
+              {qualifier && (
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+                  {qualifier}
+                </span>
+              )}
             </span>
-          )}
-        </p>
+            {role ? <span className="block truncate text-xs text-foreground">{role}</span> : null}
+          </button>
+        ) : (
+          <div className="min-w-0">
+            <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
+              <span className="truncate">{app.company}</span>
+              {qualifier && (
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted">
+                  {qualifier}
+                </span>
+              )}
+            </p>
+            {role ? <p className="truncate text-xs text-foreground">{role}</p> : null}
+          </div>
+        )}
         <div className="flex shrink-0 items-center gap-1">
           {busy !== null || optimistic ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-dim" aria-hidden />
           ) : null}
           <RowActionsMenu
-            label={`Row actions for ${app.company}`}
+            label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
             items={menuItems}
             disabled={busy !== null}
             triggerRef={triggerRef}
@@ -297,7 +325,16 @@ export function ApplicationCard({
         </div>
       </div>
 
-      {app.position ? <p className="truncate text-xs text-muted">{app.position}</p> : null}
+      {sameCompanyCount > 0 && onFilterCompany ? (
+        <button
+          type="button"
+          onClick={() => onFilterCompany(app.company)}
+          aria-label={`Show all applications at ${app.company}`}
+          className="mt-1 font-mono text-[10px] text-dim underline-offset-2 hover:text-strong hover:underline"
+        >
+          {sameCompanyCount} more at {app.company} →
+        </button>
+      ) : null}
 
       <div className="mt-2 flex items-center justify-between gap-2">
         <label className="sr-only" htmlFor={`status-${app.id}`}>
