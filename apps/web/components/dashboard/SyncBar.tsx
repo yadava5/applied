@@ -441,7 +441,11 @@ export function SyncBar({
                     simulated account · nothing is read
                   </span>
                 ) : (
-                  <LastSynced at={gmail?.lastSyncAt ?? null} className="font-mono text-[11px] text-dim" />
+                  // A sentence, so the product voice — the machine-readable
+                  // instant already rides in the <time> element's dateTime and
+                  // title. Mono here was the "last synced …" defect the
+                  // type-system note in globals.css names.
+                  <LastSynced at={gmail?.lastSyncAt ?? null} className="text-xs text-dim" />
                 )
               ) : null}
               <button

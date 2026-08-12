@@ -1,7 +1,7 @@
 /**
  * The board's transport seam — how the interactive components reach data.
  *
- * Every mutating surface (`ApplicationCard`, `ApplicationDetail`,
+ * Every mutating surface (`ApplicationRow`, `ApplicationDetail`,
  * `PipelineBoard`'s drag, `SyncBar`) takes one of these interfaces and
  * defaults to the live implementation below, which talks to the same-origin
  * proxy routes exactly as before. The public `/demo` passes an in-memory

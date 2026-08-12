@@ -11,7 +11,11 @@ import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
-import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
+import {
+  demoApplicationsAsApi,
+  demoEarlySearchAsApi,
+  demoUnsyncedAsApi,
+} from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { datedById, redate } from "@/lib/demo/redate";
 
@@ -78,13 +82,19 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Which fixture projection the twin renders — see `asApplications.ts`. */
+export type DemoPipeline = "seed" | "early";
+
 /** The whole fixture store, dated against one day — board and pool alike. */
-function buildStore(today: string): DemoBoard {
-  return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
+function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
+  return {
+    apps: pipeline === "early" ? demoEarlySearchAsApi(today) : demoApplicationsAsApi(today),
+    pool: demoUnsyncedAsApi(today),
+    touched: [],
+  };
 }
 
-
-export function DemoDashboard() {
+export function DemoDashboard({ pipeline = "seed" }: { pipeline?: DemoPipeline }) {
   // The day this demo is rendered against. UTC on the server and through
   // hydration, the visitor's own day once mounted — the same read the board,
   // the cards and the pulse strip make for themselves (`useLocalToday`).
@@ -96,7 +106,7 @@ export function DemoDashboard() {
   // module load is what keeps a long-lived server's HTML and the browser's
   // hydration agreeing on what "16 days ago" means.
   const [datedFor, setDatedFor] = useState(todayISO);
-  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor));
+  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor, pipeline));
   /** The pristine fixtures, kept for `restore` — the rows this board began
    *  with, before any drag, dismissal or rebuild touched them. */
   const original = useRef<Application[]>([...snapshot.apps, ...snapshot.pool]);
@@ -134,7 +144,7 @@ export function DemoDashboard() {
   useEffect(() => {
     if (datedFor === today) return;
     const id = window.setTimeout(() => {
-      const pristine = buildStore(today);
+      const pristine = buildStore(today, pipeline);
       const dated = datedById([...pristine.apps, ...pristine.pool]);
       const s = store.current;
       original.current = [...pristine.apps, ...pristine.pool];
@@ -142,7 +152,7 @@ export function DemoDashboard() {
       commit({ ...s, apps: redate(s.apps, dated), pool: redate(s.pool, dated) });
     }, 0);
     return () => window.clearTimeout(id);
-  }, [today, datedFor, commit]);
+  }, [today, datedFor, pipeline, commit]);
 
   const boardTransport = useMemo<BoardTransport>(
     () => ({

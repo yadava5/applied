@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { SaveStatus, SettingsSection } from "./SettingsSection";
-import { createClient } from "@/lib/supabase/client";
+import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
 
 export interface NotificationPrefs {
   weekly: boolean;
@@ -59,20 +59,27 @@ function Toggle({
  * wired on this deployment yet — the caption says so plainly rather than
  * implying a toggle sends mail it can't.
  */
-export function NotificationsSection({ initial }: { initial: NotificationPrefs }) {
+export function NotificationsSection({
+  initial,
+  mode = "live",
+}: {
+  initial: NotificationPrefs;
+  mode?: SettingsMode;
+}) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
   const [state, setState] = useState<SaveState>("idle");
+  const transport = settingsTransport(mode);
 
   async function persist(next: NotificationPrefs) {
     setPrefs(next);
     setState("saving");
-    const supabase = createClient();
-    const { error } = await supabase.auth.updateUser({ data: { notifications: next } });
-    setState(error ? "error" : "saved");
+    const { ok } = await transport.saveMetadata({ notifications: next });
+    setState(ok ? "saved" : "error");
   }
 
   return (
     <SettingsSection
+      id="notifications"
       title="Notifications"
       description="What Applied should keep you posted about."
     >
@@ -81,20 +88,19 @@ export function NotificationsSection({ initial }: { initial: NotificationPrefs }
           checked={prefs.weekly}
           onChange={(v) => persist({ ...prefs, weekly: v })}
           label="Weekly pipeline summary"
-          description="Show a this-week digest on your dashboard — new applications, what’s in motion, offers."
+          description="A one-line this-week digest at the top of your dashboard."
         />
         <Toggle
           checked={prefs.reviewAlerts}
           onChange={(v) => persist({ ...prefs, reviewAlerts: v })}
           label="Needs-review alerts"
-          description="Held mail interrupts your board — the Needs review queue sits above it. Off, it waits quietly below."
+          description="On, held mail interrupts the board above your rows. Off, it waits below them."
         />
       </div>
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-line-soft pt-4">
         <p className="text-[12px] leading-relaxed text-dim">
-          Saved to your account and applied to your dashboard cues right away. Email delivery isn’t
-          live on this deployment yet — these switches drive the in-app cues only, and will drive
-          email too once it ships.
+          Takes effect on your dashboard right away. Email delivery isn&apos;t live yet — these
+          drive the in-app cues only.
         </p>
         <SaveStatus state={state} />
       </div>

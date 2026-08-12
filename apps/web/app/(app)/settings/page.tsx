@@ -7,6 +7,7 @@ import { DataSection } from "@/components/settings/DataSection";
 import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
+import { SettingsNav } from "@/components/settings/SettingsNav";
 import { DEFAULT_GATE_PREFERENCE, GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
@@ -24,6 +25,17 @@ export const metadata: Metadata = {
  * metadata; Appearance is a device-local theme; Data exports through the
  * server-side proxy; Account signs out or deletes via the admin route. The
  * `(app)` layout guarantees an authenticated user before this renders.
+ *
+ * Layout: a sticky section rail beside the sections at desktop, so seven
+ * cards stop being one blind scroll — the rail is the page's table of
+ * contents, and the shell's scroll pane honours the anchor jumps. The copy
+ * across the sections is cut to one working line per control; the long-form
+ * reference material (Gmail safeguards, the restricted-scope scale story)
+ * survives in disclosures on the Gmail card.
+ *
+ * These same sections render publicly on `/demo/settings` over the simulated
+ * settings transport — that twin is where their e2e coverage executes,
+ * because this route needs a session CI does not have.
  */
 
 const FLAG_BANNERS: Record<string, { tone: "ok" | "warn" | "error"; text: string }> = {
@@ -78,7 +90,7 @@ export default async function SettingsPage({
   // Measure capped for form readability, but aligned to the shell's shared
   // left edge (no `mx-auto`): every authed page starts at the same x.
   return (
-    <section className="max-w-3xl space-y-6">
+    <section className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-strong">Settings</h1>
         <p className="mt-1 text-[13px] text-muted">Your account, appearance, mail, and data.</p>
@@ -87,19 +99,24 @@ export default async function SettingsPage({
       {banner ? (
         <div
           role="status"
-          className={`rounded-xl border bg-surface px-4 py-3 text-sm ${TONE_CLASS[banner.tone]}`}
+          className={`max-w-3xl rounded-xl border bg-surface px-4 py-3 text-sm ${TONE_CLASS[banner.tone]}`}
         >
           {banner.text}
         </div>
       ) : null}
 
-      <ProfileSection initialName={displayName} email={email} memberSince={memberSince} />
-      <AppearanceSection />
-      <GmailConnectionCard result={gmailResult} />
-      <NotificationsSection initial={readNotificationPrefs(meta)} />
-      <ClassificationSection initialGate={clampGate(meta.gate_threshold)} />
-      <DataSection />
-      <AccountSection email={email} />
+      <div className="lg:grid lg:grid-cols-[10rem_minmax(0,48rem)] lg:gap-8">
+        <SettingsNav />
+        <div className="max-w-3xl space-y-6 lg:max-w-none">
+          <ProfileSection initialName={displayName} email={email} memberSince={memberSince} />
+          <AppearanceSection />
+          <GmailConnectionCard result={gmailResult} />
+          <NotificationsSection initial={readNotificationPrefs(meta)} />
+          <ClassificationSection initialGate={clampGate(meta.gate_threshold)} />
+          <DataSection />
+          <AccountSection email={email} />
+        </div>
+      </div>
     </section>
   );
 }

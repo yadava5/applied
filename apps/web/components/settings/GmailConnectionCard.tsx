@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 
 import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
@@ -13,24 +14,76 @@ import type { GmailStatusResult } from "@/lib/gmail/server";
  * enabled vs. transient backend error), and every state routes forward (the
  * import fallback, the sample inbox) so the card is never a dead end.
  *
+ * The card leads with the STATE and the one control; the safeguards brief and
+ * the restricted-scope scale story still live here — they are the product's
+ * honesty and they stay — but behind disclosures, because they are reference
+ * material, not something to re-read on every visit. That cut is most of what
+ * "too much text for the user to read" was reacting to on this page.
+ *
  * A connected account also gets its sync state: when the board was last built,
  * whether the last attempt failed, and — only when a cursor actually exists —
  * that the next sync resumes from it. With `has_cursor` false the next sync is
  * a full scan, so nothing is claimed about it beyond the time.
+ *
+ * `demo` renders the same card on `/demo/settings` over a fixture status: the
+ * disconnect POST would 401 without a session, so the control is disabled and
+ * says why — a dead button with a reason beats a live one that lies.
  */
-export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
+
+/** One safeguard, one line — the details element carries the paragraph. */
+const SAFEGUARDS: [string, string][] = [
+  [
+    "Read-only",
+    "Applied requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything.",
+  ],
+  [
+    "Standard OAuth",
+    "Sign-in happens on Google's own consent screen. Applied never sees your Google password.",
+  ],
+  [
+    "Encrypted at rest",
+    "The refresh token is stored Fernet-encrypted, scoped to your account. It is never shown in the browser, never logged, and never placed in a URL.",
+  ],
+  [
+    "Revocable anytime",
+    "Disconnect here to revoke access at Google and delete the stored token. You can also remove it at myaccount.google.com/permissions.",
+  ],
+];
+
+function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
+  return (
+    <details className="group border-t border-line-soft pt-3">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-muted transition-colors hover:text-strong [&::-webkit-details-marker]:hidden">
+        <ChevronDown
+          className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+          aria-hidden
+        />
+        {summary}
+      </summary>
+      <div className="mt-3 space-y-3 pl-5">{children}</div>
+    </details>
+  );
+}
+
+export function GmailConnectionCard({
+  result,
+  demo = false,
+}: {
+  result: GmailStatusResult;
+  demo?: boolean;
+}) {
   const status = result.kind === "ok" ? result.status : null;
   const connected = status?.connected === true;
   const configured = status?.configured === true;
   const email = status?.email ?? null;
-  const needsSignin = result.kind === "unauthenticated" || result.kind === "auth";
+  const needsSignin = !demo && (result.kind === "unauthenticated" || result.kind === "auth");
 
   return (
-    <div className="space-y-8">
+    <div id="gmail" className="scroll-mt-4 space-y-6">
       {/* ---- Gmail connection card ------------------------------------- */}
       <div className="rounded-xl border border-line-soft bg-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <h2 className="text-lg font-medium text-strong">Gmail</h2>
             <p className="mt-1 text-sm text-muted">
               Read-only access so the classifier can read your job-search mail at the source.
@@ -63,7 +116,10 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
             {connected ? (
               <div className="mt-2 space-y-1 text-xs text-dim">
                 <p>
-                  <LastSynced at={status?.last_sync_at ?? null} className="font-mono text-[11px]" />
+                  {/* A sentence, so the product voice — the machine-readable
+                      instant rides in the <time> element's dateTime/title.
+                      This was one of the two "last synced …" mono defects. */}
+                  <LastSynced at={status?.last_sync_at ?? null} className="text-xs" />
                   {status?.has_cursor ? (
                     <span> · next sync resumes from where that one stopped</span>
                   ) : null}
@@ -81,14 +137,25 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
 
           <div className="flex shrink-0 items-center gap-2">
             {connected ? (
-              <form action="/api/gmail/disconnect" method="post">
+              demo ? (
                 <button
-                  type="submit"
-                  className="rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-reject/60 hover:text-strong"
+                  type="button"
+                  disabled
+                  title="Simulated account — there is no real connection to revoke."
+                  className="cursor-not-allowed rounded-lg border border-line px-4 py-2 text-sm text-dim opacity-60"
                 >
                   Disconnect
                 </button>
-              </form>
+              ) : (
+                <form action="/api/gmail/disconnect" method="post">
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-reject/60 hover:text-strong"
+                  >
+                    Disconnect
+                  </button>
+                </form>
+              )
             ) : needsSignin ? (
               <Link
                 href="/login?redirect=/settings"
@@ -102,92 +169,93 @@ export function GmailConnectionCard({ result }: { result: GmailStatusResult }) {
           </div>
         </div>
 
-        {connected ? (
-          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
-            View the classified result in your{" "}
-            <Link href="/inbox" className="text-strong underline-offset-4 hover:underline">
-              classified inbox →
-            </Link>
-          </p>
-        ) : (
-          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
-            Not ready to connect? See exactly what the classifier does on a{" "}
-            <Link href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
-              sample inbox →
-            </Link>
-          </p>
-        )}
+        <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
+          {connected ? (
+            <>
+              Review what it has read in your{" "}
+              <Link href="/inbox" className="text-strong underline-offset-4 hover:underline">
+                filed mail →
+              </Link>
+            </>
+          ) : (
+            <>
+              Not ready to connect? See exactly what the classifier does on a{" "}
+              <Link href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
+                sample inbox →
+              </Link>
+            </>
+          )}
+        </p>
+
+        {/* ---- Reference material, foldered ------------------------------ */}
+        <div className="mt-4 space-y-3">
+          <Disclosure summary="How the connection works — and why it's safe">
+            <ul className="grid gap-2 text-sm text-muted">
+              {SAFEGUARDS.map(([k, v]) => (
+                <li key={k} className="flex gap-2">
+                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-live" aria-hidden />
+                  <span>
+                    <span className="text-strong">{k}.</span> {v}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Disclosure>
+
+          <Disclosure summary="A note on scale — the honest version">
+            <p className="text-sm text-muted">
+              <code className="text-strong">gmail.readonly</code> is a Google{" "}
+              {/* The space is an explicit expression because a literal one does not survive the
+                  build. Production rendered "restrictedscope"; building this file's own committed
+                  source with our toolchain compiles the children to `restricted"}),"scope. Until`,
+                  so the bundler drops the leading whitespace of this text node. The sibling
+                  paragraph below keeps its space, and the difference is the entity: a JSX text node
+                  containing &apos; loses its leading space, one without keeps it. This was the only
+                  such node in the app — see the landing page, where `</span> int8-ONNX` and
+                  `</span> to classify` both survive. Do not "simplify" this back to a plain space. */}
+              <span className="text-strong">restricted</span>{" "}
+              scope. Until this app completes Google&apos;s
+              OAuth verification and an independent CASA security assessment, it can authorize at most{" "}
+              <span className="text-strong">100 test users</span> added on the OAuth consent screen. So
+              direct Gmail linking works, but is intentionally gated to invited testers.
+            </p>
+            <p className="text-sm text-muted">
+              The path that scales to the public <span className="text-strong">without</span>{" "}
+              restricted-scope verification is <span className="text-strong">forwarding ingestion</span>:
+              you set a Gmail filter that auto-forwards job-related mail to a per-user Applied address,
+              and the same classifier labels what arrives — no account access required. That is the
+              recommended route for broad, public use; the direct OAuth connection above is the right
+              fit for a small, invited group and for the desktop app.
+            </p>
+          </Disclosure>
+        </div>
       </div>
 
       {/* ---- No-connection path: import your own mail ----------------- */}
       {!connected ? (
         <div className="rounded-xl border border-line-soft bg-surface p-5">
-          <h2 className="text-lg font-medium text-strong">Import your mail — no connection needed</h2>
-          <p className="mt-1 text-sm text-muted">
-            Don&apos;t want to connect an account (or waiting on a beta seat)? Export your mail from
-            Google Takeout and classify it <span className="text-strong">on-device</span> — parsed and
-            scored entirely in your browser, never uploaded.
-          </p>
-          <Link
-            href="/import"
-            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
-          >
-            Open mail import <span aria-hidden>→</span>
-          </Link>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-base font-medium text-strong">
+                Import your mail — no connection needed
+              </h3>
+              <p className="mt-1 text-sm text-muted">
+                Drop a Google Takeout export and classify it{" "}
+                <span className="text-strong">on-device</span> — never uploaded.
+              </p>
+            </div>
+            <Link
+              href="/import"
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
+            >
+              Open mail import <span aria-hidden>→</span>
+            </Link>
+          </div>
         </div>
       ) : null}
 
       {/* ---- Beta access — invite-only direct Gmail connection -------- */}
       {!connected ? <BetaCard /> : null}
-
-      {/* ---- How it works / why it's safe ----------------------------- */}
-      <div className="space-y-3">
-        <h3 className="label-caps">how the connection works — and why it&apos;s safe</h3>
-        <ul className="grid gap-2 text-sm text-muted">
-          {[
-            ["Read-only", "Applied requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything."],
-            ["Standard OAuth", "Sign-in happens on Google's own consent screen. Applied never sees your Google password."],
-            ["Encrypted at rest", "The refresh token is stored Fernet-encrypted, scoped to your account. It is never shown in the browser, never logged, and never placed in a URL."],
-            ["Revocable anytime", "Disconnect here to revoke access at Google and delete the stored token. You can also remove it at myaccount.google.com/permissions."],
-          ].map(([k, v]) => (
-            <li key={k} className="flex gap-2">
-              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-live" aria-hidden />
-              <span>
-                <span className="text-strong">{k}.</span> {v}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* ---- Honest scale story --------------------------------------- */}
-      <div className="rounded-xl border border-line-soft bg-surface p-5">
-        <h3 className="label-caps mb-3">a note on scale — the honest version</h3>
-        <p className="text-sm text-muted">
-          <code className="text-strong">gmail.readonly</code> is a Google{" "}
-          {/* The space is an explicit expression because a literal one does not survive the
-              build. Production rendered "restrictedscope"; building this file's own committed
-              source with our toolchain compiles the children to `restricted"}),"scope. Until`,
-              so the bundler drops the leading whitespace of this text node. The sibling
-              paragraph below keeps its space, and the difference is the entity: a JSX text node
-              containing &apos; loses its leading space, one without keeps it. This was the only
-              such node in the app — see the landing page, where `</span> int8-ONNX` and
-              `</span> to classify` both survive. Do not "simplify" this back to a plain space. */}
-          <span className="text-strong">restricted</span>{" "}
-          scope. Until this app completes Google&apos;s
-          OAuth verification and an independent CASA security assessment, it can authorize at most{" "}
-          <span className="text-strong">100 test users</span> added on the OAuth consent screen. So
-          direct Gmail linking works, but is intentionally gated to invited testers.
-        </p>
-        <p className="mt-3 text-sm text-muted">
-          The path that scales to the public <span className="text-strong">without</span> restricted-scope
-          verification is <span className="text-strong">forwarding ingestion</span>: you set a Gmail
-          filter that auto-forwards job-related mail to a per-user Applied address, and the same
-          classifier labels what arrives — no account access required. That is the recommended route
-          for broad, public use; the direct OAuth connection above is the right fit for a small,
-          invited group and for the desktop app.
-        </p>
-      </div>
     </div>
   );
 }

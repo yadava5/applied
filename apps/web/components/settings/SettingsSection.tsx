@@ -21,7 +21,7 @@ export function SettingsSection({
     <section
       id={id}
       aria-label={title}
-      className={`rounded-xl border bg-surface p-5 ${
+      className={`scroll-mt-4 rounded-xl border bg-surface p-5 ${
         tone === "danger" ? "border-reject/30" : "border-line-soft"
       }`}
     >

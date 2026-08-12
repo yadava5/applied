@@ -115,21 +115,35 @@ test.describe("live demo (/demo)", () => {
     );
   });
 
-  test("the populated column claims the space empty ones don't use", async ({ page }) => {
-    // A real search is one heavy column and three near-empty ones. An even
-    // split starved the only column with cards until four real Amazon roles
-    // ellipsized into identical text; now space follows content at desktop.
+  test("rows are even: a missing role never changes a row's height", async ({ page }) => {
+    // Half of the raggedness complaint, measured: 8 of the real board's 29
+    // live rows have no role, and the old cards rendered them visibly shorter.
+    // The worklist row keeps a fixed skeleton — company and the role slot
+    // share one line, and an absent role prints the honest placeholder — so a
+    // role-less row (Beacon Health, the fixture for this case) must measure
+    // exactly as tall as a role-carrying one.
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.goto("/demo");
-    const applied = await page.getByRole("region", { name: /applied — 10/i }).boundingBox();
-    const offered = await page.getByRole("region", { name: /offered — 0/i }).boundingBox();
-    expect(applied, "applied column renders").not.toBeNull();
-    expect(offered, "offered column renders").not.toBeNull();
-    expect(applied!.width).toBeGreaterThan(offered!.width * 1.5);
 
-    // And the full role is always reachable on the card itself: it wraps to
-    // two lines rather than ellipsizing its discriminating tail, with the
-    // complete text in `title` as the floor.
+    const beacon = page
+      .locator("li")
+      .filter({ has: page.getByText("Beacon Health", { exact: true }) })
+      .first();
+    await expect(beacon.getByText("role not captured")).toBeVisible();
+    const quarry = page
+      .locator("li")
+      .filter({ has: page.getByText("Quarry Data", { exact: true }) })
+      .first();
+
+    const beaconBox = await beacon.boundingBox();
+    const quarryBox = await quarry.boundingBox();
+    expect(beaconBox, "role-less row renders").not.toBeNull();
+    expect(quarryBox, "role-carrying row renders").not.toBeNull();
+    expect(Math.abs(beaconBox!.height - quarryBox!.height)).toBeLessThanOrEqual(2);
+
+    // And the full role is always reachable on the row itself: it may wrap
+    // rather than ellipsize its discriminating tail, with the complete text
+    // in `title` as the floor.
     await expect(page.getByTitle("ML Engineer, Platform")).toBeVisible();
   });
 

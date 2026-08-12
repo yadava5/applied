@@ -926,36 +926,24 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
- * Board column widths (components/dashboard/PipelineBoard.tsx). At desktop,
- * space follows content: the component writes per-column tracks into
- * `--board-cols` (populated 3fr, empty a compressed readable floor), because
- * a real search is one heavy column and three near-empty ones — an even
- * four-way split starves the only column that holds cards. Below `lg` the
- * Tailwind sm:grid-cols-2 flow applies and this rule is inert.
+ * Worklist drag-and-drop (components/dashboard/PipelineBoard.tsx). The dragged
+ * row dims in place; a stage being hovered as a drop target — a spine stage or
+ * a stage group in the list — raises its border and washes its surface. Pure
+ * state styling — no keyframes, so there is nothing to collapse under reduced
+ * motion.
  * ------------------------------------------------------------------------- */
-@media (min-width: 64rem) {
-  .board-grid {
-    grid-template-columns: var(--board-cols, repeat(4, minmax(0, 1fr)));
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Board drag-and-drop (components/dashboard/PipelineBoard.tsx). The dragged
- * card dims in place; a column being hovered as a drop target raises its
- * border and washes its surface. Pure state styling — no keyframes, so there
- * is nothing to collapse under reduced motion.
- * ------------------------------------------------------------------------- */
-.board-col[data-drop="true"] {
+.board-col[data-drop="true"],
+.spine-stage[data-drop="true"] {
   border-color: var(--line-strong);
   background: var(--surface-2);
 }
-.board-card[data-dragging="true"] {
+.board-row[data-dragging="true"] {
   opacity: 0.4;
 }
-.board-card[draggable="true"] {
+.board-row[draggable="true"] {
   cursor: grab;
 }
-.board-card[draggable="true"]:active {
+.board-row[draggable="true"]:active {
   cursor: grabbing;
 }
 

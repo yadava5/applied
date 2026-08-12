@@ -8,9 +8,11 @@ import { dueInfo, duePhrase, type DueState } from "@/lib/dashboard/deadline";
 import { stageOf } from "@/lib/dashboard/summary";
 
 /**
- * The small shared pieces of a board card's anatomy, used by both the
- * interactive `ApplicationCard` and the read-only demo/sample card so the two
- * can never drift apart visually.
+ * The small shared pieces of a worklist row's anatomy, used by both the
+ * interactive `ApplicationRow` and the read-only demo/sample row so the two
+ * can never drift apart visually. Every piece is inline (no top margins):
+ * the row's meta cluster owns the spacing, so a tag can never push a row
+ * taller than its neighbours.
  */
 
 /**
@@ -91,7 +93,7 @@ export function DeadlineTag({
       data-testid="deadline-tag"
       data-due-state={due.state}
       title={`deadline ${longDate(dueAt)}`}
-      className={`tabular mt-2 inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px] leading-snug ${DUE_TAG_CLASS[due.state]}`}
+      className={`tabular inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px] leading-snug ${DUE_TAG_CLASS[due.state]}`}
     >
       <CalendarClock
         className={`h-3 w-3 shrink-0 ${due.state === "overdue" ? "text-reject-ink" : ""}`}
@@ -127,7 +129,7 @@ export function SameCompanyChip({
       type="button"
       onClick={() => onFilter(company)}
       aria-label={`Show all applications at ${company}`}
-      className="mt-1.5 inline-flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5 text-[11px] font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+      className="inline-flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5 text-[11px] font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
     >
       <Layers className="h-3 w-3" aria-hidden />+{count} at {company}
     </button>

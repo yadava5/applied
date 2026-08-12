@@ -18,19 +18,27 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  * The signed-in product: a work surface, not a metrics poster.
  *
  * The page answers exactly two questions, in this order: "what needs me?"
- * (the review queue) and "where does everything stand?" (the board). One
- * honest line of state — the subtitle — carries the totals; the board columns
- * carry the per-stage counts. Nothing on the page restates either. The stat
- * tiles, the classifier-context strip, the distribution bars and the
- * recent-activity feed are gone: each was a second (or sixth) rendering of a
- * number already on screen, and the classifier strip was CI provenance shown
- * to somebody trying to find a job.
+ * (the review queue) and "where does everything stand?" (the worklist). One
+ * honest line of state — the subtitle — carries the totals; the board's stage
+ * spine carries the per-stage counts. Nothing on the page restates either.
  *
- * The pulse strip (`PipelinePulse`) is not those coming back: every cell on it
- * is DERIVED signal the subtitle and the columns cannot express — filed-per-
- * week momentum, the age distribution of open rows, and how much of the board
- * the classifier built / is holding — each computed once, in `lib/dashboard/
- * age.ts`, from the same rows the board renders.
+ * The geometry is viewport-locked at desktop: the shell is one screen tall,
+ * this page fills its pane exactly (`lg:min-h-0 lg:flex-1`), and the ONLY
+ * thing that scrolls is the worklist inside `PipelineBoard`. Header, notice
+ * lines and the spine hold still — the dashboard reads as an instrument, not
+ * a document. Below `lg` the lock releases and the page flows normally.
+ *
+ * The notice zone under the SyncBar is deliberately one line box per notice
+ * (`truncate`, no wrapping): the "what changed since you last looked" summary
+ * (PR #113, `SinceLastLook`) is designed to land in this same zone as another
+ * single line, so nothing that appears after hydration can ever shift the
+ * board.
+ *
+ * The pulse's four derived signals — filed-per-week momentum, the age
+ * distribution of open rows, deadlines, and how much of the board the
+ * classifier built / is holding — render inside the board's spine at desktop
+ * (`layout="rail"`), where they read as the pipeline's instrument panel, and
+ * as the horizontal strip after the list on smaller screens.
  *
  * Data path unchanged: the counts come from the O(1) `GET
  * /applications/summary`, the board from one bounded page of
@@ -323,46 +331,67 @@ export default async function DashboardPage() {
     ) : null;
 
   return (
-    <section className="space-y-6">
+    <section className="flex flex-col gap-4 lg:min-h-0 lg:flex-1">
       <SyncBar subtitle={subtitle} gmail={gmail}>
         <AddApplicationForm compact />
       </SyncBar>
 
-      {/* The three signals the rows carry that the board can't show as
-          columns: momentum over time, how the open pipeline is ageing, and
-          what the classifier built/held (see PipelinePulse). */}
-      <PipelinePulse
-        applications={state.applications}
-        total={state.total}
-        needsReview={state.needsReview}
-      />
-
-      {/* The in-app weekly digest — pref-gated, and only when there is a week
-          to report. The review half of the old NotificationCues banner is gone:
-          the queue itself now sits where the banner pointed. */}
+      {/* The notice zone: single-line notices only, so nothing here can shift
+          the board. The in-app weekly digest — pref-gated, and only when there
+          is a week to report — is the first tenant; `SinceLastLook` (PR #113)
+          is designed to stack here as another one-line element. */}
       {notifPrefs.weekly && summary.total > 0 && summary.thisWeek > 0 ? (
-        <div
+        <p
           role="status"
-          className="rounded-xl border border-line-soft bg-surface px-4 py-3 text-[13px] text-muted"
+          className="truncate border-l-2 border-line-strong pl-3 text-[13px] leading-snug text-muted"
         >
           <span className="text-strong">This week</span> · {summary.thisWeek} new application
           {summary.thisWeek === 1 ? "" : "s"} · {summary.inMotion} in motion · {summary.offers}{" "}
           offer{summary.offers === 1 ? "" : "s"}
-        </div>
+        </p>
       ) : null}
 
-      {/* "Needs review alerts" now decides whether held mail interrupts the
-          board (above) or waits under it (below) — the quiet-board promise the
-          Settings toggle describes, kept real. */}
-      {notifPrefs.reviewAlerts ? queue : null}
+      {/* The worklist owns the rest of the pane. `total` is the account's true
+          count, not the page's: past BOARD_PAGE_SIZE the board says which slice
+          it is showing, so the subtitle's "250 filed" and a list summing to 200
+          stop contradicting each other.
 
-      {/* `total` is the account's true count, not the page's: past
-          BOARD_PAGE_SIZE the board says which slice it is showing, so the
-          subtitle's "250 filed" and four columns summing to 200 stop
-          contradicting each other. */}
-      <PipelineBoard applications={state.applications} total={state.total} />
+          "Needs review alerts" decides whether held mail interrupts the list
+          (above the rows) or waits under it — the quiet-board promise the
+          Settings toggle describes, kept real. Both placements live INSIDE the
+          list's scroll context, so an eight-item queue can never starve the
+          worklist of its viewport.
 
-      {!notifPrefs.reviewAlerts ? queue : null}
+          The pulse renders once per breakpoint: in the spine at `lg`+
+          (`layout="rail"`), after the list below it — the hidden copy leaves
+          the accessibility tree with `display: none`, so the signals are never
+          announced twice. */}
+      <PipelineBoard
+        variant="locked"
+        applications={state.applications}
+        total={state.total}
+        rail={
+          <PipelinePulse
+            layout="rail"
+            applications={state.applications}
+            total={state.total}
+            needsReview={state.needsReview}
+          />
+        }
+        beforeList={notifPrefs.reviewAlerts ? queue : null}
+        afterList={
+          <>
+            {!notifPrefs.reviewAlerts ? queue : null}
+            <div className="lg:hidden">
+              <PipelinePulse
+                applications={state.applications}
+                total={state.total}
+                needsReview={state.needsReview}
+              />
+            </div>
+          </>
+        }
+      />
     </section>
   );
 }

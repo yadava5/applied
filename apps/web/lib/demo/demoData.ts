@@ -93,9 +93,8 @@ function resolve(seed: DemoSeed, today: string): DemoApplication {
  * cross-column same-company cards, an applied column past the collapse
  * threshold, and an honestly empty column.
  *
- * Order matters as much as the dates: the applied column renders in this
- * order, and the collapse expander test depends on Copperline and Waypoint
- * being the two that wait behind "show all 10".
+ * Order matters as much as the dates: the applied group renders in this
+ * order, and the specs assert specific rows by name against it.
  */
 const APPLICATION_SEEDS: DemoSeed[] = [
   // Northstar Systems ×3 — one advanced, two still applied. Three cards, three
@@ -110,7 +109,11 @@ const APPLICATION_SEEDS: DemoSeed[] = [
   { id: "a6", company: "Harbor Analytics", position: "Backend Engineer", status: "applied", filedDaysAgo: 11, lastSignal: "Application under review" },
   { id: "a7", company: "Summit Platform", position: "Full-Stack Engineer", status: "applied", filedDaysAgo: 9, lastSignal: "Application under review" },
   { id: "a8", company: "Quarry Data", position: "Data Engineer", status: "applied", filedDaysAgo: 8, lastSignal: "Thanks for applying" },
-  { id: "a9", company: "Beacon Health", position: "ML Engineer, Risk", status: "applied", filedDaysAgo: 6, lastSignal: "We received your application" },
+  // The role-not-captured case: 8 of the real board's 29 live rows have no
+  // role (an ATS receipt that never named one), so the twin must exercise the
+  // row's fixed role slot — the honest "role not captured" placeholder — or
+  // the raggedness it fixes stays unreviewable.
+  { id: "a9", company: "Beacon Health", position: "", status: "applied", filedDaysAgo: 6, lastSignal: "We received your application" },
   { id: "a10", company: "Fernworks", position: "Systems Engineer", status: "rejected", filedDaysAgo: 45, lastSignal: "Update on your application" },
   { id: "a11", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", filedDaysAgo: 38, lastSignal: "Moving forward with other candidates" },
   { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 5, lastSignal: "We received your application" },
