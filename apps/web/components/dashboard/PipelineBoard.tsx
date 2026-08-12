@@ -422,7 +422,7 @@ export function PipelineBoard({
   for (const app of applications) {
     let counts = companyStages.get(app.company);
     if (!counts) {
-      counts = { applied: 0, interviewing: 0, offered: 0, rejected: 0 };
+      counts = { applied: 0, assessment: 0, interviewing: 0, offered: 0, rejected: 0 };
       companyStages.set(app.company, counts);
     }
     counts[stageOf(shownStatus(app))] += 1;
@@ -510,7 +510,7 @@ export function PipelineBoard({
    */
   const spineCounts: Record<StageKey, number> = stageTotals
     ? { ...stageTotals }
-    : { applied: 0, interviewing: 0, offered: 0, rejected: 0 };
+    : { applied: 0, assessment: 0, interviewing: 0, offered: 0, rejected: 0 };
   if (stageTotals) {
     for (const app of applications) {
       const pending = pendingMoves[app.id];

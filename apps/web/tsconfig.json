@@ -10,6 +10,13 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
+    // Lets a module that `node --test` has to load spell its relative import
+    // with the real filename (`./dates.ts`). Node's type stripping resolves
+    // ESM specifiers literally — no extension search, no `@/` alias — so this
+    // is what makes `lib/dashboard/summary.ts` (the single implementation of
+    // stage semantics) unit-testable instead of hand-copied into a fixture.
+    // Safe with `noEmit`, which is the only mode this project type-checks in.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,

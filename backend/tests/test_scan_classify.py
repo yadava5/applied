@@ -196,8 +196,10 @@ async def test_a_scanned_message_is_stored_and_then_corrected(cloud_app):
 
     The message reaches the store, the user's category is the stored verdict,
     the row is marked as theirs, and an application is filed at the stage
-    ``assessment`` maps to (``interviewing`` — assessment is a CATEGORY, not a
-    stage; see CATEGORY_TO_STATUS).
+    ``assessment`` maps to — which, since 2026-08-12, is ``assessment`` itself
+    rather than ``interviewing`` (see CATEGORY_TO_STATUS). This assertion is the
+    end-to-end proof of that change: correcting a mail to ``assessment`` now
+    files a row that SAYS assessment.
 
     Mutation: dropping ``data.message`` in the endpoint → fails (404).
     """
@@ -233,7 +235,7 @@ async def test_a_scanned_message_is_stored_and_then_corrected(cloud_app):
             await session.exec(select(Application).where(Application.id == body["application_id"]))
         ).first()
     assert app is not None
-    assert app.status == ApplicationStatus.INTERVIEWING
+    assert app.status == ApplicationStatus.ASSESSMENT
     assert app.user_id == uuid.UUID(OWNER)
 
 

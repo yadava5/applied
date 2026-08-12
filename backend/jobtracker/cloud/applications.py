@@ -336,18 +336,22 @@ class StatusVocabularyResponse(BaseModel):
 
     Every field is DERIVED from :class:`ApplicationStatus` /
     :data:`CATEGORY_TO_STATUS` at import time, so this endpoint and the 422 a
-    bad ``PATCH`` earns cannot disagree. It exists because they did: the board
-    offered ``assessment``, the file-by-hand dialog offered six of the seven,
-    and the API accepted a different seven.
+    bad ``PATCH`` earns cannot disagree. It exists because they did: three
+    hand-written copies of the vocabulary, all different — the board's card
+    offered a value the API refused, the file-by-hand dialog offered fewer than
+    the API accepted, and only the enum was right.
 
     - ``statuses`` — the settable stages, in lifecycle order. THE list.
     - ``default`` — what a new row starts at.
     - ``category_to_status`` — how a classifier verdict maps onto a stage, for
-      a client that wants to show ``assessment`` mail under ``interviewing``.
-      A category absent from this map asserts no stage.
+      a client that wants to file mail under the stage it implies (an
+      ``interview`` message means the row is ``interviewing``). A category
+      absent from this map asserts no stage.
     - ``classifier_categories`` — everything the classifier can emit. A
       SUPERSET of the mapping's keys and NOT interchangeable with ``statuses``;
-      confusing the two is the original defect.
+      confusing the two is the original defect. They overlap on ``applied`` and
+      — since 2026-08-12 — ``assessment``, which is precisely when the two get
+      conflated again, so both lists keep being served.
     """
 
     statuses: list[str]

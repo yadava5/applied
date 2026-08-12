@@ -39,3 +39,12 @@ pyinstaller>=6.3.0            # Bundle Python as standalone executable
 # isolation, and it spent months skipped because it needed a hand-exported
 # env var. See the module docstring.
 testcontainers[postgres]>=4.15.0
+
+# The SYNC Postgres driver, for Alembic only — never for the app, which is
+# async (asyncpg, in requirements.txt) and does not import this.
+# `alembic/env.py` rewrites a `postgresql+asyncpg` URL to `postgresql+psycopg`
+# because Alembic is purely synchronous, so without this package no migration
+# can be run against Postgres anywhere except a machine that happens to have it:
+# not in CI, not on a fresh laptop. That is how the migration chain came to be
+# exercised only by production. tests/test_migrations_postgres.py needs it.
+psycopg[binary]>=3.2.0
