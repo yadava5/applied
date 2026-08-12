@@ -47,9 +47,12 @@ from jobtracker.database.models import (
     DEFAULT_APPLICATION_STATUS,
     Application,
     ApplicationStatus,
+    Contact,
     Email,
     EmailCategory,
+    EmailEmbedding,
     EmailSource,
+    Interview,
     TrainingData,
 )
 
@@ -1446,6 +1449,15 @@ async def _reset_review_queue(
         return
 
     await _orphan_training_examples(session, user_id, doomed)
+    # ``email_embeddings.email_id`` is a NOT NULL FK with no ``ondelete``, and a
+    # Core bulk DELETE runs no ORM cascade, so on Postgres this statement is
+    # refused outright while one embedding survives. Same edge, same fix, as
+    # :func:`delete_application`.
+    await session.exec(
+        sa_delete(EmailEmbedding).where(
+            EmailEmbedding.user_id == user_id, EmailEmbedding.email_id.in_(doomed)
+        )
+    )
     await session.exec(
         sa_delete(Email).where(Email.user_id == user_id, Email.id.in_(doomed))
     )
@@ -1924,11 +1936,37 @@ async def restore_application(
 async def delete_application(
     session, user_id: uuid.UUID, application_id: int
 ) -> bool:
-    """Hard-delete an application and its linked emails. Scoped to the owner.
+    """Hard-delete an application and everything that hangs off it.
 
-    The user's training examples are KEPT (they carry the subject and body they
-    were labelled from, and destroying a correction is not this endpoint's
-    decision) but are unlinked first — see :func:`_orphan_training_examples`.
+    Children before parents, in exactly the order ``cloud/account.py``'s
+    ``_DELETION_ORDER`` uses for the account-wide purge —
+    ``email_embeddings → contacts → interviews → emails → applications``. Not a
+    coincidence and not a second opinion: every foreign key in this schema is
+    declared without ``ondelete`` (see migration ``d7da4461f034``), so on
+    Postgres they are all NO ACTION/RESTRICT and any other order is a 500.
+    There is one right answer to "what order?" for this schema and it is already
+    written down; ``tests/test_application_delete_children.py`` asserts the two
+    have not drifted apart.
+
+    What each child DESERVES, which is a different question from what order:
+
+    - **contacts / interviews** — user-authored, and their ``application_id`` is
+      NOT NULL, so "unlink and keep" is not representable. Delete or refuse are
+      the only two options, and DELETE is already the deliberately-final action
+      here: ``dismiss``/``restore`` is the reversible one, and it destroys
+      nothing. So they go with the application. Before this, they were not
+      touched at all: SQLAlchemy's default cascade tried
+      ``UPDATE contacts SET application_id = NULL`` and the flush raised.
+    - **emails** — derived from Gmail and re-derivable by a re-sync. Deleted, as
+      they always were.
+    - **email_embeddings** — derived from an email and recomputable from it.
+      They die with the email. Nothing was deleting them, and because the mail
+      delete is a Core bulk statement no ORM cascade ran either, so on Postgres
+      the ``DELETE FROM emails`` itself was refused.
+    - **training_data** — derived in origin but a HUMAN's label, holding the
+      subject and body it was labelled from. Kept, and only unlinked, so it stops
+      naming an ``emails`` id that no longer exists (:func:`_orphan_training_examples`).
+      Destroying a user's correction is not this endpoint's decision.
     """
 
     app = (
@@ -1948,6 +1986,23 @@ async def delete_application(
         )
     ).all()
     await _orphan_training_examples(session, user_id, doomed)
+    if doomed:
+        await session.exec(
+            sa_delete(EmailEmbedding).where(
+                EmailEmbedding.user_id == user_id,
+                EmailEmbedding.email_id.in_(doomed),
+            )
+        )
+    await session.exec(
+        sa_delete(Contact).where(
+            Contact.user_id == user_id, Contact.application_id == application_id
+        )
+    )
+    await session.exec(
+        sa_delete(Interview).where(
+            Interview.user_id == user_id, Interview.application_id == application_id
+        )
+    )
     await session.exec(
         sa_delete(Email).where(
             Email.user_id == user_id, Email.application_id == application_id

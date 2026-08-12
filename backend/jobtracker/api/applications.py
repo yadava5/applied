@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import text
 from sqlmodel import func, select
 
@@ -19,8 +20,10 @@ from jobtracker.database import get_session
 from jobtracker.database.models import (
     Application,
     ApplicationStatus,
+    Contact,
     Email,
     EmailCategory,
+    Interview,
 )
 from jobtracker.services.application_insights import (
     get_follow_up_reminders,
@@ -368,6 +371,33 @@ async def get_application(application_id: int):
         )
 
 
+async def _delete_required_children(session, application_id: int) -> None:
+    """Remove the child rows that cannot outlive their application.
+
+    ``contacts.application_id`` and ``interviews.application_id`` are NOT NULL
+    foreign keys onto ``applications.id`` (unlike ``emails.application_id``,
+    which is Optional and is therefore unlinked rather than deleted). So when a
+    parent goes, SQLAlchemy's default cascade tries to de-associate the children
+    with ``SET application_id = NULL``, the flush raises
+    ``NOT NULL constraint failed: contacts.application_id``, and the endpoint
+    answers 500 with the application still in place.
+
+    There is no third option for these two. Nulling the column is not
+    representable, so the choice is delete-with-the-parent or refuse the delete
+    — and both callers are the explicitly-destructive action, not a recoverable
+    one. The order (children, then parent) and the set of tables are the same
+    ones ``jobtracker/cloud/account.py`` already uses for the account-wide
+    purge; there is deliberately one answer to this question, not two.
+    """
+
+    await session.exec(
+        sa_delete(Contact).where(Contact.application_id == application_id)
+    )
+    await session.exec(
+        sa_delete(Interview).where(Interview.application_id == application_id)
+    )
+
+
 @router.post("/{application_id}/mark-not-job", response_model=MarkNotJobResponse)
 async def mark_application_not_job_posting(application_id: int):
     """
@@ -414,6 +444,7 @@ async def mark_application_not_job_posting(application_id: int):
                     exc,
                 )
 
+        await _delete_required_children(session, application_id)
         await session.delete(app)
         await session.commit()
 
@@ -514,7 +545,13 @@ async def update_application(application_id: int, data: ApplicationUpdate):
 
 @router.delete("/{application_id}", status_code=204)
 async def delete_application(application_id: int):
-    """Delete an application. Linked emails are unlinked (not deleted)."""
+    """Delete an application.
+
+    Linked emails are unlinked (not deleted) — the local database is the user's
+    own mail archive and ``emails.application_id`` is nullable. Contacts and
+    interviews go with the application, because their FK is NOT NULL and there
+    is nothing to unlink them to; see :func:`_delete_required_children`.
+    """
     async with get_session() as session:
         stmt = select(Application).where(Application.id == application_id)
         result = await session.exec(stmt)
@@ -530,7 +567,8 @@ async def delete_application(application_id: int):
             email.application_id = None
             session.add(email)
 
-        # Delete application
+        # Then the children that cannot be unlinked, then the application.
+        await _delete_required_children(session, application_id)
         await session.delete(app)
         await session.commit()
 
