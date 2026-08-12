@@ -110,9 +110,11 @@ export interface LastLookRow {
 }
 
 /**
- * The board you last acknowledged. Deliberately holds ids and stage words
- * only — no company, no role, no note — so what sits in `localStorage` is the
- * minimum needed to answer "was this row here, and where".
+ * The board you last acknowledged. Deliberately holds ids, stage words, and —
+ * only where the classifier read one — a deadline with the filed day it is
+ * measured against: no company, no role, no note, so what sits in
+ * `localStorage` is the minimum needed to answer "was this row here, where,
+ * and due when".
  */
 export interface LastLookRecord {
   v: number;
