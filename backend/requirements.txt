@@ -17,7 +17,7 @@ websockets>=17.0.1              # WebSocket support for real-time sync updates
 # -----------------------------------------------------------------------------
 # Database (Async SQLite + Postgres)
 # -----------------------------------------------------------------------------
-aiosqlite>=0.19.0             # Async SQLite driver (desktop/tests)
+aiosqlite>=0.22.1             # Async SQLite driver (desktop/tests)
 asyncpg>=0.31.0               # Async Postgres driver (Supabase/cloud)
 sqlmodel>=0.0.14              # SQLAlchemy + Pydantic ORM (by FastAPI creator)
 sqlalchemy[asyncio]>=2.0.25   # Async SQLAlchemy core
