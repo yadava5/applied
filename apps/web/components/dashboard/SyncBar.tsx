@@ -449,9 +449,12 @@ export function SyncBar({
           The recency sentence drops to a quiet line of its own down there
           (`order-last`), so the controls read as one bar. */}
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+        {/* Title and subtitle share one baseline: stacked they cost a second
+            line of the pane for numbers that read fine beside the name. On a
+            narrow viewport the row wraps and the stack comes back for free. */}
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
           <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
-          <p className="tabular mt-1 text-[13px] text-muted">{subtitle}</p>
+          <p className="tabular text-[13px] text-muted">{subtitle}</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {connected ? (

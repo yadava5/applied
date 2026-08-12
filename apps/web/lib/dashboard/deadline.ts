@@ -131,7 +131,7 @@ export const DEADLINE_SAVE_FAILED = "Couldn't save the deadline — nothing chan
 export const DEADLINE_CLEAR_FAILED = "Couldn't clear the deadline — it is still set.";
 export const DEADLINE_PICK_FIRST = "Pick a date first — the deadline is unchanged.";
 
-// --- The pulse strip's derivation --------------------------------------------
+// --- The pulse's derivation --------------------------------------------
 
 export interface DeadlinePulse {
   overdue: number;
