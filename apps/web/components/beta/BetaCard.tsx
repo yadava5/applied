@@ -52,21 +52,21 @@ export function BetaCard({ className = "" }: { className?: string }) {
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <a
               href={BETA_MAILTO}
-              className="beta-cta inline-flex items-center gap-2 rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background outline-none transition-transform hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-viz-rules"
+              className="beta-cta inline-flex items-center gap-2 rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background outline-none transition-transform hover:-translate-y-px focus-accent"
             >
               <span aria-hidden>✉</span>
               {BETA_CTA_LABEL}
             </a>
             <Link
               href={IMPORT_HREF}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-visible:ring-2 focus-visible:ring-viz-rules"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-accent"
             >
               {BETA_IMPORT_LABEL}
               <span aria-hidden>→</span>
             </Link>
             <Link
               href={SAMPLE_INBOX_HREF}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-visible:ring-2 focus-visible:ring-viz-rules"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-accent"
             >
               {BETA_SAMPLE_LABEL}
               <span aria-hidden>→</span>

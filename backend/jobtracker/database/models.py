@@ -86,12 +86,26 @@ class ApplicationStatus(str, Enum):
     body models, ``GET /applications/statuses``, the rollup's rank tables, the
     web's ``<select>`` — derives from here rather than restating it, because
     three hand-written copies is exactly how the board came to offer a stage
-    (``assessment``) the API answers with a 422.
+    (``assessment``) that the API answered with a 422. The word is settable now;
+    the lesson is not about the word but about the copies.
 
-    ``assessment`` is deliberately NOT a member: see :data:`CATEGORY_TO_STATUS`.
+    ``assessment`` IS a member, as of 2026-08-12: see :data:`CATEGORY_TO_STATUS`
+    for the decision and why it changed.
+
+    DECLARATION ORDER IS THE API'S ORDER. ``APPLICATION_STATUSES``, the
+    endpoint's list and the web's mirror all take their order from here, so a
+    member is inserted at its lifecycle position, never appended.
+
+    The member NAMES are what Postgres stores — SQLModel/SQLAlchemy persist an
+    enum's name, not its value — so the ``applicationstatus`` type holds
+    ``'ASSESSMENT'`` while the API speaks ``'assessment'``. Adding a member
+    therefore needs a migration that adds the UPPERCASE label
+    (``b9e42f7c10ad``), and the SQLite suites cannot see that difference because
+    ``sa.Enum`` renders as ``VARCHAR`` there.
     """
 
     APPLIED = "applied"
+    ASSESSMENT = "assessment"
     INTERVIEWING = "interviewing"
     OFFERED = "offered"
     REJECTED = "rejected"
@@ -126,26 +140,55 @@ class EmailCategory(str, Enum):
 # What a classifier verdict means for the application it belongs to — the ONE
 # statement of the category → stage mapping.
 #
-# ``assessment`` is the interesting one, and it is a CATEGORY, not a stage. A
-# message can *be* an assessment request ("complete this take-home"), which is
-# why the classifier predicts it; the application it belongs to is at the
-# interviewing stage, which is what the tracker records. That was already the
-# behaviour in two independent places (``pipeline._STAGE_RANK`` ranks it between
-# applied and interview, and the orphan reconciler filed it as ``interviewing``)
-# and in the web's own stage grouping, which folds
-# ``interviewing``/``interview``/``assessment`` into one column. Promoting it to
-# an ``ApplicationStatus`` would mean an ``ALTER TYPE applicationstatus ADD
-# VALUE`` against live Postgres to encode a distinction the product does not
-# make. So the mapping is stated here once, and the board's <select> offers
-# stages only.
+# ``assessment`` is the interesting one, and it is BOTH a category and a stage.
+# It maps to itself.
+#
+# This reverses the decision recorded here until 2026-08-12, which folded it
+# into ``interviewing`` on the grounds that "the product does not make that
+# distinction". The product's owner does, on his own mail, and that is the
+# authority that settles a vocabulary question: a real message from Roblox was
+# five self-serve timed tasks with a seven-day expiry — no human, no scheduling,
+# no call — and the board said "interviewing" about it. A tracker whose one
+# screen names the wrong thing is wrong, however consistent it is internally.
+#
+# What actually changed, beyond the owner's verdict:
+#
+# - An EXPIRY is a different kind of time from a scheduled slot. Since
+#   ``b7c31e0d94aa`` a row carries ``due_at``, so the difference between "you
+#   must act before Friday" and "someone will meet you on Friday" is now a
+#   fact the schema can hold; a stage that says which one this is makes the
+#   deadline legible instead of decorative.
+# - The rollup had ALREADY ranked it separately (``pipeline._STAGE_RANK`` has
+#   ranked ``assessment`` between applied and interview since it was written).
+#   The old decision cited that ranking as evidence the distinction was not
+#   made, when it was in fact evidence that everything except the enum made it.
+# - The cost cited against it — an ``ALTER TYPE applicationstatus ADD VALUE``
+#   against live Postgres — is real but one-way and cheap; ``b9e42f7c10ad``
+#   does it, forward-only, because Postgres has no ``DROP VALUE``.
+#
+# Deliberately UNCHANGED, so this stays a vocabulary change and not a redesign:
+#
+# - the classifier's category vocabulary (:class:`EmailCategory`, nine values)
+#   and the corpus labelled with it — no retraining, no relabelling;
+# - the terminal set (rejected/accepted/withdrawn/ghosted) — an assessment is
+#   in-flight, so ``assessment`` is not terminal;
+# - the monotonic rule in ``pipeline.advance_application_status`` — mail may
+#   still only push a row FORWARD, so a re-test mailed to a row already at
+#   ``interviewing`` leaves it at ``interviewing`` (its deadline still lands,
+#   because ``due_at`` is recomputed independently of status);
+# - application identity (employer + req_id-or-role) — a second requisition is
+#   still a separate row that starts its own journey.
 #
 # Categories absent from this map (``follow_up``, ``needs_review``, ``other``)
 # assert no stage at all: a follow-up is chasing an application, not a stage of
-# one, and the other two are noise or a holding pen.
+# one, and the other two are noise or a holding pen. That is what keeps the two
+# vocabularies distinct now that they overlap by one member: a category is a
+# claim about a MESSAGE, a status is a fact about an APPLICATION, and only the
+# six categories below say anything about the second.
 CATEGORY_TO_STATUS: dict[EmailCategory, ApplicationStatus] = {
     EmailCategory.APPLIED: ApplicationStatus.APPLIED,
     EmailCategory.PENDING_APPLICATION: ApplicationStatus.APPLIED,
-    EmailCategory.ASSESSMENT: ApplicationStatus.INTERVIEWING,
+    EmailCategory.ASSESSMENT: ApplicationStatus.ASSESSMENT,
     EmailCategory.INTERVIEW: ApplicationStatus.INTERVIEWING,
     EmailCategory.OFFER: ApplicationStatus.OFFERED,
     EmailCategory.REJECTION: ApplicationStatus.REJECTED,

@@ -18,10 +18,14 @@ export function SettingsSection({
   tone?: "default" | "danger";
 }) {
   return (
+    // `scroll-mt-16` below `lg` clears the chip strip SettingsNav pins to the
+    // top of the scroll pane (53px tall) — without it an anchor jump lands the
+    // heading underneath it. At `lg` the rail sits beside the cards with
+    // nothing above them, so the jump only needs room to breathe.
     <section
       id={id}
       aria-label={title}
-      className={`rounded-xl border bg-surface p-5 ${
+      className={`scroll-mt-16 rounded-xl border bg-surface p-5 lg:scroll-mt-4 ${
         tone === "danger" ? "border-reject/30" : "border-line-soft"
       }`}
     >

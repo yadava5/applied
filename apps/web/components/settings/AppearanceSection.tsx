@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { Moon, Sun } from "lucide-react";
 
 import { SettingsSection } from "./SettingsSection";
+import type { SettingsMode } from "@/lib/settings/transport";
 import { THEME_CHANGE_EVENT, applyTheme, readAppliedTheme, type Theme } from "@/lib/theme";
 
 const OPTIONS: { value: Theme; label: string; icon: typeof Moon }[] = [
@@ -26,12 +27,18 @@ function subscribe(onChange: () => void) {
  * the dark default, then the client syncs to the saved choice); selecting an
  * option flips `data-theme` on <html> and persists it, re-theming the whole app
  * with no reload and no flash on the next visit.
+ *
+ * `mode="demo"` changes nothing about the mechanism — the switch writes and
+ * persists the real theme there too — but the demo family pins its own dark
+ * ground (see app/demo/page.tsx), so the change is invisible ON that page. The
+ * control says so rather than looking broken: a switch you flip and nothing
+ * moves reads as a bug, whatever it did underneath.
  */
-export function AppearanceSection() {
+export function AppearanceSection({ mode = "live" }: { mode?: SettingsMode }) {
   const theme = useSyncExternalStore(subscribe, readAppliedTheme, () => "dark" as Theme);
 
   return (
-    <SettingsSection title="Appearance" description="Choose how Applied looks on this device.">
+    <SettingsSection id="appearance" title="Appearance" description="Choose how Applied looks on this device.">
       <div
         role="radiogroup"
         aria-label="Theme"
@@ -57,7 +64,11 @@ export function AppearanceSection() {
           );
         })}
       </div>
-      <p className="mt-3 text-[12px] leading-relaxed text-dim">Saved on this device. Dark is the default.</p>
+      <p className="mt-3 text-[12px] leading-relaxed text-dim">
+        {mode === "demo"
+          ? "Saved on this device, and applied the moment you pick it — but the demo is shown in the product's dark theme throughout, so this page will not change colour. Sign in to see it applied."
+          : "Saved on this device. Dark is the default."}
+      </p>
     </SettingsSection>
   );
 }

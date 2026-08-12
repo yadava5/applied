@@ -26,6 +26,12 @@
 import { todayISO } from "@/lib/dashboard/age";
 import { dueDayISO } from "@/lib/dashboard/deadline";
 
+/**
+ * The statuses the FIXTURES use — a subset of the API's vocabulary, not a
+ * mirror of it. It deliberately does not grow with `ApplicationStatus`: adding
+ * `assessment` here would type-check while no fixture used it, which is a
+ * promise the demo does not keep. It grows when a fixture is re-filed.
+ */
 export type DemoStatus = "applied" | "interviewing" | "offered" | "rejected";
 
 export interface DemoApplication {
@@ -86,20 +92,26 @@ function resolve(seed: DemoSeed, today: string): DemoApplication {
 
 /**
  * Shaped like a REAL early-search board, not a brochure: the applied column is
- * heavy (10 of 17), offered is empty, and one employer holds several
- * applications in different stages — the owner's own board has four Amazon
- * requisitions, so the fixtures must exercise the same truths the live board
- * does: company+role as the card identity, the "N more at …" affordance,
- * cross-column same-company cards, an applied column past the collapse
- * threshold, and an honestly empty column.
+ * heavy (10 of 17), offered is empty, and two employers hold several
+ * applications in different stages — Northstar ×4 and Cedar Labs ×2, so both
+ * ends of the affordance render ("+3 at …" and "+1 at …") and the four-deep
+ * set is reachable. That mirrors the owner's own board, where four employers
+ * hold several requisitions each (Amazon 4, Verkada 4). The fixtures must
+ * exercise the same truths the live board does: company+role as the card
+ * identity, the "+N at …" affordance, cross-column same-company cards, an
+ * applied column past the collapse threshold, and an honestly empty column.
  *
- * Order matters as much as the dates: the applied column renders in this
- * order, and the collapse expander test depends on Copperline and Waypoint
- * being the two that wait behind "show all 10".
+ * Order matters as much as the dates: the applied group renders in this
+ * order, and the specs assert specific rows by name against it.
  */
 const APPLICATION_SEEDS: DemoSeed[] = [
-  // Northstar Systems ×3 — one advanced, two still applied. Three cards, three
+  // Northstar Systems ×4 — one advanced, three still applied. Four cards, four
   // distinct roles, two different columns: an application is not a company.
+  // Four is the number on purpose: the owner's own board holds four Amazon
+  // requisitions, so this is the shape the "+3 at …" chip and the set view it
+  // opens have to be reviewable against. The fourth row (`a7`) stays down in
+  // filing order rather than being moved up here — the seed order IS the
+  // applied group's render order, and the specs read specific rows off it.
   { id: "a1", company: "Northstar Systems", position: "ML Engineer", status: "interviewing", filedDaysAgo: 18, lastSignal: "Interview availability — technical round" },
   { id: "a2", company: "Northstar Systems", position: "ML Engineer, Platform", status: "applied", filedDaysAgo: 16, lastSignal: "Your application was received" },
   { id: "a3", company: "Northstar Systems", position: "Research Engineer, Applied ML", status: "applied", filedDaysAgo: 15, lastSignal: "Thanks for applying" },
@@ -108,9 +120,17 @@ const APPLICATION_SEEDS: DemoSeed[] = [
   { id: "a5", company: "Cedar Labs", position: "Site Reliability Engineer", status: "rejected", filedDaysAgo: 34, lastSignal: "Moving forward with other candidates" },
   // Single-application employers — the common case, which stays untaxed.
   { id: "a6", company: "Harbor Analytics", position: "Backend Engineer", status: "applied", filedDaysAgo: 11, lastSignal: "Application under review" },
-  { id: "a7", company: "Summit Platform", position: "Full-Stack Engineer", status: "applied", filedDaysAgo: 9, lastSignal: "Application under review" },
+  // Northstar's fourth, filed a week after the third — the row that makes the
+  // employer's set four cards deep. Retargeted from a single-application
+  // employer rather than added, so the board's totals (17 rows, 10 applied)
+  // and every count the specs assert against them are untouched.
+  { id: "a7", company: "Northstar Systems", position: "Full-Stack Engineer", status: "applied", filedDaysAgo: 9, lastSignal: "Application under review" },
   { id: "a8", company: "Quarry Data", position: "Data Engineer", status: "applied", filedDaysAgo: 8, lastSignal: "Thanks for applying" },
-  { id: "a9", company: "Beacon Health", position: "ML Engineer, Risk", status: "applied", filedDaysAgo: 6, lastSignal: "We received your application" },
+  // The role-not-captured case: 8 of the real board's 29 live rows have no
+  // role (an ATS receipt that never named one), so the twin must exercise the
+  // row's fixed role slot — the honest "role not captured" placeholder — or
+  // the raggedness it fixes stays unreviewable.
+  { id: "a9", company: "Beacon Health", position: "", status: "applied", filedDaysAgo: 6, lastSignal: "We received your application" },
   { id: "a10", company: "Fernworks", position: "Systems Engineer", status: "rejected", filedDaysAgo: 45, lastSignal: "Update on your application" },
   { id: "a11", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", filedDaysAgo: 38, lastSignal: "Moving forward with other candidates" },
   { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 5, lastSignal: "We received your application" },
@@ -119,9 +139,13 @@ const APPLICATION_SEEDS: DemoSeed[] = [
   // Assessments with deadlines ×3 — the landing's own opening problem ("its
   // 48-hour deadline passes unseen") demonstrated in all three states: one
   // comfortably ahead, one inside the DUE_SOON_DAYS window, one already
-  // missed. Status is `interviewing` (an assessment mail advances the row;
-  // `assessment` is a classifier category, not an API status — see
-  // lib/dashboard/status.ts), and every deadline here is mail-extracted
+  // missed. Status is `interviewing`, and as of 2026-08-12 that is STALE
+  // rather than principled: `assessment` became a real API status (see
+  // lib/dashboard/status.ts), so these three rows should be filed at it. They
+  // are deliberately left alone here because their offsets and columns are the
+  // contract `demo.spec.ts` asserts, and re-filing them is a demo change with
+  // its own e2e run — not part of the vocabulary change. Every deadline here is
+  // mail-extracted
   // (`due_source: "mail"` via the adapter): this account is auto-filed, and
   // the e2e sets/clears the one "user" deadline through the sheet instead.
   // The offsets are the contract demo.spec.ts asserts (due in 9d / due in 2d /

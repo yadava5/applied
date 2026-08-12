@@ -1,7 +1,7 @@
 /**
  * The board's transport seam — how the interactive components reach data.
  *
- * Every mutating surface (`ApplicationCard`, `ApplicationDetail`,
+ * Every mutating surface (`ApplicationRow`, `ApplicationDetail`,
  * `PipelineBoard`'s drag, `SyncBar`) takes one of these interfaces and
  * defaults to the live implementation below, which talks to the same-origin
  * proxy routes exactly as before. The public `/demo` passes an in-memory
@@ -16,6 +16,8 @@
  * `lib/dashboard/rowActions.ts`, so the which-endpoint-does-what guarantees
  * asserted in `tests/unit/row-actions.test.mjs` keep holding here.
  */
+import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
+import { noteUserStageChange } from "@/lib/dashboard/lastLookStore";
 import {
   deadlineChangeRequest,
   permanentDeleteRequest,
@@ -90,7 +92,16 @@ async function send(req: ProxyRequest): Promise<SendResult> {
 
 /** The default: the same-origin proxy routes (JWT stays server-side). */
 export const liveBoardTransport: BoardTransport = {
-  changeStatus: (id, status) => send(statusChangeRequest(id, status)),
+  async changeStatus(id, status) {
+    const result = await send(statusChangeRequest(id, status));
+    // A move the USER made is not news. Every path that changes a stage —
+    // drag, the card's select, the detail sheet's — funnels through here, so
+    // folding it into the change ledger's baseline in one place stops the
+    // ledger reporting the reader's own drag back at them. A failed write
+    // changes nothing, so it folds nothing.
+    if (result.ok) noteUserStageChange(LAST_LOOK_KEY, id, result.status ?? status);
+    return result;
+  },
   setDeadline: (id, dueAt) => send(deadlineChangeRequest(id, dueAt)),
   dismiss: (id) => send(removeFromBoardRequest(id)),
   deleteRow: (id) => send(permanentDeleteRequest(id)),

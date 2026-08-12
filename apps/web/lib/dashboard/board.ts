@@ -22,15 +22,18 @@
  * under it now agree either way — nothing in `closed` claims to be a rejection.
  *
  * The membership change is still worth making, and it is one file: `STAGES`
- * grows a fifth stage owning `withdrawn` (and `ghosted`, which today has no
- * stage at all and so falls through `stageOf`'s `?? "applied"` into the applied
- * column and into `inMotion`), `counts`/`PipelineSummary` gain that key, and
- * the board's `lg:grid-cols-4` becomes 5. Doing it there fixes the funnel and
- * the tiles in the same stroke; doing it here would fix only the board.
+ * grows a stage owning `withdrawn`, `counts`/`PipelineSummary` gain that key,
+ * and the board's column count follows `STAGES` on its own. Doing it there
+ * fixes the funnel and the tiles in the same stroke; doing it here would fix
+ * only the board. (`ghosted`, named here as the same defect, has had an
+ * explicit home in the `rejected` stage since; `assessment` got a stage of its
+ * own on 2026-08-12, which is what took the board from four columns to five.)
  *
  * `stages` is a parameter rather than an import so this module stays
- * import-free and `node --test` can load it under type stripping (`summary.ts`
- * value-imports through the `@/` alias, which Node cannot resolve).
+ * import-free — a shape worth keeping, though no longer a necessity:
+ * `summary.ts` value-imports relatively now (`./dates.ts`), so `node --test`
+ * can load it too, and the stage test reads the real `STAGES` instead of a
+ * copy of them.
  */
 import type { StageDef, StageKey } from "./summary";
 

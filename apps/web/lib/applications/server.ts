@@ -18,6 +18,7 @@
  * write both updates the row AND records a training example — the correction
  * loop the user drives from the board.
  */
+import type { ClassifyArgs } from "@/lib/applications/classify-request";
 import { serverEnv } from "@/lib/env";
 import { getAccessToken } from "@/lib/supabase/auth";
 
@@ -138,6 +139,35 @@ export function getReviewQueue(): Promise<ApiCallResult> {
   return call(`/applications/review`, { method: "GET" });
 }
 
+/** The query parameters `/applications/mail` accepts. Nothing else is forwarded. */
+const MAIL_QUERY_PARAMS = ["page", "page_size", "category", "q"] as const;
+
+/**
+ * GET /applications/mail — every stored message, whatever the verdict.
+ *
+ * The counterpart to `getReviewQueue`, and the reason it exists: the review
+ * queue filters to `needs_review AND unlinked AND not-yet-reviewed`, so a
+ * verdict becomes unreachable the moment it is touched. This lists the user's
+ * mail regardless of review state or linkage, which is what makes a wrong
+ * verdict correctable more than once. Metadata only — bodies never leave the
+ * backend.
+ *
+ * Values are forwarded as strings and validated by FastAPI, which already
+ * answers a precise 422 naming the offending parameter. A second parser here
+ * would be a second thing to drift. The keys ARE allowlisted: only the four
+ * the endpoint declares travel, so this proxy cannot be used to reach
+ * parameters the backend adds later without a deliberate change here.
+ */
+export function getMail(search: URLSearchParams): Promise<ApiCallResult> {
+  const forwarded = new URLSearchParams();
+  for (const key of MAIL_QUERY_PARAMS) {
+    const value = search.get(key)?.trim();
+    if (value) forwarded.set(key, value);
+  }
+  const query = forwarded.toString();
+  return call(`/applications/mail${query ? `?${query}` : ""}`, { method: "GET" });
+}
+
 /**
  * POST /applications/review/{messageId}/classify — classify + persist + train.
  *
@@ -145,12 +175,15 @@ export function getReviewQueue(): Promise<ApiCallResult> {
  * consults it ONLY when it cannot name the employer from the mail itself, so we
  * send it only when the user has actually supplied one. A 2xx here does not
  * imply a row was filed — the caller must read `needs_employer` off the body.
+ *
+ * `message` carries the mail's own metadata for a message that may not be
+ * stored — every row in the live-scan view. Without it those corrections were
+ * 404s, because the scan reads Gmail and persists nothing and the file step
+ * drops anything below the 0.70 review floor.
  */
 export function classifyReviewItem(
   messageId: string,
-  category: string,
-  company?: string,
-  applicationId?: number,
+  { category, company, applicationId, message }: ClassifyArgs,
 ): Promise<ApiCallResult> {
   const named = company?.trim();
   return call(`/applications/review/${encodeURIComponent(messageId)}/classify`, {
@@ -162,6 +195,7 @@ export function classifyReviewItem(
       // rather than sent as null when absent, so the backend's "no choice was
       // made" path stays distinguishable from "the choice was empty".
       ...(applicationId !== undefined ? { application_id: applicationId } : {}),
+      ...(message ? { message } : {}),
     },
   });
 }

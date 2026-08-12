@@ -16,8 +16,12 @@
  * the component and its test read the same function.
  *
  * Deliberately dependency-free (no React, no `@/` alias, no generated schema)
- * so `tests/unit/` can load it directly under Node's type stripping.
+ * so `tests/unit/` can load it directly under Node's type stripping. The one
+ * import below is a TYPE, which stripping removes outright — it never becomes
+ * a module specifier Node has to resolve.
  */
+
+import type { ScanMessagePayload } from "../gmail/scan-correction";
 
 /** What the user is told when the employer could not be read from the message. */
 export const NEEDS_EMPLOYER_PROMPT =
@@ -53,6 +57,13 @@ export interface ClassifyRequestBody {
    * entity-model change landed (see `reviewCandidates`).
    */
   application_id?: number;
+  /**
+   * The message's own metadata, for a row that may not be stored yet — the
+   * live scan's case. Consulted by the backend ONLY when the message id is
+   * unknown; a stored message is always corrected in place. Absent for the
+   * filed ledger, whose rows are stored by definition.
+   */
+  message?: ScanMessagePayload;
 }
 
 /**
@@ -75,6 +86,7 @@ export function classifyRequestBody(
   category: string,
   company?: string | null,
   applicationId?: number | null,
+  message?: ScanMessagePayload | null,
 ): ClassifyRequestBody {
   const named = typeof company === "string" ? company.trim() : "";
   const body: ClassifyRequestBody = { category };
@@ -82,6 +94,13 @@ export function classifyRequestBody(
   if (typeof applicationId === "number" && Number.isInteger(applicationId) && applicationId > 0) {
     body.application_id = applicationId;
   }
+  // Sent on EVERY attempt for a scan row, including the re-send that answers
+  // `needs_employer`. The first attempt does store the message (the backend
+  // mints it before that early return, deliberately), so the re-send normally
+  // finds it — but the half of the round trip that actually FILES must not
+  // depend on that ordering, and the backend ignores the payload for a message
+  // it already has.
+  if (message) body.message = message;
   return body;
 }
 

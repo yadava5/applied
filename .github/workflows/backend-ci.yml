@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -167,7 +167,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -221,6 +221,46 @@ jobs:
               )
           PY
 
+      - name: Run migration suite (real Postgres)
+        # tests/test_migrations_postgres.py applies the WHOLE Alembic chain to a
+        # bare database and checks what the SQLite suites structurally cannot:
+        # enum labels. `sa.Enum` renders as VARCHAR on SQLite, so a migration
+        # that adds the wrong label — the lowercase API value instead of the
+        # member NAME Postgres actually stores — passes 600 green tests and then
+        # 500s on the first write in production. It runs here because this is
+        # the job with a Postgres; it is NOT in the `test` job for the same
+        # reason the RLS suite is not.
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+          JOBTRACKER_TEST_PG_ADMIN_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
+        run: |
+          pytest tests/test_migrations_postgres.py -q \
+            --junit-xml="$RUNNER_TEMP/migration-results.xml"
+
+      - name: Assert the migration suite actually ran
+        # Same guard, same reason: this module skips itself when no Postgres is
+        # reachable, and a skip is green.
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(
+              os.path.join(os.environ["RUNNER_TEMP"], "migration-results.xml")
+          ).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          total = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+          print(f"Migration suite: {total} tests, {skipped} skipped")
+          if total == 0 or skipped:
+              sys.exit(
+                  "Migration tests did not run. Every enum label in the chain is "
+                  "UNVERIFIED by this build."
+              )
+          PY
+
   cloud-smoke:
     # Smoke-test the cloud FastAPI entrypoint (`api/index.py` /
     # `jobtracker.main_cloud`) under the exact env used on Vercel:
@@ -237,7 +277,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v7

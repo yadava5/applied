@@ -31,6 +31,12 @@ import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { type Application, STAGES, stageOf } from "@/lib/dashboard/summary";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 
+/** The honest slot for the 8-in-29 case: a row whose mail never named a role
+ *  says so, in the same words the detail sheet and the review picker already
+ *  use — instead of rendering shorter than its neighbours and making the
+ *  whole list ragged. */
+export const NO_ROLE_LABEL = "role not captured";
+
 /**
  * The stage control — label and `<select>` together — behind `memo`, and that
  * memo is load-bearing rather than a performance nicety.
@@ -39,7 +45,7 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  * that touches its fiber: `commitUpdate` → `updateProperties` → `updateOptions`
  * re-selects the option matching the `value` prop, and React 19 reads that prop
  * unconditionally — there is no "did value change?" guard on that path. So any
- * re-render of the surrounding card, for any reason, re-writes the control's
+ * re-render of the surrounding row, for any reason, re-writes the control's
  * DOM value.
  *
  * That is invisible until a re-render lands between the moment the browser sets
@@ -51,15 +57,15 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  * silently discarded: no request, no error, no visible failure.
  *
  * That is exactly what the reader's-day swap made reproducible. `useLocalToday`
- * re-renders every card once, tens of milliseconds after hydration (see
+ * re-renders every row once, tens of milliseconds after hydration (see
  * `useLocalToday.ts`), and a stage change chosen in that window vanished.
- * Isolating the control means a card re-render that changes nothing ABOUT THE
+ * Isolating the control means a row re-render that changes nothing ABOUT THE
  * CONTROL — a re-dating, a sibling's move, a filter — bails out here, the
  * `<select>` fiber is never committed, and nothing can overwrite a choice in
  * flight.
  *
  * `memo` only bails out on shallow-equal props, so `onChange` has to be
- * referentially stable (`useCallback` in the card) — a fresh closure per render
+ * referentially stable (`useCallback` in the row) — a fresh closure per render
  * defeats the whole thing. Nothing but the row's identity, its shown stage and
  * its in-flight state may be passed in; `today` deliberately is NOT, because
  * the day changing is precisely the re-render this must survive.
@@ -92,7 +98,15 @@ const StageSelect = memo(function StageSelect({
         disabled={disabled}
         aria-busy={busy}
         onChange={(e) => onChange(e.target.value)}
-        className="max-w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 py-0.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+        // `w-[8.5rem]`, not max-w: an intrinsic-width select is as wide as its
+        // current value, so 17 rows put the board's main control on four
+        // different x positions (a 78px spread, measured). Fixed width + a
+        // fixed-width tail after it (see the meta cluster) is what makes the
+        // selects a column. `h-6` matches the cluster's other controls (the
+        // Gmail slot, the menu trigger), so a card with a select and a card
+        // without one — the employer set header — compute the same height;
+        // the select's intrinsic height was a measured 1px taller.
+        className="h-6 w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
       >
         {statusOptions(value).map((option) => (
           <option key={option.value} value={option.value} disabled={option.disabled}>
@@ -108,17 +122,37 @@ const StageSelect = memo(function StageSelect({
  * One pipeline row — clickable, correctable, and no longer able to lose an
  * application to a single click.
  *
+ * This is the worklist form of what used to be `ApplicationCard`: the same
+ * state machine over a full-width, fixed-skeleton line. At `sm` and up
+ * everything a row can say lives on ONE line — company · role slot on the
+ * left, then the meta cluster (chip, deadline, filed stamp, stage control,
+ * Gmail link, actions) pinned right — so a row missing its role renders
+ * exactly as tall as one that has it (the raggedness complaint was 8 of 29
+ * live rows with no role line). The role slot never collapses: an absent role
+ * prints {@link NO_ROLE_LABEL} in the dim rank, the same words the detail
+ * sheet uses.
+ *
+ * Below `sm` the row is an explicit stack instead of a flex-wrap accident:
+ * company + filed stamp on the first line, the role slot on the second, the
+ * controls on the third, all anchored left. The wrap-based layout put the
+ * chip/select cluster right-aligned on its own line — a dead gutter down the
+ * left of every row — and any row carrying both a chip and a "quiet Nd" tag
+ * wrapped its date onto a third line (measured: two row heights at 375px,
+ * 69px and 96px, predicted exactly by chip+quiet). The stamp now lives on the
+ * company line at phone width, so the controls line has a fixed population
+ * and rows keep one shape.
+ *
  * Three behaviours here are load-bearing:
  *
  *  1. **Removal is recoverable.** "Not an application" no longer fires
- *     anything: the card becomes a tombstone with an Undo for
+ *     anything: the row becomes a tombstone with an Undo for
  *     `UNDO_WINDOW_SECONDS`, and only when that expires does it POST the
  *     backend's *soft* dismiss (row + emails stay on disk, restorable).
  *     Undo is a cancelled timer — nothing was sent, so there is nothing to
  *     reverse and no training example written and then written over. The hard
  *     `DELETE` — which erases the row and its linked mail, and which no layer
  *     can undo — is a separate item behind an inline confirm.
- *  2. **The stage control is optimistic.** The chosen stage (and the card's
+ *  2. **The stage control is optimistic.** The chosen stage (and the row's
  *     stage accent) change on click instead of after the round trip, with an
  *     in-flight state on the control; a failure rolls the value back visibly
  *     and says what it tried, what the row still is, and why.
@@ -131,12 +165,14 @@ const StageSelect = memo(function StageSelect({
  * in-memory one so this exact component runs on fixtures) and, on success,
  * `router.refresh()` re-renders the server board from fresh data.
  */
-export function ApplicationCard({
+export function ApplicationRow({
   app,
   columnLabel,
   today = todayISO(),
   onOpenDetail,
+  inSet = false,
   sameCompanyCount = 0,
+  sameCompanyLabel,
   onFilterCompany,
   dragging = false,
   onDragStart,
@@ -144,26 +180,35 @@ export function ApplicationCard({
   transport = liveBoardTransport,
 }: {
   app: Application;
-  /** The heading of the column this card is rendered in (see `board.ts`). */
+  /** The heading of the stage group this row is rendered in (see `board.ts`). */
   columnLabel?: string;
   /** Today's calendar day — the board threads one read of the clock down so
-   *  every card's age tag and deadline state derive from the same instant
+   *  every row's age tag and deadline state derive from the same instant
    *  (`useLocalToday`: UTC for the server pass, the reader's own day once
-   *  mounted). The UTC default only stands in for a caller that renders a card
+   *  mounted). The UTC default only stands in for a caller that renders a row
    *  outside the board; the board always passes its own. */
   today?: string;
-  /** Opens the detail sheet (the mail behind this card). */
+  /** Opens the detail sheet (the mail behind this row). */
   onOpenDetail?: (app: Application) => void;
+  /** True for a member of an employer set: the set's header already names the
+   *  company, so the row leads with its role — repeating the employer three
+   *  times under a header that says it is the duplication grouping removes.
+   *  The accessible name keeps the company; only the visible lead changes. */
+  inSet?: boolean;
   /**
-   * How many OTHER applications share this company. A card is an application,
+   * How many OTHER applications share this company. A row is an application,
    * not a company — one employer can hold several — so this is a light
-   * affordance ("+3 at Amazon"), never a merge. The board passes 0 while its
-   * active filter already IS this company.
+   * affordance, never a merge. The board passes 0 while its active filter
+   * already IS this company, and for member rows inside an employer set
+   * (the set's header owns the affordance there).
    */
   sameCompanyCount?: number;
-  /** Filters the board to this card's company (opens the set view). */
+  /** Stage-aware chip text ("+1 in interviewing") when the board groups by
+   *  employer; without it the chip says "+N at {company}" (search view). */
+  sameCompanyLabel?: string | null;
+  /** Filters the board to this row's company (opens the set view). */
   onFilterCompany?: (company: string) => void;
-  /** True while this card is the one being dragged. */
+  /** True while this row is the one being dragged. */
   dragging?: boolean;
   onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd?: () => void;
@@ -190,8 +235,8 @@ export function ApplicationCard({
 
   // Server data caught up (to our value or to a different one): drop the
   // overlay and show the truth. Both arms matter — without the second, a
-  // backend that answered with something else would leave the card asserting a
-  // stage the row is not at, forever.
+  // backend that answered with something else would leave the row asserting a
+  // stage it is not at, forever.
   if (optimistic && (app.status === optimistic.to || app.status !== optimistic.from)) {
     setOptimistic(null);
   }
@@ -220,7 +265,7 @@ export function ApplicationCard({
       setBusy("status");
       const result = await transport.changeStatus(app.id, next);
       // Cleared on success AND on failure: the old code left `busy` latched on
-      // success, so a change that did not move the card to another column (it
+      // success, so a change that did not move the row to another group (it
       // stays mounted, and `router.refresh()` preserves client state) left the
       // control disabled and the spinner turning until a full reload.
       setBusy(null);
@@ -324,8 +369,8 @@ export function ApplicationCard({
   // --- Pending removal: the row is still here, and one click keeps it --------
   if (removalPending) {
     return (
-      <div className="rounded-lg border border-dashed border-line bg-surface-2/60 p-3">
-        <p role="status" className="text-xs leading-snug text-muted">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed border-line bg-surface-2/60 px-3 py-2">
+        <p role="status" className="min-w-0 flex-1 text-xs leading-snug text-muted">
           {removalPendingMessage(app.company, secondsLeft ?? 0)}
         </p>
         <button
@@ -335,7 +380,7 @@ export function ApplicationCard({
             refocusTrigger.current = true;
             setSecondsLeft(null);
           }}
-          className="mt-2 inline-flex items-center gap-1.5 rounded border border-line px-2 py-1 text-xs text-strong transition-colors hover:border-line-strong hover:bg-surface"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line px-2 py-1 text-xs text-strong transition-colors hover:border-line-strong hover:bg-surface"
         >
           <Undo2 className="h-3.5 w-3.5" aria-hidden />
           {UNDO_LABEL}
@@ -348,7 +393,7 @@ export function ApplicationCard({
   // WHICH of the two happened — one is still on disk, the other is gone. -----
   if (removed) {
     return (
-      <div className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 p-3">
+      <div className="rounded-lg border border-dashed border-line-soft bg-surface-2/40 px-3 py-2">
         <p role="status" className="text-xs text-dim">
           {removed === "deleted" ? deletedMessage(app.company) : removedMessage(app.company)}
         </p>
@@ -358,6 +403,69 @@ export function ApplicationCard({
 
   const role = app.position.trim();
 
+  const identity = inSet ? (
+    // Set member: the role IS the line (the header names the employer). The
+    // qualifier survives — a `closed` set's members must each say rejected /
+    // withdrawn / ghosted for themselves.
+    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      {role ? (
+        <span
+          title={role}
+          className="line-clamp-2 min-w-0 break-words text-sm leading-snug text-foreground underline-offset-2 group-hover/row:underline"
+        >
+          {role}
+        </span>
+      ) : (
+        <span className="text-sm leading-snug text-dim underline-offset-2 group-hover/row:underline">
+          {NO_ROLE_LABEL}
+        </span>
+      )}
+      {qualifier && (
+        <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
+          {qualifier}
+        </span>
+      )}
+      <span className="ml-auto shrink-0 sm:hidden">
+        <FiledStamp filed={filed} status={shownStatus} today={today} />
+      </span>
+    </span>
+  ) : (
+    <>
+      <span className="flex min-w-0 items-baseline gap-2 text-sm font-medium text-strong sm:max-w-[16rem] sm:shrink-0">
+        <span className="min-w-0 truncate underline-offset-2 group-hover/row:underline">
+          {app.company}
+        </span>
+        {qualifier && (
+          <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
+            {qualifier}
+          </span>
+        )}
+        {/* Below `sm` the filed stamp rides the company line (pinned right),
+            which is what keeps the controls line one fixed shape — see the
+            component note. Above `sm` its twin renders in the meta cluster. */}
+        <span className="ml-auto shrink-0 font-normal sm:hidden">
+          <FiledStamp filed={filed} status={shownStatus} today={today} />
+        </span>
+      </span>
+      {/* The role WRAPS (two lines) instead of ellipsizing when it must: a job
+          title's discriminating part is its tail — "…, AWS Data Services -
+          2026" — which is exactly what a one-line truncate eats. At the row's
+          full-width measure this almost never fires; `title` stays the floor,
+          not the fix. An absent role prints the slot's honest placeholder so
+          the line's shape never changes. */}
+      {role ? (
+        <span
+          title={role}
+          className="line-clamp-2 min-w-0 break-words text-[13px] leading-snug text-foreground"
+        >
+          {role}
+        </span>
+      ) : (
+        <span className="text-[13px] leading-snug text-dim">{NO_ROLE_LABEL}</span>
+      )}
+    </>
+  );
+
   return (
     <div
       aria-busy={busy !== null}
@@ -365,81 +473,54 @@ export function ApplicationCard({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       data-dragging={dragging || undefined}
-      className="board-card group/card relative rounded-lg border border-line-soft bg-surface-2 p-3 transition-colors hover:border-line-strong"
+      className="board-row group/row relative flex flex-col gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:pr-1.5"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
-      <div className="flex items-start justify-between gap-2">
-        {/* A card is an APPLICATION: company anchors it, the role discriminates
-            it (four Amazon cards must read as four different rows), and the
-            block itself opens the mail behind the card. */}
-        {onOpenDetail ? (
-          <button
-            type="button"
-            onClick={() => onOpenDetail(app)}
-            aria-label={`Open ${app.company}${role ? ` — ${role}` : ""}`}
-            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
-          >
-            <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
-              <span className="truncate underline-offset-2 group-hover/card:underline">
-                {app.company}
-              </span>
-              {qualifier && (
-                <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
-                  {qualifier}
-                </span>
-              )}
-            </span>
-            {/* The role WRAPS (two lines) instead of ellipsizing: a job title's
-                discriminating part is its tail — "…, AWS Data Services - 2026"
-                — which is exactly what a one-line truncate eats. Four real
-                Amazon roles measured 244–353px against a 198px box and
-                rendered as identical text. `title` is the floor, not the fix:
-                the board must read without hovering. */}
-            {role ? (
-              <span title={role} className="line-clamp-2 break-words text-[13px] leading-snug text-foreground">
-                {role}
-              </span>
-            ) : null}
-          </button>
-        ) : (
-          <div className="min-w-0">
-            <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-strong">
-              <span className="truncate">{app.company}</span>
-              {qualifier && (
-                <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
-                  {qualifier}
-                </span>
-              )}
-            </p>
-            {role ? (
-              <p title={role} className="line-clamp-2 break-words text-[13px] leading-snug text-foreground">
-                {role}
-              </p>
-            ) : null}
-          </div>
-        )}
-        <div className="flex shrink-0 items-center gap-1">
-          {busy !== null || optimistic ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-dim" aria-hidden />
-          ) : null}
-          <RowActionsMenu
-            label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
-            items={menuItems}
-            disabled={busy !== null}
-            triggerRef={triggerRef}
-          />
+      {/* A row is an APPLICATION: company anchors it, the role discriminates
+          it (four Amazon rows must read as four different lines), and the
+          block itself opens the mail behind the row. */}
+      {onOpenDetail ? (
+        <button
+          type="button"
+          onClick={() => onOpenDetail(app)}
+          aria-label={`Open ${app.company}${role ? ` — ${role}` : ""}`}
+          className="flex min-w-0 flex-col gap-y-0.5 text-left sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5"
+        >
+          {identity}
+        </button>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-y-0.5 sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5">
+          {identity}
         </div>
-      </div>
+      )}
 
-      {sameCompanyCount > 0 && onFilterCompany ? (
-        <SameCompanyChip company={app.company} count={sameCompanyCount} onFilter={onFilterCompany} />
-      ) : null}
-
-      {/* Renders nothing unless the row carries a due_at — the tag never
-          prompts, and never guesses (see DeadlineTag). */}
-      <DeadlineTag dueAt={app.due_at} today={today} />
-
-      <div className="mt-2 flex items-center justify-between gap-2">
+      {/* The meta cluster — every fact in one fixed order, pinned right from
+          `sm` up so the eye can read a column of rows like a table. The order
+          puts the variable-width pieces (chip, deadline, stamp) BEFORE the
+          fixed-width tail (select · Gmail slot · menu): with the tail constant,
+          every select shares one x position, which the old order — stamp and a
+          conditional link after the select — measurably broke (78px spread).
+          `max-w-full` (never `shrink-0`): an unshrinkable cluster refuses the
+          wrap and pushes the row past a phone's viewport instead of taking its
+          own line. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:ml-auto sm:max-w-full sm:justify-end">
+        {sameCompanyCount > 0 && onFilterCompany ? (
+          <SameCompanyChip
+            company={app.company}
+            count={sameCompanyCount}
+            label={sameCompanyLabel ?? undefined}
+            onFilter={onFilterCompany}
+          />
+        ) : null}
+        {/* Renders nothing unless the row carries a due_at — the tag never
+            prompts, and never guesses (see DeadlineTag). */}
+        <DeadlineTag dueAt={app.due_at} today={today} />
+        {busy !== null || optimistic ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none" aria-hidden />
+        ) : null}
+        <span className="hidden sm:inline">
+          <FiledStamp filed={filed} status={shownStatus} today={today} />
+        </span>
         <StageSelect
           id={app.id}
           company={app.company}
@@ -448,25 +529,36 @@ export function ApplicationCard({
           busy={busy === "status"}
           onChange={onStatusChange}
         />
-        <FiledStamp filed={filed} status={shownStatus} today={today} />
+        {app.url ? (
+          <a
+            href={app.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open the mail behind ${app.company} in Gmail`}
+            title="open in gmail"
+            className="grid h-6 w-6 place-items-center rounded text-dim transition-colors hover:bg-surface hover:text-strong"
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          </a>
+        ) : (
+          // A rowed-up board needs this slot even when there is no mail to
+          // open — a hole here shifts the select column 32px on manual rows.
+          // Phone rows drop it: the controls line is left-anchored, not a
+          // column, and the space matters more.
+          <span className="hidden h-6 w-6 sm:block" aria-hidden="true" />
+        )}
+        <RowActionsMenu
+          label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
+          items={menuItems}
+          disabled={busy !== null}
+          triggerRef={triggerRef}
+        />
       </div>
 
       {busy === "status" || optimistic ? (
-        <p role="status" className="mt-1 text-[11px] text-dim">
+        <p role="status" className="basis-full text-[11px] text-dim">
           {busy === "status" ? `moving to ${shownStatus}…` : "board updating…"}
         </p>
-      ) : null}
-
-      {app.url ? (
-        <a
-          href={app.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-dim underline-offset-2 hover:text-strong hover:underline"
-        >
-          <ExternalLink className="h-3 w-3" aria-hidden />
-          open in gmail
-        </a>
       ) : null}
 
       {/* The one action nothing can undo, so the one that asks first. Inline
@@ -482,7 +574,7 @@ export function ApplicationCard({
             setConfirmingDelete(false);
             triggerRef.current?.focus();
           }}
-          className="mt-2 rounded border border-reject/50 bg-reject/10 p-2"
+          className="basis-full rounded border border-reject/50 bg-reject/10 p-2"
         >
           {/* The stakes are wired to BOTH buttons rather than announced once as
               an alert: focus lands in here, so whichever button the user is on
@@ -518,7 +610,7 @@ export function ApplicationCard({
       {error ? (
         <p
           role="alert"
-          className="mt-2 flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
+          className="flex basis-full items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
         >
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
           <span>{error}</span>

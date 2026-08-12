@@ -26,6 +26,90 @@ function syncSurface(page: Page) {
   return page.locator("[data-sync-surface]");
 }
 
+/**
+ * Pretend this browser was here before.
+ *
+ * The demo's fixture store is rebuilt on every mount, so a real second visit
+ * is byte-identical to the first and the change ledger is honestly quiet — the
+ * product must not fabricate a prior visit to look busy. The SPEC may, because
+ * it owns the fixture: this writes the marker record the ledger reads
+ * (`lib/dashboard/lastLook.ts`) describing the same board minus two rows, with
+ * Northstar's interviewing row still at applied and Kestrel's mail-read
+ * deadline not yet known. `v` is the record version — if the shape changes and
+ * this is not updated, `parseLastLook` rejects it and the ledger renders the
+ * first-visit line, which every assertion below then fails on.
+ *
+ * It seeds ONCE, and the guard is load-bearing. `addInitScript` runs again on
+ * every navigation, `page.reload()` included, so an unconditional write would
+ * put the seeded visit back after the reload that checks "Mark as seen" stuck
+ * — the ledger would read loud again and the test would fail whether the
+ * product was right or wrong. A real prior visit is written once and then
+ * lives in the browser; so is this one.
+ */
+async function seedPriorVisit(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    if (window.localStorage.getItem("applied:lastlook:demo") !== null) return;
+    // ONE anchor day, with every date below written as an offset from it —
+    // the same shape `demoData.ts` seeds the fixtures with. Which day the
+    // anchor IS does not matter (this one is UTC; the board re-dates itself
+    // onto the reader's local day when the two differ): a stored deadline is
+    // measured against its own row's filed day, so a record written in one day
+    // basis reads correctly against a board settled in another. What matters
+    // is that a row's `d` and `f` come from the SAME anchor, which is why they
+    // share one.
+    const anchor = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    const day = (offset: number) =>
+      new Date(anchor + offset * 86_400_000).toISOString().slice(0, 10);
+    const dueDay = (offset: number) => `${day(offset)}T23:59:59Z`;
+    // Fixture ids 1–17 under the board's column words, minus 13 (Copperline)
+    // and 14 (Waypoint Robotics) — the two "filed" rows. Id 1 (Northstar, now
+    // interviewing) sits at applied; id 16 (Kestrel) carries no deadline yet.
+    const stages: Record<string, string> = {
+      1: "applied",
+      2: "applied",
+      3: "applied",
+      4: "applied",
+      5: "closed",
+      6: "applied",
+      7: "applied",
+      8: "applied",
+      9: "applied",
+      10: "closed",
+      11: "closed",
+      12: "applied",
+      15: "interviewing",
+      16: "interviewing",
+      17: "interviewing",
+    };
+    const rows: Record<string, { s: string; d?: string; f?: string }> = {};
+    for (const [id, s] of Object.entries(stages)) rows[id] = { s };
+    // A deadline never travels without the filed day it is measured against —
+    // the record `snapshotOf` writes carries both, and so must this one, or the
+    // ledger has nothing to tell a re-dated board from a board of new dates.
+    // The filed offsets are the fixtures' own (`demoData.ts`: a15 filed 1 day
+    // ago, a17 filed 7).
+    rows["15"].d = dueDay(9);
+    rows["15"].f = day(-1);
+    rows["17"].d = dueDay(-2);
+    rows["17"].f = day(-7);
+    window.localStorage.setItem(
+      "applied:lastlook:demo",
+      JSON.stringify({
+        v: 2,
+        scope: "demo",
+        at: Date.now() - 15 * 60 * 60 * 1000,
+        floor: null,
+        rows,
+      }),
+    );
+  });
+}
+
+/** The change ledger, scoped so a company name matches it and not the board. */
+function ledger(page: Page) {
+  return page.getByTestId("since-last-look");
+}
+
 test.describe("live demo (/demo)", () => {
   test("renders the dashboard twin and the decision trace cleanly", async ({ page }) => {
     const watch = startConsoleWatch(page);
@@ -115,22 +199,37 @@ test.describe("live demo (/demo)", () => {
     );
   });
 
-  test("the populated column claims the space empty ones don't use", async ({ page }) => {
-    // A real search is one heavy column and three near-empty ones. An even
-    // split starved the only column with cards until four real Amazon roles
-    // ellipsized into identical text; now space follows content at desktop.
+  test("rows are even: a missing role never changes a row's height", async ({ page }) => {
+    // Half of the raggedness complaint, measured: 8 of the real board's 29
+    // live rows have no role, and the old cards rendered them visibly shorter.
+    // The worklist row keeps a fixed skeleton — company and the role slot
+    // share one line, and an absent role prints the honest placeholder — so a
+    // role-less row (Beacon Health, the fixture for this case) must measure
+    // exactly as tall as a role-carrying one.
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.goto("/demo");
-    const applied = await page.getByRole("region", { name: /applied — 10/i }).boundingBox();
-    const offered = await page.getByRole("region", { name: /offered — 0/i }).boundingBox();
-    expect(applied, "applied column renders").not.toBeNull();
-    expect(offered, "offered column renders").not.toBeNull();
-    expect(applied!.width).toBeGreaterThan(offered!.width * 1.5);
 
-    // And the full role is always reachable on the card itself: it wraps to
-    // two lines rather than ellipsizing its discriminating tail, with the
-    // complete text in `title` as the floor.
-    await expect(page.getByTitle("ML Engineer, Platform")).toBeVisible();
+    const beacon = page
+      .locator("li")
+      .filter({ has: page.getByText("Beacon Health", { exact: true }) })
+      .first();
+    await expect(beacon.getByText("role not captured")).toBeVisible();
+    const quarry = page
+      .locator("li")
+      .filter({ has: page.getByText("Quarry Data", { exact: true }) })
+      .first();
+
+    const beaconBox = await beacon.boundingBox();
+    const quarryBox = await quarry.boundingBox();
+    expect(beaconBox, "role-less row renders").not.toBeNull();
+    expect(quarryBox, "role-carrying row renders").not.toBeNull();
+    expect(Math.abs(beaconBox!.height - quarryBox!.height)).toBeLessThanOrEqual(2);
+
+    // And the full role is always reachable on the row itself: it may wrap
+    // rather than ellipsize its discriminating tail, with the complete text
+    // in `title` as the floor. (A singleton's role — Northstar's rows sit
+    // inside a collapsed employer set on this view.)
+    await expect(page.getByTitle("Software Engineer, Platform")).toBeVisible();
   });
 
   test("a card moves between stages by drag, and by its select", async ({ page }) => {
@@ -154,7 +253,7 @@ test.describe("live demo (/demo)", () => {
     // Drop near the TOP of the column, not its centre. Hovering the centre of a
     // 2249px-tall board scrolls the page ~147px between mouse-down and the first
     // move, so the HTML5 `dragstart` fires on whichever card has slid under the
-    // cursor — Summit Platform moved while Harbor stayed put, and the count
+    // cursor — the neighbouring card moved while Harbor stayed put, and the count
     // assertion above was satisfied by the wrong card. A real drag has no
     // programmatic scroll between press and move; this is the harness, not the
     // product. The assertion below must keep naming Harbor: asserting whichever
@@ -375,8 +474,10 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
 
-    // The card-level ageing tag agrees with the strip's threshold.
-    await expect(page.getByText(/quiet \d+d/).first()).toBeVisible();
+    // The card-level ageing tag agrees with the strip's threshold. `.last()`,
+    // not `.first()`: the filed stamp renders a phone-width twin earlier in
+    // the row's DOM that is display:none at this viewport.
+    await expect(page.getByText(/quiet \d+d/).last()).toBeVisible();
   });
 
   test("the pulse strip moves when Sync files fresh mail", async ({ page }) => {
@@ -387,6 +488,197 @@ test.describe("live demo (/demo)", () => {
     // new board. (No assertion on the ageing buckets here: the fixture dates
     // are static while real time passes, so any exact bucket count would rot.)
     await expect(page.getByText("19 of 19 auto-filed from mail")).toBeVisible();
+  });
+
+  test("the change ledger claims nothing on a first visit", async ({ page }) => {
+    // The first visit has no "last look", so there is nothing to compare
+    // against and the 17 rows already on the board are not news. The line says
+    // exactly that instead of counting them.
+    await page.goto("/demo");
+    const band = ledger(page);
+    await expect(band).toContainText("No earlier visit recorded in this browser");
+    await expect(band).not.toContainText("filed");
+    await expect(band.getByRole("button", { name: "Mark as seen" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "since you last looked" })).toHaveCount(0);
+  });
+
+  test("a FIRST-VISIT ledger holds its line open, so appearing never moves the board", async ({
+    browser,
+  }) => {
+    // Scope, because the title used to imply the whole feature: this measures
+    // the first-visit line only. The loud state — a returning visitor with
+    // changes, which is the case the feature exists for — is measured in the
+    // test below, and used to shift the board 118.9px while this one passed.
+    //
+    // The ledger is read out of localStorage, so it has nothing to say until
+    // hydration. Rendering NOTHING until then made it appear ~70ms after first
+    // paint and push every card down 41.9px — and a pointer that pressed a
+    // card inside that window released above it, so the browser retargeted the
+    // click to the column's <ul> and the card never opened. That was measured
+    // on /demo, and it is what took five tests here red or flaky in CI.
+    //
+    // The property, stated as geometry rather than as a class name: where the
+    // board sits with no script at all — the server's own layout — is where it
+    // sits once the ledger has rendered. Any future band that appears above
+    // the board without reserving its space fails here.
+    const noScript = await browser.newContext({
+      javaScriptEnabled: false,
+      viewport: { width: 1440, height: 900 },
+    });
+    const served = await noScript.newPage();
+    await served.goto("/demo");
+    const card = (p: Page) =>
+      p.getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" });
+    const serverBox = await card(served).boundingBox();
+    // Asserted on the page that can never hydrate, so it is a fact about the
+    // served HTML rather than a race against the effect that replaces it.
+    const reservedWhileSilent = await served.getByTestId("since-last-look-reserve").count();
+    await noScript.close();
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto("/demo");
+    await expect(ledger(page)).toContainText("No earlier visit recorded in this browser");
+    const hydratedBox = await card(page).boundingBox();
+    const reservedAfter = await page.getByTestId("since-last-look-reserve").count();
+    await page.close();
+
+    // The geometry is the claim; the two counts below only name the mechanism.
+    expect(serverBox, "the board's Open control must render without script").not.toBeNull();
+    expect(hydratedBox).not.toBeNull();
+    expect(
+      Math.abs((hydratedBox?.y ?? 0) - (serverBox?.y ?? 0)),
+      `the board moved ${(hydratedBox?.y ?? 0) - (serverBox?.y ?? 0)}px when the ledger rendered`,
+    ).toBeLessThanOrEqual(1);
+    expect(reservedWhileSilent, "the served HTML must hold the ledger's line open").toBe(1);
+    expect(reservedAfter, "the placeholder must give way to the real line").toBe(0);
+  });
+
+  test("a LOUD ledger is the same one line, so a returning visitor's board never moves", async ({
+    browser,
+  }) => {
+    // The state the feature exists for, and the one the reserved line did not
+    // cover: a visitor with changes to read. The old block grew with the news
+    // — 136.8px for these four rows — and moved the board 118.9px after first
+    // paint, which is the same dead-first-click defect the test above pins,
+    // in the case that actually happens to a returning user.
+    //
+    // Same instrument, same claim: the server's own layout is where the board
+    // stays. With `javaScriptEnabled: false` the marker can never be read, so
+    // the no-script page is the reserved line by construction — exactly what
+    // the hydrated loud band has to match.
+    const noScript = await browser.newContext({
+      javaScriptEnabled: false,
+      viewport: { width: 1440, height: 900 },
+    });
+    const served = await noScript.newPage();
+    await served.goto("/demo");
+    const card = (p: Page) =>
+      p.getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" });
+    const serverBox = await card(served).boundingBox();
+    const reserveBox = await served.getByTestId("since-last-look-reserve").boundingBox();
+    await noScript.close();
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await seedPriorVisit(page);
+    await page.goto("/demo");
+    const band = ledger(page);
+    // Wait for the LOUD state specifically — a quiet band would pass the
+    // geometry below while proving nothing about this case.
+    await expect(band.getByText("2 filed")).toBeVisible();
+    const loudBox = await card(page).boundingBox();
+    const bandBox = await band.boundingBox();
+
+    expect(serverBox, "the board's Open control must render without script").not.toBeNull();
+    expect(loudBox).not.toBeNull();
+    expect(
+      Math.abs((loudBox?.y ?? 0) - (serverBox?.y ?? 0)),
+      `the board moved ${(loudBox?.y ?? 0) - (serverBox?.y ?? 0)}px when the loud ledger rendered`,
+    ).toBeLessThanOrEqual(1);
+    // The mechanism, in the same units: the loud band is the line the server
+    // held open, not a block that happens to sit somewhere harmless.
+    expect(
+      Math.abs((bandBox?.height ?? 0) - (reserveBox?.height ?? 0)),
+      `the loud band is ${bandBox?.height}px against a reserved ${reserveBox?.height}px`,
+    ).toBeLessThanOrEqual(1);
+
+    // Positive control, measured the same way: naming the rows DOES move the
+    // board, so the assertions above can fail. A reader presses for that —
+    // it is the one movement on this band that is asked for.
+    await band.getByRole("button", { name: /Name the rows/ }).click();
+    await expect(band.getByText("Copperline", { exact: true })).toBeVisible();
+    const openedBox = await card(page).boundingBox();
+    expect(
+      (openedBox?.y ?? 0) - (loudBox?.y ?? 0),
+      "naming the rows must take space — without a real delta here the check above proves nothing",
+    ).toBeGreaterThan(40);
+    await page.close();
+  });
+
+  test("a prior visit turns the ledger loud: what arrived, what moved, what gained a date", async ({
+    page,
+  }) => {
+    await seedPriorVisit(page);
+    await page.goto("/demo");
+    const band = ledger(page);
+    await expect(band.getByRole("heading", { name: "since you last looked" })).toBeVisible();
+
+    // The counts are the arrival line — one line, whatever the news is.
+    await expect(band.getByText("2 filed")).toBeVisible();
+    await expect(band.getByText("1 moved")).toBeVisible();
+    await expect(band.getByText("1 new deadline")).toBeVisible();
+
+    // Nobody is named until the reader asks: the band above the board holds
+    // one line, and the space the names need is spent on a press.
+    await expect(band).not.toContainText("Copperline");
+    await expect(band).not.toContainText("Northstar Systems");
+    await band.getByRole("button", { name: /Name the rows/ }).click();
+
+    // …and then every claim names the row it is about, with the column to
+    // look in.
+    await expect(band.getByText("Copperline", { exact: true })).toBeVisible();
+    await expect(band.getByText("Waypoint Robotics", { exact: true })).toBeVisible();
+    const moved = band.locator("p").filter({ hasText: "Northstar Systems" });
+    await expect(moved).toContainText("applied");
+    await expect(moved).toContainText("interviewing");
+    await expect(band.locator("p").filter({ hasText: "Kestrel Dynamics" })).toContainText(
+      "due in 2d",
+    );
+    // A row that did not change is never named.
+    await expect(band).not.toContainText("Harbor Analytics");
+
+    // The two voices hold here too: names are language, the deadline is data.
+    await expect(band.getByText("Copperline", { exact: true })).toHaveCSS(
+      "font-family",
+      /atkinson/i,
+    );
+    await expect(band.getByText("due in 2d")).toHaveCSS("font-family", /Geist Mono/);
+
+    // Marking it seen is the only thing that advances the marker, and it holds
+    // across a reload — the fixture board is identical on every mount, so any
+    // reappearance would be the ledger re-deriving from a stale snapshot.
+    await band.getByRole("button", { name: "Mark as seen" }).click();
+    await expect(band).toContainText("Nothing new since");
+    await expect(band.getByText("2 filed")).toHaveCount(0);
+    await page.reload();
+    await expect(ledger(page)).toContainText("Nothing new since");
+  });
+
+  test("a stage change the visitor makes is never reported back as news", async ({ page }) => {
+    // First visit lays the baseline; the second has an unchanged board.
+    await page.goto("/demo");
+    await expect(ledger(page)).toContainText("No earlier visit recorded");
+    await page.reload();
+    const band = ledger(page);
+    await expect(band).toContainText("Nothing new since");
+
+    await page.getByLabel("Change stage for Quarry Data").selectOption("interviewing");
+    await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
+
+    // The card moved. The ledger stays silent — it reports what happened while
+    // you were away, and it must not report a move in the WRONG direction
+    // while the board catches up with the write either.
+    await expect(band).toContainText("Nothing new since");
+    await expect(band).not.toContainText("moved");
   });
 
   test("assessment deadlines render in all three states — and only where a date exists", async ({
@@ -529,27 +821,94 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
   });
 
-  test("a company opens as a set: band on, chips suppressed, clear restores", async ({ page }) => {
+  test("one employer, one card: the set opens inline and hides no application's stage", async ({
+    page,
+  }) => {
     await page.goto("/demo");
-    // Three Northstar cards each carry the "+2 at" chip while unfiltered.
+
+    // Northstar's three APPLIED applications fold into one employer card;
+    // the interviewing one keeps its own row under its own stage heading —
+    // grouping is per stage, so a row's true stage is never behind a summary.
+    const header = page.getByRole("button", { name: "Northstar Systems — 3 applications" });
+    await expect(header).toBeVisible();
+    await expect(header).toHaveAttribute("aria-expanded", "false");
+    // Collapsed, only the interviewing row's Open control is on the board…
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(1);
+    // …but the stage heading still counts APPLICATIONS, not cards.
+    await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();
+
+    // Opening the set reveals every member as a full row: its own Open
+    // control, its own stage select — one select per application, no merge.
+    await header.click();
+    await expect(header).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(4);
+    await expect(page.getByLabel("Change stage for Northstar Systems")).toHaveCount(4);
+    await header.click();
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(1);
+  });
+
+  test("a company opens as a set view: band on, chips suppressed, clear restores", async ({
+    page,
+  }) => {
+    await page.goto("/demo");
+    // The cross-stage chip renders twice while unfiltered: on the applied
+    // set's header ("+1 in interviewing") and on the interviewing singleton
+    // ("+3 in applied"). Its accessible name is the stable contract.
     const chips = page.getByRole("button", { name: "Show all applications at Northstar Systems" });
-    await expect(chips).toHaveCount(3);
+    await expect(chips).toHaveCount(2);
 
     await chips.first().click();
-    // The band names the set…
+    // The set view disperses the employer card: all four applications render
+    // flat, one row each, under their own stage headings.
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(4);
+
+    // The band states the filter and stops there. It used to add "3
+    // applications", a per-stage dot list and the filing span — all three of
+    // which the four cards on screen already say, each carrying its own stage
+    // and its own date. A count here is the metrics-poster defect coming back
+    // through a side door.
     const band = page.getByTestId("company-band");
     await expect(band).toBeVisible();
+    await expect(band.getByText("filtered to")).toBeVisible();
     await expect(band.getByText("Northstar Systems")).toBeVisible();
-    await expect(band.getByText(/3 applications/)).toBeVisible();
+    await expect(band.getByText(/\d+\s+applications?/)).toHaveCount(0);
     // …and the chip must NOT render while the active filter already is this
-    // company ("2 more at Northstar" inside Northstar's own set was the bug).
+    // company (a "+N" chip inside Northstar's own set view was the bug).
     await expect(chips).toHaveCount(0);
-    await expect(page.getByText(/at Northstar Systems/)).toHaveCount(0);
 
-    // Clear via the band restores the board and the chips.
+    // Clear via the band restores the grouped board and the chips.
     await page.getByRole("button", { name: "Stop filtering by Northstar Systems" }).click();
     await expect(page.getByText("Harbor Analytics", { exact: true })).toBeVisible();
-    await expect(chips).toHaveCount(3);
+    await expect(chips).toHaveCount(2);
+    await expect(
+      page.getByRole("button", { name: "Northstar Systems — 3 applications" }),
+    ).toBeVisible();
+  });
+
+  test("a four-deep employer on the early board opens four applications from one card", async ({
+    page,
+  }) => {
+    // `?pipeline=early` holds every row at applied, so Northstar's four
+    // applications share ONE stage — the owner's own shape (four Amazon
+    // requisitions, all applied), and the case the grouping exists for.
+    await page.goto("/demo?pipeline=early");
+
+    const header = page.getByRole("button", { name: "Northstar Systems — 4 applications" });
+    await expect(header).toBeVisible();
+    // Nothing of Northstar's lives outside this stage → no cross-stage chip.
+    await expect(
+      page.getByRole("button", { name: "Show all applications at Northstar Systems" }),
+    ).toHaveCount(0);
+    // The stage heading and the spine keep the real number — 17 applications,
+    // however few cards the grouped list draws.
+    await expect(page.getByRole("region", { name: /applied — 17/i })).toBeVisible();
+
+    await header.click();
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems/ })).toHaveCount(4);
+    // Cedar Labs' pair folds the same way.
+    await expect(
+      page.getByRole("button", { name: "Cedar Labs — 2 applications" }),
+    ).toBeVisible();
   });
 
   test("with reduced motion, every surface is fully present — nothing gated", async ({ page }) => {
@@ -568,6 +927,9 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
     await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    // The change ledger carries no animation at all, so there is nothing for
+    // this mode to collapse — its sentence is simply present.
+    await expect(ledger(page)).toContainText("No earlier visit recorded in this browser");
     // The deadline surfaces are content, not motion: all three tags and the
     // pulse counts render statically too.
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
@@ -601,7 +963,13 @@ test.describe("live demo (/demo)", () => {
       .click();
     const band = page.getByTestId("company-band");
     await expect(band.getByText("Northstar Systems")).toBeVisible();
-    await expect(band.getByText(/3 applications/)).toBeVisible();
+    // The band's whole content, statically: the state it names and the control
+    // that undoes it. `toBeVisible()` on the bordered bar alone would pass on
+    // an empty one.
+    await expect(band.getByText("filtered to")).toBeVisible();
+    await expect(
+      band.getByRole("button", { name: "Stop filtering by Northstar Systems" }),
+    ).toBeVisible();
     // The set view keeps only Northstar cards, so open one of those.
     await page
       .getByRole("button", { name: "Open Northstar Systems — ML Engineer, Platform" })

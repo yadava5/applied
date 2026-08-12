@@ -3,14 +3,23 @@ import Link from "next/link";
 import { createServerApiClient } from "@/lib/api/server";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { DashboardEmptyState, ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
 import { RetryLoadButton } from "@/components/dashboard/RetryLoadButton";
 import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
+import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
+import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
-import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
+import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
+import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
+import { toChangeRow } from "@/lib/dashboard/lastLookStore";
+import {
+  stageCountsOf,
+  summarizeCounts,
+  type Application,
+  type PipelineSummary,
+} from "@/lib/dashboard/summary";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
 
@@ -18,34 +27,38 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  * The signed-in product: a work surface, not a metrics poster.
  *
  * The page answers exactly two questions, in this order: "what needs me?"
- * (the review queue) and "where does everything stand?" (the board). One
- * honest line of state — the subtitle — carries the totals; the board columns
- * carry the per-stage counts. Nothing on the page restates either. The stat
- * tiles, the classifier-context strip, the distribution bars and the
- * recent-activity feed are gone: each was a second (or sixth) rendering of a
- * number already on screen, and the classifier strip was CI provenance shown
- * to somebody trying to find a job.
+ * (the review queue) and "where does everything stand?" (the worklist). One
+ * honest line of state — the subtitle — carries the totals; the board's stage
+ * spine carries the per-stage counts. Nothing on the page restates either.
  *
- * The pulse strip (`PipelinePulse`) is not those coming back: every cell on it
- * is DERIVED signal the subtitle and the columns cannot express — filed-per-
- * week momentum, the age distribution of open rows, and how much of the board
- * the classifier built / is holding — each computed once, in `lib/dashboard/
- * age.ts`, from the same rows the board renders.
+ * The geometry is viewport-locked at desktop: the shell is one screen tall,
+ * this page fills its pane exactly (`lg:min-h-0 lg:flex-1`), and the ONLY
+ * thing that scrolls is the worklist inside `PipelineBoard`. Header, notice
+ * lines and the spine hold still — the dashboard reads as an instrument, not
+ * a document. Below `lg` the lock releases and the page flows normally.
+ *
+ * The notice zone under the SyncBar is deliberately one line box per notice
+ * (`truncate`, no wrapping): the "what changed since you last looked" summary
+ * (PR #113, `SinceLastLook`) is designed to land in this same zone as another
+ * single line, so nothing that appears after hydration can ever shift the
+ * board.
+ *
+ * The pulse's four derived signals — filed-per-week momentum, the age
+ * distribution of open rows, deadlines, and how much of the board the
+ * classifier built / is holding — are NOT this page's content any more: they
+ * live in the shell's sidebar as the rail's instrument column
+ * (`components/shell/Sidebar.tsx`), on every tab, fed by the same bounded
+ * page of rows via `lib/shell/rail`. This page spends its whole pane on the
+ * work.
  *
  * Data path unchanged: the counts come from the O(1) `GET
  * /applications/summary`, the board from one bounded page of
- * `GET /applications`, fetched in parallel. Failure modes stay first-class —
- * an unreachable backend degrades to a labelled error state with a retry and
- * the routes forward, never sample rows dressed as the user's own pipeline.
+ * `GET /applications`, fetched in parallel (and shared with the shell's rail
+ * fetch by request memoization — identical URLs). Failure modes stay
+ * first-class — an unreachable backend degrades to a labelled error state
+ * with a retry and the routes forward, never sample rows dressed as the
+ * user's own pipeline.
  */
-
-/**
- * Upper bound on rows pulled for the board in one page. Large enough that a
- * typical account sees its whole board, capped so a pathological account never
- * ships thousands of rows to the client — the subtitle stays exact regardless
- * via the counts-only summary endpoint.
- */
-const BOARD_PAGE_SIZE = 200;
 
 /**
  * Why the board isn't rendering. The three failures are kept apart because the
@@ -323,46 +336,76 @@ export default async function DashboardPage() {
     ) : null;
 
   return (
-    <section className="space-y-6">
+    <section className={LOCKED_PAGE_CLASS}>
       <SyncBar subtitle={subtitle} gmail={gmail}>
         <AddApplicationForm compact />
       </SyncBar>
 
-      {/* The three signals the rows carry that the board can't show as
-          columns: momentum over time, how the open pipeline is ageing, and
-          what the classifier built/held (see PipelinePulse). */}
-      <PipelinePulse
-        applications={state.applications}
-        total={state.total}
-        needsReview={state.needsReview}
-      />
+      {/* The notice zone: single-line notices only, so nothing here can shift
+          the board. Its two tenants are `SinceLastLook` and the in-app weekly
+          digest, both exactly one line tall.
+
+          SinceLastLook is client-only (the marker is this browser's), per
+          user, and silent until it has a previous visit to compare against.
+          The rows are projected here so the flight payload carries six fields
+          per row rather than the whole record twice.
+
+          No id, no ledger — never a shared "anon" scope. One marker key holds
+          one board, so a record written under a fallback scope would OVERWRITE
+          the signed-in owner's, silently destroying the unread digest this
+          feature's whose-marker-advances rules exist to protect. The layout
+          redirects a session-less request before this page's HTML ships, so
+          the branch should be unreachable; borrowing that guarantee from
+          another file is what makes it worth stating here. Same discipline as
+          the SyncBar's gmail cluster: an unknown state renders nothing rather
+          than a guessed one. */}
+      {user?.id ? (
+        <SinceLastLook
+          rows={state.applications.map(toChangeRow)}
+          total={state.total}
+          scope={user.id}
+          storageKey={LAST_LOOK_KEY}
+        />
+      ) : null}
 
       {/* The in-app weekly digest — pref-gated, and only when there is a week
           to report. The review half of the old NotificationCues banner is gone:
           the queue itself now sits where the banner pointed. */}
       {notifPrefs.weekly && summary.total > 0 && summary.thisWeek > 0 ? (
-        <div
+        <p
           role="status"
-          className="rounded-xl border border-line-soft bg-surface px-4 py-3 text-[13px] text-muted"
+          className="truncate border-l-2 border-line-strong pl-3 text-[13px] leading-snug text-muted"
         >
           <span className="text-strong">This week</span> · {summary.thisWeek} new application
           {summary.thisWeek === 1 ? "" : "s"} · {summary.inMotion} in motion · {summary.offers}{" "}
           offer{summary.offers === 1 ? "" : "s"}
-        </div>
+        </p>
       ) : null}
 
-      {/* "Needs review alerts" now decides whether held mail interrupts the
-          board (above) or waits under it (below) — the quiet-board promise the
-          Settings toggle describes, kept real. */}
-      {notifPrefs.reviewAlerts ? queue : null}
+      {/* The worklist owns the rest of the pane. `total` is the account's true
+          count, not the page's: past BOARD_PAGE_SIZE the board says which slice
+          it is showing, so the subtitle's "250 filed" and a list summing to 200
+          stop contradicting each other.
 
-      {/* `total` is the account's true count, not the page's: past
-          BOARD_PAGE_SIZE the board says which slice it is showing, so the
-          subtitle's "250 filed" and four columns summing to 200 stop
-          contradicting each other. */}
-      <PipelineBoard applications={state.applications} total={state.total} />
-
-      {!notifPrefs.reviewAlerts ? queue : null}
+          "Needs review alerts" decides whether held mail interrupts the list
+          (above the rows) or waits under it — the quiet-board promise the
+          Settings toggle describes, kept real. Both placements live INSIDE the
+          list's scroll context, so an eight-item queue can never starve the
+          worklist of its viewport. */}
+      {/* `total` and `stageTotals` both come from the summary endpoint, and the
+          board's prop type makes them inseparable: the spine states the
+          ACCOUNT's per-stage counts (a `GROUP BY status` in the database), not
+          the shape of the page that happened to load. Past BOARD_PAGE_SIZE the
+          two differ, and a spine summing to the page while this subtitle says
+          the account is exactly the contradiction the scope note exists for. */}
+      <PipelineBoard
+        variant="locked"
+        applications={state.applications}
+        total={state.total}
+        stageTotals={stageCountsOf(state.summary)}
+        beforeList={notifPrefs.reviewAlerts ? queue : null}
+        afterList={!notifPrefs.reviewAlerts ? queue : null}
+      />
     </section>
   );
 }

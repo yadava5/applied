@@ -160,8 +160,14 @@ export function RowActionsMenu({
         className={
           // `pointer-coarse:opacity-100`: hover-revealed is no affordance at
           // all on touch, so a coarse pointer always sees the trigger.
+          // `group-hover/row` matches the worklist row's group name — the old
+          // `/card` name outlived the card→row rename, so a mouse hovering a
+          // row never saw the trigger at all (focus and coarse pointers did).
+          // `grid h-6 w-6`: the same fixed 24px box as the cluster's other
+          // controls — an inline button + baseline slop measured 25px, and
+          // that stray pixel was the difference between row heights.
           triggerClassName ??
-          "rounded p-0.5 text-dim opacity-0 transition-opacity hover:text-strong focus-visible:opacity-100 disabled:opacity-30 group-hover/card:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100"
+          "grid h-6 w-6 place-items-center rounded text-dim opacity-0 transition-opacity hover:text-strong focus-visible:opacity-100 disabled:opacity-30 group-hover/row:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100"
         }
       >
         {triggerContent ?? <MoreHorizontal className="h-4 w-4" aria-hidden />}

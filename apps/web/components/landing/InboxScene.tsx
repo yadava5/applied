@@ -64,7 +64,7 @@ export function RawInbox() {
                 key={row.subject}
                 tabIndex={0}
                 aria-label={`${row.subject} — hover to classify`}
-                className="group relative flex cursor-default items-center gap-3 px-4 py-3 outline-none transition-colors hover:bg-surface-2 focus-visible:bg-surface-2"
+                className="focus-inset group relative flex cursor-default items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-2 focus-visible:bg-surface-2"
               >
                 <span className="relative h-3 w-3 shrink-0" aria-hidden>
                   <span className="absolute inset-0 rounded-[3px] border border-line-strong transition-opacity duration-300 group-hover:opacity-0 group-focus-visible:opacity-0" />

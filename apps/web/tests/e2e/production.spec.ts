@@ -104,6 +104,10 @@ function watch(page: Page): PageFault[] {
 const ROUTES: { path: string; label: string; expect: RegExp }[] = [
   { path: "/", label: "landing", expect: /Applied/i },
   { path: "/demo", label: "demo dashboard", expect: /decision trace/i },
+  // The measured production distribution (every row one stage) — the case the
+  // worklist redesign exists for, kept hydration-clean like the seed twin.
+  { path: "/demo?pipeline=early", label: "demo dashboard (early search)", expect: /decision trace/i },
+  { path: "/demo/settings", label: "settings twin", expect: /nothing is saved/i },
   { path: "/demo/inbox", label: "sample inbox", expect: /inbox/i },
   { path: "/import", label: "import", expect: /import/i },
   { path: "/login", label: "login", expect: /sign in|log in|email/i },

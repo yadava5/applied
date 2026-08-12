@@ -48,3 +48,24 @@ export function demoApplicationsAsApi(today: string = todayISO()): Application[]
 export function demoUnsyncedAsApi(today: string = todayISO()): Application[] {
   return demoUnsynced(today).map((app, index) => toApi(app, DEMO_APPLICATION_COUNT + index + 1));
 }
+
+/**
+ * The early-search projection (`/demo?pipeline=early`): the SAME fixtures,
+ * every row resting at `applied` — the measured shape of the one real
+ * production account (29 live rows, 100% in one stage), which is the case the
+ * worklist redesign exists for and the case the healthy seed board can never
+ * show. Roughly the real board's share of rows also lose their role (8 of 29
+ * live rows never had one named), so the fixed role slot renders at its real
+ * density. Deadlines are cleared: a board this young hasn't earned any, and a
+ * leftover assessment date would contradict the all-applied claim.
+ */
+export function demoEarlySearchAsApi(today: string = todayISO()): Application[] {
+  return demoApplicationsAsApi(today).map((app, index) => ({
+    ...app,
+    status: "applied",
+    notes: "Your application was received",
+    due_at: null,
+    due_source: null,
+    position: index % 4 === 2 ? "" : app.position,
+  }));
+}

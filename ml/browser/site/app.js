@@ -1,9 +1,10 @@
 /* JobTracker classifier, in-browser.
  *
  * Faithful port of the 3-layer hybrid (backend/jobtracker/classifier):
- *   1. rules       — same 201 regexes, same scoring (strong +3 ×2-subject,
- *                    weak +1, negative −5), same margin→confidence tiers,
- *                    same ATS-domain boost. Accept ≥0.9.
+ *   1. rules       — same 207 regexes, same scoring (strong +3 ×2-subject,
+ *                    weak +1, negative −5, veto caps the category at 0),
+ *                    same margin→confidence tiers, same ATS-domain boost.
+ *                    Accept ≥0.9.
  *   2. embeddings  — cosine vs a synthetic example bank embedded with the
  *                    fine-tuned body ("query: " prefix). Accept ≥0.85.
  *   3. setfit      — LogisticRegression head over the same embedding
@@ -32,6 +33,8 @@ function compileRules(raw) {
       strong: g.strong.map((p) => new RegExp(p, 'i')),
       weak: g.weak.map((p) => new RegExp(p, 'i')),
       negative: g.negative.map((p) => new RegExp(p, 'i')),
+      // Only `assessment` declares vetoes today; the key is absent elsewhere.
+      veto: (g.veto ?? []).map((p) => new RegExp(p, 'i')),
     };
   }
   return { cats, ats: raw.ats_domains };
@@ -49,6 +52,7 @@ function rulesClassify(subject, body, sender) {
     for (const re of g.strong) { if (re.test(subject)) s += 6; else if (re.test(body)) s += 3; }
     for (const re of g.weak) { if (re.test(subject)) s += 2; else if (re.test(body)) s += 1; }
     for (const re of g.negative) { if (re.test(subject) || re.test(body)) s -= 5; }
+    for (const re of g.veto) { if (re.test(subject) || re.test(body)) s = Math.min(s, 0); }
     scores[cat] = s;
   }
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);

@@ -251,6 +251,11 @@ router = APIRouter(
 DEFAULT_PAGE_SIZE = 100
 MAX_PAGE_SIZE = 500
 
+# The mail listing pages smaller than the board does: a message row carries a
+# subject and a snippet, so 50 of them is already a heavier response than 100
+# applications. Same MAX_PAGE_SIZE ceiling.
+DEFAULT_MAIL_PAGE_SIZE = 50
+
 # How recent an application counts as "this week" for the summary tile. Kept
 # in one place so the backend aggregate and the frontend's array-based
 # `summarize()` fold agree on the window (7 days).
@@ -331,18 +336,22 @@ class StatusVocabularyResponse(BaseModel):
 
     Every field is DERIVED from :class:`ApplicationStatus` /
     :data:`CATEGORY_TO_STATUS` at import time, so this endpoint and the 422 a
-    bad ``PATCH`` earns cannot disagree. It exists because they did: the board
-    offered ``assessment``, the file-by-hand dialog offered six of the seven,
-    and the API accepted a different seven.
+    bad ``PATCH`` earns cannot disagree. It exists because they did: three
+    hand-written copies of the vocabulary, all different — the board's card
+    offered a value the API refused, the file-by-hand dialog offered fewer than
+    the API accepted, and only the enum was right.
 
     - ``statuses`` — the settable stages, in lifecycle order. THE list.
     - ``default`` — what a new row starts at.
     - ``category_to_status`` — how a classifier verdict maps onto a stage, for
-      a client that wants to show ``assessment`` mail under ``interviewing``.
-      A category absent from this map asserts no stage.
+      a client that wants to file mail under the stage it implies (an
+      ``interview`` message means the row is ``interviewing``). A category
+      absent from this map asserts no stage.
     - ``classifier_categories`` — everything the classifier can emit. A
       SUPERSET of the mapping's keys and NOT interchangeable with ``statuses``;
-      confusing the two is the original defect.
+      confusing the two is the original defect. They overlap on ``applied`` and
+      — since 2026-08-12 — ``assessment``, which is precisely when the two get
+      conflated again, so both lists keep being served.
     """
 
     statuses: list[str]
@@ -409,6 +418,103 @@ class ReviewQueueResponse(BaseModel):
     total: int
 
 
+class MailMessageResponse(BaseModel):
+    """One stored message in the full mail listing.
+
+    Deliberately METADATA ONLY. ``snippet`` is the persisted ``body_snippet``
+    and there is no field for ``body_text`` or ``body_html``: the cloud sync
+    never fetches a body and this listing is not the place to start.
+
+    ``category``/``confidence``/``method`` are the stored verdict verbatim —
+    ``classified_as``, ``classification_confidence``, ``classification_method``
+    — so a reader can see WHAT was decided and HOW, which is the difference
+    between "the machine says applied" and "a rule matched at 0.71".
+
+    ``category`` carries the enum's own value (``"applied"``, ``"needs_review"``
+    …), the same lowercase vocabulary ``?category=`` accepts and
+    ``POST /review/{message_id}/classify`` takes back. One vocabulary end to
+    end, so a value read here can be sent straight back as a correction.
+    """
+
+    message_id: str
+    thread_id: str | None = None
+    subject: str | None = None
+    sender_name: str | None = None
+    sender_email: str | None = None
+    received_at: str | None = None
+    snippet: str | None = None
+    category: str | None = None
+    confidence: float | None = None
+    method: str | None = None
+    user_corrected: bool = False
+    is_reviewed: bool = False
+    application_id: int | None = None
+    # The linked application's employer, resolved in ONE query for the whole
+    # page (never per row). ``None`` when the message is not filed against an
+    # application — which most needs-review mail is not.
+    company: str | None = None
+    gmail_link: str | None = None
+
+
+class MailListResponse(BaseModel):
+    """A page of the user's stored mail, plus the counts the chips need.
+
+    ``total`` is the size of the CURRENT query — it respects both ``category``
+    and ``q``, because it is the number ``page``/``page_size`` walk.
+
+    ``category_counts`` is deliberately different: it respects ``q`` but NOT
+    ``category``, so each filter chip can show its own total while one of them
+    is active. Counting only the filtered set would make every chip but the
+    selected one read zero.
+    """
+
+    messages: list[MailMessageResponse]
+    total: int
+    page: int
+    page_size: int
+    category_counts: dict[str, int]
+
+
+class ScannedMessageIn(BaseModel):
+    """The metadata needed to STORE a message the live scan has only mined.
+
+    The live-scan view (``/inbox?view=scan``) reads Gmail directly and holds
+    nothing: its rows are verdicts about messages this database has never seen.
+    Correcting one of them therefore has to persist the message first, or the
+    correction lands on a row that does not exist — ``classify_review_item``
+    answers 404 and the user's click does nothing.
+
+    Filing first is NOT a substitute. ``pipeline.collect_review_items`` keeps
+    only ``needs_review`` mail and lifecycle mail at/above the 0.70 review
+    floor, so the exact case this exists for — an assessment email the
+    classifier called ``other`` at 0% — is dropped by ``POST /gmail/sync`` and
+    can never be reached by a correction. The user can see the row; nothing in
+    the product could store it.
+
+    ``received_at`` is REQUIRED and is never defaulted to "now": ``Email``
+    requires a receive time and :func:`_persist_message_refs` deliberately skips
+    undated messages rather than fabricating one. A client that has no date for
+    a row must not offer the correction at all.
+
+    ``category``/``confidence``/``method`` are the classifier's verdict AS THE
+    SCAN SHOWED IT. They are stored on the minted row so it starts out as a
+    faithful copy of what the user was looking at — the same thing a sync would
+    have written — and the correction is then applied on top of it, leaving the
+    normal "was X, user says Y" trail instead of a row that claims the user's
+    label was the machine's all along.
+    """
+
+    sender_email: str
+    received_at: datetime
+    subject: str | None = None
+    sender_name: str | None = None
+    thread_id: str | None = None
+    snippet: str | None = None
+    category: EmailCategory | None = None
+    confidence: float | None = None
+    method: str | None = None
+
+
 class ReviewClassifyRequest(BaseModel):
     """Body for classifying a review item into a category.
 
@@ -422,11 +528,17 @@ class ReviewClassifyRequest(BaseModel):
     "Update on your application" — belongs to exactly one of them without saying
     which. The board asks; this carries the answer. Ignored when the id is not
     the caller's own row, or not at the employer the mail names.
+
+    ``message`` is what makes the same correction possible from the LIVE SCAN,
+    whose rows may never have been stored (see :class:`ScannedMessageIn`).
+    Consulted only when this message id is not already on file; a stored message
+    is always corrected in place, so a client cannot use this to rewrite one.
     """
 
     category: EmailCategory
     company: str | None = None
     application_id: int | None = None
+    message: ScannedMessageIn | None = None
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -1846,6 +1958,59 @@ async def delete_application(
     return True
 
 
+async def _mint_scanned_email(
+    session,
+    user_id: uuid.UUID,
+    message_id: str,
+    scanned: ScannedMessageIn,
+) -> Email:
+    """Store a live-scan message so a correction has something to land on.
+
+    Writes exactly what a sync would have written for the same message — the
+    scan's own verdict, metadata only, no bodies — under the CALLER's user id.
+    It is flushed before returning because ``_add_training_example`` keys on
+    ``email.id``.
+
+    ``received_at`` goes through :func:`pipeline.to_naive_utc` for the same
+    reason every other write does: ``Email.received_at`` is TIMESTAMP WITHOUT
+    TIME ZONE and asyncpg refuses an aware datetime. A value that survives
+    parsing but not that conversion is refused rather than replaced with now().
+    """
+
+    received_at = pipeline.to_naive_utc(scanned.received_at)
+    if received_at is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This message carries no usable receive time, so it cannot be stored.",
+        )
+
+    email = Email(
+        user_id=user_id,
+        source_account=EmailSource.GMAIL,
+        message_id=message_id,
+        thread_id=scanned.thread_id,
+        subject=scanned.subject,
+        sender_name=scanned.sender_name,
+        sender_email=scanned.sender_email,
+        received_at=received_at,
+        body_snippet=pipeline.unescape_entities(scanned.snippet or "")[:500] or None,
+        classified_as=scanned.category,
+        classification_confidence=scanned.confidence,
+        classification_method=scanned.method,
+    )
+    session.add(email)
+    await session.flush()
+    logger.info(
+        "Stored a live-scan message for user_id=%s message_id=%s so its verdict "
+        "could be corrected (scan said category=%s confidence=%s)",
+        user_id,
+        message_id,
+        scanned.category.value if scanned.category else None,
+        scanned.confidence,
+    )
+    return email
+
+
 async def classify_review_item(
     session,
     user_id: uuid.UUID,
@@ -1853,6 +2018,7 @@ async def classify_review_item(
     category: EmailCategory,
     company: str | None = None,
     application_id: int | None = None,
+    scanned: ScannedMessageIn | None = None,
 ) -> dict[str, object]:
     """Classify a needs-review email into a category — persist + train.
 
@@ -1880,6 +2046,15 @@ async def classify_review_item(
     created no application and returned ``{"application_id": null}`` with a
     2xx — so the item vanished from the queue and never reached the board.
     ``training_data`` id 4 / ``emails`` id 58 in production are that bug.)
+
+    A message that is NOT on file is a 404 unless the caller supplies
+    ``scanned``, in which case it is stored first and then corrected — that is
+    the live-scan path (:class:`ScannedMessageIn`). The store happens BEFORE the
+    ``needs_employer`` early return on purpose: that branch commits and returns
+    without filing anything, and the whole point of it is that the caller
+    re-sends the same classification with a company. Minting afterwards would
+    make the second half of that round trip 404 on a message the first half had
+    just accepted.
     """
 
     email = (
@@ -1890,7 +2065,11 @@ async def classify_review_item(
         )
     ).first()
     if email is None:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Review item not found.")
+        if scanned is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND, detail="Review item not found."
+            )
+        email = await _mint_scanned_email(session, user_id, message_id, scanned)
 
     status_value = _lifecycle_to_status(category)
     employer = None
@@ -2550,11 +2729,23 @@ async def classify_review_item_cloud(
     named the response carries ``needs_employer: true`` and the item stays in
     the queue. Callers must branch on that flag (and may re-POST with
     ``company``) rather than assuming success.
+
+    Accepts a correction for a message this database has never seen, provided
+    the caller sends its metadata as ``message`` — the live scan's rows are
+    verdicts about un-stored mail, and without this they were 404s. The message
+    is stored under the JWT's user id and nowhere else, so the worst a bogus id
+    can do is add a row to the caller's own mail listing.
     """
 
     async with get_session() as session:
         return await classify_review_item(
-            session, user_id, message_id, data.category, data.company, data.application_id
+            session,
+            user_id,
+            message_id,
+            data.category,
+            data.company,
+            data.application_id,
+            data.message,
         )
 
 
@@ -2580,6 +2771,188 @@ async def application_statuses_cloud() -> StatusVocabularyResponse:
             for category, status in CATEGORY_TO_STATUS.items()
         },
         classifier_categories=list(pipeline.CANONICAL_CATEGORIES),
+    )
+
+
+@router.get("/mail", response_model=MailListResponse)
+async def mail_listing_cloud(
+    user_id: uuid.UUID = Depends(current_user),
+    page: int = Query(1, ge=1, description="1-based page number."),
+    page_size: int = Query(
+        DEFAULT_MAIL_PAGE_SIZE,
+        ge=1,
+        le=MAX_PAGE_SIZE,
+        description="Rows per page (capped so a single response stays bounded).",
+    ),
+    category: EmailCategory | None = Query(
+        None,
+        description=(
+            "Filter to one stored verdict. Does not affect `category_counts`."
+        ),
+    ),
+    q: str | None = Query(
+        None, description="Case-insensitive substring match on subject/sender."
+    ),
+) -> MailListResponse:
+    """Every message this user has stored, whatever the classifier decided.
+
+    Declared ABOVE ``GET /{application_id}`` deliberately: FastAPI matches in
+    declaration order and would otherwise try ``"mail"`` as an int path param
+    and answer 422. Same pattern as ``/summary``, ``/review`` and ``/statuses``.
+
+    WHY THIS EXISTS
+    ---------------
+    ``/review`` is the only other listing of classified mail, and it filters to
+    ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
+    for a work queue and the wrong set for a correction surface, because those
+    three predicates make a verdict unreachable the moment it is touched:
+
+    * a message already reviewed once drops out for good — emails 58 and 59 of
+      the owner's account sit at ``needs_review`` with ``is_reviewed = true``
+      and no endpoint in the product could name them, so no screen could
+      change them;
+    * a message linked to an application drops out too, so a ``rejection``
+      filed as ``applied`` is a wrong stored verdict a user can see on the
+      board and never correct at its source;
+    * and for an account whose mail all classified confidently, ``/review``
+      returns zero rows and the review UI never renders at all.
+
+    The write path never had that restriction — :func:`classify_review_item`
+    selects on ``(user_id, message_id)`` alone — so correcting any of these
+    already worked. What was missing was a way to *find* them. This is that
+    read, and nothing more: no new write, no body, no state change.
+
+    SHAPE
+    -----
+    Newest first with an ``id`` tiebreak, for the same reason the applications
+    listing has one: a sync writes a batch of rows carrying identical
+    ``received_at`` values, tied rows are free to come back in a different
+    order per request on Postgres, and paging a partial order drops some rows
+    and repeats others.
+
+    One entry per MESSAGE — unlike ``/review``, which collapses a thread to its
+    newest message because being asked the same question twice is duplicated
+    work. Here the user is auditing what is stored, and every stored row is
+    correctable individually, so hiding siblings would hide exactly the rows
+    this endpoint exists to reach.
+    """
+
+    # Two filter sets, and the difference is the contract: `total` counts the
+    # query being paged (category + q), while the chips' counts must ignore
+    # `category` or every chip but the active one reads zero.
+    base_filters = [Email.user_id == user_id]
+    needle = (q or "").strip()
+    if needle:
+        like = f"%{needle}%"
+        base_filters.append(
+            or_(
+                Email.subject.ilike(like),
+                Email.sender_name.ilike(like),
+                Email.sender_email.ilike(like),
+            )
+        )
+
+    page_filters = list(base_filters)
+    if category is not None:
+        page_filters.append(Email.classified_as == category)
+
+    offset = (page - 1) * page_size
+
+    async with get_session() as session:
+        total = (
+            await session.exec(
+                select(func.count()).select_from(Email).where(*page_filters)
+            )
+        ).one()
+
+        grouped = (
+            await session.exec(
+                select(Email.classified_as, func.count())
+                .where(*base_filters)
+                .group_by(Email.classified_as)
+            )
+        ).all()
+
+        stmt = (
+            select(Email)
+            .where(*page_filters)
+            # The tiebreak, and it has to be here. A sync writes a batch of
+            # rows inside the same second, so `received_at` alone leaves them
+            # tied and Postgres may return them in a different order per
+            # request — which drops and repeats rows across pages.
+            .order_by(Email.received_at.desc(), Email.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        rows = (await session.exec(stmt)).all()
+
+        # ONE query for the whole page's employers, not one per row. Scoped to
+        # the owner as well as the id set: a linked id is only ever this user's,
+        # and re-asserting it here means a stale link cannot read across users.
+        linked_ids = {e.application_id for e in rows if e.application_id is not None}
+        company_by_application: dict[int, str] = {}
+        if linked_ids:
+            pairs = (
+                await session.exec(
+                    select(Application.id, Application.company).where(
+                        Application.id.in_(linked_ids),
+                        Application.user_id == user_id,
+                    )
+                )
+            ).all()
+            company_by_application = dict(pairs)
+
+    category_counts: dict[str, int] = {}
+    for stored_category, count in grouped:
+        if stored_category is None:
+            # An unclassified row is real, but it has no chip to land on and
+            # `dict[str, int]` has no key for it. Counted nowhere rather than
+            # under a made-up name; `total` still includes it.
+            continue
+        key = (
+            stored_category.value
+            if hasattr(stored_category, "value")
+            else str(stored_category)
+        )
+        category_counts[key] = count
+
+    account_email = await _connected_account_email(user_id)
+    messages = [
+        MailMessageResponse(
+            message_id=e.message_id,
+            thread_id=e.thread_id,
+            subject=e.subject,
+            sender_name=e.sender_name,
+            sender_email=e.sender_email,
+            received_at=e.received_at.isoformat() if e.received_at else None,
+            # `body_snippet` — the stored preview. Never `body_text`/`body_html`.
+            snippet=e.body_snippet,
+            category=e.classified_as.value if e.classified_as else None,
+            confidence=e.classification_confidence,
+            method=e.classification_method,
+            user_corrected=e.user_corrected,
+            is_reviewed=e.is_reviewed,
+            application_id=e.application_id,
+            company=(
+                company_by_application.get(e.application_id)
+                if e.application_id is not None
+                else None
+            ),
+            gmail_link=pipeline.gmail_deeplink(
+                thread_id=e.thread_id,
+                message_id=e.message_id,
+                account_email=account_email,
+            ),
+        )
+        for e in rows
+    ]
+
+    return MailListResponse(
+        messages=messages,
+        total=total,
+        page=page,
+        page_size=page_size,
+        category_counts=category_counts,
     )
 
 

@@ -8,10 +8,17 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * The signed-in `/dashboard` is auth-gated and unreachable without a Supabase
  * session (see navigation.spec / shell.spec). But it renders from the SAME
  * `PipelineBoard` component as the public `/demo` twin — the header hierarchy,
- * the board with search/company-filter/expanders — fed by fixture rows adapted
- * to the exact API shape. So we drive that content on `/demo` here, and add a
- * skip-guarded pass that becomes real coverage of `/dashboard` itself the
- * moment the suite runs against a session.
+ * the stage spine, the grouped worklist with search/company-filter — fed by
+ * fixture rows adapted to the exact API shape. So we drive that content on
+ * `/demo` here, and add a skip-guarded pass that becomes real coverage of
+ * `/dashboard` itself the moment the suite runs against a session.
+ *
+ * The board is a worklist now, not a kanban: stage groups render as regions
+ * ONLY while they hold rows; an empty stage is a line in the spine (a button
+ * named `${stage} — ${count}`), never a full-width box of nothing. The
+ * `?pipeline=early` variant renders the measured production distribution —
+ * every row in one stage — which is the case the worklist exists for and the
+ * healthy seed spread cannot show.
  *
  * What is deliberately ABSENT is asserted too: the stat-tile row, the
  * classifier-context strip (auto-file gate / macro-F1 / CI floor), the
@@ -28,7 +35,7 @@ async function reachDashboardOrSkip(page: Page): Promise<void> {
 }
 
 test.describe("dashboard content (via the public /demo twin)", () => {
-  test("the header is one honest line of state, and the board leads", async ({ page }) => {
+  test("the header is one honest line of state, and the worklist leads", async ({ page }) => {
     const watch = startConsoleWatch(page);
     await page.goto("/demo");
 
@@ -37,15 +44,31 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     // interviewing), 0 offers. The page's only rendering of the totals.
     await expect(page.getByText("17 filed · 14 in motion · 0 offers")).toBeVisible();
 
-    // Board columns carry the per-stage counts (the fixtures are shaped like a
-    // real early search: applied-heavy, offered honestly empty).
+    // Populated stages render as list groups, carrying their counts…
     await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();
     await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
-    await expect(page.getByRole("region", { name: /offered — 0/i })).toBeVisible();
     await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
-    await expect(page.getByText("none yet")).toBeVisible();
+    // …while the EMPTY stage renders no group at all: its emptiness is the
+    // spine's one line, not a quarter of the screen.
+    await expect(page.getByRole("region", { name: /offered/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "offered — 0" })).toBeVisible();
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
+  });
+
+  test("the spine is the stage lens: filtering to an empty stage says so", async ({ page }) => {
+    await page.goto("/demo");
+
+    await page.getByRole("button", { name: "offered — 0" }).click();
+    // The selected stage renders its (empty) group with the honest copy…
+    await expect(page.getByRole("region", { name: /offered — 0/i })).toBeVisible();
+    await expect(page.getByText("none yet")).toBeVisible();
+    // …and other groups leave the list while the lens is narrowed.
+    await expect(page.getByRole("region", { name: /applied — 10/i })).toHaveCount(0);
+
+    // Pressing the active stage again returns to the whole pipeline.
+    await page.getByRole("button", { name: "offered — 0" }).click();
+    await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();
   });
 
   test("the metrics-poster surfaces stay dead: no tiles, no strip, no funnel, no feed", async ({
@@ -65,26 +88,37 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     await expect(page.getByText("this week", { exact: true })).toHaveCount(0);
   });
 
-  test("a card is an application: role is the discriminator, company repeats", async ({ page }) => {
+  test("a row is an application: grouped by employer in the view, never in the data", async ({
+    page,
+  }) => {
     await page.goto("/demo");
 
-    // Northstar Systems holds three applications in two different columns.
-    // (`exact` so the "2 more at Northstar Systems" chips don't also match.)
-    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(3);
+    // Northstar Systems holds four applications in two different stages — the
+    // shape of the owner's own board, where one employer holds four
+    // requisitions. The three applied ones share ONE employer card; the
+    // interviewing one keeps its own row — so the name renders twice, not
+    // four times, and no application's stage hides behind a summary.
+    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(2);
     await expect(page.getByText("ML Engineer", { exact: true })).toBeVisible();
+
+    // Opening the set reveals every member led by its role — the discriminator
+    // (four requisitions must read as four different lines). The employer's
+    // name still renders exactly twice: members don't repeat the header.
+    await page.getByRole("button", { name: "Northstar Systems — 3 applications" }).click();
     await expect(page.getByText("ML Engineer, Platform", { exact: true })).toBeVisible();
     await expect(page.getByText("Research Engineer, Applied ML", { exact: true })).toBeVisible();
+    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(2);
 
-    // The light same-company affordance filters the board to that employer.
+    // The cross-stage chip filters the board to the employer's whole set.
     await page
       .getByRole("button", { name: /show all applications at Northstar Systems/i })
       .first()
       .click();
-    await expect(page.getByText("3 of 17 shown")).toBeVisible();
+    await expect(page.getByText("4 of 17 shown")).toBeVisible();
     await expect(page.getByText("Harbor Analytics")).toHaveCount(0);
     // …and the filter chip clears it.
     await page.getByRole("button", { name: /stop filtering by Northstar Systems/i }).click();
-    // (`exact` on every visible-company assertion: the interactive cards'
+    // (`exact` on every visible-company assertion: the interactive rows'
     // sr-only "Change stage for {company}" labels otherwise trip strict mode.)
     await expect(page.getByText("Harbor Analytics", { exact: true })).toBeVisible();
   });
@@ -102,16 +136,49 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     await expect(page.getByText("Quarry Data", { exact: true })).toBeVisible();
   });
 
-  test("a tall column expands on the page instead of scrolling inside it", async ({ page }) => {
+  test("the whole worklist is present — no expander, no nested scroll on the flow twin", async ({
+    page,
+  }) => {
     await page.goto("/demo");
 
-    // 10 applied fixtures, 8 shown collapsed: the newest rows wait behind the
-    // expander rather than behind a nested scrollbar.
-    await expect(page.getByText("Waypoint Robotics")).toHaveCount(0);
-    await page.getByRole("button", { name: "show all 10" }).click();
+    // Every applied row renders immediately (the old board held the newest two
+    // behind a "show all 10" expander); the page is the one scroll context on
+    // the flow twin, so nothing waits behind a control or an inner scrollbar.
     await expect(page.getByText("Waypoint Robotics", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "show fewer" }).click();
-    await expect(page.getByText("Waypoint Robotics")).toHaveCount(0);
+    await expect(page.getByText("Copperline", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /show all \d+/ })).toHaveCount(0);
+  });
+
+  test("the early-search distribution renders deliberately, not as three empty boxes", async ({
+    page,
+  }) => {
+    const watch = startConsoleWatch(page);
+    // `?pipeline=early` is the measured production shape: every live row in
+    // one stage (the real account is 29-0-0-0). This is the distribution the
+    // worklist redesign exists for.
+    await page.goto("/demo?pipeline=early");
+
+    await expect(page.getByText("17 filed · 17 in motion · 0 offers")).toBeVisible();
+    // One populated group — 17 APPLICATIONS, however few cards the employer
+    // grouping draws (Northstar's four and Cedar's two fold into one card
+    // each; the count must reflect the applications, not the cards)…
+    await expect(page.getByRole("region", { name: /applied — 17/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Northstar Systems — 4 applications" }),
+    ).toBeVisible();
+    // …and the three empty stages are spine lines, not rendered groups.
+    for (const name of ["interviewing — 0", "offered — 0", "closed — 0"]) {
+      await expect(page.getByRole("button", { name })).toBeVisible();
+    }
+    await expect(page.getByRole("region", { name: /interviewing/i })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: /closed/i })).toHaveCount(0);
+
+    // The role slot holds its shape at the real board's density: this variant
+    // blanks roughly the production share of roles (8 of 29 live rows), and
+    // each prints the honest placeholder instead of shortening its row.
+    expect(await page.getByText("role not captured", { exact: true }).count()).toBeGreaterThan(2);
+
+    expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
   test("no console errors and no horizontal overflow at 375px", async ({ page }) => {
@@ -127,10 +194,31 @@ test.describe("dashboard content (via the public /demo twin)", () => {
 test.describe("dashboard (signed in — needs a session)", () => {
   test("shows the pipeline header and a way to file an application", async ({ page }) => {
     await reachDashboardOrSkip(page);
-    // Either populated (the board) or empty (the empty-state hero) — both must
-    // offer the file-application entry point and never be a blank page.
+    // Either populated (the worklist) or empty (the empty-state hero) — both
+    // must offer the file-application entry point and never be a blank page.
     await expect(page.getByRole("button", { name: /file an application/i }).first()).toBeVisible();
     await expect(page.getByRole("heading", { name: /pipeline/i })).toBeVisible();
+  });
+
+  test("the dashboard is viewport-locked at desktop: the page itself does not scroll", async ({
+    page,
+  }) => {
+    await reachDashboardOrSkip(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // The shell is h-dvh with the worklist as the one scroll region — the
+    // document never grows past the viewport (complaint: "the dashboard means
+    // it's the screen size and doesn't scroll").
+    //
+    // NOTE this copy is session-gated and exists to run against the user's
+    // REAL data volume when a session is available. The always-executing
+    // version — same primitives, mounted by /demo/shell — lives in
+    // shell.spec.ts ("app shell — viewport lock"), so the lock can no longer
+    // regress silently while this skip stands.
+    const heights = await page.evaluate(() => ({
+      scroll: document.documentElement.scrollHeight,
+      client: document.documentElement.clientHeight,
+    }));
+    expect(heights.scroll).toBeLessThanOrEqual(heights.client + 1);
   });
 
   // The "Re-sync is retired" vocabulary guard lives in demo.spec.ts, where it

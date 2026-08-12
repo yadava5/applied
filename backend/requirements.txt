@@ -11,13 +11,13 @@ fastapi>=0.109.0              # Modern async web framework
 uvicorn[standard]>=0.27.0     # ASGI server with uvloop
 pydantic>=2.13.4               # Data validation using Python type hints
 pydantic-settings>=2.14.2     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
-email-validator>=2.0.0        # Email validation for Pydantic EmailStr
-websockets>=12.0              # WebSocket support for real-time sync updates
+email-validator>=2.3.0        # Email validation for Pydantic EmailStr
+websockets>=17.0.1              # WebSocket support for real-time sync updates
 
 # -----------------------------------------------------------------------------
 # Database (Async SQLite + Postgres)
 # -----------------------------------------------------------------------------
-aiosqlite>=0.19.0             # Async SQLite driver (desktop/tests)
+aiosqlite>=0.22.1             # Async SQLite driver (desktop/tests)
 asyncpg>=0.31.0               # Async Postgres driver (Supabase/cloud)
 sqlmodel>=0.0.14              # SQLAlchemy + Pydantic ORM (by FastAPI creator)
 sqlalchemy[asyncio]>=2.0.25   # Async SQLAlchemy core
@@ -41,7 +41,7 @@ cryptography>=50.0.0,<51      # Pulled via pyjwt[crypto]; PYSEC-2026-35 / PYSEC-
 # -----------------------------------------------------------------------------
 # ML & NLP
 # -----------------------------------------------------------------------------
-sentence-transformers>=2.2.0  # Sentence embeddings (loads e5-small-v2)
+sentence-transformers>=5.7.0  # Sentence embeddings (loads e5-small-v2)
 # The <5 cap is load-bearing and cannot be lifted from here. Note that neither
 # dependency's metadata says so: setfit 1.1.3 declares `transformers>=4.41.0` with
 # no upper bound and sentence-transformers 5.2.2 allows `<6.0.0`, so a resolver
@@ -60,14 +60,14 @@ sentence-transformers>=2.2.0  # Sentence embeddings (loads e5-small-v2)
 # (backend/checkpoints, appdata/models/setfit), and never from a user-supplied
 # repo id. Unblocking needs a setfit release that supports transformers 5.
 transformers>=4.40,<5         # HuggingFace transformers (see the note above)
-setfit>=1.0.0                 # Few-shot text classification
+setfit>=1.1.3                 # Few-shot text classification
 scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
 numpy>=1.24.0                 # Numerical operations, embedding serialization
 
 # -----------------------------------------------------------------------------
 # Email Parsing
 # -----------------------------------------------------------------------------
-beautifulsoup4>=4.12.0        # HTML email parsing
+beautifulsoup4>=4.15.0        # HTML email parsing
 lxml>=6.1.1                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
 python-dateutil>=2.8.0        # Date parsing utilities
 

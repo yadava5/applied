@@ -13,15 +13,19 @@ import {
   selectClass,
   textareaClass,
 } from "@/components/ui/formStyles";
+import { APPLICATION_STATUSES } from "@/lib/dashboard/status";
 
-const STATUS_OPTIONS = [
-  "applied",
-  "interviewing",
-  "offered",
-  "rejected",
-  "accepted",
-  "withdrawn",
-] as const;
+/**
+ * The stage vocabulary, imported rather than restated.
+ *
+ * This dialog held the last hand-written copy: six values, missing `ghosted`
+ * (which the API accepts) — one of the three lists that disagreed when setting
+ * a card to `assessment` answered 422. The card's `<select>` was fixed by
+ * deleting its literal and importing this one; this one was left behind, so it
+ * would have been the single place a filed-by-hand application could not be
+ * filed as an assessment.
+ */
+const STATUS_OPTIONS = APPLICATION_STATUSES;
 
 type Mode = "live" | "demo";
 

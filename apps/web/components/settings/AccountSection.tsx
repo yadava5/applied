@@ -7,7 +7,7 @@ import { LogOut } from "lucide-react";
 import { SettingsSection } from "./SettingsSection";
 import { Dialog } from "@/components/ui/Dialog";
 import { dangerBtnClass, inputClass, secondaryBtnClass } from "@/components/ui/formStyles";
-import { createClient } from "@/lib/supabase/client";
+import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
 
 const CONFIRM_WORD = "DELETE";
 
@@ -16,19 +16,30 @@ const CONFIRM_WORD = "DELETE";
  * DELETE to arm, then calls the server route that removes the account. If the
  * deployment hasn't enabled deletion (no service-role key), the route says so
  * honestly rather than silently doing nothing — the button is never a no-op.
+ * On the `/demo/settings` twin the same gate runs end to end; the transport's
+ * answer is the one honest difference ("simulated account — nothing exists to
+ * delete").
  */
-export function AccountSection({ email }: { email: string }) {
+export function AccountSection({ email, mode = "live" }: { email: string; mode?: SettingsMode }) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutNote, setSignOutNote] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const transport = settingsTransport(mode);
 
   async function signOut() {
     setSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await transport.signOut();
+    if (transport.mode === "demo") {
+      // No session exists here to end — the twin says so instead of bouncing
+      // an anonymous visitor to the login wall.
+      setSignOutNote("Simulated account — there is no session to sign out of.");
+      setSigningOut(false);
+      return;
+    }
     router.refresh();
     router.replace("/login");
   }
@@ -36,29 +47,23 @@ export function AccountSection({ email }: { email: string }) {
   async function deleteAccount() {
     setDeleting(true);
     setError(null);
-    try {
-      const res = await fetch("/api/account/delete", { method: "POST" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-        setError(
-          typeof body.detail === "string"
-            ? body.detail
-            : "Account deletion isn’t available on this deployment yet.",
-        );
-        setDeleting(false);
-        return;
-      }
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.replace("/");
-    } catch {
-      setError("Couldn’t reach the server. Try again shortly.");
+    const result = await transport.deleteAccount();
+    if (!result.ok) {
+      setError(result.detail ?? "Account deletion isn’t available on this deployment yet.");
       setDeleting(false);
+      return;
     }
+    await transport.signOut();
+    router.replace("/");
   }
 
   return (
-    <SettingsSection title="Account" description="Sign out, or remove your account entirely." tone="danger">
+    <SettingsSection
+      id="account"
+      title="Account"
+      description="Sign out, or remove your account entirely."
+      tone="danger"
+    >
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={signOut} disabled={signingOut} className={secondaryBtnClass}>
           <LogOut className="h-4 w-4" aria-hidden="true" />
@@ -68,6 +73,12 @@ export function AccountSection({ email }: { email: string }) {
           Delete account
         </button>
       </div>
+
+      {signOutNote ? (
+        <p role="status" className="mt-3 text-xs text-dim">
+          {signOutNote}
+        </p>
+      ) : null}
 
       <p className="mt-3 text-[12px] leading-relaxed text-dim">
         Deleting removes your applications and revokes any connected Gmail. This can’t be undone.

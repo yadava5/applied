@@ -1,71 +1,52 @@
 import type { CSSProperties } from "react";
-import Link from "next/link";
 
 import type { RailPipelineData } from "@/lib/shell/rail";
 
 /**
- * The sidebar's pipeline snapshot — a dashboard-in-the-rail.
+ * The head of the sidebar's instrument column: the tracked total and a slim
+ * stage-distribution bar (the same stage fold + accent hues as the board's
+ * spine). The pulse's four derived signals stack directly beneath it
+ * (`PipelinePulse layout="rail"`, mounted by `Sidebar`), so this component
+ * deliberately says only what the pulse does not: how many, and how they sit
+ * across the stages.
  *
- * Turns the nav's former dead space into glanceable signal: the tracked total,
- * a slim stage-distribution bar (the same stage fold + accent hues as the
- * dashboard funnel), a per-stage legend, and — when the classifier is holding
- * mail — an amber "N need review" nudge that deep-links straight to the
- * dashboard's needs-classification queue.
+ * What it USED to carry, and where that went:
+ *   - the per-stage legend rows — dropped. On /dashboard they duplicated the
+ *     board's spine a column away, and on the production shape (every row in
+ *     one stage) they were three zeros asserting emptiness; the bar's segment
+ *     tooltips keep the exact counts for a hover.
+ *   - the bordered card — dropped. One card was chrome when the snapshot stood
+ *     alone; around a full instrument column it was a box in a box. The column
+ *     reads on the rail's own surface, separated by hairlines.
+ *   - the needs-review nudge — moved into the pulse's classifier signal, which
+ *     already owned that number's deep link. One number, one place.
  *
  * Honest states, no fake numbers:
- *   - `pipeline === null`  → backend unreachable / rejected → quiet mono note.
+ *   - `pipeline === null`  → backend unreachable / rejected → quiet note.
  *   - `total === 0`        → "nothing filed yet" (the dashboard owns onboarding).
- *   - review nudge renders independently of the total — zero *filed*
- *     applications can still mean held mail waiting on the user.
  *
  * Motion: bar segments grow in once, staggered (`.rail-seg`, globals.css) and
- * the nudge arrow slides on hover — both collapse to static under
- * `prefers-reduced-motion`.
+ * collapse to static under `prefers-reduced-motion`.
  */
 
 const seg = (i: number): CSSProperties => ({ ["--i" as string]: i });
-
-/** Amber deep-link into the dashboard's needs-classification queue. */
-function ReviewNudge({ count }: { count: number }) {
-  return (
-    <Link
-      href="/dashboard#needs-classification"
-      className="group mt-3 flex items-center gap-1.5 rounded-lg border border-review/40 px-2.5 py-1.5 text-xs font-medium text-review transition-colors hover:border-review focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
-    >
-      <span className="tabular">{count}</span>
-      <span>need{count === 1 ? "s" : ""} review</span>
-      <span
-        aria-hidden="true"
-        className="ml-auto transition-transform motion-safe:group-hover:translate-x-0.5"
-      >
-        →
-      </span>
-    </Link>
-  );
-}
 
 export function RailPipeline({ pipeline }: { pipeline: RailPipelineData | null }) {
   // Backend down / session rejected → say so quietly, never invent numbers.
   if (!pipeline) {
     return (
-      <section
-        aria-label="Pipeline snapshot"
-        className="rounded-xl border border-line-soft p-3"
-      >
+      <section aria-label="Pipeline snapshot">
         <h2 className="label-caps">pipeline</h2>
         <p className="mt-2 text-xs text-dim">backend unreachable</p>
       </section>
     );
   }
 
-  const { summary, needsReview } = pipeline;
+  const { summary } = pipeline;
   const { total, thisWeek, stages } = summary;
 
   return (
-    <section
-      aria-label="Pipeline snapshot"
-      className="rounded-xl border border-line-soft p-3 transition-colors hover:border-line"
-    >
+    <section aria-label="Pipeline snapshot">
       <h2 className="label-caps">pipeline</h2>
       <p className="tabular mt-2 font-mono text-2xl font-semibold leading-none text-strong">
         {total}
@@ -79,48 +60,31 @@ export function RailPipeline({ pipeline }: { pipeline: RailPipelineData | null }
       </p>
 
       {total > 0 ? (
-        <>
-          {/* Slim distribution bar — same stage order + accents as the funnel. */}
-          <div
-            role="img"
-            aria-label={`Distribution: ${stages
-              .map(({ stage, count }) => `${count} ${stage.label}`)
-              .join(", ")}`}
-            className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-surface-2"
-          >
-            {stages
-              .filter(({ count }) => count > 0)
-              .map(({ stage, count }, i) => (
-                <span
-                  key={stage.key}
-                  title={`${stage.label} · ${count}`}
-                  className="rail-seg h-full"
-                  style={{
-                    width: `${(count / total) * 100}%`,
-                    backgroundColor: stage.color,
-                    ...seg(i),
-                  }}
-                />
-              ))}
-          </div>
-
-          <ul className="mt-3 space-y-1.5">
-            {stages.map(({ stage, count }) => (
-              <li key={stage.key} className="flex items-center gap-2 text-xs">
-                <span
-                  aria-hidden="true"
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: stage.color }}
-                />
-                <span className="text-muted">{stage.label}</span>
-                <span className="tabular ml-auto font-mono text-[11px] text-strong">{count}</span>
-              </li>
+        // Slim distribution bar — same stage order + accents as the board's
+        // spine; exact per-stage counts live in each segment's tooltip.
+        <div
+          role="img"
+          aria-label={`Distribution: ${stages
+            .map(({ stage, count }) => `${count} ${stage.label}`)
+            .join(", ")}`}
+          className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-surface-2"
+        >
+          {stages
+            .filter(({ count }) => count > 0)
+            .map(({ stage, count }, i) => (
+              <span
+                key={stage.key}
+                title={`${stage.label} · ${count}`}
+                className="rail-seg h-full"
+                style={{
+                  width: `${(count / total) * 100}%`,
+                  backgroundColor: stage.color,
+                  ...seg(i),
+                }}
+              />
             ))}
-          </ul>
-        </>
+        </div>
       ) : null}
-
-      {needsReview > 0 ? <ReviewNudge count={needsReview} /> : null}
     </section>
   );
 }

@@ -5,13 +5,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
+import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
+import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { todayISO } from "@/lib/dashboard/age";
+import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
+import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
 import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
-import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
+import {
+  demoApplicationsAsApi,
+  demoEarlySearchAsApi,
+  demoUnsyncedAsApi,
+} from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { datedById, redate } from "@/lib/demo/redate";
 
@@ -78,13 +86,32 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Which fixture projection the twin renders — see `asApplications.ts`. */
+export type DemoPipeline = "seed" | "early";
+
 /** The whole fixture store, dated against one day — board and pool alike. */
-function buildStore(today: string): DemoBoard {
-  return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
+function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
+  return {
+    apps: pipeline === "early" ? demoEarlySearchAsApi(today) : demoApplicationsAsApi(today),
+    pool: demoUnsyncedAsApi(today),
+    touched: [],
+  };
 }
 
-
-export function DemoDashboard() {
+export function DemoDashboard({
+  pipeline = "seed",
+  variant = "flow",
+}: {
+  pipeline?: DemoPipeline;
+  /** `flow` — the /demo page twin: natural height, the page scrolls, the
+   *  pulse renders as its in-page strip (that page has no shell rail).
+   *  `locked` — the /demo/shell twin: the signed-in dashboard's exact
+   *  geometry (`LOCKED_PAGE_CLASS` root, `variant="locked"` board, NO
+   *  in-page pulse — the shell rail carries it), which is what makes the
+   *  viewport-lock e2e assertions executable without a session. */
+  variant?: "flow" | "locked";
+}) {
+  const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
   // hydration, the visitor's own day once mounted — the same read the board,
   // the cards and the pulse strip make for themselves (`useLocalToday`).
@@ -96,7 +123,7 @@ export function DemoDashboard() {
   // module load is what keeps a long-lived server's HTML and the browser's
   // hydration agreeing on what "16 days ago" means.
   const [datedFor, setDatedFor] = useState(todayISO);
-  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor));
+  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor, pipeline));
   /** The pristine fixtures, kept for `restore` — the rows this board began
    *  with, before any drag, dismissal or rebuild touched them. */
   const original = useRef<Application[]>([...snapshot.apps, ...snapshot.pool]);
@@ -134,7 +161,7 @@ export function DemoDashboard() {
   useEffect(() => {
     if (datedFor === today) return;
     const id = window.setTimeout(() => {
-      const pristine = buildStore(today);
+      const pristine = buildStore(today, pipeline);
       const dated = datedById([...pristine.apps, ...pristine.pool]);
       const s = store.current;
       original.current = [...pristine.apps, ...pristine.pool];
@@ -142,7 +169,7 @@ export function DemoDashboard() {
       commit({ ...s, apps: redate(s.apps, dated), pool: redate(s.pool, dated) });
     }, 0);
     return () => window.clearTimeout(id);
-  }, [today, datedFor, commit]);
+  }, [today, datedFor, pipeline, commit]);
 
   const boardTransport = useMemo<BoardTransport>(
     () => ({
@@ -158,6 +185,10 @@ export function DemoDashboard() {
           return { ok: false, detail: `“${status}” is not a status the API accepts` };
         }
         const s = store.current;
+        // The visitor moved this card themselves — fold it into the change
+        // ledger's baseline so it is never reported back to them as news.
+        // Same call, same reason, as the live transport.
+        noteUserStageChange(LAST_LOOK_DEMO_KEY, id, status);
         commit({
           ...s,
           apps: s.apps.map((app) => (app.id === id ? { ...app, status } : app)),
@@ -297,15 +328,29 @@ export function DemoDashboard() {
   );
 
   const summary = summarize(snapshot.apps);
+  /** The board as the change ledger reads it. `total` is deliberately not
+   *  passed below: on this twin the store IS the whole account, so there is no
+   *  slice to disclose. */
+  const ledgerRows = useMemo(() => snapshot.apps.map(toChangeRow), [snapshot.apps]);
   const subtitle = `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
   }`;
 
   return (
-    <section className="space-y-6">
+    // A flex column (not `space-y`) so the pulse strip can reorder below the
+    // board at phone width without a second instance — see its wrapper.
+    <section className={locked ? LOCKED_PAGE_CLASS : "flex flex-col gap-6"}>
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
       </SyncBar>
+      {/* The real change ledger, over the fixture store and under its own
+          marker key — a signed-in owner who visits /demo never has these rows
+          folded into their own board's record. */}
+      <SinceLastLook
+        rows={ledgerRows}
+        scope={LAST_LOOK_DEMO_SCOPE}
+        storageKey={LAST_LOOK_DEMO_KEY}
+      />
       {/* Same strip as the signed-in dashboard, over the fixture store.
           `total` is the store's own length because on this board it IS the
           whole account — the strip's scope note ("newest N of M") therefore
@@ -316,9 +361,33 @@ export function DemoDashboard() {
           deep-links to /dashboard#needs-classification — an auth-gated route
           that would dead-end an anonymous visitor. The fixture queue
           (DEMO_REVIEW_QUEUE) does hold one sub-gate message; the DecisionTrace
-          lower down this page is where it is shown and explained. */}
-      <PipelinePulse applications={snapshot.apps} total={snapshot.apps.length} needsReview={0} />
-      <PipelineBoard applications={snapshot.apps} transport={boardTransport} />
+          lower down this page is where it is shown and explained.
+
+          `max-sm:order-last`: at phone width the four cells stack into a
+          full-width column that pushed the first application row ~1500px down
+          the page, so the strip yields the top to the worklist — the same
+          answer the signed-in dashboard already gives below `lg`. One
+          instance, reordered visually; it holds no interactive content here
+          (needsReview is 0 by construction), so visual order and tab order
+          cannot disagree.
+
+          Absent on the locked twin, on purpose: there the shell's rail is
+          present and carries the pulse, exactly as the signed-in app does —
+          a second in-page copy is the duplication the rail move removed. */}
+      {locked ? null : (
+        <div className="max-sm:order-last">
+          <PipelinePulse
+            applications={snapshot.apps}
+            total={snapshot.apps.length}
+            needsReview={0}
+          />
+        </div>
+      )}
+      <PipelineBoard
+        variant={locked ? "locked" : "flow"}
+        applications={snapshot.apps}
+        transport={boardTransport}
+      />
     </section>
   );
 }

@@ -13,9 +13,16 @@ import { isNavItemActive, navItems } from "./nav";
 
 type TopBarProps = {
   userEmail: string | null;
+  /**
+   * Fixture mode (/demo/shell): there is no session to sign out of, so the
+   * sign-out button becomes the demo provenance pill — same slot, same bar
+   * height, and an anonymous visitor is never handed a control that can only
+   * bounce them to /login.
+   */
+  demo?: boolean;
 };
 
-export function TopBar({ userEmail }: TopBarProps) {
+export function TopBar({ userEmail, demo = false }: TopBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -79,14 +86,24 @@ export function TopBar({ userEmail }: TopBarProps) {
         <div className="truncate text-sm text-muted md:hidden">{userEmail ?? ""}</div>
       </div>
 
-      <Button
-        type="button"
-        variant="ghost"
-        onClick={handleSignOut}
-        disabled={isSigningOut}
-      >
-        {isSigningOut ? "Signing out…" : "Sign out"}
-      </Button>
+      {demo ? (
+        <Link
+          href="/demo"
+          aria-label="Demo shell on fixture data — back to the demo overview"
+          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted transition-colors hover:text-strong focus-accent"
+        >
+          demo · fixture data
+        </Link>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={handleSignOut}
+          disabled={isSigningOut}
+        >
+          {isSigningOut ? "Signing out…" : "Sign out"}
+        </Button>
+      )}
 
       {/* Mobile navigation — mirrors the desktop sidebar (same items + active
           state) and is the only in-app nav below `md`. */}
