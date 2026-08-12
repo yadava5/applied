@@ -67,7 +67,7 @@ numpy>=1.24.0                 # Numerical operations, embedding serialization
 # -----------------------------------------------------------------------------
 # Email Parsing
 # -----------------------------------------------------------------------------
-beautifulsoup4>=4.12.0        # HTML email parsing
+beautifulsoup4>=4.15.0        # HTML email parsing
 lxml>=6.1.1                   # Fast HTML/XML parser (bs4 backend) (>=6.1.0: PYSEC-2026-87)
 python-dateutil>=2.8.0        # Date parsing utilities
 
