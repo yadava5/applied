@@ -17,7 +17,7 @@ A negative pattern cannot actually veto anything: a strong pattern in the
 subject is +6 and one negative is -5, so "Newsletter: 2026 skills assessment
 trends" still scored +1 and won as `assessment`. Veto patterns exist for the
 cases where a phrase means the category is wrong regardless of what else the
-text says — see EmailCategory.ASSESSMENT below.
+text says — see EmailCategory.ASSESSMENT and EmailCategory.FOLLOW_UP below.
 
 The category with highest score wins. Confidence is based on margin and match strength.
 """
@@ -50,31 +50,82 @@ class CategoryPatterns:
     veto: list[str] = field(default_factory=list)
 
 
+# The sentences that state the hiring decision has gone AGAINST the candidate.
+# DECISION SENTENCES — the block below appears TWICE on purpose, once as
+# REJECTION's strongest evidence and once as FOLLOW_UP's veto (a message that
+# says the decision is made is not a nudge, whatever its subject line reads).
+#
+# It is duplicated rather than shared through a module constant, and that is
+# not an oversight. Three things read these lists as LITERALS in the PATTERNS
+# dict and cannot see through a splat or a `list(...)` call:
+#   * ``scripts/readme_facts.py`` parses this file statically for the pattern
+#     counts the README, `apps/web/lib/demo/rulesLayer.ts` and
+#     `ml/browser/site/app.js` all publish — a shared constant silently
+#     under-counted this file by 12 and turned a checked claim into a wrong one;
+#   * ``ml/demo/space/jobtracker/classifier/rules.py`` is a byte-identical copy;
+#   * ``apps/web/lib/demo/rules.json`` enumerates every pattern for the browser
+#     port, so it can never agree with a count that hides some of them.
+# Keep them in step by hand, and keep them in step with those three files.
+#
+# The mail that forced this is a real rejection from Anthropic, subject
+# "Anthropic Follow-Up for TPU Kernel Engineer | Ayush Yadav", body "…we have
+# decided not to move forward with your application". The word "Follow-Up" in
+# the subject scored follow_up +6 and the rejection sentence scored NOTHING, so
+# it classified as follow_up at 0.90 — and ``follow_up`` reaches neither
+# ``pipeline._qualifies_for_hard_row`` nor ``pipeline.collect_review_items``, so
+# the message was never persisted at all.
+
+
 # Pattern definitions for each category
 PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.REJECTION: CategoryPatterns(
         strong=[
-            r"unfortunately.{0,50}(not|won't|will not|unable)",
             r"regret to inform",
             r"decided not to proceed",
+            # The INFINITIVE. "we have decided not to move forward with your
+            # application" is the most standard rejection sentence there is and
+            # it matched nothing here: every pattern below wanted the participle
+            # ("moving") or the bare "not …forward" with no "to" in between. The
+            # participle already carries a general form AND a noun-anchored one,
+            # which is how it reaches +6 from a body alone; the infinitive gets
+            # the same pair so the two inflections are worth the same.
+            r"not to (move|proceed|go) forward",
+            r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
-            r"move(d)? forward with other candidates",
+            r"will not be moving forward.{0,30}(application|candidacy)",
+            r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
+            # Replaces `move(d)? forward with other candidates` and
+            # `chosen to move forward with another candidate`: neither had the
+            # participle, so "we will be moving forward with other candidates
+            # whose qualifications more closely match" scored 0.
+            r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            # Replaces `decided to pursue other candidates`, which required both
+            # the lead-in and the noun "candidates"; "pursue other applicants"
+            # scored 0.
+            r"pursu(e|ing) other (candidates|applicants)",
+            r"not (been )?selected.{0,30}(position|role|interview)",
+            # "You have not been selected." — a complete rejection with no
+            # trailing noun for the pattern above to anchor on.
+            r"\bnot been selected\b",
+            r"not (be )?able to offer.{0,20}(position|role|interview)",
+            # "unable" is not "not able", and it is the form ATS templates use:
+            # "we are unable to offer you a position at this time".
+            r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (proceed|continue|move forward) with",
+            # Was `won't be advancing…` — contraction only, so "we will not be
+            # advancing your candidacy" missed.
+            r"(won't|will not) be advancing.{0,20}(application|candidacy)",
             r"position has been filled",
+            r"we('ve| have) decided to go in (a )?different direction",
+            # --- end of the block FOLLOW_UP.veto repeats -------------------
+            r"unfortunately.{0,50}(not|won't|will not|unable)",
             r"(role|position).{0,20}(closed|filled)",
             r"decision on (your |my )?candidacy",
-            r"not (been )?selected.{0,30}(position|role|interview)",
-            r"will not be moving forward.{0,30}(application|candidacy)",
-            r"not (be )?able to offer.{0,20}(position|role|interview)",
-            r"decided to pursue other candidates",
-            r"chosen to move forward with another candidate",
             r"after careful (consideration|review).{0,30}(not|decided|unfortunately)",
-            r"we('ve| have) decided to go in (a )?different direction",
             r"wish you (the best|well|success) in your (job )?search",
             r"encourage you to apply (for )?future.{0,20}(position|role|opening)",
             r"keep your (resume|application) on file",
-            r"won't be advancing.{0,20}(application|candidacy)",
             r"not a (good )?fit.{0,20}(at this time|for this role)",
-            r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
         ],
         weak=[
             r"competitive (applicant )?(pool|field)",
@@ -84,7 +135,18 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
         negative=[
             r"schedule.{0,20}interview",
             r"excited to (meet|speak)",
-            r"offer (you|letter|of employment)",
+            # Was one pattern, `offer (you|letter|of employment)`. The bare
+            # "offer you" arm fired on "we are unable to offer you a position at
+            # this time" — a rejection stated as an offer that isn't — for -5,
+            # cancelling the +3 that sentence had just earned and landing the
+            # mail in `other` at 0.50. Split so the "you" arm needs the
+            # affirmative lead-in an actual offer carries. Deliberately NOT a
+            # lookbehind: `apps/web/lib/demo/rules.json` compiles every one of
+            # these with `new RegExp(p, "i")` in the browser, the port declares
+            # an ES2017 baseline, and lookbehind is ES2018 — one unsupported
+            # pattern throws at construction and takes the whole layer with it.
+            r"offer (letter|of employment)",
+            r"(pleased|delighted|happy|excited|glad|would like) to offer",
             r"looking forward to speaking",
             r"thank you for applying",
             r"application.{0,20}received",
@@ -339,7 +401,6 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.FOLLOW_UP: CategoryPatterns(
         strong=[
             r"following up.{0,30}(application|interview|position|role)",
-            r"follow-?up",
             r"check(ing)? in.{0,30}(application|status|interview)",
             r"any update(s)?.{0,20}(application|interview|position)",
             r"status (of|on).{0,20}(your |my )application",
@@ -349,6 +410,16 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
         ],
         weak=[
             r"circling back.{0,30}(application|interview|position|role)",
+            # Demoted from `strong`. On its own the compound noun says only
+            # that a thread is being continued — scheduling mail, recruiter
+            # nudges and rejections all use it — yet as a strong SUBJECT match
+            # it was worth +6, i.e. 0.90 confidence and an auto-file, from one
+            # word and no other evidence whatsoever. Every pattern above it
+            # names what is being followed up on; this one does not, so it is
+            # weak evidence and now scores like it. The phrasal verb
+            # ("following up on your application") is unaffected: it never
+            # matched this pattern, it matches the first `strong` entry.
+            r"follow-?up",
         ],
         negative=[
             r"unfortunately",
@@ -360,6 +431,36 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer|flash sale)\b",
             r"\b(order|purchase|shipment|tracking number)\b",
             r"\b(security alert|verification code|otp|one[- ]time (passcode|password|code)|sign[- ]in|login)\b",
+        ],
+        # A stated hiring decision makes this category WRONG, not merely less
+        # likely — the exact bar the veto tier exists for. A -5 negative cannot
+        # do it: "Following up on your application" is a genuine strong subject
+        # match at +6, so a rejection body scoring +6 of its own only ties it,
+        # and a tie is decided by enum order at confidence 0.60. Vetoing gives
+        # the rejection the whole margin, which is what it has earned.
+        #
+        # This IS the decision block from EmailCategory.REJECTION.strong,
+        # repeated verbatim. See the note above PATTERNS for why it is copied
+        # rather than shared: three files count these as literals. Change one,
+        # change the other.
+        veto=[
+            r"regret to inform",
+            r"decided not to proceed",
+            r"not to (move|proceed|go) forward",
+            r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
+            r"not (be )?(moving|proceeding) forward",
+            r"will not be moving forward.{0,30}(application|candidacy)",
+            r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
+            r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            r"pursu(e|ing) other (candidates|applicants)",
+            r"not (been )?selected.{0,30}(position|role|interview)",
+            r"\bnot been selected\b",
+            r"not (be )?able to offer.{0,20}(position|role|interview)",
+            r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (proceed|continue|move forward) with",
+            r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            r"position has been filled",
+            r"we('ve| have) decided to go in (a )?different direction",
         ],
     ),
 }

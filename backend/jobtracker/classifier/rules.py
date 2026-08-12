@@ -51,12 +51,21 @@ class CategoryPatterns:
 
 
 # The sentences that state the hiring decision has gone AGAINST the candidate.
+# DECISION SENTENCES — the block below appears TWICE on purpose, once as
+# REJECTION's strongest evidence and once as FOLLOW_UP's veto (a message that
+# says the decision is made is not a nudge, whatever its subject line reads).
 #
-# Named once and shared by two categories, because they answer two different
-# questions with the same evidence:
-#   * ``REJECTION`` scores them — they are its strongest signal;
-#   * ``FOLLOW_UP`` vetoes on them — a message that says the decision is made
-#     is not a nudge, whatever its subject line reads.
+# It is duplicated rather than shared through a module constant, and that is
+# not an oversight. Three things read these lists as LITERALS in the PATTERNS
+# dict and cannot see through a splat or a `list(...)` call:
+#   * ``scripts/readme_facts.py`` parses this file statically for the pattern
+#     counts the README, `apps/web/lib/demo/rulesLayer.ts` and
+#     `ml/browser/site/app.js` all publish — a shared constant silently
+#     under-counted this file by 12 and turned a checked claim into a wrong one;
+#   * ``ml/demo/space/jobtracker/classifier/rules.py`` is a byte-identical copy;
+#   * ``apps/web/lib/demo/rules.json`` enumerates every pattern for the browser
+#     port, so it can never agree with a count that hides some of them.
+# Keep them in step by hand, and keep them in step with those three files.
 #
 # The mail that forced this is a real rejection from Anthropic, subject
 # "Anthropic Follow-Up for TPU Kernel Engineer | Ayush Yadav", body "…we have
@@ -64,52 +73,51 @@ class CategoryPatterns:
 # the subject scored follow_up +6 and the rejection sentence scored NOTHING, so
 # it classified as follow_up at 0.90 — and ``follow_up`` reaches neither
 # ``pipeline._qualifies_for_hard_row`` nor ``pipeline.collect_review_items``, so
-# the message was never persisted at all. Two lists would drift; one cannot.
-REJECTION_DECISION_PATTERNS: list[str] = [
-    r"regret to inform",
-    r"decided not to proceed",
-    # The INFINITIVE. "we have decided not to move forward with your
-    # application" is the most standard rejection sentence there is and it
-    # matched nothing here: every pattern below wanted the participle
-    # ("moving") or the bare "not …forward" with no "to" in between. The
-    # participle already carries a general form AND a noun-anchored form, which
-    # is how it reaches +6 from a body alone; the infinitive gets the same pair
-    # so the two inflections are worth the same, which is the whole point.
-    r"not to (move|proceed|go) forward",
-    r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
-    r"not (be )?(moving|proceeding) forward",
-    r"will not be moving forward.{0,30}(application|candidacy)",
-    r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
-    # Replaces `move(d)? forward with other candidates` and
-    # `chosen to move forward with another candidate`: neither had the
-    # participle, so "we will be moving forward with other candidates whose
-    # qualifications more closely match" — the standard ATS wording — scored 0.
-    r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
-    # Replaces `decided to pursue other candidates`, which required both the
-    # lead-in and the noun "candidates"; "pursue other applicants" scored 0.
-    r"pursu(e|ing) other (candidates|applicants)",
-    r"not (been )?selected.{0,30}(position|role|interview)",
-    # "You have not been selected." — a complete rejection with no trailing
-    # noun for the pattern above to anchor on.
-    r"\bnot been selected\b",
-    r"not (be )?able to offer.{0,20}(position|role|interview)",
-    # "unable" is not "not able", and it is the form ATS templates use:
-    # "we are unable to offer you a position at this time".
-    r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
-    r"unable to (proceed|continue|move forward) with",
-    # Was `won't be advancing…` — contraction only, so "we will not be
-    # advancing your candidacy" missed.
-    r"(won't|will not) be advancing.{0,20}(application|candidacy)",
-    r"position has been filled",
-    r"we('ve| have) decided to go in (a )?different direction",
-]
+# the message was never persisted at all.
 
 
 # Pattern definitions for each category
 PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     EmailCategory.REJECTION: CategoryPatterns(
         strong=[
-            *REJECTION_DECISION_PATTERNS,
+            r"regret to inform",
+            r"decided not to proceed",
+            # The INFINITIVE. "we have decided not to move forward with your
+            # application" is the most standard rejection sentence there is and
+            # it matched nothing here: every pattern below wanted the participle
+            # ("moving") or the bare "not …forward" with no "to" in between. The
+            # participle already carries a general form AND a noun-anchored one,
+            # which is how it reaches +6 from a body alone; the infinitive gets
+            # the same pair so the two inflections are worth the same.
+            r"not to (move|proceed|go) forward",
+            r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
+            r"not (be )?(moving|proceeding) forward",
+            r"will not be moving forward.{0,30}(application|candidacy)",
+            r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
+            # Replaces `move(d)? forward with other candidates` and
+            # `chosen to move forward with another candidate`: neither had the
+            # participle, so "we will be moving forward with other candidates
+            # whose qualifications more closely match" scored 0.
+            r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            # Replaces `decided to pursue other candidates`, which required both
+            # the lead-in and the noun "candidates"; "pursue other applicants"
+            # scored 0.
+            r"pursu(e|ing) other (candidates|applicants)",
+            r"not (been )?selected.{0,30}(position|role|interview)",
+            # "You have not been selected." — a complete rejection with no
+            # trailing noun for the pattern above to anchor on.
+            r"\bnot been selected\b",
+            r"not (be )?able to offer.{0,20}(position|role|interview)",
+            # "unable" is not "not able", and it is the form ATS templates use:
+            # "we are unable to offer you a position at this time".
+            r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (proceed|continue|move forward) with",
+            # Was `won't be advancing…` — contraction only, so "we will not be
+            # advancing your candidacy" missed.
+            r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            r"position has been filled",
+            r"we('ve| have) decided to go in (a )?different direction",
+            # --- end of the block FOLLOW_UP.veto repeats -------------------
             r"unfortunately.{0,50}(not|won't|will not|unable)",
             r"(role|position).{0,20}(closed|filled)",
             r"decision on (your |my )?candidacy",
@@ -127,11 +135,18 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
         negative=[
             r"schedule.{0,20}interview",
             r"excited to (meet|speak)",
-            # The lookbehinds matter: "we are unable to offer you a position at
-            # this time" is a rejection stated as an offer that isn't. Without
-            # them this negative fired on it for -5, cancelling the +3 the
-            # sentence had just earned and landing the mail in `other` at 0.50.
-            r"(?<!unable to )(?<!not able to )offer (you|letter|of employment)",
+            # Was one pattern, `offer (you|letter|of employment)`. The bare
+            # "offer you" arm fired on "we are unable to offer you a position at
+            # this time" — a rejection stated as an offer that isn't — for -5,
+            # cancelling the +3 that sentence had just earned and landing the
+            # mail in `other` at 0.50. Split so the "you" arm needs the
+            # affirmative lead-in an actual offer carries. Deliberately NOT a
+            # lookbehind: `apps/web/lib/demo/rules.json` compiles every one of
+            # these with `new RegExp(p, "i")` in the browser, the port declares
+            # an ES2017 baseline, and lookbehind is ES2018 — one unsupported
+            # pattern throws at construction and takes the whole layer with it.
+            r"offer (letter|of employment)",
+            r"(pleased|delighted|happy|excited|glad|would like) to offer",
             r"looking forward to speaking",
             r"thank you for applying",
             r"application.{0,20}received",
@@ -423,7 +438,30 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
         # match at +6, so a rejection body scoring +6 of its own only ties it,
         # and a tie is decided by enum order at confidence 0.60. Vetoing gives
         # the rejection the whole margin, which is what it has earned.
-        veto=list(REJECTION_DECISION_PATTERNS),
+        #
+        # This IS the decision block from EmailCategory.REJECTION.strong,
+        # repeated verbatim. See the note above PATTERNS for why it is copied
+        # rather than shared: three files count these as literals. Change one,
+        # change the other.
+        veto=[
+            r"regret to inform",
+            r"decided not to proceed",
+            r"not to (move|proceed|go) forward",
+            r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
+            r"not (be )?(moving|proceeding) forward",
+            r"will not be moving forward.{0,30}(application|candidacy)",
+            r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
+            r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            r"pursu(e|ing) other (candidates|applicants)",
+            r"not (been )?selected.{0,30}(position|role|interview)",
+            r"\bnot been selected\b",
+            r"not (be )?able to offer.{0,20}(position|role|interview)",
+            r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (proceed|continue|move forward) with",
+            r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            r"position has been filled",
+            r"we('ve| have) decided to go in (a )?different direction",
+        ],
     ),
 }
 
