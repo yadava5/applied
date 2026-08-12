@@ -180,18 +180,25 @@ def rules_pattern_counts(rel: str) -> dict[str, int]:
     The `PATTERNS` dict literal in a rules.py, counted by AST.
 
     Shape: `PATTERNS: dict[EmailCategory, CategoryPatterns] = {
-                EmailCategory.X: CategoryPatterns(strong=[...], weak=[...], negative=[...]),
+                EmailCategory.X: CategoryPatterns(strong=[...], weak=[...],
+                                                  negative=[...], veto=[...]),
                 ...}`
 
     Counting by AST rather than by grepping for quotes is what makes this a
     definition-site count: a regex that mentions `strong` in a comment, or a
     pattern list built somewhere else and never placed in PATTERNS, cannot
     contribute.
+
+    `total` is the SCORED patterns — strong + weak + negative — and deliberately
+    excludes `veto`, which contributes no points and instead caps a category at
+    zero. Vetoes are counted separately and claimed separately, because folding
+    them into one number would make the "N strong, M weak, K negative"
+    breakdown stop summing to it.
     """
     node = _assigned(rel, "PATTERNS")
     if not isinstance(node, ast.Dict):
         raise SystemExit(f"  ✗ {rel}: PATTERNS is not a dict literal")
-    out = {"strong": 0, "weak": 0, "negative": 0, "categories": len(node.keys)}
+    out = {"strong": 0, "weak": 0, "negative": 0, "veto": 0, "categories": len(node.keys)}
     for value in node.values:
         if not isinstance(value, ast.Call):
             raise SystemExit(f"  ✗ {rel}: a PATTERNS value is not a CategoryPatterns(...) call")
@@ -214,7 +221,7 @@ def _rules(rel: str = BACKEND_RULES) -> dict[str, int]:
 
 
 def json_patterns(rel: str) -> int:
-    """Pattern count in one of the JS ports' rules.json (categories → lists)."""
+    """Scored pattern count in one of the JS ports' rules.json (categories → lists)."""
     data = json.loads(read(rel))
     cats = data["categories"] if "categories" in data else data
     return sum(
@@ -222,6 +229,23 @@ def json_patterns(rel: str) -> int:
         for group in cats.values()
         if isinstance(group, dict)
         for k in ("strong", "weak", "negative")
+    )
+
+
+def json_veto_patterns(rel: str) -> int:
+    """Veto count in one of the JS ports' rules.json.
+
+    Separate from `json_patterns` so the port invariants check the veto lists
+    too. Without it, a port that carried every scored pattern and none of the
+    vetoes would satisfy the count and ship the noun patterns with their guards
+    missing — which is the failure the vetoes exist to prevent.
+    """
+    data = json.loads(read(rel))
+    cats = data["categories"] if "categories" in data else data
+    return sum(
+        len(group.get("veto", []))
+        for group in cats.values()
+        if isinstance(group, dict)
     )
 
 
@@ -421,6 +445,14 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"\d+ strong · \d+ weak · (\d+) negative",
             r"\(\d+ strong, \d+ weak, (\d+) negative\)",
+        ],
+    },
+    "rulesVeto": {
+        "kind": "static",
+        "describe": "veto patterns in PATTERNS (not scored, not in the total)",
+        "compute": lambda: _rules()["veto"],
+        "sites": [
+            r"A further (\d+) \*\*veto\*\* patterns",
         ],
     },
     "rulesCategories": {
@@ -799,7 +831,7 @@ FACTS: dict[str, dict] = {
 
 INVARIANTS = [
     {
-        "name": "the strong/weak/negative split accounts for every pattern",
+        "name": "the strong/weak/negative split accounts for every scored pattern",
         "holds": lambda f: f["rulesStrong"] + f["rulesWeak"] + f["rulesNegative"] == f["rulesPatterns"],
         "explain": lambda f: (
             f"{f['rulesStrong']} + {f['rulesWeak']} + {f['rulesNegative']} = "
@@ -846,20 +878,40 @@ INVARIANTS = [
     },
     {
         "name": "the second copy of rules.py under ml/demo/space carries the same patterns",
-        "holds": lambda f: _rules(DEMO_SPACE_RULES)["total"] == f["rulesPatterns"],
+        "holds": lambda f: (
+            _rules(DEMO_SPACE_RULES)["total"] == f["rulesPatterns"]
+            and _rules(DEMO_SPACE_RULES)["veto"] == f["rulesVeto"]
+        ),
         "explain": lambda f: (
-            f"{DEMO_SPACE_RULES} has {_rules(DEMO_SPACE_RULES)['total']} patterns, "
-            f"{BACKEND_RULES} has {f['rulesPatterns']}. There are two copies of this file on "
+            f"{DEMO_SPACE_RULES} has {_rules(DEMO_SPACE_RULES)['total']} scored patterns and "
+            f"{_rules(DEMO_SPACE_RULES)['veto']} vetoes, {BACKEND_RULES} has "
+            f"{f['rulesPatterns']} and {f['rulesVeto']}. There are two copies of this file on "
             f"purpose; they have diverged."
         ),
     },
     {
+        # Both JSON ports are byte-identical and only one is named here, which
+        # is enough: `ml/browser/site/rules.json` is a copy of this file, and
+        # the two engines that read them are checked by their own claim sites.
         "name": "the browser port's rules.json carries the same patterns",
-        "holds": lambda f: json_patterns("apps/web/lib/demo/rules.json") == f["rulesPatterns"],
+        "holds": lambda f: (
+            json_patterns("apps/web/lib/demo/rules.json") == f["rulesPatterns"]
+            and json_veto_patterns("apps/web/lib/demo/rules.json") == f["rulesVeto"]
+        ),
         "explain": lambda f: (
             f"apps/web/lib/demo/rules.json has {json_patterns('apps/web/lib/demo/rules.json')} "
-            f"patterns, {BACKEND_RULES} has {f['rulesPatterns']}. The /demo page is running a "
-            f"different layer 1 from the product."
+            f"scored patterns and {json_veto_patterns('apps/web/lib/demo/rules.json')} vetoes, "
+            f"{BACKEND_RULES} has {f['rulesPatterns']} and {f['rulesVeto']}. The /demo page is "
+            f"running a different layer 1 from the product."
+        ),
+    },
+    {
+        "name": "the two JSON ports are the same file",
+        "holds": lambda f: read("apps/web/lib/demo/rules.json") == read("ml/browser/site/rules.json"),
+        "explain": lambda f: (
+            "apps/web/lib/demo/rules.json and ml/browser/site/rules.json have diverged. They are "
+            "the same pattern table served to two different pages; whichever was regenerated, the "
+            "other was not."
         ),
     },
     {
