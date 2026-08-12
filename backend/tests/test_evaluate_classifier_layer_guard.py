@@ -123,6 +123,74 @@ def test_full_run_is_not_compared_against_a_deterministic_baseline() -> None:
     assert len(failures) == 1, "the mismatch must short-circuit, not add to metric noise"
 
 
+def test_layer_guard_names_the_directory_it_searched() -> None:
+    """
+    On a hosted runner the cause is always "no checkpoint ships in the repo".
+    Saying which directory was empty is what keeps that from reading as a bug.
+    """
+    report = _report({"content_filter": 5, "fallback": 33, "rules": 58})
+    report["artifacts"] = {"setfit": {"checkpoint": None, "models_dir": "/runner/models/setfit"}}
+
+    failures = _assert_layers_exercised(report, mode="hybrid", hybrid_profile="full")
+
+    assert failures
+    assert "/runner/models/setfit" in failures[0]
+
+
+def test_baseline_recorded_with_setfit_is_not_compared_to_a_run_without_it() -> None:
+    """
+    The cascade baseline was recorded with a checkpoint loaded. Run the same
+    command where no checkpoint exists and every prediction comes from rules --
+    which scores HIGHER on this dataset. Compared naively that is a pass, and it
+    would pin the rules number under the cascade's name.
+    """
+    current = {
+        "meta": {"mode": "hybrid", "hybrid_profile": "full"},
+        "overall": {"accuracy": 0.9792, "macro_f1": 0.9791, "weighted_f1": 0.9791},
+        "per_label": {},
+        "layers": {"rules": 58, "fallback": 33, "content_filter": 5},
+    }
+    baseline = {
+        "meta": {"mode": "hybrid", "hybrid_profile": "full"},
+        "overall": {"accuracy": 0.9583, "macro_f1": 0.9582, "weighted_f1": 0.9582},
+        "per_label": {},
+        "layers": {"rules": 58, "setfit": 20, "fallback": 13, "content_filter": 5},
+        "artifacts": {"setfit": {"checkpoint": "setfit_model_20260306_175404"}},
+    }
+
+    failures = compare_against_baseline(current, baseline, tolerance=0.0)
+
+    assert failures, "a run without the baseline's model is not comparable to it"
+    assert "learned layer mismatch" in failures[0]
+    assert "setfit" in failures[0]
+    assert "setfit_model_20260306_175404" in failures[0]
+    assert len(failures) == 1, "the mismatch must short-circuit, not add to metric noise"
+
+
+def test_legacy_baselines_without_a_layer_tally_still_compare() -> None:
+    """
+    Every baseline committed before the tally existed stores ``layers: null``.
+    Those must keep comparing on metrics rather than failing as unattributable.
+    """
+    current = {
+        "meta": {"mode": "rules"},
+        "overall": {"accuracy": 0.90, "macro_f1": 0.89, "weighted_f1": 0.90},
+        "per_label": {},
+        "layers": {"rules": 96},
+    }
+    baseline = {
+        "meta": {"mode": "rules"},
+        "overall": {"accuracy": 0.95, "macro_f1": 0.94, "weighted_f1": 0.95},
+        "per_label": {},
+        "layers": None,
+    }
+
+    failures = compare_against_baseline(current, baseline, tolerance=0.0)
+
+    assert not any("learned layer mismatch" in f for f in failures)
+    assert any("overall.macro_f1" in f for f in failures)
+
+
 def test_matching_profiles_still_compare_metrics() -> None:
     same = {"meta": {"mode": "hybrid", "hybrid_profile": "deterministic"}}
     current = {
