@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from jobtracker.classifier.embeddings import EmbeddingsClassifier
 from jobtracker.scripts.evaluate_classifier import (
     PROMOTION_MARGIN,
     _configure_hybrid_profile,
@@ -175,15 +176,19 @@ def test_compare_against_baseline_flags_f1_regression() -> None:
     assert any("per_label.applied.f1" in msg for msg in failures)
 
 
-class _FakeEmbeddings:
-    def __init__(self) -> None:
-        self._known_embeddings = [("x", "y")]
-        self._loaded = False
-
-
 class _FakeHybridClassifier:
+    """Stands in for ``HybridClassifier``, but holds a REAL layer-2 instance.
+
+    The embeddings half used to be a hand-written double carrying just
+    ``_known_embeddings`` / ``_loaded``. That let the double drift away from
+    the class it imitated: when layer 2 gained an owner-keyed load cache, a
+    hand-written double would have kept this test green while the
+    ``deterministic`` profile silently started re-reading the database.
+    """
+
     def __init__(self) -> None:
-        self._embeddings = _FakeEmbeddings()
+        self._embeddings = EmbeddingsClassifier()
+        self._embeddings._known_embeddings = [("x", "y")]
         self.lite_mode_enabled = False
 
     def set_lite_mode(self, enabled: bool) -> None:

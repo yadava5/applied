@@ -336,9 +336,11 @@ def _configure_hybrid_profile(classifier: HybridClassifier, profile: str) -> Non
         classifier.set_lite_mode(True)
         embeddings = getattr(classifier, "_embeddings", None)
         if embeddings is not None:
-            # Prevent DB/stateful embedding examples from affecting benchmark outcomes.
-            embeddings._known_embeddings = []
-            embeddings._loaded = True
+            # Prevent DB/stateful embedding examples from affecting benchmark
+            # outcomes. Must go through ``pin_empty_corpus``: the layer's load
+            # cache is keyed by owner, so poking ``_loaded`` alone no longer
+            # stops a re-read for a caller with a different identity.
+            embeddings.pin_empty_corpus()
         return
 
     raise ValueError(f"Unsupported hybrid profile: {profile}")
