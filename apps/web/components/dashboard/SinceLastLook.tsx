@@ -334,6 +334,9 @@ export function SinceLastLook({
   }
 
   const Chevron = named ? ChevronUp : ChevronDown;
+  /** The phone's one number, summed from the same groups the wider line prints
+   *  one by one — two renderings of one reading, never two readings. */
+  const counted = groups.reduce((sum, group) => sum + group.count, 0);
 
   return (
     <section
@@ -368,7 +371,7 @@ export function SinceLastLook({
                 wider line gets the kinds. The count is the group's heading in
                 both — no summary restates it. */}
             <span className="sm:hidden">
-              {entries.length} change{entries.length === 1 ? "" : "s"}
+              {counted} change{counted === 1 ? "" : "s"}
             </span>
             <span className="hidden sm:inline">
               {groups.map((group, i) => (
