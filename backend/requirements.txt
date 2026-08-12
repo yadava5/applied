@@ -12,7 +12,7 @@ uvicorn[standard]>=0.27.0     # ASGI server with uvloop
 pydantic>=2.13.4               # Data validation using Python type hints
 pydantic-settings>=2.14.2     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
 email-validator>=2.3.0        # Email validation for Pydantic EmailStr
-websockets>=12.0              # WebSocket support for real-time sync updates
+websockets>=17.0.1              # WebSocket support for real-time sync updates
 
 # -----------------------------------------------------------------------------
 # Database (Async SQLite + Postgres)
