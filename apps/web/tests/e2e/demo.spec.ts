@@ -38,9 +38,17 @@ function syncSurface(page: Page) {
  * deadline not yet known. `v` is the record version — if the shape changes and
  * this is not updated, `parseLastLook` rejects it and the ledger renders the
  * first-visit line, which every assertion below then fails on.
+ *
+ * It seeds ONCE, and the guard is load-bearing. `addInitScript` runs again on
+ * every navigation, `page.reload()` included, so an unconditional write would
+ * put the seeded visit back after the reload that checks "Mark as seen" stuck
+ * — the ledger would read loud again and the test would fail whether the
+ * product was right or wrong. A real prior visit is written once and then
+ * lives in the browser; so is this one.
  */
 async function seedPriorVisit(page: Page): Promise<void> {
   await page.addInitScript(() => {
+    if (window.localStorage.getItem("applied:lastlook:demo") !== null) return;
     const dueDay = (days: number) =>
       `${new Date(Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`) + days * 86_400_000)
         .toISOString()
@@ -448,6 +456,50 @@ test.describe("live demo (/demo)", () => {
     await expect(band).not.toContainText("filed");
     await expect(band.getByRole("button", { name: "Mark as seen" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "since you last looked" })).toHaveCount(0);
+  });
+
+  test("the ledger holds its line open, so appearing never moves the board", async ({ browser }) => {
+    // The ledger is read out of localStorage, so it has nothing to say until
+    // hydration. Rendering NOTHING until then made it appear ~70ms after first
+    // paint and push every card down 41.9px — and a pointer that pressed a
+    // card inside that window released above it, so the browser retargeted the
+    // click to the column's <ul> and the card never opened. That was measured
+    // on /demo, and it is what took five tests here red or flaky in CI.
+    //
+    // The property, stated as geometry rather than as a class name: where the
+    // board sits with no script at all — the server's own layout — is where it
+    // sits once the ledger has rendered. Any future band that appears above
+    // the board without reserving its space fails here.
+    const noScript = await browser.newContext({
+      javaScriptEnabled: false,
+      viewport: { width: 1440, height: 900 },
+    });
+    const served = await noScript.newPage();
+    await served.goto("/demo");
+    const card = (p: Page) =>
+      p.getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" });
+    const serverBox = await card(served).boundingBox();
+    // Asserted on the page that can never hydrate, so it is a fact about the
+    // served HTML rather than a race against the effect that replaces it.
+    const reservedWhileSilent = await served.getByTestId("since-last-look-reserve").count();
+    await noScript.close();
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto("/demo");
+    await expect(ledger(page)).toContainText("No earlier visit recorded in this browser");
+    const hydratedBox = await card(page).boundingBox();
+    const reservedAfter = await page.getByTestId("since-last-look-reserve").count();
+    await page.close();
+
+    // The geometry is the claim; the two counts below only name the mechanism.
+    expect(serverBox, "the board's Open control must render without script").not.toBeNull();
+    expect(hydratedBox).not.toBeNull();
+    expect(
+      Math.abs((hydratedBox?.y ?? 0) - (serverBox?.y ?? 0)),
+      `the board moved ${(hydratedBox?.y ?? 0) - (serverBox?.y ?? 0)}px when the ledger rendered`,
+    ).toBeLessThanOrEqual(1);
+    expect(reservedWhileSilent, "the served HTML must hold the ledger's line open").toBe(1);
+    expect(reservedAfter, "the placeholder must give way to the real line").toBe(0);
   });
 
   test("a prior visit turns the ledger loud: what arrived, what moved, what gained a date", async ({

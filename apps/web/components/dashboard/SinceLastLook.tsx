@@ -74,9 +74,12 @@ import { STAGES } from "@/lib/dashboard/summary";
  * the single case the feature exists for. See `lib/dashboard/lastLook.ts`.
  *
  * SSR / no-JS: the marker is `localStorage`, which the server cannot read, so
- * `useSyncExternalStore`'s server snapshot is `null` and this renders nothing
- * at all until hydration — no mismatch, and no board state depends on it. With
- * JS off the dashboard is exactly the dashboard, minus one reading aid.
+ * `useSyncExternalStore`'s server snapshot is `null` and this has nothing to
+ * SAY until hydration — no mismatch, and no board state depends on it. It
+ * still occupies its line from the server pass, though; see
+ * `ReservedLine` below, which is not decoration but the fix for a measured
+ * defect. With JS off the dashboard is exactly the dashboard, minus one
+ * reading aid.
  */
 
 /** The board's own accent per column word — the dot beside a stage here is the
@@ -107,6 +110,44 @@ function DueNote({ dueAt, today }: { dueAt: string; today: string }) {
     due.state === "overdue" ? "text-reject" : due.state === "soon" ? "text-review" : "text-dim";
   return (
     <span className={`tabular shrink-0 font-mono text-[10px] ${ink}`}>{duePhrase(due.daysLeft)}</span>
+  );
+}
+
+/**
+ * The line this band will occupy, held open from the SERVER pass — the one
+ * piece of this component that must render before the marker is readable.
+ *
+ * Measured, on `next dev` at 1440×900: without it the band appeared ~70 ms
+ * after first paint and moved every card on the board down by 41.9 px (17.9 px
+ * of line + the page's 24 px stack gap). A pointer that pressed a card inside
+ * that window released 41.9 px above it, so the browser retargeted the `click`
+ * to the column's `<ul>` — the nearest common ancestor of press and release —
+ * and the card's own handler never ran. The card simply did not open. Five
+ * tests across this suite hit that race in CI (three red, two flaky), and a
+ * real first click landing in the same window is just as dead; this is a CLS
+ * defect, not a test-harness quirk.
+ *
+ * A `&nbsp;` rather than a pixel height: it is the same font at the same size
+ * with the same leading as the sentence that replaces it, so the two line
+ * boxes are identical by construction and stay identical if the type scale
+ * moves. `aria-hidden` because it says nothing — a reader must not be told
+ * there is a blank region here.
+ *
+ * It reserves ONE line, which is exactly what the first-run and quiet states
+ * render at any width the board is usable at. Two shifts remain and are
+ * stated rather than hidden: the loud state is taller than one line, and below
+ * ~640px the sentences wrap. Nothing rendered above a board can avoid those
+ * while the marker lives in this browser rather than on the server.
+ */
+function ReservedLine() {
+  return (
+    <div
+      data-testid="since-last-look-reserve"
+      aria-hidden="true"
+      className="text-[13px] leading-snug"
+    >
+      &nbsp;
+    </div>
   );
 }
 
@@ -211,9 +252,11 @@ export function SinceLastLook({
   const seeded = record !== null && record.seed === true && record.at >= now;
 
   // Nothing to say yet: the server pass, and the instant before the marker is
-  // read. Rendering a placeholder here would reserve space for a line that is
-  // usually one sentence long.
-  if (record === null) return null;
+  // read. The line is still held open — rendering nothing here is what moved
+  // the whole board after first paint (see `ReservedLine`). Storage that is
+  // blocked outright never resolves past this, and one invisible line is the
+  // whole cost of that case.
+  if (record === null) return <ReservedLine />;
 
   if (seeded) {
     return (
