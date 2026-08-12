@@ -138,6 +138,35 @@ export function getReviewQueue(): Promise<ApiCallResult> {
   return call(`/applications/review`, { method: "GET" });
 }
 
+/** The query parameters `/applications/mail` accepts. Nothing else is forwarded. */
+const MAIL_QUERY_PARAMS = ["page", "page_size", "category", "q"] as const;
+
+/**
+ * GET /applications/mail — every stored message, whatever the verdict.
+ *
+ * The counterpart to `getReviewQueue`, and the reason it exists: the review
+ * queue filters to `needs_review AND unlinked AND not-yet-reviewed`, so a
+ * verdict becomes unreachable the moment it is touched. This lists the user's
+ * mail regardless of review state or linkage, which is what makes a wrong
+ * verdict correctable more than once. Metadata only — bodies never leave the
+ * backend.
+ *
+ * Values are forwarded as strings and validated by FastAPI, which already
+ * answers a precise 422 naming the offending parameter. A second parser here
+ * would be a second thing to drift. The keys ARE allowlisted: only the four
+ * the endpoint declares travel, so this proxy cannot be used to reach
+ * parameters the backend adds later without a deliberate change here.
+ */
+export function getMail(search: URLSearchParams): Promise<ApiCallResult> {
+  const forwarded = new URLSearchParams();
+  for (const key of MAIL_QUERY_PARAMS) {
+    const value = search.get(key)?.trim();
+    if (value) forwarded.set(key, value);
+  }
+  const query = forwarded.toString();
+  return call(`/applications/mail${query ? `?${query}` : ""}`, { method: "GET" });
+}
+
 /**
  * POST /applications/review/{messageId}/classify — classify + persist + train.
  *
