@@ -69,8 +69,13 @@ async def test_cloud_app_root_returns_deployment_info(cloud_app):
     assert response.status_code == 200
     payload = response.json()
     assert payload["deployment"] == "cloud"
-    assert payload["docs"] == "/docs"
     assert payload["health"] == "/health"
+    # This fixture does not set JOBTRACKER_ENABLE_DOCS, so the docs are off and
+    # the root must not advertise them. It used to assert ``payload["docs"] ==
+    # "/docs"``, which was true of the deployment that published its full
+    # interactive API surface to the internet. The docs contract, both halves
+    # of it, now lives in tests/test_api_docs_are_opt_in.py.
+    assert "docs" not in payload
 
 
 def test_cloud_app_does_not_import_keyring_or_aiosqlite(tmp_path):

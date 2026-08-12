@@ -406,9 +406,19 @@ async def test_a_category_that_is_not_a_stage_is_still_not_settable(
     assert "interviewing" in resp.text
 
 
-async def test_the_openapi_enum_is_the_same_list(client: AsyncClient) -> None:
-    """A client generating types from the schema gets the canonical list too."""
+async def test_the_openapi_enum_is_the_same_list(cloud_app: Any) -> None:
+    """A client generating types from the schema gets the canonical list too.
 
-    schema = (await client.get("/openapi.json")).json()
+    Reads the document from ``app.openapi()`` rather than over HTTP from
+    ``/openapi.json``. The route is opt-in as of 2026-08-12 (see
+    tests/test_api_docs_are_opt_in.py) and is absent unless
+    JOBTRACKER_ENABLE_DOCS is set, so fetching it here would test the docs
+    switch instead of the enum. The document itself is unaffected, and
+    ``app.openapi()`` is exactly what scripts/generate_api_schema.sh calls to
+    build apps/web/lib/api/schema.d.ts -- so this now checks the same object
+    the real type generator consumes.
+    """
+
+    schema = cloud_app.openapi()
     enum = schema["components"]["schemas"]["ApplicationStatus"]["enum"]
     assert enum == list(EXPECTED_STATUSES)

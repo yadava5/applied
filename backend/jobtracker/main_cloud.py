@@ -34,7 +34,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jobtracker.config import settings
 from jobtracker.logging import setup_logging
@@ -97,13 +97,78 @@ def _build_cors_origin_regex() -> str:
     return rf"^https?://({'|'.join(parts)})$"
 
 
+# Interactive docs are OPT-IN. Until 2026-08-12 the three URLs below were
+# passed unconditionally, so the production API published its complete
+# interactive surface -- every path, every schema, a live "Try it out" -- to
+# anyone who loaded https://<api-host>/docs.
+#
+# WHY THE GATE IS `enable_docs` AND NOT `environment`
+# ---------------------------------------------------
+# The reflexive fix is ``if settings.environment != "production"``. It would
+# have changed nothing. Nothing sets JOBTRACKER_ENVIRONMENT on Vercel, so the
+# deployed API reports ``"development"`` -- the field's default -- and that
+# condition is false in production. A gate whose condition is never true where
+# it matters is not a gate.
+#
+# ``enable_docs`` defaults to False instead, which puts the safe state in the
+# default rather than in the configuration. The property that holds: a
+# deployment carrying no environment configuration at all serves no docs.
+# Passing None (rather than a path) is what makes that a 404 -- FastAPI does
+# not register the route at all, so there is nothing to probe. ``app.openapi()``
+# still works in-process, which is what scripts/generate_api_schema.sh uses to
+# build the web client's typed bindings.
+_docs_enabled = settings.enable_docs
+
+
+def _build_commit_sha() -> str | None:
+    """The git commit this deployment was built from, or None if unknowable.
+
+    WHY /health NEEDS THIS
+    ----------------------
+    On 2026-08-12 production ran a web app from one commit against an API from
+    a commit three hours older, and nothing anywhere said so. Establishing it
+    meant reading Vercel's deployment records and running
+    ``git merge-base --is-ancestor`` per project. The API could not help:
+
+        {"status":"ok","version":"0.1.0","deployment":"cloud", ...}
+
+    ``version`` is ``Settings.app_version``, a constant in the source. It has
+    never changed and it cannot answer "what code is actually running?". A SHA
+    can, with one curl, by anyone -- including after a Vercel CLI deploy, which
+    creates no GitHub deployment record at all and so leaves the platform's own
+    view of "production" pointing at a stale commit indefinitely.
+
+    HONESTY
+    -------
+    Reported verbatim from Vercel's own ``VERCEL_GIT_COMMIT_SHA`` and never
+    synthesised. No git subprocess, no build-time stamp, no "unknown" string
+    dressed up as a value: when the variable is absent -- a local run, or a
+    deployment where the project has "Automatically expose System Environment
+    Variables" turned off -- this returns None and /health omits the claim, the
+    same rule the ``environment`` field follows.
+
+    That the variable does reach the running function is not an assumption:
+    ``_build_cors_origin_regex`` above reads ``VERCEL_URL`` from the same
+    system-variable mechanism at import time, and CORS works in production.
+
+    Read at import, like the CORS hosts: the value cannot change during a
+    process lifetime, and both states are covered by subprocess probes in
+    tests/test_api_docs_are_opt_in.py rather than by reloading this module,
+    which corrupts a pytest session (see that file).
+    """
+
+    return os.environ.get("VERCEL_GIT_COMMIT_SHA", "").strip() or None
+
+
+_COMMIT_SHA = _build_commit_sha()
+
 app = FastAPI(
     title=f"{settings.app_name} (cloud)",
     description="Cloud (Vercel + Supabase) deployment of the Applied backend.",
     version=settings.app_version,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 app.add_middleware(
@@ -158,7 +223,24 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     deployment: str
-    environment: str
+    environment: str | None = Field(
+        default=None,
+        description=(
+            "The configured environment, or null when the deployment does not "
+            "declare one. Null is not 'development' -- it means nobody said. "
+            "This endpoint used to print the field's default, which read as an "
+            "assertion that production was a development deployment."
+        ),
+    )
+    commit: str | None = Field(
+        default=None,
+        description=(
+            "The git commit SHA this deployment was built from, taken verbatim "
+            "from VERCEL_GIT_COMMIT_SHA, or null when the platform does not "
+            "supply one. Answers 'what code is actually running?', which "
+            "`version` cannot: that is a constant in the source."
+        ),
+    )
 
 
 @app.get(
@@ -180,7 +262,18 @@ async def health_check() -> HealthResponse:
         status="ok",
         version=settings.app_version,
         deployment=settings.deployment,
-        environment=settings.environment,
+        # Report the environment only when one was actually configured.
+        # ``settings.environment`` always holds a string; until now this
+        # endpoint printed it unconditionally, so production told every caller
+        # it was a "development" deployment on the strength of a default
+        # nobody had set. Null is the honest answer to "which environment?"
+        # when the deployment has never been told.
+        environment=(
+            settings.environment if settings.environment_is_configured else None
+        ),
+        # Null when the platform did not supply one. Never a placeholder --
+        # a made-up SHA is worse than no SHA, because it looks answerable.
+        commit=_COMMIT_SHA,
     )
 
 
@@ -192,13 +285,22 @@ async def health_check() -> HealthResponse:
 async def root() -> dict[str, Any]:
     """Root endpoint with API information for the cloud deployment."""
 
-    return {
+    payload: dict[str, Any] = {
         "name": settings.app_name,
         "version": settings.app_version,
         "deployment": "cloud",
-        "docs": "/docs",
-        "health": "/health",
     }
+    # Advertise the docs only when they are actually mounted -- and read that
+    # off the app object rather than re-reading ``settings.enable_docs``, so
+    # "advertised if and only if served" is structural instead of two
+    # independent reads that happen to agree. Before this, the root of the
+    # production API handed out "/docs" as a directions sign to a page that
+    # should never have existed; the failure mode to avoid now is the mirror
+    # image, a sign pointing at a 404.
+    if app.docs_url:
+        payload["docs"] = app.docs_url
+    payload["health"] = "/health"
+    return payload
 
 
 # =============================================================================
