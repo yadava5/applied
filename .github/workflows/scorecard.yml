@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           # Scorecard reads repository metadata through the API with its own
           # token; keeping the checkout credential out of the workspace is one
@@ -58,6 +58,6 @@ jobs:
           retention-days: 14
 
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3
         with:
           sarif_file: results.sarif

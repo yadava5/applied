@@ -9,8 +9,15 @@ Scoring system:
 - Strong patterns: +3 points (highly specific phrases)
 - Weak patterns: +1 point (suggestive but ambiguous)
 - Negative patterns: -5 points (contradicting phrases)
+- Veto patterns: the category cannot win, whatever else matched
 - Subject patterns: 2x weight (subjects are more predictable)
 - ATS sender domains: bonus confidence
+
+A negative pattern cannot actually veto anything: a strong pattern in the
+subject is +6 and one negative is -5, so "Newsletter: 2026 skills assessment
+trends" still scored +1 and won as `assessment`. Veto patterns exist for the
+cases where a phrase means the category is wrong regardless of what else the
+text says — see EmailCategory.ASSESSMENT below.
 
 The category with highest score wins. Confidence is based on margin and match strength.
 """
@@ -37,6 +44,10 @@ class CategoryPatterns:
     strong: list[str] = field(default_factory=list)  # +3 points
     weak: list[str] = field(default_factory=list)  # +1 point
     negative: list[str] = field(default_factory=list)  # -5 points
+    # A match here caps the category's score at 0, so it can neither win nor
+    # be out-voted by a strong subject match. Use it only for phrases that
+    # make the category *wrong*, not merely less likely.
+    veto: list[str] = field(default_factory=list)
 
 
 # Pattern definitions for each category
@@ -251,12 +262,31 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"codility",
             r"codesignal",
             r"leetcode",
-            r"take.?home (assignment|project|exercise)",
+            # HireVue also runs recorded/live interviews, but both senses land
+            # on ApplicationStatus.INTERVIEWING, so the vendor name is safe to
+            # treat the way hackerrank/codility already are.
+            r"hirevue",
+            r"take.?home (assignment|project|exercise|task|round)",
             r"coding (exercise|test|challenge)",
             r"online (assessment|test)",
             r"skills (assessment|test)",
             r"deadline.{0,30}(assessment|test|challenge)",
             r"time limit.{0,20}(hour|minute)",
+            # --- the noun on its own ---------------------------------------
+            # Everything above requires a verb ("complete", "take") or a
+            # qualifier ("technical", "online"). Real mail does not oblige:
+            # "[Action Required] Your Roblox Assessments Invitation" matched
+            # none of them and fell through to `other` at 0.50. These patterns
+            # fire on the noun plus the shape of an invitation. What keeps them
+            # honest is `veto` below, not narrowness — the senses of
+            # "assessment" that are not a candidate test are named there.
+            r"assessments?\s+(invitation|invite)\b",
+            r"invitation\s+(to|for)\s+[\w \-]{0,25}assessments?\b",
+            r"assessments?\s+(link|reminder|instructions|deadline|details)\b",
+            r"assessments?\s+(is|are)\s+(ready|available|waiting|live|open)\b",
+            # The bare noun, hyphenated only: "take home" unhyphenated is a
+            # verb phrase ("take home a free gift") and far too common.
+            r"\btake-home\b(?!\s+(pay|message|gift|dose|salary))",
         ],
         weak=[
             r"next step.{0,30}(assessment|test)",
@@ -270,6 +300,40 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"regret",
             r"offer",
             r"not (moving|proceeding)",
+        ],
+        veto=[
+            # "assessment" is an ordinary business noun. In these senses the
+            # mail is never a candidate test, and a -5 negative cannot stop it:
+            # "Complete your self-assessment before your review" scored +6 from
+            # `complete.{0,30}(assessment|challenge|test)` and classified as
+            # assessment at 0.90 before this list existed.
+            r"\brisk assessment",
+            r"\bself[- ]assessments?\b",
+            r"\bneeds assessment",
+            r"\bimpact assessment",
+            # An HR review cycle, not a candidate test.
+            r"\bperformance assessment",
+            r"\bassessments? of damages",
+            r"\b(damage|vulnerability|security|credit|tax|property|environmental|medical|clinical)\s+assessment",
+            r"take.?home\s+pay",
+            # Content ABOUT assessments, rather than an invitation to sit one.
+            r"\bwebinar\b",
+            r"\bassessments? quiz\b",
+            # NOT here, on purpose: "newsletter", "digest", "coupon",
+            # "flash sale", "limited time offer", "unsubscribe", "manage
+            # preferences". Marketing vocabulary already belongs to the content
+            # guard that runs BEFORE this layer
+            # (hybrid.NON_APPLICATION_PATTERNS, applied in
+            # `_forced_other_reason`), which requires two such signals — or one
+            # plus a marketing sender — and lets a lifecycle phrase override it.
+            # Repeating those words here, at a threshold of one and with no
+            # override, would be a second marketing guard that disagrees with
+            # the first. Worse, veto patterns match the BODY as well as the
+            # subject, and a legitimate ATS assessment invitation routinely
+            # carries "unsubscribe" or "you subscribed to our newsletter" in its
+            # footer: a body-matched `newsletter` veto would suppress exactly
+            # the mail this category exists to catch. See
+            # test_ats_footer_does_not_veto_a_real_invitation.
         ],
     ),
     EmailCategory.FOLLOW_UP: CategoryPatterns(
@@ -342,6 +406,7 @@ class RulesClassifier:
     - Strong pattern match: +3
     - Weak pattern match: +1
     - Negative pattern match: -5
+    - Veto pattern match: the category's score is capped at 0
     - Subject patterns: 2x weight
 
     Confidence is calculated from the winning category's score and its margin
@@ -352,7 +417,11 @@ class RulesClassifier:
     - score >= 2 and margin >= 1: 0.70
     - otherwise: 0.60
 
-    Two overrides apply:
+    Three overrides apply:
+    - A category with a veto match is capped at 0, so it cannot win. The cap
+      never *raises* a score: a category already in the negative stays there,
+      which keeps the runner-up margin (and therefore confidence) unchanged
+      for whichever category does win.
     - A non-positive winning score short-circuits to 'other' at 0.5
     - A sender on a known ATS domain scoring as applied/rejection/interview/
       offer gets +0.05, capped at 0.95
@@ -367,6 +436,7 @@ class RulesClassifier:
                 "strong": [re.compile(p, re.IGNORECASE) for p in patterns.strong],
                 "weak": [re.compile(p, re.IGNORECASE) for p in patterns.weak],
                 "negative": [re.compile(p, re.IGNORECASE) for p in patterns.negative],
+                "veto": [re.compile(p, re.IGNORECASE) for p in patterns.veto],
             }
 
         logger.info(f"RulesClassifier initialized with {len(PATTERNS)} categories")
@@ -425,6 +495,15 @@ class RulesClassifier:
                 if pattern.search(subject) or pattern.search(body):
                     category_score -= 5
                     category_matches.append(f"[NEGATIVE] {pattern.pattern}")
+
+            # Check veto patterns. Tagged "[VETO]" and not "[NEGATIVE]" on
+            # purpose: hybrid.py reads the "[NEGATIVE]" tag to decide whether
+            # to distrust the semantic layers, and a veto is a statement about
+            # one category rather than about the mail being non-job-related.
+            for pattern in compiled["veto"]:
+                if pattern.search(subject) or pattern.search(body):
+                    category_score = min(category_score, 0)
+                    category_matches.append(f"[VETO] {pattern.pattern}")
 
             scores[category.value] = category_score
             if category_matches:

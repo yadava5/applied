@@ -4,8 +4,9 @@
  * This is a faithful, byte-for-byte port of the scoring in the shipped
  * classifier: `backend/jobtracker/classifier/rules.py` and its in-browser
  * twin `ml/browser/site/app.js` (the HF Space `yadava5/jobtracker-classifier`).
- * Same 201 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
- * negative −5), same margin→confidence tiers, same ATS-domain boost.
+ * Same 207 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
+ * negative −5), same veto cap, same margin→confidence tiers, same ATS-domain
+ * boost.
  *
  * It is pure JavaScript — no model, no network, no WASM — so it runs live in
  * the visitor's tab under the app's strict CSP. The `/demo/inbox` sample view
@@ -29,15 +30,27 @@ interface CompiledCategory {
   strong: RegExp[];
   weak: RegExp[];
   negative: RegExp[];
+  veto: RegExp[];
 }
 
+interface RawCategory {
+  strong: string[];
+  weak: string[];
+  negative: string[];
+  /** Only `assessment` declares vetoes today, so the key is absent elsewhere. */
+  veto?: string[];
+}
+
+const RAW_CATS = rulesRaw.categories as Record<string, RawCategory>;
+
 const CATS: Record<string, CompiledCategory> = Object.fromEntries(
-  Object.entries(rulesRaw.categories).map(([cat, g]) => [
+  Object.entries(RAW_CATS).map(([cat, g]) => [
     cat,
     {
       strong: g.strong.map((p) => new RegExp(p, "i")),
       weak: g.weak.map((p) => new RegExp(p, "i")),
       negative: g.negative.map((p) => new RegExp(p, "i")),
+      veto: (g.veto ?? []).map((p) => new RegExp(p, "i")),
     },
   ]),
 );
@@ -51,9 +64,10 @@ const ATS_BOOSTED = new Set(["applied", "rejection", "interview", "offer"]);
  *
  * Mirrors `RulesClassifier.classify` / `rulesClassify`: strong patterns score
  * +6 in the subject or +3 in the body; weak +2 / +1; a negative match anywhere
- * is −5. The top category wins; confidence comes from its score and its margin
- * over the runner-up. A message from a known ATS domain gets a small boost on
- * lifecycle categories.
+ * is −5; a veto match anywhere caps the category at 0 (it never raises a
+ * negative score, so the runner-up margin is untouched). The top category
+ * wins; confidence comes from its score and its margin over the runner-up. A
+ * message from a known ATS domain gets a small boost on lifecycle categories.
  */
 export function classifyWithRules(
   subject: string,
@@ -80,6 +94,9 @@ export function classifyWithRules(
     }
     for (const re of g.negative) {
       if (re.test(subject) || re.test(body)) s -= 5;
+    }
+    for (const re of g.veto) {
+      if (re.test(subject) || re.test(body)) s = Math.min(s, 0);
     }
     scores[cat] = s;
   }
