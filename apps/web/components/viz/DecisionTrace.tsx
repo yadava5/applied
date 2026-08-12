@@ -84,7 +84,7 @@ export function DecisionTrace() {
               <button
                 type="button"
                 onClick={() => setOpen(isOpen ? null : item.subject)}
-                className="group trace-row flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
+                className="group trace-row focus-inset flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
               >
                 {/* basis-full on mobile gives the subject its own line so the
                     layer track / verdict / % wrap below instead of squeezing it

@@ -271,11 +271,24 @@ body {
 
 /* The one deliberate variation: primary navigation, the brand mark and the
  * beta actions have always focused in classifier cyan. They re-point the token
- * instead of restating a ring, so there is still exactly one indicator. */
+ * instead of restating a ring, so there is still exactly one indicator. Layered
+ * safely, because it only sets the token the unlayered rule above reads. */
 @layer components {
   .focus-accent {
     --focus-ring: var(--viz-rules);
   }
+}
+
+/* Rows that run the full width of a card that clips. The landing inbox scene
+ * and the decision trace both sit in `overflow-hidden` cards, so an outward
+ * offset is cropped: measured, the landing row lost its left, right and bottom
+ * edges and showed a single horizontal line, and the trace row lost both
+ * sides. Drawing the ring inside their own box keeps all four edges, and these
+ * rows are wide enough that 2px in reads as a ring rather than a border. It has
+ * to be unlayered — a `-outline-offset-2` utility would be a layered rule, and
+ * the offset above outranks it. */
+.focus-inset:focus-visible {
+  outline-offset: -2px;
 }
 
 /* ---------------------------------------------------------------------------
