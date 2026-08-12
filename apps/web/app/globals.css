@@ -73,9 +73,12 @@
 
 /* Explicit dark re-assertion. `:root` already defaults to dark, but that only
  * covers the top of the cascade — a subtree that forces `data-theme="dark"`
- * on itself (the landing page, `/demo`: both are the product's own
- * always-dark narrative, regardless of the visitor's saved Appearance
- * setting) sits *inside* `<html>`, and `[data-theme="light"]` below is a bare
+ * on itself (the landing page and the whole `/demo` family — `/demo`,
+ * `/demo/settings`, `/demo/inbox`: all of it is the product's own always-dark
+ * narrative, regardless of the visitor's saved Appearance setting, and a demo
+ * that changed ground halfway through the journey was worse than one that
+ * ignores the setting honestly) sits *inside* `<html>`, and
+ * `[data-theme="light"]` below is a bare
  * attribute selector with no ancestor scoping, so it happily overrides `:root`
  * from `<html data-theme="light">` right through a nested `data-theme="dark"`
  * element with nothing to stop it. Mirroring `[data-theme="light"]` with an
