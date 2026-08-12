@@ -32,11 +32,42 @@ updates:
   # those — but a major bump can still pull a heavier transitive tree, so these
   # PRs want a human eye rather than an automerge.
   #
+  # `exclude-paths` is what keeps this entry pointed at the root manifest and
+  # nothing else. Without it, it also updated backend/: pip's file fetcher scans
+  # the configured `directory` for requirements files and then descends one
+  # level into every immediate subdirectory, so `directory: "/"` was reaching
+  # backend/requirements*.txt and duplicating the /backend entry below. It
+  # surfaced as two pull requests carrying byte-identical diffs for a single
+  # pin — #58 and #60 both raising transformers in backend/requirements.txt,
+  # #56 and #62 both raising setfit — while the file this entry exists to guard
+  # got no PRs at all and sat on a stale email-validator>=2.0.0 floor that #63
+  # was raising over in backend/. GitHub's own reference states the rule this
+  # broke: with more than one block per ecosystem and branch, "you must ensure
+  # that all values are unique and there is no overlap in directories defined."
+  #
+  # `backend/**` excludes the backend directory entry itself from the scan, so
+  # the descent into it never begins. Patterns are globs relative to this
+  # entry's `directory`; `directory` takes no wildcards of its own (only the
+  # plural `directories` does, and that would not have stopped the descent
+  # either — there is no directory-recursion switch to turn off).
+  #
+  # The list is live, not decorative. Because the descent is exactly one level,
+  # a requirements .txt landing directly in any other top-level directory
+  # (api/, scripts/, ...) would start being updated from here and would need
+  # adding above. That one-level limit is also why the ml/** manifests called
+  # out at the top of this file have never needed excluding — they sit three or
+  # more levels down, out of reach. And if duplicate PRs ever reappear, read
+  # the Dependabot run log before editing anything: exclude-paths filtering is
+  # gated server-side, and a key that is accepted but not honoured is silently
+  # a no-op rather than the loud config error an unknown key would be.
+  #
   # Monthly, not weekly: `schedule` governs Dependabot's VERSION updates only.
   # Security updates are a separate mechanism, unaffected by this interval, so
   # vulnerability patches still arrive immediately regardless of the cadence.
   - package-ecosystem: "pip"
     directory: "/"
+    exclude-paths:
+      - "backend/**"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
@@ -50,12 +81,53 @@ updates:
   # ---------------------------------------------------------------------------
   # One entry covers requirements.txt, requirements-dev.txt and
   # requirements-migrate.txt: Dependabot picks up every requirements file in the
-  # directory it is pointed at.
+  # directory it is pointed at — and, less obviously, in each of that
+  # directory's immediate subdirectories, which is the reach the root entry
+  # above has to exclude. All three files sit directly in backend/, so none of
+  # them depend on that descent.
+  #
+  # It also covers backend/pyproject.toml, whose [project] dependencies list is
+  # the source of truth for the packaged app. pyproject.toml is only ever read
+  # from an entry's own directory and never from a subdirectory, so this is the
+  # only entry that can see it — which is why the fix above is a narrowing of
+  # the root entry rather than a deletion of this one.
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
+    # transformers is capped at <5 in backend/requirements.txt, and that cap is
+    # a guard on a published number — not an upgrade nobody got round to.
+    # Dependabot filed the bump anyway (#60, >=4.40,<5 to >=5.14.1,<6) and would
+    # refile it every month forever, so the major is ignored here.
+    #
+    # Nothing in the metadata enforces the cap: setfit 1.1.3 declares
+    # transformers>=4.41.0 with no upper bound and sentence-transformers 5.2.2
+    # allows <6.0.0, so a resolver installs 5.x happily. 5.x then breaks setfit:
+    #     ImportError: cannot import name 'default_logdir'
+    #                  from 'transformers.training_args'
+    # tested 2026-08-02. And it breaks it SILENTLY — HybridClassifier catches
+    # that ImportError and degrades to the rules layer, so the API keeps
+    # answering and the benchmark keeps printing 0.9791, the RULES figure, under
+    # the cascade's name. That number is published on the System Card, the
+    # portfolio and a résumé. backend/tests/test_evaluate_classifier_layer_guard.py
+    # records the degradation as observed, not hypothesised. Lifting this needs
+    # a setfit release that supports transformers 5 AND a decision to re-measure
+    # and republish the number — not a green CI run.
+    #
+    # Scoped to the major deliberately: 4.x patch and minor updates must keep
+    # flowing, because the cap holds open PYSEC-2026-2288/2289/2290 and
+    # PYSEC-2025-217, which backend/requirements.txt records as accepted cost
+    # rather than hiding. What this rule is known to stop is the monthly
+    # VERSION-update PR that #60 was. Whether an ignore written here also
+    # withholds a Dependabot SECURITY update for those advisories is not
+    # something the docs state unambiguously for the dependabot.yml form of
+    # ignore — only for the @dependabot ignore comment command — so it is not
+    # claimed. Those four are accepted cost over there either way, and this
+    # file configures update pull requests, not the alerts themselves.
+    ignore:
+      - dependency-name: "transformers"
+        update-types: ["version-update:semver-major"]
     groups:
       pip-backend:
         patterns: ["*"]
