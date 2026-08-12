@@ -151,7 +151,7 @@ function LoginForm() {
         {error ? (
           <p
             role="alert"
-            className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject"
+            className="rounded-md border border-reject/40 bg-reject/10 px-3 py-2 text-sm text-reject-ink"
           >
             {error}
           </p>

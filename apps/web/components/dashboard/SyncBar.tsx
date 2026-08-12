@@ -353,7 +353,7 @@ export function SyncBar({
     // Resting after a failed run: the backend keeps `last_sync_at` at the last
     // good sync, so recency and this line are two facts, both shown.
     statusContent = (
-      <span className="text-reject">
+      <span className="text-reject-ink">
         last sync failed{gmail.syncError ? ` · ${gmail.syncError}` : ""}{" "}
         <button
           type="button"
@@ -511,7 +511,7 @@ export function SyncBar({
       </p>
       <p
         role="alert"
-        className={`text-xs text-reject ${alertContent === null ? "sr-only" : ""}`}
+        className={`text-xs text-reject-ink ${alertContent === null ? "sr-only" : ""}`}
       >
         {alertContent}
       </p>
@@ -670,7 +670,7 @@ function RebuildReceipt({
           ) : endKind === "partial" ? (
             <p className="text-xs text-review">rebuild stopped early · just now</p>
           ) : (
-            <p className="text-xs text-reject">
+            <p className="text-xs text-reject-ink">
               rebuild interrupted · the scan {stopReasonPhrase(outcome.stoppedBy)}
             </p>
           )}
@@ -727,7 +727,7 @@ function RebuildReceipt({
               ) : (
                 <span className="ml-auto flex items-center gap-2">
                   {failedId === row.id ? (
-                    <span role="alert" className="text-xs text-reject">
+                    <span role="alert" className="text-xs text-reject-ink">
                       couldn&apos;t restore — still removed
                     </span>
                   ) : null}

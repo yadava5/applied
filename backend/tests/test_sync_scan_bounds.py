@@ -327,3 +327,146 @@ async def test_the_size_estimate_is_the_largest_seen_and_never_below_examined(
     # Gmail offered none: report none. A floor is not an estimate.
     silent = _ShrinkingGmail({WIDE: (100, 50)})
     assert (await _scan(monkeypatch, silent, WIDE)).result_size_estimate is None
+
+
+# =============================================================================
+# Gmail vanishing mid-scan
+# =============================================================================
+
+
+class _VanishingGmail:
+    """Answers the first ``ok_pages`` page requests, then stops answering.
+
+    ``fetch_message_page`` returns ``None`` when it cannot read Gmail at all —
+    an expired or revoked token, or Gmail refusing. The interesting case is
+    when that happens PART WAY through: earlier pages succeeded, so the scan
+    holds a real but incomplete read of the window.
+    """
+
+    def __init__(self, total: int, per_page: int, ok_pages: int) -> None:
+        self.total = total
+        self.per_page = per_page
+        self.ok_pages = ok_pages
+        self.calls = 0
+
+    async def fetch_message_page(
+        self,
+        user_id: Any,
+        *,
+        query: str,
+        page_size: int,
+        page_token: str | None = None,
+    ) -> Any:
+        from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
+
+        self.calls += 1
+        if self.calls > self.ok_pages:
+            return None  # Gmail stopped answering.
+
+        start = int(page_token) if page_token else 0
+        served = min(self.per_page, page_size, self.total - start)
+        messages = [
+            CloudGmailMessage(
+                message_id=f"m{i}",
+                thread_id=f"t{i}",
+                subject="Application received",
+                sender_name="Careers",
+                sender_email="careers@example.test",
+                snippet="snippet",
+                received_at=datetime(2026, 7, 1, tzinfo=UTC),
+            )
+            for i in range(start, start + served)
+        ]
+        nxt = str(start + served) if start + served < self.total else None
+        return MessagePage(
+            messages=messages,
+            next_page_token=nxt,
+            unreadable=0,
+            result_size_estimate=None,
+        )
+
+
+async def test_gmail_going_away_mid_scan_is_reported_not_called_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The last untested terminal state of ``stopped_by``.
+
+    Every other stop reason — complete, target, deadline, page_limit, relay —
+    is pinned somewhere in this suite. ``disconnected`` was not, despite having
+    its own branch in the UI: the sync bar renders "the scan lost its Gmail
+    connection partway" and offers a reconnect link only for this value, so an
+    untested constant here means an unreachable-in-anger surface there.
+
+    The property that matters is that a partial read is never dressed up as a
+    whole one. The scan answered page 1 and lost Gmail on page 2, so what it
+    holds is real and incomplete — it must keep the mail it did read AND say
+    the scan ended early, because the caller uses that to decide whether rows
+    it did not see may be removed.
+    """
+
+    gmail = _VanishingGmail(total=100, per_page=25, ok_pages=1)
+    result = await _scan(monkeypatch, gmail, WIDE)
+
+    from jobtracker.cloud.gmail_oauth import STOPPED_DISCONNECTED
+
+    assert result.stopped_by == STOPPED_DISCONNECTED
+    # The first page's mail survives — losing the connection is not a reason to
+    # throw away what was already read.
+    assert len(result.items) == 25
+    assert result.scanned == 25
+
+
+async def test_gmail_unreachable_from_the_very_first_page_is_a_409_not_a_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing was read at all, which is a different answer to a partial read.
+
+    "Your scan stopped early" implies something WAS read and invites the user
+    to continue it; there is nothing to continue here. The endpoint has to say
+    Gmail is not connected instead, so the UI sends them to reconnect rather
+    than to retry a scan that can never start.
+    """
+
+    from fastapi import HTTPException
+
+    gmail = _VanishingGmail(total=100, per_page=25, ok_pages=0)
+    with pytest.raises(HTTPException) as excinfo:
+        await _scan(monkeypatch, gmail, WIDE)
+
+    assert excinfo.value.status_code == 409
+    assert "not connected" in str(excinfo.value.detail).lower()
+
+
+async def test_every_stop_reason_the_backend_can_emit_is_a_known_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guard on the vocabulary itself.
+
+    The frontend classifies ``stopped_by`` into complete / partial / broken and
+    falls back to "complete" for anything it does not recognise — the safest
+    default for an OLD frontend against a NEW backend, and the most dangerous
+    one for a value the backend invents later. So the set is asserted here: a
+    new constant has to be added deliberately, and whoever adds it is the
+    person who should be teaching the UI to read it.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    known = {
+        gmail_module.STOPPED_COMPLETE,
+        gmail_module.STOPPED_TARGET,
+        gmail_module.STOPPED_DEADLINE,
+        gmail_module.STOPPED_PAGE_LIMIT,
+        gmail_module.STOPPED_DISCONNECTED,
+        gmail_module.STOPPED_RELAY,
+    }
+    declared = {
+        value
+        for name, value in vars(gmail_module).items()
+        if name.startswith("STOPPED_") and isinstance(value, str)
+    }
+    assert declared == known, (
+        f"the backend can emit a stop reason the UI has never been taught to "
+        f"read: {sorted(declared - known)}. Add it to lib/gmail/sync-plan.ts "
+        f"(stopKind + stopReasonPhrase) before adding it here."
+    )

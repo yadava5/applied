@@ -10,6 +10,7 @@ import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { todayISO } from "@/lib/dashboard/age";
 import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
 import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
+import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
@@ -100,6 +101,15 @@ export function DemoDashboard() {
     () => ({
       async changeStatus(id, status) {
         await delay(300);
+        // The wire contract is an ENUM (`ApplicationStatus`), not a free
+        // string — `BoardTransport` still says `string`, so without this the
+        // demo would happily write a value the live backend answers with a
+        // 422 into a row typed as the backend's own response. The controls
+        // only ever offer canonical statuses, so this never fires from the
+        // UI; it fires if one of them ever drifts, which is the point.
+        if (!isApplicationStatus(status)) {
+          return { ok: false, detail: `“${status}” is not a status the API accepts` };
+        }
         const s = store.current;
         // The visitor moved this card themselves — fold it into the change
         // ledger's baseline so it is never reported back to them as news.

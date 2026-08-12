@@ -288,9 +288,25 @@ class Application(TimestampMixin, table=True):
     # legitimate and means the mail named no role anywhere — that employer keeps
     # exactly one row, which is the honest floor rather than a guess.
     #
-    # Deliberately NOT a unique constraint: re-applying to the same role after a
-    # rejection is a second application, and the resolver only ever matches
-    # against live rows.
+    # Re-applying after a rejection does NOT produce a second row, and the
+    # comment that used to sit here claiming it did was wrong in both halves.
+    # ``_company_rows`` filters on owner and company token only — no status, and
+    # "live" there means not-dismissed, which a rejected row still is — so a
+    # fresh confirmation for the same role resolves straight onto the settled
+    # row. What happens instead is REOPEN-IN-PLACE: ``roll_up_applications``
+    # reads a cluster's status from the mail strictly newer than its newest
+    # dated rejection, and ``upsert_applications_for_user`` lets a rejected AUTO
+    # row leave the terminal state only on that evidence. One identity is one
+    # row across any number of attempts — the board shows a single card whose
+    # ``applied_date`` keeps the FIRST filing.
+    #
+    # Still deliberately NOT a unique constraint, for two reasons that survive
+    # that correction. No column tuple expresses the identity the resolver
+    # actually uses: it matches a normalized company TOKEN against the stored
+    # display name, which the sync itself restyles ("Doordash" → "DoorDash").
+    # And both columns are legitimately NULL for an employer that names no role,
+    # where NULLs do not collide — so the constraint would police only the rows
+    # that never needed policing.
     req_id: Optional[str] = Field(
         default=None,
         index=True,

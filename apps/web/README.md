@@ -96,29 +96,35 @@ Typed bindings for the FastAPI backend live under `lib/api/`:
 
 ```
 lib/api/
-├── schema.d.ts   # generated (or seed) OpenAPI types — `paths` / `components` / `operations`
+├── schema.d.ts   # GENERATED OpenAPI types — `paths` / `components` / `operations`
 ├── client.ts     # `createApiClient({ baseUrl, token? })` → typed openapi-fetch client
 └── server.ts     # `createServerApiClient()` — reads Supabase JWT from cookies
 ```
 
-`schema.d.ts` is committed so screens (C11–C16) compile without a live
-backend. It is a **seed**: hand-authored to cover only the endpoints we
-currently touch (`GET /auth/me`, `GET /health`, `GET /applications`,
-`POST /applications`). Regenerate from the live OpenAPI whenever the
-backend contract changes:
+`schema.d.ts` is committed so the app compiles without a live backend, and it
+is **generated — never edited by hand**. Regenerate whenever the backend
+contract changes:
 
 ```bash
-# Against the deployed cloud backend (reads BACKEND_API_URL from env)
-pnpm -C apps/web api:gen
-
-# Against a local uvicorn (backend/jobtracker/main_cloud.py) on :8000
-pnpm -C apps/web api:gen:local
+pnpm -C apps/web api:gen        # `api:gen:local` is the same command
 ```
 
-Both scripts run `openapi-typescript <url> -o lib/api/schema.d.ts` and
-will OVERWRITE the seed file with the full generated output — that is the
-intended flow. After regenerating, run `pnpm typecheck` to surface any
-shape changes in consuming screens.
+That runs `scripts/generate_api_schema.sh`, which builds the OpenAPI document
+by importing `jobtracker.main_cloud` (the app `api/index.py` serves on Vercel)
+and writes it through `openapi-typescript`. It needs the backend's Python
+dependencies — `backend/.venv311` is used automatically when it exists,
+otherwise `python3` from PATH, or set `PYTHON=…`.
+
+No URL, and no running server: the desktop app on `:8000` (`jobtracker.main`,
+what the e2e job boots) serves a *different* contract, and a deployed URL
+serves whatever was deployed last rather than what is in this checkout. Both
+of those were what the old `api:gen` / `api:gen:local` scripts pointed at.
+
+`.github/workflows/e2e-ci.yml` runs the same script and fails on any diff, so
+a stale `schema.d.ts` is a red build rather than a silent lie. After
+regenerating, run `pnpm typecheck` — real shape changes surface there, and
+every one of them is a call site that was reading something the backend does
+not send.
 
 Typical usage in a Server Component:
 
@@ -137,7 +143,6 @@ export default async function Page() {
 ## Not yet in scope
 
 - Playwright E2E tests (separate issue, C17).
-- Auto-regenerate `schema.d.ts` in CI (manual `pnpm api:gen` for now).
 - Zod runtime validation layer on top of the static types.
 - shadcn/ui kit beyond `Button`.
 - Monorepo tooling (`pnpm-workspace.yaml`, `turbo.json`).

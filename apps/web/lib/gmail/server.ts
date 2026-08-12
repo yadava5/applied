@@ -24,9 +24,15 @@
  * yet" even when the real cause was an auth rejection — a dead end. Keeping
  * them distinct is what lets the connect + inbox surfaces stay honest.
  *
- * We use plain `fetch` (not the typed `openapi-fetch` client) so the C5
- * endpoints don't need to be baked into the committed seed OpenAPI schema
- * — they resolve at runtime against the deployed backend.
+ * We use plain `fetch` here, not the typed `openapi-fetch` client. That began
+ * as a workaround for the hand-written seed schema, which did not describe the
+ * C5 endpoints; `lib/api/schema.d.ts` is generated from `main_cloud` now and
+ * does (`GmailStatusResponse`, `InboxResponse`, `SyncResponse`, …), so the
+ * interfaces below are a hand copy of shapes the compiler could be checking.
+ * `GmailSyncOutcome` in particular names 4 of the 10 fields `SyncResponse`
+ * sends. Nothing reads a field the backend does not send — `sync-plan.ts`
+ * re-parses the body defensively — but moving these onto the typed client is
+ * a follow-up worth doing.
  */
 import { serverEnv } from "@/lib/env";
 import type { InboxPage, PipelineAnalysis } from "@/lib/gmail/types";
