@@ -536,6 +536,13 @@ export default function Landing() {
             demo runs on fixture data — no inbox is read · by Ayush Yadav
           </span>
           <nav className="flex items-center gap-4 font-mono text-[11px] text-dim">
+            {/* Privacy is a document, not a destination in the product — it
+                opens in its own tab like every other link that leaves the
+                landing, and it is the link Google's OAuth verification looks
+                for on the homepage. */}
+            <a href="/privacy" {...NEW_TAB} className="transition-colors hover:text-strong">
+              Privacy
+            </a>
             <a href={SYSTEM_CARD} {...NEW_TAB} className="transition-colors hover:text-strong">
               System Card
             </a>

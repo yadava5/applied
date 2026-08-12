@@ -15,14 +15,13 @@ type AppShellProps = {
  * in `AppShellFrame`, which `/demo/shell` also mounts over fixtures so the
  * lock stays testable without a session.
  *
- * This is an async Server Component: it assembles the rail's snapshot data
- * (pipeline summary + one bounded page of rows for the pulse + Gmail
- * connection) via `loadRailData()` — parallel, never-throwing backend reads
- * that degrade to honest fallbacks — and hands the result to the client
- * `Sidebar` as serializable props. The auth/session reads underneath are
- * request-memoized, so the shell shares them with the page it wraps. `TopBar`
- * is a Client Component because sign-out calls into supabase-js in the
- * browser.
+ * This is an async Server Component: it assembles the rail's data (the Gmail
+ * connection state the footer shows) via `loadRailData()` — a never-throwing
+ * backend read that degrades to an honest fallback — and hands the result to
+ * the client `Sidebar` as serializable props. The auth/session reads
+ * underneath are request-memoized, so the shell shares them with the page it
+ * wraps. `TopBar` is a Client Component because sign-out calls into
+ * supabase-js in the browser.
  */
 export async function AppShell({ children, userEmail }: AppShellProps) {
   const rail = await loadRailData();

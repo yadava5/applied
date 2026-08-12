@@ -39,17 +39,18 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  *
  * The notice zone under the SyncBar is deliberately one line box per notice
  * (`truncate`, no wrapping): the "what changed since you last looked" summary
- * (PR #113, `SinceLastLook`) is designed to land in this same zone as another
- * single line, so nothing that appears after hydration can ever shift the
- * board.
+ * (PR #113, `SinceLastLook`) lands in this zone as a single line, so nothing
+ * that appears after hydration can ever shift the board. The in-app weekly
+ * digest is no longer a second line here — it restated the subtitle's own
+ * numbers plus one (task #59), so its one new number (+N this wk) folds into
+ * the subtitle itself when the pref asks for it.
  *
  * The pulse's four derived signals — filed-per-week momentum, the age
  * distribution of open rows, deadlines, and how much of the board the
- * classifier built / is holding — are NOT this page's content any more: they
- * live in the shell's sidebar as the rail's instrument column
- * (`components/shell/Sidebar.tsx`), on every tab, fed by the same bounded
- * page of rows via `lib/shell/rail`. This page spends its whole pane on the
- * work.
+ * classifier built / is holding — render inside the board's stage spine,
+ * under the stage buttons (`PipelineBoard`'s `pulse` prop), filling the
+ * column's blank run instead of spending a band of the pane. They derive
+ * from the same rows the board renders, so the board is where they live.
  *
  * Data path unchanged: the counts come from the O(1) `GET
  * /applications/summary`, the board from one bounded page of
@@ -155,10 +156,13 @@ async function loadDashboard(): Promise<LoadState> {
 }
 
 /** The page's one prose data line — its only rendering of the totals. The
- *  needs-review count is NOT here anymore: the pulse strip's classifier cell
- *  owns it (with the deep link), so the number renders once. */
-function buildSubtitle(summary: PipelineSummary): string {
-  return `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
+ *  needs-review count is NOT here: the pulse's classifier signal owns it
+ *  (with the deep link), so the number renders once. `weekly` folds the
+ *  this-week count in — the pref's digest used to be its own banner line
+ *  restating everything else this line already says. */
+function buildSubtitle(summary: PipelineSummary, weekly: boolean): string {
+  const thisWeek = weekly && summary.thisWeek > 0 ? ` · +${summary.thisWeek} this wk` : "";
+  return `${summary.total} filed${thisWeek} · ${summary.inMotion} in motion · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
   }`;
 }
@@ -325,7 +329,7 @@ export default async function DashboardPage() {
 
   // --- Populated dashboard ---------------------------------------------------
   const { summary } = state;
-  const subtitle = buildSubtitle(summary);
+  const subtitle = buildSubtitle(summary, notifPrefs.weekly);
 
   // Only fetch the queue's rows when the summary says there is something to show.
   const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
@@ -368,20 +372,6 @@ export default async function DashboardPage() {
         />
       ) : null}
 
-      {/* The in-app weekly digest — pref-gated, and only when there is a week
-          to report. The review half of the old NotificationCues banner is gone:
-          the queue itself now sits where the banner pointed. */}
-      {notifPrefs.weekly && summary.total > 0 && summary.thisWeek > 0 ? (
-        <p
-          role="status"
-          className="truncate border-l-2 border-line-strong pl-3 text-[13px] leading-snug text-muted"
-        >
-          <span className="text-strong">This week</span> · {summary.thisWeek} new application
-          {summary.thisWeek === 1 ? "" : "s"} · {summary.inMotion} in motion · {summary.offers}{" "}
-          offer{summary.offers === 1 ? "" : "s"}
-        </p>
-      ) : null}
-
       {/* The worklist owns the rest of the pane. `total` is the account's true
           count, not the page's: past BOARD_PAGE_SIZE the board says which slice
           it is showing, so the subtitle's "250 filed" and a list summing to 200
@@ -403,6 +393,7 @@ export default async function DashboardPage() {
         applications={state.applications}
         total={state.total}
         stageTotals={stageCountsOf(state.summary)}
+        pulse={{ needsReview: state.needsReview }}
         beforeList={notifPrefs.reviewAlerts ? queue : null}
         afterList={!notifPrefs.reviewAlerts ? queue : null}
       />

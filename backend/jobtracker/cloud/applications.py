@@ -816,7 +816,8 @@ async def _persist_message_refs(
     user_id: uuid.UUID,
     application_id: int | None,
     refs,
-) -> set[int]:
+    siblings: frozenset[int] = frozenset(),
+) -> dict[int, set[int]]:
     """Upsert metadata-only Email rows for a set of message refs (no bodies).
 
     Idempotent on ``(user_id, message_id)``: a re-sync updates the link and
@@ -836,17 +837,32 @@ async def _persist_message_refs(
     link: the rebuild path persists review items unfiltered, which would
     otherwise un-link (and so un-file) an application the user just created.
 
-    RETURNS the ids of the applications it moved an email AWAY from. Re-pointing
-    is right — the newest resolution of a message's employer wins — but it can
-    leave the previous row with no linked mail at all, which is how application
-    64 ("Together AI") ended up on the owner's board with nothing behind it. The
+    ``siblings`` — ids of OTHER rows at the same employer, passed only when the
+    cluster being filed carries no identity of its own (no requisition id, no
+    role token). Such a cluster is resolved by :func:`_pick_application`'s rule
+    4, which returns the employer's oldest live row: a tie-break, not evidence.
+    A tie-break must never overrule a link an earlier, better-informed scan
+    already made, so a message already filed against a sibling STAYS there.
+    Without this an ordinary sync that re-read one message without its snippet
+    (a metadata-only pass names no role) walked the mail of the owner's second
+    Amazon application onto his first one, emptied the row, and the emptied row
+    was then dismissed — 22 times over two days, on employers that never left
+    the board. Cross-employer re-pointing is untouched: that one is a change of
+    evidence about who the message is from, not a tie-break.
+
+    RETURNS which applications it moved an email away from, and WHERE each one
+    went: ``{source_id: {destination_id, ...}}``. Re-pointing is right — the
+    newest resolution of a message's employer wins — but it can leave the
+    previous row with no linked mail at all, which is how application 64
+    ("Together AI") ended up on the owner's board with nothing behind it. The
     caller has to decide what happens to those rows; see
-    :func:`_dismiss_rows_left_without_mail`. It cannot be decided here, because
-    a row emptied by one rolled company may be re-filled by the next one in the
-    same sync.
+    :func:`_dismiss_rows_left_without_mail`, which needs the destination to tell
+    "this row's employer is gone" from "its mail was re-filed next door". It
+    cannot be decided here, because a row emptied by one rolled company may be
+    re-filled by the next one in the same sync.
     """
 
-    moved_from: set[int] = set()
+    moved_from: dict[int, set[int]] = {}
     for ref in refs:
         # Naive-UTC: the Email.received_at column is TIMESTAMP WITHOUT TIME ZONE;
         # asyncpg refuses an aware datetime (from parsedate_to_datetime) here.
@@ -866,12 +882,18 @@ async def _persist_message_refs(
         category = _safe_category(ref.category)
         if existing is not None:
             if application_id is not None:
-                if (
-                    existing.application_id is not None
-                    and existing.application_id != application_id
-                ):
-                    moved_from.add(existing.application_id)
-                existing.application_id = application_id
+                current = existing.application_id
+                if current is not None and current != application_id:
+                    if current in siblings:
+                        # An identity-less cluster asking for a message that is
+                        # already filed against another application at this same
+                        # employer. It knows nothing this link does not; leave it.
+                        pass
+                    else:
+                        moved_from.setdefault(current, set()).add(application_id)
+                        existing.application_id = application_id
+                else:
+                    existing.application_id = application_id
             existing.subject = ref.subject or existing.subject
             existing.sender_name = ref.sender_name
             existing.sender_email = ref.sender_email
@@ -916,10 +938,50 @@ async def _persist_message_refs(
     return moved_from
 
 
+def _merge_moves(into: dict[int, set[int]], moves: dict[int, set[int]]) -> None:
+    """Fold one ``{source: {destination}}`` map into the running one."""
+
+    for source, destinations in moves.items():
+        into.setdefault(source, set()).update(destinations)
+
+
+async def _mail_stayed_at_this_employer(
+    session, user_id: uuid.UUID, row: Application, destinations: set[int]
+) -> bool:
+    """Did the mail that left ``row`` land on another row of the same employer?
+
+    ANY same-employer destination is enough to answer yes. A row whose messages
+    scattered — some next door, some to a genuinely different company — is
+    ambiguous, and ambiguity resolves toward keeping the application.
+
+    Compares the way every other employer comparison in this module does, via
+    :func:`pipeline.matches_company_token`, so "Amazon" and "Amazon.com" are one
+    employer here exactly as they are at filing time. A destination row that has
+    since vanished simply contributes nothing.
+    """
+
+    if not destinations:
+        return False
+    companies = (
+        await session.exec(
+            select(Application.company).where(
+                Application.user_id == user_id,
+                Application.id.in_(destinations),
+            )
+        )
+    ).all()
+    return any(
+        pipeline.matches_company_token(
+            row.company, pipeline.normalize_company_name(company)
+        )
+        for company in companies
+    )
+
+
 async def _dismiss_rows_left_without_mail(
-    session, user_id: uuid.UUID, application_ids: set[int]
+    session, user_id: uuid.UUID, moved: dict[int, set[int]]
 ) -> list[RemovedApplication]:
-    """Take off the board any AUTO row whose LAST linked email moved elsewhere.
+    """Take off the board any AUTO row whose LAST linked email LEFT THE EMPLOYER.
 
     When a message is re-attributed to a different application, the row it came
     from can be left with nothing behind it. That state is worse than either of
@@ -934,19 +996,34 @@ async def _dismiss_rows_left_without_mail(
     again. Only ``gmail``-auto rows are eligible — a manual row may legitimately
     have never had mail, and a user-settled row is the user's, not the sync's.
 
-    Deliberately NOT reported as ``purged``: that count renders as "cleared N
-    stale" beside the names, and naming a company as removed while it is still
-    on the board under the row its mail moved to would be a worse lie than
-    saying nothing. It is logged instead.
+    WHERE THE MAIL WENT decides it, which is why the caller passes destinations
+    and not just a set of emptied ids. Two very different things empty a row:
+
+    - the message now belongs to a DIFFERENT employer. Then this row was a
+      misattribution of another company's mail, nothing about that employer
+      remains, and an empty row is the worse state. Dismissed.
+    - the message was re-filed onto a SIBLING at the same employer — a role
+      token that tokenizes differently than the day the row was minted, a scan
+      that could not re-derive an identity. Then the application has not gone
+      anywhere; one identity resolution disagreed with another, and company-token
+      reasoning cannot express "this employer is present but that requisition is
+      gone". The row STAYS. It cost the owner 22 real applications to establish
+      that removing a row on this evidence is the wrong trade: a stale row is a
+      click to remove, a removed one is not even visible to click.
+
+    Every removal that survives that test is now RETURNED to the caller and
+    reported. The note that used to sit here — that naming these would be a lie
+    because the company is still on the board under the row its mail moved to —
+    described exactly the case that no longer removes anything.
     """
 
-    if not application_ids:
+    if not moved:
         return []
 
     await session.flush()
     removed: list[RemovedApplication] = []
     now = datetime.utcnow()
-    for application_id in sorted(application_ids):
+    for application_id in sorted(moved):
         remaining = (
             await session.exec(
                 select(func.count())
@@ -968,6 +1045,8 @@ async def _dismiss_rows_left_without_mail(
             )
         ).first()
         if row is None or row.dismissed_at is not None or not _is_auto_row(row.source):
+            continue
+        if await _mail_stayed_at_this_employer(session, user_id, row, moved[application_id]):
             continue
         row.dismissed_at = now
         row.dismissed_reason = DISMISSED_BY_RESYNC
@@ -1058,6 +1137,7 @@ async def upsert_applications_for_user(
     session,
     user_id: uuid.UUID,
     rolled: list[pipeline.RolledApplication],
+    removed_out: list[RemovedApplication] | None = None,
 ) -> tuple[int, int]:
     """Idempotently persist rolled-up applications for one user.
 
@@ -1071,6 +1151,12 @@ async def upsert_applications_for_user(
     strand the row it left. Those rows are collected across the whole loop and
     resolved once at the end (:func:`_dismiss_rows_left_without_mail`), never
     per company — a row emptied by one company may be re-filled by the next.
+    Any row that ends up genuinely removed is APPENDED to ``removed_out`` when
+    the caller passes a list. An out-parameter, not a third return value, so the
+    ``(created, updated)`` contract every existing caller unpacks is untouched;
+    the merge functions are the only callers that need the names, and they need
+    them because a sync that changes the board without saying so is the defect
+    this file has now produced twice.
 
     Stickiness: a mail signal only advances an AUTO row (``source == 'gmail'``).
     A row the user created or corrected (manual / gmail_user) keeps its status
@@ -1096,7 +1182,7 @@ async def upsert_applications_for_user(
 
     created = 0
     updated = 0
-    emptied: set[int] = set()
+    moved: dict[int, set[int]] = {}
     # Earliest-applied first WITHIN a company. When several applications at one
     # employer meet a single pre-identity row, the earliest is the one that
     # adopts it — so the row that has been on the board (and any status the user
@@ -1105,6 +1191,19 @@ async def upsert_applications_for_user(
     for r in sorted(rolled, key=lambda x: (x.company_token, x.applied_at or datetime.max)):
         existing = await _resolve_application(session, user_id, r)
         deeplink = _rolled_deeplink(r)
+
+        # A cluster that carries no identity of its own lands on the employer's
+        # oldest row by :func:`_pick_application`'s rule 4 — a stable tie-break,
+        # and no evidence at all about which application the mail belongs to. It
+        # may file NEW messages there; it may not take one off a sibling. Only
+        # such a cluster pays for this lookup.
+        siblings: frozenset[int] = frozenset()
+        if r.req_id is None and r.role_token is None:
+            siblings = frozenset(
+                row.id
+                for row in await _company_rows(session, user_id, r.company_token)
+                if row.id is not None
+            )
 
         if existing is not None:
             # Stamp the identity on whatever row we landed on. For a row minted
@@ -1180,8 +1279,11 @@ async def upsert_applications_for_user(
             existing.updated_at = datetime.utcnow()
             session.add(existing)
             await session.flush()
-            emptied |= await _persist_message_refs(
-                session, user_id, existing.id, r.messages
+            _merge_moves(
+                moved,
+                await _persist_message_refs(
+                    session, user_id, existing.id, r.messages, siblings
+                ),
             )
             updated += 1
         else:
@@ -1200,14 +1302,19 @@ async def upsert_applications_for_user(
             )
             session.add(app)
             await session.flush()
-            emptied |= await _persist_message_refs(
-                session, user_id, app.id, r.messages
+            _merge_moves(
+                moved,
+                await _persist_message_refs(
+                    session, user_id, app.id, r.messages, siblings
+                ),
             )
             created += 1
 
     # Once, after every company has had its say — a row emptied by one of them
     # may have been re-filled by another.
-    await _dismiss_rows_left_without_mail(session, user_id, emptied)
+    removed = await _dismiss_rows_left_without_mail(session, user_id, moved)
+    if removed_out is not None:
+        removed_out.extend(removed)
 
     await session.commit()
     return created, updated
@@ -1572,30 +1679,40 @@ async def sync_gmail_pipeline_additive(
     applications appearing then vanishing run-to-run. The destructive
     purge+rebuild is reserved for the explicit user "Re-sync" button.
 
-    Idempotent and user-scoped. Returns a :class:`MergeResult` whose ``purged``
-    is always 0 and whose ``removed`` is always empty. ``created`` includes any
-    application recovered by :func:`reconcile_orphaned_classifications`.
+    Idempotent and user-scoped. ``created`` includes any application recovered
+    by :func:`reconcile_orphaned_classifications`.
 
-    ONE row can still leave the board on this path, and the counts do not name
-    it: an AUTO row whose LAST linked email was re-attributed to another
-    application is dismissed by :func:`_dismiss_rows_left_without_mail` (called
-    from the upsert, so it applies to both merge paths). That is not the removal
-    this function promises never to make — nothing is dropped for being absent
-    from a bounded scan; a row is retired because its own evidence now belongs
-    to a different row, which is the alternative to leaving it stranded and
-    permanently unremovable. It is logged, listed under ``?dismissed=true``, and
-    restorable. It is deliberately NOT counted in ``purged``, because that
-    number renders as "cleared N stale (names)" and the company in question is
-    still on the board under the row its mail moved to.
+    ONE row can still leave the board on this path, and it is now COUNTED AND
+    NAMED: an AUTO row whose last linked email was re-attributed to a different
+    EMPLOYER is dismissed by :func:`_dismiss_rows_left_without_mail` (called
+    from the upsert, so it applies to both merge paths). That is still not the
+    removal this function promises never to make — nothing is dropped for being
+    absent from a bounded scan; the row is retired because its own evidence
+    turned out to belong to another company, which is the alternative to leaving
+    it stranded and permanently unremovable.
+
+    It used to be left out of ``purged`` on the grounds that the company was
+    still on the board under the row its mail moved to. That was true only of
+    the same-employer case, which no longer removes anything at all — so what is
+    left is a company leaving the board, and the user has to be told, on the one
+    surface that offers the undo. Silence here is what let 22 removals pass
+    unnoticed over two days.
     """
 
-    created, updated = await upsert_applications_for_user(session, user_id, rolled)
+    removed: list[RemovedApplication] = []
+    created, updated = await upsert_applications_for_user(
+        session, user_id, rolled, removed
+    )
     # Catch up on anything the user classified that never got an application.
     created += await reconcile_orphaned_classifications(session, user_id)
     needs_review = await _persist_review_items_additive(session, user_id, review)
     await session.commit()
     return MergeResult(
-        created=created, updated=updated, purged=0, needs_review=needs_review
+        created=created,
+        updated=updated,
+        purged=len(removed),
+        needs_review=needs_review,
+        removed=tuple(removed),
     )
 
 
@@ -1691,7 +1808,12 @@ async def purge_and_rebuild_gmail_pipeline(
         removed.append(RemovedApplication(id=row.id, company=row.company))
     await session.flush()
 
-    created, updated = await upsert_applications_for_user(session, user_id, rolled)
+    # The upsert appends anything IT takes off the board (a row whose last email
+    # turned out to be another employer's) to the same list, so one receipt
+    # names every removal the run made, whatever removed it.
+    created, updated = await upsert_applications_for_user(
+        session, user_id, rolled, removed
+    )
     # Catch up on anything the user classified that never got an application.
     # Runs AFTER the upsert so an orphan whose employer is also in the fresh
     # rollup joins that row instead of creating a duplicate.
@@ -1703,7 +1825,7 @@ async def purge_and_rebuild_gmail_pipeline(
     await session.commit()
     if removed:
         logger.info(
-            "Re-sync removed %s contradicted auto row(s) for user_id=%s: %s "
+            "Re-sync removed %s auto row(s) for user_id=%s: %s "
             "(dismissed, not deleted — restorable)",
             len(removed),
             user_id,

@@ -26,4 +26,4 @@
  * nested scroller helps nobody. The document itself stays locked at every
  * width by the frame's `h-dvh overflow-hidden`.
  */
-export const LOCKED_PAGE_CLASS = "page-locked flex flex-col gap-4 lg:min-h-0 lg:flex-1";
+export const LOCKED_PAGE_CLASS = "page-locked flex flex-col gap-3 lg:min-h-0 lg:flex-1";

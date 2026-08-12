@@ -7,7 +7,7 @@
  * the seeds are OFFSETS ("due in 2d", "filed 16 days ago"), and a store dated
  * against one day but bucketed against another shifts every phrase on the page
  * by one for the width of the reader's UTC offset — far enough that Kestrel's
- * "due in 2d" drops out of the pulse strip's `≤2d` cell for readers west of
+ * "due in 2d" drops out of the pulse's `≤2d` cell for readers west of
  * UTC.
  *
  * The rule this module exists to enforce is that re-dating is a MAP over the

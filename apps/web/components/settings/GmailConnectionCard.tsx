@@ -203,6 +203,16 @@ export function GmailConnectionCard({
                 </li>
               ))}
             </ul>
+            {/* The safeguards above are the short version. The page that owns
+                the long one — every stored field, where it runs, how to delete
+                it — is linked from the place a user decides to connect. */}
+            <p className="mt-3 text-sm text-muted">
+              The full account — every field Applied stores, where it runs, and how to delete it —
+              is in the{" "}
+              <Link href="/privacy" className="text-strong underline-offset-4 hover:underline">
+                privacy policy →
+              </Link>
+            </p>
           </Disclosure>
 
           <Disclosure summary="A note on scale — the honest version">
