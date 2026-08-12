@@ -40,13 +40,19 @@ Content guards force obvious non-application content (newsletters/job-alert dige
 
 ### 1. User Corrections
 
-When a user corrects classification:
+When a user corrects the classification **of a message**:
 
 - email row is updated
 - training sample is inserted into `training_data`
 - embedding is stored in `email_embeddings`
 
 This immediately improves similarity matching and contributes to SetFit training eligibility.
+
+Only a per-message decision writes a training sample. Whole-row actions — a
+stage correction (`PATCH /applications/{id}`) and a dismissal — deliberately
+write none: a stage is a fact about an application, not a label for any of its
+messages. See [ML_CORPUS_INTEGRITY.md](ML_CORPUS_INTEGRITY.md) for what the old
+behaviour put in the production corpus and which rows are suspect.
 
 ### 2. Approved Review Queue Items
 
