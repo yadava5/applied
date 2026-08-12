@@ -251,6 +251,11 @@ router = APIRouter(
 DEFAULT_PAGE_SIZE = 100
 MAX_PAGE_SIZE = 500
 
+# The mail listing pages smaller than the board does: a message row carries a
+# subject and a snippet, so 50 of them is already a heavier response than 100
+# applications. Same MAX_PAGE_SIZE ceiling.
+DEFAULT_MAIL_PAGE_SIZE = 50
+
 # How recent an application counts as "this week" for the summary tile. Kept
 # in one place so the backend aggregate and the frontend's array-based
 # `summarize()` fold agree on the window (7 days).
@@ -407,6 +412,63 @@ class ReviewQueueResponse(BaseModel):
 
     items: list[ReviewItemResponse]
     total: int
+
+
+class MailMessageResponse(BaseModel):
+    """One stored message in the full mail listing.
+
+    Deliberately METADATA ONLY. ``snippet`` is the persisted ``body_snippet``
+    and there is no field for ``body_text`` or ``body_html``: the cloud sync
+    never fetches a body and this listing is not the place to start.
+
+    ``category``/``confidence``/``method`` are the stored verdict verbatim —
+    ``classified_as``, ``classification_confidence``, ``classification_method``
+    — so a reader can see WHAT was decided and HOW, which is the difference
+    between "the machine says applied" and "a rule matched at 0.71".
+
+    ``category`` carries the enum's own value (``"applied"``, ``"needs_review"``
+    …), the same lowercase vocabulary ``?category=`` accepts and
+    ``POST /review/{message_id}/classify`` takes back. One vocabulary end to
+    end, so a value read here can be sent straight back as a correction.
+    """
+
+    message_id: str
+    thread_id: str | None = None
+    subject: str | None = None
+    sender_name: str | None = None
+    sender_email: str | None = None
+    received_at: str | None = None
+    snippet: str | None = None
+    category: str | None = None
+    confidence: float | None = None
+    method: str | None = None
+    user_corrected: bool = False
+    is_reviewed: bool = False
+    application_id: int | None = None
+    # The linked application's employer, resolved in ONE query for the whole
+    # page (never per row). ``None`` when the message is not filed against an
+    # application — which most needs-review mail is not.
+    company: str | None = None
+    gmail_link: str | None = None
+
+
+class MailListResponse(BaseModel):
+    """A page of the user's stored mail, plus the counts the chips need.
+
+    ``total`` is the size of the CURRENT query — it respects both ``category``
+    and ``q``, because it is the number ``page``/``page_size`` walk.
+
+    ``category_counts`` is deliberately different: it respects ``q`` but NOT
+    ``category``, so each filter chip can show its own total while one of them
+    is active. Counting only the filtered set would make every chip but the
+    selected one read zero.
+    """
+
+    messages: list[MailMessageResponse]
+    total: int
+    page: int
+    page_size: int
+    category_counts: dict[str, int]
 
 
 class ReviewClassifyRequest(BaseModel):
@@ -2580,6 +2642,188 @@ async def application_statuses_cloud() -> StatusVocabularyResponse:
             for category, status in CATEGORY_TO_STATUS.items()
         },
         classifier_categories=list(pipeline.CANONICAL_CATEGORIES),
+    )
+
+
+@router.get("/mail", response_model=MailListResponse)
+async def mail_listing_cloud(
+    user_id: uuid.UUID = Depends(current_user),
+    page: int = Query(1, ge=1, description="1-based page number."),
+    page_size: int = Query(
+        DEFAULT_MAIL_PAGE_SIZE,
+        ge=1,
+        le=MAX_PAGE_SIZE,
+        description="Rows per page (capped so a single response stays bounded).",
+    ),
+    category: EmailCategory | None = Query(
+        None,
+        description=(
+            "Filter to one stored verdict. Does not affect `category_counts`."
+        ),
+    ),
+    q: str | None = Query(
+        None, description="Case-insensitive substring match on subject/sender."
+    ),
+) -> MailListResponse:
+    """Every message this user has stored, whatever the classifier decided.
+
+    Declared ABOVE ``GET /{application_id}`` deliberately: FastAPI matches in
+    declaration order and would otherwise try ``"mail"`` as an int path param
+    and answer 422. Same pattern as ``/summary``, ``/review`` and ``/statuses``.
+
+    WHY THIS EXISTS
+    ---------------
+    ``/review`` is the only other listing of classified mail, and it filters to
+    ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
+    for a work queue and the wrong set for a correction surface, because those
+    three predicates make a verdict unreachable the moment it is touched:
+
+    * a message already reviewed once drops out for good — emails 58 and 59 of
+      the owner's account sit at ``needs_review`` with ``is_reviewed = true``
+      and no endpoint in the product could name them, so no screen could
+      change them;
+    * a message linked to an application drops out too, so a ``rejection``
+      filed as ``applied`` is a wrong stored verdict a user can see on the
+      board and never correct at its source;
+    * and for an account whose mail all classified confidently, ``/review``
+      returns zero rows and the review UI never renders at all.
+
+    The write path never had that restriction — :func:`classify_review_item`
+    selects on ``(user_id, message_id)`` alone — so correcting any of these
+    already worked. What was missing was a way to *find* them. This is that
+    read, and nothing more: no new write, no body, no state change.
+
+    SHAPE
+    -----
+    Newest first with an ``id`` tiebreak, for the same reason the applications
+    listing has one: a sync writes a batch of rows carrying identical
+    ``received_at`` values, tied rows are free to come back in a different
+    order per request on Postgres, and paging a partial order drops some rows
+    and repeats others.
+
+    One entry per MESSAGE — unlike ``/review``, which collapses a thread to its
+    newest message because being asked the same question twice is duplicated
+    work. Here the user is auditing what is stored, and every stored row is
+    correctable individually, so hiding siblings would hide exactly the rows
+    this endpoint exists to reach.
+    """
+
+    # Two filter sets, and the difference is the contract: `total` counts the
+    # query being paged (category + q), while the chips' counts must ignore
+    # `category` or every chip but the active one reads zero.
+    base_filters = [Email.user_id == user_id]
+    needle = (q or "").strip()
+    if needle:
+        like = f"%{needle}%"
+        base_filters.append(
+            or_(
+                Email.subject.ilike(like),
+                Email.sender_name.ilike(like),
+                Email.sender_email.ilike(like),
+            )
+        )
+
+    page_filters = list(base_filters)
+    if category is not None:
+        page_filters.append(Email.classified_as == category)
+
+    offset = (page - 1) * page_size
+
+    async with get_session() as session:
+        total = (
+            await session.exec(
+                select(func.count()).select_from(Email).where(*page_filters)
+            )
+        ).one()
+
+        grouped = (
+            await session.exec(
+                select(Email.classified_as, func.count())
+                .where(*base_filters)
+                .group_by(Email.classified_as)
+            )
+        ).all()
+
+        stmt = (
+            select(Email)
+            .where(*page_filters)
+            # The tiebreak, and it has to be here. A sync writes a batch of
+            # rows inside the same second, so `received_at` alone leaves them
+            # tied and Postgres may return them in a different order per
+            # request — which drops and repeats rows across pages.
+            .order_by(Email.received_at.desc(), Email.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        rows = (await session.exec(stmt)).all()
+
+        # ONE query for the whole page's employers, not one per row. Scoped to
+        # the owner as well as the id set: a linked id is only ever this user's,
+        # and re-asserting it here means a stale link cannot read across users.
+        linked_ids = {e.application_id for e in rows if e.application_id is not None}
+        company_by_application: dict[int, str] = {}
+        if linked_ids:
+            pairs = (
+                await session.exec(
+                    select(Application.id, Application.company).where(
+                        Application.id.in_(linked_ids),
+                        Application.user_id == user_id,
+                    )
+                )
+            ).all()
+            company_by_application = dict(pairs)
+
+    category_counts: dict[str, int] = {}
+    for stored_category, count in grouped:
+        if stored_category is None:
+            # An unclassified row is real, but it has no chip to land on and
+            # `dict[str, int]` has no key for it. Counted nowhere rather than
+            # under a made-up name; `total` still includes it.
+            continue
+        key = (
+            stored_category.value
+            if hasattr(stored_category, "value")
+            else str(stored_category)
+        )
+        category_counts[key] = count
+
+    account_email = await _connected_account_email(user_id)
+    messages = [
+        MailMessageResponse(
+            message_id=e.message_id,
+            thread_id=e.thread_id,
+            subject=e.subject,
+            sender_name=e.sender_name,
+            sender_email=e.sender_email,
+            received_at=e.received_at.isoformat() if e.received_at else None,
+            # `body_snippet` — the stored preview. Never `body_text`/`body_html`.
+            snippet=e.body_snippet,
+            category=e.classified_as.value if e.classified_as else None,
+            confidence=e.classification_confidence,
+            method=e.classification_method,
+            user_corrected=e.user_corrected,
+            is_reviewed=e.is_reviewed,
+            application_id=e.application_id,
+            company=(
+                company_by_application.get(e.application_id)
+                if e.application_id is not None
+                else None
+            ),
+            gmail_link=pipeline.gmail_deeplink(
+                thread_id=e.thread_id,
+                message_id=e.message_id,
+                account_email=account_email,
+            ),
+        )
+        for e in rows
+    ]
+
+    return MailListResponse(
+        messages=messages,
+        total=total,
+        page=page,
+        page_size=page_size,
+        category_counts=category_counts,
     )
 
 
