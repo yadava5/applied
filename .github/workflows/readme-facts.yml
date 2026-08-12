@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No `pip install`, no venv, no dependencies. The checker is stdlib-only
       # on purpose: it has to stay fast enough that nobody is tempted to make it
