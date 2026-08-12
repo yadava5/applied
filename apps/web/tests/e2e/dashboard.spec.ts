@@ -88,18 +88,28 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     await expect(page.getByText("this week", { exact: true })).toHaveCount(0);
   });
 
-  test("a row is an application: role is the discriminator, company repeats", async ({ page }) => {
+  test("a row is an application: grouped by employer in the view, never in the data", async ({
+    page,
+  }) => {
     await page.goto("/demo");
 
     // Northstar Systems holds four applications in two different stages — the
-    // shape of the owner's own board, where one employer holds four requisitions.
-    // (`exact` so the "+3 at Northstar Systems" chips don't also match.)
-    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(4);
+    // shape of the owner's own board, where one employer holds four
+    // requisitions. The three applied ones share ONE employer card; the
+    // interviewing one keeps its own row — so the name renders twice, not
+    // four times, and no application's stage hides behind a summary.
+    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(2);
     await expect(page.getByText("ML Engineer", { exact: true })).toBeVisible();
+
+    // Opening the set reveals every member led by its role — the discriminator
+    // (four requisitions must read as four different lines). The employer's
+    // name still renders exactly twice: members don't repeat the header.
+    await page.getByRole("button", { name: "Northstar Systems — 3 applications" }).click();
     await expect(page.getByText("ML Engineer, Platform", { exact: true })).toBeVisible();
     await expect(page.getByText("Research Engineer, Applied ML", { exact: true })).toBeVisible();
+    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(2);
 
-    // The light same-company affordance filters the board to that employer.
+    // The cross-stage chip filters the board to the employer's whole set.
     await page
       .getByRole("button", { name: /show all applications at Northstar Systems/i })
       .first()
@@ -149,8 +159,13 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     await page.goto("/demo?pipeline=early");
 
     await expect(page.getByText("17 filed · 17 in motion · 0 offers")).toBeVisible();
-    // One populated group…
+    // One populated group — 17 APPLICATIONS, however few cards the employer
+    // grouping draws (Northstar's four and Cedar's two fold into one card
+    // each; the count must reflect the applications, not the cards)…
     await expect(page.getByRole("region", { name: /applied — 17/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Northstar Systems — 4 applications" }),
+    ).toBeVisible();
     // …and the three empty stages are spine lines, not rendered groups.
     for (const name of ["interviewing — 0", "offered — 0", "closed — 0"]) {
       await expect(page.getByRole("button", { name })).toBeVisible();

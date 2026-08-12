@@ -98,7 +98,15 @@ const StageSelect = memo(function StageSelect({
         disabled={disabled}
         aria-busy={busy}
         onChange={(e) => onChange(e.target.value)}
-        className="max-w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 py-0.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+        // `w-[8.5rem]`, not max-w: an intrinsic-width select is as wide as its
+        // current value, so 17 rows put the board's main control on four
+        // different x positions (a 78px spread, measured). Fixed width + a
+        // fixed-width tail after it (see the meta cluster) is what makes the
+        // selects a column. `h-6` matches the cluster's other controls (the
+        // Gmail slot, the menu trigger), so a card with a select and a card
+        // without one — the employer set header — compute the same height;
+        // the select's intrinsic height was a measured 1px taller.
+        className="h-6 w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
       >
         {statusOptions(value).map((option) => (
           <option key={option.value} value={option.value} disabled={option.disabled}>
@@ -115,13 +123,24 @@ const StageSelect = memo(function StageSelect({
  * application to a single click.
  *
  * This is the worklist form of what used to be `ApplicationCard`: the same
- * state machine over a full-width, fixed-skeleton line. Everything a row can
- * say lives on ONE line — company · role slot on the left, then the meta
- * cluster (deadline, filed stamp, stage control, Gmail link, actions) pinned
- * right — so a row missing its role renders exactly as tall as one that has
- * it (the raggedness complaint was 8 of 29 live rows with no role line). The
- * role slot never collapses: an absent role prints {@link NO_ROLE_LABEL} in
- * the dim rank, the same words the detail sheet uses.
+ * state machine over a full-width, fixed-skeleton line. At `sm` and up
+ * everything a row can say lives on ONE line — company · role slot on the
+ * left, then the meta cluster (chip, deadline, filed stamp, stage control,
+ * Gmail link, actions) pinned right — so a row missing its role renders
+ * exactly as tall as one that has it (the raggedness complaint was 8 of 29
+ * live rows with no role line). The role slot never collapses: an absent role
+ * prints {@link NO_ROLE_LABEL} in the dim rank, the same words the detail
+ * sheet uses.
+ *
+ * Below `sm` the row is an explicit stack instead of a flex-wrap accident:
+ * company + filed stamp on the first line, the role slot on the second, the
+ * controls on the third, all anchored left. The wrap-based layout put the
+ * chip/select cluster right-aligned on its own line — a dead gutter down the
+ * left of every row — and any row carrying both a chip and a "quiet Nd" tag
+ * wrapped its date onto a third line (measured: two row heights at 375px,
+ * 69px and 96px, predicted exactly by chip+quiet). The stamp now lives on the
+ * company line at phone width, so the controls line has a fixed population
+ * and rows keep one shape.
  *
  * Three behaviours here are load-bearing:
  *
@@ -151,7 +170,9 @@ export function ApplicationRow({
   columnLabel,
   today = todayISO(),
   onOpenDetail,
+  inSet = false,
   sameCompanyCount = 0,
+  sameCompanyLabel,
   onFilterCompany,
   dragging = false,
   onDragStart,
@@ -169,13 +190,22 @@ export function ApplicationRow({
   today?: string;
   /** Opens the detail sheet (the mail behind this row). */
   onOpenDetail?: (app: Application) => void;
+  /** True for a member of an employer set: the set's header already names the
+   *  company, so the row leads with its role — repeating the employer three
+   *  times under a header that says it is the duplication grouping removes.
+   *  The accessible name keeps the company; only the visible lead changes. */
+  inSet?: boolean;
   /**
    * How many OTHER applications share this company. A row is an application,
    * not a company — one employer can hold several — so this is a light
-   * affordance ("+3 at Amazon"), never a merge. The board passes 0 while its
-   * active filter already IS this company.
+   * affordance, never a merge. The board passes 0 while its active filter
+   * already IS this company, and for member rows inside an employer set
+   * (the set's header owns the affordance there).
    */
   sameCompanyCount?: number;
+  /** Stage-aware chip text ("+1 in interviewing") when the board groups by
+   *  employer; without it the chip says "+N at {company}" (search view). */
+  sameCompanyLabel?: string | null;
   /** Filters the board to this row's company (opens the set view). */
   onFilterCompany?: (company: string) => void;
   /** True while this row is the one being dragged. */
@@ -373,15 +403,49 @@ export function ApplicationRow({
 
   const role = app.position.trim();
 
-  const identity = (
+  const identity = inSet ? (
+    // Set member: the role IS the line (the header names the employer). The
+    // qualifier survives — a `closed` set's members must each say rejected /
+    // withdrawn / ghosted for themselves.
+    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      {role ? (
+        <span
+          title={role}
+          className="line-clamp-2 min-w-0 break-words text-sm leading-snug text-foreground underline-offset-2 group-hover/row:underline"
+        >
+          {role}
+        </span>
+      ) : (
+        <span className="text-sm leading-snug text-dim underline-offset-2 group-hover/row:underline">
+          {NO_ROLE_LABEL}
+        </span>
+      )}
+      {qualifier && (
+        <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
+          {qualifier}
+        </span>
+      )}
+      <span className="ml-auto shrink-0 sm:hidden">
+        <FiledStamp filed={filed} status={shownStatus} today={today} />
+      </span>
+    </span>
+  ) : (
     <>
-      <span className="flex min-w-0 max-w-[16rem] shrink-0 items-center gap-2 text-sm font-medium text-strong">
-        <span className="truncate underline-offset-2 group-hover/row:underline">{app.company}</span>
+      <span className="flex min-w-0 items-baseline gap-2 text-sm font-medium text-strong sm:max-w-[16rem] sm:shrink-0">
+        <span className="min-w-0 truncate underline-offset-2 group-hover/row:underline">
+          {app.company}
+        </span>
         {qualifier && (
           <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
             {qualifier}
           </span>
         )}
+        {/* Below `sm` the filed stamp rides the company line (pinned right),
+            which is what keeps the controls line one fixed shape — see the
+            component note. Above `sm` its twin renders in the meta cluster. */}
+        <span className="ml-auto shrink-0 font-normal sm:hidden">
+          <FiledStamp filed={filed} status={shownStatus} today={today} />
+        </span>
       </span>
       {/* The role WRAPS (two lines) instead of ellipsizing when it must: a job
           title's discriminating part is its tail — "…, AWS Data Services -
@@ -409,7 +473,7 @@ export function ApplicationRow({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       data-dragging={dragging || undefined}
-      className="board-row group/row relative flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-1.5 transition-colors hover:border-line-strong"
+      className="board-row group/row relative flex flex-col gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:pr-1.5"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
       {/* A row is an APPLICATION: company anchors it, the role discriminates
@@ -420,23 +484,31 @@ export function ApplicationRow({
           type="button"
           onClick={() => onOpenDetail(app)}
           aria-label={`Open ${app.company}${role ? ` — ${role}` : ""}`}
-          className="flex min-w-0 flex-1 basis-56 items-baseline gap-x-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+          className="flex min-w-0 flex-col gap-y-0.5 text-left sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5"
         >
           {identity}
         </button>
       ) : (
-        <div className="flex min-w-0 flex-1 basis-56 items-baseline gap-x-2.5">{identity}</div>
+        <div className="flex min-w-0 flex-col gap-y-0.5 sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5">
+          {identity}
+        </div>
       )}
 
-      {/* The meta cluster — every fact pinned right, in one fixed order, so
-          the eye can read a column of rows like a table. `max-w-full` (never
-          `shrink-0`): an unshrinkable cluster refuses the wrap and pushes the
-          row past a phone's viewport instead of taking its own line. */}
-      <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1">
+      {/* The meta cluster — every fact in one fixed order, pinned right from
+          `sm` up so the eye can read a column of rows like a table. The order
+          puts the variable-width pieces (chip, deadline, stamp) BEFORE the
+          fixed-width tail (select · Gmail slot · menu): with the tail constant,
+          every select shares one x position, which the old order — stamp and a
+          conditional link after the select — measurably broke (78px spread).
+          `max-w-full` (never `shrink-0`): an unshrinkable cluster refuses the
+          wrap and pushes the row past a phone's viewport instead of taking its
+          own line. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:ml-auto sm:max-w-full sm:justify-end">
         {sameCompanyCount > 0 && onFilterCompany ? (
           <SameCompanyChip
             company={app.company}
             count={sameCompanyCount}
+            label={sameCompanyLabel ?? undefined}
             onFilter={onFilterCompany}
           />
         ) : null}
@@ -446,6 +518,9 @@ export function ApplicationRow({
         {busy !== null || optimistic ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none" aria-hidden />
         ) : null}
+        <span className="hidden sm:inline">
+          <FiledStamp filed={filed} status={shownStatus} today={today} />
+        </span>
         <StageSelect
           id={app.id}
           company={app.company}
@@ -454,7 +529,6 @@ export function ApplicationRow({
           busy={busy === "status"}
           onChange={onStatusChange}
         />
-        <FiledStamp filed={filed} status={shownStatus} today={today} />
         {app.url ? (
           <a
             href={app.url}
@@ -462,11 +536,17 @@ export function ApplicationRow({
             rel="noopener noreferrer"
             aria-label={`Open the mail behind ${app.company} in Gmail`}
             title="open in gmail"
-            className="grid h-6 w-6 place-items-center rounded text-dim transition-colors hover:bg-surface hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+            className="grid h-6 w-6 place-items-center rounded text-dim transition-colors hover:bg-surface hover:text-strong"
           >
             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </a>
-        ) : null}
+        ) : (
+          // A rowed-up board needs this slot even when there is no mail to
+          // open — a hole here shifts the select column 32px on manual rows.
+          // Phone rows drop it: the controls line is left-anchored, not a
+          // column, and the space matters more.
+          <span className="hidden h-6 w-6 sm:block" aria-hidden="true" />
+        )}
         <RowActionsMenu
           label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
           items={menuItems}

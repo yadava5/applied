@@ -323,7 +323,9 @@ export function DemoDashboard({ pipeline = "seed" }: { pipeline?: DemoPipeline }
   }`;
 
   return (
-    <section className="space-y-6">
+    // A flex column (not `space-y`) so the pulse strip can reorder below the
+    // board at phone width without a second instance — see its wrapper.
+    <section className="flex flex-col gap-6">
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
       </SyncBar>
@@ -345,8 +347,18 @@ export function DemoDashboard({ pipeline = "seed" }: { pipeline?: DemoPipeline }
           deep-links to /dashboard#needs-classification — an auth-gated route
           that would dead-end an anonymous visitor. The fixture queue
           (DEMO_REVIEW_QUEUE) does hold one sub-gate message; the DecisionTrace
-          lower down this page is where it is shown and explained. */}
-      <PipelinePulse applications={snapshot.apps} total={snapshot.apps.length} needsReview={0} />
+          lower down this page is where it is shown and explained.
+
+          `max-sm:order-last`: at phone width the four cells stack into a
+          full-width column that pushed the first application row ~1500px down
+          the page, so the strip yields the top to the worklist — the same
+          answer the signed-in dashboard already gives below `lg`. One
+          instance, reordered visually; it holds no interactive content here
+          (needsReview is 0 by construction), so visual order and tab order
+          cannot disagree. */}
+      <div className="max-sm:order-last">
+        <PipelinePulse applications={snapshot.apps} total={snapshot.apps.length} needsReview={0} />
+      </div>
       <PipelineBoard applications={snapshot.apps} transport={boardTransport} />
     </section>
   );

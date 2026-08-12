@@ -9,9 +9,11 @@ import { ApplicationRow, NO_ROLE_LABEL } from "@/components/dashboard/Applicatio
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { CompanyBand } from "@/components/dashboard/CompanyBand";
+import { EmployerSetRow } from "@/components/dashboard/EmployerSetRow";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { boardColumns, cardQualifier, type BoardColumn } from "@/lib/dashboard/board";
 import { filedAt } from "@/lib/dashboard/dates";
+import { elsewhereLabel, groupByEmployer } from "@/lib/dashboard/employerGroups";
 import { cn } from "@/lib/utils";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
@@ -54,13 +56,26 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  *
  * A row is an APPLICATION, not a company: one employer can hold several rows
  * (four Amazon roles in one evening is the proven case), and the role is the
- * discriminator. Company stays an attribute — the company-level affordances
- * are the "+N at Amazon" chip on a row and the set view it opens: the list
- * filters to the employer and a `CompanyBand` states that filter — just the
+ * discriminator. But four rows all HEADED "Amazon" read as duplication, so the
+ * unfiltered list folds same-employer rows *within a stage group* into one
+ * employer card that opens inline (`EmployerSetRow`, membership from
+ * `lib/dashboard/employerGroups.ts`). Display only — each member keeps its own
+ * id, status, mail and controls; the stage headings and the spine keep
+ * counting applications, never cards; and the grouping is per stage on
+ * purpose, so an employer split across stages appears once under each — a
+ * cross-stage summary row would have to pick one stage to live in, which is
+ * the furthest-stage-wins display the old merge bug drew.
+ *
+ * The remaining company-level affordance is the cross-stage chip
+ * ("+1 in interviewing") on a set header or a singleton whose employer holds
+ * rows in other stages. It opens the set VIEW: the list filters to the
+ * employer — dispersed back into flat rows, one per application, each under
+ * its own stage heading — and a `CompanyBand` states that filter: just the
  * name and a clear, since the cards themselves already say how many there are
  * and what stage each one is in. While that filter is active the chip is
  * suppressed — "+3 at Amazon" inside Amazon's own set view was a bug, not
- * information.
+ * information. A search also disperses the sets: a match hidden inside a
+ * collapsed card would make search worse than no grouping at all.
  *
  * Motion (the `motion` library): every row cell is a `motion.li` with a
  * shared `layoutId`, so search/filter changes glide survivors into place, a
@@ -117,51 +132,103 @@ function StaticApplicationRow({
   app,
   columnLabel,
   today,
+  inSet = false,
   sameCompanyCount = 0,
+  sameCompanyLabel,
   onFilterCompany,
 }: {
   app: Application;
   columnLabel: string;
   today: string;
+  inSet?: boolean;
   sameCompanyCount?: number;
+  sameCompanyLabel?: string | null;
   onFilterCompany?: (company: string) => void;
 }) {
   const qualifier = cardQualifier(app.status, columnLabel);
   const stage = STAGES.find((s) => s.key === stageOf(app.status))!;
   const filed = filedAt(app);
   const role = app.position.trim();
+  const showChip = sameCompanyCount > 0 && onFilterCompany !== undefined;
   return (
+    // Same responsive skeleton as the interactive row: an explicit stack below
+    // `sm` (stamp on the company line, meta left-anchored), one line above it.
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong"
+      className="flex flex-col gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
-      <div className="flex min-w-0 flex-1 basis-56 items-baseline gap-x-2.5">
-        <span className="flex min-w-0 max-w-[16rem] shrink-0 items-center gap-2 text-sm font-medium text-strong">
-          <span className="truncate">{app.company}</span>
-          {qualifier && (
-            <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
-              {qualifier}
+      <div className="flex min-w-0 flex-col gap-y-0.5 sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5">
+        {inSet ? (
+          // Set member: role leads, employer stays on the header (see
+          // ApplicationRow — same rule, same reason).
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            {role ? (
+              <span
+                title={role}
+                className="line-clamp-2 min-w-0 break-words text-sm leading-snug text-foreground"
+              >
+                {role}
+              </span>
+            ) : (
+              <span className="text-sm leading-snug text-dim">{NO_ROLE_LABEL}</span>
+            )}
+            {qualifier && (
+              <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
+                {qualifier}
+              </span>
+            )}
+            <span className="ml-auto shrink-0 sm:hidden">
+              <FiledStamp filed={filed} status={app.status} today={today} />
             </span>
-          )}
-        </span>
-        {role ? (
-          <span
-            title={role}
-            className="line-clamp-2 min-w-0 break-words text-[13px] leading-snug text-foreground"
-          >
-            {role}
           </span>
         ) : (
-          <span className="text-[13px] leading-snug text-dim">{NO_ROLE_LABEL}</span>
+          <>
+            <span className="flex min-w-0 items-baseline gap-2 text-sm font-medium text-strong sm:max-w-[16rem] sm:shrink-0">
+              <span className="min-w-0 truncate">{app.company}</span>
+              {qualifier && (
+                <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted">
+                  {qualifier}
+                </span>
+              )}
+              <span className="ml-auto shrink-0 font-normal sm:hidden">
+                <FiledStamp filed={filed} status={app.status} today={today} />
+              </span>
+            </span>
+            {role ? (
+              <span
+                title={role}
+                className="line-clamp-2 min-w-0 break-words text-[13px] leading-snug text-foreground"
+              >
+                {role}
+              </span>
+            ) : (
+              <span className="text-[13px] leading-snug text-dim">{NO_ROLE_LABEL}</span>
+            )}
+          </>
         )}
       </div>
-      <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1">
-        {sameCompanyCount > 0 && onFilterCompany ? (
-          <SameCompanyChip company={app.company} count={sameCompanyCount} onFilter={onFilterCompany} />
+      {/* This row has no controls, so at phone width the meta line only exists
+          when it has something to say — an empty flex child would still spend
+          the stack's gap. */}
+      <div
+        className={cn(
+          showChip || app.due_at != null ? "flex" : "hidden sm:flex",
+          "flex-wrap items-center gap-x-2 gap-y-1 sm:ml-auto sm:max-w-full sm:justify-end",
+        )}
+      >
+        {showChip ? (
+          <SameCompanyChip
+            company={app.company}
+            count={sameCompanyCount}
+            label={sameCompanyLabel ?? undefined}
+            onFilter={onFilterCompany}
+          />
         ) : null}
         {/* Same rule as the interactive row: nothing unless the row has a due_at. */}
         <DeadlineTag dueAt={app.due_at} today={today} />
-        <FiledStamp filed={filed} status={app.status} today={today} />
+        <span className="hidden sm:inline">
+          <FiledStamp filed={filed} status={app.status} today={today} />
+        </span>
       </div>
     </div>
   );
@@ -169,15 +236,18 @@ function StaticApplicationRow({
 
 /**
  * One list cell: the layout-animated `li` around a row. `layoutId` is what
- * lets a row travel between stage groups as one continuous element;
- * `entering` gates the fade-in to post-hydration appearances only.
+ * lets a row travel between stage groups as one continuous element —
+ * `app-{id}` for an application (stable across grouping, so a member leaving
+ * a set glides out of it as itself), `set-{stage}-{company}` for an employer
+ * set's own cell. `entering` gates the fade-in to post-hydration appearances
+ * only.
  */
 function BoardCell({
-  id,
+  layoutKey,
   entering,
   children,
 }: {
-  id: number;
+  layoutKey: string;
   entering: boolean;
   children: ReactNode;
 }) {
@@ -198,7 +268,7 @@ function BoardCell({
   return (
     <motion.li
       layout={!reduceMotion}
-      layoutId={`app-${id}`}
+      layoutId={layoutKey}
       initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={
@@ -327,12 +397,63 @@ export function PipelineBoard({
   });
 
   /**
+   * Employer grouping is the resting view only. A search or the company
+   * filter disperses the sets back into flat rows: a match hidden inside a
+   * collapsed card would defeat the search, and the set VIEW's whole point is
+   * one row per application under its own stage heading.
+   */
+  const grouping = !filterActive;
+
+  /** Which employer sets are open, keyed `${stage}:${company}`. Session state
+   *  — a set the user opened stays open across filters and refreshes of this
+   *  mount, and there is nothing worth persisting beyond it. */
+  const [openSets, setOpenSets] = useState<Record<string, boolean>>({});
+  const toggleSet = (key: string) =>
+    setOpenSets((s) => ({ ...s, [key]: !s[key] }));
+
+  /**
    * The chip is suppressed for the company the board is already filtered to —
    * "N more at Amazon" while looking at exactly Amazon's set was the bug this
    * argument exists to keep fixed.
    */
   const sameCompanyCount = (app: Application) =>
     companyFilter === app.company ? 0 : (companyCounts.get(app.company) ?? 1) - 1;
+
+  /** Each employer's loaded rows by stage — the SHOWN stage, so an optimistic
+   *  move updates the cross-stage chips in the same frame as the row itself.
+   *  Not memoized: it depends on `pendingMoves`, which changes exactly when a
+   *  re-render happens anyway, and the board holds one bounded page. */
+  const companyStages = new Map<string, Record<StageKey, number>>();
+  for (const app of applications) {
+    let counts = companyStages.get(app.company);
+    if (!counts) {
+      counts = { applied: 0, interviewing: 0, offered: 0, rejected: 0 };
+      companyStages.set(app.company, counts);
+    }
+    counts[stageOf(shownStatus(app))] += 1;
+  }
+
+  /**
+   * The cross-stage affordance for a row or set in `here`: how many of the
+   * employer's OTHER applications sit outside this stage, and the chip text
+   * naming where ("+1 in interviewing"). Null when the employer is wholly
+   * here — an employer set carrying "+0 elsewhere" would be noise.
+   */
+  const crossStageChip = (
+    company: string,
+    here: StageKey,
+    columns: BoardColumn[],
+  ): { count: number; label: string } | null => {
+    const counts = companyStages.get(company);
+    if (!counts) return null;
+    const others = columns.filter((c) => c.key !== here && counts[c.key] > 0);
+    const count = others.reduce((n, c) => n + counts[c.key], 0);
+    const label = elsewhereLabel(
+      count,
+      others.map((c) => c.label),
+    );
+    return label === null ? null : { count, label };
+  };
 
   async function moveTo(appId: number, stageKey: StageKey) {
     const app = applications.find((a) => a.id === appId);
@@ -424,6 +545,50 @@ export function PipelineBoard({
     );
 
   const locked = variant === "locked";
+
+  /** One application row in its animated cell. `inSet` rows sit inside an
+   *  employer set: the header owns the company-level affordance, so the
+   *  member's own chip is suppressed. */
+  const rowCell = (app: Application, column: BoardColumn, inSet = false) => {
+    const chip = inSet || !grouping ? null : crossStageChip(app.company, column.key, columns);
+    return (
+      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated}>
+        {interactive ? (
+          <ApplicationRow
+            app={app}
+            columnLabel={column.label}
+            today={today}
+            transport={transport}
+            onOpenDetail={setDetailApp}
+            inSet={inSet}
+            sameCompanyCount={inSet ? 0 : sameCompanyCount(app)}
+            sameCompanyLabel={chip?.label ?? null}
+            onFilterCompany={setCompanyFilter}
+            dragging={draggingId === app.id}
+            onDragStart={(event) => {
+              event.dataTransfer.setData("text/plain", String(app.id));
+              event.dataTransfer.effectAllowed = "move";
+              setDraggingId(app.id);
+            }}
+            onDragEnd={() => {
+              setDraggingId(null);
+              setDropStage(null);
+            }}
+          />
+        ) : (
+          <StaticApplicationRow
+            app={app}
+            columnLabel={column.label}
+            today={today}
+            inSet={inSet}
+            sameCompanyCount={inSet ? 0 : sameCompanyCount(app)}
+            sameCompanyLabel={chip?.label ?? null}
+            onFilterCompany={setCompanyFilter}
+          />
+        )}
+      </BoardCell>
+    );
+  };
 
   const dropHandlers = (column: BoardColumn) =>
     interactive
@@ -558,8 +723,13 @@ export function PipelineBoard({
         </div>
       ) : null}
 
-      {/* --- The stage lens, compressed (below lg) -------------------------- */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 lg:hidden">
+      {/* --- The stage lens, compressed (below lg) --------------------------
+          `flex-wrap`, not a scroller: at 375px the horizontal scroller cut
+          "offered" to "offer" at the viewport edge and hid "closed" entirely,
+          with no affordance that anything was scrollable — a filter you cannot
+          see is a filter that does not exist. Two wrapped lines cost ~30px and
+          keep every stage visible. */}
+      <div className="flex flex-wrap items-center gap-1.5 lg:hidden">
         <button
           type="button"
           aria-label={`all stages — ${spineTotal}`}
@@ -671,40 +841,38 @@ export function PipelineBoard({
                       <li className="rounded-lg border border-dashed border-line-soft p-4 text-center text-xs text-dim">
                         {filterActive ? "none match" : "none yet"}
                       </li>
+                    ) : grouping ? (
+                      // One entry per employer within this stage: singletons
+                      // (most rows) render exactly as before; a multi-row
+                      // employer folds into a set that opens inline. The
+                      // heading above still counts `items` — applications,
+                      // never cards.
+                      groupByEmployer(items).map((entry) =>
+                        entry.kind === "single" ? (
+                          rowCell(entry.app, column)
+                        ) : (
+                          <BoardCell
+                            key={`set-${entry.company}`}
+                            layoutKey={`set-${column.key}-${entry.company}`}
+                            entering={hydrated}
+                          >
+                            <EmployerSetRow
+                              company={entry.company}
+                              items={entry.items}
+                              column={column}
+                              today={today}
+                              open={openSets[`${column.key}:${entry.company}`] === true}
+                              onToggle={() => toggleSet(`${column.key}:${entry.company}`)}
+                              chip={crossStageChip(entry.company, column.key, columns)}
+                              onFilterCompany={setCompanyFilter}
+                            >
+                              {entry.items.map((app) => rowCell(app, column, true))}
+                            </EmployerSetRow>
+                          </BoardCell>
+                        ),
+                      )
                     ) : (
-                      items.map((app) => (
-                        <BoardCell key={app.id} id={app.id} entering={hydrated}>
-                          {interactive ? (
-                            <ApplicationRow
-                              app={app}
-                              columnLabel={column.label}
-                              today={today}
-                              transport={transport}
-                              onOpenDetail={setDetailApp}
-                              sameCompanyCount={sameCompanyCount(app)}
-                              onFilterCompany={setCompanyFilter}
-                              dragging={draggingId === app.id}
-                              onDragStart={(event) => {
-                                event.dataTransfer.setData("text/plain", String(app.id));
-                                event.dataTransfer.effectAllowed = "move";
-                                setDraggingId(app.id);
-                              }}
-                              onDragEnd={() => {
-                                setDraggingId(null);
-                                setDropStage(null);
-                              }}
-                            />
-                          ) : (
-                            <StaticApplicationRow
-                              app={app}
-                              columnLabel={column.label}
-                              today={today}
-                              sameCompanyCount={sameCompanyCount(app)}
-                              onFilterCompany={setCompanyFilter}
-                            />
-                          )}
-                        </BoardCell>
-                      ))
+                      items.map((app) => rowCell(app, column))
                     )}
                   </ul>
                 </section>

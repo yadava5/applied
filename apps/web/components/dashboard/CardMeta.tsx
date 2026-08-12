@@ -107,21 +107,30 @@ export function DeadlineTag({
 }
 
 /**
- * The same-company affordance: "+N at Amazon" opens the employer's set view
- * (the board filters to the company and the `CompanyBand` names the set).
- * The accessible name stays "Show all applications at …" — the contract the
- * board's tests and muscle memory rely on. The caller suppresses it while the
- * active filter already IS this company (rendering "3 more at Amazon" inside
- * Amazon's own set view was the bug).
+ * The same-company affordance: opens the employer's set view (the board
+ * filters to the company and the `CompanyBand` names the set). The accessible
+ * name stays "Show all applications at …" — the contract the board's tests
+ * and muscle memory rely on. The caller suppresses it while the active filter
+ * already IS this company (rendering "3 more at Amazon" inside Amazon's own
+ * set view was the bug).
+ *
+ * The visible text is stage-aware when the board groups by employer: the
+ * caller passes `label` ("+1 in interviewing", built by `elsewhereLabel`) so
+ * the chip stops repeating the company name one word away from the row that
+ * already says it. Without a label (the dispersed search view) it falls back
+ * to the generic "+N at {company}".
  */
 export function SameCompanyChip({
   company,
   count,
+  label,
   onFilter,
 }: {
   company: string;
   /** How many OTHER applications share the company. */
   count: number;
+  /** Stage-aware visible text; the aria contract above is unaffected. */
+  label?: string;
   onFilter: (company: string) => void;
 }) {
   return (
@@ -129,9 +138,10 @@ export function SameCompanyChip({
       type="button"
       onClick={() => onFilter(company)}
       aria-label={`Show all applications at ${company}`}
-      className="inline-flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5 text-[11px] font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+      className="inline-flex items-center gap-1 rounded border border-line-soft px-1.5 py-0.5 text-[11px] font-medium text-muted transition-colors hover:border-line-strong hover:text-strong"
     >
-      <Layers className="h-3 w-3" aria-hidden />+{count} at {company}
+      <Layers className="h-3 w-3" aria-hidden />
+      {label ?? `+${count} at ${company}`}
     </button>
   );
 }

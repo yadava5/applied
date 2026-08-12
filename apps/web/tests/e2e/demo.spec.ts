@@ -227,8 +227,9 @@ test.describe("live demo (/demo)", () => {
 
     // And the full role is always reachable on the row itself: it may wrap
     // rather than ellipsize its discriminating tail, with the complete text
-    // in `title` as the floor.
-    await expect(page.getByTitle("ML Engineer, Platform")).toBeVisible();
+    // in `title` as the floor. (A singleton's role — Northstar's rows sit
+    // inside a collapsed employer set on this view.)
+    await expect(page.getByTitle("Software Engineer, Platform")).toBeVisible();
   });
 
   test("a card moves between stages by drag, and by its select", async ({ page }) => {
@@ -473,8 +474,10 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
     await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
 
-    // The card-level ageing tag agrees with the strip's threshold.
-    await expect(page.getByText(/quiet \d+d/).first()).toBeVisible();
+    // The card-level ageing tag agrees with the strip's threshold. `.last()`,
+    // not `.first()`: the filed stamp renders a phone-width twin earlier in
+    // the row's DOM that is display:none at this viewport.
+    await expect(page.getByText(/quiet \d+d/).last()).toBeVisible();
   });
 
   test("the pulse strip moves when Sync files fresh mail", async ({ page }) => {
@@ -818,15 +821,45 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
   });
 
-  test("a company opens as a set: band on, chips suppressed, clear restores", async ({ page }) => {
+  test("one employer, one card: the set opens inline and hides no application's stage", async ({
+    page,
+  }) => {
     await page.goto("/demo");
-    // Four Northstar cards each carry the "+3 at" chip while unfiltered.
+
+    // Northstar's three APPLIED applications fold into one employer card;
+    // the interviewing one keeps its own row under its own stage heading —
+    // grouping is per stage, so a row's true stage is never behind a summary.
+    const header = page.getByRole("button", { name: "Northstar Systems — 3 applications" });
+    await expect(header).toBeVisible();
+    await expect(header).toHaveAttribute("aria-expanded", "false");
+    // Collapsed, only the interviewing row's Open control is on the board…
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(1);
+    // …but the stage heading still counts APPLICATIONS, not cards.
+    await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();
+
+    // Opening the set reveals every member as a full row: its own Open
+    // control, its own stage select — one select per application, no merge.
+    await header.click();
+    await expect(header).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(4);
+    await expect(page.getByLabel("Change stage for Northstar Systems")).toHaveCount(4);
+    await header.click();
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(1);
+  });
+
+  test("a company opens as a set view: band on, chips suppressed, clear restores", async ({
+    page,
+  }) => {
+    await page.goto("/demo");
+    // The cross-stage chip renders twice while unfiltered: on the applied
+    // set's header ("+1 in interviewing") and on the interviewing singleton
+    // ("+3 in applied"). Its accessible name is the stable contract.
     const chips = page.getByRole("button", { name: "Show all applications at Northstar Systems" });
-    await expect(chips).toHaveCount(4);
+    await expect(chips).toHaveCount(2);
 
     await chips.first().click();
-    // The chip's "+3" counts the OTHERS, so the set it opens is all four —
-    // the row you clicked plus the three the chip was offering.
+    // The set view disperses the employer card: all four applications render
+    // flat, one row each, under their own stage headings.
     await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(4);
 
     // The band states the filter and stops there. It used to add "3
@@ -840,14 +873,42 @@ test.describe("live demo (/demo)", () => {
     await expect(band.getByText("Northstar Systems")).toBeVisible();
     await expect(band.getByText(/\d+\s+applications?/)).toHaveCount(0);
     // …and the chip must NOT render while the active filter already is this
-    // company ("+3 at Northstar" inside Northstar's own set was the bug).
+    // company (a "+N" chip inside Northstar's own set view was the bug).
     await expect(chips).toHaveCount(0);
-    await expect(page.getByText(/at Northstar Systems/)).toHaveCount(0);
 
-    // Clear via the band restores the board and the chips.
+    // Clear via the band restores the grouped board and the chips.
     await page.getByRole("button", { name: "Stop filtering by Northstar Systems" }).click();
     await expect(page.getByText("Harbor Analytics", { exact: true })).toBeVisible();
-    await expect(chips).toHaveCount(4);
+    await expect(chips).toHaveCount(2);
+    await expect(
+      page.getByRole("button", { name: "Northstar Systems — 3 applications" }),
+    ).toBeVisible();
+  });
+
+  test("a four-deep employer on the early board opens four applications from one card", async ({
+    page,
+  }) => {
+    // `?pipeline=early` holds every row at applied, so Northstar's four
+    // applications share ONE stage — the owner's own shape (four Amazon
+    // requisitions, all applied), and the case the grouping exists for.
+    await page.goto("/demo?pipeline=early");
+
+    const header = page.getByRole("button", { name: "Northstar Systems — 4 applications" });
+    await expect(header).toBeVisible();
+    // Nothing of Northstar's lives outside this stage → no cross-stage chip.
+    await expect(
+      page.getByRole("button", { name: "Show all applications at Northstar Systems" }),
+    ).toHaveCount(0);
+    // The stage heading and the spine keep the real number — 17 applications,
+    // however few cards the grouped list draws.
+    await expect(page.getByRole("region", { name: /applied — 17/i })).toBeVisible();
+
+    await header.click();
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems/ })).toHaveCount(4);
+    // Cedar Labs' pair folds the same way.
+    await expect(
+      page.getByRole("button", { name: "Cedar Labs — 2 applications" }),
+    ).toBeVisible();
   });
 
   test("with reduced motion, every surface is fully present — nothing gated", async ({ page }) => {

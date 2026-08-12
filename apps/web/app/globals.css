@@ -1007,6 +1007,18 @@ body {
 .board-row[data-dragging="true"] {
   opacity: 0.4;
 }
+/* A COLLAPSED employer set (components/dashboard/EmployerSetRow.tsx) wears a
+ * small deck: two card edges peek out beneath it, each narrower and fainter
+ * than the last, so "several applications live here" reads before any copy
+ * does. Solid box-shadows in the hairline tokens — both themes get it from the
+ * cascade, it follows the card's own radius, and it takes no layout space, so
+ * a set header and a single row keep identical geometry. The class comes off
+ * when the set is open: the member rows are the deck then. */
+.board-stack {
+  box-shadow:
+    0 3px 0 -1px var(--line-strong),
+    0 6px 0 -2px var(--line);
+}
 .board-row[draggable="true"] {
   cursor: grab;
 }
