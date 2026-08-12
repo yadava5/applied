@@ -17,7 +17,9 @@ import { RailPipeline } from "./RailPipeline";
  * Top to bottom: the Applied lockup, the four nav items, a live pipeline
  * snapshot (`RailPipeline` — total, stage distribution, needs-review nudge),
  * then — anchored to the viewport bottom via the sticky full-height column —
- * the Gmail connection chip and the user chip (`RailFooter`). The rail is
+ * one identity block: who is signed in, with the Gmail connection state as a
+ * subordinate line beneath it (`RailFooter`, which explains why those two
+ * chips became one). The rail is
  * `sticky top-0 h-dvh`, so it stays in view while long pages scroll and the
  * footer genuinely anchors; the middle section scrolls internally on short
  * viewports so the footer is never pushed out of reach.

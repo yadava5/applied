@@ -1178,11 +1178,20 @@ async def test_application_detail_click_through_has_gmail_link(client: AsyncClie
     assert stripe["url"].endswith("#all/th-stripe")
 
 
-async def test_status_correction_is_sticky_through_resync_and_trains(client: AsyncClient) -> None:
+async def test_status_correction_is_sticky_through_resync_and_labels_no_mail(
+    client: AsyncClient,
+) -> None:
+    """A stage correction settles the ROW and says nothing about its messages.
+
+    It used to write a ``training_data`` example for every linked email, read
+    off the new stage — which is how an assessment invite entered the corpus as
+    a ``rejection``. See ``tests/test_training_corpus_integrity.py``.
+    """
+
     from sqlmodel import select as sm_select
 
     from jobtracker.database import get_session
-    from jobtracker.database.models import TrainingData
+    from jobtracker.database.models import Email, EmailCategory, TrainingData
 
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
@@ -1197,10 +1206,19 @@ async def test_status_correction_is_sticky_through_resync_and_trains(client: Asy
     assert patch.json()["status"] == "rejected"
     assert patch.json()["source"] == "gmail_user"  # now user-owned → sticky
 
-    # A correction trains the model (training_data row written).
     async with get_session() as session:
         labels = (await session.exec(sm_select(TrainingData.label))).all()
-    assert "rejection" in labels
+        assert list(labels) == []  # no per-message label was manufactured
+        email = (
+            await session.exec(
+                sm_select(Email).where(Email.message_id == "m-airbnb")
+            )
+        ).first()
+    # The message is still what the classifier said it was, and is not flagged
+    # as human-judged — flagging it would freeze it against re-classification.
+    assert email is not None
+    assert email.classified_as == EmailCategory.INTERVIEW
+    assert email.user_corrected is False and email.is_reviewed is False
 
     # A re-sync (mail still says 'interviewing') must NOT overwrite the decision.
     await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
@@ -1209,11 +1227,22 @@ async def test_status_correction_is_sticky_through_resync_and_trains(client: Asy
     assert airbnb2["status"] == "rejected"
 
 
-async def test_dismiss_removes_row_and_trains_other(client: AsyncClient) -> None:
+async def test_dismiss_removes_row_without_relabelling_its_mail(
+    client: AsyncClient,
+) -> None:
+    """Dismissal is a statement about the ROW, and it is reversible.
+
+    It used to write an ``other`` example per linked email while leaving each
+    email's stored classification untouched, so the corpus and the database
+    disagreed about the same message. Making them agree would mean flagging the
+    mail user-corrected, which freezes it — a bad trade on an action ``restore``
+    can undo. See ``tests/test_training_corpus_integrity.py``.
+    """
+
     from sqlmodel import select as sm_select
 
     from jobtracker.database import get_session
-    from jobtracker.database.models import TrainingData
+    from jobtracker.database.models import Email, EmailCategory, TrainingData
 
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     await client.post("/gmail/sync", json={"items": _owner_batch()}, headers=headers)
@@ -1227,7 +1256,15 @@ async def test_dismiss_removes_row_and_trains_other(client: AsyncClient) -> None
     assert "Stripe" not in {a["company"] for a in listing2["applications"]}
     async with get_session() as session:
         labels = (await session.exec(sm_select(TrainingData.label))).all()
-    assert "other" in labels  # taught that it was misfiled
+        assert list(labels) == []
+        email = (
+            await session.exec(
+                sm_select(Email).where(Email.message_id == "m-stripe")
+            )
+        ).first()
+    assert email is not None
+    assert email.classified_as == EmailCategory.APPLIED
+    assert email.user_corrected is False and email.is_reviewed is False
 
 
 async def test_review_item_classify_creates_sticky_application(client: AsyncClient) -> None:

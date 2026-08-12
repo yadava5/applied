@@ -335,11 +335,13 @@ export interface paths {
         head?: never;
         /**
          * Update Application Status Cloud
-         * @description Apply a user's status correction — makes it sticky AND trains the model.
+         * @description Apply a user's status correction — and make it sticky.
          *
          *     The new status is honoured verbatim (a human decision, not the advance-only
-         *     guard) and future syncs will never overwrite it. Every linked email becomes
-         *     a training example. 404 when the row is not the caller's.
+         *     guard) and future syncs will never overwrite it. It changes nothing about
+         *     the linked mail: a stage is not a label for any individual message, and
+         *     treating it as one poisoned the training corpus — see
+         *     :func:`record_status_correction`. 404 when the row is not the caller's.
          */
         patch: operations["update_application_status_cloud_applications__application_id__patch"];
         trace?: never;
@@ -427,10 +429,12 @@ export interface paths {
         put?: never;
         /**
          * Dismiss Application Cloud
-         * @description 'Not an application / dismiss' — take the row off the board + train it.
+         * @description 'Not an application / dismiss' — take the row off the board.
          *
          *     Reversible: the row leaves the board and the summary but is not deleted, so
-         *     ``POST /applications/{id}/restore`` brings it back intact.
+         *     ``POST /applications/{id}/restore`` brings it back intact — mail, stored
+         *     classifications and all, which is why the dismissal labels no message
+         *     (see :func:`dismiss_application`).
          */
         post: operations["dismiss_application_cloud_applications__application_id__dismiss_post"];
         delete?: never;

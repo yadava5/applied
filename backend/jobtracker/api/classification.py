@@ -368,8 +368,16 @@ async def trigger_retraining(background_tasks: BackgroundTasks) -> dict:
             detail="Training already in progress",
         )
 
-    # Run in background
-    background_tasks.add_task(classifier.retrain_setfit)
+    # Run in background, scoped to a single user.
+    #
+    # SCOPE: Gmail is read under the restricted ``gmail.readonly`` scope, whose
+    # user-data policy permits training only a model personalized to one end
+    # user — no co-mingling. This endpoint is the desktop trigger, so the id
+    # resolves to the ``LOCAL_USER_ID`` sentinel that every local row carries.
+    # See ``setfit_model.CrossUserTrainingError``.
+    from jobtracker.classifier.setfit_model import resolve_training_user_id
+
+    background_tasks.add_task(classifier.retrain_setfit, user_id=resolve_training_user_id())
 
     return {
         "success": True,
@@ -805,13 +813,22 @@ async def import_training_data(
 
         await session.commit()
 
-    # Check if we should trigger retraining
+    # Check if we should trigger retraining.
+    #
+    # SCOPE: training reads ``training_data`` for ONE user. Gmail's restricted
+    # ``gmail.readonly`` scope permits only a per-user personalized model (no
+    # co-mingling across users), so the id is resolved explicitly rather than
+    # left to a full-table read. Desktop resolves to the ``LOCAL_USER_ID``
+    # sentinel. See ``setfit_model.CrossUserTrainingError``.
     retrain_triggered = False
     if request.trigger_retrain and inserted > 0:
+        from jobtracker.classifier.setfit_model import resolve_training_user_id
+
         classifier = get_classifier()
         setfit = classifier._setfit
-        if await setfit.should_retrain():
-            background_tasks.add_task(classifier.retrain_setfit)
+        training_user_id = resolve_training_user_id()
+        if await setfit.should_retrain(user_id=training_user_id):
+            background_tasks.add_task(classifier.retrain_setfit, user_id=training_user_id)
             retrain_triggered = True
 
     return BulkImportResponse(

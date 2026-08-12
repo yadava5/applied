@@ -37,14 +37,29 @@ useDefault = true
     # distinguished by pattern alone.
     '''fxHtKRWuaD2nQbNZoAzwEo9pG_Q4AoHTsWvj1_RlrZw=''',
 
-    # backend/tests/test_user_id_scoping.py
+    # backend/tests/*.py — the HS256 test-secret convention.
     #
     # A literal string long enough to satisfy PyJWT's HMAC key-length warning
     # for HS256. Its content is irrelevant so long as it is consistent within
-    # the module — the tests assert user-id scoping, not signature strength.
-    # The value says what it is. Verified 2026-08-02 to appear in zero files
-    # outside backend/tests/.
-    '''scoping-test-jwt-secret-at-least-32-bytes-long-for-hs256''',
+    # the module — these tests assert user-id scoping, stage vocabulary and
+    # listing order, not signature strength.
+    #
+    # This started as one allowlisted value and is now a shape, because the
+    # one-per-value form was failing open in the other direction: several
+    # later test modules adopted the same convention, the generic rule fires
+    # on some of them and not others depending on entropy, and the config was
+    # only patched when a scan happened to catch one. A file added tomorrow
+    # would trip CI for a reason that has nothing to do with security, and the
+    # habit that forms from that is the dangerous part — the config's own
+    # header says a scanner that cries wolf gets skimmed.
+    #
+    # The pattern is still a VALUE match, not a path exclusion and not a
+    # silenced rule: it matches only strings that spell out, in themselves,
+    # that they are test JWT secrets of a length chosen for HS256. A real
+    # credential pasted into a test file does not look like this and is still
+    # caught. Verified 2026-08-11: matches 5 values, all in backend/tests/,
+    # and zero files outside it.
+    '''[a-z0-9-]+-test-jwt-secret-at-least-32-bytes-long-(?:for-)?hs256''',
   ]
 
   # Deliberately NOT allowlisted:
