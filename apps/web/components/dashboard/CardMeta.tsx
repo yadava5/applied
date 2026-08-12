@@ -94,7 +94,7 @@ export function DeadlineTag({
       className={`tabular mt-2 inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px] leading-snug ${DUE_TAG_CLASS[due.state]}`}
     >
       <CalendarClock
-        className={`h-3 w-3 shrink-0 ${due.state === "overdue" ? "text-reject" : ""}`}
+        className={`h-3 w-3 shrink-0 ${due.state === "overdue" ? "text-reject-ink" : ""}`}
         aria-hidden
       />
       <span>

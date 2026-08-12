@@ -119,7 +119,11 @@ function ExpandedTrace({ email }: { email: SampleEmail }) {
               <span className="w-16 shrink-0 text-dim">
                 {meta.n} · {meta.label}
               </span>
-              <span className={dim ? "text-dim/70" : "text-muted"}>
+              {/* A skipped layer drops a rank on the text ramp, not below it: the
+                  old `text-dim/70` composited to Lc 19.6 on this surface, which is
+                  not "quiet", it is unreadable. The dot's 0.3 opacity above is
+                  decoration and can carry the skipped state on its own. */}
+              <span className={dim ? "text-dim" : "text-muted"}>
                 {step.state === "answered" ? "answered — " : step.state === "passed" ? "passed — " : ""}
                 {step.note}
               </span>

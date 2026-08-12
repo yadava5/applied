@@ -293,7 +293,7 @@ function ReviewRow({
       ) : null}
 
       {error ? (
-        <p role="alert" className="mt-1.5 text-xs text-reject">
+        <p role="alert" className="mt-1.5 text-xs text-reject-ink">
           {error}
         </p>
       ) : null}

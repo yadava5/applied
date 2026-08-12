@@ -41,7 +41,18 @@ export interface DatedRow {
   created_at: string;
   applied_date?: string | null;
   due_at?: string | null;
-  due_source?: "user" | "mail" | null;
+  /**
+   * A free string, NOT the `"user" | "mail"` union the prose above describes,
+   * because that is what the wire actually carries: `CloudApplicationResponse`
+   * types this `string | null` (`lib/api/schema.d.ts`, generated from the
+   * backend, which declares the column a plain `str`). Narrowing it here made
+   * the board's own `Application` rows fail to satisfy `DatedRow`, so
+   * `redate`'s `T` collapsed to `DatedRow` and the store lost every other
+   * field. Only the exact literal `"mail"` is acted on below; anything else —
+   * `"user"`, a value a future backend invents, `null` — leaves `due_at` alone,
+   * which is the conservative half of the rule and the one worth keeping.
+   */
+  due_source?: string | null;
 }
 
 /**

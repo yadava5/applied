@@ -61,7 +61,7 @@ function pct(n: number): string {
 /** The sheet's deadline phrase ink, by state — measured in both themes (red
  * 6.89:1 dark / 6.47:1 light on the sheet surface; amber 8.87:1 / 5.02:1). */
 const DUE_TEXT_CLASS: Record<DueState, string> = {
-  overdue: "text-reject",
+  overdue: "text-reject-ink",
   soon: "text-review",
   ahead: "text-muted",
 };
@@ -133,12 +133,14 @@ function TrailMessage({ message, isLast }: { message: DetailData["messages"][num
 /**
  * "This looks like N applications — split?" for a merged row.
  *
- * TODO(backend): renders ONLY when the detail response carries
- * `split_candidates` (see `lib/dashboard/detail.ts`) and posts to
- * `POST /api/applications/{id}/split` — neither exists until the entity-model
- * branch lands, so today this component never mounts and no decorative
- * control ships. The wiring is here so the surface lights up the moment the
- * backend starts sending candidates.
+ * Renders only when the detail response carries two or more `split_candidates`
+ * (see `lib/dashboard/detail.ts`), which the backend derives by re-clustering
+ * this row's own stored mail. Empty is the normal case and offers nothing.
+ *
+ * The split itself takes NO request body: `POST /applications/{id}/split`
+ * recomputes the clusters server-side from the same stored mail, so the client
+ * cannot propose a division the server did not derive. The candidates here are
+ * for display and consent only — they tell the user what they are agreeing to.
  */
 function SplitPrompt({
   applicationId,
@@ -159,10 +161,10 @@ function SplitPrompt({
     setBusy(true);
     setError(null);
     try {
+      // No body on purpose — the endpoint re-derives the clusters from stored
+      // mail. Sending `candidates` would imply the server honours them.
       const res = await fetch(`/api/applications/${applicationId}/split`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidates }),
       });
       if (!res.ok) {
         setError("Couldn't split this row — it is unchanged.");
@@ -182,9 +184,12 @@ function SplitPrompt({
         This looks like {candidates.length} applications at {company} — split them?
       </p>
       <ul className="mt-2 space-y-1">
-        {candidates.map((c) => (
-          <li key={c.position} className="text-xs text-muted">
-            {company} · {c.position}
+        {candidates.map((c, i) => (
+          // Keyed on the first message id, not the role: a role is nullable on
+          // the wire and two clusters at one employer can share one.
+          <li key={c.message_ids[0] ?? `candidate-${i}`} className="text-xs text-muted">
+            {company} · {c.role ?? "no role named in this mail"}
+            {c.retains_row ? " · keeps your edits" : null}
           </li>
         ))}
       </ul>
@@ -202,7 +207,7 @@ function SplitPrompt({
         </button>
       </div>
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-reject">
+        <p role="alert" className="mt-2 text-xs text-reject-ink">
           {error}
         </p>
       ) : null}
@@ -407,7 +412,7 @@ export function ApplicationDetail({
             role="alert"
             className="flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
           >
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
             <span>{stageError}</span>
           </p>
         ) : null}
@@ -511,7 +516,7 @@ export function ApplicationDetail({
             role="alert"
             className="flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
           >
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject" aria-hidden />
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
             <span>{dueError}</span>
           </p>
         ) : null}

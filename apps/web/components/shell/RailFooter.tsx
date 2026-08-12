@@ -72,7 +72,7 @@ function GmailChip({ gmail }: { gmail: RailGmailData }) {
         ) : null}
         <LastSynced at={gmail.lastSyncAt} className="block truncate font-mono text-[10px] text-dim" />
         {gmail.syncStatus === "error" ? (
-          <span className="block truncate text-[11px] text-reject">
+          <span className="block truncate text-[11px] text-reject-ink">
             last sync failed{gmail.syncError ? ` · ${gmail.syncError}` : ""}
           </span>
         ) : null}

@@ -7,9 +7,10 @@ import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { todayISO } from "@/lib/dashboard/age";
-import { useLocalToday } from "@/lib/dashboard/useLocalToday";
+import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { datedById, redate } from "@/lib/demo/redate";
@@ -30,7 +31,8 @@ import { datedById, redate } from "@/lib/demo/redate";
  *     visitor has not corrected it by hand — "rows you corrected are kept";
  *   - every receipt count is derived from what the store actually did, never
  *     invented after the fact;
- *   - restore puts the removed row back on the board, not just off the list.
+ *   - restore puts the removed row back on the board, not just off the list,
+ *     and counts as one of those corrections — a later pass keeps it.
  *
  * The store lives in a ref (single owner, mutated only from event handlers)
  * mirrored into state for rendering, so the transports can stay referentially
@@ -146,6 +148,15 @@ export function DemoDashboard() {
     () => ({
       async changeStatus(id, status) {
         await delay(300);
+        // The wire contract is an ENUM (`ApplicationStatus`), not a free
+        // string — `BoardTransport` still says `string`, so without this the
+        // demo would happily write a value the live backend answers with a
+        // 422 into a row typed as the backend's own response. The controls
+        // only ever offer canonical statuses, so this never fires from the
+        // UI; it fires if one of them ever drifts, which is the point.
+        if (!isApplicationStatus(status)) {
+          return { ok: false, detail: `“${status}” is not a status the API accepts` };
+        }
         const s = store.current;
         commit({
           ...s,
@@ -265,7 +276,20 @@ export function DemoDashboard() {
         // not the session).
         const row = original.current.find((app) => app.id === id);
         if (!row) return false;
-        commit({ ...s, apps: [...s.apps, row] });
+        // A restore is a CORRECTION — the visitor has said "keep this one" —
+        // so the row joins `touched` and the next pass leaves it alone, the
+        // same promise the rebuild dialog makes. Without that it was removed
+        // again on every pass, and because re-removing it made the pass
+        // "change" something, a shallow scan re-reported the same stopped-early
+        // stop at PARTIAL_SCAN: the receipt never resolved, the scanned count
+        // never moved past 100, and the visitor could continue forever.
+        // Continuing after a restore now reads exactly like continuing
+        // without one.
+        commit({
+          ...s,
+          apps: [...s.apps, row],
+          touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
+        });
         return true;
       },
     }),
