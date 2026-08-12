@@ -646,3 +646,65 @@ Verification:
   - `pytest -q tests/test_ml_monitoring_report.py tests/test_prepare_ml_monitoring_alert_issue.py` -> `9 passed`
 - full backend suite:
   - `pytest -q` -> `150 passed`
+
+---
+
+## Cycle N (August 11, 2026): Cascade Measurement Gate + Promotion Policy - Completed
+
+Goal:
+- Make the learned layers measurable instead of asserted. Until now neither CI gate
+  touched them (`--mode rules`, and `--mode hybrid --hybrid-profile deterministic`,
+  which disables SetFit), so "does learning help?" had no executing check behind it.
+
+### Step N1 - Cascade evaluation + provenance in the harness (`completed`)
+
+Implemented in `jobtracker/scripts/evaluate_classifier.py`:
+- `--compare-rules`: scores the rules classifier over the same examples in the same
+  invocation and reports the delta, the per-example exchange
+  (`comparison.fixed_vs_reference` / `broken_vs_reference`) and a promotion verdict
+  against `PROMOTION_MARGIN = 0.005`.
+- every report now records `artifacts` (SetFit checkpoint directory, base model,
+  `trained_at`, training-example and per-source counts; embedding model, whether it
+  loaded, and the store size), the dataset SHA-256, and the layer that answered each
+  mismatch.
+- `compare_against_baseline` refuses a run whose learned layer is absent where the
+  baseline had it answering. Without that, a checkpoint-less run scores 0.9791 --
+  higher than the cascade -- and passes as a cascade non-regression.
+
+### Step N2 - Cascade baseline + gate (`completed`)
+
+Artifacts:
+- `backend/data/evaluation/baseline_cascade_v3.json` (new, `--hybrid-profile full`)
+- `scripts/cascade_gate.sh` - runs the cascade where a checkpoint exists, against a
+  scratch data directory holding only a link to it, so the score is a function of the
+  checkpoint and not of anybody's mail
+- `.github/workflows/learning-gate.yml` - `workflow_dispatch`; on a GitHub-hosted
+  runner it fails naming the searched directory, because no checkpoint ships here
+- `benchmark_history.{md,jsonl}` now carry a `cascade` row
+
+Measured on `classifier_eval_v3.jsonl` (96 examples), checkpoint
+`setfit_model_20260306_175404`, empty embedding store:
+- rules-only reference run: `accuracy=0.9792`, `macro_f1=0.9791`, `misclassified=2`
+- cascade (full profile): `accuracy=0.9583`, `macro_f1=0.9582`, `misclassified=4`
+- delta: `macro_f1=-0.0210`, verdict `behind_rules`, `promotable=false`
+- layers: `rules=58`, `setfit=20`, `fallback=13`, `content_filter=5`, `embeddings=0`
+- exchange: SetFit fixed 1 (`follow_up` read as `assessment` by the rules layer) and
+  broke 3 (two `applied` -> `pending_application`, one `other` -> `interview`)
+
+Note on the fourth decimal: Cycle H records `macro_f1=0.9583` for this configuration.
+The measured value is `0.9581695...` (0.9582 at four decimals); `0.9583` is the
+accuracy. Cycle H stands as the record of what was run in March -- `README.md` and
+`scripts/readme_facts.py` both pin it -- and `baseline_cascade_v3.json` is the
+definition site from here.
+
+Reproducibility check: the Cycle-H-era checkpoint `setfit_model_20260228_131948`
+produces identical metrics and identical mismatches, differing only in how many
+examples SetFit answered (22 vs 20). The cascade number is attributable to the
+checkpoint alone.
+
+### Step N3 - Promotion rule (`completed`)
+
+- `docs/ML_PROMOTION_POLICY.md`: the margin a learned layer must clear before it may
+  serve real mail, that promotion is its own reviewed commit rather than a side
+  effect of a retrain, the rollback triggers, and the provenance still missing (code
+  revision, a content hash of the weights, which training rows produced a checkpoint).

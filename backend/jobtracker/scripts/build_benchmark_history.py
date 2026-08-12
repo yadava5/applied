@@ -10,7 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-BASELINE_RE = re.compile(r"^baseline_(rules|hybrid)_v(\d+)\.json$")
+# `cascade` is `--mode hybrid --hybrid-profile full` with the learned layers
+# actually answering -- recorded by scripts/cascade_gate.sh, which refuses to
+# write a baseline in which they did not. It is listed as its own mode rather
+# than folded into `hybrid` because the reader's question is "does the ML help?"
+# and the answer is the gap between this row and the `rules` row of the same
+# version. Without the row, the table's only hybrid v3 entry is the
+# deterministic one, which is the regexes wearing the cascade's name.
+BASELINE_RE = re.compile(r"^baseline_(rules|hybrid|cascade)_v(\d+)\.json$")
 
 
 @dataclass
@@ -103,6 +110,12 @@ def write_markdown(rows: list[BenchmarkRow], out_path: Path) -> None:
         "`deterministic` disables SetFit and blanks the embedding examples for",
         "machine-stable CI gating, so a `deterministic` hybrid row measures the",
         "deterministic path -- which is why it matches the `rules` row exactly.",
+        "",
+        "A `cascade` row is the same classifier with the learned layers switched on",
+        "and a SetFit checkpoint loaded, recorded by `scripts/cascade_gate.sh`. Its",
+        "gap to the `rules` row of the same version is the only measurement of what",
+        "the learned layers are worth. It is not produced by CI: no checkpoint ships",
+        "in this repository, so a GitHub-hosted runner has nothing to load.",
         "",
         "| mode | version | profile | dataset | accuracy | macro_f1 | weighted_f1 | misclassified |",
         "|------|---------|---------|---------|----------|----------|-------------|---------------|",
