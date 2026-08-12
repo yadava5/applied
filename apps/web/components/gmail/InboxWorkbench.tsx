@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
+import { MailSnippet, OpenInGmail } from "@/components/mail/MailPreview";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { selectClass } from "@/components/ui/formStyles";
 import { Segmented } from "@/components/ui/Segmented";
@@ -91,6 +92,15 @@ function pct(n: number) {
  * widths keep the meters aligned down the list so confidence reads as a
  * column, not a scatter.
  *
+ * It also carries the message itself — a one-line preview and a link that
+ * opens it in Gmail, both the filed ledger's own (`MailSnippet` /
+ * `OpenInGmail`), shared rather than rewritten. Without them this view asked
+ * the reader to confirm or overrule a verdict about a message they could
+ * neither read nor reach: "how can i classify when i don't even know the
+ * content or don't have the link to look at it". A row whose snippet or link
+ * is null renders neither, so nothing here is ever a blank line or a dead
+ * control.
+ *
  * Every row carries a CORRECTION, which is what this view was missing. It used
  * to be read-only: an assessment email labelled "other" at 0% had nothing to
  * press, and filing could not rescue it either — the sync drops everything
@@ -121,6 +131,7 @@ function VerdictRow({
           {v.sender_name ? `${v.sender_name} · ` : ""}
           {v.sender_email}
         </p>
+        <MailSnippet snippet={v.snippet} />
       </div>
       <span className="inline-flex w-24 items-center gap-1.5 text-xs text-muted">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
@@ -143,6 +154,7 @@ function VerdictRow({
       <span className="tabular hidden w-12 shrink-0 text-right font-mono text-[10px] text-dim md:inline">
         {v.received_at ? shortDate(v.received_at) : ""}
       </span>
+      <OpenInGmail href={v.gmail_link} subject={v.subject} />
       <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-1">
         {v.user_corrected ? <span className="text-[11px] text-dim">corrected by you</span> : null}
         {payload ? (
@@ -188,7 +200,17 @@ function SkeletonRow() {
  * rewrites the snapshot); a short TTL bounds staleness. Session-scoped only —
  * nothing touches disk, and the JWT is still verified on any real fetch.
  */
-const SNAPSHOT_KEY = "applied:inbox:snapshot:v1";
+/**
+ * BUMP THE VERSION whenever the stored verdict shape changes. A snapshot is
+ * rehydrated verbatim on remount, so a reader mid-session when a deploy lands
+ * keeps being served the OLD shape for the rest of the TTL — with every test
+ * and every gate green, because nothing on the server can see it. `v1`
+ * snapshots predate `snippet`/`gmail_link`: left on `v1` this change would
+ * have shipped and still shown that reader a row with no preview and no way
+ * to open the message, which is the complaint it exists to fix. An unknown
+ * key simply misses, so the bump costs one re-mine and nothing else.
+ */
+const SNAPSHOT_KEY = "applied:inbox:snapshot:v2";
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 interface InboxSnapshot {

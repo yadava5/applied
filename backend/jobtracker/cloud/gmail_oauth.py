@@ -137,7 +137,22 @@ class GmailDisconnectResponse(BaseModel):
 
 
 class InboxVerdict(BaseModel):
-    """One classifier verdict for one recent message. No body is included."""
+    """One classifier verdict for one recent message, and enough of the message
+    to judge that verdict by.
+
+    ``snippet`` is Gmail's own preview — the SAME text this verdict was reached
+    from (see the classify call below) — unescaped and truncated to 500 chars,
+    exactly as the filed ledger stores and serves it. Full bodies are still
+    never fetched in the cloud path and never returned; that is the privacy
+    line, and it has not moved. What changed is only that the preview the
+    classifier already read now reaches the reader too.
+
+    It has to, because without it a scan row was unjudgeable: subject, sender
+    and a category, with a correction control and no way to see what the
+    message actually said or to open it. The filed ledger has carried both
+    fields since it existed, so the live scan was the one mail surface in the
+    product showing a verdict the reader could not check.
+    """
 
     message_id: str
     subject: str
@@ -149,9 +164,16 @@ class InboxVerdict(BaseModel):
     needs_review: bool
     # ISO-8601 receipt time (from the Date header) and the normalized company
     # token this message groups under — both drive the pipeline view (age,
-    # follow-up detection, per-company rollup). Never any body content.
+    # follow-up detection, per-company rollup).
     received_at: str | None = None
     company: str = ""
+    # The preview, and a deep link to the message in Gmail. Both are nullable
+    # and mean "not available for this row", never "empty": a message Gmail
+    # returned no snippet for, or a mine running while the account link is
+    # unreadable. A client must render neither rather than show a blank line or
+    # a dead control.
+    snippet: str | None = None
+    gmail_link: str | None = None
 
 
 class InboxResponse(BaseModel):
@@ -843,9 +865,11 @@ async def gmail_inbox(
     (batched metadata gets, no bodies) so it stays inside the Vercel function
     budget; big mines are many bounded pages, not one fragile mega-call.
 
-    Bodies are never returned — only verdict metadata. The per-user, per-page
-    short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is verified
-    on every request before the cache is consulted.
+    Full bodies are never fetched or returned. Each verdict carries the Gmail
+    ``snippet`` the classification was made from plus a deep link to the
+    message, which is what makes a scan row judgeable at all. The per-user,
+    per-page short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is
+    verified on every request before the cache is consulted.
     """
 
     _require_configured()
@@ -890,6 +914,21 @@ async def gmail_inbox(
             detail="Gmail is not connected for this user. Connect it first.",
         )
 
+    # The connected address, for the deep links built below. Read once per
+    # PAGE — not once per row, and not once per mine either: a 2,000-message
+    # mine is several of these requests and so several credential reads. Only
+    # past the cache check, so a cached page (which returns above carrying
+    # links that were already built) costs none.
+    #
+    # Reaching here means the fetch found credentials, so this is effectively
+    # never None (a disconnect racing the mine is the only way). The fallback
+    # still matters: `gmail_deeplink` without an address emits the positional
+    # ``/u/0/`` form, which is the FIRST account in the browser session and so
+    # the wrong inbox for anyone signed into several Google accounts — the bug
+    # already reported once against the board's links.
+    stored = await get_gmail_credentials(user_id)
+    account_email = stored.email if stored else None
+
     classifier = get_classifier()
     verdicts: list[InboxVerdict] = []
     summary = dict.fromkeys(pipeline.CANONICAL_CATEGORIES, 0)
@@ -910,6 +949,17 @@ async def gmail_inbox(
                 received_at=msg.received_at.isoformat() if msg.received_at else None,
                 company=pipeline.company_key(
                     msg.sender_email, msg.subject, msg.sender_name
+                ),
+                # Same unescape + 500-char truncation the store applies, so a
+                # message reads identically whether it is mined or filed. `or
+                # None` because a message Gmail gave no snippet for must arrive
+                # as null, not "" — the row renders nothing for null and would
+                # otherwise draw an empty preview line.
+                snippet=pipeline.unescape_entities(msg.snippet or "")[:500] or None,
+                gmail_link=pipeline.gmail_deeplink(
+                    thread_id=msg.thread_id,
+                    message_id=msg.message_id,
+                    account_email=account_email,
                 ),
             )
         )

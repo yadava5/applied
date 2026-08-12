@@ -452,7 +452,11 @@ async def test_inbox_classifies_stubbed_messages(
     # sees through the shared Lever relay to the employer named in the subject.
     assert by_id["m1"]["received_at"] == "2026-07-01T12:00:00"
     assert by_id["m1"]["company"] == "acme"
-    # No body content is ever returned — only verdict metadata.
+    # The exact wire shape. Pinned as a SET so a field added to the model is a
+    # deliberate edit here, not something that appears unannounced — the scan
+    # view's client type is hand-maintained and has to be moved in step.
+    # ``snippet`` is Gmail's own preview (the text the verdict was made from),
+    # never a full body; the two dedicated tests below cover its content.
     assert set(by_id["m1"].keys()) == {
         "message_id",
         "subject",
@@ -464,9 +468,124 @@ async def test_inbox_classifies_stubbed_messages(
         "needs_review",
         "received_at",
         "company",
+        "snippet",
+        "gmail_link",
     }
     # Newsletter/digest content is guarded to OTHER.
     assert by_id["m2"]["category"] == "other"
+
+
+async def test_inbox_verdict_carries_snippet_and_deep_link(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mined row ships the preview it was judged from, and a way to open it.
+
+    Without these the live-scan view asked the reader to confirm or correct a
+    verdict having shown them only a subject and a sender — no content, no
+    link. The preview arrives UNESCAPED (Gmail sends ``&#39;``; rendering the
+    entity verbatim is a bug already fixed once on the board) and the link
+    selects the connected account with ``authuser`` rather than the positional
+    ``/u/0/`` slot, which is the first account in the browser session and so
+    the wrong inbox for anyone signed into several.
+    """
+
+    from datetime import datetime
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
+
+    await _connect_gmail(USER_A)
+
+    async def _fake_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[
+                CloudGmailMessage(
+                    message_id="m1",
+                    thread_id="t1",
+                    subject="Thanks for applying to Acme",
+                    sender_name="Acme Recruiting",
+                    sender_email="careers@acme.test",
+                    snippet="We&#39;ve received your application and will be in touch.",
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
+                )
+            ],
+            next_page_token=None,
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    resp = await client.get(
+        "/gmail/inbox",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    verdict = resp.json()["verdicts"][0]
+
+    assert verdict["snippet"] == "We've received your application and will be in touch."
+    # The conversation, not the message: `#all/` reaches archived mail too.
+    assert verdict["gmail_link"] == (
+        f"https://mail.google.com/mail/?authuser={urllib.parse.quote(GMAIL_ADDRESS)}"
+        "#all/t1"
+    )
+
+
+async def test_inbox_snippet_is_null_when_absent_and_bounded_when_long(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The preview is null when there is none, and 500 chars at most.
+
+    Null rather than ``""`` because a client must be able to tell "this message
+    has no preview" from "here is an empty preview" — the row renders nothing
+    for null instead of drawing a blank line under the subject. The 500-char
+    bound is the same one the store applies to ``body_snippet``, so a message
+    reads identically whether it was mined or filed.
+    """
+
+    from datetime import datetime
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.cloud.gmail_client import CloudGmailMessage, MessagePage
+
+    await _connect_gmail(USER_A)
+
+    async def _fake_page(user_id, **_kwargs):
+        return MessagePage(
+            messages=[
+                CloudGmailMessage(
+                    message_id="empty",
+                    thread_id="t-empty",
+                    subject="Interview scheduling",
+                    sender_name="Acme",
+                    sender_email="careers@acme.test",
+                    snippet="",
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
+                ),
+                CloudGmailMessage(
+                    message_id="long",
+                    thread_id="t-long",
+                    subject="Interview scheduling",
+                    sender_name="Acme",
+                    sender_email="careers@acme.test",
+                    snippet="x" * 900,
+                    received_at=datetime(2026, 7, 1, 12, 0, 0),
+                ),
+            ],
+            next_page_token=None,
+        )
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    resp = await client.get(
+        "/gmail/inbox",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    by_id = {v["message_id"]: v for v in resp.json()["verdicts"]}
+
+    assert by_id["empty"]["snippet"] is None
+    # A message with no preview is still openable — the link is independent.
+    assert by_id["empty"]["gmail_link"].endswith("#all/t-empty")
+    assert by_id["long"]["snippet"] == "x" * 500
 
 
 async def test_inbox_cache_serves_repeat_without_refetch(

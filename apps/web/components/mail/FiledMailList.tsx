@@ -1,6 +1,7 @@
-import { ExternalLink, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import Link from "next/link";
 
+import { MailSnippet, OpenInGmail } from "@/components/mail/MailPreview";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
@@ -177,9 +178,7 @@ export function FiledMailList({
                     {sender}
                     {m.company ? <span className="text-muted"> · {m.company}</span> : null}
                   </p>
-                  {m.snippet ? (
-                    <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-dim">{m.snippet}</p>
-                  ) : null}
+                  <MailSnippet snippet={m.snippet} />
                 </div>
                 <span className="inline-flex w-24 items-center gap-1.5 text-xs text-muted">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
@@ -201,18 +200,7 @@ export function FiledMailList({
                 <span className="tabular hidden w-12 shrink-0 text-right font-mono text-[10px] text-dim md:inline">
                   {m.received_at ? shortDate(m.received_at) : ""}
                 </span>
-                {m.gmail_link ? (
-                  <a
-                    href={m.gmail_link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Open “${subject}” in Gmail`}
-                    title="open in gmail"
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded text-dim transition-colors hover:bg-surface-2 hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                  </a>
-                ) : null}
+                <OpenInGmail href={m.gmail_link} subject={subject} />
                 {/* The row's standing facts: whose verdict it is, and whether it
                     built a board row. Quiet — they qualify, they don't shout. */}
                 <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-1">
