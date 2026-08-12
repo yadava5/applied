@@ -471,6 +471,46 @@ class MailListResponse(BaseModel):
     category_counts: dict[str, int]
 
 
+class ScannedMessageIn(BaseModel):
+    """The metadata needed to STORE a message the live scan has only mined.
+
+    The live-scan view (``/inbox?view=scan``) reads Gmail directly and holds
+    nothing: its rows are verdicts about messages this database has never seen.
+    Correcting one of them therefore has to persist the message first, or the
+    correction lands on a row that does not exist — ``classify_review_item``
+    answers 404 and the user's click does nothing.
+
+    Filing first is NOT a substitute. ``pipeline.collect_review_items`` keeps
+    only ``needs_review`` mail and lifecycle mail at/above the 0.70 review
+    floor, so the exact case this exists for — an assessment email the
+    classifier called ``other`` at 0% — is dropped by ``POST /gmail/sync`` and
+    can never be reached by a correction. The user can see the row; nothing in
+    the product could store it.
+
+    ``received_at`` is REQUIRED and is never defaulted to "now": ``Email``
+    requires a receive time and :func:`_persist_message_refs` deliberately skips
+    undated messages rather than fabricating one. A client that has no date for
+    a row must not offer the correction at all.
+
+    ``category``/``confidence``/``method`` are the classifier's verdict AS THE
+    SCAN SHOWED IT. They are stored on the minted row so it starts out as a
+    faithful copy of what the user was looking at — the same thing a sync would
+    have written — and the correction is then applied on top of it, leaving the
+    normal "was X, user says Y" trail instead of a row that claims the user's
+    label was the machine's all along.
+    """
+
+    sender_email: str
+    received_at: datetime
+    subject: str | None = None
+    sender_name: str | None = None
+    thread_id: str | None = None
+    snippet: str | None = None
+    category: EmailCategory | None = None
+    confidence: float | None = None
+    method: str | None = None
+
+
 class ReviewClassifyRequest(BaseModel):
     """Body for classifying a review item into a category.
 
@@ -484,11 +524,17 @@ class ReviewClassifyRequest(BaseModel):
     "Update on your application" — belongs to exactly one of them without saying
     which. The board asks; this carries the answer. Ignored when the id is not
     the caller's own row, or not at the employer the mail names.
+
+    ``message`` is what makes the same correction possible from the LIVE SCAN,
+    whose rows may never have been stored (see :class:`ScannedMessageIn`).
+    Consulted only when this message id is not already on file; a stored message
+    is always corrected in place, so a client cannot use this to rewrite one.
     """
 
     category: EmailCategory
     company: str | None = None
     application_id: int | None = None
+    message: ScannedMessageIn | None = None
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -1908,6 +1954,59 @@ async def delete_application(
     return True
 
 
+async def _mint_scanned_email(
+    session,
+    user_id: uuid.UUID,
+    message_id: str,
+    scanned: ScannedMessageIn,
+) -> Email:
+    """Store a live-scan message so a correction has something to land on.
+
+    Writes exactly what a sync would have written for the same message — the
+    scan's own verdict, metadata only, no bodies — under the CALLER's user id.
+    It is flushed before returning because ``_add_training_example`` keys on
+    ``email.id``.
+
+    ``received_at`` goes through :func:`pipeline.to_naive_utc` for the same
+    reason every other write does: ``Email.received_at`` is TIMESTAMP WITHOUT
+    TIME ZONE and asyncpg refuses an aware datetime. A value that survives
+    parsing but not that conversion is refused rather than replaced with now().
+    """
+
+    received_at = pipeline.to_naive_utc(scanned.received_at)
+    if received_at is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This message carries no usable receive time, so it cannot be stored.",
+        )
+
+    email = Email(
+        user_id=user_id,
+        source_account=EmailSource.GMAIL,
+        message_id=message_id,
+        thread_id=scanned.thread_id,
+        subject=scanned.subject,
+        sender_name=scanned.sender_name,
+        sender_email=scanned.sender_email,
+        received_at=received_at,
+        body_snippet=pipeline.unescape_entities(scanned.snippet or "")[:500] or None,
+        classified_as=scanned.category,
+        classification_confidence=scanned.confidence,
+        classification_method=scanned.method,
+    )
+    session.add(email)
+    await session.flush()
+    logger.info(
+        "Stored a live-scan message for user_id=%s message_id=%s so its verdict "
+        "could be corrected (scan said category=%s confidence=%s)",
+        user_id,
+        message_id,
+        scanned.category.value if scanned.category else None,
+        scanned.confidence,
+    )
+    return email
+
+
 async def classify_review_item(
     session,
     user_id: uuid.UUID,
@@ -1915,6 +2014,7 @@ async def classify_review_item(
     category: EmailCategory,
     company: str | None = None,
     application_id: int | None = None,
+    scanned: ScannedMessageIn | None = None,
 ) -> dict[str, object]:
     """Classify a needs-review email into a category — persist + train.
 
@@ -1942,6 +2042,15 @@ async def classify_review_item(
     created no application and returned ``{"application_id": null}`` with a
     2xx — so the item vanished from the queue and never reached the board.
     ``training_data`` id 4 / ``emails`` id 58 in production are that bug.)
+
+    A message that is NOT on file is a 404 unless the caller supplies
+    ``scanned``, in which case it is stored first and then corrected — that is
+    the live-scan path (:class:`ScannedMessageIn`). The store happens BEFORE the
+    ``needs_employer`` early return on purpose: that branch commits and returns
+    without filing anything, and the whole point of it is that the caller
+    re-sends the same classification with a company. Minting afterwards would
+    make the second half of that round trip 404 on a message the first half had
+    just accepted.
     """
 
     email = (
@@ -1952,7 +2061,11 @@ async def classify_review_item(
         )
     ).first()
     if email is None:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Review item not found.")
+        if scanned is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND, detail="Review item not found."
+            )
+        email = await _mint_scanned_email(session, user_id, message_id, scanned)
 
     status_value = _lifecycle_to_status(category)
     employer = None
@@ -2612,11 +2725,23 @@ async def classify_review_item_cloud(
     named the response carries ``needs_employer: true`` and the item stays in
     the queue. Callers must branch on that flag (and may re-POST with
     ``company``) rather than assuming success.
+
+    Accepts a correction for a message this database has never seen, provided
+    the caller sends its metadata as ``message`` — the live scan's rows are
+    verdicts about un-stored mail, and without this they were 404s. The message
+    is stored under the JWT's user id and nowhere else, so the worst a bogus id
+    can do is add a row to the caller's own mail listing.
     """
 
     async with get_session() as session:
         return await classify_review_item(
-            session, user_id, message_id, data.category, data.company, data.application_id
+            session,
+            user_id,
+            message_id,
+            data.category,
+            data.company,
+            data.application_id,
+            data.message,
         )
 
 

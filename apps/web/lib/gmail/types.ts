@@ -22,6 +22,14 @@ export interface InboxVerdict {
   received_at: string | null;
   /** Normalized company token this message groups under. */
   company: string;
+  /**
+   * The reader corrected this verdict in the scan view. CLIENT-SIDE ONLY — the
+   * mine never sets it (it reports what the classifier said, and the classifier
+   * has no opinion about who overruled it). It rides in the session snapshot so
+   * a correction still reads as the user's after a remount, the same standing
+   * fact the filed ledger shows as "corrected by you".
+   */
+  user_corrected?: boolean;
 }
 
 export type CategorySummary = Record<string, number>;
@@ -127,6 +135,47 @@ export const CATEGORY_META: Record<string, { label: string; dot: string }> = {
   needs_review: { label: "needs review", dot: "bg-review" },
   other: { label: "other", dot: "bg-dim" },
 };
+
+/** One filter chip: a category, how it reads, and how many hold it. */
+export interface CategoryChip {
+  value: string;
+  label: string;
+  dot: string;
+  count: number;
+}
+
+/**
+ * The category chips for a set of counts — ONE vocabulary for both mail views.
+ *
+ * The filed ledger and the live scan each built this themselves and had drifted:
+ * the scan dropped any category `CATEGORY_ORDER` doesn't list (a new backend
+ * category would have been invisible rather than merely unstyled) and counted
+ * "all" from the row array instead of the counts it was showing, so the two
+ * numbers disagreed whenever the whole-set analysis covered more than the
+ * rendered page.
+ *
+ * Canonical order first, then anything else the counts name, sorted — a
+ * category this file has never heard of is still offered, never silently
+ * dropped. Zero-count categories are omitted: a chip reading "assessment 0" is
+ * a filter that returns nothing, which is worse than no chip. That omission is
+ * exactly why a corrected verdict has to reach these counts (see
+ * `applyVerdictCorrection`) rather than only the row it changed.
+ */
+export function categoryChips(counts: Record<string, number>): CategoryChip[] {
+  const known = CATEGORY_ORDER.filter((c) => (counts[c] ?? 0) > 0);
+  const extra = Object.keys(counts)
+    .filter((c) => !(CATEGORY_ORDER as readonly string[]).includes(c) && (counts[c] ?? 0) > 0)
+    .sort();
+  return [...known, ...extra].map((c) => {
+    const meta = CATEGORY_META[c] ?? { label: c.replaceAll("_", " "), dot: "bg-dim" };
+    return { value: c, label: meta.label, dot: meta.dot, count: counts[c] ?? 0 };
+  });
+}
+
+/** The "all" chip's number: the sum of the same counts the chips are drawn from. */
+export function chipTotal(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((sum, n) => sum + (n > 0 ? n : 0), 0);
+}
 
 /**
  * Build the query string for one `GET /api/gmail/inbox` page request. Pure —

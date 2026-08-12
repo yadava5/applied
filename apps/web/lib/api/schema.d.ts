@@ -211,6 +211,12 @@ export interface paths {
          *     named the response carries ``needs_employer: true`` and the item stays in
          *     the queue. Callers must branch on that flag (and may re-POST with
          *     ``company``) rather than assuming success.
+         *
+         *     Accepts a correction for a message this database has never seen, provided
+         *     the caller sends its metadata as ``message`` — the live scan's rows are
+         *     verdicts about un-stored mail, and without this they were 404s. The message
+         *     is stored under the JWT's user id and nowhere else, so the worst a bogus id
+         *     can do is add a row to the caller's own mail listing.
          */
         post: operations["classify_review_item_cloud_applications_review__message_id__classify_post"];
         delete?: never;
@@ -1218,6 +1224,11 @@ export interface components {
          *     "Update on your application" — belongs to exactly one of them without saying
          *     which. The board asks; this carries the answer. Ignored when the id is not
          *     the caller's own row, or not at the employer the mail names.
+         *
+         *     ``message`` is what makes the same correction possible from the LIVE SCAN,
+         *     whose rows may never have been stored (see :class:`ScannedMessageIn`).
+         *     Consulted only when this message id is not already on file; a stored message
+         *     is always corrected in place, so a client cannot use this to rewrite one.
          */
         ReviewClassifyRequest: {
             category: components["schemas"]["EmailCategory"];
@@ -1225,6 +1236,7 @@ export interface components {
             company?: string | null;
             /** Application Id */
             application_id?: number | null;
+            message?: components["schemas"]["ScannedMessageIn"] | null;
         };
         /**
          * ReviewItemResponse
@@ -1259,6 +1271,57 @@ export interface components {
             items: components["schemas"]["ReviewItemResponse"][];
             /** Total */
             total: number;
+        };
+        /**
+         * ScannedMessageIn
+         * @description The metadata needed to STORE a message the live scan has only mined.
+         *
+         *     The live-scan view (``/inbox?view=scan``) reads Gmail directly and holds
+         *     nothing: its rows are verdicts about messages this database has never seen.
+         *     Correcting one of them therefore has to persist the message first, or the
+         *     correction lands on a row that does not exist — ``classify_review_item``
+         *     answers 404 and the user's click does nothing.
+         *
+         *     Filing first is NOT a substitute. ``pipeline.collect_review_items`` keeps
+         *     only ``needs_review`` mail and lifecycle mail at/above the 0.70 review
+         *     floor, so the exact case this exists for — an assessment email the
+         *     classifier called ``other`` at 0% — is dropped by ``POST /gmail/sync`` and
+         *     can never be reached by a correction. The user can see the row; nothing in
+         *     the product could store it.
+         *
+         *     ``received_at`` is REQUIRED and is never defaulted to "now": ``Email``
+         *     requires a receive time and :func:`_persist_message_refs` deliberately skips
+         *     undated messages rather than fabricating one. A client that has no date for
+         *     a row must not offer the correction at all.
+         *
+         *     ``category``/``confidence``/``method`` are the classifier's verdict AS THE
+         *     SCAN SHOWED IT. They are stored on the minted row so it starts out as a
+         *     faithful copy of what the user was looking at — the same thing a sync would
+         *     have written — and the correction is then applied on top of it, leaving the
+         *     normal "was X, user says Y" trail instead of a row that claims the user's
+         *     label was the machine's all along.
+         */
+        ScannedMessageIn: {
+            /** Sender Email */
+            sender_email: string;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+            /** Subject */
+            subject?: string | null;
+            /** Sender Name */
+            sender_name?: string | null;
+            /** Thread Id */
+            thread_id?: string | null;
+            /** Snippet */
+            snippet?: string | null;
+            category?: components["schemas"]["EmailCategory"] | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Method */
+            method?: string | null;
         };
         /**
          * SplitCandidateResponse

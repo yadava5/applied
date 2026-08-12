@@ -77,3 +77,83 @@ test("both optional fields ride together when both are given", () => {
     applicationId: 7,
   });
 });
+
+// --- The scan message payload -----------------------------------------------
+// Same defect shape as `application_id`, with a worse failure: the live scan's
+// rows are verdicts about mail the backend has NEVER STORED, so this payload is
+// the only thing that lets a correction land at all. Dropped here, every
+// correction made from the scan view is a 404 with a working-looking UI in
+// front of it.
+
+test("the scan message survives the proxy, so a correction has something to land on", () => {
+  const parsed = readClassifyBody({
+    category: "assessment",
+    message: {
+      sender_email: "no-reply@hackerrank.harboranalytics.com",
+      received_at: "2026-08-11T09:30:00Z",
+      subject: "Your HackerRank assessment",
+      sender_name: "Harbor Analytics",
+      category: "other",
+      confidence: 0,
+      method: "rules",
+    },
+  });
+
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.message, {
+    sender_email: "no-reply@hackerrank.harboranalytics.com",
+    received_at: "2026-08-11T09:30:00Z",
+    subject: "Your HackerRank assessment",
+    sender_name: "Harbor Analytics",
+    category: "other",
+    confidence: 0,
+    method: "rules",
+  });
+});
+
+test("confidence 0 is a real confidence and is not dropped as falsy", () => {
+  // The complaint's own message scored 0%. A `if (m.confidence)` guard would
+  // drop it and store the row with no verdict at all.
+  const parsed = readClassifyBody({
+    category: "assessment",
+    message: { sender_email: "a@b.test", received_at: "2026-08-11T09:30:00Z", confidence: 0 },
+  });
+
+  assert.equal(parsed.message.confidence, 0);
+});
+
+test("a message with no sender or no receive time is refused, not half-forwarded", () => {
+  // `Email.received_at` is NOT NULL and the employer is resolved from the
+  // sender: forwarding either half turns an honest client-side refusal into a
+  // 422 the reader has to interpret.
+  const halves = [
+    { received_at: "2026-08-11T09:30:00Z" },
+    { sender_email: "a@b.test" },
+    { sender_email: "   ", received_at: "2026-08-11T09:30:00Z" },
+    { sender_email: "a@b.test", received_at: "  " },
+    "not an object",
+    null,
+  ];
+  for (const message of halves) {
+    const parsed = readClassifyBody({ category: "assessment", message });
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.message, undefined, `expected ${JSON.stringify(message)} to be refused`);
+  }
+});
+
+test("unknown keys on the message are dropped — the handler names what it sends", () => {
+  const parsed = readClassifyBody({
+    category: "offer",
+    message: {
+      sender_email: "a@b.test",
+      received_at: "2026-08-11T09:30:00Z",
+      body_text: "SHOULD NOT TRAVEL",
+      user_id: "someone-else",
+    },
+  });
+
+  assert.deepEqual(parsed.message, {
+    sender_email: "a@b.test",
+    received_at: "2026-08-11T09:30:00Z",
+  });
+});

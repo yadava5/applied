@@ -12,6 +12,8 @@ import {
   readClassifyOutcome,
   rowStaysInQueue,
 } from "@/lib/dashboard/review";
+import type { ScanMessagePayload } from "@/lib/gmail/scan-correction";
+import { liveClassify, type ClassifyFn } from "@/lib/gmail/transport";
 
 /**
  * The correction affordance the filed-mail view exists for: every stored
@@ -44,6 +46,9 @@ export function ReclassifyControl({
   messageId,
   subject,
   company,
+  message,
+  onCorrected,
+  classify = liveClassify,
 }: {
   messageId: string;
   /** For the control's accessible name — three bare "reclassify" buttons in a
@@ -51,6 +56,25 @@ export function ReclassifyControl({
   subject: string;
   /** The row's resolved employer token, if any — prefills the employer ask. */
   company: string | null;
+  /**
+   * The message's own metadata, for a row that may not be STORED yet — every
+   * row in the live-scan view. Absent for the filed ledger, whose rows are
+   * stored by definition. Without it the backend has nothing to correct and
+   * answers 404, so a scan row whose metadata cannot be built (no receive
+   * time) must not render this control at all; `scanMessagePayload` decides
+   * that, and the caller shows `UNSTORABLE_ROW_NOTE` instead.
+   */
+  message?: ScanMessagePayload;
+  /**
+   * Told the accepted category once the correction sticks. The filed view
+   * needs nothing here — `router.refresh()` re-renders it from the server —
+   * but the scan view's rows are client state the server does not know about,
+   * so it updates its own row, its chip counts and its session snapshot.
+   */
+  onCorrected?: (category: string) => void;
+  /** The transport seam. Defaults to the real proxy call; `/demo/scan` passes
+   *  the simulated one so the control is reachable without a session. */
+  classify?: ClassifyFn;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -67,17 +91,13 @@ export function ReclassifyControl({
     setError(null);
     const named = namedCompany.trim();
     try {
-      const res = await fetch(
-        `/api/applications/review/${encodeURIComponent(messageId)}/classify`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // Only send the company once the backend has asked for it — sending
-          // it up front would override an employer the mail itself names.
-          body: JSON.stringify(classifyRequestBody(category, employerPrompt ? named : null)),
-        },
+      const res = await classify(
+        messageId,
+        // Only send the company once the backend has asked for it — sending
+        // it up front would override an employer the mail itself names.
+        classifyRequestBody(category, employerPrompt ? named : null, null, message),
       );
-      const outcome = readClassifyOutcome(res.ok, await res.json().catch(() => ({})));
+      const outcome = readClassifyOutcome(res.ok, res.body);
       if (rowStaysInQueue(outcome)) {
         if (outcome.kind === "needs-employer") {
           setEmployerPrompt(employerPromptFor(employerPrompt ? named : ""));
@@ -89,9 +109,12 @@ export function ReclassifyControl({
       }
       // The correction stuck. Refresh re-renders the server list (and the
       // rail's counts) with the new verdict; the local "corrected" note covers
-      // the gap so the click is never silent.
+      // the gap so the click is never silent. `onCorrected` is the scan view's
+      // half of the same job: its rows are client state, so a refresh alone
+      // would leave the verdict it just changed reading the old category.
       setDone(true);
       setBusy(false);
+      onCorrected?.(category);
       router.refresh();
     } catch {
       setError(CLASSIFY_FAILED);
