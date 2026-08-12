@@ -54,8 +54,8 @@ function Toggle({
  * Notification preferences. The choices persist to the Supabase user's metadata
  * immediately (so they survive reloads) AND drive real in-app behaviour on the
  * dashboard: `reviewAlerts` decides whether the Needs-review queue interrupts
- * the board (above it) or waits under it, and `weekly` surfaces the in-app
- * this-week digest (both wired in the dashboard page). Email delivery isn't
+ * the board (above it) or waits under it, and `weekly` folds the this-week
+ * count into the header line (both wired in the dashboard page). Email delivery isn't
  * wired on this deployment yet — the caption says so plainly rather than
  * implying a toggle sends mail it can't.
  */
@@ -88,7 +88,7 @@ export function NotificationsSection({
           checked={prefs.weekly}
           onChange={(v) => persist({ ...prefs, weekly: v })}
           label="Weekly pipeline summary"
-          description="A one-line this-week digest at the top of your dashboard."
+          description="Adds this week's filings to your dashboard's header line."
         />
         <Toggle
           checked={prefs.reviewAlerts}

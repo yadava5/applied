@@ -2,9 +2,6 @@ import type { Metadata } from "next";
 
 import { DemoDashboard } from "@/components/demo/DemoDashboard";
 import { AppShellFrame } from "@/components/shell/AppShellFrame";
-import { todayISO } from "@/lib/dashboard/age";
-import { summarize, toPulseRow } from "@/lib/dashboard/summary";
-import { demoApplicationsAsApi } from "@/lib/demo/asApplications";
 import type { RailData } from "@/lib/shell/rail";
 
 export const metadata: Metadata = {
@@ -39,24 +36,26 @@ export const dynamic = "force-dynamic";
  *
  * What is fixture here and what is real:
  *   - real: every layout component, the board's full interactivity (drag,
- *     detail sheet, stage filter), the pulse in the rail, the theme.
- *   - fixture: the rows, the rail snapshot below, and the identity block.
- *     The rail snapshot is computed once per request from the pristine
- *     fixtures; unlike the live shell it does not re-derive after board
- *     mutations, because the transports here commit to component state
- *     rather than to a backend a `router.refresh()` could re-read.
- *   - `needsReview: 0`, same reasoning as /demo: the classifier signal's
- *     non-zero branch deep-links to an auth-gated route that would dead-end
- *     an anonymous visitor.
+ *     detail sheet, stage filter), the pulse in the board's stage spine, the
+ *     theme.
+ *   - fixture: the rows, the rail's Gmail state, and the identity block.
+ *   - the pulse's `needsReview` is 0, same reasoning as /demo: the classifier
+ *     signal's non-zero branch deep-links to an auth-gated route that would
+ *     dead-end an anonymous visitor (`DemoDashboard` passes it).
+ *
+ * `?pipeline=early` renders the same locked twin over the early-search
+ * projection, exactly as /demo does — the measured production shape (every
+ * row at `applied`, no deadlines, roles missing at the real rate). The
+ * geometry claims have to hold when every distribution is a single spike,
+ * because that is the real account's normal state, not an edge case.
  */
-export default function DemoShellPage() {
-  const apps = demoApplicationsAsApi(todayISO());
+export default async function DemoShellPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pipeline?: string }>;
+}) {
+  const { pipeline } = await searchParams;
   const rail: RailData = {
-    pipeline: {
-      summary: summarize(apps),
-      needsReview: 0,
-      pulseRows: apps.map(toPulseRow),
-    },
     gmail: {
       connected: true,
       email: null,
@@ -69,7 +68,7 @@ export default function DemoShellPage() {
 
   return (
     <AppShellFrame rail={rail} userEmail="demo@applied.example" demo>
-      <DemoDashboard variant="locked" />
+      <DemoDashboard variant="locked" pipeline={pipeline === "early" ? "early" : "seed"} />
     </AppShellFrame>
   );
 }

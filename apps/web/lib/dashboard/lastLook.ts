@@ -31,7 +31,7 @@
  *     `Application` schema at all — only the local FastAPI surface exposes it.)
  *   · "went quiet" — nothing happening is the opposite of a change. It is a
  *     clock crossing, it would fire every day on a stale board and drown the
- *     real events, and the pulse strip's amber bucket plus the card's own
+ *     real events, and the pulse's amber bucket plus the card's own
  *     "quiet Nd" tag already say it.
  *   · rows that DISAPPEARED — the board is one bounded page (`BOARD_PAGE_SIZE`),
  *     so a row's absence is not evidence it was removed; it may simply not have

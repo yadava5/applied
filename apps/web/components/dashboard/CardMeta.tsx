@@ -18,7 +18,7 @@ import { stageOf } from "@/lib/dashboard/summary";
 /**
  * The card's date stamp, now carrying the ageing signal: an applied-stage row
  * ≥ {@link QUIET_AFTER_DAYS} days old with no stage movement gets an amber
- * "quiet Nd" tag — the same threshold the pulse strip counts, so the board and
+ * "quiet Nd" tag — the same threshold the pulse counts, so the board and
  * the strip always agree on what "quiet" means. Other stages show the date
  * alone: their filed date says nothing honest about how stale the *contact*
  * is, so no claim is made.
