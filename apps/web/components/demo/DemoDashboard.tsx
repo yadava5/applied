@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
@@ -103,18 +102,18 @@ export function DemoDashboard({
   variant = "flow",
 }: {
   pipeline?: DemoPipeline;
-  /** `flow` — the /demo page twin: natural height, the page scrolls, the
-   *  pulse renders as its in-page strip (that page has no shell rail).
+  /** `flow` — the /demo page twin: natural height, the page scrolls.
    *  `locked` — the /demo/shell twin: the signed-in dashboard's exact
-   *  geometry (`LOCKED_PAGE_CLASS` root, `variant="locked"` board, NO
-   *  in-page pulse — the shell rail carries it), which is what makes the
-   *  viewport-lock e2e assertions executable without a session. */
+   *  geometry (`LOCKED_PAGE_CLASS` root, `variant="locked"` board), which is
+   *  what makes the viewport-lock e2e assertions executable without a
+   *  session. Both mount the pulse where the real page does: in the board's
+   *  stage spine. */
   variant?: "flow" | "locked";
 }) {
   const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
   // hydration, the visitor's own day once mounted — the same read the board,
-  // the cards and the pulse strip make for themselves (`useLocalToday`).
+  // the cards and the pulse make for themselves (`useLocalToday`).
   const today = useLocalToday();
 
   // ONE clock read per dating of the store: the fixture dates are relative, so
@@ -139,7 +138,7 @@ export function DemoDashboard({
   // ("due in 9d", "overdue 2d") and the board now buckets them against the
   // local day, so leaving the store on the UTC day would shift every phrase on
   // /demo by one for the width of the visitor's UTC offset — and Kestrel's
-  // "due in 2d" would fall out of the pulse strip's ≤2d cell for every reader
+  // "due in 2d" would fall out of the pulse's ≤2d cell for every reader
   // west of UTC.
   //
   // It re-dates what is THERE (`lib/demo/redate.ts`, which owns the rules and
@@ -337,8 +336,6 @@ export function DemoDashboard({
   }`;
 
   return (
-    // A flex column (not `space-y`) so the pulse strip can reorder below the
-    // board at phone width without a second instance — see its wrapper.
     <section className={locked ? LOCKED_PAGE_CLASS : "flex flex-col gap-6"}>
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
@@ -351,41 +348,21 @@ export function DemoDashboard({
         scope={LAST_LOOK_DEMO_SCOPE}
         storageKey={LAST_LOOK_DEMO_KEY}
       />
-      {/* Same strip as the signed-in dashboard, over the fixture store.
-          `total` is the store's own length because on this board it IS the
-          whole account — the strip's scope note ("newest N of M") therefore
-          never fires here by construction, not by omission; the live
-          dashboard is where a bounded page makes it real.
-          `needsReview` is 0 deliberately, not a stub: /demo mounts no review
-          queue for a held verdict to point at, and the cell's non-zero branch
-          deep-links to /dashboard#needs-classification — an auth-gated route
-          that would dead-end an anonymous visitor. The fixture queue
-          (DEMO_REVIEW_QUEUE) does hold one sub-gate message; the DecisionTrace
-          lower down this page is where it is shown and explained.
-
-          `max-sm:order-last`: at phone width the four cells stack into a
-          full-width column that pushed the first application row ~1500px down
-          the page, so the strip yields the top to the worklist — the same
-          answer the signed-in dashboard already gives below `lg`. One
-          instance, reordered visually; it holds no interactive content here
-          (needsReview is 0 by construction), so visual order and tab order
-          cannot disagree.
-
-          Absent on the locked twin, on purpose: there the shell's rail is
-          present and carries the pulse, exactly as the signed-in app does —
-          a second in-page copy is the duplication the rail move removed. */}
-      {locked ? null : (
-        <div className="max-sm:order-last">
-          <PipelinePulse
-            applications={snapshot.apps}
-            total={snapshot.apps.length}
-            needsReview={0}
-          />
-        </div>
-      )}
+      {/* The pulse rides the board's stage spine here exactly as it does on
+          the signed-in dashboard — one home, both variants, so the twin stays
+          honest evidence for the real page's geometry. `needsReview` is 0
+          deliberately, not a stub: /demo mounts no review queue for a held
+          verdict to point at, and the signal's non-zero branch deep-links to
+          /dashboard#needs-classification — an auth-gated route that would
+          dead-end an anonymous visitor. The fixture queue (DEMO_REVIEW_QUEUE)
+          does hold one sub-gate message; the DecisionTrace lower down /demo
+          is where it is shown and explained. Below `lg` the spine collapses
+          and the pulse goes with it — the phone answer the old full-width
+          strip needed a `max-sm:order-last` workaround to approximate. */}
       <PipelineBoard
         variant={locked ? "locked" : "flow"}
         applications={snapshot.apps}
+        pulse={{ needsReview: 0 }}
         transport={boardTransport}
       />
     </section>

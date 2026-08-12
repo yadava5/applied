@@ -24,7 +24,7 @@ import { localTodayISO, todayISO } from "@/lib/dashboard/age";
  * So: UTC for the server snapshot and the hydrating pass — byte-identical, no
  * mismatch — then the reader's real day, once there is a reader. Every surface
  * that buckets a deadline or an age takes its day from here, so the card tag,
- * the detail sheet and the pulse strip cannot disagree about what day it is.
+ * the detail sheet and the pulse cannot disagree about what day it is.
  *
  * `useSyncExternalStore` rather than a mounted flag in `useEffect`: this is the
  * "server value, then client value" case the API exists for, it is already the

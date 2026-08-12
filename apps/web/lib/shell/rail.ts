@@ -1,61 +1,28 @@
 /**
  * Server-side data assembly for the sidebar rail.
  *
- * The redesigned sidebar is not just navigation — it is the app's instrument
- * column: a glanceable pipeline snapshot (total + stage distribution), the
- * pulse's four derived signals (momentum, ageing, deadlines, classifier), and
- * the Gmail connection state. This module gathers that signal ONCE per server
- * render of the shell, through the same helpers the dashboard already uses:
+ * One probe: the Gmail connection state the rail footer renders beside the
+ * signed-in identity — connected + account email + the sync cursor state
+ * ("last synced …"), with its labelled failure modes collapsed to "unknown"
+ * here (the rail is a glance, not a diagnostic surface; Settings owns the
+ * detailed story).
  *
- *   - `GET /applications/summary` via the typed client — counts only, O(1)
- *     transfer, folded through `summarizeCounts` so the rail can never show a
- *     number derived differently from the dashboard's tiles.
- *   - `GET /applications` (page 1, `BOARD_PAGE_SIZE`) — the board's own
- *     bounded page, projected down to `PulseRow` so the rail's signals derive
- *     from the same rows the board renders without shipping them twice.
- *   - `getGmailStatus()` — connected + account email + the sync cursor state
- *     ("last synced …"), with its labelled failure modes collapsed to
- *     "unknown" here (the rail is a glance, not a diagnostic surface; Settings
- *     owns the detailed story).
+ * This module used to assemble a whole instrument column as well — the
+ * pipeline summary, and one bounded page of rows for the pulse's derived
+ * signals (PR #122). Both are gone from the rail: the pulse lives on the
+ * dashboard's stage spine (`PipelineBoard`'s `pulse` prop) where the board's
+ * own rows already are, and the snapshot's total restated a number the
+ * dashboard screen already stated twice (see `components/shell/Sidebar` for
+ * the measurements and the restatement note). With them went a summary read
+ * and a full list read the shell was paying on every tab.
  *
- * Both fetches run in parallel and every failure degrades to `null` rather
- * than throwing, so a broken backend can never take the app shell down with
- * it — the rail simply renders its honest fallback. No client polling: the
- * snapshot re-fetches on server render / `router.refresh()` (which the
- * dashboard's sync affordances already trigger).
- *
- * The exported types are plain serializable objects so the client `Sidebar`
- * can receive them as props; client modules must import them with
- * `import type` (erased at compile time — this module itself is server-only
- * via `lib/api/server`).
+ * The probe never throws — a failed status read degrades to `null` and the
+ * rail omits the connection chip rather than guessing. The exported types are
+ * plain serializable objects so the client `Sidebar` can receive them as
+ * props; client modules must import them with `import type` (erased at
+ * compile time — `lib/gmail/server` is server-only).
  */
-import { createServerApiClient } from "@/lib/api/server";
-import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
-import {
-  summarizeCounts,
-  toPulseRow,
-  type PipelineSummary,
-  type PulseRow,
-} from "@/lib/dashboard/summary";
 import { getGmailStatus } from "@/lib/gmail/server";
-
-export interface RailPipelineData {
-  /** Same fold as the dashboard tiles/funnel — one implementation of truth. */
-  summary: PipelineSummary;
-  /** Uncertain verdicts held for the user — the classifier signal's amber link. */
-  needsReview: number;
-  /**
-   * One bounded page of rows, projected to the fields the pulse's derived
-   * signals read (momentum, ageing, deadlines, classifier share). The SAME
-   * page the dashboard's board loads — identical URL, so React's request
-   * memoization collapses the two fetches into one backend read when the
-   * shell wraps /dashboard, and the rail describes exactly the slice the
-   * board shows. `null` = the list fetch failed while the summary survived;
-   * the rail then renders the counts it has and no derived signals, never a
-   * guess.
-   */
-  pulseRows: PulseRow[] | null;
-}
 
 export interface RailGmailData {
   connected: boolean;
@@ -71,35 +38,8 @@ export interface RailGmailData {
 }
 
 export interface RailData {
-  /** `null` = backend unreachable / rejected — rail shows an honest fallback. */
-  pipeline: RailPipelineData | null;
   /** `null` = status unknown (failure) — rail omits the connection chip. */
   gmail: RailGmailData | null;
-}
-
-async function loadPipeline(): Promise<RailPipelineData | null> {
-  try {
-    const api = await createServerApiClient();
-    const [summaryRes, listRes] = await Promise.all([
-      api.GET("/applications/summary"),
-      api.GET("/applications", {
-        params: { query: { page: 1, page_size: BOARD_PAGE_SIZE } },
-      }),
-    ]);
-    if (summaryRes.error || !summaryRes.data) return null;
-    return {
-      summary: summarizeCounts(
-        summaryRes.data.status_counts,
-        summaryRes.data.total,
-        summaryRes.data.this_week,
-      ),
-      needsReview: summaryRes.data.needs_review ?? 0,
-      pulseRows:
-        listRes.error || !listRes.data ? null : listRes.data.applications.map(toPulseRow),
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function loadGmail(): Promise<RailGmailData | null> {
@@ -117,8 +57,7 @@ async function loadGmail(): Promise<RailGmailData | null> {
   };
 }
 
-/** Fetch everything the rail shows, in parallel, never throwing. */
+/** Fetch everything the rail shows, never throwing. */
 export async function loadRailData(): Promise<RailData> {
-  const [pipeline, gmail] = await Promise.all([loadPipeline(), loadGmail()]);
-  return { pipeline, gmail };
+  return { gmail: await loadGmail() };
 }

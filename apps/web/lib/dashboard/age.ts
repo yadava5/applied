@@ -33,7 +33,7 @@ const CALENDAR_PREFIX = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/;
 
 /**
  * An applied-stage application this many days old with no stage change is
- * "quiet" — the amber signal on cards and in the pulse strip. One threshold,
+ * "quiet" — the amber signal on cards and in the pulse. One threshold,
  * used everywhere, so the card tag and the strip's count can never disagree.
  */
 export const QUIET_AFTER_DAYS = 14;
@@ -91,7 +91,7 @@ export function daysBetween(
   return Math.round((to - from) / DAY_MS);
 }
 
-/** The three age buckets the pulse strip draws for open applications. */
+/** The three age buckets the pulse draws for open applications. */
 export interface AgeBuckets {
   /** under one week old */
   fresh: number;

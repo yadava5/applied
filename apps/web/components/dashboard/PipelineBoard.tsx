@@ -10,6 +10,7 @@ import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { CompanyBand } from "@/components/dashboard/CompanyBand";
 import { EmployerSetRow } from "@/components/dashboard/EmployerSetRow";
+import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { boardColumns, cardQualifier, type BoardColumn } from "@/lib/dashboard/board";
 import { filedAt } from "@/lib/dashboard/dates";
@@ -36,6 +37,9 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  *     zero and an empty meter, which costs a line, not a quarter of the
  *     screen. At 29-0-0-0 it reads as a young pipeline; at a healthy spread
  *     it reads as a funnel. Below `lg` it compresses into a chip strip.
+ *     When the caller passes `pulse`, the pulse's four derived signals
+ *     (`PipelinePulse`) stack under the stage buttons and fill the column's
+ *     blank run — stage lens above, derived lenses below, one instrument.
  *   - the **worklist** (right) renders every application as one full-width
  *     row with a fixed skeleton, grouped by stage in flow order. Rows are
  *     even by construction: company and the role slot share one line, and a
@@ -307,6 +311,7 @@ export function PipelineBoard({
   interactive = true,
   variant = "flow",
   transport = liveBoardTransport,
+  pulse,
   beforeList,
   afterList,
 }: {
@@ -317,6 +322,11 @@ export function PipelineBoard({
   variant?: "locked" | "flow";
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
+  /** Mount the pulse's derived signals under the stage buttons (see the spine
+   *  note above). Omitted by the inert empty-state preview on purpose: four
+   *  derived signals over sample rows would be onboarding noise. `needsReview`
+   *  is the account's held-verdict count — the classifier signal's deep link. */
+  pulse?: { needsReview: number };
   /** Rendered inside the list pane, above the rows (e.g. the review queue
    *  when alerts interrupt) — it scrolls with the list, so an interrupt can
    *  never starve the worklist of its viewport. */
@@ -647,7 +657,7 @@ export function PipelineBoard({
         data-drop={dropStage === column.key || undefined}
         {...dropHandlers(column)}
         className={cn(
-          "spine-stage w-full rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
+          "spine-stage w-full rounded-lg border px-2.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
           active
             ? "border-line-strong bg-surface-2"
             : "border-transparent hover:border-line-soft hover:bg-surface-2/60",
@@ -664,60 +674,72 @@ export function PipelineBoard({
           </span>
           <span className="tabular ml-auto font-mono text-[11px] text-strong">{count}</span>
         </span>
-        {/* The meter: this stage's share of the loaded rows. An empty stage is
-            an empty track — a fact stated in 4px, not a tall box of nothing. */}
-        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
-          {count > 0 ? (
+        {/* The meter: this stage's share of the loaded rows. Only drawn when
+            there is a share to draw — the 0 beside the label already states
+            emptiness, and on the real account's shape (every row in one
+            stage) an empty track under each of four zeros was five bars
+            representing nothing. */}
+        {count > 0 ? (
+          <span
+            className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
+            aria-hidden="true"
+          >
             <span
               className="block h-full rounded-full"
               style={{ width: `${(count / spineMax) * 100}%`, background: column.color }}
             />
-          ) : null}
-        </span>
+          </span>
+        ) : null}
       </button>
     );
   };
+
+  /**
+   * Search + view state. Lives INSIDE the worklist column (not spanning the
+   * spine): it filters the list, so it sits over the list — and the spine
+   * gets the column's full height for the stage lens + pulse, which is where
+   * that height was being wasted as a full-width input row.
+   */
+  const toolbar =
+    showSearch || filterActive || scopeNote ? (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {showSearch ? (
+          <div className="relative min-w-0 flex-1 basis-56 sm:max-w-sm">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dim"
+              aria-hidden
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="search company or role…"
+              aria-label="Search the board by company or role"
+              className="w-full rounded-lg border border-line bg-surface py-1.5 pl-8 pr-3 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
+            />
+          </div>
+        ) : null}
+        {filterActive ? (
+          <span className="tabular text-xs text-dim" role="status">
+            {filtered.length} of {applications.length} shown
+          </span>
+        ) : null}
+        {/* The subtitle counts the whole account; this list can only count
+            what loaded. Without this line "250 filed" sat above a list
+            summing to 200 and neither number explained the other. */}
+        {scopeNote ? (
+          <span className="tabular text-xs text-dim">
+            board shows the {scopeNote} · older rows aren&apos;t loaded
+          </span>
+        ) : null}
+      </div>
+    ) : null;
 
   return (
     <div
       data-testid="pipeline-board"
       className={cn("flex flex-col gap-3", locked && "lg:min-h-0 lg:flex-1")}
     >
-      {/* --- Toolbar: search + view state ---------------------------------- */}
-      {showSearch || filterActive || scopeNote ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          {showSearch ? (
-            <div className="relative flex-1 basis-56">
-              <Search
-                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dim"
-                aria-hidden
-              />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="search company or role…"
-                aria-label="Search the board by company or role"
-                className="w-full rounded-lg border border-line bg-surface py-1.5 pl-8 pr-3 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
-              />
-            </div>
-          ) : null}
-          {filterActive ? (
-            <span className="tabular text-xs text-dim" role="status">
-              {filtered.length} of {applications.length} shown
-            </span>
-          ) : null}
-          {/* The subtitle counts the whole account; this list can only count
-              what loaded. Without this line "250 filed" sat above a list
-              summing to 200 and neither number explained the other. */}
-          {scopeNote ? (
-            <span className="tabular text-xs text-dim">
-              board shows the {scopeNote} · older rows aren&apos;t loaded
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
       {/* --- The stage lens, compressed (below lg) --------------------------
           `flex-wrap`, not a scroller: at 375px the horizontal scroller cut
           "offered" to "offer" at the viewport edge and hid "closed" entirely,
@@ -748,7 +770,7 @@ export function PipelineBoard({
         <aside
           aria-label="Stages"
           className={cn(
-            "hidden w-52 shrink-0 flex-col gap-1 lg:flex",
+            "hidden w-52 shrink-0 flex-col gap-0.5 lg:flex",
             locked ? "lg:min-h-0 lg:overflow-y-auto" : "lg:sticky lg:top-5 lg:self-start",
           )}
         >
@@ -759,7 +781,7 @@ export function PipelineBoard({
             aria-pressed={stageFilter === "all"}
             onClick={() => setStageFilter("all")}
             className={cn(
-              "w-full rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
+              "w-full rounded-lg border px-2.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
               stageFilter === "all"
                 ? "border-line-strong bg-surface-2"
                 : "border-transparent hover:border-line-soft hover:bg-surface-2/60",
@@ -780,9 +802,25 @@ export function PipelineBoard({
             </span>
           </button>
           {columns.map((column) => stageButton(column, "spine"))}
+          {/* The pulse fills the run under the stage buttons — the blank
+              space this column used to spend on nothing. `px-2.5` puts its
+              text on the stage labels' own left edge; its first section's
+              hairline is the divider. The spine's counts above state the
+              ACCOUNT; the pulse derives from the loaded rows and its own
+              scope line says so when the two differ. */}
+          {pulse ? (
+            <div className="mt-0.5 px-2.5">
+              <PipelinePulse
+                applications={applications}
+                total={total ?? applications.length}
+                needsReview={pulse.needsReview}
+              />
+            </div>
+          ) : null}
         </aside>
 
         <div className={cn("flex min-w-0 flex-1 flex-col gap-3", locked && "lg:min-h-0")}>
+          {toolbar}
           {/* --- The filter state, stated once ------------------------------ */}
           {companyFilter !== null ? (
             <CompanyBand

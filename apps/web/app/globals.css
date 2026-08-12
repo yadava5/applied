@@ -935,17 +935,13 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
- * Sidebar rail (components/shell/RailPipeline.tsx) — the pipeline snapshot's
- * distribution segments grow in once on mount, staggered left-to-right so the
- * bar reads as the pipeline assembling. Transform-only (scaleX from an
- * origin-left), so layout never shifts. Enhancement only: collapses to the
- * static, fully-drawn bar under prefers-reduced-motion.
+ * Pulse (components/dashboard/PipelinePulse.tsx) — the momentum bars rise
+ * from the baseline and the distribution segments grow left-to-right on
+ * mount, staggered. Transform-only (the numbers beside them are the
+ * content), so nothing is ever hidden and both collapse to the fully-drawn
+ * state under prefers-reduced-motion. (`rail-seg-in` keeps its name from the
+ * retired sidebar snapshot whose bar it animated first.)
  * ------------------------------------------------------------------------- */
-.rail-seg {
-  transform-origin: left;
-  animation: rail-seg-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(var(--i, 0) * 70ms);
-}
 @keyframes rail-seg-in {
   from {
     transform: scaleX(0);
@@ -954,19 +950,6 @@ body {
     transform: scaleX(1);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .rail-seg {
-    animation: none !important;
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Pulse strip (components/dashboard/PipelinePulse.tsx) — the momentum bars
- * rise from the baseline and the distribution segments grow left-to-right on
- * mount, staggered, echoing the rail's `.rail-seg` entrance. Transform-only
- * (the numbers beside them are the content), so nothing is ever hidden and
- * both collapse to the fully-drawn state under prefers-reduced-motion.
- * ------------------------------------------------------------------------- */
 .pulse-seg {
   transform-origin: bottom;
   animation: pulse-seg-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
