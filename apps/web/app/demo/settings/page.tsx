@@ -26,9 +26,15 @@ export const metadata: Metadata = {
  * neither CI nor a local checkout has, so without this page the entire
  * settings surface had no executing e2e coverage and nothing reviewable.
  *
- * Deliberately NOT theme-forced (unlike `/demo`, which pins dark): the
- * Appearance switch here is the real mechanism writing the real `data-theme`,
- * and demonstrating it is half this page's value.
+ * Theme-forced dark, like the rest of `/demo`. It used to honour the visitor's
+ * saved theme so the Appearance switch below could be seen working — but the
+ * demo is one journey, and `/demo` and `/` pin dark deliberately (the always-
+ * dark product narrative, documented at globals.css `[data-theme="dark"]`), so
+ * a light-theme visitor watched the whole page flip as they moved between the
+ * board and settings. The family is one ground now, and the Appearance control
+ * carries `mode="demo"`, which says plainly that the preview will not change
+ * colour. The switch is still the real mechanism writing the real
+ * `data-theme` — what it stops doing is pretending this page is the proof.
  *
  * Per-request rendering for the same reason as `/demo`: the fixture
  * `last_sync_at` below is relative to now, and a prerendered copy would age
@@ -54,7 +60,7 @@ function fixtureGmail(): GmailStatusResult {
 
 export default function DemoSettingsPage() {
   return (
-    <main className="min-h-screen w-full bg-background text-foreground">
+    <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
         <header className="flex min-h-14 flex-wrap items-center justify-between gap-y-2 border-b border-line-soft py-2">
           <div className="flex flex-wrap items-center gap-3">
@@ -94,9 +100,11 @@ export default function DemoSettingsPage() {
                 email="demo@applied.example"
                 memberSince="March 3, 2026"
               />
-              {/* The one live control on this page — Appearance is device-local
-                  by design, so the demo IS the product here. */}
-              <AppearanceSection />
+              {/* Appearance is device-local by design, so the demo IS the
+                  product here — but this page is pinned dark with the rest of
+                  the demo, and `mode="demo"` is what says so on the control
+                  instead of leaving it looking inert. */}
+              <AppearanceSection mode="demo" />
               <GmailConnectionCard result={fixtureGmail()} demo />
               <NotificationsSection mode="demo" initial={{ weekly: true, reviewAlerts: true }} />
               <ClassificationSection mode="demo" initialGate={DEFAULT_GATE_PREFERENCE} />

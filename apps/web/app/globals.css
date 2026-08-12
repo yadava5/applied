@@ -60,6 +60,10 @@
    * Re-measured: 9.25:1 / APCA Lc 63.5 solid on surface-2; the 55% card-border
    * wash lands at 3.62:1 (vs 2.56:1 for the --text-muted accent it replaced). */
   --stage-applied: #b3b9c2;
+  /* The keyboard focus indicator, in one place — see the block below the type
+   * helpers for what it replaced and how it was measured. 12.52 / 12.05 /
+   * 11.56:1 on background / surface / surface-2. */
+  --focus-ring: #c9ced6;
   /* Data-viz sub-palette — the three classifier layers get their own
    * categorical hues so the pipeline reads as data, not just mono text. */
   --viz-rules: #38bdf8; /* layer 1 — regex rules, instant */
@@ -69,9 +73,12 @@
 
 /* Explicit dark re-assertion. `:root` already defaults to dark, but that only
  * covers the top of the cascade — a subtree that forces `data-theme="dark"`
- * on itself (the landing page, `/demo`: both are the product's own
- * always-dark narrative, regardless of the visitor's saved Appearance
- * setting) sits *inside* `<html>`, and `[data-theme="light"]` below is a bare
+ * on itself (the landing page and the whole `/demo` family — `/demo`,
+ * `/demo/settings`, `/demo/inbox`: all of it is the product's own always-dark
+ * narrative, regardless of the visitor's saved Appearance setting, and a demo
+ * that changed ground halfway through the journey was worse than one that
+ * ignores the setting honestly) sits *inside* `<html>`, and
+ * `[data-theme="light"]` below is a bare
  * attribute selector with no ancestor scoping, so it happily overrides `:root`
  * from `<html data-theme="light">` right through a nested `data-theme="dark"`
  * element with nothing to stop it. Mirroring `[data-theme="light"]` with an
@@ -96,6 +103,7 @@
   --red: #f87171;
   --red-ink: #fca5a5;
   --stage-applied: #b3b9c2;
+  --focus-ring: #c9ced6;
   --viz-rules: #38bdf8;
   --viz-embeddings: #a78bfa;
   --viz-setfit: #34d399;
@@ -147,6 +155,11 @@
   /* Ink counterpart of the dark ramp's #b3b9c2 — measured 9.93:1 on white,
    * 9.03:1 on the paper surface-2 (APCA Lc 93 / 87). */
   --stage-applied: #3f434b;
+  /* Ink focus ring. The dark theme's #c9ced6 measures 1.51 / 1.58 / 1.44:1 on
+   * these paper grounds — a ring declared in white is invisible here, which is
+   * why the token is re-grounded rather than shared. Measured 9.51 / 9.93 /
+   * 9.03:1 on background / surface / surface-2. */
+  --focus-ring: #3f434b;
   --viz-rules: #0284c7;
   --viz-embeddings: #7c3aed;
   --viz-setfit: #059669;
@@ -222,6 +235,60 @@ body {
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Keyboard focus indicator — one definition for the whole app.
+ *
+ * It used to be a per-component decision: `focus-visible:outline-none` plus a
+ * 1px Tailwind ring in `--line-strong`. Measured in Chrome, that ring was
+ * 1.83:1 on `--surface` and 1.87:1 on `--surface-2` in dark, 1.78:1 on paper —
+ * under the 3:1 floor WCAG 2.2 SC 1.4.11 sets for a non-text indicator. The
+ * one piece of UI a keyboard-only user cannot work without was the faintest
+ * thing on the page. Native controls had it worse: a <select> that sets
+ * `outline-none` and answers focus by moving its border from 6% to 20% white
+ * (the worklist's stage picker) measured 1.16:1 — no indicator in practice.
+ * (WCAG ratios, not APCA: the APCA pass on this file tuned TEXT, and Lc has no
+ * threshold for a 2px rule of colour.)
+ *
+ * So the indicator stops being per-component. `--focus-ring` is measured
+ * against every ground it can land on — the numbers are with each theme's
+ * token — and the 1px offset puts the page's own ground between the ring and a
+ * light control (`bg-strong` buttons), which is what an offset ring is for.
+ *
+ * Unlayered on purpose. `focus-visible:outline-none` is a utility, and an
+ * unlayered rule outranks any layered one whatever the specificity — the same
+ * cascade fact `.brand-logo-link`'s `display` relies on (see the note in
+ * TopBar). That is what lets ONE rule reach every control, including files
+ * this change does not touch. The per-component `ring-line-strong` rings are
+ * still declared in those files; they now sit inside this outline rather than
+ * standing in for it.
+ * ------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The one deliberate variation: primary navigation, the brand mark and the
+ * beta actions have always focused in classifier cyan. They re-point the token
+ * instead of restating a ring, so there is still exactly one indicator. Layered
+ * safely, because it only sets the token the unlayered rule above reads. */
+@layer components {
+  .focus-accent {
+    --focus-ring: var(--viz-rules);
+  }
+}
+
+/* Rows that run the full width of a card that clips. The landing inbox scene
+ * and the decision trace both sit in `overflow-hidden` cards, so an outward
+ * offset is cropped: measured, the landing row lost its left, right and bottom
+ * edges and showed a single horizontal line, and the trace row lost both
+ * sides. Drawing the ring inside their own box keeps all four edges, and these
+ * rows are wide enough that 2px in reads as a ring rather than a border. It has
+ * to be unlayered — a `-outline-offset-2` utility would be a layered rule, and
+ * the offset above outranks it. */
+.focus-inset:focus-visible {
+  outline-offset: -2px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -412,10 +479,10 @@ body {
 }
 
 /* ---- signature ending choreography (full-bleed bottom band) -------------- */
-/* The whole band replays on click; focus ring inset so it stays visible on
- * the full-bleed edge. */
+/* The whole band replays on click; the shared focus ring, inset so it stays
+ * visible on the full-bleed edge (an outward offset would be cropped there). */
 .sig-band:focus-visible {
-  outline: 2px solid var(--line-strong);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 

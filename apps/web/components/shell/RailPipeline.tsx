@@ -30,7 +30,7 @@ function ReviewNudge({ count }: { count: number }) {
   return (
     <Link
       href="/dashboard#needs-classification"
-      className="group mt-3 flex items-center gap-1.5 rounded-lg border border-review/40 px-2.5 py-1.5 text-xs font-medium text-review transition-colors hover:border-review focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
+      className="group mt-3 flex items-center gap-1.5 rounded-lg border border-review/40 px-2.5 py-1.5 text-xs font-medium text-review transition-colors hover:border-review focus-accent"
     >
       <span className="tabular">{count}</span>
       <span>need{count === 1 ? "s" : ""} review</span>

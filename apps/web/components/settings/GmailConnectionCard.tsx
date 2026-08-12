@@ -78,8 +78,11 @@ export function GmailConnectionCard({
   const email = status?.email ?? null;
   const needsSignin = !demo && (result.kind === "unauthenticated" || result.kind === "auth");
 
+  // The one settings anchor that is not a <SettingsSection> (it is two cards
+  // under one id), so it carries that component's scroll-mt itself:
+  // `scroll-mt-16` below `lg` clears the chip strip SettingsNav pins there.
   return (
-    <div id="gmail" className="scroll-mt-4 space-y-6">
+    <div id="gmail" className="scroll-mt-16 space-y-6 lg:scroll-mt-4">
       {/* ---- Gmail connection card ------------------------------------- */}
       <div className="rounded-xl border border-line-soft bg-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

@@ -195,7 +195,7 @@ function InboxRow({
         onClick={onToggle}
         aria-expanded={open}
         data-testid="sample-row"
-        className="trace-row flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
+        className="trace-row focus-inset flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
       >
         <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
           <p className="truncate text-sm font-medium text-strong">{email.subject}</p>
