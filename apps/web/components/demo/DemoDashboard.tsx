@@ -5,8 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
+import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { todayISO } from "@/lib/dashboard/age";
+import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
+import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
 import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
@@ -158,6 +161,10 @@ export function DemoDashboard() {
           return { ok: false, detail: `“${status}” is not a status the API accepts` };
         }
         const s = store.current;
+        // The visitor moved this card themselves — fold it into the change
+        // ledger's baseline so it is never reported back to them as news.
+        // Same call, same reason, as the live transport.
+        noteUserStageChange(LAST_LOOK_DEMO_KEY, id, status);
         commit({
           ...s,
           apps: s.apps.map((app) => (app.id === id ? { ...app, status } : app)),
@@ -297,6 +304,10 @@ export function DemoDashboard() {
   );
 
   const summary = summarize(snapshot.apps);
+  /** The board as the change ledger reads it. `total` is deliberately not
+   *  passed below: on this twin the store IS the whole account, so there is no
+   *  slice to disclose. */
+  const ledgerRows = useMemo(() => snapshot.apps.map(toChangeRow), [snapshot.apps]);
   const subtitle = `${summary.total} filed · ${summary.inMotion} in motion · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
   }`;
@@ -306,6 +317,14 @@ export function DemoDashboard() {
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
       </SyncBar>
+      {/* The real change ledger, over the fixture store and under its own
+          marker key — a signed-in owner who visits /demo never has these rows
+          folded into their own board's record. */}
+      <SinceLastLook
+        rows={ledgerRows}
+        scope={LAST_LOOK_DEMO_SCOPE}
+        storageKey={LAST_LOOK_DEMO_KEY}
+      />
       {/* Same strip as the signed-in dashboard, over the fixture store.
           `total` is the store's own length because on this board it IS the
           whole account — the strip's scope note ("newest N of M") therefore

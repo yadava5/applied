@@ -7,9 +7,12 @@ import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { DashboardEmptyState, ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
 import { RetryLoadButton } from "@/components/dashboard/RetryLoadButton";
 import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
+import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
+import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
+import { toChangeRow } from "@/lib/dashboard/lastLookStore";
 import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
@@ -327,6 +330,30 @@ export default async function DashboardPage() {
       <SyncBar subtitle={subtitle} gmail={gmail}>
         <AddApplicationForm compact />
       </SyncBar>
+
+      {/* What happened while you were away — the one thing a board of
+          identical cards cannot say. Client-only (the marker is this
+          browser's), per user, and silent until it has a previous visit to
+          compare against. The rows are projected here so the flight payload
+          carries six fields per row rather than the whole record twice.
+
+          No id, no ledger — never a shared "anon" scope. One marker key holds
+          one board, so a record written under a fallback scope would OVERWRITE
+          the signed-in owner's, silently destroying the unread digest this
+          feature's whose-marker-advances rules exist to protect. The layout
+          redirects a session-less request before this page's HTML ships, so
+          the branch should be unreachable; borrowing that guarantee from
+          another file is what makes it worth stating here. Same discipline as
+          the SyncBar's gmail cluster: an unknown state renders nothing rather
+          than a guessed one. */}
+      {user?.id ? (
+        <SinceLastLook
+          rows={state.applications.map(toChangeRow)}
+          total={state.total}
+          scope={user.id}
+          storageKey={LAST_LOOK_KEY}
+        />
+      ) : null}
 
       {/* The three signals the rows carry that the board can't show as
           columns: momentum over time, how the open pipeline is ageing, and
