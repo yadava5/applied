@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-634%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-647%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/rules%20macro--F1-0.9791%20(CI%20floor%200.95)-2b9348" alt="Rules macro-F1">
   <img src="https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs&logoColor=white" alt="Next.js">
   <img src="https://img.shields.io/badge/React-19.2-61dafb?logo=react&logoColor=black" alt="React">
@@ -375,7 +375,7 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --o
 
 ## Testing
 
-**634 tests collected, 0 skipped.** These figures were recorded on 2026-08-12 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 542 `test_*` functions across 38 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS and migration-chain work, four of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`). The bold 634 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**647 tests collected, 0 skipped.** These figures were recorded on 2026-08-12 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 555 `test_*` functions across 39 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS and migration-chain work, four of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`). The bold 647 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The 11 that used to skip are the Postgres row-level-security module — the only thing in the repo that can demonstrate the isolation the product claims. They waited on a database URL no workflow set, and a skip is green, so as of 2026-08-02 they had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -383,7 +383,7 @@ Those tests drive the production machinery, not a fixture: `jobtracker.database.
 
 `test_migrations_postgres.py` rides in the same job, for a defect the rest of the suite is structurally blind to: on SQLite, `sa.Enum` renders as `VARCHAR`, so a migration can add an enum label in the wrong case and every other test stays green while production 500s on the first write. It applies the whole Alembic chain to a bare database through the real CLI, then asserts the `applicationstatus` labels are the Python enum's member names in declaration order, that a row round-trips, and that the lowercase spelling is genuinely rejected. It is guarded by the same "did it actually run" JUnit check as the RLS suite.
 
-**Coverage**, from the same run: **58.60%** overall — 9,418 statements, 3,899 missed. The distribution matters more than the total. `jobtracker/cloud`, the code that actually deploys, is at **87.9%**; `auth` 80.5%; `database` 77.5%. What pulls the average down is `jobtracker/scripts` at 2,358 statements and 33.6%, of which eight modules no test imports account for 1,010 statements at 0%.
+**Coverage**, from the same run: **58.67%** overall — 9,429 statements, 3,897 missed. The distribution matters more than the total. `jobtracker/cloud`, the code that actually deploys, is at **88.0%**; `auth` 80.5%; `database` 77.5%. What pulls the average down is `jobtracker/scripts` at 2,358 statements and 33.6%, of which eight modules no test imports account for 1,010 statements at 0%.
 
 This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statements of dataset importers" until 2026-08-03, and three of those four numbers were wrong. The corrections, in full, are in commit `5b895d8`: 54% came from a Python 3.14 run, where PEP 649 stops emitting line events for annotation-only class attributes, so the same tree measures 8,018 statements instead of 8,210 — a 192-statement gap across 13 Pydantic models. 61% is dropped rather than restated, because it reaches 60.5% only by excluding 1,234 statements that CI invokes directly as gates. And 2,163 never described dataset importers; those are 662 statements at 0%. The portfolio was citing this README instead of a run, which is how they persisted.
 
@@ -538,7 +538,7 @@ applied/
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 12 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 38 modules
+│   └── tests/               # 39 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
