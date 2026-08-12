@@ -48,25 +48,32 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * individuals (which the counts cannot), the same two-level shape the pulse
  * strip's deadline cell already uses.
  *
- * ONE LINE ON ARRIVAL — the shape, and why it is this shape
- * ---------------------------------------------------------
- * The two levels are now literally two levels: the arrival LINE carries the
- * counts, and opening it names the rows. Every state of this band — the server
- * pass, first run, quiet, and a loud return — occupies exactly one line box at
- * every width, so the band can never move the board it sits above.
+ * A CHIP ON THE COMMAND ROW — the shape, and why it is this shape
+ * ----------------------------------------------------------------
+ * The two levels are literally two levels: the arrival CHIP carries the
+ * counts, and opening it names the rows. The chip lives on the dashboard's
+ * one command row (SyncBar's `since` slot, between the subtitle and the sync
+ * controls), inside a wrapper whose flex-basis is FIXED — so hydration can
+ * never re-wrap the row, and every state of this chip occupies the same line
+ * box. The dedicated notice line it used to hold is a line the worklist got
+ * back.
  *
- * That is not only a layout fix. The band sits between the sync header and the
- * board on a work surface, and the old block grew with the news: three groups
- * of four named rows plus "+N more" is ~300px on a laptop and half a phone
- * screen, so the busiest morning — the one this feature exists for — was the
- * morning the board itself got pushed out of view. A digest that costs the
- * work surface more space the more there is to say has its incentives
- * backwards. One line always; the reader spends the space, by opening it, only
- * when they want the names.
+ * Space inside the chip varies with the viewport and its row-mates, so the
+ * loud state is container-adaptive rather than truncated: per-kind counts
+ * ("2 filed · 1 moved") when the chip is wide enough to say them, the total
+ * ("3 changes") when it is not — and the opened panel names the rows either
+ * way, so nothing is ever clipped mid-claim.
+ *
+ * The NAMES are an overlay, not a reflow: opening the chip floats the panel
+ * over the board (absolutely positioned under the row) instead of pushing the
+ * board down. The old block grew with the news — three groups of four named
+ * rows plus "+N more" is ~300px on a laptop — so the busiest morning was the
+ * morning the board itself got pushed out of view. Now not even the asked-for
+ * expansion moves the work surface.
  *
  * The expansion is never remembered. Restoring it on the next load would
  * re-create exactly the defect this shape removes — the server cannot know it
- * was open, so the board would move again after hydration.
+ * was open, so the panel would pop over the board unasked after hydration.
  *
  * Three states, all of them real:
  *
@@ -140,7 +147,9 @@ function DueNote({ dueAt, today }: { dueAt: string; today: string }) {
   const ink =
     due.state === "overdue" ? "text-reject" : due.state === "soon" ? "text-review" : "text-dim";
   return (
-    <span className={`tabular shrink-0 font-mono text-[10px] ${ink}`}>{duePhrase(due.daysLeft)}</span>
+    <span className={`tabular shrink-0 font-mono text-[10px] ${ink}`}>
+      {duePhrase(due.daysLeft)}
+    </span>
   );
 }
 
@@ -243,10 +252,41 @@ export function SinceLastLook({
    *  impure and a render must not depend on when it happens to run. */
   const [now] = useState(() => Date.now());
   /** Whether the names are showing. Deliberately not persisted — see the
-   *  header: a remembered expansion would move the board on the next load,
-   *  because the server pass cannot know about it. */
+   *  header: a remembered panel would pop over the board unasked on the next
+   *  load, because the server pass cannot know about it. */
   const [named, setNamed] = useState(false);
   const panelId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // The panel is an overlay, so it gets an overlay's exits — the same three
+  // RowActionsMenu earned the hard way (see its header): Escape (which hands
+  // focus back to the trigger, for the keyboard user who opened it), a click
+  // anywhere outside (which does NOT move focus — yanking it from whatever
+  // the reader just clicked is hostile), and the toggle itself. Listeners
+  // exist only while the panel is open; both pointerdown and mousedown are
+  // registered because environments differ in which they deliver first.
+  useEffect(() => {
+    if (!named) return;
+    const onOutside = (event: Event) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setNamed(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setNamed(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("mousedown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("mousedown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [named]);
 
   const partial = total !== undefined && rows.length < total;
   const entries = useMemo(
@@ -266,7 +306,10 @@ export function SinceLastLook({
     // digest it exists to protect.
     const stored = parseLastLook(readLastLookRaw(storageKey), scope);
     if (stored === null) {
-      writeLastLook(storageKey, { ...snapshotOf(rows, scope, Date.now(), partial), seed: true });
+      writeLastLook(storageKey, {
+        ...snapshotOf(rows, scope, Date.now(), partial),
+        seed: true,
+      });
       return;
     }
     // Rule 3: nothing to report → fold the board in, leave the moment alone.
@@ -305,15 +348,20 @@ export function SinceLastLook({
 
   if (seeded) {
     return (
-      <section data-testid="since-last-look" aria-label="Changes since your last visit">
+      <section
+        data-testid="since-last-look"
+        aria-label="Changes since your last visit"
+        className="w-full @container"
+      >
         <ArrivalLine>
           {/* The clause that carries the fact is the whole sentence on a
-              phone; the tail explaining what happens next is what a wider
-              line has room for. One sentence, two lengths — never two lines. */}
+              tight chip; the tail explaining what happens next is what a
+              roomier one has space for. One sentence, two lengths — never
+              two lines. */}
           <p className="min-w-0 truncate text-dim">
             No earlier visit recorded in this browser
-            <span className="sm:hidden">.</span>
-            <span className="hidden sm:inline">
+            <span className="@[34rem]:hidden">.</span>
+            <span className="hidden @[34rem]:inline">
               {" "}
               — from your next one, this line names what changed.
             </span>
@@ -327,14 +375,20 @@ export function SinceLastLook({
 
   if (groups.length === 0) {
     return (
-      <section data-testid="since-last-look" aria-label="Changes since your last visit">
+      <section
+        data-testid="since-last-look"
+        aria-label="Changes since your last visit"
+        className="w-full @container"
+      >
         <ArrivalLine>
           <p className="min-w-0 truncate text-muted">
             Nothing new since <span className="font-mono text-[11px] text-dim">{moment}</span>
-            {/* The slice this reading covers, where a phone has room for it —
-                the board and the pulse carry the same disclosure, in the
+            {/* The slice this reading covers, where the chip has room for it
+                — the board and the pulse carry the same disclosure, in the
                 same words, at every width. */}
-            {scopeNote ? <span className="hidden text-dim sm:inline"> · {scopeNote}</span> : null}
+            {scopeNote ? (
+              <span className="hidden text-dim @[34rem]:inline"> · {scopeNote}</span>
+            ) : null}
           </p>
         </ArrivalLine>
       </section>
@@ -342,46 +396,47 @@ export function SinceLastLook({
   }
 
   const Chevron = named ? ChevronUp : ChevronDown;
-  /** The phone's one number, summed from the same groups the wider line prints
-   *  one by one — two renderings of one reading, never two readings. */
+  /** The narrow chip's one number, summed from the same groups the wider chip
+   *  prints one by one — two renderings of one reading, never two readings. */
   const counted = groups.reduce((sum, group) => sum + group.count, 0);
 
   return (
     <section
       data-testid="since-last-look"
       aria-label="Changes since your last visit"
-      /* Capped to a reading measure rather than the page's width: the stage
-         annotations form a right-hand column, and across 1100px the eye loses
-         which name they belong to. */
-      className="max-w-3xl border-l-2 border-stage-applied pl-3"
+      /* `@container` because the chip's room depends on its row-mates, not
+         the viewport: the /demo row carries a wider cluster than the signed-in
+         one at the same width, and a viewport breakpoint cannot know that.
+         The blue rule is the loud state's across-the-room signal — the caps
+         heading it used to carry belongs to the section's aria-label now.
+
+         Deliberately NOT `relative`: the names panel positions against the
+         HEADER ROW (SyncBar's row is the nearest positioned ancestor), not
+         this chip — anchored to the chip it extended past <main>'s left edge,
+         whose implicit overflow clip cut the first label off. */
+      className="w-full border-l-2 border-stage-applied pl-2 @container"
     >
       <ArrivalLine>
-        {/* Below `sm` the counts lead and the heading gives way — the news
-            first, then the window it covers; the section's own label carries
-            the name of the band for a reader who cannot see the rule. */}
-        <h2 className="label-caps order-1 hidden shrink-0 sm:block">since you last looked</h2>
-        <span className="order-3 shrink-0 font-mono text-[11px] text-dim sm:order-2">
-          · {moment}
-        </span>
-
         {/* The counts ARE the control: pressing them is what names the rows
             they count, so the affordance and the summary are one thing rather
             than a label with a "show" beside it. */}
         <button
+          ref={triggerRef}
           type="button"
           aria-expanded={named}
           aria-controls={panelId}
           onClick={() => setNamed((showing) => !showing)}
-          className={`${LINE_CONTROL} order-2 flex min-w-0 items-baseline gap-1.5 text-muted sm:order-3`}
+          className={`${LINE_CONTROL} flex min-w-0 items-baseline gap-1.5 text-muted`}
         >
           <span className="tabular truncate">
-            {/* One rendering at a time, never both: a phone gets the total, a
-                wider line gets the kinds. The count is the group's heading in
-                both — no summary restates it. */}
-            <span className="sm:hidden">
+            {/* One rendering at a time, never both: a tight chip gets the
+                total, a roomy one gets the kinds. Opening it names the rows
+                under their kind either way, so a reader on the total form is
+                one press from everything the wide form says. */}
+            <span className="@[26rem]:hidden">
               {counted} change{counted === 1 ? "" : "s"}
             </span>
-            <span className="hidden sm:inline">
+            <span className="hidden @[26rem]:inline">
               {groups.map((group, i) => (
                 <Fragment key={group.kind}>
                   {i > 0 ? <span className="text-dim"> · </span> : null}
@@ -396,20 +451,30 @@ export function SinceLastLook({
           <span className="sr-only">{named ? "Hide the rows" : "Name the rows"}</span>
         </button>
 
+        <span className="hidden shrink-0 font-mono text-[11px] text-dim @[34rem]:inline">
+          · {moment}
+        </span>
+
         <button
           type="button"
           onClick={() => writeLastLook(storageKey, snapshotOf(rows, scope, Date.now(), partial))}
-          className={`${LINE_CONTROL} order-4 ml-auto shrink-0 text-muted`}
+          className={`${LINE_CONTROL} ml-auto shrink-0 text-muted`}
         >
           Mark as seen
         </button>
       </ArrivalLine>
 
-      {/* Opened by the reader, so the space it takes is spent on purpose —
-          this is the only thing on the band that moves the board, and only
-          ever after a press. */}
+      {/* Opened by the reader — and even then the board holds still: the
+          panel FLOATS under the row (anchored to the chip's right edge, so it
+          opens inward over the board rather than past the pane's edge). The
+          one movement this feature used to make on request is now no
+          movement at all. */}
       {named ? (
-        <div id={panelId} className="pb-1 pt-2.5">
+        <div
+          ref={panelRef}
+          id={panelId}
+          className="absolute right-0 top-full z-30 mt-2 w-[min(38rem,85vw)] rounded-xl border border-line bg-surface p-4 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)]"
+        >
           {/* Baseline alignment across the two columns, not a nudge: the kind
               label is 11px caps and the entries 13px, so the grid lines their
               first baselines up rather than their boxes. */}
@@ -419,17 +484,16 @@ export function SinceLastLook({
               const hidden = group.count - shown.length;
               return (
                 <Fragment key={group.kind}>
-                  {/* The kind, not the count: the line above is already the
-                      counts, and the same number twice is the thing this
+                  {/* The kind, not the count: the chip is already the counts
+                      (and on its total form, the entries under each kind ARE
+                      the count) — the same number twice is the thing this
                       dashboard removed everywhere else. */}
                   <dt className="label-caps">{group.label}</dt>
                   <dd className="space-y-1.5">
                     {shown.map((entry) => (
                       <EntryLine key={entry.id} entry={entry} today={today} />
                     ))}
-                    {hidden > 0 ? (
-                      <p className="tabular text-xs text-dim">+{hidden} more</p>
-                    ) : null}
+                    {hidden > 0 ? <p className="tabular text-xs text-dim">+{hidden} more</p> : null}
                   </dd>
                 </Fragment>
               );
@@ -438,7 +502,7 @@ export function SinceLastLook({
 
           {/* The ledger reads one bounded page, so it says which page — the
               same disclosure, in the same words, as the board and the pulse
-              strip. */}
+              band. */}
           {scopeNote ? (
             <p className="tabular mt-2.5 text-xs text-dim">
               reads the {scopeNote} · older rows aren&apos;t loaded

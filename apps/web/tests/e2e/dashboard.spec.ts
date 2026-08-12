@@ -39,10 +39,10 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     const watch = startConsoleWatch(page);
     await page.goto("/demo");
 
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
-    // The one prose data line — 17 fixtures, 14 in motion (10 applied + 4
-    // interviewing), 0 offers. The page's only rendering of the totals.
-    await expect(page.getByText("17 filed · 14 in motion · 0 offers")).toBeVisible();
+    // The one prose data line — 17 fixtures, 14 open (10 applied + 4
+    // interviewing), 0 offers. The page's only rendering of the totals, and
+    // the twin's anchor now that the route title lives in the shell's bar.
+    await expect(page.getByText("17 filed · 14 open · 0 offers")).toBeVisible();
 
     // Populated stages render as list groups, carrying their counts…
     await expect(page.getByRole("region", { name: /applied — 10/i })).toBeVisible();
@@ -75,7 +75,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     page,
   }) => {
     await page.goto("/demo");
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    await expect(page.getByText("17 filed · 14 open · 0 offers")).toBeVisible();
 
     // Classifier internals belong to the landing/system card, never a board.
     await expect(page.getByText("auto-file gate", { exact: true })).toHaveCount(0);
@@ -158,7 +158,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     // worklist redesign exists for.
     await page.goto("/demo?pipeline=early");
 
-    await expect(page.getByText("17 filed · 17 in motion · 0 offers")).toBeVisible();
+    await expect(page.getByText("17 filed · 17 open · 0 offers")).toBeVisible();
     // One populated group — 17 APPLICATIONS, however few cards the employer
     // grouping draws (Northstar's four and Cedar's two fold into one card
     // each; the count must reflect the applications, not the cards)…
@@ -185,7 +185,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
     const watch = startConsoleWatch(page);
     await page.setViewportSize(MOBILE_375);
     await page.goto("/demo");
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    await expect(page.getByText("17 filed · 14 open · 0 offers")).toBeVisible();
     await expectNoHorizontalOverflow(page);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
@@ -197,7 +197,10 @@ test.describe("dashboard (signed in — needs a session)", () => {
     // Either populated (the worklist) or empty (the empty-state hero) — both
     // must offer the file-application entry point and never be a blank page.
     await expect(page.getByRole("button", { name: /file an application/i }).first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: /pipeline/i })).toBeVisible();
+    // The route title in the shell's top bar is the page heading now.
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Applications", exact: true }),
+    ).toBeVisible();
   });
 
   test("the dashboard is viewport-locked at desktop: the page itself does not scroll", async ({

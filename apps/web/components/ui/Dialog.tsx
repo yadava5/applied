@@ -92,13 +92,16 @@ export function Dialog({
 
   const overlayClass =
     variant === "sheet"
-      ? "fixed inset-0 z-[100] flex justify-end bg-background/70 backdrop-blur-sm"
+      ? "fixed inset-0 z-[100] flex items-start justify-end bg-background/70 p-3 backdrop-blur-sm sm:p-4"
       : "fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-background/70 p-4 backdrop-blur-sm sm:items-center sm:p-6";
   const panelClass =
     variant === "sheet"
-      ? // The sheet owns its scroll: the page behind is scroll-locked while it
-        // is open, so this is the only scroll context on screen.
-        `relative h-dvh w-full max-w-xl overflow-y-auto border-l border-line-strong bg-surface p-5 shadow-[0_0_80px_-24px_rgba(0,0,0,0.85)] outline-none sm:p-6 ${className}`.trim()
+      ? // A floating panel sized BY ITS CONTENT, not a full-height drawer: a
+        // one-mail application used to render a third of a column of facts
+        // over two-thirds of empty drawer, which read as broken. The panel
+        // ends where its content does; past the viewport cap it owns its
+        // scroll (the page behind is scroll-locked while it is open).
+        `relative max-h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-line-strong bg-surface p-5 shadow-[0_0_80px_-24px_rgba(0,0,0,0.85)] outline-none sm:p-6 ${className}`.trim()
       : `relative my-auto w-full max-w-lg rounded-2xl border border-line-strong bg-surface p-5 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.85)] outline-none sm:p-6 ${className}`.trim();
 
   // Enter/exit for each geometry. Exits are quicker than entrances — closing

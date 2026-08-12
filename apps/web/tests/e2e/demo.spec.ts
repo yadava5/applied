@@ -1,10 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import {
-  expectNoHorizontalOverflow,
-  MOBILE_375,
-  startConsoleWatch,
-} from "./helpers";
+import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
 
 /**
  * E2E for the auth-free product demo (`/demo`).
@@ -115,7 +111,9 @@ test.describe("live demo (/demo)", () => {
     const watch = startConsoleWatch(page);
     await page.goto("/demo");
 
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    // The board twin has no in-page h1 anymore (the signed-in shell's top bar
+    // carries the route title); its one line of state is the anchor.
+    await expect(page.getByText("17 filed · 14 open · 0 offers")).toBeVisible();
     await expect(page.getByRole("heading", { name: /decision trace/i })).toBeVisible();
     // Pipeline columns render the fixture applications. (`exact` everywhere a
     // company is asserted visible: each interactive card also carries an
@@ -153,16 +151,15 @@ test.describe("live demo (/demo)", () => {
     // matched substring — verified by aborting the woff2 at the network, where
     // the text rasterized as Arial and all of these still passed. So the wiring
     // checks stay, and this is the one that can fail on a missing font.
-    await expect
-      .poll(() => page.evaluate(() => document.fonts.check('16px atkinson')))
-      .toBe(true);
+    await expect.poll(() => page.evaluate(() => document.fonts.check("16px atkinson"))).toBe(true);
     await expect
       .poll(() => page.evaluate(() => document.fonts.check('16px "Geist Mono"')))
       .toBe(true);
 
     await expect(page.locator("body")).toHaveCSS("font-family", /atkinson/i);
-    // The page h1 and the board's structural column labels speak the product voice…
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toHaveCSS(
+    // The board's state line and its structural column labels speak the
+    // product voice…
+    await expect(page.getByText("17 filed · 14 open · 0 offers")).toHaveCSS(
       "font-family",
       /atkinson/i,
     );
@@ -189,7 +186,14 @@ test.describe("live demo (/demo)", () => {
     // …and the board actually gained the two filed fixture rows.
     await expect(page.getByRole("region", { name: /applied — 12/i })).toBeVisible();
     await expect(page.getByText("Twitch", { exact: true })).toBeVisible();
-    await expect(page.getByText("19 filed · 16 in motion · 0 offers")).toBeVisible();
+    // …and the totals come BACK. At `lg`+ the note borrows this exact slot so
+    // the row never grows (shell.spec's zero-shift test guards that half), and
+    // the note has to hand it back: with no decay, one sync hid the board's
+    // totals and the change ledger for the rest of the session. The wait is
+    // longer than SYNCED_NOTE_MS on purpose — this asserts the release.
+    await expect(page.getByText("19 filed · 16 open · 0 offers")).toBeVisible({
+      timeout: 15_000,
+    });
 
     // A second sync has nothing new, and the cursored zero case says exactly
     // that — never a claim about a window it did not check.
@@ -237,9 +241,7 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
 
     // The accessible path: the per-card stage select.
-    await page
-      .getByLabel("Change stage for Quarry Data")
-      .selectOption("interviewing");
+    await page.getByLabel("Change stage for Quarry Data").selectOption("interviewing");
     await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
     await expect(
       page.getByRole("region", { name: /interviewing/i }).getByText("Quarry Data", { exact: true }),
@@ -450,16 +452,17 @@ test.describe("live demo (/demo)", () => {
     await expect(fileOpener).toBeFocused();
   });
 
-  test("the pulse renders all four derived signals in the stage spine", async ({ page }) => {
+  test("the pulse renders all four derived signals in the board's band", async ({ page }) => {
     await page.goto("/demo");
-    // ONE copy, and it lives inside the board's "Stages" aside — the home the
-    // strip (a full-width band) and the shell rail (which it made scroll)
-    // both ceded to.
+    // ONE copy, and it is the board's full-width band — back in the
+    // dashboard's content area, where the owner keeps putting it. The stage
+    // spine (#136) and the shell rail (PR #122) are the closed homes.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
+    await expect(page.getByTestId("pipeline-board").getByTestId("pipeline-pulse")).toBeVisible();
     await expect(
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
-    ).toBeVisible();
+    ).toHaveCount(0);
 
     // Momentum: exactly 8 week-bars plus the delta sentence derived from them.
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
@@ -471,14 +474,20 @@ test.describe("live demo (/demo)", () => {
     await expect(pulse.getByText(/[1-9]\d* quiet/)).toBeVisible();
 
     // Deadlines: the three fixture states, counted, and the most urgent row
-    // named. The counts derive from the same `dueInfo` that inks the cards.
+    // named on the cell's label line. The counts derive from the same
+    // `dueInfo` that inks the cards. (Name and phrase are separate spans —
+    // the name truncates before the phrase ever does — so they are asserted
+    // separately rather than as one string.)
     await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
-    await expect(pulse.getByText(/next · Tidewater Labs/)).toBeVisible();
+    await expect(pulse.getByText("next ·")).toBeVisible();
+    await expect(pulse.getByText("Tidewater Labs")).toBeVisible();
     await expect(pulse.getByText("overdue 2d", { exact: true })).toBeVisible();
 
-    // Classifier: every fixture row is source="gmail", and nothing is held.
-    await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
-    await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    // Auto-filed: every fixture row is source="gmail", and nothing is held.
+    // (A user has a mailbox, not a classifier — the mechanism's real names,
+    // the gate included, live in Settings, which controls them.)
+    await expect(pulse.getByText(/17 of 17/)).toBeVisible();
+    await expect(pulse.getByText("nothing waiting on you")).toBeVisible();
 
     // The card-level ageing tag agrees with the pulse's threshold. `.last()`,
     // not `.first()`: the filed stamp renders a phone-width twin earlier in
@@ -488,12 +497,13 @@ test.describe("live demo (/demo)", () => {
 
   test("the pulse moves when Sync files fresh mail", async ({ page }) => {
     await page.goto("/demo");
-    await expect(page.getByText("17 of 17 auto-filed from mail")).toBeVisible();
+    const pulse = page.getByTestId("pipeline-pulse");
+    await expect(pulse.getByText(/17 of 17/)).toBeVisible();
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
-    // Two fixture rows arrive → the classifier fraction re-derives from the
+    // Two fixture rows arrive → the auto-filed fraction re-derives from the
     // new board. (No assertion on the ageing buckets here: the fixture dates
     // are static while real time passes, so any exact bucket count would rot.)
-    await expect(page.getByText("19 of 19 auto-filed from mail")).toBeVisible();
+    await expect(pulse.getByText(/19 of 19/)).toBeVisible();
   });
 
   test("the change ledger claims nothing on a first visit", async ({ page }) => {
@@ -589,8 +599,9 @@ test.describe("live demo (/demo)", () => {
     await page.goto("/demo");
     const band = ledger(page);
     // Wait for the LOUD state specifically — a quiet band would pass the
-    // geometry below while proving nothing about this case.
-    await expect(band.getByText("2 filed")).toBeVisible();
+    // geometry below while proving nothing about this case. "Mark as seen"
+    // exists only on the loud chip, at every chip width.
+    await expect(band.getByRole("button", { name: "Mark as seen" })).toBeVisible();
     const loudBox = await card(page).boundingBox();
     const bandBox = await band.boundingBox();
 
@@ -607,16 +618,17 @@ test.describe("live demo (/demo)", () => {
       `the loud band is ${bandBox?.height}px against a reserved ${reserveBox?.height}px`,
     ).toBeLessThanOrEqual(1);
 
-    // Positive control, measured the same way: naming the rows DOES move the
-    // board, so the assertions above can fail. A reader presses for that —
-    // it is the one movement on this band that is asked for.
+    // Naming the rows is an OVERLAY now, not a reflow: the panel floats over
+    // the board, so even the one movement this feature used to make on
+    // request is no movement at all. The names still appear — over the
+    // board, not instead of it.
     await band.getByRole("button", { name: /Name the rows/ }).click();
     await expect(band.getByText("Copperline", { exact: true })).toBeVisible();
     const openedBox = await card(page).boundingBox();
     expect(
-      (openedBox?.y ?? 0) - (loudBox?.y ?? 0),
-      "naming the rows must take space — without a real delta here the check above proves nothing",
-    ).toBeGreaterThan(40);
+      Math.abs((openedBox?.y ?? 0) - (loudBox?.y ?? 0)),
+      "the board moved when the names panel opened — the panel must float, not push",
+    ).toBeLessThanOrEqual(1);
     await page.close();
   });
 
@@ -626,18 +638,27 @@ test.describe("live demo (/demo)", () => {
     await seedPriorVisit(page);
     await page.goto("/demo");
     const band = ledger(page);
-    await expect(band.getByRole("heading", { name: "since you last looked" })).toBeVisible();
 
-    // The counts are the arrival line — one line, whatever the news is.
-    await expect(band.getByText("2 filed")).toBeVisible();
-    await expect(band.getByText("1 moved")).toBeVisible();
-    await expect(band.getByText("1 new deadline")).toBeVisible();
+    // The chip is the arrival line — the counts by kind when its share of the
+    // row can say them, the total when it cannot. BOTH renderings are in the
+    // DOM (container queries pick one), so a text locator across them is a
+    // guaranteed strict-mode violation — assert the one accessible control
+    // instead: its name is computed from rendered text only, whichever
+    // variant is showing. The opened panel below is the width-independent
+    // claim about the content.
+    await expect(band.getByRole("button", { name: "Mark as seen" })).toBeVisible();
+    await expect(band.getByRole("button", { name: /Name the rows/ })).toBeVisible();
 
-    // Nobody is named until the reader asks: the band above the board holds
-    // one line, and the space the names need is spent on a press.
+    // Nobody is named until the reader asks: the chip holds its line, and
+    // the names appear on a press.
     await expect(band).not.toContainText("Copperline");
     await expect(band).not.toContainText("Northstar Systems");
     await band.getByRole("button", { name: /Name the rows/ }).click();
+
+    // The panel groups by kind — the two-level shape, one press deep.
+    await expect(band.getByText("filed", { exact: true })).toBeVisible();
+    await expect(band.getByText("moved", { exact: true })).toBeVisible();
+    await expect(band.getByText("new deadline", { exact: true })).toBeVisible();
 
     // …and then every claim names the row it is about, with the column to
     // look in.
@@ -912,9 +933,7 @@ test.describe("live demo (/demo)", () => {
     await header.click();
     await expect(page.getByRole("button", { name: /^Open Northstar Systems/ })).toHaveCount(4);
     // Cedar Labs' pair folds the same way.
-    await expect(
-      page.getByRole("button", { name: "Cedar Labs — 2 applications" }),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cedar Labs — 2 applications" })).toBeVisible();
   });
 
   test("with reduced motion, every surface is fully present — nothing gated", async ({ page }) => {
@@ -931,8 +950,8 @@ test.describe("live demo (/demo)", () => {
     // component rendering nothing is the shape this estate keeps producing.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
-    await expect(pulse.getByText("17 of 17 auto-filed from mail")).toBeVisible();
-    await expect(pulse.getByText("queue clear · gate 0.85")).toBeVisible();
+    await expect(pulse.getByText(/17 of 17/)).toBeVisible();
+    await expect(pulse.getByText("nothing waiting on you")).toBeVisible();
     // The change ledger carries no animation at all, so there is nothing for
     // this mode to collapse — its sentence is simply present.
     await expect(ledger(page)).toContainText("No earlier visit recorded in this browser");
@@ -941,9 +960,9 @@ test.describe("live demo (/demo)", () => {
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
     await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
     // A bar with zero drawn height would satisfy the count above.
-    const barHeights = await pulse.getByTestId("pulse-week").evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().height),
-    );
+    const barHeights = await pulse
+      .getByTestId("pulse-week")
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
     expect(Math.max(...barHeights)).toBeGreaterThan(0);
 
     // The board's own row-actions menu must keep its accessible name. Branching
@@ -1017,7 +1036,7 @@ test.describe("live demo (/demo)", () => {
     const watch = startConsoleWatch(page);
     await page.setViewportSize(MOBILE_375);
     await page.goto("/demo");
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    await expect(page.getByText("17 filed · 14 open · 0 offers")).toBeVisible();
     await expectNoHorizontalOverflow(page);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });

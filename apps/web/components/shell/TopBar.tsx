@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 
 import { Logo } from "@/components/brand/Logo";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
 import { isNavItemActive, navItems } from "./nav";
+import { DemoFixturePill, SignOutButton } from "./SessionControls";
 
 type TopBarProps = {
   userEmail: string | null;
@@ -23,10 +22,18 @@ type TopBarProps = {
 };
 
 export function TopBar({ userEmail, demo = false }: TopBarProps) {
-  const router = useRouter();
   const pathname = usePathname();
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // The route's own name, from the nav vocabulary — never hardcoded, because
+  // this one bar serves every authed route (and /demo/shell, whose path
+  // matches no nav item but which IS the board twin). The board route gets an
+  // <h1>: its page surrendered the in-page header row to the worklist, so the
+  // page heading lives here now. Every other route keeps its own <h1> below
+  // and this reads as the location label beside it.
+  const current =
+    navItems.find((item) => isNavItemActive(pathname, item.href)) ?? (demo ? navItems[0] : null);
+  const isBoardTitle = current?.href === "/dashboard";
 
   // The desktop sidebar is hidden below `md`, so this menu is the only way to
   // move between sections on a phone — never leave the user stranded. It closes
@@ -41,17 +48,18 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
     return () => document.removeEventListener("keydown", onKey);
   }, [menuOpen]);
 
-  async function handleSignOut() {
-    setIsSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    // Refresh so the proxy re-evaluates and redirects us to /login.
-    router.refresh();
-    router.replace("/login");
-  }
-
   return (
-    <header className="relative flex h-12 items-center justify-between border-b border-line-soft bg-surface px-4">
+    // On the BOARD route this bar yields at `lg`+: the board's own header row
+    // (SyncBar with the title and sign-out folded in) takes the top line, so
+    // the screen never spends 48px on a strip whose middle is empty. Every
+    // other route — and every width below `lg`, where the mobile menu and the
+    // stacked board header need it — keeps this bar exactly as it is.
+    <header
+      className={cn(
+        "relative flex h-12 items-center justify-between border-b border-line-soft bg-surface px-4",
+        isBoardTitle && "lg:hidden",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-2">
         <button
           type="button"
@@ -75,35 +83,26 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
         <span className="shrink-0 md:hidden">
           <Link
             href="/dashboard"
-            aria-label="Applied — go to dashboard"
+            aria-label="Applied — go to your applications"
             className="brand-logo-link text-strong"
           >
             <Logo variant="mark" className="h-7 w-7" />
           </Link>
         </span>
-        {/* Identity moved to the sidebar rail's bottom user chip on desktop —
-            keep the email here only below `md`, where the rail is hidden. */}
-        <div className="truncate text-sm text-muted md:hidden">{userEmail ?? ""}</div>
+        {/* The route title. NOT on the board route: its title is the page's
+            one <h1>, rendered by the board's own header row at every width
+            (SyncBar's `title`) — a second copy here, even CSS-hidden at lg,
+            was a duplicate h1 in the document outline and exactly the
+            two-nodes-one-hidden shape that keeps producing strict-mode
+            locator bugs. The node is simply absent, not hidden. Identity
+            lives in the rail footer (desktop) and the mobile menu (below
+            `md`). */}
+        {current && !isBoardTitle ? (
+          <span className="truncate text-sm font-medium text-muted">{current.label}</span>
+        ) : null}
       </div>
 
-      {demo ? (
-        <Link
-          href="/demo"
-          aria-label="Demo shell on fixture data — back to the demo overview"
-          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted transition-colors hover:text-strong focus-accent"
-        >
-          demo · fixture data
-        </Link>
-      ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={handleSignOut}
-          disabled={isSigningOut}
-        >
-          {isSigningOut ? "Signing out…" : "Sign out"}
-        </Button>
-      )}
+      {demo ? <DemoFixturePill /> : <SignOutButton />}
 
       {/* Mobile navigation — mirrors the desktop sidebar (same items + active
           state) and is the only in-app nav below `md`. */}
@@ -121,6 +120,14 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
             aria-label="Primary"
             className="absolute inset-x-0 top-12 z-50 border-b border-line-soft bg-surface px-2 py-2 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)] md:hidden"
           >
+            {/* Identity lives here below `md` (the rail footer's job on
+                desktop) — it used to sit in the bar itself, where the route
+                title now goes. */}
+            {userEmail ? (
+              <p className="mb-2 truncate border-b border-line-soft px-3 pb-2 text-xs text-dim">
+                {userEmail}
+              </p>
+            ) : null}
             <ul className="space-y-1">
               {navItems.map((item) => {
                 const Icon = item.icon;

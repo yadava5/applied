@@ -179,6 +179,16 @@ export function relativeSyncLabel(value: string | null | undefined, nowMs: numbe
   return relative === null ? NOT_SYNCED_YET : `last synced ${relative}`;
 }
 
+/**
+ * The same fact for tight rows — "synced 3 minutes ago". Used where the Sync
+ * button sits right beside it and already carries the noun; the full sentence
+ * stays the default everywhere else.
+ */
+export function compactSyncLabel(value: string | null | undefined, nowMs: number): string {
+  const relative = relativeSince(value, nowMs);
+  return relative === null ? NOT_SYNCED_YET : `synced ${relative}`;
+}
+
 function count(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }

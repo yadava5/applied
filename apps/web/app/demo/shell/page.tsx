@@ -36,7 +36,7 @@ export const dynamic = "force-dynamic";
  *
  * What is fixture here and what is real:
  *   - real: every layout component, the board's full interactivity (drag,
- *     detail sheet, stage filter), the pulse in the board's stage spine, the
+ *     detail sheet, stage filter), the pulse band across the board, the
  *     theme.
  *   - fixture: the rows, the rail's Gmail state, and the identity block.
  *   - the pulse's `needsReview` is 0, same reasoning as /demo: the classifier

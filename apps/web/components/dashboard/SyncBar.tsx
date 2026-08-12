@@ -42,9 +42,21 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
 
 /**
  * The one sync surface. Everything the dashboard says about Gmail flows
- * through this component: the header (title, subtitle, recency, the `Sync`
- * button, the `⋯` overflow), the persistent status/alert line, the rebuild
- * dialog, and the rebuild receipt.
+ * through this component: the header cluster (subtitle, the change-ledger
+ * chip, recency, the `Sync` button, the `⋯` overflow), the persistent
+ * status/alert line, the rebuild dialog, and the rebuild receipt.
+ *
+ * Its header is the page's TOP LINE: one ~40px row carrying the route title
+ * (`title` — the page's one <h1>, at every width; at `lg`+ the shell's
+ * TopBar yields to this row entirely, see TopBar), the
+ * subtitle, the change-ledger chip (`since`), the status/recency slot, the
+ * controls, and the session edge (`trailing`). Sign-out therefore stays on
+ * the top line of the screen, in this row, on the board route. The status
+ * line never moves the page at `lg`+ — it swaps into the subtitle's own slot
+ * for exactly as long as it speaks (the owner watched the board jump when
+ * "checking Gmail…" used to take a line of its own). The alert and the
+ * receipt DO take lines below the row when present: failures and removals
+ * are rare and must not be missable.
  *
  * It replaces three things that used to speak over each other:
  *   - `ReSyncButton` — a prominent button labelled "Re-sync" that silently ran
@@ -100,6 +112,11 @@ const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
 /** The additive clock only appears once a sync stops feeling instant. */
 const SLOW_SYNC_AFTER_MS = 8000;
+
+/** How long a finished sync's resting note keeps the status slot before the
+ *  row goes back to the board's own totals. Long enough to read one short
+ *  sentence, short enough that the totals are never gone for long. */
+const SYNCED_NOTE_MS = 6000;
 
 function recentlyAutoSynced(): boolean {
   try {
@@ -159,12 +176,29 @@ export function RebuildWindowButton() {
 export function SyncBar({
   subtitle,
   gmail,
+  since,
+  title,
+  trailing,
   children,
   transport = liveSyncTransport,
 }: {
-  /** The page's one honest line of state — `214 filed · 32 in motion · 1 offer`. */
+  /** The page's one honest line of state — `214 filed · 32 open · 1 offer`. */
   subtitle: string;
   gmail: SyncGmailState | null;
+  /** The change-ledger chip (`SinceLastLook`) — one line by that component's
+   *  own contract, mounted right after the subtitle so state and news read as
+   *  one sentence. A slot rather than an import: the ledger's rows/scope are
+   *  the caller's business, and the error/empty pages pass nothing. */
+  since?: ReactNode;
+  /** The route title. Rendered as the page's ONE <h1>, at every width — the
+   *  shell's TopBar renders no title on this route (see TopBar), so the
+   *  document outline holds exactly one heading and no CSS-hidden twin ever
+   *  exists for a locator to trip over. At `lg`+ this row is also the
+   *  screen's top line, TopBar having yielded entirely. */
+  title?: string;
+  /** The session-edge control for the same case — SignOutButton on the
+   *  signed-in page, the demo pill on the fixture twin. `lg`+ only. */
+  trailing?: ReactNode;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
   /** How sync requests reach data — Gmail via the proxy by default; the demo
@@ -180,7 +214,10 @@ export function SyncBar({
   /** Ticks while a sync/rebuild runs so the elapsed clock stays honest. */
   const [nowMs, setNowMs] = useState(() => Date.now());
   const autoRan = useRef(false);
-  const lastRebuild = useRef<{ depth: RebuildDepth; range: RebuildRange } | null>(null);
+  const lastRebuild = useRef<{
+    depth: RebuildDepth;
+    range: RebuildRange;
+  } | null>(null);
 
   const connected = gmail?.connected === true;
   const hasCursor = gmail?.hasCursor === true;
@@ -198,7 +235,11 @@ export function SyncBar({
     // rescan this surface exists to remove.
     const res = await transport.sync({ mode: "additive" });
     if (!res.ok) {
-      setPhase({ kind: "failed", op: "sync", notConnected: res.status === 409 });
+      setPhase({
+        kind: "failed",
+        op: "sync",
+        notConnected: res.status === 409,
+      });
       return;
     }
     const data = res.body as Partial<SyncCounts>;
@@ -237,10 +278,18 @@ export function SyncBar({
     async (d: RebuildDepth, r: RebuildRange) => {
       lastRebuild.current = { depth: d, range: r };
       const startedAt = Date.now();
-      setPhase({ kind: "rebuilding", startedAt, scopeLine: rebuildScopeLine(d, r) });
+      setPhase({
+        kind: "rebuilding",
+        startedAt,
+        scopeLine: rebuildScopeLine(d, r),
+      });
       const res = await transport.sync(rebuildRequestBody(d, r));
       if (!res.ok) {
-        setPhase({ kind: "failed", op: "rebuild", notConnected: res.status === 409 });
+        setPhase({
+          kind: "failed",
+          op: "rebuild",
+          notConnected: res.status === 409,
+        });
         return;
       }
       const outcome = readRebuildOutcome(res.body);
@@ -286,6 +335,21 @@ export function SyncBar({
     return () => window.clearInterval(id);
   }, [busy]);
 
+  // A finished run's note is a RECEIPT, not a state, so it decays. It has to:
+  // at `lg`+ that note takes the subtitle + ledger slot (see the header-row
+  // note below), and `synced` had no exit but the receipt dialog — which a
+  // plain sync never opens. So one press hid the board's totals and the
+  // change ledger for the rest of the session, on the signed-in dashboard as
+  // well as the demo. A partial scan is excluded on purpose: it carries a
+  // "continue the scan" control, and a control must not vanish under the
+  // cursor.
+  useEffect(() => {
+    if (phase.kind !== "synced") return;
+    if (stopKind(phase.end.stoppedBy) === "partial") return;
+    const id = window.setTimeout(() => setPhase({ kind: "idle" }), SYNCED_NOTE_MS);
+    return () => window.clearTimeout(id);
+  }, [phase]);
+
   function openDialog() {
     setMemoryLine(() => {
       const memory = readRebuildMemoryFromStorage(memoryKey);
@@ -301,7 +365,9 @@ export function SyncBar({
         ...p,
         outcome: {
           ...p.outcome,
-          removed: p.outcome.removed.map((row) => (row.id === id ? { ...row, restored: true } : row)),
+          removed: p.outcome.removed.map((row) =>
+            row.id === id ? { ...row, restored: true } : row,
+          ),
         },
       };
     });
@@ -405,7 +471,10 @@ export function SyncBar({
     alertContent = phase.notConnected ? (
       <>
         Gmail is not connected · nothing was changed{" "}
-        <Link href="/settings" className="text-muted underline-offset-2 hover:text-strong hover:underline">
+        <Link
+          href="/settings"
+          className="text-muted underline-offset-2 hover:text-strong hover:underline"
+        >
           connect in settings →
         </Link>
       </>
@@ -439,24 +508,90 @@ export function SyncBar({
   // instead — every other sentence in the machine stays the product's own.
   const showRecency = connected && statusContent === null && alertContent === null;
 
+  // Whether the status borrows the subtitle + ledger slot at `lg`+. Kept as
+  // "the status is speaking at all", deliberately: narrowing it (so a partial
+  // scan or a resting failure keeps its own line instead) un-hides the
+  // subtitle and the ledger in states where a long status ALSO sits on the
+  // row, and the header wrapping to two lines costs the worklist ~30px
+  // against a 7px floor margin. No test exercises those states, so that
+  // change cannot be made safely without a fixture for them first — task #96.
+  const statusTakesSlot = statusContent !== null;
+
   return (
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
     // the sync UI") to this surface without leaning on copy or classes.
-    <div className="space-y-2" data-sync-surface="">
-      {/* Below `sm` the action cluster takes its own full-width line under the
-          title, anchored LEFT — flex-wrap + justify-end orphaned "File an
-          application" on its own right-aligned line with a dead gap beside it.
-          The recency sentence drops to a quiet line of its own down there
-          (`order-last`), so the controls read as one bar. */}
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        {/* Title and subtitle share one baseline: stacked they cost a second
-            line of the pane for numbers that read fine beside the name. On a
-            narrow viewport the row wraps and the stack comes back for free. */}
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
-          <p className="tabular text-[13px] text-muted">{subtitle}</p>
-        </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+    <div className="flex flex-col gap-2" data-sync-surface="">
+      {/* --- The header row -------------------------------------------------
+          At `lg`+ in the shell this IS the screen's top line: TopBar yields
+          on the board route, so the title, the state, the change ledger, the
+          sync controls and the session edge share one ~40px row instead of a
+          48px bar with an empty middle plus a second row under it.
+
+          ZERO LAYOUT SHIFT is a requirement of this row (the owner watched
+          the whole page jump when "checking Gmail…" appeared): at `lg`+ the
+          status line does not get a line of its own — it takes over the
+          subtitle + ledger slot for exactly as long as it has something to
+          say, so idle → checking → result → idle never changes the row's
+          height. "As long as it has something to say" is enforced by the
+          decay above, not merely intended: a note that never expired held
+          this slot for the rest of the session.
+          Two statuses still have no end of their own and so still hold it —
+          the stopped-early scan (it carries a "continue the scan" control)
+          and the resting "last sync failed". Both wait on the user, and both
+          therefore keep the totals hidden while they wait; see task #96,
+          which owes them a fixture before that can be changed. Below `lg` the
+          row stacks and the status keeps its own line, as before. */}
+      {/* `relative`: the change ledger's names panel anchors to THIS row
+          (its own chip sits mid-row, where an anchored overlay ran past
+          <main>'s left edge and got clipped). */}
+      <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2">
+        {title ? (
+          <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
+        ) : null}
+        <p
+          className={`tabular shrink-0 text-[13px] text-muted ${statusTakesSlot ? "lg:hidden" : ""}`}
+        >
+          {subtitle}
+        </p>
+        {/* The ledger chip takes the slack between state and controls — its
+            own fixed flex-basis, so hydration can never re-wrap the row (the
+            board below must not move when the ledger finds its words). */}
+        {since ? (
+          <div className={`min-w-0 flex-1 basis-40 ${statusTakesSlot ? "lg:hidden" : ""}`}>
+            {since}
+          </div>
+        ) : null}
+        {/* The status live region — persistent (mounting live regions on
+            demand drops announcements), sr-only while silent. When it speaks
+            it takes the subtitle's slot at `lg`+ (see the row note above) and
+            its own wrap-line below `lg`. The inner span is keyed by the
+            machine's state so each transition slides its sentence in — the
+            state CHANGE is visible, not just the state. */}
+        <p
+          role="status"
+          aria-live="polite"
+          className={
+            statusContent === null
+              ? "sr-only"
+              : "min-w-0 text-xs text-muted max-lg:order-last max-lg:basis-full lg:flex-1"
+          }
+        >
+          <motion.span
+            key={phase.kind}
+            initial={reduceMotion ? false : { opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="flex flex-wrap items-center gap-2"
+          >
+            {statusContent}
+          </motion.span>
+        </p>
+        {/* Below `sm` the action cluster takes its own full-width line under
+            the state, anchored LEFT — flex-wrap + justify-end orphaned "File
+            an application" on its own right-aligned line with a dead gap
+            beside it. The recency phrase drops to a quiet line of its own
+            down there (`order-last`), so the controls read as one bar. */}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
           {connected ? (
             <>
               {showRecency ? (
@@ -465,12 +600,14 @@ export function SyncBar({
                     simulated account · nothing is read
                   </span>
                 ) : (
-                  // A sentence, so the product voice — the machine-readable
+                  // A phrase, so the product voice — the machine-readable
                   // instant already rides in the <time> element's dateTime and
-                  // title. Mono here was the "last synced …" defect the
-                  // type-system note in globals.css names.
+                  // title. Compact ("synced 3 minutes ago"): the Sync button
+                  // beside it carries the noun, and on the shared command row
+                  // every word here is width the ledger's news needs.
                   <LastSynced
                     at={gmail?.lastSyncAt ?? null}
+                    compact
                     className="order-last w-full text-xs text-dim sm:order-none sm:w-auto"
                   />
                 )
@@ -519,27 +656,13 @@ export function SyncBar({
           ) : null}
           {children}
         </div>
-      </header>
+        {trailing ? <div className="hidden shrink-0 items-center lg:flex">{trailing}</div> : null}
+      </div>
 
-      {/* Persistent live regions — visually empty when idle. The inner span is
-          keyed by the machine's state so each transition (idle → syncing →
-          synced…) slides its sentence in — the state CHANGE is visible, not
-          just the state. Reduced motion renders each state statically. */}
-      <p
-        role="status"
-        aria-live="polite"
-        className={`text-xs text-muted ${statusContent === null ? "sr-only" : ""}`}
-      >
-        <motion.span
-          key={phase.kind}
-          initial={reduceMotion ? false : { opacity: 0, y: 3 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
-          className="flex items-center gap-2"
-        >
-          {statusContent}
-        </motion.span>
-      </p>
+      {/* The alert live region — persistent for the same announcement reason,
+          its own line below the row when it speaks. A failure pushing the
+          board down is deliberate: it is rare, it is red, and it must not be
+          possible to miss. */}
       <p
         role="alert"
         className={`text-xs text-reject-ink ${alertContent === null ? "sr-only" : ""}`}
@@ -548,20 +671,22 @@ export function SyncBar({
       </p>
 
       {phase.kind === "receipt" ? (
-        <RebuildReceipt
-          op={phase.op}
-          outcome={phase.outcome}
-          transport={transport}
-          onDismiss={() => setPhase({ kind: "idle" })}
-          onRestored={restoreSucceeded}
-          onContinue={() => {
-            if (phase.op === "sync") {
-              void runSync();
-            } else if (lastRebuild.current) {
-              void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
-            }
-          }}
-        />
+        <div>
+          <RebuildReceipt
+            op={phase.op}
+            outcome={phase.outcome}
+            transport={transport}
+            onDismiss={() => setPhase({ kind: "idle" })}
+            onRestored={restoreSucceeded}
+            onContinue={() => {
+              if (phase.op === "sync") {
+                void runSync();
+              } else if (lastRebuild.current) {
+                void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
+              }
+            }}
+          />
+        </div>
       ) : null}
 
       <Dialog

@@ -8,7 +8,10 @@ import { LayoutDashboard, Inbox, Upload, Settings, type LucideIcon } from "lucid
 export type NavItem = { href: string; label: string; icon: LucideIcon };
 
 export const navItems: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  // "Applications", because that is what the rows are and what a person says
+  // — "Dashboard" named the furniture, and "Pipeline" was a sales-CRM borrow.
+  // The ROUTE stays /dashboard: renames stop at presentation labels.
+  { href: "/dashboard", label: "Applications", icon: LayoutDashboard },
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/import", label: "Import mail", icon: Upload },
   { href: "/settings", label: "Settings", icon: Settings },

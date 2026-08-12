@@ -9,6 +9,7 @@ import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
+import { SignOutButton } from "@/components/shell/SessionControls";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
@@ -33,24 +34,28 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  *
  * The geometry is viewport-locked at desktop: the shell is one screen tall,
  * this page fills its pane exactly (`lg:min-h-0 lg:flex-1`), and the ONLY
- * thing that scrolls is the worklist inside `PipelineBoard`. Header, notice
- * lines and the spine hold still — the dashboard reads as an instrument, not
- * a document. Below `lg` the lock releases and the page flows normally.
+ * thing that scrolls is the worklist inside `PipelineBoard`. Below `lg` the
+ * lock releases and the page flows normally.
  *
- * The notice zone under the SyncBar is deliberately one line box per notice
- * (`truncate`, no wrapping): the "what changed since you last looked" summary
- * (PR #113, `SinceLastLook`) lands in this zone as a single line, so nothing
- * that appears after hydration can ever shift the board. The in-app weekly
- * digest is no longer a second line here — it restated the subtitle's own
- * numbers plus one (task #59), so its one new number (+N this wk) folds into
- * the subtitle itself when the pref asks for it.
+ * The page spends ONE line of chrome above the board's pulse band: the shell's
+ * top bar carries the route title now, and everything this page used to stack
+ * — the header row, the notice line, the board's own in-column search row —
+ * shares the board's command row instead. The SyncBar (subtitle · the
+ * change-ledger chip · recency · Sync · ⋯ · +) rides that row through the
+ * board's `toolbar` slot, so the /demo twin inherits the identical
+ * composition by construction and the worklist gets every reclaimed line.
+ * The in-app weekly digest is not a line anywhere — it restated the
+ * subtitle's own numbers plus one (task #59), so its one new number
+ * (+N this wk) folds into the subtitle itself when the pref asks for it.
  *
  * The pulse's four derived signals — filed-per-week momentum, the age
- * distribution of open rows, deadlines, and how much of the board the
- * classifier built / is holding — render inside the board's stage spine,
- * under the stage buttons (`PipelineBoard`'s `pulse` prop), filling the
- * column's blank run instead of spending a band of the pane. They derive
- * from the same rows the board renders, so the board is where they live.
+ * distribution of open rows, deadlines, and how much of the board arrived
+ * from mail / is held for review — render as a full-width band across the
+ * top of the board's body (`PipelineBoard`'s `pulse` prop). That is the
+ * pre-#136 home the owner asked back, at band density instead of the old
+ * ~200px strip; the shell rail and the stage spine are both measured,
+ * rejected homes for it. They derive from the same rows the board renders,
+ * so the board is where they live.
  *
  * Data path unchanged: the counts come from the O(1) `GET
  * /applications/summary`, the board from one bounded page of
@@ -162,7 +167,9 @@ async function loadDashboard(): Promise<LoadState> {
  *  restating everything else this line already says. */
 function buildSubtitle(summary: PipelineSummary, weekly: boolean): string {
   const thisWeek = weekly && summary.thisWeek > 0 ? ` · +${summary.thisWeek} this wk` : "";
-  return `${summary.total} filed${thisWeek} · ${summary.inMotion} in motion · ${summary.offers} offer${
+  // "open", not "in motion": the pulse already calls these same rows open,
+  // and an applied-and-waiting row is precisely the one NOT moving.
+  return `${summary.total} filed${thisWeek} · ${summary.inMotion} open · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
   }`;
 }
@@ -173,9 +180,7 @@ export default async function DashboardPage() {
     getGmailStatus(),
     getCurrentUser(),
   ]);
-  const notifPrefs = readNotificationPrefs(
-    (user?.user_metadata ?? {}) as Record<string, unknown>,
-  );
+  const notifPrefs = readNotificationPrefs((user?.user_metadata ?? {}) as Record<string, unknown>);
 
   // A failed status probe is UNKNOWN, not disconnected — the SyncBar renders
   // no gmail cluster at all rather than a guessed state.
@@ -217,7 +222,7 @@ export default async function DashboardPage() {
     const headline =
       state.kind === "offline"
         ? "We couldn't reach the server."
-        : "We couldn't load your pipeline.";
+        : "We couldn't load your applications.";
     // Only an auth rejection is a session problem. A 500 told through the same
     // words sent people to sign in again — a loop that could not help them.
     const detail =
@@ -228,7 +233,12 @@ export default async function DashboardPage() {
           : `The backend didn't answer: ${state.message}. Nothing is lost — your board renders the moment it responds.`;
     return (
       <section className="space-y-8">
-        <SyncBar subtitle="connection issue · your data could not be loaded" gmail={null}>
+        <SyncBar
+          subtitle="connection issue · your data could not be loaded"
+          gmail={null}
+          title="Applications"
+          trailing={<SignOutButton />}
+        >
           <AddApplicationForm compact />
         </SyncBar>
         <div
@@ -242,8 +252,8 @@ export default async function DashboardPage() {
           </h2>
           <p className="mt-2 max-w-xl text-sm text-muted">{detail}</p>
           <p className="mt-2 max-w-xl text-xs text-dim">
-            This is a loading failure, not an empty pipeline — nothing below is your data, because
-            we have none to show yet.
+            This is a loading failure, not an empty board — nothing below is your data, because we
+            have none to show yet.
           </p>
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <RetryLoadButton />
@@ -282,6 +292,8 @@ export default async function DashboardPage() {
               scanCompleted ? "no applications detected yet" : "no applications filed yet"
             }${reviewNote}`}
             gmail={gmail}
+            title="Applications"
+            trailing={<SignOutButton />}
           >
             <AddApplicationForm compact />
           </SyncBar>
@@ -319,7 +331,12 @@ export default async function DashboardPage() {
     // Genuinely fresh user (not connected, nothing imported) → scaffold + sample.
     return (
       <section className="space-y-6">
-        <SyncBar subtitle="0 filed · start your pipeline" gmail={gmail}>
+        <SyncBar
+          subtitle="0 filed · nothing tracked yet"
+          gmail={gmail}
+          title="Applications"
+          trailing={<SignOutButton />}
+        >
           <AddApplicationForm compact />
         </SyncBar>
         <DashboardEmptyState />
@@ -341,18 +358,18 @@ export default async function DashboardPage() {
 
   return (
     <section className={LOCKED_PAGE_CLASS}>
-      <SyncBar subtitle={subtitle} gmail={gmail}>
-        <AddApplicationForm compact />
-      </SyncBar>
+      {/* The sync surface is the page's top line: at `lg`+ the shell's TopBar
+          yields on this route and this row carries the title, the state, the
+          change ledger, the sync controls and sign-out — one line where a
+          92%-empty bar plus a second header row used to sit. The /demo twin
+          composes the identical row (with the demo pill in the trailing
+          slot), so the two cannot drift.
 
-      {/* The notice zone: single-line notices only, so nothing here can shift
-          the board. Its two tenants are `SinceLastLook` and the in-app weekly
-          digest, both exactly one line tall.
-
-          SinceLastLook is client-only (the marker is this browser's), per
-          user, and silent until it has a previous visit to compare against.
-          The rows are projected here so the flight payload carries six fields
-          per row rather than the whole record twice.
+          SinceLastLook is the chip on that row: client-only (the marker is
+          this browser's), per user, and silent until it has a previous visit
+          to compare against. The rows are projected here so the flight
+          payload carries six fields per row rather than the whole record
+          twice.
 
           No id, no ledger — never a shared "anon" scope. One marker key holds
           one board, so a record written under a fallback scope would OVERWRITE
@@ -363,31 +380,42 @@ export default async function DashboardPage() {
           another file is what makes it worth stating here. Same discipline as
           the SyncBar's gmail cluster: an unknown state renders nothing rather
           than a guessed one. */}
-      {user?.id ? (
-        <SinceLastLook
-          rows={state.applications.map(toChangeRow)}
-          total={state.total}
-          scope={user.id}
-          storageKey={LAST_LOOK_KEY}
-        />
-      ) : null}
+      <SyncBar
+        subtitle={subtitle}
+        gmail={gmail}
+        title="Applications"
+        trailing={<SignOutButton />}
+        since={
+          user?.id ? (
+            <SinceLastLook
+              rows={state.applications.map(toChangeRow)}
+              total={state.total}
+              scope={user.id}
+              storageKey={LAST_LOOK_KEY}
+            />
+          ) : null
+        }
+      >
+        <AddApplicationForm compact />
+      </SyncBar>
 
-      {/* The worklist owns the rest of the pane. `total` is the account's true
-          count, not the page's: past BOARD_PAGE_SIZE the board says which slice
-          it is showing, so the subtitle's "250 filed" and a list summing to 200
-          stop contradicting each other.
+      {/* The board owns the rest of the pane. Its stage lens + search live in
+          the shell's rail (portaled by the board itself — state stays with
+          the list they filter), so the worklist takes the full measure.
 
           "Needs review alerts" decides whether held mail interrupts the list
           (above the rows) or waits under it — the quiet-board promise the
           Settings toggle describes, kept real. Both placements live INSIDE the
           list's scroll context, so an eight-item queue can never starve the
-          worklist of its viewport. */}
-      {/* `total` and `stageTotals` both come from the summary endpoint, and the
-          board's prop type makes them inseparable: the spine states the
-          ACCOUNT's per-stage counts (a `GROUP BY status` in the database), not
-          the shape of the page that happened to load. Past BOARD_PAGE_SIZE the
-          two differ, and a spine summing to the page while this subtitle says
-          the account is exactly the contradiction the scope note exists for. */}
+          worklist of its viewport.
+
+          `total` and `stageTotals` both come from the summary endpoint, and
+          the board's prop type makes them inseparable: the stage lens states
+          the ACCOUNT's per-stage counts (a `GROUP BY status` in the
+          database), not the shape of the page that happened to load. Past
+          BOARD_PAGE_SIZE the two differ, and a lens summing to the page while
+          the subtitle says the account is exactly the contradiction the scope
+          note exists for. */}
       <PipelineBoard
         variant="locked"
         applications={state.applications}

@@ -53,17 +53,19 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     }));
 
   /**
-   * The dashboard's own H1 — `exact` and `level` on purpose. This shell tree
-   * once held a SECOND heading whose name contained "pipeline" (the retired
-   * rail snapshot's h2), and Playwright's default role-name matching is
-   * case-insensitive substring, so the loose form resolved to both — a
-   * strict-mode violation that poisoned every geometry test in this describe
-   * on its first CI run. The strict form stays: if a duplicate H1 ever
-   * appears, it should fail the one assertion that counts things, not every
-   * wait-for-load line.
+   * The dashboard's own H1 — "Applications", rendered by the shell's TOP BAR
+   * (the board page surrendered its in-page header row to the worklist, so
+   * the route title in the bar is the page heading now). `exact` and `level`
+   * on purpose: this shell tree once held a SECOND heading whose name
+   * contained the page word (the retired rail snapshot's h2), and
+   * Playwright's default role-name matching is case-insensitive substring, so
+   * the loose form resolved to both — a strict-mode violation that poisoned
+   * every geometry test in this describe on its first CI run. The strict form
+   * stays: if a duplicate H1 ever appears, it should fail the one assertion
+   * that counts things, not every wait-for-load line.
    */
   const pageHeading = (page: Page) =>
-    page.getByRole("heading", { level: 1, name: "Pipeline", exact: true });
+    page.getByRole("heading", { level: 1, name: "Applications", exact: true });
 
   for (const viewport of [
     { width: 1280, height: 800 },
@@ -149,35 +151,165 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     });
   }
 
-  test("the pulse lives in the board's stage spine — exactly one copy in the tree", async ({
+  test("the pulse is the board's full-width band — exactly one copy in the tree", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
     await expect(pageHeading(page)).toBeVisible();
 
-    // One rendered pulse, inside the "Stages" aside — under the stage list,
-    // where the owner pointed — and provably NOT in the shell rail (the
-    // PR #122 slot, which the measured sidebar overflow retired) nor as a
-    // display-none twin under the list (the pre-#122 duplicate).
+    // One rendered pulse, as a full-width band in the BOARD's own tree —
+    // the dashboard's content area, where the owner keeps putting it back.
+    // Both left-column homes are closed and provably empty of it: the stage
+    // spine (#136, rejected) and the shell rail (PR #122, retired for
+    // measured sidebar overflow). No display-none twin anywhere.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
+    await expect(page.getByTestId("pipeline-board").getByTestId("pipeline-pulse")).toBeVisible();
     await expect(
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       page.locator('aside:has(nav[aria-label="Primary"])').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
 
-    // Below lg the spine collapses into the chip strip and the pulse goes
-    // with it — a deliberate choice (the phone dashboard leads with the
-    // worklist; age/deadline tags on the cards carry the same ground truth),
-    // not a hidden duplicate.
+    // A BAND, not a column: it spans the board. A pulse that fits in a spine
+    // again would pass every locator above and still be the rejected layout.
+    const bandBox = await pulse.boundingBox();
+    const boardBox = await page.getByTestId("pipeline-board").boundingBox();
+    expect(bandBox?.width ?? 0).toBeGreaterThan((boardBox?.width ?? 1) * 0.9);
+
+    // Same idea for the page heading: exactly ONE <h1> node in the DOM, not
+    // one visible and one CSS-hidden. A hidden twin already shipped once
+    // (TopBar kept rendering its copy under `lg:hidden` while the header row
+    // rendered the visible one) — a duplicate document outline for screen
+    // readers, and the exact two-nodes-one-hidden shape that produces
+    // strict-mode locator failures. Counted at both breakpoints because the
+    // twin only existed on one side of `lg`.
+    await expect(page.locator("h1")).toHaveCount(1);
+
+    // Below lg the band yields — a deliberate choice (the phone dashboard
+    // leads with the worklist; age/deadline tags on the cards carry the same
+    // ground truth), not a hidden duplicate.
     await page.setViewportSize(MOBILE_375);
     await expect(pulse).toBeHidden();
     await expect(page.getByTestId("pipeline-pulse")).toHaveCount(1);
+    await expect(page.locator("h1")).toHaveCount(1);
   });
+
+  test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    // The nav label is asserted HERE, where the sidebar renders without a
+    // session — inside the session-gated describe below it was a check that
+    // could not fail, guarding a rename CI never executed.
+    await expect(
+      page
+        .locator('nav[aria-label="Primary"]')
+        .getByRole("link", { name: "Applications", exact: true }),
+    ).toBeVisible();
+
+    // The stage lens lives in the rail's middle run (portaled by the board —
+    // one state owner), with search above it: filters are route-local
+    // navigation, and this is the void the owner pointed at.
+    const lens = page.getByRole("group", { name: "Stages" });
+    await expect(lens).toBeVisible();
+    await expect(lens.getByRole("button", { name: "applied — 10" })).toBeVisible();
+    await expect(lens.getByRole("searchbox", { name: /search the board/i })).toBeVisible();
+    // …and the in-board spine is gone with it: the worklist owns the full
+    // measure. (The chip strip still exists for below-`md`, CSS-picked — the
+    // same both-in-DOM shape the chips/spine pair always had.)
+    await expect(page.locator('aside[aria-label="Stages"]')).toHaveCount(0);
+
+    // Filtering through the rail drives the same board.
+    await lens.getByRole("button", { name: "interviewing — 4" }).click();
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: /applied — 10/i })).toHaveCount(0);
+  });
+
+  test("a sync reports without moving the board: idle → checking → result", async ({ page }) => {
+    // The owner watched the whole page jump when "checking Gmail…" appeared.
+    // The status now takes over the subtitle's slot in the header row for
+    // exactly as long as it speaks, so the three routine states share one
+    // geometry — asserted against the worklist pane, the thing that moved.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    const list = page.getByTestId("worklist-pane");
+    const status = page.locator("[data-sync-surface]").getByRole("status");
+    const idle = await list.boundingBox();
+
+    await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
+    await expect(status).toContainText("checking Gmail");
+    const checking = await list.boundingBox();
+
+    await expect(status).toContainText("2 filed, 3 already known");
+    const settled = await list.boundingBox();
+
+    // The note hands the slot back — a receipt, not a state. That is a fourth
+    // routine transition and it shares the same geometry; without it the
+    // subtitle and the change ledger stayed hidden for the rest of the
+    // session, which is a product regression a shift test alone cannot see.
+    await expect(status).not.toContainText("2 filed", { timeout: 15_000 });
+    await expect(page.getByText("19 filed · 16 open · 0 offers")).toBeVisible();
+    const restored = await list.boundingBox();
+
+    expect(
+      Math.abs((checking?.y ?? 0) - (idle?.y ?? 0)),
+      "the board moved when the checking line appeared",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs((settled?.y ?? 0) - (idle?.y ?? 0)),
+      "the board moved when the sync result appeared",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs((restored?.y ?? 0) - (idle?.y ?? 0)),
+      "the board moved when the sync note decayed back to the subtitle",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs((settled?.height ?? 0) - (idle?.height ?? 0)),
+      "the worklist pane changed height across the sync",
+    ).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * The floor the band's return must never eat through: the worklist's own
+   * viewport share. The document-lock gate CANNOT catch this failure —
+   * `h-dvh overflow-hidden` plus the min-h-0 chain is structural, so chrome
+   * that overspends its budget doesn't scroll the page; it silently shrinks
+   * the one region the dashboard exists to show, with every geometry test
+   * green. The floors are measured on /demo/shell (recorded 2026-08-12,
+   * `next start`, headless Chrome, after the header row replaced the top bar
+   * and the stage lens moved to the rail): worklist-pane clientHeight 652 at
+   * 1280×800, 572 at 1280×720, 592 at 1024×768 (the demo pill wraps the
+   * header to two lines at that width; the signed-in row holds one). A small
+   * tolerance absorbs sub-pixel/font drift; a real regression (a fatter
+   * band, a second header row, a reinstated notice line) costs tens of
+   * pixels and lands far below it.
+   */
+  for (const { viewport, floor } of [
+    { viewport: { width: 1280, height: 800 }, floor: 645 },
+    { viewport: { width: 1280, height: 720 }, floor: 565 },
+    { viewport: { width: 1024, height: 768 }, floor: 585 },
+  ]) {
+    test(`the worklist keeps its viewport share at ${viewport.width}×${viewport.height}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/demo/shell");
+      await expect(pageHeading(page)).toBeVisible();
+
+      const client = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+      expect(
+        client,
+        `the worklist pane shrank to ${client}px (floor ${floor}px) — some chrome above it is spending the list's pixels`,
+      ).toBeGreaterThanOrEqual(floor);
+    });
+  }
 
   test("light theme: still locked, still no horizontal overflow at 375", async ({ page }) => {
     // `jt-theme` is THEME_STORAGE_KEY (lib/theme.ts) — hardcoded here because
@@ -230,7 +362,7 @@ test.describe("app shell — signed out (public)", () => {
 
 test.describe("app shell — signed in (needs a session)", () => {
   for (const { path, label } of [
-    { path: "/dashboard", label: "Dashboard" },
+    { path: "/dashboard", label: "Applications" },
     { path: "/inbox", label: "Inbox" },
     { path: "/settings", label: "Settings" },
   ]) {
@@ -259,8 +391,10 @@ test.describe("app shell — signed in (needs a session)", () => {
 
     // The import tool itself is here...
     await expect(page.getByRole("heading", { name: "Import your mail" })).toBeVisible();
-    // ...and there is a way back into the rest of the app.
-    await page.getByRole("link", { name: "Dashboard" }).click();
+    // ...and there is a way back into the rest of the app. `exact`: the brand
+    // logo's own aria-label ("…go to your applications") substring-matches
+    // the loose form now that the nav item is named "Applications".
+    await page.getByRole("link", { name: "Applications", exact: true }).click();
     await expect(page).toHaveURL(/\/dashboard$/);
   });
 
