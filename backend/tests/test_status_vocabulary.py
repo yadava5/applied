@@ -154,12 +154,28 @@ def test_the_rollup_rank_tables_account_for_every_canonical_status() -> None:
     assert known == set(APPLICATION_STATUSES)
 
 
-def test_every_status_has_a_training_label() -> None:
-    """A status missing here is a correction that trains nothing."""
+def test_a_stage_is_not_convertible_into_a_message_label() -> None:
+    """The status→training-label map is GONE, and must not come back.
 
-    from jobtracker.cloud.applications import _STATUS_TO_TRAINING_LABEL
+    It existed so a stage correction could write a ``training_data`` example for
+    every linked email. That is a category error with measured damage — an
+    assessment invite entered the corpus as a ``rejection``, and
+    ``withdrawn``/``ghosted`` mapped to ``other`` — so the map was deleted along
+    with the loop that read it. Re-adding one puts the defect back, which is why
+    this asserts its absence rather than its completeness.
+    """
 
-    assert set(_STATUS_TO_TRAINING_LABEL) == set(ApplicationStatus)
+    from jobtracker.cloud import applications as cloud_apps
+
+    assert not [
+        name
+        for name in vars(cloud_apps)
+        if "TRAINING_LABEL" in name.upper()
+    ], (
+        "a status→training-label map is back in cloud/applications.py. A stage "
+        "is a fact about an application; a training example is a claim about "
+        "one message. Per-message labels come from the review queue."
+    )
 
 
 def test_the_category_map_only_ever_targets_a_canonical_status() -> None:
@@ -252,8 +268,7 @@ async def test_a_classifier_category_is_not_settable_as_a_stage(
     """``assessment`` is deliberately a 422, and the message names the real list.
 
     If this ever starts passing, the decision above was reversed and the enum,
-    the Postgres type, the rank tables and the training-label map all have to
-    have moved with it.
+    the Postgres type and the rank tables all have to have moved with it.
     """
 
     created = await client.post(

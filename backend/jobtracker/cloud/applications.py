@@ -35,6 +35,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, or_
+from sqlalchemy import update as sa_update
 from sqlmodel import select
 
 from jobtracker.auth import current_user, require_user
@@ -224,19 +225,16 @@ def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> boo
     return all(coverage.covers(e.received_at) for e in emails)
 
 
-# ApplicationStatus → the training label a manual correction should teach the
-# classifier (the SetFit retrain path reads ``training_data``). Must name EVERY
-# status: a status missing here is a correction that silently trains nothing,
-# so ``test_status_vocabulary`` fails if the enum grows and this does not.
-_STATUS_TO_TRAINING_LABEL: dict[ApplicationStatus, EmailCategory] = {
-    ApplicationStatus.APPLIED: EmailCategory.APPLIED,
-    ApplicationStatus.INTERVIEWING: EmailCategory.INTERVIEW,
-    ApplicationStatus.OFFERED: EmailCategory.OFFER,
-    ApplicationStatus.ACCEPTED: EmailCategory.OFFER,
-    ApplicationStatus.REJECTED: EmailCategory.REJECTION,
-    ApplicationStatus.WITHDRAWN: EmailCategory.OTHER,
-    ApplicationStatus.GHOSTED: EmailCategory.OTHER,
-}
+# There is deliberately no ApplicationStatus → training-label map here any
+# more. A stage is a fact about an APPLICATION; a training example is a claim
+# about one MESSAGE, and the two do not convert. The map that used to sit here
+# ran on every status correction and wrote a label for every linked email:
+# ``rejected`` turned an assessment-invite message into a ``rejection`` example
+# (``training_data`` id 2 in production), and ``withdrawn``/``ghosted`` mapped
+# to ``other``, so recording that you never heard back taught the classifier
+# that the genuine confirmation was not job mail. Per-message labels come from
+# the review queue (:func:`classify_review_item`), where the user is actually
+# answering "what is this message?".
 
 
 router = APIRouter(
@@ -1316,14 +1314,28 @@ async def _reset_review_queue(
     if coverage is None or not coverage.message_ids:
         return
 
-    await session.exec(
-        sa_delete(Email).where(
-            Email.user_id == user_id,
-            Email.source_account == EmailSource.GMAIL,
-            Email.application_id.is_(None),
-            Email.is_reviewed == False,  # noqa: E712 — SQL boolean, not identity
-            Email.message_id.in_(coverage.message_ids),
+    # Read the ids first, so the corpus can be unlinked from them before they
+    # cease to exist. A queue item the user labelled but could not file (the
+    # ``needs_employer`` branch of :func:`classify_review_item`) is unlinked and
+    # un-reviewed, which is precisely what this deletes — and it carries a
+    # ``training_data`` row pointing at it.
+    doomed = (
+        await session.exec(
+            select(Email.id).where(
+                Email.user_id == user_id,
+                Email.source_account == EmailSource.GMAIL,
+                Email.application_id.is_(None),
+                Email.is_reviewed == False,  # noqa: E712 — SQL boolean, not identity
+                Email.message_id.in_(coverage.message_ids),
+            )
         )
+    ).all()
+    if not doomed:
+        return
+
+    await _orphan_training_examples(session, user_id, doomed)
+    await session.exec(
+        sa_delete(Email).where(Email.user_id == user_id, Email.id.in_(doomed))
     )
 
 
@@ -1582,6 +1594,34 @@ async def purge_and_rebuild_gmail_pipeline(
     )
 
 
+async def _orphan_training_examples(
+    session, user_id: uuid.UUID, email_ids
+) -> None:
+    """Cut the corpus's link to ``emails`` rows that are about to be deleted.
+
+    ``training_data.email_id`` is a bare indexed integer, not a foreign key, so
+    deleting an email leaves the example pointing at nothing and no constraint
+    complains. That is how ``training_data`` id 2 ended up naming ``emails`` id
+    35: a label with no provenance, unauditable, still read by every retrain.
+
+    The example itself is deliberately kept — it holds the subject and body it
+    was labelled from, so the text remains inspectable — but it stops claiming
+    an origin it no longer has. Consequence worth knowing: a review-queue
+    message the rebuild deletes and re-persists comes back with a NEW id, so a
+    later classification of it writes a SECOND example rather than updating the
+    first (:func:`_add_training_example` is idempotent on ``email_id``).
+    """
+
+    ids = [i for i in (email_ids or []) if i is not None]
+    if not ids:
+        return
+    await session.exec(
+        sa_update(TrainingData)
+        .where(TrainingData.user_id == user_id, TrainingData.email_id.in_(ids))
+        .values(email_id=None)
+    )
+
+
 async def _add_training_example(
     session,
     user_id: uuid.UUID,
@@ -1641,12 +1681,28 @@ async def record_status_correction(
     application_id: int,
     new_status: ApplicationStatus,
 ) -> Application | None:
-    """Apply a user's status correction and TRAIN the model from it.
+    """Apply a user's status correction to the APPLICATION, and only to it.
 
     Makes the status STICKY (tags the row user-owned so future syncs never
-    overwrite it) and, for every linked email, writes a training example
-    labelled with the category implied by the new status. Scoped to the owner;
-    returns the updated row or None when it does not exist for this user.
+    overwrite it). Scoped to the owner; returns the updated row or None when it
+    does not exist for this user.
+
+    It labels no mail, and that is the fix rather than an omission. This used to
+    walk every linked email, flag it ``user_corrected``/``is_reviewed`` and
+    write a ``training_data`` example read off the new STAGE. But the user is
+    answering "what stage is this APPLICATION at?", which is not an answer to
+    "what is this MESSAGE?" — the only question a training example can record.
+    :func:`classify_review_item` already states that distinction in the other
+    direction; this is the same rule seen from the other side.
+
+    The damage was measured, not theorised. ``training_data`` id 2 labels an
+    assessment-invite message ``rejection`` because the application it belonged
+    to was set to rejected, and ``withdrawn``/``ghosted`` mapped to ``other``,
+    so marking a real application ghosted taught the classifier that its own
+    "we received your application" confirmation was not job mail. The flags were
+    the second half: ``_persist_message_refs`` refuses to re-classify anything
+    flagged, so a message the user never looked at froze at whatever the rules
+    last guessed — ``emails`` id 58 is stored ``needs_review`` permanently.
 
     Setting a status on a REMOVED row restores it. Otherwise the correction
     would land on a row nobody can see — user-owned, sticky and invisible —
@@ -1672,21 +1728,6 @@ async def record_status_correction(
     app.updated_at = datetime.utcnow()
     session.add(app)
 
-    label = _STATUS_TO_TRAINING_LABEL.get(new_status)
-    if label is not None:
-        emails = (
-            await session.exec(
-                select(Email).where(
-                    Email.user_id == user_id, Email.application_id == application_id
-                )
-            )
-        ).all()
-        for email in emails:
-            email.user_corrected = True
-            email.is_reviewed = True
-            session.add(email)
-            await _add_training_example(session, user_id, email, label)
-
     await session.commit()
     await session.refresh(app)
     return app
@@ -1695,14 +1736,28 @@ async def record_status_correction(
 async def dismiss_application(
     session, user_id: uuid.UUID, application_id: int
 ) -> bool:
-    """Mark a row 'not an application' — take it off the board, teach the model.
+    """Mark a row 'not an application' — take it off the board.
 
-    Records each linked email as an ``other`` training example (so the classifier
-    learns it was wrongly filed), then DISMISSES the row: it disappears from the
-    board and the summary, but the row and its emails stay on disk so
-    :func:`restore_application` can put it back. It used to delete both, which
-    made a misclick as final as the re-sync bug was. Scoped to the owner.
-    Returns False when the row does not exist for this user.
+    The row disappears from the board and the summary, but the row and its
+    emails stay on disk so :func:`restore_application` can put it back. It used
+    to delete both, which made a misclick as final as the re-sync bug was.
+    Scoped to the owner. Returns False when the row does not exist for this user.
+
+    Like :func:`record_status_correction`, this writes NO per-message training
+    example. It used to record every linked email as ``other`` while leaving
+    each one's stored ``classified_as`` alone, so the corpus said "not job mail"
+    about a message the database still called an application confirmation — the
+    same silent disagreement, one action along, and nothing could ever notice it
+    (:mod:`tests.test_training_corpus_integrity` now does).
+
+    Making them agree instead is not available here: the stored classification
+    only survives a re-sync if the email is flagged ``user_corrected``/
+    ``is_reviewed``, and that flag freezes it against every future
+    re-classification. Freezing mail is a bad trade on a REVERSIBLE action —
+    restore would hand back a live application whose messages are stuck at
+    ``other`` forever, which is exactly the defect this change removes from the
+    status path. A dismissal is a statement about the row; per-message labels
+    come from the review queue, where the user is looking at the message.
     """
 
     app = (
@@ -1714,18 +1769,6 @@ async def dismiss_application(
     ).first()
     if app is None:
         return False
-
-    emails = (
-        await session.exec(
-            select(Email).where(
-                Email.user_id == user_id, Email.application_id == application_id
-            )
-        )
-    ).all()
-    for email in emails:
-        await _add_training_example(
-            session, user_id, email, EmailCategory.OTHER
-        )
 
     app.dismissed_at = datetime.utcnow()
     app.dismissed_reason = DISMISSED_BY_USER
@@ -1769,7 +1812,12 @@ async def restore_application(
 async def delete_application(
     session, user_id: uuid.UUID, application_id: int
 ) -> bool:
-    """Hard-delete an application and its linked emails. Scoped to the owner."""
+    """Hard-delete an application and its linked emails. Scoped to the owner.
+
+    The user's training examples are KEPT (they carry the subject and body they
+    were labelled from, and destroying a correction is not this endpoint's
+    decision) but are unlinked first — see :func:`_orphan_training_examples`.
+    """
 
     app = (
         await session.exec(
@@ -1780,6 +1828,14 @@ async def delete_application(
     ).first()
     if app is None:
         return False
+    doomed = (
+        await session.exec(
+            select(Email.id).where(
+                Email.user_id == user_id, Email.application_id == application_id
+            )
+        )
+    ).all()
+    await _orphan_training_examples(session, user_id, doomed)
     await session.exec(
         sa_delete(Email).where(
             Email.user_id == user_id, Email.application_id == application_id
@@ -2713,11 +2769,13 @@ async def update_application_status_cloud(
     data: ApplicationStatusUpdate,
     user_id: uuid.UUID = Depends(current_user),
 ) -> CloudApplicationResponse:
-    """Apply a user's status correction — makes it sticky AND trains the model.
+    """Apply a user's status correction — and make it sticky.
 
     The new status is honoured verbatim (a human decision, not the advance-only
-    guard) and future syncs will never overwrite it. Every linked email becomes
-    a training example. 404 when the row is not the caller's.
+    guard) and future syncs will never overwrite it. It changes nothing about
+    the linked mail: a stage is not a label for any individual message, and
+    treating it as one poisoned the training corpus — see
+    :func:`record_status_correction`. 404 when the row is not the caller's.
     """
 
     async with get_session() as session:
@@ -2774,10 +2832,12 @@ async def dismiss_application_cloud(
     application_id: int,
     user_id: uuid.UUID = Depends(current_user),
 ) -> dict[str, object]:
-    """'Not an application / dismiss' — take the row off the board + train it.
+    """'Not an application / dismiss' — take the row off the board.
 
     Reversible: the row leaves the board and the summary but is not deleted, so
-    ``POST /applications/{id}/restore`` brings it back intact.
+    ``POST /applications/{id}/restore`` brings it back intact — mail, stored
+    classifications and all, which is why the dismissal labels no message
+    (see :func:`dismiss_application`).
     """
 
     async with get_session() as session:
