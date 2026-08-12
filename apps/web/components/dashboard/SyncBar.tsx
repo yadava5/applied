@@ -42,9 +42,19 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
 
 /**
  * The one sync surface. Everything the dashboard says about Gmail flows
- * through this component: the header (title, subtitle, recency, the `Sync`
- * button, the `⋯` overflow), the persistent status/alert line, the rebuild
- * dialog, and the rebuild receipt.
+ * through this component: the header cluster (subtitle, the change-ledger
+ * chip, recency, the `Sync` button, the `⋯` overflow), the persistent
+ * status/alert line, the rebuild dialog, and the rebuild receipt.
+ *
+ * It renders as ROW CONTENT, not a block: the root is a flex-wrap line whose
+ * resting members (subtitle · ledger chip · recency · Sync · ⋯ · +) share one
+ * ~40px row — on the dashboard it is passed into `PipelineBoard`'s command
+ * row beside search, and on the error/empty pages it stands alone as the same
+ * one line. The page TITLE is gone from here on purpose: the shell's top bar
+ * carries the route name now, and every line this header used to spend is a
+ * line the worklist gets back. The transient members (the status line, the
+ * alert, the receipt) are `basis-full`, so they only take a wrap-line of
+ * their own while they actually have something to say.
  *
  * It replaces three things that used to speak over each other:
  *   - `ReSyncButton` — a prominent button labelled "Re-sync" that silently ran
@@ -159,12 +169,18 @@ export function RebuildWindowButton() {
 export function SyncBar({
   subtitle,
   gmail,
+  since,
   children,
   transport = liveSyncTransport,
 }: {
-  /** The page's one honest line of state — `214 filed · 32 in motion · 1 offer`. */
+  /** The page's one honest line of state — `214 filed · 32 open · 1 offer`. */
   subtitle: string;
   gmail: SyncGmailState | null;
+  /** The change-ledger chip (`SinceLastLook`) — one line by that component's
+   *  own contract, mounted right after the subtitle so state and news read as
+   *  one sentence. A slot rather than an import: the ledger's rows/scope are
+   *  the caller's business, and the error/empty pages pass nothing. */
+  since?: ReactNode;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
   /** How sync requests reach data — Gmail via the proxy by default; the demo
@@ -180,7 +196,10 @@ export function SyncBar({
   /** Ticks while a sync/rebuild runs so the elapsed clock stays honest. */
   const [nowMs, setNowMs] = useState(() => Date.now());
   const autoRan = useRef(false);
-  const lastRebuild = useRef<{ depth: RebuildDepth; range: RebuildRange } | null>(null);
+  const lastRebuild = useRef<{
+    depth: RebuildDepth;
+    range: RebuildRange;
+  } | null>(null);
 
   const connected = gmail?.connected === true;
   const hasCursor = gmail?.hasCursor === true;
@@ -198,7 +217,11 @@ export function SyncBar({
     // rescan this surface exists to remove.
     const res = await transport.sync({ mode: "additive" });
     if (!res.ok) {
-      setPhase({ kind: "failed", op: "sync", notConnected: res.status === 409 });
+      setPhase({
+        kind: "failed",
+        op: "sync",
+        notConnected: res.status === 409,
+      });
       return;
     }
     const data = res.body as Partial<SyncCounts>;
@@ -237,10 +260,18 @@ export function SyncBar({
     async (d: RebuildDepth, r: RebuildRange) => {
       lastRebuild.current = { depth: d, range: r };
       const startedAt = Date.now();
-      setPhase({ kind: "rebuilding", startedAt, scopeLine: rebuildScopeLine(d, r) });
+      setPhase({
+        kind: "rebuilding",
+        startedAt,
+        scopeLine: rebuildScopeLine(d, r),
+      });
       const res = await transport.sync(rebuildRequestBody(d, r));
       if (!res.ok) {
-        setPhase({ kind: "failed", op: "rebuild", notConnected: res.status === 409 });
+        setPhase({
+          kind: "failed",
+          op: "rebuild",
+          notConnected: res.status === 409,
+        });
         return;
       }
       const outcome = readRebuildOutcome(res.body);
@@ -301,7 +332,9 @@ export function SyncBar({
         ...p,
         outcome: {
           ...p.outcome,
-          removed: p.outcome.removed.map((row) => (row.id === id ? { ...row, restored: true } : row)),
+          removed: p.outcome.removed.map((row) =>
+            row.id === id ? { ...row, restored: true } : row,
+          ),
         },
       };
     });
@@ -405,7 +438,10 @@ export function SyncBar({
     alertContent = phase.notConnected ? (
       <>
         Gmail is not connected · nothing was changed{" "}
-        <Link href="/settings" className="text-muted underline-offset-2 hover:text-strong hover:underline">
+        <Link
+          href="/settings"
+          className="text-muted underline-offset-2 hover:text-strong hover:underline"
+        >
           connect in settings →
         </Link>
       </>
@@ -442,93 +478,101 @@ export function SyncBar({
   return (
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
     // the sync UI") to this surface without leaning on copy or classes.
-    <div className="space-y-2" data-sync-surface="">
+    //
+    // `flex-1 min-w-0` matter only inside the board's command row, where this
+    // whole surface is one flex item sharing the line with search; standalone
+    // (error/empty pages) the root is an ordinary block and they are inert.
+    <div
+      className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 sm:w-auto sm:min-w-0 sm:flex-1"
+      data-sync-surface=""
+    >
+      <p className="tabular shrink-0 text-[13px] text-muted">{subtitle}</p>
+      {/* The ledger chip takes the slack between state and controls — its own
+          fixed flex-basis, so hydration can never re-wrap the row (the board
+          below must not move when the ledger finds its words). */}
+      {since ? <div className="min-w-0 flex-1 basis-40">{since}</div> : null}
       {/* Below `sm` the action cluster takes its own full-width line under the
-          title, anchored LEFT — flex-wrap + justify-end orphaned "File an
+          state, anchored LEFT — flex-wrap + justify-end orphaned "File an
           application" on its own right-aligned line with a dead gap beside it.
-          The recency sentence drops to a quiet line of its own down there
+          The recency phrase drops to a quiet line of its own down there
           (`order-last`), so the controls read as one bar. */}
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        {/* Title and subtitle share one baseline: stacked they cost a second
-            line of the pane for numbers that read fine beside the name. On a
-            narrow viewport the row wraps and the stack comes back for free. */}
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
-          <p className="tabular text-[13px] text-muted">{subtitle}</p>
-        </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-          {connected ? (
-            <>
-              {showRecency ? (
-                simulated ? (
-                  <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
-                    simulated account · nothing is read
-                  </span>
-                ) : (
-                  // A sentence, so the product voice — the machine-readable
-                  // instant already rides in the <time> element's dateTime and
-                  // title. Mono here was the "last synced …" defect the
-                  // type-system note in globals.css names.
-                  <LastSynced
-                    at={gmail?.lastSyncAt ?? null}
-                    className="order-last w-full text-xs text-dim sm:order-none sm:w-auto"
-                  />
-                )
-              ) : null}
-              <button
-                type="button"
-                onClick={() => void runSync()}
-                disabled={busy}
-                aria-label="Sync new mail from Gmail"
-                title="Checks Gmail for new mail and adds what it finds. Never removes anything."
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <RefreshCw className="h-4 w-4" aria-hidden />
-                Sync
-              </button>
-              <RowActionsMenu
-                label="Sync options"
-                disabled={busy}
-                triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
-                triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
-                items={[
-                  {
-                    key: "rebuild",
-                    label: "Rebuild from Gmail…",
-                    hint: "replaces Gmail-filed rows · lists every removal",
-                    onSelect: openDialog,
-                  },
-                  {
-                    key: "inbox",
-                    label: "Open inbox workbench",
-                    hint: "mine, inspect and file mail by hand",
-                    onSelect: () => router.push("/inbox"),
-                  },
-                ]}
-              />
-            </>
-          ) : gmail !== null ? (
-            // S0 — known not-connected. An unknown status (failed probe)
-            // renders nothing rather than a guessed state.
-            <Link
-              href="/settings"
-              className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline"
+      <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+        {connected ? (
+          <>
+            {showRecency ? (
+              simulated ? (
+                <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
+                  simulated account · nothing is read
+                </span>
+              ) : (
+                // A phrase, so the product voice — the machine-readable
+                // instant already rides in the <time> element's dateTime and
+                // title. Compact ("synced 3 minutes ago"): the Sync button
+                // beside it carries the noun, and on the shared command row
+                // every word here is width the ledger's news needs.
+                <LastSynced
+                  at={gmail?.lastSyncAt ?? null}
+                  compact
+                  className="order-last w-full text-xs text-dim sm:order-none sm:w-auto"
+                />
+              )
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void runSync()}
+              disabled={busy}
+              aria-label="Sync new mail from Gmail"
+              title="Checks Gmail for new mail and adds what it finds. Never removes anything."
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
             >
-              gmail not connected · connect in settings →
-            </Link>
-          ) : null}
-          {children}
-        </div>
-      </header>
+              <RefreshCw className="h-4 w-4" aria-hidden />
+              Sync
+            </button>
+            <RowActionsMenu
+              label="Sync options"
+              disabled={busy}
+              triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+              triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
+              items={[
+                {
+                  key: "rebuild",
+                  label: "Rebuild from Gmail…",
+                  hint: "replaces Gmail-filed rows · lists every removal",
+                  onSelect: openDialog,
+                },
+                {
+                  key: "inbox",
+                  label: "Open inbox workbench",
+                  hint: "mine, inspect and file mail by hand",
+                  onSelect: () => router.push("/inbox"),
+                },
+              ]}
+            />
+          </>
+        ) : gmail !== null ? (
+          // S0 — known not-connected. An unknown status (failed probe)
+          // renders nothing rather than a guessed state.
+          <Link
+            href="/settings"
+            className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline"
+          >
+            gmail not connected · connect in settings →
+          </Link>
+        ) : null}
+        {children}
+      </div>
 
-      {/* Persistent live regions — visually empty when idle. The inner span is
-          keyed by the machine's state so each transition (idle → syncing →
-          synced…) slides its sentence in — the state CHANGE is visible, not
-          just the state. Reduced motion renders each state statically. */}
+      {/* Persistent live regions — visually empty when idle (sr-only takes
+          them out of flow, so the resting row is exactly one line). When one
+          speaks, `basis-full` gives it a wrap-line of its own under the row.
+          The inner span is keyed by the machine's state so each transition
+          (idle → syncing → synced…) slides its sentence in — the state CHANGE
+          is visible, not just the state. Reduced motion renders each state
+          statically. */}
       <p
         role="status"
         aria-live="polite"
-        className={`text-xs text-muted ${statusContent === null ? "sr-only" : ""}`}
+        className={`text-xs text-muted ${statusContent === null ? "sr-only" : "basis-full"}`}
       >
         <motion.span
           key={phase.kind}
@@ -542,26 +586,28 @@ export function SyncBar({
       </p>
       <p
         role="alert"
-        className={`text-xs text-reject-ink ${alertContent === null ? "sr-only" : ""}`}
+        className={`text-xs text-reject-ink ${alertContent === null ? "sr-only" : "basis-full"}`}
       >
         {alertContent}
       </p>
 
       {phase.kind === "receipt" ? (
-        <RebuildReceipt
-          op={phase.op}
-          outcome={phase.outcome}
-          transport={transport}
-          onDismiss={() => setPhase({ kind: "idle" })}
-          onRestored={restoreSucceeded}
-          onContinue={() => {
-            if (phase.op === "sync") {
-              void runSync();
-            } else if (lastRebuild.current) {
-              void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
-            }
-          }}
-        />
+        <div className="basis-full">
+          <RebuildReceipt
+            op={phase.op}
+            outcome={phase.outcome}
+            transport={transport}
+            onDismiss={() => setPhase({ kind: "idle" })}
+            onRestored={restoreSucceeded}
+            onContinue={() => {
+              if (phase.op === "sync") {
+                void runSync();
+              } else if (lastRebuild.current) {
+                void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
+              }
+            }}
+          />
+        </div>
       ) : null}
 
       <Dialog

@@ -28,6 +28,16 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // The route's own name, from the nav vocabulary — never hardcoded, because
+  // this one bar serves every authed route (and /demo/shell, whose path
+  // matches no nav item but which IS the board twin). The board route gets an
+  // <h1>: its page surrendered the in-page header row to the worklist, so the
+  // page heading lives here now. Every other route keeps its own <h1> below
+  // and this reads as the location label beside it.
+  const current =
+    navItems.find((item) => isNavItemActive(pathname, item.href)) ?? (demo ? navItems[0] : null);
+  const isBoardTitle = current?.href === "/dashboard";
+
   // The desktop sidebar is hidden below `md`, so this menu is the only way to
   // move between sections on a phone — never leave the user stranded. It closes
   // on Escape, on the backdrop, and whenever a destination link is tapped (each
@@ -75,15 +85,24 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
         <span className="shrink-0 md:hidden">
           <Link
             href="/dashboard"
-            aria-label="Applied — go to dashboard"
+            aria-label="Applied — go to your applications"
             className="brand-logo-link text-strong"
           >
             <Logo variant="mark" className="h-7 w-7" />
           </Link>
         </span>
-        {/* Identity moved to the sidebar rail's bottom user chip on desktop —
-            keep the email here only below `md`, where the rail is hidden. */}
-        <div className="truncate text-sm text-muted md:hidden">{userEmail ?? ""}</div>
+        {/* The route title — this bar's one piece of content besides sign-out,
+            in a bar that measured 92% empty. Identity lives in the rail
+            footer (desktop) and the mobile menu (below `md`). */}
+        {current ? (
+          isBoardTitle ? (
+            <h1 className="truncate text-sm font-semibold tracking-tight text-strong">
+              {current.label}
+            </h1>
+          ) : (
+            <span className="truncate text-sm font-medium text-muted">{current.label}</span>
+          )
+        ) : null}
       </div>
 
       {demo ? (
@@ -95,12 +114,7 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
           demo · fixture data
         </Link>
       ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={handleSignOut}
-          disabled={isSigningOut}
-        >
+        <Button type="button" variant="ghost" onClick={handleSignOut} disabled={isSigningOut}>
           {isSigningOut ? "Signing out…" : "Sign out"}
         </Button>
       )}
@@ -121,6 +135,14 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
             aria-label="Primary"
             className="absolute inset-x-0 top-12 z-50 border-b border-line-soft bg-surface px-2 py-2 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)] md:hidden"
           >
+            {/* Identity lives here below `md` (the rail footer's job on
+                desktop) — it used to sit in the bar itself, where the route
+                title now goes. */}
+            {userEmail ? (
+              <p className="mb-2 truncate border-b border-line-soft px-3 pb-2 text-xs text-dim">
+                {userEmail}
+              </p>
+            ) : null}
             <ul className="space-y-1">
               {navItems.map((item) => {
                 const Icon = item.icon;

@@ -37,9 +37,16 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  *     zero and an empty meter, which costs a line, not a quarter of the
  *     screen. At 29-0-0-0 it reads as a young pipeline; at a healthy spread
  *     it reads as a funnel. Below `lg` it compresses into a chip strip.
- *     When the caller passes `pulse`, the pulse's four derived signals
- *     (`PipelinePulse`) stack under the stage buttons and fill the column's
- *     blank run — stage lens above, derived lenses below, one instrument.
+ *   - the **pulse band** (`pulse` prop): the four derived signals
+ *     (`PipelinePulse`) as one full-width band above the spine + worklist
+ *     row — dashboard content, in the dashboard's content area. This is the
+ *     pre-#136 home restored at band-density (~56px, not the old ~200px
+ *     strip); the spine and the shell rail are both measured, rejected homes
+ *     for it (see PipelinePulse's header).
+ *   - the **command row** (top): search, the caller's sync surface
+ *     (`toolbar`), and the board's own scope lines share ONE full-width row,
+ *     so the dashboard spends a single line of chrome above the band where
+ *     it used to spend three (page header, notice line, in-column toolbar).
  *   - the **worklist** (right) renders every application as one full-width
  *     row with a fixed skeleton, grouped by stage in flow order. Rows are
  *     even by construction: company and the role slot share one line, and a
@@ -159,7 +166,9 @@ function StaticApplicationRow({
     // `sm` (stamp on the company line, meta left-anchored), one line above it.
     <div
       className="flex flex-col gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
-      style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
+      style={{
+        borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)`,
+      }}
     >
       <div className="flex min-w-0 flex-col gap-y-0.5 sm:flex-1 sm:basis-56 sm:flex-row sm:items-baseline sm:gap-x-2.5">
         {inSet ? (
@@ -275,9 +284,7 @@ function BoardCell({
       layoutId={layoutKey}
       initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={
-        reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
-      }
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </motion.li>
@@ -312,6 +319,7 @@ export function PipelineBoard({
   variant = "flow",
   transport = liveBoardTransport,
   pulse,
+  toolbar,
   beforeList,
   afterList,
 }: {
@@ -322,11 +330,17 @@ export function PipelineBoard({
   variant?: "locked" | "flow";
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
-  /** Mount the pulse's derived signals under the stage buttons (see the spine
-   *  note above). Omitted by the inert empty-state preview on purpose: four
-   *  derived signals over sample rows would be onboarding noise. `needsReview`
-   *  is the account's held-verdict count — the classifier signal's deep link. */
+  /** Mount the pulse's derived signals as a full-width band above the spine +
+   *  worklist row (`lg`-up, one instance — see the band note above). Omitted
+   *  by the inert empty-state preview on purpose: four derived signals over
+   *  sample rows would be onboarding noise. `needsReview` is the account's
+   *  held-verdict count — the auto-filed signal's deep link. */
   pulse?: { needsReview: number };
+  /** The caller's sync surface (SyncBar), rendered INTO the board's command
+   *  row beside search. Both twins pass it, so the one-row header is shared
+   *  composition, not a copy — and the board never has to know what a sync
+   *  is. Error/empty pages render the same SyncBar standalone instead. */
+  toolbar?: ReactNode;
   /** Rendered inside the list pane, above the rows (e.g. the review queue
    *  when alerts interrupt) — it scrolls with the list, so an interrupt can
    *  never starve the worklist of its viewport. */
@@ -413,8 +427,7 @@ export function PipelineBoard({
    *  — a set the user opened stays open across filters and refreshes of this
    *  mount, and there is nothing worth persisting beyond it. */
   const [openSets, setOpenSets] = useState<Record<string, boolean>>({});
-  const toggleSet = (key: string) =>
-    setOpenSets((s) => ({ ...s, [key]: !s[key] }));
+  const toggleSet = (key: string) => setOpenSets((s) => ({ ...s, [key]: !s[key] }));
 
   /**
    * The chip is suppressed for the company the board is already filtered to —
@@ -432,7 +445,13 @@ export function PipelineBoard({
   for (const app of applications) {
     let counts = companyStages.get(app.company);
     if (!counts) {
-      counts = { applied: 0, assessment: 0, interviewing: 0, offered: 0, rejected: 0 };
+      counts = {
+        applied: 0,
+        assessment: 0,
+        interviewing: 0,
+        offered: 0,
+        rejected: 0,
+      };
       companyStages.set(app.company, counts);
     }
     counts[stageOf(shownStatus(app))] += 1;
@@ -686,7 +705,10 @@ export function PipelineBoard({
           >
             <span
               className="block h-full rounded-full"
-              style={{ width: `${(count / spineMax) * 100}%`, background: column.color }}
+              style={{
+                width: `${(count / spineMax) * 100}%`,
+                background: column.color,
+              }}
             />
           </span>
         ) : null}
@@ -695,16 +717,23 @@ export function PipelineBoard({
   };
 
   /**
-   * Search + view state. Lives INSIDE the worklist column (not spanning the
-   * spine): it filters the list, so it sits over the list — and the spine
-   * gets the column's full height for the stage lens + pulse, which is where
-   * that height was being wasted as a full-width input row.
+   * The command row: search, the board's own scope lines, and the caller's
+   * sync surface on ONE full-width line. Search used to live inside the
+   * worklist column while the page spent a separate header row on the title
+   * and controls — with the title in the shell's top bar and the sync
+   * cluster here, that whole row comes back to the worklist. Search keeps
+   * the left edge (it filters the list below); the sync surface owns the
+   * right, and its transient lines (status, alert, receipt) wrap to their
+   * own full-width lines only while they have something to say.
    */
-  const toolbar =
-    showSearch || filterActive || scopeNote ? (
+  const commandRow =
+    toolbar || showSearch || filterActive || scopeNote ? (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {/* Search is full-width below `sm` — beside a stacked sync surface, a
+            shared line vertically centres the input against the whole stack
+            and squeezes the subtitle off-screen (measured at 375). */}
         {showSearch ? (
-          <div className="relative min-w-0 flex-1 basis-56 sm:max-w-sm">
+          <div className="relative w-full sm:w-auto sm:min-w-0 sm:flex-1 sm:basis-40 sm:max-w-56">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dim"
               aria-hidden
@@ -720,7 +749,7 @@ export function PipelineBoard({
           </div>
         ) : null}
         {filterActive ? (
-          <span className="tabular text-xs text-dim" role="status">
+          <span className="tabular shrink-0 text-xs text-dim" role="status">
             {filtered.length} of {applications.length} shown
           </span>
         ) : null}
@@ -732,6 +761,7 @@ export function PipelineBoard({
             board shows the {scopeNote} · older rows aren&apos;t loaded
           </span>
         ) : null}
+        {toolbar}
       </div>
     ) : null;
 
@@ -740,6 +770,21 @@ export function PipelineBoard({
       data-testid="pipeline-board"
       className={cn("flex flex-col gap-3", locked && "lg:min-h-0 lg:flex-1")}
     >
+      {commandRow}
+
+      {/* --- The pulse band (lg-up) ------------------------------------------
+          Full width, above the spine + worklist row — the dashboard's own
+          content area, which is the one home the owner has accepted for it.
+          One instance: below `lg` the cards carry the same ground truth
+          (age tags, deadline tags, the review queue), so nothing renders. */}
+      {pulse ? (
+        <PipelinePulse
+          applications={applications}
+          total={total ?? applications.length}
+          needsReview={pulse.needsReview}
+        />
+      ) : null}
+
       {/* --- The stage lens, compressed (below lg) --------------------------
           `flex-wrap`, not a scroller: at 375px the horizontal scroller cut
           "offered" to "offer" at the viewport edge and hid "closed" entirely,
@@ -766,11 +811,16 @@ export function PipelineBoard({
       </div>
 
       {/* --- Body: spine + worklist ----------------------------------------- */}
-      <div className={cn("flex flex-col gap-4 lg:flex-row lg:gap-5", locked && "lg:min-h-0 lg:flex-1")}>
+      <div
+        className={cn("flex flex-col gap-4 lg:flex-row lg:gap-5", locked && "lg:min-h-0 lg:flex-1")}
+      >
+        {/* w-44, not the w-52 the pulse-in-spine era needed: the longest
+            stage word + count fits comfortably, and every horizontal pixel
+            the emptier column gives back goes to the rows. */}
         <aside
           aria-label="Stages"
           className={cn(
-            "hidden w-52 shrink-0 flex-col gap-0.5 lg:flex",
+            "hidden w-44 shrink-0 flex-col gap-0.5 lg:flex",
             locked ? "lg:min-h-0 lg:overflow-y-auto" : "lg:sticky lg:top-5 lg:self-start",
           )}
         >
@@ -802,25 +852,9 @@ export function PipelineBoard({
             </span>
           </button>
           {columns.map((column) => stageButton(column, "spine"))}
-          {/* The pulse fills the run under the stage buttons — the blank
-              space this column used to spend on nothing. `px-2.5` puts its
-              text on the stage labels' own left edge; its first section's
-              hairline is the divider. The spine's counts above state the
-              ACCOUNT; the pulse derives from the loaded rows and its own
-              scope line says so when the two differ. */}
-          {pulse ? (
-            <div className="mt-0.5 px-2.5">
-              <PipelinePulse
-                applications={applications}
-                total={total ?? applications.length}
-                needsReview={pulse.needsReview}
-              />
-            </div>
-          ) : null}
         </aside>
 
         <div className={cn("flex min-w-0 flex-1 flex-col gap-3", locked && "lg:min-h-0")}>
-          {toolbar}
           {/* --- The filter state, stated once ------------------------------ */}
           {companyFilter !== null ? (
             <CompanyBand
@@ -847,7 +881,10 @@ export function PipelineBoard({
                 lock nothing pushes against would pass vacuously. */}
             <div
               data-testid="worklist-pane"
-              className={cn("space-y-4", locked && "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1")}
+              className={cn(
+                "space-y-4",
+                locked && "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1",
+              )}
             >
               {beforeList}
               {groups.map(({ column, items }) => (
@@ -928,7 +965,11 @@ export function PipelineBoard({
       </div>
 
       {interactive ? (
-        <ApplicationDetail app={detailApp} onClose={() => setDetailApp(null)} transport={transport} />
+        <ApplicationDetail
+          app={detailApp}
+          onClose={() => setDetailApp(null)}
+          transport={transport}
+        />
       ) : null}
     </div>
   );

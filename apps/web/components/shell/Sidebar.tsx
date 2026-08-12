@@ -31,8 +31,8 @@ import { RailFooter } from "./RailFooter";
  * "the dashboard still scrolls". And even the slim snapshot that survived a
  * first fix stated a total the same screen already stated twice (the page
  * subtitle, the spine's "all" row — the task #59 restatement family). The
- * pulse is dashboard content, so it lives with the board — under the stage
- * buttons in the spine's blank run (`PipelineBoard`'s `pulse` prop) — and
+ * pulse is dashboard content, so it lives with the board — its full-width
+ * band above the spine + worklist row (`PipelineBoard`'s `pulse` prop) — and
  * the chrome stays constant on every tab and can never scroll again: four
  * nav items cannot outgrow any viewport this app supports.
  *
@@ -58,7 +58,7 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
       <div className="px-4 py-4">
         <Link
           href="/dashboard"
-          aria-label="Applied — go to dashboard"
+          aria-label="Applied — go to your applications"
           className="brand-logo-link rounded-md text-strong focus-accent"
         >
           <Logo className="h-7 w-auto" />
@@ -103,7 +103,6 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
             })}
           </ul>
         </nav>
-
       </div>
 
       <div className="shrink-0 border-t border-line-soft px-3 py-3">
