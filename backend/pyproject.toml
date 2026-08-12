@@ -39,7 +39,7 @@ dependencies = [
     "google-auth-oauthlib>=1.1.0",
     "aioimaplib>=2.0.0",
     "keyring>=25.7.0",
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers>=5.7.0",
     # The <5 cap is load-bearing: under transformers 5.x setfit fails to import and
     # HybridClassifier silently degrades to the rules layer, so the benchmark keeps
     # printing the rules score under the cascade's name. Full rationale, including
