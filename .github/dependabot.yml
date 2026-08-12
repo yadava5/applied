@@ -32,11 +32,42 @@ updates:
   # those — but a major bump can still pull a heavier transitive tree, so these
   # PRs want a human eye rather than an automerge.
   #
+  # `exclude-paths` is what keeps this entry pointed at the root manifest and
+  # nothing else. Without it, it also updated backend/: pip's file fetcher scans
+  # the configured `directory` for requirements files and then descends one
+  # level into every immediate subdirectory, so `directory: "/"` was reaching
+  # backend/requirements*.txt and duplicating the /backend entry below. It
+  # surfaced as two pull requests carrying byte-identical diffs for a single
+  # pin — #58 and #60 both raising transformers in backend/requirements.txt,
+  # #56 and #62 both raising setfit — while the file this entry exists to guard
+  # got no PRs at all and sat on a stale email-validator>=2.0.0 floor that #63
+  # was raising over in backend/. GitHub's own reference states the rule this
+  # broke: with more than one block per ecosystem and branch, "you must ensure
+  # that all values are unique and there is no overlap in directories defined."
+  #
+  # `backend/**` excludes the backend directory entry itself from the scan, so
+  # the descent into it never begins. Patterns are globs relative to this
+  # entry's `directory`; `directory` takes no wildcards of its own (only the
+  # plural `directories` does, and that would not have stopped the descent
+  # either — there is no directory-recursion switch to turn off).
+  #
+  # The list is live, not decorative. Because the descent is exactly one level,
+  # a requirements .txt landing directly in any other top-level directory
+  # (api/, scripts/, ...) would start being updated from here and would need
+  # adding above. That one-level limit is also why the ml/** manifests called
+  # out at the top of this file have never needed excluding — they sit three or
+  # more levels down, out of reach. And if duplicate PRs ever reappear, read
+  # the Dependabot run log before editing anything: exclude-paths filtering is
+  # gated server-side, and a key that is accepted but not honoured is silently
+  # a no-op rather than the loud config error an unknown key would be.
+  #
   # Monthly, not weekly: `schedule` governs Dependabot's VERSION updates only.
   # Security updates are a separate mechanism, unaffected by this interval, so
   # vulnerability patches still arrive immediately regardless of the cadence.
   - package-ecosystem: "pip"
     directory: "/"
+    exclude-paths:
+      - "backend/**"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
@@ -50,7 +81,16 @@ updates:
   # ---------------------------------------------------------------------------
   # One entry covers requirements.txt, requirements-dev.txt and
   # requirements-migrate.txt: Dependabot picks up every requirements file in the
-  # directory it is pointed at.
+  # directory it is pointed at — and, less obviously, in each of that
+  # directory's immediate subdirectories, which is the reach the root entry
+  # above has to exclude. All three files sit directly in backend/, so none of
+  # them depend on that descent.
+  #
+  # It also covers backend/pyproject.toml, whose [project] dependencies list is
+  # the source of truth for the packaged app. pyproject.toml is only ever read
+  # from an entry's own directory and never from a subdirectory, so this is the
+  # only entry that can see it — which is why the fix above is a narrowing of
+  # the root entry rather than a deletion of this one.
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
