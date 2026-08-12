@@ -180,12 +180,22 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     const boardBox = await page.getByTestId("pipeline-board").boundingBox();
     expect(bandBox?.width ?? 0).toBeGreaterThan((boardBox?.width ?? 1) * 0.9);
 
+    // Same idea for the page heading: exactly ONE <h1> node in the DOM, not
+    // one visible and one CSS-hidden. A hidden twin already shipped once
+    // (TopBar kept rendering its copy under `lg:hidden` while the header row
+    // rendered the visible one) — a duplicate document outline for screen
+    // readers, and the exact two-nodes-one-hidden shape that produces
+    // strict-mode locator failures. Counted at both breakpoints because the
+    // twin only existed on one side of `lg`.
+    await expect(page.locator("h1")).toHaveCount(1);
+
     // Below lg the band yields — a deliberate choice (the phone dashboard
     // leads with the worklist; age/deadline tags on the cards carry the same
     // ground truth), not a hidden duplicate.
     await page.setViewportSize(MOBILE_375);
     await expect(pulse).toBeHidden();
     await expect(page.getByTestId("pipeline-pulse")).toHaveCount(1);
+    await expect(page.locator("h1")).toHaveCount(1);
   });
 
   test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {

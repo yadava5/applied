@@ -47,7 +47,8 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * status/alert line, the rebuild dialog, and the rebuild receipt.
  *
  * Its header is the page's TOP LINE: one ~40px row carrying the route title
- * (`title`, `lg`+ where the shell's TopBar yields to it — see TopBar), the
+ * (`title` — the page's one <h1>, at every width; at `lg`+ the shell's
+ * TopBar yields to this row entirely, see TopBar), the
  * subtitle, the change-ledger chip (`since`), the status/recency slot, the
  * controls, and the session edge (`trailing`). Sign-out therefore stays on
  * the top line of the screen, in this row, on the board route. The status
@@ -184,9 +185,11 @@ export function SyncBar({
    *  one sentence. A slot rather than an import: the ledger's rows/scope are
    *  the caller's business, and the error/empty pages pass nothing. */
   since?: ReactNode;
-  /** The route title, when this row IS the page's top line (`lg`+ in the app
-   *  shell, where TopBar yields to it — see TopBar). Rendered as the page's
-   *  one <h1>, hidden below `lg` where the shell bar still carries it. */
+  /** The route title. Rendered as the page's ONE <h1>, at every width — the
+   *  shell's TopBar renders no title on this route (see TopBar), so the
+   *  document outline holds exactly one heading and no CSS-hidden twin ever
+   *  exists for a locator to trip over. At `lg`+ this row is also the
+   *  screen's top line, TopBar having yielded entirely. */
   title?: string;
   /** The session-edge control for the same case — SignOutButton on the
    *  signed-in page, the demo pill on the fixture twin. `lg`+ only. */
@@ -509,9 +512,7 @@ export function SyncBar({
           <main>'s left edge and got clipped). */}
       <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2">
         {title ? (
-          <h1 className="hidden shrink-0 text-sm font-semibold tracking-tight text-strong lg:block">
-            {title}
-          </h1>
+          <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
         ) : null}
         <p
           className={`tabular shrink-0 text-[13px] text-muted ${statusContent !== null ? "lg:hidden" : ""}`}

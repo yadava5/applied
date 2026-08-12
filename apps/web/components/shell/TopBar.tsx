@@ -89,17 +89,16 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
             <Logo variant="mark" className="h-7 w-7" />
           </Link>
         </span>
-        {/* The route title — this bar's one piece of content besides sign-out,
-            in a bar that measured 92% empty. Identity lives in the rail
-            footer (desktop) and the mobile menu (below `md`). */}
-        {current ? (
-          isBoardTitle ? (
-            <h1 className="truncate text-sm font-semibold tracking-tight text-strong">
-              {current.label}
-            </h1>
-          ) : (
-            <span className="truncate text-sm font-medium text-muted">{current.label}</span>
-          )
+        {/* The route title. NOT on the board route: its title is the page's
+            one <h1>, rendered by the board's own header row at every width
+            (SyncBar's `title`) — a second copy here, even CSS-hidden at lg,
+            was a duplicate h1 in the document outline and exactly the
+            two-nodes-one-hidden shape that keeps producing strict-mode
+            locator bugs. The node is simply absent, not hidden. Identity
+            lives in the rail footer (desktop) and the mobile menu (below
+            `md`). */}
+        {current && !isBoardTitle ? (
+          <span className="truncate text-sm font-medium text-muted">{current.label}</span>
         ) : null}
       </div>
 
