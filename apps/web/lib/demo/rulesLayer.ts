@@ -4,7 +4,7 @@
  * This is a faithful, byte-for-byte port of the scoring in the shipped
  * classifier: `backend/jobtracker/classifier/rules.py` and its in-browser
  * twin `ml/browser/site/app.js` (the HF Space `yadava5/jobtracker-classifier`).
- * Same 207 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
+ * Same 212 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
  * negative −5), same veto cap, same margin→confidence tiers, same ATS-domain
  * boost.
  *
@@ -37,7 +37,7 @@ interface RawCategory {
   strong: string[];
   weak: string[];
   negative: string[];
-  /** Only `assessment` declares vetoes today, so the key is absent elsewhere. */
+  /** `assessment` and `follow_up` declare vetoes; the key is absent elsewhere. */
   veto?: string[];
 }
 
