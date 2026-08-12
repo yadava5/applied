@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
@@ -10,8 +10,10 @@ import { todayISO } from "@/lib/dashboard/age";
 import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { demoApplicationsAsApi, demoUnsyncedAsApi } from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
+import { datedById, redate } from "@/lib/demo/redate";
 
 /**
  * The demo dashboard: the REAL components — SyncBar, PipelineBoard, the cards,
@@ -76,16 +78,25 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** The whole fixture store, dated against one day — board and pool alike. */
+function buildStore(today: string): DemoBoard {
+  return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
+}
+
+
 export function DemoDashboard() {
-  // ONE clock read for the whole mount: the fixture dates are relative, so
-  // every row in this store — board and unsynced pool alike — is aged against
-  // the same "today" the board renders with. Resolving them here rather than
-  // at module load is what keeps a long-lived server's HTML and the browser's
+  // The day this demo is rendered against. UTC on the server and through
+  // hydration, the visitor's own day once mounted — the same read the board,
+  // the cards and the pulse strip make for themselves (`useLocalToday`).
+  const today = useLocalToday();
+
+  // ONE clock read per dating of the store: the fixture dates are relative, so
+  // every row here — board and unsynced pool alike — is aged against the same
+  // day the board renders with. Resolving them during render rather than at
+  // module load is what keeps a long-lived server's HTML and the browser's
   // hydration agreeing on what "16 days ago" means.
-  const [snapshot, setSnapshot] = useState<DemoBoard>(() => {
-    const today = todayISO();
-    return { apps: demoApplicationsAsApi(today), pool: demoUnsyncedAsApi(today), touched: [] };
-  });
+  const [datedFor, setDatedFor] = useState(todayISO);
+  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor));
   /** The pristine fixtures, kept for `restore` — the rows this board began
    *  with, before any drag, dismissal or rebuild touched them. */
   const original = useRef<Application[]>([...snapshot.apps, ...snapshot.pool]);
@@ -94,6 +105,44 @@ export function DemoDashboard() {
     store.current = next;
     setSnapshot(next);
   }, []);
+
+  // The store is dated with the UTC day so the server's HTML and the first
+  // client render agree; once the visitor's real day is known and it differs,
+  // the fixtures are re-dated against it. They MUST be: the seeds are offsets
+  // ("due in 9d", "overdue 2d") and the board now buckets them against the
+  // local day, so leaving the store on the UTC day would shift every phrase on
+  // /demo by one for the width of the visitor's UTC offset — and Kestrel's
+  // "due in 2d" would fall out of the pulse strip's ≤2d cell for every reader
+  // west of UTC.
+  //
+  // It re-dates what is THERE (`lib/demo/redate.ts`, which owns the rules and
+  // is unit-tested) instead of installing fresh fixtures. The old version
+  // committed `buildStore(today)`, which discarded whatever the visitor had
+  // already done; no guard fixes that, because the transports await 300ms
+  // before committing, so "has anything been touched yet" is false at exactly
+  // the instant it needs to be true. Mapping has no such window: the swap can
+  // land on either side of any commit and only dates move.
+  //
+  // `original` — the pristine rows a rebuild's Restore recovers from — is
+  // rebuilt outright, which is correct: by definition it holds no edits, and
+  // its rows must come back dated against the day the board is now showing.
+  //
+  // Not once-only, deliberately: a visitor whose own midnight passes while the
+  // page is open gets a second, equally harmless re-dating. Deferred off the
+  // effect body (the house rule, the same shape the detail sheet's reset uses)
+  // so it lands in a macrotask rather than as a synchronous setState.
+  useEffect(() => {
+    if (datedFor === today) return;
+    const id = window.setTimeout(() => {
+      const pristine = buildStore(today);
+      const dated = datedById([...pristine.apps, ...pristine.pool]);
+      const s = store.current;
+      original.current = [...pristine.apps, ...pristine.pool];
+      setDatedFor(today);
+      commit({ ...s, apps: redate(s.apps, dated), pool: redate(s.pool, dated) });
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [today, datedFor, commit]);
 
   const boardTransport = useMemo<BoardTransport>(
     () => ({

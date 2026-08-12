@@ -163,9 +163,18 @@ jobs:
           tail -n 200 frontend.log || true
           exit 1
 
+      # NO `--project` filter, deliberately. `playwright.config.ts` declares
+      # three projects — chromium at UTC, plus two that re-run `demo.spec.ts`
+      # at fixed DST-free offsets of opposite sign (UTC−10 / UTC+14) so that at
+      # whatever hour this job fires, one of them has a local calendar day
+      # differing from UTC and drives the post-hydration day swap. A UTC-only
+      # runner never enters that window, so /demo's calendar-day assertions
+      # cannot go red there whatever the code does. Naming `--project=chromium`
+      # here would skip both and restore exactly that; see the long note above
+      # `projects` in that file, including what these projects do NOT cover.
       - name: Run Playwright tests
         working-directory: apps/web
-        run: pnpm exec playwright test --project=chromium
+        run: pnpm exec playwright test
 
       - name: Upload Playwright report
         if: always()
@@ -277,9 +286,14 @@ jobs:
           tail -n 200 frontend-prod.log || true
           exit 1
 
+      # Again no `--project` filter — and this is the job where it matters
+      # most. The race the offset projects exist for is a HYDRATION-adjacent
+      # defect, and only this job hydrates a real static prerender; the dev
+      # server re-renders every route per request. Same reasoning as the note
+      # in the job above.
       - name: Run Playwright against the production build
         working-directory: apps/web
-        run: pnpm exec playwright test --project=chromium
+        run: pnpm exec playwright test
 
       - name: Upload Playwright report
         if: always()
