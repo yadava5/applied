@@ -50,13 +50,22 @@ if [ "$TRIGGER_RETRAIN" = true ]; then
 import asyncio
 
 from jobtracker.classifier import get_classifier
+from jobtracker.classifier.setfit_model import resolve_training_user_id
 from jobtracker.database import init_db
 
 
 async def main() -> None:
     await init_db()
     classifier = get_classifier()
-    await classifier.retrain_setfit()
+    # SCOPE: training reads training_data for ONE user. Applied reads mail
+    # under Gmail's restricted gmail.readonly scope, whose user-data policy
+    # permits training only a model personalized to a single end user, with
+    # no co-mingling across users. This script has no authenticated identity,
+    # so it resolves to the LOCAL_USER_ID sentinel every desktop row carries.
+    # That is deliberate: run against a production DATABASE_URL it matches no
+    # rows and trains on nothing, instead of pooling every tenant's mail.
+    # See setfit_model.CrossUserTrainingError.
+    await classifier.retrain_setfit(user_id=resolve_training_user_id())
 
 
 asyncio.run(main())
