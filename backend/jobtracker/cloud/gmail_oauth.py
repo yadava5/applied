@@ -293,8 +293,12 @@ class SyncResponse(BaseModel):
     # a denominator to say "41 of about 1,200", never a count. ``null`` when
     # Gmail offered none (the incremental and relay paths never do).
     result_size_estimate: int | None = None
-    # Stale AUTO rows the rebuild removed (the "garbage gone" number) and how
-    # many uncertain verdicts are waiting in the needs-classification queue.
+    # AUTO rows this run took off the board and how many uncertain verdicts are
+    # waiting in the needs-classification queue. Usually a rebuild's "garbage
+    # gone" number, but an ADDITIVE sync can report one too: a row whose last
+    # email turned out to belong to another employer leaves the board on that
+    # path as well, and a board that changes without saying so is the defect
+    # that cost the owner 22 applications.
     purged: int = 0
     needs_review: int = 0
     # WHICH rows were removed — id + company. A re-sync that silently changes
