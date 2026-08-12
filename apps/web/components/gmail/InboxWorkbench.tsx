@@ -645,7 +645,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
             type="button"
             onClick={() => void fileThese()}
             disabled={filing.phase === "filing"}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-strong px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-strong px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 focus-accent disabled:cursor-not-allowed disabled:opacity-40"
           >
             {filing.phase === "filing" ? (
               <>

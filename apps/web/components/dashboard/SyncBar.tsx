@@ -427,21 +427,33 @@ export function SyncBar({
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
     // the sync UI") to this surface without leaning on copy or classes.
     <div className="space-y-2" data-sync-surface="">
+      {/* Below `sm` the action cluster takes its own full-width line under the
+          title, anchored LEFT — flex-wrap + justify-end orphaned "File an
+          application" on its own right-aligned line with a dead gap beside it.
+          The recency sentence drops to a quiet line of its own down there
+          (`order-last`), so the controls read as one bar. */}
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-strong">Pipeline</h1>
           <p className="tabular mt-1 text-[13px] text-muted">{subtitle}</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {connected ? (
             <>
               {showRecency ? (
                 simulated ? (
-                  <span className="text-xs text-dim">
+                  <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
                     simulated account · nothing is read
                   </span>
                 ) : (
-                  <LastSynced at={gmail?.lastSyncAt ?? null} className="font-mono text-[11px] text-dim" />
+                  // A sentence, so the product voice — the machine-readable
+                  // instant already rides in the <time> element's dateTime and
+                  // title. Mono here was the "last synced …" defect the
+                  // type-system note in globals.css names.
+                  <LastSynced
+                    at={gmail?.lastSyncAt ?? null}
+                    className="order-last w-full text-xs text-dim sm:order-none sm:w-auto"
+                  />
                 )
               ) : null}
               <button

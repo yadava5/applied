@@ -4,40 +4,43 @@ import { useState } from "react";
 
 import { ReadonlyField, SaveStatus, SettingsSection } from "./SettingsSection";
 import { inputClass, primaryBtnClass, fieldLabelClass } from "@/components/ui/formStyles";
-import { createClient } from "@/lib/supabase/client";
+import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
 /**
  * Profile: an editable, persisted display name plus honest read-only account
- * facts. The name is written to the Supabase user's `user_metadata` via
- * `auth.updateUser`, so it survives reloads and is available anywhere the
- * session is read. Email, sign-in method, and member-since are real values
- * passed from the server — never editable stand-ins.
+ * facts. The name is written through the settings transport (live: the
+ * Supabase user's `user_metadata`, so it survives reloads and is available
+ * anywhere the session is read; demo: simulated). Email, sign-in method, and
+ * member-since are real values passed from the server — never editable
+ * stand-ins.
  */
 export function ProfileSection({
   initialName,
   email,
   memberSince,
+  mode = "live",
 }: {
   initialName: string;
   email: string;
   memberSince: string | null;
+  mode?: SettingsMode;
 }) {
   const [name, setName] = useState(initialName);
   const [state, setState] = useState<SaveState>("idle");
   const dirty = name.trim() !== initialName.trim();
+  const transport = settingsTransport(mode);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setState("saving");
-    const supabase = createClient();
-    const { error } = await supabase.auth.updateUser({ data: { display_name: name.trim() } });
-    setState(error ? "error" : "saved");
+    const { ok } = await transport.saveMetadata({ display_name: name.trim() });
+    setState(ok ? "saved" : "error");
   }
 
   return (
-    <SettingsSection title="Profile" description="How you show up in Applied.">
+    <SettingsSection id="profile" title="Profile" description="How you show up in Applied.">
       <form onSubmit={save} className="space-y-4">
         <label className="grid gap-1">
           <span className={fieldLabelClass}>display name</span>

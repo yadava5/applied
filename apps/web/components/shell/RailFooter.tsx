@@ -78,7 +78,7 @@ function distinctMailbox(gmailEmail: string | null, userEmail: string | null): s
 
 /** Shared with the identity row so the two rows behave as one control strip. */
 const ROW =
-  "group flex rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules";
+  "group flex rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2 focus-accent";
 
 function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail: string | null }) {
   if (!gmail.connected) {

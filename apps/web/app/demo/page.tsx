@@ -42,7 +42,18 @@ export const dynamic = "force-dynamic";
  * The decision trace stays as the demo's own second act — it is the showcase
  * the landing links to, not a dashboard component.
  */
-export default function DemoPage() {
+export default async function DemoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pipeline?: string }>;
+}) {
+  // `?pipeline=early` renders the same twin over the early-search projection —
+  // every row at `applied`, the measured shape of the real production account
+  // (29 live rows, one stage). The healthy seed spread literally cannot show
+  // the distribution the worklist redesign exists for, so the skewed case gets
+  // its own reviewable, testable URL.
+  const { pipeline } = await searchParams;
+  const early = pipeline === "early";
   return (
     <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
@@ -69,7 +80,7 @@ export default function DemoPage() {
 
         {/* --- the dashboard, verbatim ------------------------------------ */}
         <div className="mt-8">
-          <DemoDashboard />
+          <DemoDashboard pipeline={early ? "early" : "seed"} />
         </div>
 
         {/* --- the decision trace ----------------------------------------- */}

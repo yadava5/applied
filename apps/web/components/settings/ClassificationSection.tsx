@@ -6,7 +6,7 @@ import { SaveStatus, SettingsSection } from "./SettingsSection";
 import { primaryBtnClass } from "@/components/ui/formStyles";
 import { GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
 import { DEMO_REVIEW_QUEUE } from "@/lib/demo/demoData";
-import { createClient } from "@/lib/supabase/client";
+import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -29,9 +29,16 @@ const CATEGORIES = [
  * persists to the user's metadata. The caption is explicit that the hosted
  * classifier still files at the shipped 0.85 gate today.
  */
-export function ClassificationSection({ initialGate }: { initialGate: number }) {
+export function ClassificationSection({
+  initialGate,
+  mode = "live",
+}: {
+  initialGate: number;
+  mode?: SettingsMode;
+}) {
   const [gate, setGate] = useState(initialGate);
   const [state, setState] = useState<SaveState>("idle");
+  const transport = settingsTransport(mode);
 
   const held = useMemo(
     () => DEMO_REVIEW_QUEUE.filter((v) => v.confidence < gate).length,
@@ -40,13 +47,13 @@ export function ClassificationSection({ initialGate }: { initialGate: number }) 
 
   async function save() {
     setState("saving");
-    const supabase = createClient();
-    const { error } = await supabase.auth.updateUser({ data: { gate_threshold: gate } });
-    setState(error ? "error" : "saved");
+    const { ok } = await transport.saveMetadata({ gate_threshold: gate });
+    setState(ok ? "saved" : "error");
   }
 
   return (
     <SettingsSection
+      id="classification"
       title="Classification"
       description="How Applied decides what to auto-file versus hold for you."
     >
@@ -106,8 +113,8 @@ export function ClassificationSection({ initialGate }: { initialGate: number }) 
         </div>
 
         <p className="text-[12px] leading-relaxed text-dim">
-          Your gate is stored on your account. The hosted classifier files at the shipped{" "}
-          <span className="font-mono text-muted">0.85</span> gate today and honors your value as
+          Stored on your account. The hosted classifier files at the shipped{" "}
+          <span className="font-mono text-muted">0.85</span> gate today; your value applies as
           per-user tuning rolls out.
         </p>
       </div>

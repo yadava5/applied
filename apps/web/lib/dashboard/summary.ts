@@ -141,6 +141,24 @@ export function summarizeCounts(
 }
 
 /**
+ * The summary's per-stage counts as a keyed record — the shape the board's
+ * spine reads. Folded here rather than at the call site so the spine's numbers
+ * and the subtitle's numbers keep coming out of one implementation of stage
+ * semantics; a second `for` loop over `status_counts` somewhere else is how
+ * two surfaces start disagreeing about what "closed" contains.
+ */
+export function stageCountsOf(summary: PipelineSummary): Record<StageKey, number> {
+  const counts: Record<StageKey, number> = {
+    applied: 0,
+    interviewing: 0,
+    offered: 0,
+    rejected: 0,
+  };
+  for (const { stage, count } of summary.stages) counts[stage.key] = count;
+  return counts;
+}
+
+/**
  * Derive every headline number from the application list. `now` is injectable
  * so tests are deterministic; production passes the real clock.
  *

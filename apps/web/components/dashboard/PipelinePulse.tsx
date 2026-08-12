@@ -62,6 +62,7 @@ export function PipelinePulse({
   applications,
   total,
   needsReview,
+  layout = "strip",
 }: {
   /** The board's loaded rows — the same page `PipelineBoard` renders. */
   applications: Application[];
@@ -69,6 +70,11 @@ export function PipelinePulse({
   total: number;
   /** Verdicts held under the gate for the user (0 when the queue is clear). */
   needsReview: number;
+  /** `strip` — the standalone horizontal band (the /demo twin). `rail` — the
+   *  same four cells stacked for the board's spine, framed by the spine
+   *  itself rather than their own border. Content and testids are identical
+   *  in both, so the derived signals have one implementation to audit. */
+  layout?: "strip" | "rail";
 }) {
   const today = useLocalToday();
   /** True when the single board page holds every row the account has. */
@@ -101,14 +107,28 @@ export function PipelinePulse({
 
   const scopeNote = complete ? null : `newest ${applications.length} of ${total}`;
 
+  const rail = layout === "rail";
+  /** Per-cell frame: the strip draws its own borders; the rail cells stack
+   *  with hairline separators and lean on the spine's framing. */
+  const cell = {
+    momentum: rail ? "py-3 first:pt-0" : "border-b border-line-soft p-4 sm:border-r lg:border-b-0",
+    ageing: rail ? "border-t border-line-soft py-3" : "border-b border-line-soft p-4 lg:border-b-0 lg:border-r",
+    deadlines: rail ? "border-t border-line-soft py-3" : "border-b border-line-soft p-4 sm:border-b-0 sm:border-r",
+    classifier: rail ? "border-t border-line-soft py-3 last:pb-0" : "p-4",
+  };
+
   return (
     <section
       aria-label="Pipeline pulse"
       data-testid="pipeline-pulse"
-      className="grid overflow-hidden rounded-xl border border-line-soft bg-surface sm:grid-cols-2 lg:grid-cols-4"
+      className={
+        rail
+          ? "flex flex-col"
+          : "grid overflow-hidden rounded-xl border border-line-soft bg-surface sm:grid-cols-2 lg:grid-cols-4"
+      }
     >
       {/* --- momentum -------------------------------------------------------- */}
-      <div className="border-b border-line-soft p-4 sm:border-r lg:border-b-0">
+      <div className={cell.momentum}>
         <h2 className="label-caps">momentum · filed per wk</h2>
         <div
           role="img"
@@ -141,7 +161,7 @@ export function PipelinePulse({
       </div>
 
       {/* --- ageing ---------------------------------------------------------- */}
-      <div className="border-b border-line-soft p-4 lg:border-b-0 lg:border-r">
+      <div className={cell.ageing}>
         <h2 className="label-caps">open · age since filed</h2>
         {openTotal === 0 ? (
           <p className="mt-3 text-xs text-dim">no open applications</p>
@@ -185,7 +205,7 @@ export function PipelinePulse({
       </div>
 
       {/* --- deadlines ------------------------------------------------------- */}
-      <div className="border-b border-line-soft p-4 sm:border-b-0 sm:border-r">
+      <div className={cell.deadlines}>
         <h2 className="label-caps">deadlines · time left</h2>
         {due.total === 0 ? (
           <>
@@ -256,7 +276,7 @@ export function PipelinePulse({
       </div>
 
       {/* --- classifier ------------------------------------------------------ */}
-      <div className="p-4">
+      <div className={cell.classifier}>
         <h2 className="label-caps">classifier</h2>
         <div
           role="img"

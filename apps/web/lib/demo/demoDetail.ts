@@ -76,7 +76,11 @@ export function demoDetailBody(app: Application): Record<string, unknown> {
     sender_name: `${app.company} Talent`,
     sender_email,
     received_at: filed,
-    snippet: `Thanks for applying to the ${app.position} role.`,
+    // A fixture without a captured role mirrors the real mail that caused it:
+    // the receipt simply doesn't name one.
+    snippet: app.position.trim()
+      ? `Thanks for applying to the ${app.position} role.`
+      : "Thanks for applying.",
     category: "applied",
     confidence: 0.99,
     gmail_link: null,
