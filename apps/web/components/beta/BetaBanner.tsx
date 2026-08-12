@@ -123,7 +123,7 @@ export function BetaBanner() {
             <div className="mt-3 flex flex-col gap-2">
               <a
                 href={BETA_MAILTO}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-strong px-3 py-2 text-sm font-medium text-background outline-none transition-transform hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-viz-rules"
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-strong px-3 py-2 text-sm font-medium text-background outline-none transition-transform hover:-translate-y-px focus-accent"
               >
                 <span aria-hidden>✉</span>
                 {BETA_CTA_LABEL}
@@ -131,7 +131,7 @@ export function BetaBanner() {
               <Link
                 href={SAMPLE_INBOX_HREF}
                 onClick={() => setOpen(false)}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-visible:ring-2 focus-visible:ring-viz-rules"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-accent"
               >
                 {BETA_SAMPLE_LABEL}
                 <span aria-hidden>→</span>
@@ -150,7 +150,7 @@ export function BetaBanner() {
             aria-expanded={open}
             aria-controls="beta-banner-panel"
             onClick={() => setOpen((v) => !v)}
-            className="flex items-center gap-2 rounded-full py-0.5 pr-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
+            className="flex items-center gap-2 rounded-full py-0.5 pr-1 text-xs focus-accent"
           >
             <span className="beta-dot" aria-hidden />
             <span className="font-mono font-semibold uppercase tracking-widest text-strong">Beta</span>
@@ -163,7 +163,7 @@ export function BetaBanner() {
             type="button"
             onClick={dismiss}
             aria-label="Dismiss beta notice"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-dim outline-none transition-colors hover:bg-surface-2 hover:text-strong focus-visible:ring-2 focus-visible:ring-viz-rules"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-dim outline-none transition-colors hover:bg-surface-2 hover:text-strong focus-accent"
           >
             <span aria-hidden className="text-sm leading-none">
               ×

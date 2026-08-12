@@ -47,7 +47,7 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
         <Link
           href="/dashboard"
           aria-label="Applied — go to dashboard"
-          className="brand-logo-link rounded-md text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules"
+          className="brand-logo-link rounded-md text-strong focus-accent"
         >
           <Logo className="h-7 w-auto" />
         </Link>
@@ -65,7 +65,7 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
                     href={item.href}
                     aria-current={active ? "page" : undefined}
                     className={cn(
-                      "group relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viz-rules",
+                      "group relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-accent",
                       active
                         ? "bg-surface-2 text-strong"
                         : "text-muted hover:bg-surface-2 hover:text-strong",
