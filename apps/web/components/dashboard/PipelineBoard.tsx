@@ -307,7 +307,6 @@ export function PipelineBoard({
   interactive = true,
   variant = "flow",
   transport = liveBoardTransport,
-  rail,
   beforeList,
   afterList,
 }: {
@@ -318,10 +317,6 @@ export function PipelineBoard({
   variant?: "locked" | "flow";
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
-  /** Rendered inside the desktop spine, under the stages — the dashboard puts
-   *  the pulse's derived signals here so the left rail reads as the
-   *  instrument panel and the right pane as the work. */
-  rail?: ReactNode;
   /** Rendered inside the list pane, above the rows (e.g. the review queue
    *  when alerts interrupt) — it scrolls with the list, so an interrupt can
    *  never starve the worklist of its viewport. */
@@ -785,7 +780,6 @@ export function PipelineBoard({
             </span>
           </button>
           {columns.map((column) => stageButton(column, "spine"))}
-          {rail ? <div className="mt-4 border-t border-line-soft pt-4">{rail}</div> : null}
         </aside>
 
         <div className={cn("flex min-w-0 flex-1 flex-col gap-3", locked && "lg:min-h-0")}>
@@ -809,7 +803,14 @@ export function PipelineBoard({
               context; sticky group headings keep the stage legible while the
               rows underneath move. In flow it is ordinary page content. */}
           <LayoutGroup>
-            <div className={cn("space-y-4", locked && "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1")}>
+            {/* `worklist-pane` is the geometry assertion's handle: the e2e
+                lock specs (shell.spec.ts, via /demo/shell) prove this region
+                overflows and scrolls while the document and <main> hold — a
+                lock nothing pushes against would pass vacuously. */}
+            <div
+              data-testid="worklist-pane"
+              className={cn("space-y-4", locked && "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1")}
+            >
               {beforeList}
               {groups.map(({ column, items }) => (
                 <section

@@ -3,14 +3,15 @@ import Link from "next/link";
 import { createServerApiClient } from "@/lib/api/server";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { DashboardEmptyState, ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
 import { RetryLoadButton } from "@/components/dashboard/RetryLoadButton";
 import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
+import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
+import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
 import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
 import { toChangeRow } from "@/lib/dashboard/lastLookStore";
 import {
@@ -44,24 +45,20 @@ import { getCurrentUser } from "@/lib/supabase/auth";
  *
  * The pulse's four derived signals — filed-per-week momentum, the age
  * distribution of open rows, deadlines, and how much of the board the
- * classifier built / is holding — render inside the board's spine at desktop
- * (`layout="rail"`), where they read as the pipeline's instrument panel, and
- * as the horizontal strip after the list on smaller screens.
+ * classifier built / is holding — are NOT this page's content any more: they
+ * live in the shell's sidebar as the rail's instrument column
+ * (`components/shell/Sidebar.tsx`), on every tab, fed by the same bounded
+ * page of rows via `lib/shell/rail`. This page spends its whole pane on the
+ * work.
  *
  * Data path unchanged: the counts come from the O(1) `GET
  * /applications/summary`, the board from one bounded page of
- * `GET /applications`, fetched in parallel. Failure modes stay first-class —
- * an unreachable backend degrades to a labelled error state with a retry and
- * the routes forward, never sample rows dressed as the user's own pipeline.
+ * `GET /applications`, fetched in parallel (and shared with the shell's rail
+ * fetch by request memoization — identical URLs). Failure modes stay
+ * first-class — an unreachable backend degrades to a labelled error state
+ * with a retry and the routes forward, never sample rows dressed as the
+ * user's own pipeline.
  */
-
-/**
- * Upper bound on rows pulled for the board in one page. Large enough that a
- * typical account sees its whole board, capped so a pathological account never
- * ships thousands of rows to the client — the subtitle stays exact regardless
- * via the counts-only summary endpoint.
- */
-const BOARD_PAGE_SIZE = 200;
 
 /**
  * Why the board isn't rendering. The three failures are kept apart because the
@@ -339,7 +336,7 @@ export default async function DashboardPage() {
     ) : null;
 
   return (
-    <section className="flex flex-col gap-4 lg:min-h-0 lg:flex-1">
+    <section className={LOCKED_PAGE_CLASS}>
       <SyncBar subtitle={subtitle} gmail={gmail}>
         <AddApplicationForm compact />
       </SyncBar>
@@ -361,11 +358,7 @@ export default async function DashboardPage() {
           the branch should be unreachable; borrowing that guarantee from
           another file is what makes it worth stating here. Same discipline as
           the SyncBar's gmail cluster: an unknown state renders nothing rather
-          than a guessed one.
-
-          The pulse is NOT here any more — it moved into the board's `rail`
-          slot at lg+ (see below), so this zone stays one line tall and the
-          worklist keeps the pane. */}
+          than a guessed one. */}
       {user?.id ? (
         <SinceLastLook
           rows={state.applications.map(toChangeRow)}
@@ -398,12 +391,7 @@ export default async function DashboardPage() {
           (above the rows) or waits under it — the quiet-board promise the
           Settings toggle describes, kept real. Both placements live INSIDE the
           list's scroll context, so an eight-item queue can never starve the
-          worklist of its viewport.
-
-          The pulse renders once per breakpoint: in the spine at `lg`+
-          (`layout="rail"`), after the list below it — the hidden copy leaves
-          the accessibility tree with `display: none`, so the signals are never
-          announced twice. */}
+          worklist of its viewport. */}
       {/* `total` and `stageTotals` both come from the summary endpoint, and the
           board's prop type makes them inseparable: the spine states the
           ACCOUNT's per-stage counts (a `GROUP BY status` in the database), not
@@ -415,27 +403,8 @@ export default async function DashboardPage() {
         applications={state.applications}
         total={state.total}
         stageTotals={stageCountsOf(state.summary)}
-        rail={
-          <PipelinePulse
-            layout="rail"
-            applications={state.applications}
-            total={state.total}
-            needsReview={state.needsReview}
-          />
-        }
         beforeList={notifPrefs.reviewAlerts ? queue : null}
-        afterList={
-          <>
-            {!notifPrefs.reviewAlerts ? queue : null}
-            <div className="lg:hidden">
-              <PipelinePulse
-                applications={state.applications}
-                total={state.total}
-                needsReview={state.needsReview}
-              />
-            </div>
-          </>
-        }
+        afterList={!notifPrefs.reviewAlerts ? queue : null}
       />
     </section>
   );

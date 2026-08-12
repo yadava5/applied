@@ -7,6 +7,7 @@ import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
+import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { todayISO } from "@/lib/dashboard/age";
 import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
 import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
@@ -97,7 +98,20 @@ function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
   };
 }
 
-export function DemoDashboard({ pipeline = "seed" }: { pipeline?: DemoPipeline }) {
+export function DemoDashboard({
+  pipeline = "seed",
+  variant = "flow",
+}: {
+  pipeline?: DemoPipeline;
+  /** `flow` — the /demo page twin: natural height, the page scrolls, the
+   *  pulse renders as its in-page strip (that page has no shell rail).
+   *  `locked` — the /demo/shell twin: the signed-in dashboard's exact
+   *  geometry (`LOCKED_PAGE_CLASS` root, `variant="locked"` board, NO
+   *  in-page pulse — the shell rail carries it), which is what makes the
+   *  viewport-lock e2e assertions executable without a session. */
+  variant?: "flow" | "locked";
+}) {
+  const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
   // hydration, the visitor's own day once mounted — the same read the board,
   // the cards and the pulse strip make for themselves (`useLocalToday`).
@@ -325,7 +339,7 @@ export function DemoDashboard({ pipeline = "seed" }: { pipeline?: DemoPipeline }
   return (
     // A flex column (not `space-y`) so the pulse strip can reorder below the
     // board at phone width without a second instance — see its wrapper.
-    <section className="flex flex-col gap-6">
+    <section className={locked ? LOCKED_PAGE_CLASS : "flex flex-col gap-6"}>
       <SyncBar subtitle={subtitle} gmail={DEMO_GMAIL} transport={syncTransport}>
         <AddApplicationForm mode="demo" />
       </SyncBar>
@@ -355,11 +369,25 @@ export function DemoDashboard({ pipeline = "seed" }: { pipeline?: DemoPipeline }
           answer the signed-in dashboard already gives below `lg`. One
           instance, reordered visually; it holds no interactive content here
           (needsReview is 0 by construction), so visual order and tab order
-          cannot disagree. */}
-      <div className="max-sm:order-last">
-        <PipelinePulse applications={snapshot.apps} total={snapshot.apps.length} needsReview={0} />
-      </div>
-      <PipelineBoard applications={snapshot.apps} transport={boardTransport} />
+          cannot disagree.
+
+          Absent on the locked twin, on purpose: there the shell's rail is
+          present and carries the pulse, exactly as the signed-in app does —
+          a second in-page copy is the duplication the rail move removed. */}
+      {locked ? null : (
+        <div className="max-sm:order-last">
+          <PipelinePulse
+            applications={snapshot.apps}
+            total={snapshot.apps.length}
+            needsReview={0}
+          />
+        </div>
+      )}
+      <PipelineBoard
+        variant={locked ? "locked" : "flow"}
+        applications={snapshot.apps}
+        transport={boardTransport}
+      />
     </section>
   );
 }

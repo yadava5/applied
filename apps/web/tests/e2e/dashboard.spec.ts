@@ -208,6 +208,12 @@ test.describe("dashboard (signed in — needs a session)", () => {
     // The shell is h-dvh with the worklist as the one scroll region — the
     // document never grows past the viewport (complaint: "the dashboard means
     // it's the screen size and doesn't scroll").
+    //
+    // NOTE this copy is session-gated and exists to run against the user's
+    // REAL data volume when a session is available. The always-executing
+    // version — same primitives, mounted by /demo/shell — lives in
+    // shell.spec.ts ("app shell — viewport lock"), so the lock can no longer
+    // regress silently while this skip stands.
     const heights = await page.evaluate(() => ({
       scroll: document.documentElement.scrollHeight,
       client: document.documentElement.clientHeight,
