@@ -249,8 +249,20 @@ test.describe("live demo (/demo)", () => {
     await expect(sheet).toBeVisible();
     await expect(sheet.getByText("the mail behind this card")).toBeVisible();
     // The verdict trail renders the fixture message with its classification.
-    await expect(sheet.getByText("Your application was received")).toBeVisible();
-    await expect(sheet.getByText("Cedar Labs Talent")).toBeVisible();
+    //
+    // Scoped to the trail's own `<li>`, and that scoping is the assertion.
+    // "Your application was received" is BOTH this row's latest signal (the
+    // `notes` paragraph the sheet renders straight from the row, above the
+    // trail) and the fixture mail's subject, so an unscoped `getByText`
+    // matched exactly one element while the trail was still loading and two
+    // the moment it arrived. The assertion therefore passed only by beating
+    // the detail transport's 250ms delay — and when it won, what it had
+    // matched was the notes line, not the trail. Under load it lost: 5 of 12
+    // repeats failed on `strict mode violation … resolved to 2 elements`.
+    const trail = sheet.getByRole("listitem");
+    await expect(trail).toHaveCount(1);
+    await expect(trail.getByText("Your application was received")).toBeVisible();
+    await expect(trail.getByText("Cedar Labs Talent")).toBeVisible();
 
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
@@ -646,13 +658,38 @@ test.describe("live demo (/demo)", () => {
 
     // One fixture per state, phrase + calendar day, derived from the relative
     // offsets in demoData.ts (dueInDays 9 / 2 / -2).
-    await expect(tag("ahead")).toHaveCount(1);
-    await expect(tag("ahead")).toContainText("due in 9d");
-    await expect(tag("soon")).toHaveCount(1);
-    await expect(tag("soon")).toContainText("due in 2d");
-    await expect(tag("overdue")).toHaveCount(1);
-    await expect(tag("overdue")).toContainText("overdue 2d");
-    await expect(tag("overdue")).toContainText("was due");
+    //
+    // Wrapped in `toPass` because for a reader whose local day differs from
+    // UTC this board passes through ONE inconsistent frame, and the assertions
+    // below are strict-single locators that a two-element frame kills outright
+    // (a strict-mode violation is thrown, not retried). Measured against the
+    // production server under Pacific/Honolulu, sampling every 100ms:
+    //
+    //     145ms  ahead:due in 10d Aug 21 | ahead:due in 3d Aug 14 | overdue:overdue 1d
+    //     247ms  ahead:due in  9d Aug 20 | soon:due in 2d Aug 13 | overdue:overdue 2d
+    //
+    // `useLocalToday` swaps the day AS PART of hydration, while the demo's
+    // re-dating of its offset fixtures lands one macrotask later
+    // (`DemoDashboard`'s effect defers with `setTimeout(…, 0)`), so in between,
+    // a UTC-dated store is bucketed against the local day and Kestrel's
+    // deadline is briefly in the wrong cell. It is a real ~100ms flicker on
+    // /demo — worth knowing about, not what this test is for — and it made the
+    // spec fail roughly one run in six.
+    //
+    // This does NOT weaken the check. The pre-hydration frame and the settled
+    // frame both satisfy every assertion inside; only the transition does not,
+    // and only until it ends. Delete the re-dating entirely and the wrong
+    // buckets become permanent, so the block never passes and `toPass` times
+    // out — which is the regression this file has to catch.
+    await expect(async () => {
+      await expect(tag("ahead")).toHaveCount(1, { timeout: 2000 });
+      await expect(tag("ahead")).toContainText("due in 9d", { timeout: 2000 });
+      await expect(tag("soon")).toHaveCount(1, { timeout: 2000 });
+      await expect(tag("soon")).toContainText("due in 2d", { timeout: 2000 });
+      await expect(tag("overdue")).toHaveCount(1, { timeout: 2000 });
+      await expect(tag("overdue")).toContainText("overdue 2d", { timeout: 2000 });
+      await expect(tag("overdue")).toContainText("was due", { timeout: 2000 });
+    }).toPass({ timeout: 15000 });
 
     // A deadline is data: the tag speaks mono, like every date stamp.
     await expect(tag("overdue")).toHaveCSS("font-family", /Geist Mono/);
@@ -688,9 +725,32 @@ test.describe("live demo (/demo)", () => {
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
 
-    // Cedar Labs (applied) has no deadline; give it one 5 days out. The date
-    // is computed the way the app computes everything: UTC calendar days.
-    const dayISO = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // Cedar Labs (applied) has no deadline; give it one 5 days out.
+    //
+    // LOCAL calendar days, not UTC. A date input holds what the user typed,
+    // and the card now buckets it against the reader's own midnight — so a
+    // UTC-derived day here reads as `due in 6d` against this `due in 5d`
+    // whenever the browser sits in the UTC-offset window (New York after
+    // 20:00, Tokyo before 09:00). The old comment claimed UTC was "the way
+    // the app computes everything", which is exactly the assumption the
+    // local-day fix removed.
+    //
+    // `Intl("en-CA")` yields YYYY-MM-DD, and is computed independently of the
+    // app's own helper (which hand-assembles the local accessors), so this
+    // stays an oracle rather than a restatement of the code under test.
+    //
+    // Evaluated IN THE PAGE, not in this Node process. The two are different
+    // zones now: the offset projects set the browser's zone per context
+    // (`playwright.config.ts`), while this file runs in whatever zone the
+    // runner's OS is in. Computed here it read the RUNNER's day and was right
+    // only by the accident of both being the same machine — under
+    // `demo-utc-plus-14` it produced `due in 3d`, and under the UTC-pinned
+    // `chromium` project on a US-evening machine, `due in 4d`. `page.evaluate`
+    // asks the browser under test what day it is, which is the only zone the
+    // assertion below is about.
+    const dayISO = await page.evaluate(() =>
+      new Intl.DateTimeFormat("en-CA").format(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)),
+    );
     const cedar = page
       .locator("li")
       .filter({ has: page.getByText("Software Engineer, Platform", { exact: true }) });

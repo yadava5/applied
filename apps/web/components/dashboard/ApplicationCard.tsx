@@ -2,7 +2,7 @@
 
 import { ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
@@ -30,6 +30,79 @@ import {
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { type Application, STAGES, stageOf } from "@/lib/dashboard/summary";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
+
+/**
+ * The stage control — label and `<select>` together — behind `memo`, and that
+ * memo is load-bearing rather than a performance nicety.
+ *
+ * A controlled `<select>` is re-asserted onto the DOM by React on EVERY commit
+ * that touches its fiber: `commitUpdate` → `updateProperties` → `updateOptions`
+ * re-selects the option matching the `value` prop, and React 19 reads that prop
+ * unconditionally — there is no "did value change?" guard on that path. So any
+ * re-render of the surrounding card, for any reason, re-writes the control's
+ * DOM value.
+ *
+ * That is invisible until a re-render lands between the moment the browser sets
+ * the selected option and the moment it delivers `change`. `input`/`change` are
+ * DISCRETE events, so React flushes all pending work synchronously inside the
+ * `input` dispatch — and if a render was pending, the user's just-made choice
+ * is overwritten with the row's old status before `onChange` ever sees it. The
+ * handler then reads `next === app.status`, returns, and the stage change is
+ * silently discarded: no request, no error, no visible failure.
+ *
+ * That is exactly what the reader's-day swap made reproducible. `useLocalToday`
+ * re-renders every card once, tens of milliseconds after hydration (see
+ * `useLocalToday.ts`), and a stage change chosen in that window vanished.
+ * Isolating the control means a card re-render that changes nothing ABOUT THE
+ * CONTROL — a re-dating, a sibling's move, a filter — bails out here, the
+ * `<select>` fiber is never committed, and nothing can overwrite a choice in
+ * flight.
+ *
+ * `memo` only bails out on shallow-equal props, so `onChange` has to be
+ * referentially stable (`useCallback` in the card) — a fresh closure per render
+ * defeats the whole thing. Nothing but the row's identity, its shown stage and
+ * its in-flight state may be passed in; `today` deliberately is NOT, because
+ * the day changing is precisely the re-render this must survive.
+ */
+const StageSelect = memo(function StageSelect({
+  id,
+  company,
+  value,
+  disabled,
+  busy,
+  onChange,
+}: {
+  id: number;
+  company: string;
+  /** The stage to SHOW — the optimistic one while a change is in flight. */
+  value: string;
+  disabled: boolean;
+  busy: boolean;
+  /** Must be referentially stable; see the note above. */
+  onChange: (next: string) => void;
+}) {
+  return (
+    <>
+      <label className="sr-only" htmlFor={`status-${id}`}>
+        Change stage for {company}
+      </label>
+      <select
+        id={`status-${id}`}
+        value={statusSelectValue(value)}
+        disabled={disabled}
+        aria-busy={busy}
+        onChange={(e) => onChange(e.target.value)}
+        className="max-w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 py-0.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+      >
+        {statusOptions(value).map((option) => (
+          <option key={option.value} value={option.value} disabled={option.disabled}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+});
 
 /**
  * One pipeline row — clickable, correctable, and no longer able to lose an
@@ -73,8 +146,11 @@ export function ApplicationCard({
   app: Application;
   /** The heading of the column this card is rendered in (see `board.ts`). */
   columnLabel?: string;
-  /** Today's UTC calendar day — the board threads one read of the clock down
-   *  so every card's age tag derives from the same instant. */
+  /** Today's calendar day — the board threads one read of the clock down so
+   *  every card's age tag and deadline state derive from the same instant
+   *  (`useLocalToday`: UTC for the server pass, the reader's own day once
+   *  mounted). The UTC default only stands in for a caller that renders a card
+   *  outside the board; the board always passes its own. */
   today?: string;
   /** Opens the detail sheet (the mail behind this card). */
   onOpenDetail?: (app: Application) => void;
@@ -129,28 +205,37 @@ export function ApplicationCard({
   const fromGmail = app.source === "gmail" || app.source === "gmail_user";
   const removalPending = secondsLeft !== null;
 
-  async function onStatusChange(next: string) {
-    const current = statusSelectValue(app.status);
-    if (next === (optimistic?.to ?? app.status)) return;
-    setError(null);
-    setOptimistic({ from: app.status, to: next });
-    setBusy("status");
-    const result = await transport.changeStatus(app.id, next);
-    // Cleared on success AND on failure: the old code left `busy` latched on
-    // success, so a change that did not move the card to another column (it
-    // stays mounted, and `router.refresh()` preserves client state) left the
-    // control disabled and the spinner turning until a full reload.
-    setBusy(null);
-    if (!result.ok) {
-      setOptimistic(null);
-      setError(statusChangeFailure(next, current, result.detail));
-      return;
-    }
-    if (result.status && result.status !== next) {
-      setOptimistic({ from: app.status, to: result.status });
-    }
-    router.refresh();
-  }
+  // `useCallback`, not a plain function: this is `StageSelect`'s only unstable
+  // prop, and a fresh closure per render would re-render the control on every
+  // board change — which is the thing that overwrites a choice in flight (see
+  // StageSelect). The deps are the row's identity and the stage it is showing;
+  // re-dating a fixture changes neither.
+  const optimisticTo = optimistic?.to;
+  const onStatusChange = useCallback(
+    async (next: string) => {
+      const current = statusSelectValue(app.status);
+      if (next === (optimisticTo ?? app.status)) return;
+      setError(null);
+      setOptimistic({ from: app.status, to: next });
+      setBusy("status");
+      const result = await transport.changeStatus(app.id, next);
+      // Cleared on success AND on failure: the old code left `busy` latched on
+      // success, so a change that did not move the card to another column (it
+      // stays mounted, and `router.refresh()` preserves client state) left the
+      // control disabled and the spinner turning until a full reload.
+      setBusy(null);
+      if (!result.ok) {
+        setOptimistic(null);
+        setError(statusChangeFailure(next, current, result.detail));
+        return;
+      }
+      if (result.status && result.status !== next) {
+        setOptimistic({ from: app.status, to: result.status });
+      }
+      router.refresh();
+    },
+    [app.id, app.status, optimisticTo, router, transport],
+  );
 
   const commitRemoval = useCallback(async () => {
     if (committing.current) return;
@@ -355,23 +440,14 @@ export function ApplicationCard({
       <DeadlineTag dueAt={app.due_at} today={today} />
 
       <div className="mt-2 flex items-center justify-between gap-2">
-        <label className="sr-only" htmlFor={`status-${app.id}`}>
-          Change stage for {app.company}
-        </label>
-        <select
-          id={`status-${app.id}`}
-          value={statusSelectValue(shownStatus)}
+        <StageSelect
+          id={app.id}
+          company={app.company}
+          value={shownStatus}
           disabled={busy !== null}
-          aria-busy={busy === "status"}
-          onChange={(e) => void onStatusChange(e.target.value)}
-          className="max-w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 py-0.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
-        >
-          {statusOptions(shownStatus).map((option) => (
-            <option key={option.value} value={option.value} disabled={option.disabled}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          busy={busy === "status"}
+          onChange={onStatusChange}
+        />
         <FiledStamp filed={filed} status={shownStatus} today={today} />
       </div>
 

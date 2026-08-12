@@ -9,7 +9,7 @@ import { ApplicationCard } from "@/components/dashboard/ApplicationCard";
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
 import { CompanyBand } from "@/components/dashboard/CompanyBand";
-import { todayISO } from "@/lib/dashboard/age";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { boardColumns, cardQualifier } from "@/lib/dashboard/board";
 import { filedAt } from "@/lib/dashboard/dates";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
@@ -205,8 +205,10 @@ export function PipelineBoard({
     return () => window.clearTimeout(id);
   }, []);
 
-  /** One clock read per render — every card's age tag derives from it. */
-  const today = todayISO();
+  /** One clock read per render — every card's age tag and deadline state
+   *  derives from it. UTC for the server pass, the reader's own day once
+   *  mounted (see `useLocalToday`). */
+  const today = useLocalToday();
 
   // Server data caught up with an optimistic move → drop the overlay entry and
   // let the row's own status speak. Render-adjustment (guarded, so it settles
