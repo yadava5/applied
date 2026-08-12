@@ -159,6 +159,33 @@ export function stageCountsOf(summary: PipelineSummary): Record<StageKey, number
 }
 
 /**
+ * The slice of a row the pulse's four derived signals actually read (see
+ * `components/dashboard/PipelinePulse.tsx`): filed date (momentum, ageing),
+ * status (which rows count as open), deadline, source (classifier share) and
+ * the company name the deadline cell prints. Kept a projection on purpose —
+ * these rows ride to the client twice on /dashboard (board props and shell
+ * rail props), and the rail must not ship the whole board a second time.
+ * `Application` is structurally assignable, so callers that hold full rows
+ * (the demo twin) pass them as-is.
+ */
+export type PulseRow = Pick<
+  Application,
+  "company" | "status" | "source" | "due_at" | "applied_date" | "created_at"
+>;
+
+/** Project a full row down to exactly what the pulse reads. */
+export function toPulseRow(app: Application): PulseRow {
+  return {
+    company: app.company,
+    status: app.status,
+    source: app.source,
+    due_at: app.due_at,
+    applied_date: app.applied_date,
+    created_at: app.created_at,
+  };
+}
+
+/**
  * Derive every headline number from the application list. `now` is injectable
  * so tests are deterministic; production passes the real clock.
  *
