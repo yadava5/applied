@@ -319,6 +319,87 @@ test.describe("live demo (/demo)", () => {
     await expect(surface.getByText(/stopped early/)).toHaveCount(0);
   });
 
+  test("restoring a row first does not trap the scan in a loop", async ({ page }) => {
+    // The defect: restore, then continue, and the receipt came back IDENTICAL
+    // to the first pass — still stopped early, still 100 scanned, the offer
+    // still there and the restored row removed again. The scanned count never
+    // advanced and the offer never resolved, so the visitor could loop for
+    // ever, each pass undoing the restore. Continuing after a restore must
+    // read exactly like continuing without one.
+    await page.goto("/demo");
+    await page.getByRole("button", { name: "Sync options" }).click();
+    await page.getByRole("menuitem", { name: /rebuild from gmail/i }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Number of messages to scan").selectOption("100");
+    await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
+
+    const surface = syncSurface(page);
+    await expect(surface.getByText("rebuild stopped early · just now")).toBeVisible({
+      timeout: 6000,
+    });
+    await expect(surface.getByText(/scanned 100 of roughly 240/)).toBeVisible();
+
+    // Restore FIRST — the row is back on the board and marked as corrected.
+    await page.getByRole("button", { name: "Restore Fernworks" }).click();
+    await expect(surface.getByText("restored", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
+
+    // …then continue. Same ending as the no-restore path: finished, nothing
+    // changed, the full 140 scanned, no offer left to press.
+    await surface.getByRole("button", { name: "continue the scan" }).click();
+    await expect(surface.getByText("rebuild finished · just now")).toBeVisible({ timeout: 6000 });
+    await expect(surface.getByText(/nothing changed · 140 scanned/)).toBeVisible();
+    await expect(surface.getByText(/stopped early/)).toHaveCount(0);
+    await expect(surface.getByText(/scanned 100 of roughly 240/)).toHaveCount(0);
+    await expect(surface.getByRole("button", { name: "continue the scan" })).toHaveCount(0);
+
+    // And the restored row survived the pass — it is a correction, not a
+    // suggestion. (The row list on the finished receipt is empty, so this
+    // reads the BOARD.)
+    await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /closed/i }).getByText("Fernworks", { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("every close path returns focus to the control that opened the dialog", async ({ page }) => {
+    // A keyboard user who dismisses a dialog must land back where they were.
+    // Escape and the × did that; a BACKDROP click left focus on <body>,
+    // because the browser's own mousedown focus fix-up runs after React has
+    // already restored focus and blows it away. Both dialogs on this page are
+    // driven, and all three paths are asserted the same way.
+    await page.goto("/demo");
+
+    const opener = page.getByRole("button", {
+      name: "Open Cedar Labs — Software Engineer, Platform",
+    });
+    const sheet = page.getByRole("dialog");
+    /** The overlay behind the panel — the only backdrop there is. */
+    const backdrop = sheet.locator("xpath=..");
+
+    for (const close of ["escape", "close button", "backdrop"] as const) {
+      await opener.click();
+      await expect(sheet).toBeVisible();
+      if (close === "escape") await page.keyboard.press("Escape");
+      else if (close === "close button")
+        await sheet.getByRole("button", { name: "Close dialog" }).click();
+      // Top-left corner of the overlay: outside the right-pinned sheet panel
+      // and outside the centred one, for either geometry.
+      else await backdrop.click({ position: { x: 5, y: 5 } });
+      await expect(sheet).toBeHidden();
+      await expect(opener, `focus was lost closing via ${close}`).toBeFocused();
+    }
+
+    // The centre-variant dialog, same rule.
+    const fileOpener = page.getByRole("button", { name: "File an application" });
+    await fileOpener.click();
+    const fileDialog = page.getByRole("dialog");
+    await expect(fileDialog.getByRole("heading", { name: "File an application" })).toBeVisible();
+    await fileDialog.locator("xpath=..").click({ position: { x: 5, y: 5 } });
+    await expect(fileDialog).toBeHidden();
+    await expect(fileOpener).toBeFocused();
+  });
+
   test("the pulse strip renders all four derived signals over the fixtures", async ({ page }) => {
     await page.goto("/demo");
     const pulse = page.getByTestId("pipeline-pulse");

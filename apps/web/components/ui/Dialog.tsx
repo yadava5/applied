@@ -131,7 +131,18 @@ export function Dialog({
           exit={reduceMotion ? { opacity: 1, transition: { duration: 0 } } : { opacity: 0 }}
           transition={{ duration: 0.15, ease: "easeOut" }}
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) onClose();
+            if (e.target !== e.currentTarget) return;
+            // `preventDefault` is what makes this close path restore focus
+            // like the other two. Without it the browser's own mousedown
+            // focus fix-up runs AFTER React has flushed the close and the
+            // cleanup below has focused the trigger again — and since the
+            // backdrop is not focusable, that fix-up blanks focus to <body>.
+            // Measured on /demo: Escape and × landed back on the card's Open
+            // button, a backdrop click landed on BODY, for both the sheet and
+            // the centre variant. Cancelling the default action costs nothing
+            // here (the backdrop has no text to select and nothing to focus).
+            e.preventDefault();
+            onClose();
           }}
         >
           <motion.div
