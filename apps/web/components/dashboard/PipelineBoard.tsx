@@ -56,9 +56,11 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  * (four Amazon roles in one evening is the proven case), and the role is the
  * discriminator. Company stays an attribute — the company-level affordances
  * are the "+N at Amazon" chip on a row and the set view it opens: the list
- * filters to the employer and a `CompanyBand` names the set. While that
- * filter is active the chip is suppressed — "3 more at Amazon" inside
- * Amazon's own set view was a bug, not information.
+ * filters to the employer and a `CompanyBand` states that filter — just the
+ * name and a clear, since the cards themselves already say how many there are
+ * and what stage each one is in. While that filter is active the chip is
+ * suppressed — "+3 at Amazon" inside Amazon's own set view was a bug, not
+ * information.
  *
  * Motion (the `motion` library): every row cell is a `motion.li` with a
  * shared `layoutId`, so search/filter changes glide survivors into place, a
@@ -88,9 +90,13 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  *
  * Scope honesty: the signed-in board is ONE bounded page of a possibly larger
  * account, so it takes the account's true `total` and says which slice it is
- * showing when the two differ. Everything derived from the loaded rows (the
- * "+N at" chip, the company band, the spine counts) is then explicitly
- * counted from that slice, never claimed as the whole.
+ * showing when the two differ. The SPINE is exempt because it does not derive
+ * from the rows at all — it reads the account's own per-stage counts off the
+ * summary endpoint (`stageTotals`), so its numbers are the account's however
+ * few rows loaded and however the list chooses to group them. Everything that
+ * genuinely is derived from the loaded rows (the "+N at" chip, the company
+ * band's `partial` caveat, the "N of M shown" line) says so rather than
+ * passing itself off as the whole.
  */
 
 /** Below this many rows, search would be chrome without a job. */
@@ -204,9 +210,30 @@ function BoardCell({
   );
 }
 
+/**
+ * What the caller knows about the ACCOUNT, as opposed to the page of rows it
+ * handed over. Either it knows both numbers or it knows neither — a caller
+ * that can say "250 filed" but not how those 250 sit across the stages would
+ * leave the spine quietly describing the loaded slice while the subtitle
+ * describes the account, which is the contradiction this pairing exists to
+ * make unrepresentable. Callers whose rows ARE the account (the /demo twin,
+ * the inert sample preview) pass neither and the board counts what it has.
+ */
+type BoardScope =
+  | {
+      /** The account's true row count — the sum of `stageTotals`, from
+       *  `GET /applications/summary`. */
+      total: number;
+      /** The account's true per-stage counts, computed by a `GROUP BY status`
+       *  in the database (dismissed rows excluded, as they are off the board). */
+      stageTotals: Record<StageKey, number>;
+    }
+  | { total?: undefined; stageTotals?: undefined };
+
 export function PipelineBoard({
   applications,
   total,
+  stageTotals,
   interactive = true,
   variant = "flow",
   transport = liveBoardTransport,
@@ -215,10 +242,6 @@ export function PipelineBoard({
   afterList,
 }: {
   applications: Application[];
-  /** The account's true row count, when the caller knows it and it can exceed
-   *  what was loaded. Omitted where the given rows ARE everything (the demo
-   *  store, the sample fixtures) — then there is no slice to disclose. */
-  total?: number;
   interactive?: boolean;
   /** `locked` fills the shell's viewport pane and scrolls only the list;
    *  `flow` renders natural height for pages that scroll themselves. */
@@ -235,7 +258,7 @@ export function PipelineBoard({
   beforeList?: ReactNode;
   /** Rendered inside the list pane, below the rows (the quiet placement). */
   afterList?: ReactNode;
-}) {
+} & BoardScope) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
@@ -303,12 +326,6 @@ export function PipelineBoard({
     return true;
   });
 
-  /** The active employer's rows ON THIS BOARD — what the band describes. */
-  const companySet =
-    companyFilter !== null
-      ? applications.filter((app) => app.company === companyFilter)
-      : null;
-
   /**
    * The chip is suppressed for the company the board is already filtered to —
    * "N more at Amazon" while looking at exactly Amazon's set was the bug this
@@ -350,17 +367,47 @@ export function PipelineBoard({
   const showSearch = interactive && applications.length > SEARCH_AFTER;
 
   const columns = boardColumns(STAGES);
-  /** Spine counts read the UNFILTERED rows (with the optimistic overlay), so
-   *  typing a search never reflows the pipeline's stated shape — the spine is
-   *  the account's distribution, the list is the current view. Recomputed per
-   *  render on purpose: one O(n) pass over an already-bounded page. */
-  const spineCounts: Record<StageKey, number> = {
-    applied: 0,
-    interviewing: 0,
-    offered: 0,
-    rejected: 0,
-  };
-  for (const app of applications) spineCounts[stageOf(shownStatus(app))] += 1;
+  /**
+   * The spine states the ACCOUNT's distribution — never the current view's,
+   * and never this page's.
+   *
+   * Not the view's: the counts ignore the search and the company filter, so
+   * typing never reflows the pipeline's stated shape. The spine is the shape,
+   * the list is what you are looking at.
+   *
+   * Not the page's: counting the loaded rows was wrong by construction. Past
+   * `BOARD_PAGE_SIZE` an account's columns would sum to the page, not the
+   * account, and contradict the subtitle's own total the way the scope note
+   * exists to prevent. `stageTotals` is the database's `GROUP BY status`, so
+   * when the caller has it, it wins — and it stays right whatever the list
+   * shows, including once several applications at one employer share a card.
+   * A caller cannot supply `total` without it (see `BoardScope`).
+   *
+   * Optimistic moves still land immediately: a pending drop is a ±1 delta on
+   * top of whichever base is in use, and settles when `router.refresh()`
+   * brings the server's own count back.
+   *
+   * The GROUP HEADINGS below are deliberately NOT treated this way — they
+   * label the rows actually listed, where "applied — 250" over 200 loaded
+   * rows would be its own lie. Spine = the account; headings and `scopeNote`
+   * = this page.
+   */
+  const spineCounts: Record<StageKey, number> = stageTotals
+    ? { ...stageTotals }
+    : { applied: 0, interviewing: 0, offered: 0, rejected: 0 };
+  if (stageTotals) {
+    for (const app of applications) {
+      const pending = pendingMoves[app.id];
+      if (pending === undefined) continue;
+      spineCounts[stageOf(app.status)] -= 1;
+      spineCounts[stageOf(pending)] += 1;
+    }
+  } else {
+    for (const app of applications) spineCounts[stageOf(shownStatus(app))] += 1;
+  }
+  /** "all" must equal the columns it sits above, so it is summed from the same
+   *  source rather than read off `applications.length`. */
+  const spineTotal = columns.reduce((n, column) => n + spineCounts[column.key], 0);
   const spineMax = Math.max(1, ...columns.map((c) => spineCounts[c.key]));
 
   /** Groups actually rendered in the list: the selected stage (even empty, so
@@ -515,7 +562,7 @@ export function PipelineBoard({
       <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 lg:hidden">
         <button
           type="button"
-          aria-label={`all stages — ${applications.length}`}
+          aria-label={`all stages — ${spineTotal}`}
           aria-pressed={stageFilter === "all"}
           onClick={() => setStageFilter("all")}
           className={cn(
@@ -526,7 +573,7 @@ export function PipelineBoard({
           )}
         >
           all
-          <span className="tabular font-mono text-[11px]">{applications.length}</span>
+          <span className="tabular font-mono text-[11px]">{spineTotal}</span>
         </button>
         {columns.map((column) => stageButton(column, "chip"))}
       </div>
@@ -543,7 +590,7 @@ export function PipelineBoard({
           <p className="label-caps px-2.5 pb-1">stages</p>
           <button
             type="button"
-            aria-label={`all stages — ${applications.length}`}
+            aria-label={`all stages — ${spineTotal}`}
             aria-pressed={stageFilter === "all"}
             onClick={() => setStageFilter("all")}
             className={cn(
@@ -563,7 +610,7 @@ export function PipelineBoard({
                 all
               </span>
               <span className="tabular ml-auto font-mono text-[11px] text-strong">
-                {applications.length}
+                {spineTotal}
               </span>
             </span>
           </button>
@@ -572,12 +619,10 @@ export function PipelineBoard({
         </aside>
 
         <div className={cn("flex min-w-0 flex-1 flex-col gap-3", locked && "lg:min-h-0")}>
-          {/* --- The employer's set, named --------------------------------- */}
-          {companyFilter !== null && companySet !== null ? (
+          {/* --- The filter state, stated once ------------------------------ */}
+          {companyFilter !== null ? (
             <CompanyBand
               company={companyFilter}
-              apps={companySet}
-              statusOf={shownStatus}
               partial={truncated}
               onClear={() => setCompanyFilter(null)}
             />

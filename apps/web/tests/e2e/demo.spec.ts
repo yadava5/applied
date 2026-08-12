@@ -252,7 +252,7 @@ test.describe("live demo (/demo)", () => {
     // Drop near the TOP of the column, not its centre. Hovering the centre of a
     // 2249px-tall board scrolls the page ~147px between mouse-down and the first
     // move, so the HTML5 `dragstart` fires on whichever card has slid under the
-    // cursor — Summit Platform moved while Harbor stayed put, and the count
+    // cursor — the neighbouring card moved while Harbor stayed put, and the count
     // assertion above was satisfied by the wrong card. A real drag has no
     // programmatic scroll between press and move; this is the harness, not the
     // product. The assertion below must keep naming Harbor: asserting whichever
@@ -820,25 +820,34 @@ test.describe("live demo (/demo)", () => {
 
   test("a company opens as a set: band on, chips suppressed, clear restores", async ({ page }) => {
     await page.goto("/demo");
-    // Three Northstar cards each carry the "+2 at" chip while unfiltered.
+    // Four Northstar cards each carry the "+3 at" chip while unfiltered.
     const chips = page.getByRole("button", { name: "Show all applications at Northstar Systems" });
-    await expect(chips).toHaveCount(3);
+    await expect(chips).toHaveCount(4);
 
     await chips.first().click();
-    // The band names the set…
+    // The chip's "+3" counts the OTHERS, so the set it opens is all four —
+    // the row you clicked plus the three the chip was offering.
+    await expect(page.getByRole("button", { name: /^Open Northstar Systems — / })).toHaveCount(4);
+
+    // The band states the filter and stops there. It used to add "3
+    // applications", a per-stage dot list and the filing span — all three of
+    // which the four cards on screen already say, each carrying its own stage
+    // and its own date. A count here is the metrics-poster defect coming back
+    // through a side door.
     const band = page.getByTestId("company-band");
     await expect(band).toBeVisible();
+    await expect(band.getByText("filtered to")).toBeVisible();
     await expect(band.getByText("Northstar Systems")).toBeVisible();
-    await expect(band.getByText(/3 applications/)).toBeVisible();
+    await expect(band.getByText(/\d+\s+applications?/)).toHaveCount(0);
     // …and the chip must NOT render while the active filter already is this
-    // company ("2 more at Northstar" inside Northstar's own set was the bug).
+    // company ("+3 at Northstar" inside Northstar's own set was the bug).
     await expect(chips).toHaveCount(0);
     await expect(page.getByText(/at Northstar Systems/)).toHaveCount(0);
 
     // Clear via the band restores the board and the chips.
     await page.getByRole("button", { name: "Stop filtering by Northstar Systems" }).click();
     await expect(page.getByText("Harbor Analytics", { exact: true })).toBeVisible();
-    await expect(chips).toHaveCount(3);
+    await expect(chips).toHaveCount(4);
   });
 
   test("with reduced motion, every surface is fully present — nothing gated", async ({ page }) => {
@@ -893,7 +902,13 @@ test.describe("live demo (/demo)", () => {
       .click();
     const band = page.getByTestId("company-band");
     await expect(band.getByText("Northstar Systems")).toBeVisible();
-    await expect(band.getByText(/3 applications/)).toBeVisible();
+    // The band's whole content, statically: the state it names and the control
+    // that undoes it. `toBeVisible()` on the bordered bar alone would pass on
+    // an empty one.
+    await expect(band.getByText("filtered to")).toBeVisible();
+    await expect(
+      band.getByRole("button", { name: "Stop filtering by Northstar Systems" }),
+    ).toBeVisible();
     // The set view keeps only Northstar cards, so open one of those.
     await page
       .getByRole("button", { name: "Open Northstar Systems — ML Engineer, Platform" })
