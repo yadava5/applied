@@ -6,23 +6,36 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
+import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { selectClass } from "@/components/ui/formStyles";
 import { Segmented } from "@/components/ui/Segmented";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
-import { filedSummary, type SyncCounts } from "@/lib/gmail/sync-state";
+import {
+  applyVerdictCorrection,
+  scanMessagePayload,
+  UNSTORABLE_ROW_NOTE,
+} from "@/lib/gmail/scan-correction";
+import { filedSummary } from "@/lib/gmail/sync-state";
+import {
+  scanTransport,
+  toPipelineItems,
+  type ClassifyFn,
+  type ScanMode,
+} from "@/lib/gmail/transport";
 import {
   buildInboxParams,
+  categoryChips,
   CATEGORY_META,
-  CATEGORY_ORDER,
+  chipTotal,
   COUNT_OPTIONS,
   DEFAULT_FILTERS,
   JOB_RELATED_CATEGORIES,
   PAGE_SIZE,
   RANGE_OPTIONS,
+  type CategorySummary,
   type FetchCount,
   type InboxFilters,
-  type InboxPage,
   type InboxVerdict,
   type PipelineAnalysis,
   type RangeValue,
@@ -66,40 +79,6 @@ interface FileState {
   note: string | null;
 }
 
-/** The minimal shape `/gmail/pipeline` and `/gmail/sync` need for one message. */
-interface PipelineItem {
-  message_id: string;
-  category: string;
-  sender_email: string;
-  subject: string;
-  sender_name: string | null;
-  received_at: string | null;
-  confidence: number;
-}
-
-/**
- * Reduce mined verdicts to what the pipeline/sync endpoints consume.
- *
- * `confidence` is NOT optional here: the backend's `PipelineItemIn` defaults it
- * to 0.0, and `/gmail/sync` gates persistence on it (auto-file at 0.85, review
- * floor at 0.70). Omitting it meant every relayed item scored 0.0, fell below
- * both gates, and nothing was ever filed — the relay rolled up zero
- * applications while the server-scan path found them. It travels with the
- * verdict already (it is the percentage shown on each row), so relaying it is
- * free.
- */
-function toPipelineItems(verdicts: InboxVerdict[]): PipelineItem[] {
-  return verdicts.map((v) => ({
-    message_id: v.message_id,
-    category: v.category,
-    sender_email: v.sender_email,
-    subject: v.subject,
-    sender_name: v.sender_name,
-    received_at: v.received_at,
-    confidence: v.confidence,
-  }));
-}
-
 function pct(n: number) {
   return `${Math.round(n * 100)}%`;
 }
@@ -111,9 +90,27 @@ function pct(n: number) {
  * percentage in the cleared/held hue, and the receipt date. Fixed column
  * widths keep the meters aligned down the list so confidence reads as a
  * column, not a scatter.
+ *
+ * Every row carries a CORRECTION, which is what this view was missing. It used
+ * to be read-only: an assessment email labelled "other" at 0% had nothing to
+ * press, and filing could not rescue it either — the sync drops everything
+ * below the 0.70 review floor, so that message was never stored and so never
+ * correctable anywhere. The control sends the message's own metadata with the
+ * correction, which is what lets the backend store it first (see
+ * `scanMessagePayload`). A row the mine could not date cannot be stored at
+ * all, and says so rather than offering a control that would fail.
  */
-function VerdictRow({ v }: { v: InboxVerdict }) {
+function VerdictRow({
+  v,
+  onCorrected,
+  classify,
+}: {
+  v: InboxVerdict;
+  onCorrected: (messageId: string, category: string) => void;
+  classify: ClassifyFn;
+}) {
   const meta = CATEGORY_META[v.category] ?? { label: v.category, dot: "bg-dim" };
+  const payload = scanMessagePayload(v);
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line-soft px-1 py-3 last:border-b-0">
       {/* basis-full on mobile gives the subject its own line; sm+ restores the
@@ -145,6 +142,21 @@ function VerdictRow({ v }: { v: InboxVerdict }) {
       )}
       <span className="tabular hidden w-12 shrink-0 text-right font-mono text-[10px] text-dim md:inline">
         {v.received_at ? shortDate(v.received_at) : ""}
+      </span>
+      <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-1">
+        {v.user_corrected ? <span className="text-[11px] text-dim">corrected by you</span> : null}
+        {payload ? (
+          <ReclassifyControl
+            messageId={v.message_id}
+            subject={v.subject}
+            company={v.company || null}
+            message={payload}
+            classify={classify}
+            onCorrected={(category) => onCorrected(v.message_id, category)}
+          />
+        ) : (
+          <span className="text-[11px] text-dim">{UNSTORABLE_ROW_NOTE}</span>
+        )}
       </span>
     </li>
   );
@@ -219,8 +231,47 @@ function writeSnapshot(snap: InboxSnapshot): void {
   }
 }
 
-export function InboxWorkbench({ email }: { email?: string | null }) {
+/**
+ * Fold a correction into the cached mine, keeping `savedAt` where it was.
+ *
+ * Without this a correction lives only in React state, and this component
+ * rehydrates from the snapshot on every remount — so navigating Inbox →
+ * Dashboard → Inbox would put the classifier's rejected verdict straight back
+ * on screen, which is the "did my click do anything?" complaint with an extra
+ * step. `router.refresh()` cannot cover it: the mine is client state the
+ * server tree knows nothing about.
+ *
+ * `savedAt` is preserved deliberately — a correction is not a fresh read of
+ * Gmail, and re-stamping it would extend the staleness window on data that is
+ * exactly as old as it was a moment ago.
+ */
+function patchSnapshot(
+  sig: string,
+  patch: { verdicts: InboxVerdict[]; summary: CategorySummary },
+): void {
+  const existing = readSnapshot(sig);
+  if (!existing) return;
+  writeSnapshot({
+    ...existing,
+    verdicts: patch.verdicts,
+    analysis: existing.analysis
+      ? { ...existing.analysis, category_summary: patch.summary }
+      : existing.analysis,
+  });
+}
+
+export function InboxWorkbench({
+  email,
+  mode = "live",
+}: {
+  email?: string | null;
+  /** Which transport the mine and its corrections run on. `demo` is the
+   *  public `/demo/scan` twin — the same component over fixtures, which is the
+   *  only way this view is reachable without a session and a linked mailbox. */
+  mode?: ScanMode;
+}) {
   const router = useRouter();
+  const transport = useMemo(() => scanTransport(mode), [mode]);
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_FILTERS);
   const [verdicts, setVerdicts] = useState<InboxVerdict[]>([]);
   const [analysis, setAnalysis] = useState<PipelineAnalysis | null>(null);
@@ -267,24 +318,20 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       while (acc.length < target) {
         const pageSize = Math.min(PAGE_SIZE, target - acc.length);
         const qs = buildInboxParams({ filters: f, pageSize, pageToken: token });
-        const res = await fetch(`/api/gmail/inbox?${qs}`, {
-          cache: "no-store",
-          signal: ac.signal,
-        });
+        const { status, page } = await transport.fetchPage(qs, ac.signal);
         if (runId !== runIdRef.current) return;
-        if (res.status === 409) {
+        if (status === 409) {
           setState({ phase: "not_connected", fetched: acc.length, target });
           return;
         }
-        if (res.status === 401) {
+        if (status === 401) {
           setState({ phase: "auth", fetched: acc.length, target, errorStatus: 401 });
           return;
         }
-        if (!res.ok) {
-          setState({ phase: "error", fetched: acc.length, target, errorStatus: res.status });
+        if (!page) {
+          setState({ phase: "error", fetched: acc.length, target, errorStatus: status });
           return;
         }
-        const page = (await res.json()) as InboxPage;
         acc.push(...page.verdicts);
         if (runId !== runIdRef.current) return;
         setVerdicts([...acc]);
@@ -305,16 +352,9 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       let analysisData: PipelineAnalysis | null = null;
       let analysisBroke = false;
       try {
-        const analysisRes = await fetch("/api/gmail/pipeline", {
-          method: "POST",
-          cache: "no-store",
-          signal: ac.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items: pipelineItems }),
-        });
+        analysisData = await transport.analyze(pipelineItems, ac.signal);
         if (runId !== runIdRef.current) return;
-        if (analysisRes.ok) {
-          analysisData = (await analysisRes.json()) as PipelineAnalysis;
+        if (analysisData) {
           setAnalysis(analysisData);
         } else {
           analysisBroke = true;
@@ -348,7 +388,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       if (ac.signal.aborted || runId !== runIdRef.current) return;
       setState({ phase: "error", fetched: acc.length, target });
     }
-  }, []);
+  }, [transport]);
 
   // On first mount, serve a fresh cached snapshot for these filters if we have
   // one — this is what stops the re-scan on every visit. Only mine Gmail when
@@ -407,6 +447,32 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
   );
 
   /**
+   * Fold an accepted correction back into the mine — row, counts, and cache.
+   *
+   * All three, because any one alone is a lie somewhere on the page. The row
+   * alone leaves the chips reading the classifier's tally, and the chips only
+   * exist for categories some message holds — so correcting the owner's
+   * assessment email would still leave "assessment" with nowhere to appear,
+   * which is the complaint. The counts here are usually the WHOLE-SET analysis
+   * from `/gmail/pipeline`, not a tally of the rendered rows, so they have to
+   * be moved deliberately rather than recomputed. And the snapshot, because
+   * this component rehydrates from it on remount and would otherwise restore
+   * the verdict the user just overruled.
+   */
+  const applyCorrection = useCallback(
+    (messageId: string, category: string) => {
+      const next = applyVerdictCorrection({ verdicts, summary }, messageId, category);
+      if (!next.changed) return;
+      setVerdicts(next.verdicts);
+      // Only when there IS an analysis: without one `summary` is derived from
+      // the verdicts above, so it has already moved.
+      if (analysis) setAnalysis({ ...analysis, category_summary: next.summary });
+      patchSnapshot(filtersSig(filters), { verdicts: next.verdicts, summary: next.summary });
+    },
+    [analysis, filters, summary, verdicts],
+  );
+
+  /**
    * File the mined set into the pipeline — the action the inbox never had.
    *
    * Every message goes to the backend, not just the job-related ones: it is the
@@ -429,12 +495,7 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
 
     setFiling({ phase: "filing", note: null });
     try {
-      const res = await fetch("/api/gmail/sync", {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, mode: "additive" }),
-      });
+      const res = await transport.file(items);
       if (!res.ok) {
         setFiling({
           phase: "error",
@@ -445,13 +506,12 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
         });
         return;
       }
-      const outcome = (await res.json().catch(() => ({}))) as Partial<SyncCounts>;
-      setFiling({ phase: "done", note: filedSummary(outcome) });
+      setFiling({ phase: "done", note: filedSummary(res.counts) });
       router.refresh();
     } catch {
       setFiling({ phase: "error", note: "Couldn't reach the server — nothing was filed." });
     }
-  }, [router, verdicts]);
+  }, [router, transport, verdicts]);
 
   const loading = state.phase === "loading";
   /** The MINE broke (Gmail/proxy). Distinct from `analysisFailed`, which is a
@@ -721,16 +781,18 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
                 : "border-line-soft text-dim hover:text-muted",
             )}
           >
-            all {verdicts.length.toLocaleString()}
+            all {chipTotal(summary).toLocaleString()}
           </button>
-          {CATEGORY_ORDER.filter((c) => (summary[c] ?? 0) > 0).map((c) => {
-            const meta = CATEGORY_META[c];
-            const active = activeCategory === c;
+          {/* One vocabulary with the filed ledger (`categoryChips`), not a
+              second list that drifts: every category the counts name is
+              offered, including one this build has never heard of. */}
+          {categoryChips(summary).map((chip) => {
+            const active = activeCategory === chip.value;
             return (
               <button
-                key={c}
+                key={chip.value}
                 type="button"
-                onClick={() => setActiveCategory(active ? null : c)}
+                onClick={() => setActiveCategory(active ? null : chip.value)}
                 aria-pressed={active}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
@@ -739,8 +801,8 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
                     : "border-line-soft text-muted hover:text-strong",
                 )}
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} aria-hidden />
-                {meta.label} {summary[c] ?? 0}
+                <span className={`h-1.5 w-1.5 rounded-full ${chip.dot}`} aria-hidden />
+                {chip.label} {chip.count}
               </button>
             );
           })}
@@ -783,7 +845,12 @@ export function InboxWorkbench({ email }: { email?: string | null }) {
       ) : filtered.length > 0 ? (
         <ul className="rounded-xl border border-line-soft bg-surface px-3">
           {filtered.map((v) => (
-            <VerdictRow key={v.message_id} v={v} />
+            <VerdictRow
+              key={v.message_id}
+              v={v}
+              classify={transport.classify}
+              onCorrected={applyCorrection}
+            />
           ))}
         </ul>
       ) : mineFailed && verdicts.length === 0 ? null : (

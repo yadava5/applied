@@ -47,11 +47,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ detail: parsed.detail }, { status: parsed.status });
   }
 
-  const r = await classifyReviewItem(
-    messageId,
-    parsed.category,
-    parsed.company,
-    parsed.applicationId,
-  );
+  // Forwarded as ONE value, deliberately. Named positional arguments are how
+  // `confidence` died in the inbox relay and how `applied_date` and `url` died
+  // on create — and the newest field here, `message`, is what lets a live-scan
+  // correction land at all (its rows are verdicts about mail the backend has
+  // never stored, so without it every one of them is a 404). Passing the parse
+  // result whole means a field can only be lost in `readClassifyBody`, which
+  // `tests/unit/classify-request.test.mjs` executes.
+  const r = await classifyReviewItem(messageId, parsed);
   return NextResponse.json(r.data ?? {}, { status: r.status });
 }

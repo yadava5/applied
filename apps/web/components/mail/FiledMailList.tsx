@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
-import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/gmail/types";
+import { categoryChips, CATEGORY_META, chipTotal } from "@/lib/gmail/types";
 import {
   filedMailHref,
   filedPageCount,
@@ -40,12 +40,11 @@ function CategoryChips({
   q: string | null;
 }) {
   // Canonical order first, then anything the backend adds later — a category
-  // this file doesn't know is still shown, never silently dropped.
-  const known = CATEGORY_ORDER.filter((c) => (page.categoryCounts[c] ?? 0) > 0);
-  const extra = Object.keys(page.categoryCounts)
-    .filter((c) => !(CATEGORY_ORDER as readonly string[]).includes(c) && page.categoryCounts[c] > 0)
-    .sort();
-  const all = Object.values(page.categoryCounts).reduce((sum, n) => sum + n, 0);
+  // this file doesn't know is still shown, never silently dropped. Built by
+  // `categoryChips` so the live-scan view offers the identical vocabulary
+  // rather than a second list that drifts from this one.
+  const chips = categoryChips(page.categoryCounts);
+  const all = chipTotal(page.categoryCounts);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -61,13 +60,12 @@ function CategoryChips({
       >
         all {all}
       </Link>
-      {[...known, ...extra].map((c) => {
-        const meta = CATEGORY_META[c] ?? { label: c.replaceAll("_", " "), dot: "bg-dim" };
-        const active = activeCategory === c;
+      {chips.map((chip) => {
+        const active = activeCategory === chip.value;
         return (
           <Link
-            key={c}
-            href={active ? filedMailHref({ q }) : filedMailHref({ category: c, q })}
+            key={chip.value}
+            href={active ? filedMailHref({ q }) : filedMailHref({ category: chip.value, q })}
             aria-current={active ? "true" : undefined}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
@@ -76,8 +74,8 @@ function CategoryChips({
                 : "border-line-soft text-muted hover:text-strong",
             )}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} aria-hidden />
-            {meta.label} {page.categoryCounts[c]}
+            <span className={`h-1.5 w-1.5 rounded-full ${chip.dot}`} aria-hidden />
+            {chip.label} {chip.count}
           </Link>
         );
       })}

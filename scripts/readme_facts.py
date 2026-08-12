@@ -759,7 +759,14 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"tests-(\d+)%20collected",
             r"\*\*(\d+) tests collected, \d+ skipped\.\*\*",
-            r"The remaining difference from (\d+) is parametrization",
+            # Reworded 2026-08-12, same fact, still verified. The old sentence
+            # ("The remaining difference from N is parametrization") compared
+            # this recorded figure against the static function count, and that
+            # comparison stopped being true the moment the parse caught up to
+            # it — the two are refreshed by different commands and drift on
+            # purpose. The site is kept rather than deleted because deleting it
+            # is how a number stops being checked while still being published.
+            r"The bold (\d+) is the artifact's",
         ],
     },
     "testsSkipped": {
