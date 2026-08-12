@@ -7,6 +7,7 @@ import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
+import { DemoFixturePill } from "@/components/shell/SessionControls";
 import { todayISO } from "@/lib/dashboard/age";
 import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
 import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
@@ -345,12 +346,14 @@ export function DemoDashboard({
 
   return (
     <section className={locked ? LOCKED_PAGE_CLASS : "flex flex-col gap-6"}>
-      {/* Exactly the signed-in composition: the sync surface — with the real
-          change ledger as its chip, over the fixture store and under its own
-          marker key, so a signed-in owner who visits /demo never has these
-          rows folded into their own board's record — rides the board's
-          command row. One shared shape, which is what keeps this twin honest
-          evidence for the real page.
+      {/* Exactly the signed-in composition: the sync surface is the page's
+          top line — with the real change ledger as its chip, over the fixture
+          store and under its own marker key, so a signed-in owner who visits
+          /demo never has these rows folded into their own board's record. On
+          the LOCKED twin (inside the shell) it also carries the title and the
+          demo pill, because the shell's TopBar yields to it at `lg`+ exactly
+          as it does for the signed-in page. One shared shape, which is what
+          keeps this twin honest evidence for the real page.
 
           The pulse is the board's full-width band here exactly as it is on
           the signed-in dashboard. `needsReview` is 0 deliberately, not a
@@ -362,27 +365,27 @@ export function DemoDashboard({
           is where it is shown and explained. Below `lg` the band yields to
           the cards' own tags — the phone answer the old full-width strip
           needed a `max-sm:order-last` workaround to approximate. */}
+      <SyncBar
+        subtitle={subtitle}
+        gmail={DEMO_GMAIL}
+        transport={syncTransport}
+        title={locked ? "Applications" : undefined}
+        trailing={locked ? <DemoFixturePill /> : undefined}
+        since={
+          <SinceLastLook
+            rows={ledgerRows}
+            scope={LAST_LOOK_DEMO_SCOPE}
+            storageKey={LAST_LOOK_DEMO_KEY}
+          />
+        }
+      >
+        <AddApplicationForm mode="demo" compact />
+      </SyncBar>
       <PipelineBoard
         variant={locked ? "locked" : "flow"}
         applications={snapshot.apps}
         pulse={{ needsReview: 0 }}
         transport={boardTransport}
-        toolbar={
-          <SyncBar
-            subtitle={subtitle}
-            gmail={DEMO_GMAIL}
-            transport={syncTransport}
-            since={
-              <SinceLastLook
-                rows={ledgerRows}
-                scope={LAST_LOOK_DEMO_SCOPE}
-                storageKey={LAST_LOOK_DEMO_KEY}
-              />
-            }
-          >
-            <AddApplicationForm mode="demo" compact />
-          </SyncBar>
-        }
       />
     </section>
   );

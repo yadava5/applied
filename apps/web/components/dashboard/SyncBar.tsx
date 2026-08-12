@@ -46,15 +46,16 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * chip, recency, the `Sync` button, the `⋯` overflow), the persistent
  * status/alert line, the rebuild dialog, and the rebuild receipt.
  *
- * It renders as ROW CONTENT, not a block: the root is a flex-wrap line whose
- * resting members (subtitle · ledger chip · recency · Sync · ⋯ · +) share one
- * ~40px row — on the dashboard it is passed into `PipelineBoard`'s command
- * row beside search, and on the error/empty pages it stands alone as the same
- * one line. The page TITLE is gone from here on purpose: the shell's top bar
- * carries the route name now, and every line this header used to spend is a
- * line the worklist gets back. The transient members (the status line, the
- * alert, the receipt) are `basis-full`, so they only take a wrap-line of
- * their own while they actually have something to say.
+ * Its header is the page's TOP LINE: one ~40px row carrying the route title
+ * (`title`, `lg`+ where the shell's TopBar yields to it — see TopBar), the
+ * subtitle, the change-ledger chip (`since`), the status/recency slot, the
+ * controls, and the session edge (`trailing`). Sign-out therefore stays on
+ * the top line of the screen, in this row, on the board route. The status
+ * line never moves the page at `lg`+ — it swaps into the subtitle's own slot
+ * for exactly as long as it speaks (the owner watched the board jump when
+ * "checking Gmail…" used to take a line of its own). The alert and the
+ * receipt DO take lines below the row when present: failures and removals
+ * are rare and must not be missable.
  *
  * It replaces three things that used to speak over each other:
  *   - `ReSyncButton` — a prominent button labelled "Re-sync" that silently ran
@@ -170,6 +171,8 @@ export function SyncBar({
   subtitle,
   gmail,
   since,
+  title,
+  trailing,
   children,
   transport = liveSyncTransport,
 }: {
@@ -181,6 +184,13 @@ export function SyncBar({
    *  one sentence. A slot rather than an import: the ledger's rows/scope are
    *  the caller's business, and the error/empty pages pass nothing. */
   since?: ReactNode;
+  /** The route title, when this row IS the page's top line (`lg`+ in the app
+   *  shell, where TopBar yields to it — see TopBar). Rendered as the page's
+   *  one <h1>, hidden below `lg` where the shell bar still carries it. */
+  title?: string;
+  /** The session-edge control for the same case — SignOutButton on the
+   *  signed-in page, the demo pill on the fixture twin. `lg`+ only. */
+  trailing?: ReactNode;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
   /** How sync requests reach data — Gmail via the proxy by default; the demo
@@ -478,121 +488,155 @@ export function SyncBar({
   return (
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
     // the sync UI") to this surface without leaning on copy or classes.
-    //
-    // `flex-1 min-w-0` matter only inside the board's command row, where this
-    // whole surface is one flex item sharing the line with search; standalone
-    // (error/empty pages) the root is an ordinary block and they are inert.
-    <div
-      className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 sm:w-auto sm:min-w-0 sm:flex-1"
-      data-sync-surface=""
-    >
-      <p className="tabular shrink-0 text-[13px] text-muted">{subtitle}</p>
-      {/* The ledger chip takes the slack between state and controls — its own
-          fixed flex-basis, so hydration can never re-wrap the row (the board
-          below must not move when the ledger finds its words). */}
-      {since ? <div className="min-w-0 flex-1 basis-40">{since}</div> : null}
-      {/* Below `sm` the action cluster takes its own full-width line under the
-          state, anchored LEFT — flex-wrap + justify-end orphaned "File an
-          application" on its own right-aligned line with a dead gap beside it.
-          The recency phrase drops to a quiet line of its own down there
-          (`order-last`), so the controls read as one bar. */}
-      <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
-        {connected ? (
-          <>
-            {showRecency ? (
-              simulated ? (
-                <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
-                  simulated account · nothing is read
-                </span>
-              ) : (
-                // A phrase, so the product voice — the machine-readable
-                // instant already rides in the <time> element's dateTime and
-                // title. Compact ("synced 3 minutes ago"): the Sync button
-                // beside it carries the noun, and on the shared command row
-                // every word here is width the ledger's news needs.
-                <LastSynced
-                  at={gmail?.lastSyncAt ?? null}
-                  compact
-                  className="order-last w-full text-xs text-dim sm:order-none sm:w-auto"
-                />
-              )
-            ) : null}
-            <button
-              type="button"
-              onClick={() => void runSync()}
-              disabled={busy}
-              aria-label="Sync new mail from Gmail"
-              title="Checks Gmail for new mail and adds what it finds. Never removes anything."
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-              Sync
-            </button>
-            <RowActionsMenu
-              label="Sync options"
-              disabled={busy}
-              triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
-              triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
-              items={[
-                {
-                  key: "rebuild",
-                  label: "Rebuild from Gmail…",
-                  hint: "replaces Gmail-filed rows · lists every removal",
-                  onSelect: openDialog,
-                },
-                {
-                  key: "inbox",
-                  label: "Open inbox workbench",
-                  hint: "mine, inspect and file mail by hand",
-                  onSelect: () => router.push("/inbox"),
-                },
-              ]}
-            />
-          </>
-        ) : gmail !== null ? (
-          // S0 — known not-connected. An unknown status (failed probe)
-          // renders nothing rather than a guessed state.
-          <Link
-            href="/settings"
-            className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline"
-          >
-            gmail not connected · connect in settings →
-          </Link>
+    <div className="flex flex-col gap-2" data-sync-surface="">
+      {/* --- The header row -------------------------------------------------
+          At `lg`+ in the shell this IS the screen's top line: TopBar yields
+          on the board route, so the title, the state, the change ledger, the
+          sync controls and the session edge share one ~40px row instead of a
+          48px bar with an empty middle plus a second row under it.
+
+          ZERO LAYOUT SHIFT is a requirement of this row (the owner watched
+          the whole page jump when "checking Gmail…" appeared): at `lg`+ the
+          status line does not get a line of its own — it takes over the
+          subtitle + ledger slot for exactly as long as it has something to
+          say, so idle → checking → result never changes the row's height.
+          The one exception is the stopped-early status, which carries a
+          "continue the scan" control and may wrap — a partial scan is an
+          exceptional state that has earned the extra line. Below `lg` the
+          row stacks and the status keeps its own line, as before. */}
+      {/* `relative`: the change ledger's names panel anchors to THIS row
+          (its own chip sits mid-row, where an anchored overlay ran past
+          <main>'s left edge and got clipped). */}
+      <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2">
+        {title ? (
+          <h1 className="hidden shrink-0 text-sm font-semibold tracking-tight text-strong lg:block">
+            {title}
+          </h1>
         ) : null}
-        {children}
+        <p
+          className={`tabular shrink-0 text-[13px] text-muted ${statusContent !== null ? "lg:hidden" : ""}`}
+        >
+          {subtitle}
+        </p>
+        {/* The ledger chip takes the slack between state and controls — its
+            own fixed flex-basis, so hydration can never re-wrap the row (the
+            board below must not move when the ledger finds its words). */}
+        {since ? (
+          <div className={`min-w-0 flex-1 basis-40 ${statusContent !== null ? "lg:hidden" : ""}`}>
+            {since}
+          </div>
+        ) : null}
+        {/* The status live region — persistent (mounting live regions on
+            demand drops announcements), sr-only while silent. When it speaks
+            it takes the subtitle's slot at `lg`+ (see the row note above) and
+            its own wrap-line below `lg`. The inner span is keyed by the
+            machine's state so each transition slides its sentence in — the
+            state CHANGE is visible, not just the state. */}
+        <p
+          role="status"
+          aria-live="polite"
+          className={
+            statusContent === null
+              ? "sr-only"
+              : "min-w-0 text-xs text-muted max-lg:order-last max-lg:basis-full lg:flex-1"
+          }
+        >
+          <motion.span
+            key={phase.kind}
+            initial={reduceMotion ? false : { opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="flex flex-wrap items-center gap-2"
+          >
+            {statusContent}
+          </motion.span>
+        </p>
+        {/* Below `sm` the action cluster takes its own full-width line under
+            the state, anchored LEFT — flex-wrap + justify-end orphaned "File
+            an application" on its own right-aligned line with a dead gap
+            beside it. The recency phrase drops to a quiet line of its own
+            down there (`order-last`), so the controls read as one bar. */}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+          {connected ? (
+            <>
+              {showRecency ? (
+                simulated ? (
+                  <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
+                    simulated account · nothing is read
+                  </span>
+                ) : (
+                  // A phrase, so the product voice — the machine-readable
+                  // instant already rides in the <time> element's dateTime and
+                  // title. Compact ("synced 3 minutes ago"): the Sync button
+                  // beside it carries the noun, and on the shared command row
+                  // every word here is width the ledger's news needs.
+                  <LastSynced
+                    at={gmail?.lastSyncAt ?? null}
+                    compact
+                    className="order-last w-full text-xs text-dim sm:order-none sm:w-auto"
+                  />
+                )
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void runSync()}
+                disabled={busy}
+                aria-label="Sync new mail from Gmail"
+                title="Checks Gmail for new mail and adds what it finds. Never removes anything."
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden />
+                Sync
+              </button>
+              <RowActionsMenu
+                label="Sync options"
+                disabled={busy}
+                triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+                triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
+                items={[
+                  {
+                    key: "rebuild",
+                    label: "Rebuild from Gmail…",
+                    hint: "replaces Gmail-filed rows · lists every removal",
+                    onSelect: openDialog,
+                  },
+                  {
+                    key: "inbox",
+                    label: "Open inbox workbench",
+                    hint: "mine, inspect and file mail by hand",
+                    onSelect: () => router.push("/inbox"),
+                  },
+                ]}
+              />
+            </>
+          ) : gmail !== null ? (
+            // S0 — known not-connected. An unknown status (failed probe)
+            // renders nothing rather than a guessed state.
+            <Link
+              href="/settings"
+              className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline"
+            >
+              gmail not connected · connect in settings →
+            </Link>
+          ) : null}
+          {children}
+        </div>
+        {trailing ? <div className="hidden shrink-0 items-center lg:flex">{trailing}</div> : null}
       </div>
 
-      {/* Persistent live regions — visually empty when idle (sr-only takes
-          them out of flow, so the resting row is exactly one line). When one
-          speaks, `basis-full` gives it a wrap-line of its own under the row.
-          The inner span is keyed by the machine's state so each transition
-          (idle → syncing → synced…) slides its sentence in — the state CHANGE
-          is visible, not just the state. Reduced motion renders each state
-          statically. */}
-      <p
-        role="status"
-        aria-live="polite"
-        className={`text-xs text-muted ${statusContent === null ? "sr-only" : "basis-full"}`}
-      >
-        <motion.span
-          key={phase.kind}
-          initial={reduceMotion ? false : { opacity: 0, y: 3 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
-          className="flex items-center gap-2"
-        >
-          {statusContent}
-        </motion.span>
-      </p>
+      {/* The alert live region — persistent for the same announcement reason,
+          its own line below the row when it speaks. A failure pushing the
+          board down is deliberate: it is rare, it is red, and it must not be
+          possible to miss. */}
       <p
         role="alert"
-        className={`text-xs text-reject-ink ${alertContent === null ? "sr-only" : "basis-full"}`}
+        className={`text-xs text-reject-ink ${alertContent === null ? "sr-only" : ""}`}
       >
         {alertContent}
       </p>
 
       {phase.kind === "receipt" ? (
-        <div className="basis-full">
+        <div>
           <RebuildReceipt
             op={phase.op}
             outcome={phase.outcome}

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { RailData } from "@/lib/shell/rail";
+import { ShellSlotProvider } from "./shell-slots";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -44,21 +45,27 @@ type AppShellFrameProps = {
  */
 export function AppShellFrame({ children, rail, userEmail, demo = false }: AppShellFrameProps) {
   return (
-    <div className="flex h-dvh w-full overflow-hidden">
-      <Sidebar rail={rail} userEmail={userEmail} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar userEmail={userEmail} demo={demo} />
-        {/* ONE page geometry for every authed surface: a shared centred column
-            with a common left edge. The dashboard fills it; narrower pages
-            (settings, inbox) cap their own measure inside it but start at the
-            same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
-            so this pane is the scroll context the whole app shares. */}
-        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
-          <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
-            {children}
-          </div>
-        </main>
+    // The slot provider is what lets PAGE-owned interface reach SHELL-owned
+    // geometry with one instance: the board portals its stage lens + search
+    // into the sidebar's middle run (see shell-slots.tsx for the CLS
+    // reasoning), and page headers learn they are inside a shell at all.
+    <ShellSlotProvider>
+      <div className="flex h-dvh w-full overflow-hidden">
+        <Sidebar rail={rail} userEmail={userEmail} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar userEmail={userEmail} demo={demo} />
+          {/* ONE page geometry for every authed surface: a shared centred column
+              with a common left edge. The dashboard fills it; narrower pages
+              (settings, inbox) cap their own measure inside it but start at the
+              same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
+              so this pane is the scroll context the whole app shares. */}
+          <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
+            <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
+              {children}
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </ShellSlotProvider>
   );
 }

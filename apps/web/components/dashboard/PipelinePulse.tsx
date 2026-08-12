@@ -208,7 +208,17 @@ export function PipelinePulse({
               className="pulse-seg min-w-0 flex-1 rounded-sm"
               style={{
                 height: count > 0 ? `${Math.max(18, (count / peak) * 100)}%` : "2px",
-                background: count > 0 ? "var(--stage-applied)" : "var(--line-strong)",
+                // Two inks, one meaning: the delta sentence beside these bars
+                // compares the last 4 weeks against the prior 4, so the bars
+                // draw that same split — full stage ink for the recent half,
+                // a faded mix of the SAME hue for the prior. Colour encodes
+                // the comparison; it never decorates.
+                background:
+                  count > 0
+                    ? i >= weeks.length - 4
+                      ? "var(--stage-applied)"
+                      : "color-mix(in oklab, var(--stage-applied) 45%, transparent)"
+                    : "var(--line-strong)",
                 ["--i" as string]: i,
               }}
             />
@@ -290,8 +300,13 @@ export function PipelinePulse({
               </span>{" "}
               overdue
             </span>{" "}
-            · <span className="tabular">{due.soon}</span> ≤{DUE_SOON_DAYS}d ·{" "}
-            <span className="tabular">{due.later}</span> later
+            {/* "soon" takes the review amber only while it counts something —
+                the same ink its card tags already wear. */}
+            ·{" "}
+            <span className={due.soon > 0 ? "text-review" : ""}>
+              <span className="tabular">{due.soon}</span> ≤{DUE_SOON_DAYS}d
+            </span>{" "}
+            · <span className="tabular">{due.later}</span> later
           </p>
         )}
       </PulseCell>

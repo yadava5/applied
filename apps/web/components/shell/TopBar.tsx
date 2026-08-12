@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 
 import { Logo } from "@/components/brand/Logo";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
 import { isNavItemActive, navItems } from "./nav";
+import { DemoFixturePill, SignOutButton } from "./SessionControls";
 
 type TopBarProps = {
   userEmail: string | null;
@@ -23,9 +22,7 @@ type TopBarProps = {
 };
 
 export function TopBar({ userEmail, demo = false }: TopBarProps) {
-  const router = useRouter();
   const pathname = usePathname();
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The route's own name, from the nav vocabulary — never hardcoded, because
@@ -51,17 +48,18 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
     return () => document.removeEventListener("keydown", onKey);
   }, [menuOpen]);
 
-  async function handleSignOut() {
-    setIsSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    // Refresh so the proxy re-evaluates and redirects us to /login.
-    router.refresh();
-    router.replace("/login");
-  }
-
   return (
-    <header className="relative flex h-12 items-center justify-between border-b border-line-soft bg-surface px-4">
+    // On the BOARD route this bar yields at `lg`+: the board's own header row
+    // (SyncBar with the title and sign-out folded in) takes the top line, so
+    // the screen never spends 48px on a strip whose middle is empty. Every
+    // other route — and every width below `lg`, where the mobile menu and the
+    // stacked board header need it — keeps this bar exactly as it is.
+    <header
+      className={cn(
+        "relative flex h-12 items-center justify-between border-b border-line-soft bg-surface px-4",
+        isBoardTitle && "lg:hidden",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-2">
         <button
           type="button"
@@ -105,19 +103,7 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
         ) : null}
       </div>
 
-      {demo ? (
-        <Link
-          href="/demo"
-          aria-label="Demo shell on fixture data — back to the demo overview"
-          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted transition-colors hover:text-strong focus-accent"
-        >
-          demo · fixture data
-        </Link>
-      ) : (
-        <Button type="button" variant="ghost" onClick={handleSignOut} disabled={isSigningOut}>
-          {isSigningOut ? "Signing out…" : "Sign out"}
-        </Button>
-      )}
+      {demo ? <DemoFixturePill /> : <SignOutButton />}
 
       {/* Mobile navigation — mirrors the desktop sidebar (same items + active
           state) and is the only in-app nav below `md`. */}

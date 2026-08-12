@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { ApplicationRow, NO_ROLE_LABEL } from "@/components/dashboard/ApplicationRow";
 import { ApplicationDetail } from "@/components/dashboard/ApplicationDetail";
@@ -11,6 +12,7 @@ import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard
 import { CompanyBand } from "@/components/dashboard/CompanyBand";
 import { EmployerSetRow } from "@/components/dashboard/EmployerSetRow";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
+import { useShellSlots } from "@/components/shell/shell-slots";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { boardColumns, cardQualifier, type BoardColumn } from "@/lib/dashboard/board";
 import { filedAt } from "@/lib/dashboard/dates";
@@ -30,24 +32,26 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
  * in one column. Four columns rendered that reality as one starved strip and
  * three tall boxes asserting emptiness. So stage is now a LENS, not geometry:
  *
- *   - the **stage spine** (left, desktop) draws the pipeline as an
- *     instrument — every stage, its count, and a proportional meter. It is
- *     the filter (press a stage to see only it), the drop target (drag a row
- *     onto a stage to move it), and the one place emptiness is stated — as a
- *     zero and an empty meter, which costs a line, not a quarter of the
- *     screen. At 29-0-0-0 it reads as a young pipeline; at a healthy spread
- *     it reads as a funnel. Below `lg` it compresses into a chip strip.
+ *   - the **stage lens** draws the pipeline as an instrument — every stage,
+ *     its count, and a proportional meter. It is the filter (press a stage
+ *     to see only it), the drop target (drag a row onto a stage to move it),
+ *     and the one place emptiness is stated — as a zero and an empty meter,
+ *     which costs a line, not a quarter of the screen. At 29-0-0-0 it reads
+ *     as a young pipeline; at a healthy spread it reads as a funnel. WHERE
+ *     it draws depends on what is around the board: inside the app shell the
+ *     interactive board portals it (plus search) into the sidebar's middle
+ *     run — filters are route-local navigation, the rail's middle was a
+ *     measured void, and the worklist gains the whole column the in-board
+ *     spine used to hold. Outside the shell it stays an in-board spine at
+ *     `lg`+. Below the vertical lens's breakpoint (`md` in the shell, `lg`
+ *     outside) it compresses into a chip strip.
  *   - the **pulse band** (`pulse` prop): the four derived signals
- *     (`PipelinePulse`) as one full-width band above the spine + worklist
- *     row — dashboard content, in the dashboard's content area. This is the
+ *     (`PipelinePulse`) as one full-width band above the worklist —
+ *     dashboard content, in the dashboard's content area. This is the
  *     pre-#136 home restored at band-density (~56px, not the old ~200px
  *     strip); the spine and the shell rail are both measured, rejected homes
  *     for it (see PipelinePulse's header).
- *   - the **command row** (top): search, the caller's sync surface
- *     (`toolbar`), and the board's own scope lines share ONE full-width row,
- *     so the dashboard spends a single line of chrome above the band where
- *     it used to spend three (page header, notice line, in-column toolbar).
- *   - the **worklist** (right) renders every application as one full-width
+ *   - the **worklist** renders every application as one full-width
  *     row with a fixed skeleton, grouped by stage in flow order. Rows are
  *     even by construction: company and the role slot share one line, and a
  *     missing role prints an honest placeholder instead of a shorter card
@@ -319,7 +323,6 @@ export function PipelineBoard({
   variant = "flow",
   transport = liveBoardTransport,
   pulse,
-  toolbar,
   beforeList,
   afterList,
 }: {
@@ -330,17 +333,12 @@ export function PipelineBoard({
   variant?: "locked" | "flow";
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
-  /** Mount the pulse's derived signals as a full-width band above the spine +
-   *  worklist row (`lg`-up, one instance — see the band note above). Omitted
+  /** Mount the pulse's derived signals as a full-width band above the
+   *  worklist (`lg`-up, one instance — see the band note above). Omitted
    *  by the inert empty-state preview on purpose: four derived signals over
    *  sample rows would be onboarding noise. `needsReview` is the account's
    *  held-verdict count — the auto-filed signal's deep link. */
   pulse?: { needsReview: number };
-  /** The caller's sync surface (SyncBar), rendered INTO the board's command
-   *  row beside search. Both twins pass it, so the one-row header is shared
-   *  composition, not a copy — and the board never has to know what a sync
-   *  is. Error/empty pages render the same SyncBar standalone instead. */
-  toolbar?: ReactNode;
   /** Rendered inside the list pane, above the rows (e.g. the review queue
    *  when alerts interrupt) — it scrolls with the list, so an interrupt can
    *  never starve the worklist of its viewport. */
@@ -349,6 +347,20 @@ export function PipelineBoard({
   afterList?: ReactNode;
 } & BoardScope) {
   const router = useRouter();
+  /**
+   * Where the stage lens lives. Inside the app shell the interactive board
+   * portals it (with search) into the sidebar's middle run — filters are
+   * route-local navigation, and the rail's void was the owner's complaint —
+   * while the state stays HERE, in the one component that owns the list they
+   * filter. `inShell` is a render-time constant, so the markup choice is
+   * hydration-safe; `rail` is the live slot element, null until the sidebar
+   * mounts (the portal appearing late cannot move the page — the rail is a
+   * fixed column). The inert empty-state preview keeps its own in-board
+   * spine: sample filters do not belong in the app's navigation. Outside the
+   * shell (/demo's flow twin) nothing changes: spine at `lg`+, chips below.
+   */
+  const { inShell, rail } = useShellSlots();
+  const railStages = inShell && interactive;
   const [query, setQuery] = useState("");
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
@@ -716,38 +728,62 @@ export function PipelineBoard({
     );
   };
 
+  /** The one search field, mounted wherever the stage lens lives (the rail
+   *  at `md`+ in the shell, the command row otherwise) — searching and stage
+   *  filtering are the same act on the same list, so they share a home. */
+  const searchBox = showSearch ? (
+    <div className="relative min-w-0">
+      <Search
+        className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dim"
+        aria-hidden
+      />
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="search company or role…"
+        aria-label="Search the board by company or role"
+        className="w-full rounded-lg border border-line bg-surface py-1.5 pl-8 pr-3 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
+      />
+    </div>
+  ) : null;
+
+  /** The "all" row of the vertical stage lens (spine or rail). */
+  const allStagesRow = (
+    <button
+      type="button"
+      aria-label={`all stages — ${spineTotal}`}
+      aria-pressed={stageFilter === "all"}
+      onClick={() => setStageFilter("all")}
+      className={cn(
+        "w-full rounded-lg border px-2.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
+        stageFilter === "all"
+          ? "border-line-strong bg-surface-2"
+          : "border-transparent hover:border-line-soft hover:bg-surface-2/60",
+      )}
+    >
+      <span className="flex items-center gap-2">
+        <span
+          className={cn(
+            "text-xs font-medium",
+            stageFilter === "all" ? "text-strong" : "text-muted",
+          )}
+        >
+          all
+        </span>
+        <span className="tabular ml-auto font-mono text-[11px] text-strong">{spineTotal}</span>
+      </span>
+    </button>
+  );
+
   /**
-   * The command row: search, the board's own scope lines, and the caller's
-   * sync surface on ONE full-width line. Search used to live inside the
-   * worklist column while the page spent a separate header row on the title
-   * and controls — with the title in the shell's top bar and the sync
-   * cluster here, that whole row comes back to the worklist. Search keeps
-   * the left edge (it filters the list below); the sync surface owns the
-   * right, and its transient lines (status, alert, receipt) wrap to their
-   * own full-width lines only while they have something to say.
+   * The transient scope lines (an active filter's count, the bounded-page
+   * note). Their own slim row above the band — present only while they have
+   * something to say, so the resting board spends nothing on them.
    */
-  const commandRow =
-    toolbar || showSearch || filterActive || scopeNote ? (
+  const scopeLines =
+    filterActive || scopeNote ? (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {/* Search is full-width below `sm` — beside a stacked sync surface, a
-            shared line vertically centres the input against the whole stack
-            and squeezes the subtitle off-screen (measured at 375). */}
-        {showSearch ? (
-          <div className="relative w-full sm:w-auto sm:min-w-0 sm:flex-1 sm:basis-40 sm:max-w-56">
-            <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dim"
-              aria-hidden
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="search company or role…"
-              aria-label="Search the board by company or role"
-              className="w-full rounded-lg border border-line bg-surface py-1.5 pl-8 pr-3 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong"
-            />
-          </div>
-        ) : null}
         {filterActive ? (
           <span className="tabular shrink-0 text-xs text-dim" role="status">
             {filtered.length} of {applications.length} shown
@@ -761,7 +797,6 @@ export function PipelineBoard({
             board shows the {scopeNote} · older rows aren&apos;t loaded
           </span>
         ) : null}
-        {toolbar}
       </div>
     ) : null;
 
@@ -770,13 +805,38 @@ export function PipelineBoard({
       data-testid="pipeline-board"
       className={cn("flex flex-col gap-3", locked && "lg:min-h-0 lg:flex-1")}
     >
-      {commandRow}
+      {/* --- The stage lens + search, in the shell's rail --------------------
+          One instance, portaled: the DOM lands in the sidebar's middle run,
+          the state stays here. Appears with hydration — the rail is a fixed
+          column, so nothing on the page moves when it does, and everything
+          in it is interactive-only (a filter without JS is a label). */}
+      {railStages && rail
+        ? createPortal(
+            <div role="group" aria-label="Stages" className="flex flex-col gap-0.5">
+              {searchBox ? <div className="mb-2 px-0.5">{searchBox}</div> : null}
+              <p className="label-caps px-2.5 pb-1">stages</p>
+              {allStagesRow}
+              {columns.map((column) => stageButton(column, "spine"))}
+            </div>,
+            rail,
+          )
+        : null}
+
+      {/* Search when there is no rail to hold it: always on the no-shell
+          twins, below `md` (where the rail is hidden) in the shell. Same
+          both-in-DOM, breakpoint-picked shape as the chips/spine pair below
+          — one state, one visible control per width. */}
+      {searchBox ? (
+        <div className={cn("w-full sm:max-w-56", railStages && "md:hidden")}>{searchBox}</div>
+      ) : null}
+
+      {scopeLines}
 
       {/* --- The pulse band (lg-up) ------------------------------------------
-          Full width, above the spine + worklist row — the dashboard's own
-          content area, which is the one home the owner has accepted for it.
-          One instance: below `lg` the cards carry the same ground truth
-          (age tags, deadline tags, the review queue), so nothing renders. */}
+          Full width, above the worklist — the dashboard's own content area,
+          which is the one home the owner has accepted for it. One instance:
+          below `lg` the cards carry the same ground truth (age tags,
+          deadline tags, the review queue), so nothing renders. */}
       {pulse ? (
         <PipelinePulse
           applications={applications}
@@ -785,13 +845,20 @@ export function PipelineBoard({
         />
       ) : null}
 
-      {/* --- The stage lens, compressed (below lg) --------------------------
-          `flex-wrap`, not a scroller: at 375px the horizontal scroller cut
-          "offered" to "offer" at the viewport edge and hid "closed" entirely,
-          with no affordance that anything was scrollable — a filter you cannot
-          see is a filter that does not exist. Two wrapped lines cost ~30px and
-          keep every stage visible. */}
-      <div className="flex flex-wrap items-center gap-1.5 lg:hidden">
+      {/* --- The stage lens, compressed --------------------------------------
+          Chips until the vertical lens takes over — the rail from `md` in the
+          shell, the in-board spine from `lg` outside it. `flex-wrap`, not a
+          scroller: at 375px the horizontal scroller cut "offered" to "offer"
+          at the viewport edge and hid "closed" entirely, with no affordance
+          that anything was scrollable — a filter you cannot see is a filter
+          that does not exist. Two wrapped lines cost ~30px and keep every
+          stage visible. */}
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-1.5",
+          railStages ? "md:hidden" : "lg:hidden",
+        )}
+      >
         <button
           type="button"
           aria-label={`all stages — ${spineTotal}`}
@@ -810,49 +877,28 @@ export function PipelineBoard({
         {columns.map((column) => stageButton(column, "chip"))}
       </div>
 
-      {/* --- Body: spine + worklist ----------------------------------------- */}
+      {/* --- Body: (spine +) worklist ----------------------------------------
+          In the shell the lens is in the rail, so the worklist takes the full
+          measure — every row gains the column the spine used to hold. */}
       <div
         className={cn("flex flex-col gap-4 lg:flex-row lg:gap-5", locked && "lg:min-h-0 lg:flex-1")}
       >
-        {/* w-44, not the w-52 the pulse-in-spine era needed: the longest
-            stage word + count fits comfortably, and every horizontal pixel
-            the emptier column gives back goes to the rows. */}
-        <aside
-          aria-label="Stages"
-          className={cn(
-            "hidden w-44 shrink-0 flex-col gap-0.5 lg:flex",
-            locked ? "lg:min-h-0 lg:overflow-y-auto" : "lg:sticky lg:top-5 lg:self-start",
-          )}
-        >
-          <p className="label-caps px-2.5 pb-1">stages</p>
-          <button
-            type="button"
-            aria-label={`all stages — ${spineTotal}`}
-            aria-pressed={stageFilter === "all"}
-            onClick={() => setStageFilter("all")}
+        {!railStages ? (
+          /* w-44, not the w-52 the pulse-in-spine era needed: the longest
+             stage word + count fits comfortably, and every horizontal pixel
+             the emptier column gives back goes to the rows. */
+          <aside
+            aria-label="Stages"
             className={cn(
-              "w-full rounded-lg border px-2.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong",
-              stageFilter === "all"
-                ? "border-line-strong bg-surface-2"
-                : "border-transparent hover:border-line-soft hover:bg-surface-2/60",
+              "hidden w-44 shrink-0 flex-col gap-0.5 lg:flex",
+              locked ? "lg:min-h-0 lg:overflow-y-auto" : "lg:sticky lg:top-5 lg:self-start",
             )}
           >
-            <span className="flex items-center gap-2">
-              <span
-                className={cn(
-                  "text-xs font-medium",
-                  stageFilter === "all" ? "text-strong" : "text-muted",
-                )}
-              >
-                all
-              </span>
-              <span className="tabular ml-auto font-mono text-[11px] text-strong">
-                {spineTotal}
-              </span>
-            </span>
-          </button>
-          {columns.map((column) => stageButton(column, "spine"))}
-        </aside>
+            <p className="label-caps px-2.5 pb-1">stages</p>
+            {allStagesRow}
+            {columns.map((column) => stageButton(column, "spine"))}
+          </aside>
+        ) : null}
 
         <div className={cn("flex min-w-0 flex-1 flex-col gap-3", locked && "lg:min-h-0")}>
           {/* --- The filter state, stated once ------------------------------ */}

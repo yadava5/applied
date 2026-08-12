@@ -1,10 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import {
-  expectNoHorizontalOverflow,
-  MOBILE_375,
-  startConsoleWatch,
-} from "./helpers";
+import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
 
 /**
  * E2E for the auth-free product demo (`/demo`).
@@ -155,9 +151,7 @@ test.describe("live demo (/demo)", () => {
     // matched substring — verified by aborting the woff2 at the network, where
     // the text rasterized as Arial and all of these still passed. So the wiring
     // checks stay, and this is the one that can fail on a missing font.
-    await expect
-      .poll(() => page.evaluate(() => document.fonts.check('16px atkinson')))
-      .toBe(true);
+    await expect.poll(() => page.evaluate(() => document.fonts.check("16px atkinson"))).toBe(true);
     await expect
       .poll(() => page.evaluate(() => document.fonts.check('16px "Geist Mono"')))
       .toBe(true);
@@ -240,9 +234,7 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
 
     // The accessible path: the per-card stage select.
-    await page
-      .getByLabel("Change stage for Quarry Data")
-      .selectOption("interviewing");
+    await page.getByLabel("Change stage for Quarry Data").selectOption("interviewing");
     await expect(page.getByRole("region", { name: /interviewing — 5/i })).toBeVisible();
     await expect(
       page.getByRole("region", { name: /interviewing/i }).getByText("Quarry Data", { exact: true }),
@@ -460,9 +452,7 @@ test.describe("live demo (/demo)", () => {
     // spine (#136) and the shell rail (PR #122) are the closed homes.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
-    await expect(
-      page.getByTestId("pipeline-board").getByTestId("pipeline-pulse"),
-    ).toBeVisible();
+    await expect(page.getByTestId("pipeline-board").getByTestId("pipeline-pulse")).toBeVisible();
     await expect(
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
@@ -643,11 +633,14 @@ test.describe("live demo (/demo)", () => {
     const band = ledger(page);
 
     // The chip is the arrival line — the counts by kind when its share of the
-    // command row can say them, the total when it cannot (container-adaptive;
-    // this depends on the row-mates, not just the viewport, so accept either
-    // rendering here — the opened panel below is the width-independent claim).
+    // row can say them, the total when it cannot. BOTH renderings are in the
+    // DOM (container queries pick one), so a text locator across them is a
+    // guaranteed strict-mode violation — assert the one accessible control
+    // instead: its name is computed from rendered text only, whichever
+    // variant is showing. The opened panel below is the width-independent
+    // claim about the content.
     await expect(band.getByRole("button", { name: "Mark as seen" })).toBeVisible();
-    await expect(band.getByText(/2 filed|4 changes/)).toBeVisible();
+    await expect(band.getByRole("button", { name: /Name the rows/ })).toBeVisible();
 
     // Nobody is named until the reader asks: the chip holds its line, and
     // the names appear on a press.
@@ -933,9 +926,7 @@ test.describe("live demo (/demo)", () => {
     await header.click();
     await expect(page.getByRole("button", { name: /^Open Northstar Systems/ })).toHaveCount(4);
     // Cedar Labs' pair folds the same way.
-    await expect(
-      page.getByRole("button", { name: "Cedar Labs — 2 applications" }),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cedar Labs — 2 applications" })).toBeVisible();
   });
 
   test("with reduced motion, every surface is fully present — nothing gated", async ({ page }) => {
@@ -962,9 +953,9 @@ test.describe("live demo (/demo)", () => {
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
     await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
     // A bar with zero drawn height would satisfy the count above.
-    const barHeights = await pulse.getByTestId("pulse-week").evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().height),
-    );
+    const barHeights = await pulse
+      .getByTestId("pulse-week")
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
     expect(Math.max(...barHeights)).toBeGreaterThan(0);
 
     // The board's own row-actions menu must keep its accessible name. Branching

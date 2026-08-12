@@ -9,6 +9,7 @@ import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
+import { SignOutButton } from "@/components/shell/SessionControls";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
@@ -232,7 +233,12 @@ export default async function DashboardPage() {
           : `The backend didn't answer: ${state.message}. Nothing is lost — your board renders the moment it responds.`;
     return (
       <section className="space-y-8">
-        <SyncBar subtitle="connection issue · your data could not be loaded" gmail={null}>
+        <SyncBar
+          subtitle="connection issue · your data could not be loaded"
+          gmail={null}
+          title="Applications"
+          trailing={<SignOutButton />}
+        >
           <AddApplicationForm compact />
         </SyncBar>
         <div
@@ -286,6 +292,8 @@ export default async function DashboardPage() {
               scanCompleted ? "no applications detected yet" : "no applications filed yet"
             }${reviewNote}`}
             gmail={gmail}
+            title="Applications"
+            trailing={<SignOutButton />}
           >
             <AddApplicationForm compact />
           </SyncBar>
@@ -323,7 +331,12 @@ export default async function DashboardPage() {
     // Genuinely fresh user (not connected, nothing imported) → scaffold + sample.
     return (
       <section className="space-y-6">
-        <SyncBar subtitle="0 filed · nothing tracked yet" gmail={gmail}>
+        <SyncBar
+          subtitle="0 filed · nothing tracked yet"
+          gmail={gmail}
+          title="Applications"
+          trailing={<SignOutButton />}
+        >
           <AddApplicationForm compact />
         </SyncBar>
         <DashboardEmptyState />
@@ -345,10 +358,12 @@ export default async function DashboardPage() {
 
   return (
     <section className={LOCKED_PAGE_CLASS}>
-      {/* The board owns the whole pane; the sync surface rides its command
-          row (`toolbar`), so header, search and controls cost one line
-          between them and the /demo twin inherits this composition by
-          construction — there is no second place to mount any of it.
+      {/* The sync surface is the page's top line: at `lg`+ the shell's TopBar
+          yields on this route and this row carries the title, the state, the
+          change ledger, the sync controls and sign-out — one line where a
+          92%-empty bar plus a second header row used to sit. The /demo twin
+          composes the identical row (with the demo pill in the trailing
+          slot), so the two cannot drift.
 
           SinceLastLook is the chip on that row: client-only (the marker is
           this browser's), per user, and silent until it has a previous visit
@@ -364,7 +379,29 @@ export default async function DashboardPage() {
           the branch should be unreachable; borrowing that guarantee from
           another file is what makes it worth stating here. Same discipline as
           the SyncBar's gmail cluster: an unknown state renders nothing rather
-          than a guessed one.
+          than a guessed one. */}
+      <SyncBar
+        subtitle={subtitle}
+        gmail={gmail}
+        title="Applications"
+        trailing={<SignOutButton />}
+        since={
+          user?.id ? (
+            <SinceLastLook
+              rows={state.applications.map(toChangeRow)}
+              total={state.total}
+              scope={user.id}
+              storageKey={LAST_LOOK_KEY}
+            />
+          ) : null
+        }
+      >
+        <AddApplicationForm compact />
+      </SyncBar>
+
+      {/* The board owns the rest of the pane. Its stage lens + search live in
+          the shell's rail (portaled by the board itself — state stays with
+          the list they filter), so the worklist takes the full measure.
 
           "Needs review alerts" decides whether held mail interrupts the list
           (above the rows) or waits under it — the quiet-board promise the
@@ -373,35 +410,18 @@ export default async function DashboardPage() {
           worklist of its viewport.
 
           `total` and `stageTotals` both come from the summary endpoint, and
-          the board's prop type makes them inseparable: the spine states the
-          ACCOUNT's per-stage counts (a `GROUP BY status` in the database), not
-          the shape of the page that happened to load. Past BOARD_PAGE_SIZE the
-          two differ, and a spine summing to the page while the subtitle says
-          the account is exactly the contradiction the scope note exists for. */}
+          the board's prop type makes them inseparable: the stage lens states
+          the ACCOUNT's per-stage counts (a `GROUP BY status` in the
+          database), not the shape of the page that happened to load. Past
+          BOARD_PAGE_SIZE the two differ, and a lens summing to the page while
+          the subtitle says the account is exactly the contradiction the scope
+          note exists for. */}
       <PipelineBoard
         variant="locked"
         applications={state.applications}
         total={state.total}
         stageTotals={stageCountsOf(state.summary)}
         pulse={{ needsReview: state.needsReview }}
-        toolbar={
-          <SyncBar
-            subtitle={subtitle}
-            gmail={gmail}
-            since={
-              user?.id ? (
-                <SinceLastLook
-                  rows={state.applications.map(toChangeRow)}
-                  total={state.total}
-                  scope={user.id}
-                  storageKey={LAST_LOOK_KEY}
-                />
-              ) : null
-            }
-          >
-            <AddApplicationForm compact />
-          </SyncBar>
-        }
         beforeList={notifPrefs.reviewAlerts ? queue : null}
         afterList={!notifPrefs.reviewAlerts ? queue : null}
       />

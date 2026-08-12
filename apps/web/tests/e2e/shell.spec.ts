@@ -165,9 +165,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // measured sidebar overflow). No display-none twin anywhere.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
-    await expect(
-      page.getByTestId("pipeline-board").getByTestId("pipeline-pulse"),
-    ).toBeVisible();
+    await expect(page.getByTestId("pipeline-board").getByTestId("pipeline-pulse")).toBeVisible();
     await expect(
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
@@ -190,6 +188,72 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(page.getByTestId("pipeline-pulse")).toHaveCount(1);
   });
 
+  test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    // The nav label is asserted HERE, where the sidebar renders without a
+    // session — inside the session-gated describe below it was a check that
+    // could not fail, guarding a rename CI never executed.
+    await expect(
+      page
+        .locator('nav[aria-label="Primary"]')
+        .getByRole("link", { name: "Applications", exact: true }),
+    ).toBeVisible();
+
+    // The stage lens lives in the rail's middle run (portaled by the board —
+    // one state owner), with search above it: filters are route-local
+    // navigation, and this is the void the owner pointed at.
+    const lens = page.getByRole("group", { name: "Stages" });
+    await expect(lens).toBeVisible();
+    await expect(lens.getByRole("button", { name: "applied — 10" })).toBeVisible();
+    await expect(lens.getByRole("searchbox", { name: /search the board/i })).toBeVisible();
+    // …and the in-board spine is gone with it: the worklist owns the full
+    // measure. (The chip strip still exists for below-`md`, CSS-picked — the
+    // same both-in-DOM shape the chips/spine pair always had.)
+    await expect(page.locator('aside[aria-label="Stages"]')).toHaveCount(0);
+
+    // Filtering through the rail drives the same board.
+    await lens.getByRole("button", { name: "interviewing — 4" }).click();
+    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: /applied — 10/i })).toHaveCount(0);
+  });
+
+  test("a sync reports without moving the board: idle → checking → result", async ({ page }) => {
+    // The owner watched the whole page jump when "checking Gmail…" appeared.
+    // The status now takes over the subtitle's slot in the header row for
+    // exactly as long as it speaks, so the three routine states share one
+    // geometry — asserted against the worklist pane, the thing that moved.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    const list = page.getByTestId("worklist-pane");
+    const status = page.locator("[data-sync-surface]").getByRole("status");
+    const idle = await list.boundingBox();
+
+    await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
+    await expect(status).toContainText("checking Gmail");
+    const checking = await list.boundingBox();
+
+    await expect(status).toContainText("2 filed, 3 already known");
+    const settled = await list.boundingBox();
+
+    expect(
+      Math.abs((checking?.y ?? 0) - (idle?.y ?? 0)),
+      "the board moved when the checking line appeared",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs((settled?.y ?? 0) - (idle?.y ?? 0)),
+      "the board moved when the sync result appeared",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs((settled?.height ?? 0) - (idle?.height ?? 0)),
+      "the worklist pane changed height across the sync",
+    ).toBeLessThanOrEqual(1);
+  });
+
   /**
    * The floor the band's return must never eat through: the worklist's own
    * viewport share. The document-lock gate CANNOT catch this failure —
@@ -197,14 +261,18 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * that overspends its budget doesn't scroll the page; it silently shrinks
    * the one region the dashboard exists to show, with every geometry test
    * green. The floors are measured on /demo/shell (recorded 2026-08-12,
-   * `next start`, headless Chrome): worklist-pane clientHeight 604 at
-   * 1280×800 and 524 at 1280×720. A small tolerance absorbs sub-pixel/font
-   * drift; a real regression (a fatter band, a second header row, a
-   * reinstated notice line) costs tens of pixels and lands far below it.
+   * `next start`, headless Chrome, after the header row replaced the top bar
+   * and the stage lens moved to the rail): worklist-pane clientHeight 652 at
+   * 1280×800, 572 at 1280×720, 592 at 1024×768 (the demo pill wraps the
+   * header to two lines at that width; the signed-in row holds one). A small
+   * tolerance absorbs sub-pixel/font drift; a real regression (a fatter
+   * band, a second header row, a reinstated notice line) costs tens of
+   * pixels and lands far below it.
    */
   for (const { viewport, floor } of [
-    { viewport: { width: 1280, height: 800 }, floor: 600 },
-    { viewport: { width: 1280, height: 720 }, floor: 520 },
+    { viewport: { width: 1280, height: 800 }, floor: 645 },
+    { viewport: { width: 1280, height: 720 }, floor: 565 },
+    { viewport: { width: 1024, height: 768 }, floor: 585 },
   ]) {
     test(`the worklist keeps its viewport share at ${viewport.width}×${viewport.height}`, async ({
       page,
@@ -213,9 +281,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       await page.goto("/demo/shell");
       await expect(pageHeading(page)).toBeVisible();
 
-      const client = await page
-        .getByTestId("worklist-pane")
-        .evaluate((el) => el.clientHeight);
+      const client = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
       expect(
         client,
         `the worklist pane shrank to ${client}px (floor ${floor}px) — some chrome above it is spending the list's pixels`,

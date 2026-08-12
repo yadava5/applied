@@ -256,16 +256,36 @@ export function SinceLastLook({
    *  load, because the server pass cannot know about it. */
   const [named, setNamed] = useState(false);
   const panelId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  // The panel is an overlay, so it gets an overlay's exit: Escape closes it.
-  // (The toggle and "Mark as seen" are the other two ways out.)
+  // The panel is an overlay, so it gets an overlay's exits — the same three
+  // RowActionsMenu earned the hard way (see its header): Escape (which hands
+  // focus back to the trigger, for the keyboard user who opened it), a click
+  // anywhere outside (which does NOT move focus — yanking it from whatever
+  // the reader just clicked is hostile), and the toggle itself. Listeners
+  // exist only while the panel is open; both pointerdown and mousedown are
+  // registered because environments differ in which they deliver first.
   useEffect(() => {
     if (!named) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setNamed(false);
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    const onOutside = (event: Event) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setNamed(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setNamed(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("mousedown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("mousedown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
   }, [named]);
 
   const partial = total !== undefined && rows.length < total;
@@ -388,14 +408,20 @@ export function SinceLastLook({
          the viewport: the /demo row carries a wider cluster than the signed-in
          one at the same width, and a viewport breakpoint cannot know that.
          The blue rule is the loud state's across-the-room signal — the caps
-         heading it used to carry belongs to the section's aria-label now. */
-      className="relative w-full border-l-2 border-stage-applied pl-2 @container"
+         heading it used to carry belongs to the section's aria-label now.
+
+         Deliberately NOT `relative`: the names panel positions against the
+         HEADER ROW (SyncBar's row is the nearest positioned ancestor), not
+         this chip — anchored to the chip it extended past <main>'s left edge,
+         whose implicit overflow clip cut the first label off. */
+      className="w-full border-l-2 border-stage-applied pl-2 @container"
     >
       <ArrivalLine>
         {/* The counts ARE the control: pressing them is what names the rows
             they count, so the affordance and the summary are one thing rather
             than a label with a "show" beside it. */}
         <button
+          ref={triggerRef}
           type="button"
           aria-expanded={named}
           aria-controls={panelId}
@@ -445,6 +471,7 @@ export function SinceLastLook({
           movement at all. */}
       {named ? (
         <div
+          ref={panelRef}
           id={panelId}
           className="absolute right-0 top-full z-30 mt-2 w-[min(38rem,85vw)] rounded-xl border border-line bg-surface p-4 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)]"
         >

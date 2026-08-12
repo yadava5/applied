@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import type { RailData } from "@/lib/shell/rail";
 import { isNavItemActive, navItems } from "./nav";
 import { RailFooter } from "./RailFooter";
+import { useShellSlots } from "./shell-slots";
 
 /**
  * Desktop primary navigation (hidden below `md`; the mobile menu in `TopBar`
@@ -22,19 +23,24 @@ import { RailFooter } from "./RailFooter";
  * `overflow-y-auto` purely as a safety valve for pathologically short
  * windows.
  *
- * This rail carries NO pipeline numbers, by measurement rather than taste.
- * PR #122 stacked an instrument column here (snapshot + the pulse's four
- * derived signals) and the result was 744px of column in a middle pane that
- * gets 537–717px at 1280×720…1440×900 — the app's own chrome scrolled
+ * This rail carries NO pipeline data of its own, by measurement rather than
+ * taste. PR #122 stacked an instrument column here (snapshot + the pulse's
+ * four derived signals) and the result was 744px of column in a middle pane
+ * that gets 537–717px at 1280×720…1440×900 — the app's own chrome scrolled
  * internally on every common laptop (202px over at the owner's real
  * 1309×693, with the Dashboard nav item pushed out of view), which read as
  * "the dashboard still scrolls". And even the slim snapshot that survived a
  * first fix stated a total the same screen already stated twice (the page
  * subtitle, the spine's "all" row — the task #59 restatement family). The
  * pulse is dashboard content, so it lives with the board — its full-width
- * band above the spine + worklist row (`PipelineBoard`'s `pulse` prop) — and
- * the chrome stays constant on every tab and can never scroll again: four
- * nav items cannot outgrow any viewport this app supports.
+ * band above the worklist (`PipelineBoard`'s `pulse` prop).
+ *
+ * What the middle run DOES hold on the board route is the board's own stage
+ * lens + search, portaled in by `PipelineBoard` (see the slot below): those
+ * are FILTERS — navigation within the route, which is what a nav rail is for
+ * — their counts are the lens's own badges, and the whole block measures
+ * ~300px against the ≥537px the middle run always has, so the #122 overflow
+ * cannot recur. Derived data (bars, ages, deadlines) stays banned here.
  *
  * The item matching the current route keeps its clear active treatment — a
  * cyan accent bar, a lit icon, a raised surface, and `aria-current="page"`.
@@ -52,6 +58,7 @@ type SidebarProps = {
 
 export function Sidebar({ rail, userEmail }: SidebarProps) {
   const pathname = usePathname();
+  const { setRail } = useShellSlots();
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-line-soft bg-surface md:flex">
@@ -103,6 +110,14 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
             })}
           </ul>
         </nav>
+
+        {/* The rail's middle run — the void PR #122 once overfilled with data.
+            It is a SLOT now: the board portals its stage lens + search here
+            (`PipelineBoard`, via shell-slots), so what fills it is the
+            board's own filter state with one owner, and the rail itself still
+            carries no pipeline numbers of its own. Empty on every route that
+            mounts nothing into it. */}
+        <div ref={setRail} className="mt-5 border-t border-line-soft px-2 pt-4 empty:hidden" />
       </div>
 
       <div className="shrink-0 border-t border-line-soft px-3 py-3">

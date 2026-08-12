@@ -49,10 +49,7 @@ import { CATEGORY_META } from "@/lib/gmail/types";
  * the card), not a display; every Gmail link opens the actual conversation.
  */
 
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "error" }
-  | { kind: "ready"; detail: DetailData };
+type LoadState = { kind: "loading" } | { kind: "error" } | { kind: "ready"; detail: DetailData };
 
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
@@ -66,7 +63,13 @@ const DUE_TEXT_CLASS: Record<DueState, string> = {
   ahead: "text-muted",
 };
 
-function TrailMessage({ message, isLast }: { message: DetailData["messages"][number]; isLast: boolean }) {
+function TrailMessage({
+  message,
+  isLast,
+}: {
+  message: DetailData["messages"][number];
+  isLast: boolean;
+}) {
   const meta = message.category
     ? (CATEGORY_META[message.category] ?? { label: message.category, dot: "bg-dim" })
     : null;
@@ -102,8 +105,7 @@ function TrailMessage({ message, isLast }: { message: DetailData["messages"][num
               <span
                 className="tabular font-mono text-[10px]"
                 style={{
-                  color:
-                    message.confidence >= AUTO_FILE_GATE ? "var(--green)" : "var(--amber)",
+                  color: message.confidence >= AUTO_FILE_GATE ? "var(--green)" : "var(--amber)",
                 }}
               >
                 {pct(message.confidence)}
@@ -327,7 +329,9 @@ export function ApplicationDetail({
     const result = await transport.setDeadline(active.id, iso);
     setDueBusy(null);
     if (!result.ok) {
-      setDueError(result.detail ? `${DEADLINE_SAVE_FAILED} ${result.detail}` : DEADLINE_SAVE_FAILED);
+      setDueError(
+        result.detail ? `${DEADLINE_SAVE_FAILED} ${result.detail}` : DEADLINE_SAVE_FAILED,
+      );
       return;
     }
     // Any write through the deadline endpoint is the user's word — the
@@ -343,7 +347,9 @@ export function ApplicationDetail({
     const result = await transport.setDeadline(active.id, null);
     setDueBusy(null);
     if (!result.ok) {
-      setDueError(result.detail ? `${DEADLINE_CLEAR_FAILED} ${result.detail}` : DEADLINE_CLEAR_FAILED);
+      setDueError(
+        result.detail ? `${DEADLINE_CLEAR_FAILED} ${result.detail}` : DEADLINE_CLEAR_FAILED,
+      );
       return;
     }
     setDueOverride({ at: null, source: null });
@@ -390,10 +396,15 @@ export function ApplicationDetail({
               ))}
             </select>
             {stageBusy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none" aria-hidden />
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none"
+                aria-hidden
+              />
             ) : null}
           </div>
-          <span className="tabular font-mono text-[11px] text-dim">filed {longDate(filedAt(active))}</span>
+          <span className="tabular font-mono text-[11px] text-dim">
+            filed {longDate(filedAt(active))}
+          </span>
           {active.url ? (
             <a
               href={active.url}
@@ -507,7 +518,10 @@ export function ApplicationDetail({
             </>
           )}
           {dueBusy !== null ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none" aria-hidden />
+            <Loader2
+              className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none"
+              aria-hidden
+            />
           ) : null}
         </div>
 
@@ -529,7 +543,17 @@ export function ApplicationDetail({
 
         {/* --- The verdict trail ------------------------------------------- */}
         <div>
-          <p className="label-caps mb-3">the mail behind this card</p>
+          {/* The count rides the label once known: with the panel sized to
+              its content, "· 1 message" says the short trail is complete
+              rather than truncated. */}
+          <p className="label-caps mb-3">
+            the mail behind this card
+            {state.kind === "ready" && state.detail.messages.length > 0
+              ? ` · ${state.detail.messages.length} message${
+                  state.detail.messages.length === 1 ? "" : "s"
+                }`
+              : ""}
+          </p>
           {state.kind === "loading" ? (
             <p className="flex items-center gap-2 text-xs text-dim" role="status">
               <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
@@ -547,9 +571,7 @@ export function ApplicationDetail({
               </button>
             </div>
           ) : state.detail.messages.length === 0 ? (
-            <p className="text-xs text-dim">
-              no linked mail — this row was filed by hand
-            </p>
+            <p className="text-xs text-dim">no linked mail — this row was filed by hand</p>
           ) : (
             <ul className="space-y-4">
               {state.detail.messages.map((message, i) => (
