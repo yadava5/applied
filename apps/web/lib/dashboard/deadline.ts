@@ -14,10 +14,13 @@
  *  - a row without `due_at` produces NOTHING — no state, no placeholder, no
  *    inferred urgency. The absence of a date is itself the honest answer;
  *  - the granularity is the calendar day. `due_at` may carry a real instant,
- *    but every surface renders and buckets the day it STATES ("due today"
- *    until UTC midnight, overdue after) — the one reading that is identical
- *    on server and client in every timezone, and the same rule every other
- *    date on the board already follows;
+ *    but every surface renders and buckets the day it STATES — the same rule
+ *    every other date on the board already follows. Which day "today" IS is
+ *    the caller's one decision, and it is not free: bucketing against the UTC
+ *    day made a New York evening read `overdue 1d` on a deadline the reader
+ *    still had hours of. So callers hand this the READER's day
+ *    (`useLocalToday`), and `due today` therefore lasts until the reader's own
+ *    midnight, not UTC's;
  *  - the words are arithmetic, never inference: "due in 2d" is a subtraction,
  *    and no phrasing here claims more than the mail or the user stated.
  */
@@ -76,6 +79,13 @@ export function dueInfo(dueAt: string | null | undefined, today: string): DueInf
  * read as overdue for the whole day it is due — and the calendar prefix
  * round-trips exactly, so the card renders back the day the user picked.
  * `null` for anything that is not a real calendar day.
+ *
+ * That round-trip promise only actually held once the card started bucketing
+ * against the reader's day. The date input hands back a LOCAL day, so a New
+ * York user picking today at 21:00 got a row that read `overdue 1d` the instant
+ * they saved it — the stored day was right, the day it was compared against was
+ * not. The storage shape here is unchanged and is the correct half; see
+ * `useLocalToday`.
  */
 export function dueDayISO(day: string): string | null {
   const match = CALENDAR_PREFIX.exec(day.trim());

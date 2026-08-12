@@ -21,6 +21,7 @@ Confidence thresholds:
 
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -545,13 +546,26 @@ class HybridClassifier:
         # Store in training_data for SetFit
         await self._store_training_data(email_id, subject, body, correct_category)
 
-        # Check if we should retrain SetFit
-        if await self._setfit.should_retrain():
+        # Check if we should retrain SetFit.
+        #
+        # SCOPE: this auto-retrain reads ``training_data`` directly. Applied's
+        # Gmail access is the restricted ``gmail.readonly`` scope, and Google's
+        # Workspace API user-data policy only permits training a model
+        # personalized to a single end user — no co-mingling across users. So
+        # the corpus is scoped to one ``user_id``, never "everything in the
+        # table". On desktop that resolves to the ``LOCAL_USER_ID`` sentinel
+        # every local row carries, which is why the desktop loop is unchanged.
+        # Do not "simplify" this back to an unscoped call: see
+        # ``setfit_model.CrossUserTrainingError``.
+        from .setfit_model import resolve_training_user_id
+
+        training_user_id = resolve_training_user_id()
+        if await self._setfit.should_retrain(user_id=training_user_id):
             logger.info("Triggering SetFit retraining...")
             # Run in background (non-blocking)
             import asyncio
 
-            asyncio.create_task(self._setfit.train())
+            asyncio.create_task(self._setfit.train(user_id=training_user_id))
 
     async def _store_training_data(
         self,
@@ -641,12 +655,23 @@ class HybridClassifier:
             },
         }
 
-    async def retrain_setfit(self):
-        """Manually trigger SetFit retraining."""
+    async def retrain_setfit(self, *, user_id: uuid.UUID):
+        """Manually trigger SetFit retraining for exactly one user.
+
+        Args:
+            user_id: Whose corrections to train on. Required and undefaulted on
+                purpose — this is the entry point reached by
+                ``POST /classify/retrain`` and ``scripts/ml_cycle.sh --retrain``,
+                i.e. the one an operator could point at a production database.
+                Gmail's restricted ``gmail.readonly`` scope permits only a
+                per-user personalized model, so there is no "all users" option
+                to default to. Callers without an authenticated identity pass
+                ``setfit_model.resolve_training_user_id()``.
+        """
         if self._setfit.is_training():
             raise RuntimeError("Training already in progress")
 
-        await self._setfit.train()
+        await self._setfit.train(user_id=user_id)
 
 
 # =============================================================================

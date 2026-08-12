@@ -2,9 +2,24 @@
  * Pure age/momentum math for the dashboard's honest signals. Everything here
  * is a function of calendar-day strings — the same "read the characters, never
  * construct a local Date" rule as `dates.ts` (see its header for the timezone
- * bug that rule exists to prevent). `todayISO()` is the one clock read, and it
- * is UTC on both server and client, so hydration can only disagree across the
- * instant of UTC midnight itself.
+ * bug that rule exists to prevent).
+ *
+ * There are TWO clock reads here, and the difference between them is load-
+ * bearing rather than incidental:
+ *
+ *  - {@link todayISO} is the UTC day. It is identical on the server and in the
+ *    browser, which is the only reason server-rendered HTML can be hydrated
+ *    without a text mismatch (React #418 — `dates.ts` documents the incident).
+ *    It is the SSR/first-paint read, not a claim about the reader's day.
+ *  - {@link localTodayISO} is the day the READER is living in. It is the only
+ *    honest answer to "how long until this deadline?", and it is necessarily
+ *    zone-dependent, so it can only be adopted AFTER hydration — see
+ *    `useLocalToday.ts`, which owns that swap.
+ *
+ * Bucketing a deadline against the UTC day told a New York user at 21:00 that
+ * an assessment due by the end of their own Aug 11 was already `overdue 1d`;
+ * a user in Tokyo saw a deadline whose local day had passed still read
+ * `due today`. The affected window each day is the size of the UTC offset.
  *
  * Kept import-free (the `CALENDAR_PREFIX` regex is duplicated from `dates.ts`
  * on purpose) so `node --test` can load it under type stripping, same as
@@ -26,9 +41,32 @@ export const QUIET_AFTER_DAYS = 14;
 /** How many week-buckets the momentum strip renders. */
 export const MOMENTUM_WEEKS = 8;
 
-/** Today's calendar day, UTC — identical on server and client. */
+/**
+ * Today's calendar day, UTC — identical on server and client, and therefore
+ * the read every server render and first client render must use. It is NOT the
+ * reader's day: use {@link localTodayISO} (via `useLocalToday`) for anything
+ * that claims how much time someone has left.
+ */
 export function todayISO(now: number = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10);
+}
+
+/**
+ * Today's calendar day in the RUNTIME's own zone — the day the person reading
+ * the screen would call today, and the same day their `<input type="date">`
+ * offers when they pick "today".
+ *
+ * Deliberately assembled from the LOCAL calendar accessors. `toISOString()` is
+ * what produced the bug this function exists to fix: it renders the UTC
+ * instant, so between local midnight and UTC midnight it names a day the reader
+ * is not in yet (or has already left). Nothing here may reach for it.
+ */
+export function localTodayISO(now: number = Date.now()): string {
+  const date = new Date(now);
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /** UTC-midnight epoch of a calendar-day prefix, or `null` if unparsable. */

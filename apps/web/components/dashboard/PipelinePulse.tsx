@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 
 import {
@@ -5,9 +7,9 @@ import {
   bucketAges,
   daysBetween,
   momentumDelta,
-  todayISO,
   weeklyCounts,
 } from "@/lib/dashboard/age";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt } from "@/lib/dashboard/dates";
 import { DUE_SOON_DAYS, deadlinePulse, duePhrase } from "@/lib/dashboard/deadline";
 import { stageOf, type Application } from "@/lib/dashboard/summary";
@@ -34,11 +36,24 @@ import { stageOf, type Application } from "@/lib/dashboard/summary";
  *     (source = "gmail" rows) and what it is holding under the 0.85 gate,
  *     deep-linked to the review queue.
  *
+ * This is a client component, and deliberately: the deadline cell counts what
+ * is overdue, which is a claim about the READER's day, so its clock read has to
+ * survive past the server render (`useLocalToday`). The alternative — keeping
+ * it a server component and threading `today` down from `app/(app)/dashboard/
+ * page.tsx` — cannot work, because that page is itself a server component: the
+ * value it threaded would be the UTC day, frozen at request time, and would
+ * never be corrected once the browser could say what zone it is in. Wrapping it
+ * in a client shell just to inject the prop would pull this module into the
+ * client bundle anyway (it already is one, via `DemoDashboard`), so the shell
+ * would buy nothing but indirection. Nothing here is interactive beyond the
+ * existing `Link`; the whole surface still server-renders.
+ *
  * Honesty rules: the board fetch is one bounded page, so when the loaded rows
  * are fewer than the account's total the row-derived cells say they describe
  * the newest N rather than pretending to describe everything. Ages/weeks are
- * calendar-day math in UTC on both server and client (`age.ts`), so the strip
- * hydrates cleanly. The micro-bars are `aria-hidden` decoration over the
+ * calendar-day math on a day string — UTC for the server pass and the hydrating
+ * pass, the reader's own day thereafter — so the strip hydrates cleanly and
+ * then tells the truth about time left. The micro-bars are `aria-hidden` decoration over the
  * numbers, animate in with a transform-only CSS entrance (`.pulse-seg`,
  * globals.css), and collapse to their final state under
  * `prefers-reduced-motion` — nothing here is gated on an animation.
@@ -55,7 +70,7 @@ export function PipelinePulse({
   /** Verdicts held under the gate for the user (0 when the queue is clear). */
   needsReview: number;
 }) {
-  const today = todayISO();
+  const today = useLocalToday();
   /** True when the single board page holds every row the account has. */
   const complete = applications.length >= total;
 

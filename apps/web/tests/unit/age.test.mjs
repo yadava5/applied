@@ -72,7 +72,15 @@ test("momentumDelta halves the same buckets the bars draw", () => {
   assert.deepEqual(momentumDelta([1, 0, 0, 0, 0, 0, 1, 2]), { recent: 3, prior: 1 });
 });
 
-test("todayISO is the UTC calendar day of the instant it is handed", () => {
+/**
+ * `todayISO` is still UTC, and must stay UTC — it is the SSR/hydration-stable
+ * read, the one value the server and the browser's first pass can both produce.
+ * It is NOT what the deadline surfaces bucket against any more: claiming how
+ * much time a reader has left needs the reader's own day, which is
+ * `localTodayISO` (and `useLocalToday` for the mount gate). See
+ * `local-today.test.mjs` for the clock-read behaviour under a real `TZ`.
+ */
+test("todayISO is the UTC calendar day — the hydration-stable server read", () => {
   assert.equal(todayISO(Date.UTC(2026, 7, 11, 23, 59, 59)), "2026-08-11");
   assert.equal(todayISO(Date.UTC(2026, 7, 12, 0, 0, 1)), "2026-08-12");
 });
