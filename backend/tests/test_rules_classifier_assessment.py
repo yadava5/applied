@@ -263,12 +263,16 @@ def test_known_gap_content_guard_also_swallows_real_invitations() -> None:
     assert guard == "digest_or_promotional_content"
 
 
-def test_only_assessment_declares_vetoes() -> None:
+def test_which_categories_declare_vetoes() -> None:
     """Blast radius, stated as an assertion.
 
     Every other category has an empty veto list, so its scoring is bit-for-bit
     what it was. Extending this is fine — being surprised by it is not.
+
+    ``FOLLOW_UP`` joined on 2026-08-12: a stated hiring decision makes that
+    category wrong, and a -5 negative could not out-vote a +6 subject match any
+    more than it could here. See test_rules_classifier_rejection.py.
     """
     with_vetoes = {category for category, patterns in PATTERNS.items() if patterns.veto}
 
-    assert with_vetoes == {EmailCategory.ASSESSMENT}
+    assert with_vetoes == {EmailCategory.ASSESSMENT, EmailCategory.FOLLOW_UP}
