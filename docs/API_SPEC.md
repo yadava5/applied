@@ -301,7 +301,25 @@ Update fields (`company`, `position`, `status`, `applied_date`, `source`, `url`,
 
 ### `DELETE /applications/{application_id}`
 
-Delete application and unlink emails.
+Delete application. **Destructive for child rows**, and the three kinds are not
+treated alike:
+
+- **Emails** are unlinked (`application_id` set to `NULL`), never deleted — the
+  local database is the user's own mail archive.
+- **Contacts and interviews are deleted with the application.** Their
+  `application_id` is a NOT NULL foreign key, so "unlink and keep" is not
+  representable; the only alternative would be to refuse the delete, and this
+  endpoint is the deliberately-final action. (Before this was fixed the endpoint
+  answered **500** — `NOT NULL constraint failed: contacts.application_id` — and
+  the application stayed.)
+- **Training examples** are kept but unlinked, so a user's correction survives
+  without naming a row that no longer exists.
+
+The cloud endpoint of the same name (`jobtracker/cloud/applications.py`) differs
+on one point only: it **deletes** the linked emails (they are Gmail-derived and
+re-derivable) and their `email_embeddings`, rather than unlinking them. Order in
+both cases is `email_embeddings → contacts → interviews → emails →
+applications`, the same order `DELETE /account` uses.
 
 ### `POST /applications/{application_id}/status`
 
@@ -315,7 +333,10 @@ Transition status with payload:
 
 ### `POST /applications/{application_id}/mark-not-job`
 
-Reclassifies linked emails to `other`, unlinks them, deletes the application.
+Reclassifies linked emails to `other`, unlinks them, deletes the application —
+and deletes its contacts and interviews, for the same NOT NULL reason as
+`DELETE /applications/{application_id}` above. A UI offering this should confirm
+it as destructive.
 
 ### `GET /applications/link/preview/{email_id}`
 

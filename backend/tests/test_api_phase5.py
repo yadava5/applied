@@ -19,9 +19,14 @@ from jobtracker.database import get_session, init_db
 from jobtracker.database.models import (
     Application,
     ApplicationStatus,
+    Contact,
+    ContactRole,
     Email,
     EmailCategory,
     EmailSource,
+    Interview,
+    InterviewStatus,
+    InterviewType,
 )
 from jobtracker.main import app
 from jobtracker.tracking import get_application_linker
@@ -666,6 +671,185 @@ class TestApplicationDetailAndActions:
             assert email.application_id is None
             assert email.classified_as == EmailCategory.OTHER
             assert email.user_corrected is True
+
+
+class TestApplicationChildRowsOnDelete:
+    """The desktop half of "deleting an application orphans or 500s its children".
+
+    ``contacts.application_id`` and ``interviews.application_id`` are NOT NULL
+    foreign keys onto ``applications.id``, and the desktop linker
+    (``jobtracker/tracking/linker.py``) is what writes both. Neither endpoint
+    that removes an application used to touch them, so SQLAlchemy's default
+    cascade tried to de-associate the children by nulling their FK and the flush
+    raised — a 500, with the application still on the board.
+
+    Emails are treated differently ON PURPOSE and that difference is not an
+    oversight: ``emails.application_id`` is Optional, and the desktop database is
+    the user's own mail archive, so a message survives the application being
+    removed. A contact and an interview have no such life of their own — the
+    column cannot be nulled — so the only two answers available are "delete with
+    the parent" or "refuse the delete", and both endpoints here are already the
+    explicitly-destructive action.
+    """
+
+    @pytest.mark.asyncio
+    async def test_mark_not_job_deletes_required_children_before_app_delete(
+        self,
+        test_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        await _reset_analytics_tables()
+        now = datetime.utcnow()
+        from jobtracker.api import applications as applications_api
+
+        mock_classifier = SimpleNamespace(add_correction=AsyncMock())
+        monkeypatch.setattr(applications_api, "get_classifier", lambda: mock_classifier)
+
+        async with get_session() as session:
+            app_row = Application(
+                company="Noise Corp",
+                position="Unknown Position",
+                status=ApplicationStatus.APPLIED,
+                applied_date=date.today(),
+            )
+            session.add(app_row)
+            await session.commit()
+            await session.refresh(app_row)
+
+            session.add(
+                Email(
+                    application_id=app_row.id,
+                    source_account=EmailSource.GMAIL,
+                    message_id=f"<not-job-children-{now.timestamp()}@test.com>",
+                    received_at=now,
+                    subject="Weekly digest",
+                    sender_email="newsletter@example.com",
+                    classified_as=EmailCategory.APPLIED,
+                    classification_confidence=0.62,
+                )
+            )
+            session.add(
+                Contact(
+                    application_id=app_row.id,
+                    name="Dana Recruiter",
+                    email="dana@noisecorp.example",
+                    role=ContactRole.RECRUITER,
+                )
+            )
+            session.add(
+                Interview(
+                    application_id=app_row.id,
+                    type=InterviewType.PHONE,
+                    scheduled_at=now,
+                    status=InterviewStatus.SCHEDULED,
+                )
+            )
+            await session.commit()
+
+        response = await test_client.post(f"/applications/{app_row.id}/mark-not-job")
+        assert response.status_code == 200, response.text
+        assert response.json()["emails_reclassified"] == 1
+
+        async with get_session() as session:
+            remaining_app = (
+                await session.exec(
+                    select(Application).where(Application.id == app_row.id)
+                )
+            ).first()
+            assert remaining_app is None
+            contacts = (
+                await session.exec(
+                    select(Contact).where(Contact.application_id == app_row.id)
+                )
+            ).all()
+            interviews = (
+                await session.exec(
+                    select(Interview).where(Interview.application_id == app_row.id)
+                )
+            ).all()
+            assert contacts == []
+            assert interviews == []
+
+    @pytest.mark.asyncio
+    async def test_delete_application_deletes_required_children(
+        self,
+        test_client: AsyncClient,
+    ):
+        """The site PR #12 did not cover: plain ``DELETE /applications/{id}``.
+
+        Same schema, same NOT NULL children, same failure — one endpoint over.
+        """
+
+        await _reset_analytics_tables()
+        now = datetime.utcnow()
+
+        async with get_session() as session:
+            app_row = Application(
+                company="Acme",
+                position="Backend Engineer",
+                status=ApplicationStatus.APPLIED,
+                applied_date=date.today(),
+            )
+            session.add(app_row)
+            await session.commit()
+            await session.refresh(app_row)
+
+            mail = Email(
+                application_id=app_row.id,
+                source_account=EmailSource.GMAIL,
+                message_id=f"<delete-children-{now.timestamp()}@test.com>",
+                received_at=now,
+                subject="Thanks for applying",
+                sender_email="jobs@acme.example",
+                classified_as=EmailCategory.APPLIED,
+                classification_confidence=0.9,
+            )
+            session.add(mail)
+            session.add(
+                Contact(
+                    application_id=app_row.id,
+                    name="Dana Recruiter",
+                    email="dana@acme.example",
+                    role=ContactRole.RECRUITER,
+                )
+            )
+            session.add(
+                Interview(
+                    application_id=app_row.id,
+                    type=InterviewType.TECHNICAL,
+                    scheduled_at=now,
+                    status=InterviewStatus.SCHEDULED,
+                )
+            )
+            await session.commit()
+            await session.refresh(mail)
+            email_id = mail.id
+
+        response = await test_client.delete(f"/applications/{app_row.id}")
+        assert response.status_code == 204, response.text
+
+        async with get_session() as session:
+            assert (
+                await session.exec(
+                    select(Application).where(Application.id == app_row.id)
+                )
+            ).first() is None
+            assert (
+                await session.exec(
+                    select(Contact).where(Contact.application_id == app_row.id)
+                )
+            ).all() == []
+            assert (
+                await session.exec(
+                    select(Interview).where(Interview.application_id == app_row.id)
+                )
+            ).all() == []
+            # The desktop contract for mail is UNLINK, not delete — the local
+            # database is the user's own archive.
+            kept = (await session.exec(select(Email).where(Email.id == email_id))).first()
+            assert kept is not None
+            mail_row = kept[0] if hasattr(kept, "__getitem__") else kept
+            assert mail_row.application_id is None
 
 
 class TestAnalyticsTrendsDeScoped:
