@@ -12,7 +12,6 @@ import {
   type ReactNode,
 } from "react";
 
-import { todayISO } from "@/lib/dashboard/age";
 import { boardColumns } from "@/lib/dashboard/board";
 import { dueInfo, duePhrase } from "@/lib/dashboard/deadline";
 import {
@@ -33,6 +32,7 @@ import {
   writeLastLook,
 } from "@/lib/dashboard/lastLookStore";
 import { STAGES } from "@/lib/dashboard/summary";
+import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 
 /**
  * The change ledger — the dashboard's answer to "what happened while I was
@@ -129,7 +129,11 @@ function StageWord({ word }: { word: string }) {
 }
 
 /** The deadline a change brought with it, in the same words and the same ink
- *  the card's own tag uses — never a second vocabulary for one fact. */
+ *  the card's own tag uses — never a second vocabulary for one fact, and never
+ *  a second day either: `today` comes from `useLocalToday`, the one read the
+ *  card tag and the pulse strip already bucket against. Read from the UTC day
+ *  instead, this line said "due in 1d" beside a card reading "due in 2d" for
+ *  every reader whose day differs from UTC. */
 function DueNote({ dueAt, today }: { dueAt: string; today: string }) {
   const due = dueInfo(dueAt, today);
   if (!due) return null;
@@ -227,6 +231,11 @@ export function SinceLastLook({
   /** Parsed once per stored string: `getSnapshot` has to return a stable value,
    *  so the store hands back the raw text and the parse happens here. */
   const record = useMemo(() => parseLastLook(raw, scope), [raw, scope]);
+  /** The day a named row's deadline is measured against — the reader's own,
+   *  swapped in as part of hydration exactly as the board does it. Read here
+   *  rather than beside the render below because it is a hook, and hooks run
+   *  before this component's early returns. */
+  const today = useLocalToday();
 
   const settled = useRef(false);
   /** One clock read for the mount — the marker's label is "today"/"yesterday"
@@ -266,7 +275,6 @@ export function SinceLastLook({
     }
   }, [rows, record, scope, storageKey, partial]);
 
-  const today = todayISO();
   const scopeNote = partial ? `newest ${rows.length} of ${total} rows` : null;
 
   /**

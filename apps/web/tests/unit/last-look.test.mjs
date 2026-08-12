@@ -10,6 +10,10 @@
  *  - a sync touch is not a change: a status that lands in the same column
  *    produces nothing, which is what keeps `updated_at`-shaped noise out;
  *  - a deadline the user typed is never news (`due_source: "user"`);
+ *  - a board that was RE-DATED is not a board of new deadlines: a deadline is
+ *    measured against its own row's filed day, so a pass that moves both by the
+ *    same number of days has moved nothing (/demo re-dates its offset fixtures
+ *    onto the reader's local day, `lib/demo/redate.ts`);
  *  - under a partial board, a row that scrolled INTO the loaded window is not
  *    a row that arrived — `floor` suppresses it rather than guessing;
  *  - one entry per row, so the ledger's own counts cannot double-count;
@@ -48,6 +52,34 @@ const BOARD = [
   row(2, "interviewing", "2026-08-04"),
   row(3, "closed", "2026-07-02"),
 ];
+
+/** The same board with one mail-read deadline on it — the only rows the
+ *  deadline claim can be about. */
+const DATED = [
+  BOARD[0],
+  row(2, "interviewing", "2026-08-04", {
+    dueAt: "2026-08-13T23:59:59Z",
+    dueSource: "mail",
+  }),
+  BOARD[2],
+];
+
+/** The calendar day of `value`, moved `days` on; everything after the day is
+ *  left exactly as it was. */
+function shiftDay(value, days) {
+  const moved = new Date(Date.parse(`${value.slice(0, 10)}T00:00:00Z`) + days * 86_400_000);
+  return `${moved.toISOString().slice(0, 10)}${value.slice(10)}`;
+}
+
+/** Every row's filed day AND its deadline moved by the same `days` — what
+ *  /demo's re-dating pass does to a store built for a different day. */
+function reDated(rows, days) {
+  return rows.map((current) => ({
+    ...current,
+    filed: shiftDay(current.filed, days),
+    ...(typeof current.dueAt === "string" ? { dueAt: shiftDay(current.dueAt, days) } : {}),
+  }));
+}
 
 test("snapshotOf: ids and stage words only — no company, role or note", () => {
   const snap = snapshotOf(BOARD, SCOPE, 1_000, false);
@@ -136,6 +168,107 @@ test("a deadline counts only when the classifier read it out of mail", () => {
 
   // The same mail-read date, already known, says nothing the second time.
   assert.deepEqual(changesSince(mailRead, snapshotOf(mailRead, SCOPE, 1_000, false)), []);
+});
+
+test("snapshotOf: a stored deadline carries the filed day it is measured against", () => {
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  assert.deepEqual(snap.rows, {
+    1: { s: "applied" },
+    2: { s: "interviewing", d: "2026-08-13T23:59:59Z", f: "2026-08-04" },
+    3: { s: "closed" },
+  });
+  // `f` measures `d` and nothing else, so a row with no deadline stores none.
+});
+
+test("a board re-dated onto another day is not a board of new deadlines", () => {
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  // BOTH directions, because both happen: /demo's re-dating moves its fixtures
+  // a day EARLIER for a reader west of UTC and a day LATER for one far enough
+  // east, and at any instant one of those two is what a reader is getting.
+  assert.deepEqual(changesSince(reDated(DATED, -1), snap), []);
+  assert.deepEqual(changesSince(reDated(DATED, 1), snap), []);
+  // Across a year boundary too, where the day strings look nothing alike.
+  const newYear = [
+    row(1, "interviewing", "2026-12-28", {
+      dueAt: "2026-12-31T23:59:59Z",
+      dueSource: "mail",
+    }),
+  ];
+  const turned = snapshotOf(newYear, SCOPE, 1_000, false);
+  assert.deepEqual(changesSince(reDated(newYear, 1), turned), []);
+  assert.deepEqual(changesSince(reDated(newYear, -1), turned), []);
+});
+
+test("a deadline that moves while its row stays put is still news", () => {
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  const moved = [
+    BOARD[0],
+    row(2, "interviewing", "2026-08-04", {
+      dueAt: "2026-08-14T23:59:59Z",
+      dueSource: "mail",
+    }),
+    BOARD[2],
+  ];
+  const entries = changesSince(moved, snap);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "deadline");
+  assert.equal(entries[0].dueAt, "2026-08-14T23:59:59Z");
+});
+
+test("a deadline that moves further than its row is news", () => {
+  // The row moved one day, its deadline two: the deadline moved relative to the
+  // row that carries it, which is the fact the ledger reports.
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  const drifted = [
+    row(2, "interviewing", "2026-08-05", {
+      dueAt: "2026-08-15T23:59:59Z",
+      dueSource: "mail",
+    }),
+  ];
+  const entries = changesSince(drifted, snap);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "deadline");
+});
+
+test("a deadline the snapshot never knew is news however the board is dated", () => {
+  // The suppression above can only ever silence a date the snapshot HELD. A row
+  // that gained its first mail-read deadline says so on any day basis.
+  const snap = snapshotOf(BOARD, SCOPE, 1_000, false);
+  const entries = changesSince(reDated(DATED, -1), snap);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "deadline");
+  assert.equal(entries[0].id, 2);
+});
+
+test("the granularity is the calendar day, here as everywhere else", () => {
+  // `deadline.ts`: every surface renders and buckets the DAY a deadline states.
+  // An instant that moves inside one day changes nothing the board can show, so
+  // the ledger does not announce it — the same rule that keeps `interview` →
+  // `interviewing` out of "moved".
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  const sameDay = [
+    BOARD[0],
+    row(2, "interviewing", "2026-08-04", {
+      dueAt: "2026-08-13T09:00:00Z",
+      dueSource: "mail",
+    }),
+    BOARD[2],
+  ];
+  assert.deepEqual(changesSince(sameDay, snap), []);
+});
+
+test("a stored deadline with no filed day compares the dates outright", () => {
+  // A record can only reach this shape if the row's filed date was unusable
+  // when the snapshot was taken. There is then nothing to measure the deadline
+  // against, so the ledger reports the difference rather than guessing silence.
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  const unanchored = {
+    ...snap,
+    rows: { ...snap.rows, 2: { s: "interviewing", d: "2026-08-13T23:59:59Z" } },
+  };
+  const entries = changesSince(reDated(DATED, -1), unanchored);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "deadline");
 });
 
 test("one entry per row: a row that moved AND gained a deadline is one move", () => {
@@ -253,6 +386,37 @@ test("the seed flag survives a round-trip and is never invented", () => {
   const seeded = { ...snap, seed: true };
   assert.equal(parseLastLook(JSON.stringify(seeded), SCOPE).seed, true);
   assert.equal(parseLastLook(JSON.stringify({ ...snap, seed: "yes" }), SCOPE).seed, undefined);
+});
+
+test("parseLastLook: the filed day round-trips, and never travels without a date", () => {
+  const snap = snapshotOf(DATED, SCOPE, 1_000, false);
+  assert.deepEqual(parseLastLook(JSON.stringify(snap), SCOPE).rows["2"], {
+    s: "interviewing",
+    d: "2026-08-13T23:59:59Z",
+    f: "2026-08-04",
+  });
+  const messy = parseLastLook(
+    JSON.stringify({
+      ...snap,
+      rows: {
+        // A filed day with no deadline measures nothing, and a non-string one
+        // is not a day: both are dropped, and the row survives without them.
+        1: { s: "applied", f: "2026-08-10" },
+        2: { s: "interviewing", d: "2026-08-13T23:59:59Z", f: 7 },
+      },
+    }),
+    SCOPE,
+  );
+  assert.deepEqual(messy.rows, {
+    1: { s: "applied" },
+    2: { s: "interviewing", d: "2026-08-13T23:59:59Z" },
+  });
+});
+
+test("the version bump: a record written before deadlines carried a filed day is absent", () => {
+  assert.equal(LAST_LOOK_VERSION, 2);
+  const v1 = { v: 1, scope: SCOPE, at: 1_000, floor: null, rows: { 1: { s: "applied" } } };
+  assert.equal(parseLastLook(JSON.stringify(v1), SCOPE), null);
 });
 
 test("parseLastLook round-trips a partial board's floor", () => {

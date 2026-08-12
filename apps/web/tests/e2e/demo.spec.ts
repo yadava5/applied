@@ -49,10 +49,18 @@ function syncSurface(page: Page) {
 async function seedPriorVisit(page: Page): Promise<void> {
   await page.addInitScript(() => {
     if (window.localStorage.getItem("applied:lastlook:demo") !== null) return;
-    const dueDay = (days: number) =>
-      `${new Date(Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`) + days * 86_400_000)
-        .toISOString()
-        .slice(0, 10)}T23:59:59Z`;
+    // ONE anchor day, with every date below written as an offset from it —
+    // the same shape `demoData.ts` seeds the fixtures with. Which day the
+    // anchor IS does not matter (this one is UTC; the board re-dates itself
+    // onto the reader's local day when the two differ): a stored deadline is
+    // measured against its own row's filed day, so a record written in one day
+    // basis reads correctly against a board settled in another. What matters
+    // is that a row's `d` and `f` come from the SAME anchor, which is why they
+    // share one.
+    const anchor = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    const day = (offset: number) =>
+      new Date(anchor + offset * 86_400_000).toISOString().slice(0, 10);
+    const dueDay = (offset: number) => `${day(offset)}T23:59:59Z`;
     // Fixture ids 1–17 under the board's column words, minus 13 (Copperline)
     // and 14 (Waypoint Robotics) — the two "filed" rows. Id 1 (Northstar, now
     // interviewing) sits at applied; id 16 (Kestrel) carries no deadline yet.
@@ -73,14 +81,21 @@ async function seedPriorVisit(page: Page): Promise<void> {
       16: "interviewing",
       17: "interviewing",
     };
-    const rows: Record<string, { s: string; d?: string }> = {};
+    const rows: Record<string, { s: string; d?: string; f?: string }> = {};
     for (const [id, s] of Object.entries(stages)) rows[id] = { s };
+    // A deadline never travels without the filed day it is measured against —
+    // the record `snapshotOf` writes carries both, and so must this one, or the
+    // ledger has nothing to tell a re-dated board from a board of new dates.
+    // The filed offsets are the fixtures' own (`demoData.ts`: a15 filed 1 day
+    // ago, a17 filed 7).
     rows["15"].d = dueDay(9);
+    rows["15"].f = day(-1);
     rows["17"].d = dueDay(-2);
+    rows["17"].f = day(-7);
     window.localStorage.setItem(
       "applied:lastlook:demo",
       JSON.stringify({
-        v: 1,
+        v: 2,
         scope: "demo",
         at: Date.now() - 15 * 60 * 60 * 1000,
         floor: null,

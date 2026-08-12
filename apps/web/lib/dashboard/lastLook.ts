@@ -17,8 +17,11 @@
  *                    `interview` → `interviewing` is the same column and is
  *                    therefore not a change.
  *   · **deadline** — a row that gained (or was given a different) `due_at`
- *                    that the classifier read out of mail. `due_source: "user"`
- *                    is excluded on purpose: a deadline you typed is not news.
+ *                    that the classifier read out of mail, measured against the
+ *                    row's OWN filed day rather than against the bare date, so
+ *                    that re-dating a whole board cannot read as news (see
+ *                    `reDatedWithTheRow`). `due_source: "user"` is excluded on
+ *                    purpose: a deadline you typed is not news.
  *
  * Rejected, with reasons, because each would be a signal we cannot honestly
  * support:
@@ -46,8 +49,16 @@
  * sides of that comparison are server-origin day strings.
  */
 
-/** Bump when the record's shape changes; an older record reads as absent. */
-export const LAST_LOOK_VERSION = 1;
+/**
+ * Bump when the record's shape changes; an older record reads as absent.
+ *
+ * 2 — a stored deadline now travels with the filed day it is measured against
+ * (`f`). A version-1 record carries no such day, so it would have no way to
+ * tell a re-dated board from a board of new deadlines, and would report the
+ * whole fixture set as news exactly once more. Reading it as absent lays a
+ * fresh baseline instead, which is the honest first-visit path.
+ */
+export const LAST_LOOK_VERSION = 2;
 
 /** The signed-in board's marker. The record names the user it belongs to. */
 export const LAST_LOOK_KEY = "applied:lastlook";
@@ -90,6 +101,12 @@ export interface LastLookRow {
   s: string;
   /** due_at, only when the classifier read it out of mail */
   d?: string;
+  /**
+   * The row's filed day, written ONLY beside `d` — it exists to give that
+   * deadline something of the row's own to be measured against, and a row with
+   * no stored deadline never reaches that comparison. See `reDatedWithTheRow`.
+   */
+  f?: string;
 }
 
 /**
@@ -155,6 +172,62 @@ function day(value: string | null | undefined): string | null {
   return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** UTC-midnight epoch of a calendar-day prefix, so two days can be subtracted.
+ *  `Date.UTC` reads no clock and no zone, so this stays a pure function of the
+ *  characters in the string — the rule `dates.ts` exists to enforce. */
+function dayEpoch(value: string | null | undefined): number | null {
+  const parts = day(value);
+  if (parts === null) return null;
+  const month = Number(parts.slice(5, 7));
+  const dayOfMonth = Number(parts.slice(8, 10));
+  if (month < 1 || month > 12 || dayOfMonth < 1 || dayOfMonth > 31) return null;
+  return Date.UTC(Number(parts.slice(0, 4)), month - 1, dayOfMonth);
+}
+
+/** Whole calendar days from `from` to `to`, or null if either is unusable. */
+function dayShift(from: string | null | undefined, to: string | null | undefined): number | null {
+  const start = dayEpoch(from);
+  const end = dayEpoch(to);
+  if (start === null || end === null) return null;
+  return Math.round((end - start) / DAY_MS);
+}
+
+/**
+ * Did the whole ROW move onto another day, deadline and filed date together?
+ *
+ * A deadline is news because it moved relative to the row that carries it, and
+ * both sides of that measurement come from one board. A pass that RE-DATES a
+ * board shifts a row's filed day and its deadline by the same number of days —
+ * /demo re-dates its offset fixtures onto the reader's local day the moment
+ * hydration learns what that day is (`lib/demo/redate.ts`), and its baseline
+ * snapshot is taken against the UTC-dated store — so nothing about the deadline
+ * has changed and there is nothing to report. Without this, every mail-sourced
+ * deadline on that board read as newly gained on the next visit: the ledger
+ * announcing news that did not happen, which is the one thing it exists to
+ * prevent.
+ *
+ * It can only ever SILENCE a claim, never invent one — the caller has already
+ * established that the stored date and the current one differ — and on a board
+ * whose filed days do not move (every real one) a filed shift of 0 forces a due
+ * shift of 0, which is the "the date is unchanged" case the caller has already
+ * ruled out. So this is strictly more conservative than comparing the dates
+ * outright, and no true deadline change on a live board can reach it.
+ *
+ * The granularity is the calendar day, deliberately: the same rule `deadline.ts`
+ * states for every surface that renders a deadline. A `due_at` that moves within
+ * one day changes nothing the board can show, and the ledger never claims a
+ * change the board does not render — the same argument that keeps `interview` →
+ * `interviewing` out of "moved".
+ */
+function reDatedWithTheRow(previous: LastLookRow, filed: string, dueAt: string): boolean {
+  if (previous.d === undefined || previous.f === undefined) return false;
+  const dueMoved = dayShift(previous.d, dueAt);
+  const rowMoved = dayShift(previous.f, filed);
+  return dueMoved !== null && rowMoved !== null && dueMoved === rowMoved;
+}
+
 /**
  * The oldest day the loaded rows can see, or `null` when the rows ARE the
  * whole account (`partial: false`) and absence is therefore conclusive.
@@ -179,7 +252,15 @@ export function snapshotOf(
   const stored: Record<string, LastLookRow> = {};
   for (const row of rows) {
     const mailDue = row.dueSource === "mail" && typeof row.dueAt === "string" ? row.dueAt : null;
-    stored[String(row.id)] = mailDue === null ? { s: row.stage } : { s: row.stage, d: mailDue };
+    if (mailDue === null) {
+      stored[String(row.id)] = { s: row.stage };
+      continue;
+    }
+    // The filed day rides along with the deadline, never on its own: it is what
+    // the deadline is measured against next time (`reDatedWithTheRow`).
+    const filed = day(row.filed);
+    stored[String(row.id)] =
+      filed === null ? { s: row.stage, d: mailDue } : { s: row.stage, d: mailDue, f: filed };
   }
   return { v: LAST_LOOK_VERSION, scope, at, floor: floorOf(rows, partial), rows: stored };
 }
@@ -201,9 +282,15 @@ export function parseLastLook(raw: string | null | undefined, scope: string): La
     const rows: Record<string, LastLookRow> = {};
     for (const [id, value] of Object.entries(data.rows)) {
       if (typeof value !== "object" || value === null) continue;
-      const { s, d } = value as Partial<LastLookRow>;
+      const { s, d, f } = value as Partial<LastLookRow>;
       if (typeof s !== "string") continue;
-      rows[id] = typeof d === "string" ? { s, d } : { s };
+      if (typeof d !== "string") {
+        // A filed day with no deadline beside it measures nothing — dropped, so
+        // what comes back out of storage is the shape `snapshotOf` writes.
+        rows[id] = { s };
+        continue;
+      }
+      rows[id] = typeof f === "string" ? { s, d, f } : { s, d };
     }
     return {
       v: LAST_LOOK_VERSION,
@@ -272,7 +359,11 @@ export function changesSince(
       continue;
     }
 
-    if (mailDue !== null && previous.d !== mailDue) {
+    if (
+      mailDue !== null &&
+      previous.d !== mailDue &&
+      !reDatedWithTheRow(previous, row.filed, mailDue)
+    ) {
       deadlines.push({
         id: row.id,
         company: row.company,
