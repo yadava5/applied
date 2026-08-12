@@ -194,3 +194,36 @@ routers not yet mounted in `main_cloud` — the full-model classifier story is
 carried by the ML demo (`ml/demo`, Hugging Face Spaces) and the web `/demo`
 fixture. Until an owner completes Path C's Google setup, the deployed
 `/settings` page honestly reports Gmail as "not enabled on this deployment."
+
+## Which commits deploy
+
+Both Vercel projects build from this one repo, so every commit used to trigger
+two deployments — including workflow bumps and backend dependency updates that
+can change neither bundle. `vercel-ignore-build.sh` is now the Ignored Build
+Step for both, wired up through `ignoreCommand`:
+
+| Project          | Root Directory | Config                | Builds when these change                                             |
+| ---------------- | -------------- | --------------------- | -------------------------------------------------------------------- |
+| `jobtracker-api` | repo root      | `vercel.json`         | `api/`, `requirements.txt`, `backend/jobtracker/`, `vercel.json`, `.vercelignore` |
+| `jobtracker-web` | `apps/web`     | `apps/web/vercel.json`| `apps/web/`, `.vercelignore`                                          |
+
+`ignoreCommand` in `vercel.json` overrides whatever the dashboard's Ignored
+Build Step says, so the guard is version-controlled rather than a dashboard
+field — but JSON has no comments, and the exit codes are inverted (`exit 0`
+skips, `exit 1` builds). **The reasoning lives in the header of
+`vercel-ignore-build.sh`; read it before touching either config.** The path
+lists are an allowlist: a new build input that is not added there will never
+deploy.
+
+Dependabot branches are still skipped by branch-name prefix, exactly as before.
+A branch's first preview always builds, so the e2e browser pass always has a
+preview URL.
+
+Two things this does **not** do. It does not lower the Hobby plan's
+100-deployments-per-day count: Vercel's docs are explicit that "canceled builds
+are counted as full deployments … and will still count towards your deployment
+quotas and concurrent build slots." What it saves is build minutes and the
+single Hobby concurrent-build slot (seconds instead of a full Next.js build),
+and it stops no-op commits from replacing a good production deployment. And it
+does not replace `git.deploymentEnabled`, which is the only repo-side setting
+that stops a deployment from being *created* at all.
