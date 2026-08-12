@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Generate and update evaluation baselines for a versioned dataset.
 #
+# This covers two of the three committed baselines: rules, and hybrid under the
+# `deterministic` profile that CI gates on. The third -- baseline_cascade_v3.json,
+# the cascade with its learned layers actually answering -- is written by
+# `scripts/cascade_gate.sh --update-baseline`, because it needs a SetFit
+# checkpoint and a data directory isolated from anyone's mail. Passing
+# `--hybrid-profile full` here does NOT produce it: it would overwrite the
+# deterministic baseline that backend-ci.yml compares against, and the evaluator
+# then refuses the comparison as a profile mismatch.
+#
 # Examples:
 #   scripts/generate_eval_baselines.sh --version 3
 #   scripts/generate_eval_baselines.sh --version 3 --skip-hybrid
