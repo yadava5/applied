@@ -512,12 +512,19 @@ _STAGE_RANK: dict[str, int] = {
 }
 
 # Application lifecycle status (ApplicationStatus values) by ascending progress.
-# Used to roll a stage rank up to a status and to advance monotonically.
+# Used to advance monotonically (:func:`advance_application_status`).
+#
+# NOT the same scale as ``_STAGE_RANK`` above, and since ``assessment`` became a
+# status (2026-08-12) the two no longer even share a maximum: stage ranks top
+# out at 4 (``offer``), status ranks at 5 (``accepted``). Only ``_STAGE_RANK``
+# values may be passed to :func:`_rank_to_status`; a status rank fed to it would
+# read one stage too high.
 _STATUS_RANK: dict[str, int] = {
     "applied": 1,
-    "interviewing": 2,
-    "offered": 3,
-    "accepted": 4,
+    "assessment": 2,
+    "interviewing": 3,
+    "offered": 4,
+    "accepted": 5,
 }
 
 # A stored status the mail signal must never silently override (a manual/terminal
@@ -1081,10 +1088,21 @@ class ReviewItem:
 
 
 def _rank_to_status(rank: int) -> str:
+    """Roll a ``_STAGE_RANK`` value (a mail CATEGORY's rank) up to a status.
+
+    Takes a stage rank, never a status rank — see the note on ``_STATUS_RANK``.
+    Since ``assessment`` became a status the mapping is 1:1 with the stage
+    ranks (1 applied, 2 assessment, 3 interview→interviewing, 4 offer→offered);
+    rank 2 used to fold up into ``interviewing``, which is the fold this change
+    removes.
+    """
+
     if rank >= 4:
         return "offered"
-    if rank >= 2:
+    if rank >= 3:
         return "interviewing"
+    if rank >= 2:
+        return "assessment"
     return "applied"
 
 
@@ -1408,8 +1426,11 @@ def advance_application_status(current: str, incoming: str) -> str:
     two things:
 
     - a TERMINAL status (rejected/accepted/withdrawn/ghosted) is never left, and
-    - an in-flight row only moves FORWARD (applied → interviewing → offered),
-      or to ``rejected`` on a rejection. It never downgrades.
+    - an in-flight row only moves FORWARD (applied → assessment → interviewing
+      → offered), or to ``rejected`` on a rejection. It never downgrades — so a
+      re-test mailed to a row already at ``interviewing`` leaves it there, and
+      that deadline still lands, because ``due_at`` is recomputed from the mail
+      independently of the status.
 
     What it does NOT know is who owns the row. "Never overrides a status the
     USER settled" is a separate rule that lives entirely in the callers, all in

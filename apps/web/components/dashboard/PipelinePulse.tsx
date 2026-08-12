@@ -168,10 +168,16 @@ export function PipelinePulse({
   const arrow = recent > prior ? "↑" : recent < prior ? "↓" : "→";
 
   // --- ageing (open rows only — a closed row's age answers nothing) ---------
+  //
+  // `assessment` is open, and naming it here is not optional: this is a stage
+  // ALLOW-list, not a `stageOf` lookup, so TypeScript would not have noticed
+  // its absence — assessment rows would simply have vanished from the ageing
+  // ladder and from `openTotal`. Same defect family as `stageOf`'s
+  // `?? "applied"` fallback, in a different disguise.
   const openAges = applications
     .filter((app) => {
       const stage = stageOf(app.status);
-      return stage === "applied" || stage === "interviewing";
+      return stage === "applied" || stage === "assessment" || stage === "interviewing";
     })
     .map((app) => daysBetween(filedAt(app), today));
   const ages = bucketAges(openAges);

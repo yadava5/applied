@@ -26,6 +26,12 @@
 import { todayISO } from "@/lib/dashboard/age";
 import { dueDayISO } from "@/lib/dashboard/deadline";
 
+/**
+ * The statuses the FIXTURES use — a subset of the API's vocabulary, not a
+ * mirror of it. It deliberately does not grow with `ApplicationStatus`: adding
+ * `assessment` here would type-check while no fixture used it, which is a
+ * promise the demo does not keep. It grows when a fixture is re-filed.
+ */
 export type DemoStatus = "applied" | "interviewing" | "offered" | "rejected";
 
 export interface DemoApplication {
@@ -133,9 +139,13 @@ const APPLICATION_SEEDS: DemoSeed[] = [
   // Assessments with deadlines ×3 — the landing's own opening problem ("its
   // 48-hour deadline passes unseen") demonstrated in all three states: one
   // comfortably ahead, one inside the DUE_SOON_DAYS window, one already
-  // missed. Status is `interviewing` (an assessment mail advances the row;
-  // `assessment` is a classifier category, not an API status — see
-  // lib/dashboard/status.ts), and every deadline here is mail-extracted
+  // missed. Status is `interviewing`, and as of 2026-08-12 that is STALE
+  // rather than principled: `assessment` became a real API status (see
+  // lib/dashboard/status.ts), so these three rows should be filed at it. They
+  // are deliberately left alone here because their offsets and columns are the
+  // contract `demo.spec.ts` asserts, and re-filing them is a demo change with
+  // its own e2e run — not part of the vocabulary change. Every deadline here is
+  // mail-extracted
   // (`due_source: "mail"` via the adapter): this account is auto-filed, and
   // the e2e sets/clears the one "user" deadline through the sheet instead.
   // The offsets are the contract demo.spec.ts asserts (due in 9d / due in 2d /

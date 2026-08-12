@@ -18,10 +18,14 @@
  * not cosmetic: it is what lets a later test assert this list equals the
  * endpoint's outright, instead of comparing sorted sets and missing a member.
  *
- * `assessment` is absent on purpose. It is a classifier CATEGORY that maps to
- * the `interviewing` stage (`CATEGORY_TO_STATUS`), which is what `summary.ts`
- * already does when it groups `interviewing`/`interview`/`assessment` into one
- * column; the card's old `<select>` was the only thing treating it as a stage.
+ * `assessment` is PRESENT, as of 2026-08-12, and that is a reversal: it used to
+ * be absent here on the grounds that it was only a classifier category that
+ * mapped to `interviewing`. It is a stage now — the decision and its reasons
+ * are in `CATEGORY_TO_STATUS` in `backend/jobtracker/database/models.py`, and
+ * `summary.ts` gives it a column of its own rather than folding it in. Note
+ * what that means for this file's own history: the card's old `<select>` was
+ * offering the right word for the wrong reason, and the fix was still to delete
+ * the second list, not to keep it.
  *
  * Reading `GET /applications/statuses` at runtime would close the loop
  * entirely, but it needs a proxy route (`app/api/...`) to carry the JWT, so it
@@ -35,6 +39,7 @@
 /** Every status the API's PATCH accepts, in the enum's own declaration order. */
 export const APPLICATION_STATUSES = [
   "applied",
+  "assessment",
   "interviewing",
   "offered",
   "rejected",

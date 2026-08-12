@@ -8,7 +8,14 @@
  * has exactly one implementation to audit.
  */
 import type { components } from "@/lib/api/schema";
-import { filedAt } from "@/lib/dashboard/dates";
+// Relative, not `@/lib/dashboard/dates`, and that is the whole reason this
+// module is unit-testable: `node --test` strips types but cannot resolve the
+// `@/` alias, so ONE value-import through it made the entire stage vocabulary
+// untestable — which is why `tests/unit/application-status.test.mjs` used to
+// carry a hand-written copy of `STAGES` and could not have caught a stage
+// losing its statuses. The type-only import above is erased before Node sees
+// it, so it may keep the alias.
+import { filedAt } from "./dates.ts";
 
 /**
  * A board row, as the cloud backend actually serves it. The name on the wire is
@@ -19,8 +26,8 @@ import { filedAt } from "@/lib/dashboard/dates";
  */
 export type Application = components["schemas"]["CloudApplicationResponse"];
 
-/** The four pipeline stages, in flow order, with their semantic accent. */
-export type StageKey = "applied" | "interviewing" | "offered" | "rejected";
+/** The five pipeline stages, in flow order, with their semantic accent. */
+export type StageKey = "applied" | "assessment" | "interviewing" | "offered" | "rejected";
 
 export interface StageDef {
   key: StageKey;
@@ -38,9 +45,27 @@ export const STAGES: StageDef[] = [
   // luminance fix only (measured 9.25:1 solid, 3.62:1 at the 55% wash).
   { key: "applied", label: "applied", statuses: ["applied"], color: "var(--stage-applied)" },
   {
+    // A stage of its own since 2026-08-12, and NOT folded into `interviewing`
+    // any more. The reasons are in `CATEGORY_TO_STATUS`
+    // (`backend/jobtracker/database/models.py`); the reason it matters HERE is
+    // `stageOf`'s `?? "applied"` fallback: leaving `assessment` out of every
+    // stage would not fail a build, it would quietly file every assessment row
+    // under `applied` — the same bug `ghosted` had, documented four lines down.
+    //
+    // Colour: the sky of the viz sub-palette. The board already borrows that
+    // palette for its chromatic stages (`interviewing` is the embeddings
+    // purple), and the alternative — `--amber` — already means "needs your
+    // attention" everywhere else in this dashboard, including the pulse's
+    // "due ≤7d" rung that assessment rows will populate.
+    key: "assessment",
+    label: "assessment",
+    statuses: ["assessment"],
+    color: "var(--viz-rules)",
+  },
+  {
     key: "interviewing",
     label: "interviewing",
-    statuses: ["interviewing", "interview", "assessment"],
+    statuses: ["interviewing", "interview"],
     color: "var(--viz-embeddings)",
   },
   { key: "offered", label: "offered", statuses: ["offered", "offer", "accepted"], color: "var(--green)" },
@@ -86,13 +111,16 @@ export function qualifierOf(status: string): string | null {
 export interface PipelineSummary {
   total: number;
   thisWeek: number;
-  /** applied + interviewing — live, not-yet-resolved applications. */
+  /** applied + assessment + interviewing — live, not-yet-resolved applications. */
   inMotion: number;
   /** offered + accepted. */
   offers: number;
   /** rejected + withdrawn. */
   closed: number;
-  /** Share of applications that advanced past "applied" (interviewing+offered). */
+  /**
+   * Share of applications that advanced past "applied"
+   * (assessment + interviewing + offered).
+   */
   advancedPct: number;
   /** Per-stage counts, in flow order. */
   stages: { stage: StageDef; count: number }[];
@@ -117,6 +145,7 @@ export function summarizeCounts(
 ): PipelineSummary {
   const counts: Record<StageKey, number> = {
     applied: 0,
+    assessment: 0,
     interviewing: 0,
     offered: 0,
     rejected: 0,
@@ -126,13 +155,20 @@ export function summarizeCounts(
   for (const [status, n] of Object.entries(statusCounts)) {
     const stage = stageOf(status);
     counts[stage] += n;
-    if (stage === "interviewing" || stage === "offered") advanced += n;
+    // `assessment` counts as ADVANCED: the employer answered and asked for
+    // something, which is precisely what "past applied" means. Excluding it
+    // would make the number fall on the day the stage shipped, for rows that
+    // did not move — the old fold counted them under `interviewing`.
+    if (stage === "assessment" || stage === "interviewing" || stage === "offered") advanced += n;
   }
 
   return {
     total,
     thisWeek,
-    inMotion: counts.applied + counts.interviewing,
+    // `assessment` is IN MOTION: an unmet deadline is the most live an
+    // application ever gets. It is not resolved, so it is not in `closed`, and
+    // the three buckets still partition the board.
+    inMotion: counts.applied + counts.assessment + counts.interviewing,
     offers: counts.offered,
     closed: counts.rejected,
     advancedPct: total > 0 ? Math.round((advanced / total) * 100) : 0,
@@ -150,6 +186,7 @@ export function summarizeCounts(
 export function stageCountsOf(summary: PipelineSummary): Record<StageKey, number> {
   const counts: Record<StageKey, number> = {
     applied: 0,
+    assessment: 0,
     interviewing: 0,
     offered: 0,
     rejected: 0,

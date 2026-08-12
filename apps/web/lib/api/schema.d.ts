@@ -751,12 +751,25 @@ export interface components {
          *     body models, ``GET /applications/statuses``, the rollup's rank tables, the
          *     web's ``<select>`` — derives from here rather than restating it, because
          *     three hand-written copies is exactly how the board came to offer a stage
-         *     (``assessment``) the API answers with a 422.
+         *     (``assessment``) that the API answered with a 422. The word is settable now;
+         *     the lesson is not about the word but about the copies.
          *
-         *     ``assessment`` is deliberately NOT a member: see :data:`CATEGORY_TO_STATUS`.
+         *     ``assessment`` IS a member, as of 2026-08-12: see :data:`CATEGORY_TO_STATUS`
+         *     for the decision and why it changed.
+         *
+         *     DECLARATION ORDER IS THE API'S ORDER. ``APPLICATION_STATUSES``, the
+         *     endpoint's list and the web's mirror all take their order from here, so a
+         *     member is inserted at its lifecycle position, never appended.
+         *
+         *     The member NAMES are what Postgres stores — SQLModel/SQLAlchemy persist an
+         *     enum's name, not its value — so the ``applicationstatus`` type holds
+         *     ``'ASSESSMENT'`` while the API speaks ``'assessment'``. Adding a member
+         *     therefore needs a migration that adds the UPPERCASE label
+         *     (``b9e42f7c10ad``), and the SQLite suites cannot see that difference because
+         *     ``sa.Enum`` renders as ``VARCHAR`` there.
          * @enum {string}
          */
-        ApplicationStatus: "applied" | "interviewing" | "offered" | "rejected" | "accepted" | "withdrawn" | "ghosted";
+        ApplicationStatus: "applied" | "assessment" | "interviewing" | "offered" | "rejected" | "accepted" | "withdrawn" | "ghosted";
         /**
          * ApplicationStatusUpdate
          * @description Body for a user's status correction (PATCH /applications/{id}).
@@ -1346,18 +1359,22 @@ export interface components {
          *
          *     Every field is DERIVED from :class:`ApplicationStatus` /
          *     :data:`CATEGORY_TO_STATUS` at import time, so this endpoint and the 422 a
-         *     bad ``PATCH`` earns cannot disagree. It exists because they did: the board
-         *     offered ``assessment``, the file-by-hand dialog offered six of the seven,
-         *     and the API accepted a different seven.
+         *     bad ``PATCH`` earns cannot disagree. It exists because they did: three
+         *     hand-written copies of the vocabulary, all different — the board's card
+         *     offered a value the API refused, the file-by-hand dialog offered fewer than
+         *     the API accepted, and only the enum was right.
          *
          *     - ``statuses`` — the settable stages, in lifecycle order. THE list.
          *     - ``default`` — what a new row starts at.
          *     - ``category_to_status`` — how a classifier verdict maps onto a stage, for
-         *       a client that wants to show ``assessment`` mail under ``interviewing``.
-         *       A category absent from this map asserts no stage.
+         *       a client that wants to file mail under the stage it implies (an
+         *       ``interview`` message means the row is ``interviewing``). A category
+         *       absent from this map asserts no stage.
          *     - ``classifier_categories`` — everything the classifier can emit. A
          *       SUPERSET of the mapping's keys and NOT interchangeable with ``statuses``;
-         *       confusing the two is the original defect.
+         *       confusing the two is the original defect. They overlap on ``applied`` and
+         *       — since 2026-08-12 — ``assessment``, which is precisely when the two get
+         *       conflated again, so both lists keep being served.
          */
         StatusVocabularyResponse: {
             /** Statuses */
