@@ -91,9 +91,10 @@ test.describe("dashboard content (via the public /demo twin)", () => {
   test("a row is an application: role is the discriminator, company repeats", async ({ page }) => {
     await page.goto("/demo");
 
-    // Northstar Systems holds three applications in two different stages.
-    // (`exact` so the "2 more at Northstar Systems" chips don't also match.)
-    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(3);
+    // Northstar Systems holds four applications in two different stages — the
+    // shape of the owner's own board, where one employer holds four requisitions.
+    // (`exact` so the "+3 at Northstar Systems" chips don't also match.)
+    await expect(page.getByText("Northstar Systems", { exact: true })).toHaveCount(4);
     await expect(page.getByText("ML Engineer", { exact: true })).toBeVisible();
     await expect(page.getByText("ML Engineer, Platform", { exact: true })).toBeVisible();
     await expect(page.getByText("Research Engineer, Applied ML", { exact: true })).toBeVisible();
@@ -103,7 +104,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
       .getByRole("button", { name: /show all applications at Northstar Systems/i })
       .first()
       .click();
-    await expect(page.getByText("3 of 17 shown")).toBeVisible();
+    await expect(page.getByText("4 of 17 shown")).toBeVisible();
     await expect(page.getByText("Harbor Analytics")).toHaveCount(0);
     // …and the filter chip clears it.
     await page.getByRole("button", { name: /stop filtering by Northstar Systems/i }).click();

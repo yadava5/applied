@@ -10,7 +10,12 @@ import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
-import { summarizeCounts, type Application, type PipelineSummary } from "@/lib/dashboard/summary";
+import {
+  stageCountsOf,
+  summarizeCounts,
+  type Application,
+  type PipelineSummary,
+} from "@/lib/dashboard/summary";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
 
@@ -366,10 +371,17 @@ export default async function DashboardPage() {
           (`layout="rail"`), after the list below it — the hidden copy leaves
           the accessibility tree with `display: none`, so the signals are never
           announced twice. */}
+      {/* `total` and `stageTotals` both come from the summary endpoint, and the
+          board's prop type makes them inseparable: the spine states the
+          ACCOUNT's per-stage counts (a `GROUP BY status` in the database), not
+          the shape of the page that happened to load. Past BOARD_PAGE_SIZE the
+          two differ, and a spine summing to the page while this subtitle says
+          the account is exactly the contradiction the scope note exists for. */}
       <PipelineBoard
         variant="locked"
         applications={state.applications}
         total={state.total}
+        stageTotals={stageCountsOf(state.summary)}
         rail={
           <PipelinePulse
             layout="rail"
