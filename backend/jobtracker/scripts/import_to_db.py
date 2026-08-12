@@ -223,15 +223,28 @@ async def check_and_trigger_retrain(stats: dict):
     """Check if SetFit training gates are met and trigger retraining."""
     from sqlalchemy import func, select
 
+    from jobtracker.classifier.setfit_model import resolve_training_user_id
     from jobtracker.database import get_session
     from jobtracker.database.models import TrainingData
+
+    # SCOPE: both the gate below and the training run it triggers read
+    # ``training_data`` for ONE user. Applied reads mail under Gmail's
+    # restricted ``gmail.readonly`` scope, whose user-data policy permits
+    # training only a model personalized to a single end user, with no
+    # co-mingling across users. This is a local import script, so the id
+    # resolves to the ``LOCAL_USER_ID`` sentinel every desktop row carries —
+    # which is also what keeps it harmless if it is ever pointed at a
+    # production DATABASE_URL. See ``setfit_model.CrossUserTrainingError``.
+    training_user_id = resolve_training_user_id()
 
     async with get_session() as session:
         result = await session.exec(
             select(
                 TrainingData.label,
                 func.count(TrainingData.id).label("count"),
-            ).group_by(TrainingData.label)
+            )
+            .where(TrainingData.user_id == training_user_id)
+            .group_by(TrainingData.label)
         )
         category_counts = {row[0]: row[1] for row in result.all()}
 
@@ -263,7 +276,7 @@ async def check_and_trigger_retrain(stats: dict):
         try:
             from jobtracker.classifier.setfit_model import get_setfit_classifier
             classifier = get_setfit_classifier()
-            await classifier.train()
+            await classifier.train(user_id=training_user_id)
             logger.info("SetFit training completed successfully!")
         except Exception as e:
             logger.error("SetFit training failed: %s", e)
