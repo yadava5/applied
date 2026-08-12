@@ -57,7 +57,11 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  *
  * The word "Re-sync" is retired. Two named actions remain:
  *   - **Sync** — additive. Checks Gmail for new mail and adds what it finds.
- *     Never removes anything.
+ *     It removes nothing for being absent from the scan — but ONE shape of row
+ *     can still leave the board (an application whose last email turned out to
+ *     be a different company's), so when the backend names removals a sync gets
+ *     the same receipt a rebuild does, with the same per-row restore. A board
+ *     that changed silently is what let 22 removals go unnoticed for two days.
  *   - **Rebuild** — destructive, behind a dialog that states its window and
  *     lists every removed row afterward with per-row restore.
  *
@@ -83,7 +87,9 @@ type SyncPhase =
   /** Additive finished — `end` says HOW. A partial end never renders as done. */
   | { kind: "synced"; note: string; end: ScanEnd }
   | { kind: "rebuilding"; startedAt: number; scopeLine: string }
-  | { kind: "receipt"; outcome: RebuildOutcome }
+  /** A run that changed the board enough to owe a receipt. `op` is which run
+   *  wrote it: a rebuild always gets one, a sync only when it removed rows. */
+  | { kind: "receipt"; op: "sync" | "rebuild"; outcome: RebuildOutcome }
   /** Additive scan broke mid-flight (disconnected / unexpected mode). */
   | { kind: "interrupted"; end: ScanEnd }
   | { kind: "failed"; op: "sync" | "rebuild"; notConnected: boolean };
@@ -208,6 +214,16 @@ export function SyncBar({
     // last one, so "nothing to file · N scanned" would imply a claim about a
     // window it never checked. Only a COMPLETE scan may say it — a partial
     // one cannot vouch that nothing new exists.
+    // A sync that took rows OFF the board owes the same receipt a rebuild
+    // owes — named rows, one click to restore each. It is rare (only a row
+    // whose last email turned out to belong to another employer), and a
+    // resting note like "2 filed" would not mention it at all.
+    const outcome = readRebuildOutcome(res.body);
+    if (outcome.removed.length > 0) {
+      setPhase({ kind: "receipt", op: "sync", outcome });
+      router.refresh();
+      return;
+    }
     const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
     const note =
       nothingFiled && hasCursor && stopKind(end.stoppedBy) === "complete"
@@ -229,7 +245,7 @@ export function SyncBar({
       }
       const outcome = readRebuildOutcome(res.body);
       writeRebuildMemory(memoryKey, Date.now() - startedAt, outcome.scanned);
-      setPhase({ kind: "receipt", outcome });
+      setPhase({ kind: "receipt", op: "rebuild", outcome });
       router.refresh();
     },
     [memoryKey, router, transport],
@@ -282,7 +298,7 @@ export function SyncBar({
     setPhase((p) => {
       if (p.kind !== "receipt") return p;
       return {
-        kind: "receipt",
+        ...p,
         outcome: {
           ...p.outcome,
           removed: p.outcome.removed.map((row) => (row.id === id ? { ...row, restored: true } : row)),
@@ -530,12 +546,15 @@ export function SyncBar({
 
       {phase.kind === "receipt" ? (
         <RebuildReceipt
+          op={phase.op}
           outcome={phase.outcome}
           transport={transport}
           onDismiss={() => setPhase({ kind: "idle" })}
           onRestored={restoreSucceeded}
           onContinue={() => {
-            if (lastRebuild.current) {
+            if (phase.op === "sync") {
+              void runSync();
+            } else if (lastRebuild.current) {
               void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
             }
           }}
@@ -612,7 +631,7 @@ export function SyncBar({
 // --- The receipt --------------------------------------------------------------
 
 /**
- * A rebuild that removed rows must say WHICH, and every removal must be
+ * A run that removed rows must say WHICH, and every removal must be
  * reversible right here: each row is a dismissal the backend can restore
  * (`POST /applications/{id}/restore`), which is what makes the purge
  * auditable rather than final. Amber border when rows were removed or the
@@ -621,23 +640,27 @@ export function SyncBar({
  * eye to the receipt without ever delaying reading it; reduced motion
  * renders it statically.
  *
- * The heading is the end state, not a pleasantry: a rebuild that stopped
- * early did NOT finish, and one that removed rows on a partial scan judged
- * those removals against mail it never read — both are said outright, with
- * continue as the one action.
+ * The heading is the end state, not a pleasantry: a run that stopped early did
+ * NOT finish, and one that removed rows on a partial scan judged those
+ * removals against mail it never read — both are said outright, with continue
+ * as the one action. `op` names the run in that heading, because "rebuild
+ * finished" over a removal an ordinary sync made would send the reader looking
+ * for a rebuild they never ran.
  */
 function RebuildReceipt({
+  op,
   outcome,
   transport,
   onDismiss,
   onRestored,
   onContinue,
 }: {
+  op: "sync" | "rebuild";
   outcome: RebuildOutcome;
   transport: SyncTransport;
   onDismiss: () => void;
   onRestored: (id: number) => void;
-  /** Re-runs the same rebuild (same window and depth). */
+  /** Re-runs the same operation (a rebuild keeps its window and depth). */
   onContinue: () => void;
 }) {
   const [restoringId, setRestoringId] = useState<number | null>(null);
@@ -678,12 +701,12 @@ function RebuildReceipt({
       <div className="flex items-start justify-between gap-3">
         <div>
           {endKind === "complete" ? (
-            <p className="text-xs text-live">rebuild finished · just now</p>
+            <p className="text-xs text-live">{`${op} finished · just now`}</p>
           ) : endKind === "partial" ? (
-            <p className="text-xs text-review">rebuild stopped early · just now</p>
+            <p className="text-xs text-review">{`${op} stopped early · just now`}</p>
           ) : (
             <p className="text-xs text-reject-ink">
-              rebuild interrupted · the scan {stopReasonPhrase(outcome.stoppedBy)}
+              {op} interrupted · the scan {stopReasonPhrase(outcome.stoppedBy)}
             </p>
           )}
           <p className="mt-1 text-xs text-muted">{receiptBodyLine(outcome)}</p>
