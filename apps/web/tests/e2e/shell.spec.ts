@@ -250,6 +250,14 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(status).toContainText("2 filed, 3 already known");
     const settled = await list.boundingBox();
 
+    // The note hands the slot back — a receipt, not a state. That is a fourth
+    // routine transition and it shares the same geometry; without it the
+    // subtitle and the change ledger stayed hidden for the rest of the
+    // session, which is a product regression a shift test alone cannot see.
+    await expect(status).not.toContainText("2 filed", { timeout: 15_000 });
+    await expect(page.getByText("19 filed · 16 open · 0 offers")).toBeVisible();
+    const restored = await list.boundingBox();
+
     expect(
       Math.abs((checking?.y ?? 0) - (idle?.y ?? 0)),
       "the board moved when the checking line appeared",
@@ -257,6 +265,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     expect(
       Math.abs((settled?.y ?? 0) - (idle?.y ?? 0)),
       "the board moved when the sync result appeared",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs((restored?.y ?? 0) - (idle?.y ?? 0)),
+      "the board moved when the sync note decayed back to the subtitle",
     ).toBeLessThanOrEqual(1);
     expect(
       Math.abs((settled?.height ?? 0) - (idle?.height ?? 0)),

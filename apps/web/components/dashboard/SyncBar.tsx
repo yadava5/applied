@@ -113,6 +113,11 @@ const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 /** The additive clock only appears once a sync stops feeling instant. */
 const SLOW_SYNC_AFTER_MS = 8000;
 
+/** How long a finished sync's resting note keeps the status slot before the
+ *  row goes back to the board's own totals. Long enough to read one short
+ *  sentence, short enough that the totals are never gone for long. */
+const SYNCED_NOTE_MS = 6000;
+
 function recentlyAutoSynced(): boolean {
   try {
     const raw = window.sessionStorage.getItem(AUTOSYNC_KEY);
@@ -330,6 +335,21 @@ export function SyncBar({
     return () => window.clearInterval(id);
   }, [busy]);
 
+  // A finished run's note is a RECEIPT, not a state, so it decays. It has to:
+  // at `lg`+ that note takes the subtitle + ledger slot (see the header-row
+  // note below), and `synced` had no exit but the receipt dialog — which a
+  // plain sync never opens. So one press hid the board's totals and the
+  // change ledger for the rest of the session, on the signed-in dashboard as
+  // well as the demo. A partial scan is excluded on purpose: it carries a
+  // "continue the scan" control, and a control must not vanish under the
+  // cursor.
+  useEffect(() => {
+    if (phase.kind !== "synced") return;
+    if (stopKind(phase.end.stoppedBy) === "partial") return;
+    const id = window.setTimeout(() => setPhase({ kind: "idle" }), SYNCED_NOTE_MS);
+    return () => window.clearTimeout(id);
+  }, [phase]);
+
   function openDialog() {
     setMemoryLine(() => {
       const memory = readRebuildMemoryFromStorage(memoryKey);
@@ -488,6 +508,15 @@ export function SyncBar({
   // instead — every other sentence in the machine stays the product's own.
   const showRecency = connected && statusContent === null && alertContent === null;
 
+  // Whether the status borrows the subtitle + ledger slot at `lg`+. Kept as
+  // "the status is speaking at all", deliberately: narrowing it (so a partial
+  // scan or a resting failure keeps its own line instead) un-hides the
+  // subtitle and the ledger in states where a long status ALSO sits on the
+  // row, and the header wrapping to two lines costs the worklist ~30px
+  // against a 7px floor margin. No test exercises those states, so that
+  // change cannot be made safely without a fixture for them first — task #96.
+  const statusTakesSlot = statusContent !== null;
+
   return (
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
     // the sync UI") to this surface without leaning on copy or classes.
@@ -502,10 +531,15 @@ export function SyncBar({
           the whole page jump when "checking Gmail…" appeared): at `lg`+ the
           status line does not get a line of its own — it takes over the
           subtitle + ledger slot for exactly as long as it has something to
-          say, so idle → checking → result never changes the row's height.
-          The one exception is the stopped-early status, which carries a
-          "continue the scan" control and may wrap — a partial scan is an
-          exceptional state that has earned the extra line. Below `lg` the
+          say, so idle → checking → result → idle never changes the row's
+          height. "As long as it has something to say" is enforced by the
+          decay above, not merely intended: a note that never expired held
+          this slot for the rest of the session.
+          Two statuses still have no end of their own and so still hold it —
+          the stopped-early scan (it carries a "continue the scan" control)
+          and the resting "last sync failed". Both wait on the user, and both
+          therefore keep the totals hidden while they wait; see task #96,
+          which owes them a fixture before that can be changed. Below `lg` the
           row stacks and the status keeps its own line, as before. */}
       {/* `relative`: the change ledger's names panel anchors to THIS row
           (its own chip sits mid-row, where an anchored overlay ran past
@@ -515,7 +549,7 @@ export function SyncBar({
           <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
         ) : null}
         <p
-          className={`tabular shrink-0 text-[13px] text-muted ${statusContent !== null ? "lg:hidden" : ""}`}
+          className={`tabular shrink-0 text-[13px] text-muted ${statusTakesSlot ? "lg:hidden" : ""}`}
         >
           {subtitle}
         </p>
@@ -523,7 +557,7 @@ export function SyncBar({
             own fixed flex-basis, so hydration can never re-wrap the row (the
             board below must not move when the ledger finds its words). */}
         {since ? (
-          <div className={`min-w-0 flex-1 basis-40 ${statusContent !== null ? "lg:hidden" : ""}`}>
+          <div className={`min-w-0 flex-1 basis-40 ${statusTakesSlot ? "lg:hidden" : ""}`}>
             {since}
           </div>
         ) : null}

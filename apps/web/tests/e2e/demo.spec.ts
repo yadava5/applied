@@ -186,7 +186,14 @@ test.describe("live demo (/demo)", () => {
     // …and the board actually gained the two filed fixture rows.
     await expect(page.getByRole("region", { name: /applied — 12/i })).toBeVisible();
     await expect(page.getByText("Twitch", { exact: true })).toBeVisible();
-    await expect(page.getByText("19 filed · 16 open · 0 offers")).toBeVisible();
+    // …and the totals come BACK. At `lg`+ the note borrows this exact slot so
+    // the row never grows (shell.spec's zero-shift test guards that half), and
+    // the note has to hand it back: with no decay, one sync hid the board's
+    // totals and the change ledger for the rest of the session. The wait is
+    // longer than SYNCED_NOTE_MS on purpose — this asserts the release.
+    await expect(page.getByText("19 filed · 16 open · 0 offers")).toBeVisible({
+      timeout: 15_000,
+    });
 
     // A second sync has nothing new, and the cursored zero case says exactly
     // that — never a claim about a window it did not check.
