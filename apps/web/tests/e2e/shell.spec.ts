@@ -52,6 +52,20 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       client: document.documentElement.clientHeight,
     }));
 
+  /**
+   * The dashboard's own H1 — `exact` and `level` on purpose. This shell tree
+   * legitimately holds a SECOND heading whose name contains "pipeline": the
+   * rail snapshot's h2 (`RailPipeline`), and Playwright's default role-name
+   * matching is case-insensitive substring, so the loose form resolved to
+   * both at desktop widths (and to one at 375, where the display:none rail
+   * leaves the accessibility tree) — a strict-mode violation that poisoned
+   * every geometry test in this describe on its first CI run. If a duplicate
+   * H1 ever appears, it should fail the one assertion that counts things,
+   * not every wait-for-load line.
+   */
+  const pageHeading = (page: Page) =>
+    page.getByRole("heading", { level: 1, name: "Pipeline", exact: true });
+
   for (const viewport of [
     { width: 1280, height: 800 },
     { width: 1024, height: 768 }, // the lg boundary itself — the lock's smallest desktop
@@ -63,7 +77,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       const watch = startConsoleWatch(page);
       await page.setViewportSize(viewport);
       await page.goto("/demo/shell");
-      await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+      await expect(pageHeading(page)).toBeVisible();
 
       const doc = await docHeights(page);
       expect(
@@ -80,7 +94,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    await expect(pageHeading(page)).toBeVisible();
 
     // <main> fits its content exactly: header, notices and spine hold still.
     // This is the assertion that catches the failure the document-level lock
@@ -109,13 +123,18 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
   test("the pulse lives in the shell rail — exactly one copy in the tree", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    await expect(pageHeading(page)).toBeVisible();
 
-    // One rendered pulse, inside the <aside> rail — not a board slot, and no
-    // display-none twin waiting under the list (the pre-move arrangement).
+    // One rendered pulse, inside the shell rail — and provably NOT back in
+    // the board's stage spine (the pre-move slot; the spine is the page's
+    // other <aside>, named "Stages") nor as a display-none twin under the
+    // list (the pre-move duplicate).
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
     await expect(page.locator("aside").getByTestId("pipeline-pulse")).toBeVisible();
+    await expect(
+      page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
+    ).toHaveCount(0);
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
 
     // Below md the rail collapses and the pulse goes with it — a deliberate
@@ -138,7 +157,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     });
     await page.setViewportSize(MOBILE_375);
     await page.goto("/demo/shell");
-    await expect(page.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    await expect(pageHeading(page)).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
     const doc = await docHeights(page);
