@@ -17,7 +17,6 @@
  * this feature hard — `needs_employer: true`, a 2xx that filed nothing — so
  * the e2e exercises the branch that matters instead of only the happy path.
  */
-import { DEMO_SCAN_MINE, demoClassifyOutcome } from "@/lib/demo/scanMine";
 import type { ClassifyRequestBody } from "@/lib/dashboard/review";
 import type { InboxPage, InboxVerdict, PipelineAnalysis } from "@/lib/gmail/types";
 import type { SyncCounts } from "@/lib/gmail/sync-state";
@@ -134,13 +133,27 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The fixtures are loaded with a DYNAMIC import, and that is not decoration.
+ *
+ * `ReclassifyControl` and `InboxWorkbench` both pull this module, and both
+ * render on the signed-in `/inbox`. A top-level `import` of the fixture mail
+ * therefore shipped six invented emails into the bundle of every reader who has
+ * never opened `/demo/scan` — measured in the production build: the chunk
+ * carrying `InboxWorkbench` also carried "Your HackerRank assessment…". Behind
+ * an `await import()` the fixtures are their own chunk, fetched only when the
+ * demo transport actually runs.
+ */
 const demo: ScanTransport = {
   mode: "demo",
   async fetchPage() {
     // Long enough that the progress bar renders and can be asserted; no
     // network, no Gmail, no classifier — the verdicts are fixtures.
     await delay(120);
-    const verdicts = DEMO_SCAN_MINE;
+    const { demoScanMine } = await import("@/lib/demo/scanMine");
+    // Dated per mine rather than at module load: a frozen resolution shows
+    // whatever day the server booted on.
+    const verdicts = demoScanMine();
     const summary: Record<string, number> = {};
     for (const v of verdicts) summary[v.category] = (summary[v.category] ?? 0) + 1;
     const page: InboxPage = {
@@ -179,6 +192,7 @@ const demo: ScanTransport = {
   },
   async classify(messageId, body) {
     await delay(150);
+    const { demoClassifyOutcome } = await import("@/lib/demo/scanMine");
     return { ok: true, body: demoClassifyOutcome(messageId, body) };
   },
 };

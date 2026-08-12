@@ -132,9 +132,6 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
   ];
 }
 
-/** The fixture mine at module scope, for a caller with no clock of its own. */
-export const DEMO_SCAN_MINE: InboxVerdict[] = demoScanMine();
-
 /** Can an employer be read out of this sender, the way the backend reads one? */
 function employerFrom(senderEmail: string): string | null {
   const host = senderEmail.split("@")[1]?.toLowerCase() ?? "";
@@ -157,10 +154,14 @@ export function demoClassifyOutcome(
   messageId: string,
   body: ClassifyRequestBody,
 ): Record<string, unknown> {
-  const row = DEMO_SCAN_MINE.find((v) => v.message_id === messageId);
   const files = FILING_CATEGORIES.has(body.category);
+  // Read from the REQUEST, never from a copy of the mine held here. Every
+  // storable scan row sends `message` (and a row that cannot build one shows no
+  // control at all), so this is the same information the real backend resolves
+  // the employer from — and it keeps this module free of any state the
+  // transport would have to keep in step with.
   const employer =
-    employerFrom(body.message?.sender_email ?? row?.sender_email ?? "") ??
+    employerFrom(body.message?.sender_email ?? "") ??
     (body.company?.trim() ? body.company.trim() : null);
 
   if (files && !employer) {
