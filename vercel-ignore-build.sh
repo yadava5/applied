@@ -14,6 +14,22 @@
 # one question per project: did this commit touch anything the project
 # actually builds from?
 #
+# What it does NOT do is lower the Hobby plan's 100-deployments-per-day cap.
+# Vercel's docs are explicit, and this is the opposite of the intuitive
+# reading, so it is written down here rather than re-derived later:
+#
+#   "Canceled builds are counted as full deployments as they execute a build
+#    command in the build step. This means that any canceled builds initiated
+#    using the ignore build step will still count towards your deployment
+#    quotas and concurrent build slots."
+#   -- https://vercel.com/docs/project-configuration/project-settings#ignored-build-step
+#
+# What a skip here buys is build minutes, the single Hobby concurrent-build
+# slot released in well under a second instead of a full Next.js build, and a
+# production deployment that no-op commits stop replacing. Cutting the
+# *number* of deployments needs `git.deploymentEnabled`, which lives in both
+# vercel.json files and stops one being created at all.
+#
 # ---------------------------------------------------------------------------
 # EXIT CODES ARE INVERTED. READ THIS BEFORE EDITING.
 # ---------------------------------------------------------------------------
@@ -91,9 +107,16 @@ project="${1:-}"
 # Preserved from the previous dashboard command, which was
 #   if [ "${VERCEL_GIT_COMMIT_REF#dependabot/}" != "$VERCEL_GIT_COMMIT_REF" ]; ...
 # i.e. a plain prefix match on the branch name. Dependabot branches are
-# lockfile churn; their previews are not worth a deployment. This does nothing
-# once the PR is merged, because the merge lands on main — which is the gap the
-# path filtering below closes.
+# dependency churn; their previews are not worth a deployment. This does
+# nothing once the PR is merged, because the merge lands on main — which is the
+# gap the path filtering below closes.
+#
+# This is now a BACKSTOP, not the primary mechanism. `git.deploymentEnabled`
+# in both vercel.json files stops Dependabot deployments from being *created*
+# at all, which is the only thing that actually saves quota — reaching this
+# branch of the script means a deployment was created anyway, so skip it.
+# Note the prefix match here is on the whole ref and is not glob-based, so
+# unlike the minimatch patterns in vercel.json it needs no `**`.
 case "${VERCEL_GIT_COMMIT_REF:-}" in
   dependabot/*)
     log "branch ${VERCEL_GIT_COMMIT_REF} is a Dependabot branch; skipping"

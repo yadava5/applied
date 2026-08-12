@@ -215,15 +215,66 @@ skips, `exit 1` builds). **The reasoning lives in the header of
 lists are an allowlist: a new build input that is not added there will never
 deploy.
 
-Dependabot branches are still skipped by branch-name prefix, exactly as before.
 A branch's first preview always builds, so the e2e browser pass always has a
 preview URL.
 
-Two things this does **not** do. It does not lower the Hobby plan's
-100-deployments-per-day count: Vercel's docs are explicit that "canceled builds
-are counted as full deployments … and will still count towards your deployment
-quotas and concurrent build slots." What it saves is build minutes and the
-single Hobby concurrent-build slot (seconds instead of a full Next.js build),
-and it stops no-op commits from replacing a good production deployment. And it
-does not replace `git.deploymentEnabled`, which is the only repo-side setting
-that stops a deployment from being *created* at all.
+### The ignore step does not save quota — read this before "optimising" it
+
+An Ignored Build Step skip still costs a deployment. This is the opposite of
+the intuitive reading, so here it is verbatim, from
+<https://vercel.com/docs/project-configuration/project-settings#ignored-build-step>:
+
+> Canceled builds are counted as full deployments as they execute a build
+> command in the build step. This means that any canceled builds initiated
+> using the ignore build step will still count towards your deployment quotas
+> and concurrent build slots.
+
+The Hobby cap is 100 deployments per day, and this repo has hit it. What a skip
+buys is build minutes, the single Hobby concurrent-build slot released in well
+under a second instead of a full Next.js build, and a production deployment
+that no-op commits stop replacing. Worth having — but it is not the cap.
+
+### `git.deploymentEnabled` is the part that saves quota
+
+Both `vercel.json` files also carry:
+
+```json
+"git": { "deploymentEnabled": { "dependabot/**": false, "dependabot/*": false } }
+```
+
+Vercel never *triggers* a deployment for these branches, so nothing is created
+and nothing is counted. Dependabot previews were already being thrown away by
+the ignore step; this stops paying a deployment for the privilege. Dependabot
+branches never need a preview URL — the Claude-in-Chrome e2e pass only ever
+runs against real feature work.
+
+**The `**` is load-bearing.** These patterns are
+[minimatch](https://github.com/isaacs/minimatch), where `*` does not cross a
+`/`. Real branch names here look like
+`dependabot/pip/backend/beautifulsoup4-gte-4.15.0` — three slashes — so a
+lone `dependabot/*` would have matched *nothing* and silently done nothing.
+`dependabot/*` is kept alongside `dependabot/**` only as insurance against a
+matcher that treats `*` as crossing `/`; where rules conflict Vercel takes the
+permissive one, and both of these are `false`, so they cannot fight.
+
+`main` has no branch protection and no rulesets, so no Vercel status is a
+required check and a missing or skipped one cannot block a merge. Vercel's
+documented commit statuses are terminal in any case — a commit status reports
+that it "successfully deployed or failed, or skipped its Vercel deployment" —
+so there is no pending-forever state to get stuck on.
+
+### The dashboard "Skip deployments when there are no changes…" toggle is inert here
+
+Do not bother enabling it. Vercel's built-in
+[skipping of unaffected projects](https://vercel.com/docs/monorepos#skipping-unaffected-projects)
+requires npm/yarn/pnpm/Bun **workspaces**, "detected using the lockfile at the
+repository root". This repo has no root `package.json`, no root lockfile and no
+`pnpm-workspace.yaml` — the lockfile is `apps/web/pnpm-lock.yaml`. The
+documented fallback is that everything counts as a global change and "deploy
+all applications in the repository", followed by: "If your project does not
+meet these requirements, you can use the Ignored Build Step." That is exactly
+what the guard above is.
+
+If a root workspace definition is ever added, the toggle becomes the *better*
+lever and should replace the guard: unlike the Ignored Build Step it "does not
+occupy concurrent build slots".
