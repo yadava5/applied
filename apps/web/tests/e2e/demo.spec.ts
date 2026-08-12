@@ -458,7 +458,14 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("heading", { name: "since you last looked" })).toHaveCount(0);
   });
 
-  test("the ledger holds its line open, so appearing never moves the board", async ({ browser }) => {
+  test("a FIRST-VISIT ledger holds its line open, so appearing never moves the board", async ({
+    browser,
+  }) => {
+    // Scope, because the title used to imply the whole feature: this measures
+    // the first-visit line only. The loud state — a returning visitor with
+    // changes, which is the case the feature exists for — is measured in the
+    // test below, and used to shift the board 118.9px while this one passed.
+    //
     // The ledger is read out of localStorage, so it has nothing to say until
     // hydration. Rendering NOTHING until then made it appear ~70ms after first
     // paint and push every card down 41.9px — and a pointer that pressed a
@@ -502,6 +509,67 @@ test.describe("live demo (/demo)", () => {
     expect(reservedAfter, "the placeholder must give way to the real line").toBe(0);
   });
 
+  test("a LOUD ledger is the same one line, so a returning visitor's board never moves", async ({
+    browser,
+  }) => {
+    // The state the feature exists for, and the one the reserved line did not
+    // cover: a visitor with changes to read. The old block grew with the news
+    // — 136.8px for these four rows — and moved the board 118.9px after first
+    // paint, which is the same dead-first-click defect the test above pins,
+    // in the case that actually happens to a returning user.
+    //
+    // Same instrument, same claim: the server's own layout is where the board
+    // stays. With `javaScriptEnabled: false` the marker can never be read, so
+    // the no-script page is the reserved line by construction — exactly what
+    // the hydrated loud band has to match.
+    const noScript = await browser.newContext({
+      javaScriptEnabled: false,
+      viewport: { width: 1440, height: 900 },
+    });
+    const served = await noScript.newPage();
+    await served.goto("/demo");
+    const card = (p: Page) =>
+      p.getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" });
+    const serverBox = await card(served).boundingBox();
+    const reserveBox = await served.getByTestId("since-last-look-reserve").boundingBox();
+    await noScript.close();
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await seedPriorVisit(page);
+    await page.goto("/demo");
+    const band = ledger(page);
+    // Wait for the LOUD state specifically — a quiet band would pass the
+    // geometry below while proving nothing about this case.
+    await expect(band.getByText("2 filed")).toBeVisible();
+    const loudBox = await card(page).boundingBox();
+    const bandBox = await band.boundingBox();
+
+    expect(serverBox, "the board's Open control must render without script").not.toBeNull();
+    expect(loudBox).not.toBeNull();
+    expect(
+      Math.abs((loudBox?.y ?? 0) - (serverBox?.y ?? 0)),
+      `the board moved ${(loudBox?.y ?? 0) - (serverBox?.y ?? 0)}px when the loud ledger rendered`,
+    ).toBeLessThanOrEqual(1);
+    // The mechanism, in the same units: the loud band is the line the server
+    // held open, not a block that happens to sit somewhere harmless.
+    expect(
+      Math.abs((bandBox?.height ?? 0) - (reserveBox?.height ?? 0)),
+      `the loud band is ${bandBox?.height}px against a reserved ${reserveBox?.height}px`,
+    ).toBeLessThanOrEqual(1);
+
+    // Positive control, measured the same way: naming the rows DOES move the
+    // board, so the assertions above can fail. A reader presses for that —
+    // it is the one movement on this band that is asked for.
+    await band.getByRole("button", { name: /Name the rows/ }).click();
+    await expect(band.getByText("Copperline", { exact: true })).toBeVisible();
+    const openedBox = await card(page).boundingBox();
+    expect(
+      (openedBox?.y ?? 0) - (loudBox?.y ?? 0),
+      "naming the rows must take space — without a real delta here the check above proves nothing",
+    ).toBeGreaterThan(40);
+    await page.close();
+  });
+
   test("a prior visit turns the ledger loud: what arrived, what moved, what gained a date", async ({
     page,
   }) => {
@@ -510,12 +578,19 @@ test.describe("live demo (/demo)", () => {
     const band = ledger(page);
     await expect(band.getByRole("heading", { name: "since you last looked" })).toBeVisible();
 
-    // The count IS the heading of each group — nothing restates it.
+    // The counts are the arrival line — one line, whatever the news is.
     await expect(band.getByText("2 filed")).toBeVisible();
     await expect(band.getByText("1 moved")).toBeVisible();
     await expect(band.getByText("1 new deadline")).toBeVisible();
 
-    // …and every claim names the row it is about, with the column to look in.
+    // Nobody is named until the reader asks: the band above the board holds
+    // one line, and the space the names need is spent on a press.
+    await expect(band).not.toContainText("Copperline");
+    await expect(band).not.toContainText("Northstar Systems");
+    await band.getByRole("button", { name: /Name the rows/ }).click();
+
+    // …and then every claim names the row it is about, with the column to
+    // look in.
     await expect(band.getByText("Copperline", { exact: true })).toBeVisible();
     await expect(band.getByText("Waypoint Robotics", { exact: true })).toBeVisible();
     const moved = band.locator("p").filter({ hasText: "Northstar Systems" });

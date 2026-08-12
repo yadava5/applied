@@ -1,7 +1,16 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowRight, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 import { todayISO } from "@/lib/dashboard/age";
 import { boardColumns } from "@/lib/dashboard/board";
@@ -39,6 +48,26 @@ import { STAGES } from "@/lib/dashboard/summary";
  * individuals (which the counts cannot), the same two-level shape the pulse
  * strip's deadline cell already uses.
  *
+ * ONE LINE ON ARRIVAL — the shape, and why it is this shape
+ * ---------------------------------------------------------
+ * The two levels are now literally two levels: the arrival LINE carries the
+ * counts, and opening it names the rows. Every state of this band — the server
+ * pass, first run, quiet, and a loud return — occupies exactly one line box at
+ * every width, so the band can never move the board it sits above.
+ *
+ * That is not only a layout fix. The band sits between the sync header and the
+ * board on a work surface, and the old block grew with the news: three groups
+ * of four named rows plus "+N more" is ~300px on a laptop and half a phone
+ * screen, so the busiest morning — the one this feature exists for — was the
+ * morning the board itself got pushed out of view. A digest that costs the
+ * work surface more space the more there is to say has its incentives
+ * backwards. One line always; the reader spends the space, by opening it, only
+ * when they want the names.
+ *
+ * The expansion is never remembered. Restoring it on the next load would
+ * re-create exactly the defect this shape removes — the server cannot know it
+ * was open, so the board would move again after hydration.
+ *
  * Three states, all of them real:
  *
  *   · **first run** — no marker in this browser yet. It says so, and says the
@@ -47,10 +76,10 @@ import { STAGES } from "@/lib/dashboard/summary";
  *   · **quiet** — nothing changed, stated against the moment it is comparing
  *     from. "Nothing new since Aug 3" on August 11 is not filler: it says your
  *     pipeline has been silent for eight days;
- *   · **changed** — the ledger, marked with a rule down its left edge. The
- *     contrast between one dim sentence and this block is the signal; most
- *     opens are quiet, and the loud state has to look different from across
- *     the room.
+ *   · **changed** — the counts, marked with a rule down the left edge, and the
+ *     names one press away. The contrast between one dim sentence and a ruled
+ *     line of counts in full-strength ink is the signal; most opens are quiet,
+ *     and the loud state has to look different from across the room.
  *
  * WHEN THE MARKER ADVANCES — the decision this feature lives or dies on:
  *
@@ -76,10 +105,8 @@ import { STAGES } from "@/lib/dashboard/summary";
  * SSR / no-JS: the marker is `localStorage`, which the server cannot read, so
  * `useSyncExternalStore`'s server snapshot is `null` and this has nothing to
  * SAY until hydration — no mismatch, and no board state depends on it. It
- * still occupies its line from the server pass, though; see
- * `ReservedLine` below, which is not decoration but the fix for a measured
- * defect. With JS off the dashboard is exactly the dashboard, minus one
- * reading aid.
+ * still occupies its line from the server pass; see `ArrivalLine`. With JS off
+ * the dashboard is exactly the dashboard, minus one reading aid.
  */
 
 /** The board's own accent per column word — the dot beside a stage here is the
@@ -114,40 +141,32 @@ function DueNote({ dueAt, today }: { dueAt: string; today: string }) {
 }
 
 /**
- * The line this band will occupy, held open from the SERVER pass — the one
- * piece of this component that must render before the marker is readable.
+ * The band's one line — the single piece of geometry this component promises,
+ * and the fix for a measured defect rather than a wrapper for its own sake.
  *
- * Measured, on `next dev` at 1440×900: without it the band appeared ~70 ms
- * after first paint and moved every card on the board down by 41.9 px (17.9 px
- * of line + the page's 24 px stack gap). A pointer that pressed a card inside
- * that window released 41.9 px above it, so the browser retargeted the `click`
- * to the column's `<ul>` — the nearest common ancestor of press and release —
- * and the card's own handler never ran. The card simply did not open. Five
- * tests across this suite hit that race in CI (three red, two flaky), and a
- * real first click landing in the same window is just as dead; this is a CLS
- * defect, not a test-harness quirk.
+ * Measured, on `next dev` at 1440×900: rendering nothing until the marker was
+ * readable put the band on screen ~70 ms after first paint and moved every
+ * card on the board down — 41.9 px in the quiet state, 118.9 px in the loud
+ * one. A pointer that pressed a card inside that window released above it, so
+ * the browser retargeted the `click` to the column's `<ul>` — the nearest
+ * common ancestor of press and release — and the card's own handler never ran.
+ * The card simply did not open. Five tests across this suite hit that race in
+ * CI (three red, two flaky), and a real first click landing in the same window
+ * is just as dead; this is a CLS defect, not a test-harness quirk.
  *
- * A `&nbsp;` rather than a pixel height: it is the same font at the same size
- * with the same leading as the sentence that replaces it, so the two line
- * boxes are identical by construction and stay identical if the type scale
- * moves. `aria-hidden` because it says nothing — a reader must not be told
- * there is a blank region here.
- *
- * It reserves ONE line, which is exactly what the first-run and quiet states
- * render at any width the board is usable at. Two shifts remain and are
- * stated rather than hidden: the loud state is taller than one line, and below
- * ~640px the sentences wrap. Nothing rendered above a board can avoid those
- * while the marker lives in this browser rather than on the server.
+ * `h-[1lh]` is one line box of THIS element's own type, so the server's empty
+ * line and every hydrated state are the same height by construction — they
+ * stay the same height if the type scale moves, and nothing inside can grow
+ * the box: an icon, a stamp in another face, or a control with padding all
+ * overflow invisibly instead of pushing the board. (The `lh` unit predates
+ * Tailwind v4's own browser baseline, so every browser that can render this
+ * stylesheet supports it.) The rest of the contract is horizontal: children
+ * never wrap — one flexible part truncates, everything else is `shrink-0` —
+ * because a second line at 375px is the same defect at a narrower width.
  */
-function ReservedLine() {
+function ArrivalLine({ children }: { children: ReactNode }) {
   return (
-    <div
-      data-testid="since-last-look-reserve"
-      aria-hidden="true"
-      className="text-[13px] leading-snug"
-    >
-      &nbsp;
-    </div>
+    <div className="flex h-[1lh] items-baseline gap-x-3 text-[13px] leading-snug">{children}</div>
   );
 }
 
@@ -174,6 +193,13 @@ function EntryLine({ entry, today }: { entry: ChangeEntry; today: string }) {
     </p>
   );
 }
+
+/** A text control at the line's own size: a bordered button would be half
+ *  again as tall as the line it has to live inside. The padding is cancelled
+ *  by an equal negative margin, so the press target is 26px while the box the
+ *  band measures stays exactly one line. */
+const LINE_CONTROL =
+  "-my-1 rounded py-1 underline-offset-4 hover:text-strong hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong";
 
 export function SinceLastLook({
   rows,
@@ -207,6 +233,11 @@ export function SinceLastLook({
    *  relative to it. Read through a lazy initializer because the clock is
    *  impure and a render must not depend on when it happens to run. */
   const [now] = useState(() => Date.now());
+  /** Whether the names are showing. Deliberately not persisted — see the
+   *  header: a remembered expansion would move the board on the next load,
+   *  because the server pass cannot know about it. */
+  const [named, setNamed] = useState(false);
+  const panelId = useId();
 
   const partial = total !== undefined && rows.length < total;
   const entries = useMemo(
@@ -253,18 +284,33 @@ export function SinceLastLook({
 
   // Nothing to say yet: the server pass, and the instant before the marker is
   // read. The line is still held open — rendering nothing here is what moved
-  // the whole board after first paint (see `ReservedLine`). Storage that is
+  // the whole board after first paint (see `ArrivalLine`). Storage that is
   // blocked outright never resolves past this, and one invisible line is the
   // whole cost of that case.
-  if (record === null) return <ReservedLine />;
+  if (record === null) {
+    return (
+      <div data-testid="since-last-look-reserve" aria-hidden="true">
+        <ArrivalLine>&nbsp;</ArrivalLine>
+      </div>
+    );
+  }
 
   if (seeded) {
     return (
       <section data-testid="since-last-look" aria-label="Changes since your last visit">
-        <p className="text-[13px] leading-snug text-dim">
-          No earlier visit recorded in this browser — from your next one, this line names what
-          changed.
-        </p>
+        <ArrivalLine>
+          {/* The clause that carries the fact is the whole sentence on a
+              phone; the tail explaining what happens next is what a wider
+              line has room for. One sentence, two lengths — never two lines. */}
+          <p className="min-w-0 truncate text-dim">
+            No earlier visit recorded in this browser
+            <span className="sm:hidden">.</span>
+            <span className="hidden sm:inline">
+              {" "}
+              — from your next one, this line names what changed.
+            </span>
+          </p>
+        </ArrivalLine>
       </section>
     );
   }
@@ -274,13 +320,20 @@ export function SinceLastLook({
   if (groups.length === 0) {
     return (
       <section data-testid="since-last-look" aria-label="Changes since your last visit">
-        <p className="text-[13px] leading-snug text-muted">
-          Nothing new since <span className="font-mono text-[11px] text-dim">{moment}</span>
-          {scopeNote ? <span className="text-dim"> · {scopeNote}</span> : null}
-        </p>
+        <ArrivalLine>
+          <p className="min-w-0 truncate text-muted">
+            Nothing new since <span className="font-mono text-[11px] text-dim">{moment}</span>
+            {/* The slice this reading covers, where a phone has room for it —
+                the board and the pulse strip carry the same disclosure, in the
+                same words, at every width. */}
+            {scopeNote ? <span className="hidden text-dim sm:inline"> · {scopeNote}</span> : null}
+          </p>
+        </ArrivalLine>
       </section>
     );
   }
+
+  const Chevron = named ? ChevronUp : ChevronDown;
 
   return (
     <section
@@ -289,55 +342,98 @@ export function SinceLastLook({
       /* Capped to a reading measure rather than the page's width: the stage
          annotations form a right-hand column, and across 1100px the eye loses
          which name they belong to. */
-      className="max-w-3xl border-l-2 border-stage-applied py-0.5 pl-4"
+      className="max-w-3xl border-l-2 border-stage-applied pl-3"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <h2 className="label-caps">since you last looked</h2>
-          <span className="font-mono text-[11px] text-dim">· {moment}</span>
-        </div>
+      <ArrivalLine>
+        {/* Below `sm` the counts lead and the heading gives way — the news
+            first, then the window it covers; the section's own label carries
+            the name of the band for a reader who cannot see the rule. */}
+        <h2 className="label-caps order-1 hidden shrink-0 sm:block">since you last looked</h2>
+        <span className="order-3 shrink-0 font-mono text-[11px] text-dim sm:order-2">
+          · {moment}
+        </span>
+
+        {/* The counts ARE the control: pressing them is what names the rows
+            they count, so the affordance and the summary are one thing rather
+            than a label with a "show" beside it. */}
+        <button
+          type="button"
+          aria-expanded={named}
+          aria-controls={panelId}
+          onClick={() => setNamed((showing) => !showing)}
+          className={`${LINE_CONTROL} order-2 flex min-w-0 items-baseline gap-1.5 text-muted sm:order-3`}
+        >
+          <span className="tabular truncate">
+            {/* One rendering at a time, never both: a phone gets the total, a
+                wider line gets the kinds. The count is the group's heading in
+                both — no summary restates it. */}
+            <span className="sm:hidden">
+              {entries.length} change{entries.length === 1 ? "" : "s"}
+            </span>
+            <span className="hidden sm:inline">
+              {groups.map((group, i) => (
+                <Fragment key={group.kind}>
+                  {i > 0 ? <span className="text-dim"> · </span> : null}
+                  <span className="whitespace-nowrap">
+                    <span className="text-strong">{group.count}</span> {group.label}
+                  </span>
+                </Fragment>
+              ))}
+            </span>
+          </span>
+          <Chevron className="h-3 w-3 shrink-0 text-dim" aria-hidden />
+          <span className="sr-only">{named ? "Hide the rows" : "Name the rows"}</span>
+        </button>
+
         <button
           type="button"
           onClick={() => writeLastLook(storageKey, snapshotOf(rows, scope, Date.now(), partial))}
-          className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+          className={`${LINE_CONTROL} order-4 ml-auto shrink-0 text-muted`}
         >
           Mark as seen
         </button>
-      </div>
+      </ArrivalLine>
 
-      {/* The count is the group's heading — it is not restated in a summary
-          line above, because that line would be the same numbers twice. */}
-      <dl className="mt-2.5 grid gap-x-5 gap-y-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
-        {groups.map((group) => {
-          const shown = group.entries.slice(0, LEDGER_ROWS);
-          const hidden = group.count - shown.length;
-          return (
-            <Fragment key={group.kind}>
-              {/* Tabular, not mono: an inline count inside a phrase is the
-                  same voice the pulse strip uses right below ("6 <1 wk"). Mono
-                  stays for the stamps — the marker's time, a due phrase. */}
-              <dt className="text-[13px] text-muted">
-                <span className="tabular text-strong">{group.count}</span> {group.label}
-              </dt>
-              <dd className="space-y-1.5">
-                {shown.map((entry) => (
-                  <EntryLine key={entry.id} entry={entry} today={today} />
-                ))}
-                {hidden > 0 ? (
-                  <p className="tabular text-xs text-dim">+{hidden} more</p>
-                ) : null}
-              </dd>
-            </Fragment>
-          );
-        })}
-      </dl>
+      {/* Opened by the reader, so the space it takes is spent on purpose —
+          this is the only thing on the band that moves the board, and only
+          ever after a press. */}
+      {named ? (
+        <div id={panelId} className="pb-1 pt-2.5">
+          {/* Baseline alignment across the two columns, not a nudge: the kind
+              label is 11px caps and the entries 13px, so the grid lines their
+              first baselines up rather than their boxes. */}
+          <dl className="grid items-baseline gap-x-5 gap-y-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
+            {groups.map((group) => {
+              const shown = group.entries.slice(0, LEDGER_ROWS);
+              const hidden = group.count - shown.length;
+              return (
+                <Fragment key={group.kind}>
+                  {/* The kind, not the count: the line above is already the
+                      counts, and the same number twice is the thing this
+                      dashboard removed everywhere else. */}
+                  <dt className="label-caps">{group.label}</dt>
+                  <dd className="space-y-1.5">
+                    {shown.map((entry) => (
+                      <EntryLine key={entry.id} entry={entry} today={today} />
+                    ))}
+                    {hidden > 0 ? (
+                      <p className="tabular text-xs text-dim">+{hidden} more</p>
+                    ) : null}
+                  </dd>
+                </Fragment>
+              );
+            })}
+          </dl>
 
-      {/* The ledger reads one bounded page, so it says which page — the same
-          disclosure, in the same words, as the board and the pulse strip. */}
-      {scopeNote ? (
-        <p className="tabular mt-2.5 text-xs text-dim">
-          reads the {scopeNote} · older rows aren&apos;t loaded
-        </p>
+          {/* The ledger reads one bounded page, so it says which page — the
+              same disclosure, in the same words, as the board and the pulse
+              strip. */}
+          {scopeNote ? (
+            <p className="tabular mt-2.5 text-xs text-dim">
+              reads the {scopeNote} · older rows aren&apos;t loaded
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );
