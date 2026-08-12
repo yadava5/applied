@@ -1,0 +1,294 @@
+{
+  "artifacts": {
+    "embeddings": {
+      "example_count": 0,
+      "loaded": true,
+      "model": "intfloat/e5-small-v2"
+    },
+    "setfit": {
+      "base_model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+      "checkpoint": "setfit_model_20260306_175404",
+      "loaded": true,
+      "source_counts": {
+        "external_dataset": 50,
+        "mock_seed": 4,
+        "mock_seed_v2": 42,
+        "mock_seed_v3": 57,
+        "user_correction": 39
+      },
+      "total_examples": 192,
+      "trained_at": "2026-03-06T22:54:04.334060"
+    }
+  },
+  "comparison": {
+    "broken_vs_reference": [
+      {
+        "expected": "applied",
+        "method": "setfit",
+        "predicted": "pending_application",
+        "subject": "Submission confirmed for Product Analytics role"
+      },
+      {
+        "expected": "applied",
+        "method": "setfit",
+        "predicted": "pending_application",
+        "subject": "Receipt: application for Site Reliability Engineer"
+      },
+      {
+        "expected": "other",
+        "method": "setfit",
+        "predicted": "interview",
+        "subject": "Interview prep webinar this Thursday"
+      }
+    ],
+    "delta": {
+      "accuracy": -0.02083333333333326,
+      "macro_f1": -0.020960905036991884,
+      "misclassified": 2,
+      "weighted_f1": -0.020960905036991995
+    },
+    "fixed_vs_reference": [
+      {
+        "expected": "follow_up",
+        "method": "rules",
+        "predicted": "assessment",
+        "subject": "Follow-up after completing assessment"
+      }
+    ],
+    "promotable": false,
+    "promotion_margin": 0.005,
+    "reference_layers": {
+      "rules": 96
+    },
+    "reference_mode": "rules",
+    "reference_overall": {
+      "accuracy": 0.9791666666666666,
+      "macro_f1": 0.9791304347826086,
+      "misclassified": 2,
+      "weighted_f1": 0.9791304347826086
+    },
+    "verdict": "behind_rules"
+  },
+  "confusion_matrix": {
+    "applied": {
+      "applied": 10,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 2,
+      "rejection": 0
+    },
+    "assessment": {
+      "applied": 0,
+      "assessment": 12,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "follow_up": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 12,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "interview": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 12,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "offer": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 12,
+      "other": 0,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "other": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 1,
+      "offer": 0,
+      "other": 11,
+      "pending_application": 0,
+      "rejection": 0
+    },
+    "pending_application": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 0,
+      "pending_application": 12,
+      "rejection": 0
+    },
+    "rejection": {
+      "applied": 0,
+      "assessment": 0,
+      "follow_up": 0,
+      "interview": 0,
+      "offer": 0,
+      "other": 1,
+      "pending_application": 0,
+      "rejection": 11
+    }
+  },
+  "label_distribution": {
+    "applied": 12,
+    "assessment": 12,
+    "follow_up": 12,
+    "interview": 12,
+    "offer": 12,
+    "other": 12,
+    "pending_application": 12,
+    "rejection": 12
+  },
+  "layers": {
+    "content_filter": 5,
+    "fallback": 13,
+    "rules": 58,
+    "setfit": 20
+  },
+  "meta": {
+    "dataset": "data/evaluation/classifier_eval_v3.jsonl",
+    "dataset_sha256": "0aa053536573cd733293fa6a054076a5f78b5c01ebc559e7f912f629fd6adf7e",
+    "generated_at": "2026-08-11T23:56:44.090309+00:00",
+    "hybrid_profile": "full",
+    "mode": "hybrid",
+    "sample_count": 96
+  },
+  "mismatches": [
+    {
+      "expected": "applied",
+      "method": "setfit",
+      "predicted": "pending_application",
+      "subject": "Submission confirmed for Product Analytics role"
+    },
+    {
+      "expected": "applied",
+      "method": "setfit",
+      "predicted": "pending_application",
+      "subject": "Receipt: application for Site Reliability Engineer"
+    },
+    {
+      "expected": "rejection",
+      "method": "fallback",
+      "predicted": "other",
+      "subject": "Thank you for interviewing with us"
+    },
+    {
+      "expected": "other",
+      "method": "setfit",
+      "predicted": "interview",
+      "subject": "Interview prep webinar this Thursday"
+    }
+  ],
+  "overall": {
+    "accuracy": 0.9583333333333334,
+    "macro_f1": 0.9581695297456168,
+    "misclassified": 4,
+    "weighted_f1": 0.9581695297456166
+  },
+  "per_label": {
+    "applied": {
+      "f1": 0.9090909090909091,
+      "fn": 2,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.8333333333333334,
+      "support": 12,
+      "tp": 10
+    },
+    "assessment": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "follow_up": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "interview": {
+      "f1": 0.9600000000000001,
+      "fn": 0,
+      "fp": 1,
+      "precision": 0.9230769230769231,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "offer": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "other": {
+      "f1": 0.9166666666666666,
+      "fn": 1,
+      "fp": 1,
+      "precision": 0.9166666666666666,
+      "recall": 0.9166666666666666,
+      "support": 12,
+      "tp": 11
+    },
+    "pending_application": {
+      "f1": 0.923076923076923,
+      "fn": 0,
+      "fp": 2,
+      "precision": 0.8571428571428571,
+      "recall": 1.0,
+      "support": 12,
+      "tp": 12
+    },
+    "rejection": {
+      "f1": 0.9565217391304348,
+      "fn": 1,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.9166666666666666,
+      "support": 12,
+      "tp": 11
+    }
+  },
+  "prediction_distribution": {
+    "applied": 10,
+    "assessment": 12,
+    "follow_up": 12,
+    "interview": 13,
+    "offer": 12,
+    "other": 12,
+    "pending_application": 14,
+    "rejection": 11
+  }
+}

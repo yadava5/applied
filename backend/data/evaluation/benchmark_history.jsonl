@@ -1,3 +1,4 @@
+{"accuracy": 0.9583333333333334, "dataset": "data/evaluation/classifier_eval_v3.jsonl", "macro_f1": 0.9581695297456168, "misclassified": 4, "mode": "cascade", "profile": "full", "version": 3, "weighted_f1": 0.9581695297456166}
 {"accuracy": 1.0, "dataset": "data/evaluation/classifier_eval_v1.jsonl", "macro_f1": 1.0, "misclassified": 0, "mode": "hybrid", "profile": "n/a", "version": 1, "weighted_f1": 1.0}
 {"accuracy": 0.84375, "dataset": "data/evaluation/classifier_eval_v2.jsonl", "macro_f1": 0.8597619047619047, "misclassified": 10, "mode": "hybrid", "profile": "n/a", "version": 2, "weighted_f1": 0.8597619047619047}
 {"accuracy": 0.9791666666666666, "dataset": "data/evaluation/classifier_eval_v3.jsonl", "macro_f1": 0.9791304347826086, "misclassified": 2, "mode": "hybrid", "profile": "deterministic", "version": 3, "weighted_f1": 0.9791304347826086}

@@ -3,12 +3,20 @@
 
 This harness produces per-class precision/recall/F1, overall metrics,
 and optional non-regression checks against a saved baseline report.
+
+``--compare-rules`` additionally scores the rules-only classifier over the same
+examples in the same invocation and prints the delta, which is the only
+measurement of whether the learned layers earn their place; every report also
+records the artifacts that answered (``artifacts``) and the SHA-256 of the
+corpus, so a verdict can be traced to the checkpoint and dataset that produced
+it. See ``docs/ML_PROMOTION_POLICY.md``.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
@@ -33,6 +41,15 @@ DEFAULT_BASELINES = {
 # loading, and "rules"/"fallback", which are the deterministic path itself.
 # Kept in sync with the ``method=`` values in classifier/hybrid.py.
 SEMANTIC_LAYERS = frozenset({"embeddings", "setfit"})
+
+# How far ahead of rules-only the cascade must be on the committed set before a
+# learned layer may serve real mail. Stated here, in the harness that measures
+# it, so ``docs/ML_PROMOTION_POLICY.md`` cites executing code rather than an
+# intention. It is a *reporting* threshold: --compare-rules prints the verdict
+# and records it in the report, and no run fails merely for being behind.
+# Today the cascade is behind rules by ~0.021 macro-F1, so nothing is
+# promotable and the honest thing is to say so in the artifact.
+PROMOTION_MARGIN = 0.005
 
 VALID_LABELS = {category.value for category in EmailCategory}
 DEFAULT_LABEL_ORDER = [
@@ -61,6 +78,10 @@ class ExampleOutcome:
     expected: str
     predicted: str
     subject: str
+    # Which layer produced the wrong answer. Aggregate tallies say a model ran;
+    # this says whether the model is what got it wrong, which is the difference
+    # between "the cascade is behind" and "the cascade is behind because of X".
+    method: str | None = None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -76,6 +97,14 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _string_or_empty(value: Any) -> str:
@@ -131,11 +160,13 @@ async def predict_labels(
     mode: str,
     *,
     hybrid_profile: str,
-) -> tuple[list[str], dict[str, int]]:
+) -> tuple[list[str], list[str], HybridClassifier | None]:
     """
     Run classifier predictions for all examples.
 
-    Returns the predicted labels *and* a tally of which layer produced each one.
+    Returns the predicted labels, the layer that produced each one, and (for
+    hybrid runs) the classifier instance itself, so the caller can record which
+    artifacts answered — see ``_collect_artifact_provenance``.
 
     The tally is not diagnostics. ``HybridClassifier`` degrades on purpose when a
     semantic layer will not load — the API must keep answering when the SetFit
@@ -148,15 +179,17 @@ async def predict_labels(
     it fatal.
     """
     predictions: list[str] = []
-    methods: Counter[str] = Counter()
+    methods: list[str] = []
 
     if mode == "rules":
-        classifier = get_rules_classifier()
+        rules_classifier = get_rules_classifier()
         for item in examples:
-            result = classifier.classify(item.subject, item.body_text, item.sender_email)
-            predictions.append(result.category.value)
-            methods["rules"] += 1
-        return predictions, dict(methods)
+            rules_result = rules_classifier.classify(
+                item.subject, item.body_text, item.sender_email
+            )
+            predictions.append(rules_result.category.value)
+            methods.append("rules")
+        return predictions, methods, None
 
     if mode == "hybrid":
         classifier = HybridClassifier()
@@ -164,10 +197,71 @@ async def predict_labels(
         for item in examples:
             result = await classifier.classify(item.subject, item.body_text, item.sender_email)
             predictions.append(result.category.value)
-            methods[getattr(result, "method", None) or "unknown"] += 1
-        return predictions, dict(methods)
+            methods.append(getattr(result, "method", None) or "unknown")
+        return predictions, methods, classifier
 
     raise ValueError(f"Unsupported mode: {mode}")
+
+
+def _collect_artifact_provenance(classifier: HybridClassifier | None) -> dict[str, Any]:
+    """
+    Record *which* learned artifacts answered, not just that some layer did.
+
+    A macro-F1 without this is untraceable: SetFit checkpoints are trained on
+    disk, are never committed, and rotate (``MAX_SAVED_MODELS = 3``), so a
+    cascade score six weeks old cannot otherwise be attributed to the model that
+    produced it, and a bad retrain cannot be pointed at. Everything here is read
+    off instances that already exist — nothing is loaded to fill this block, so
+    a run that never touched a model records it as absent rather than loading
+    one to find out.
+    """
+    provenance: dict[str, Any] = {}
+    if classifier is None:
+        return provenance
+
+    embeddings = getattr(classifier, "_embeddings_instance", None)
+    if embeddings is not None:
+        embedding_model = getattr(embeddings, "_model", None)
+        provenance["embeddings"] = {
+            "model": getattr(type(embedding_model), "MODEL_NAME", None),
+            "loaded": getattr(embedding_model, "_model", None) is not None,
+            # The store the similarity layer searches. Zero means the layer was
+            # present and had nothing to compare against, which is a different
+            # fact from the model failing to load.
+            "example_count": len(getattr(embeddings, "_known_embeddings", []) or []),
+        }
+
+    setfit = getattr(classifier, "_setfit_instance", None)
+    if setfit is not None:
+        from jobtracker.classifier.setfit_model import get_latest_model_path, get_models_dir
+
+        checkpoint = get_latest_model_path()
+        entry: dict[str, Any] = {
+            "loaded": getattr(setfit, "_model", None) is not None,
+            "checkpoint": checkpoint.name if checkpoint is not None else None,
+        }
+        if checkpoint is None:
+            # Only recorded when there is nothing to record instead: the search
+            # path is what makes an absent checkpoint diagnosable, and it is a
+            # machine-specific path that would otherwise churn the committed
+            # baseline on every re-record.
+            entry["models_dir"] = str(get_models_dir())
+        if checkpoint is not None:
+            metadata_path = checkpoint / "training_metadata.json"
+            if metadata_path.exists():
+                try:
+                    metadata = _read_json(metadata_path)
+                except (OSError, ValueError):
+                    metadata = {}
+                # A deliberate subset: what identifies the artifact and what it
+                # was trained on. The full metadata (per-label source counts)
+                # stays next to the checkpoint.
+                for key in ("base_model", "trained_at", "total_examples", "source_counts"):
+                    if key in metadata:
+                        entry[key] = metadata[key]
+        provenance["setfit"] = entry
+
+    return provenance
 
 
 def _assert_layers_exercised(
@@ -204,8 +298,27 @@ def _assert_layers_exercised(
         "rules classifier and would report it as hybrid. Known causes: setfit or "
         "sentence-transformers failed to import (check the warnings above), "
         "JOBTRACKER_LITE_MODE is set, or deployment=cloud forces lite mode. "
+        f"{_missing_artifact_hint(report)}"
         "Re-run with --allow-degraded-layers if a rules-only measurement is what you want."
     ]
+
+
+def _missing_artifact_hint(report: dict[str, Any]) -> str:
+    """
+    Name the artifact that is absent, with the path that was searched.
+
+    On a GitHub-hosted runner the cause is always the same and is not a bug:
+    SetFit checkpoints live under the app's data directory and are not in the
+    repository, so there is nothing to load. Saying which directory was empty
+    turns that from a puzzling red build into the documented blocker it is.
+    """
+    setfit = (report.get("artifacts") or {}).get("setfit") or {}
+    if not setfit:
+        return ""
+    checkpoint = setfit.get("checkpoint")
+    if checkpoint is None:
+        return f"No SetFit checkpoint was found in {setfit.get('models_dir')}. "
+    return f"A SetFit checkpoint is on disk ({checkpoint}) but did not answer. "
 
 
 def _configure_hybrid_profile(classifier: HybridClassifier, profile: str) -> None:
@@ -259,6 +372,7 @@ def compute_report(
     examples: list[EvaluationExample],
     dataset_path: Path,
     mode: str,
+    methods: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build aggregate metrics and confusion matrix."""
     if len(expected) != len(predicted):
@@ -315,9 +429,12 @@ def compute_report(
     for actual, pred in zip(expected, predicted, strict=True):
         confusion_matrix[actual][pred] += 1
 
+    layer_of: list[str | None] = list(methods) if methods is not None else [None] * total
     mismatches = [
-        ExampleOutcome(expected=exp, predicted=pred, subject=item.subject)
-        for item, exp, pred in zip(examples, expected, predicted, strict=True)
+        ExampleOutcome(expected=exp, predicted=pred, subject=item.subject, method=method)
+        for item, exp, pred, method in zip(
+            examples, expected, predicted, layer_of, strict=True
+        )
         if exp != pred
     ]
 
@@ -346,6 +463,7 @@ def compute_report(
                 "expected": item.expected,
                 "predicted": item.predicted,
                 "subject": item.subject,
+                **({"method": item.method} if item.method is not None else {}),
             }
             for item in mismatches
         ],
@@ -373,6 +491,38 @@ def compare_against_baseline(
             f"was generated with '{baseline_profile}'. These measure different classifiers "
             "and their scores are not comparable. Point --baseline at a file recorded "
             "under the same profile, or regenerate with --update-baseline."
+        )
+        return failures
+
+    # The same idea one level deeper. A `full` run whose SetFit checkpoint is
+    # missing still passes the profile check and still answers every example --
+    # from rules -- so against a baseline that *did* have the model it reports
+    # the model's absence as a quality regression. The layer guard above catches
+    # the case where NO semantic layer answered; this catches the case where one
+    # answered and the other, which the baseline was recorded with, did not.
+    baseline_layers = baseline.get("layers") or {}
+    current_layers = report.get("layers") or {}
+    absent = [
+        layer
+        for layer in sorted(SEMANTIC_LAYERS)
+        if baseline_layers.get(layer, 0) > 0 and current_layers.get(layer, 0) == 0
+    ]
+    if absent:
+        recorded_checkpoint = ((baseline.get("artifacts") or {}).get("setfit") or {}).get(
+            "checkpoint"
+        )
+        detail = (
+            f" The baseline was recorded with checkpoint {recorded_checkpoint}."
+            if "setfit" in absent and recorded_checkpoint
+            else ""
+        )
+        failures.append(
+            f"learned layer mismatch: the baseline was recorded with "
+            f"{', '.join(absent)} answering, and here "
+            f"{'it' if len(absent) == 1 else 'they'} answered nothing.{detail} "
+            "This run measures a smaller classifier than the baseline does, so the "
+            "score difference is the missing artifact and not a quality change. "
+            "Supply the artifact, or compare against a baseline recorded without it."
         )
         return failures
 
@@ -442,6 +592,26 @@ def print_summary(report: dict[str, Any], max_mismatches: int) -> None:
         # whether the score came from the classifier named in `mode`.
         answered = ", ".join(f"{name}={count}" for name, count in sorted(layers.items()))
         print(f"answered by: {answered}")
+    artifacts = report.get("artifacts") or {}
+    if artifacts:
+        # The other half of "which classifier was this": the layer tally says a
+        # model answered, this says *which* model, in the run log where a reader
+        # of a green build will see it.
+        embeddings = artifacts.get("embeddings") or {}
+        if embeddings:
+            print(
+                f"embeddings: model={embeddings.get('model')} "
+                f"loaded={embeddings.get('loaded')} "
+                f"examples={embeddings.get('example_count')}"
+            )
+        setfit = artifacts.get("setfit") or {}
+        if setfit:
+            print(
+                f"setfit: checkpoint={setfit.get('checkpoint')} "
+                f"loaded={setfit.get('loaded')} "
+                f"base={setfit.get('base_model')} "
+                f"trained_on={setfit.get('total_examples')} examples"
+            )
     print(
         f"accuracy: {overall['accuracy']:.4f} | macro_f1: {overall['macro_f1']:.4f} | "
         f"weighted_f1: {overall['weighted_f1']:.4f} | misclassified: {overall['misclassified']}"
@@ -466,7 +636,145 @@ def print_summary(report: dict[str, Any], max_mismatches: int) -> None:
             predicted = item.get("predicted", "")
             subject = str(item.get("subject", ""))
             preview = subject if len(subject) <= 90 else subject[:87] + "..."
-            print(f"- expected={expected:<20} predicted={predicted:<20} subject={preview}")
+            answered_by = f" by={item['method']}" if item.get("method") else ""
+            print(
+                f"- expected={expected:<20} predicted={predicted:<20}"
+                f"{answered_by} subject={preview}"
+            )
+
+
+def build_comparison(
+    report: dict[str, Any],
+    reference: dict[str, Any],
+    *,
+    promotion_margin: float,
+) -> dict[str, Any]:
+    """
+    Score this run against the rules-only run of the same dataset.
+
+    The question "do the learned layers help?" has been answered in prose for
+    months and measured by nothing: CI runs rules, and hybrid under the
+    `deterministic` profile that switches the learned layers off, which is why
+    both committed baselines read the same 0.9791. A delta computed here, in the
+    same invocation and over the same examples, is the smallest thing that makes
+    the answer a number rather than a claim.
+
+    ``promotable`` is deliberately not a pass/fail. Being behind rules is the
+    status quo, and a gate that failed for it would be red on day one and
+    deleted by week two; what matters is that the number is printed, pinned in
+    the committed baseline, and cannot move without showing up in a diff.
+    """
+    current_overall = report.get("overall", {})
+    reference_overall = reference.get("overall", {})
+
+    delta = {
+        metric: float(current_overall.get(metric, 0.0)) - float(reference_overall.get(metric, 0.0))
+        for metric in ("accuracy", "macro_f1", "weighted_f1")
+    }
+    delta["misclassified"] = int(current_overall.get("misclassified", 0)) - int(
+        reference_overall.get("misclassified", 0)
+    )
+
+    macro_delta = delta["macro_f1"]
+    if macro_delta > 0:
+        verdict = "ahead_of_rules"
+    elif macro_delta < 0:
+        verdict = "behind_rules"
+    else:
+        verdict = "level_with_rules"
+
+    # Which examples changed hands. A macro-F1 delta says the learned layers cost
+    # two examples; this says which two, and which layer answered them -- the
+    # difference between a number to argue about and a defect to work on.
+    reference_mismatches = {
+        str(item.get("subject", "")): item
+        for item in reference.get("mismatches", [])
+        if isinstance(item, dict)
+    }
+    current_mismatches = {
+        str(item.get("subject", "")): item
+        for item in report.get("mismatches", [])
+        if isinstance(item, dict)
+    }
+    fixed = [
+        reference_mismatches[subject]
+        for subject in reference_mismatches
+        if subject not in current_mismatches
+    ]
+    broken = [
+        current_mismatches[subject]
+        for subject in current_mismatches
+        if subject not in reference_mismatches
+    ]
+
+    return {
+        "reference_mode": reference.get("meta", {}).get("mode", "rules"),
+        "reference_overall": reference_overall,
+        "reference_layers": reference.get("layers", {}),
+        "fixed_vs_reference": fixed,
+        "broken_vs_reference": broken,
+        "delta": delta,
+        "verdict": verdict,
+        "promotion_margin": promotion_margin,
+        # The single bit the promotion policy turns on. False today, and the day
+        # it flips the committed baseline diff dates the event.
+        "promotable": macro_delta >= promotion_margin,
+    }
+
+
+def print_comparison(report: dict[str, Any]) -> None:
+    """Print the rules-vs-this-run table."""
+    comparison = report.get("comparison")
+    if not comparison:
+        return
+
+    meta = report.get("meta", {})
+    this_run = meta.get("mode", "current")
+    if meta.get("hybrid_profile"):
+        this_run = f"{this_run}/{meta['hybrid_profile']}"
+    reference_mode = comparison.get("reference_mode", "rules")
+
+    current_overall = report.get("overall", {})
+    reference_overall = comparison.get("reference_overall", {})
+    delta = comparison.get("delta", {})
+
+    print(f"\n=== {reference_mode} vs {this_run} ===")
+    print(f"{'metric':<16}{reference_mode:>12}{this_run:>16}{'delta':>12}")
+    for metric in ("accuracy", "macro_f1", "weighted_f1"):
+        print(
+            f"{metric:<16}{float(reference_overall.get(metric, 0.0)):>12.4f}"
+            f"{float(current_overall.get(metric, 0.0)):>16.4f}"
+            f"{float(delta.get(metric, 0.0)):>+12.4f}"
+        )
+    print(
+        f"{'misclassified':<16}{int(reference_overall.get('misclassified', 0)):>12}"
+        f"{int(current_overall.get('misclassified', 0)):>16}"
+        f"{int(delta.get('misclassified', 0)):>+12}"
+    )
+
+    # In both lists `by=` names the layer that produced the WRONG answer, in
+    # whichever of the two runs got it wrong.
+    for heading, key in (
+        (f"fixed vs {reference_mode} (wrong there, right here)", "fixed_vs_reference"),
+        (f"broken vs {reference_mode} (right there, wrong here)", "broken_vs_reference"),
+    ):
+        items = comparison.get(key) or []
+        print(f"\n{heading}: {len(items)}")
+        for item in items:
+            answered_by = f" by={item['method']}" if item.get("method") else ""
+            print(
+                f"- expected={item.get('expected', ''):<20} "
+                f"predicted={item.get('predicted', ''):<20}{answered_by} "
+                f"subject={item.get('subject', '')}"
+            )
+
+    margin = float(comparison.get("promotion_margin", PROMOTION_MARGIN))
+    macro_delta = float(delta.get("macro_f1", 0.0))
+    print(
+        f"verdict: {comparison.get('verdict')} "
+        f"({macro_delta:+.4f} macro-F1; promotion needs >= {margin:+.4f}) -> "
+        f"promotable={comparison.get('promotable')}"
+    )
 
 
 async def run_evaluation(
@@ -474,22 +782,51 @@ async def run_evaluation(
     mode: str,
     *,
     hybrid_profile: str,
+    compare_rules: bool = False,
+    promotion_margin: float = PROMOTION_MARGIN,
 ) -> dict[str, Any]:
     await init_db()
     examples = load_dataset(dataset)
     expected = [item.label for item in examples]
-    predicted, layers = await predict_labels(
+    predicted, methods, classifier = await predict_labels(
         examples,
         mode=mode,
         hybrid_profile=hybrid_profile,
     )
-    report = compute_report(expected, predicted, examples, dataset_path=dataset, mode=mode)
+    report = compute_report(
+        expected, predicted, examples, dataset_path=dataset, mode=mode, methods=methods
+    )
     # Which layer answered, and how often. Recorded in the report so the artifact
     # itself says whether the ML path ran, rather than leaving that to be inferred
     # from a score that rules alone can reproduce.
-    report["layers"] = layers
+    report["layers"] = dict(Counter(methods))
+    # Which artifacts answered, so the score can be traced back to them later.
+    report["artifacts"] = _collect_artifact_provenance(classifier)
+    # The corpus, by content rather than by filename: a baseline is only a
+    # baseline for the dataset it was measured on, and datasets get edited.
+    report["meta"]["dataset_sha256"] = _sha256(dataset)
     if mode == "hybrid":
         report["meta"]["hybrid_profile"] = hybrid_profile
+
+    if compare_rules:
+        reference_predicted, reference_methods, _ = await predict_labels(
+            examples,
+            mode="rules",
+            hybrid_profile="full",
+        )
+        reference = compute_report(
+            expected,
+            reference_predicted,
+            examples,
+            dataset_path=dataset,
+            mode="rules",
+            methods=reference_methods,
+        )
+        reference["layers"] = dict(Counter(reference_methods))
+        report["comparison"] = build_comparison(
+            report, reference, promotion_margin=promotion_margin
+        )
+
     return report
 
 
@@ -540,6 +877,24 @@ def parse_args() -> argparse.Namespace:
             "classifier and reports it as hybrid."
         ),
     )
+    parser.add_argument(
+        "--compare-rules",
+        action="store_true",
+        help=(
+            "Also run the rules classifier over the same dataset and report the "
+            "delta. This is the only measurement of whether the learned layers "
+            "help; it never fails the run on its own."
+        ),
+    )
+    parser.add_argument(
+        "--promotion-margin",
+        type=float,
+        default=PROMOTION_MARGIN,
+        help=(
+            "Macro-F1 margin over rules-only required before a learned layer is "
+            "promotable (see docs/ML_PROMOTION_POLICY.md). Reported, not enforced."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -554,11 +909,14 @@ def main() -> int:
             args.dataset,
             args.mode,
             hybrid_profile=args.hybrid_profile,
+            compare_rules=args.compare_rules,
+            promotion_margin=args.promotion_margin,
         )
     )
     baseline_path = args.baseline or DEFAULT_BASELINES[args.mode]
 
     print_summary(report, max_mismatches=args.max_mismatches)
+    print_comparison(report)
 
     if args.output is not None:
         _write_json(args.output, report)
