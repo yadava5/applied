@@ -987,6 +987,11 @@ export interface components {
              * @description The configured environment, or null when the deployment does not declare one. Null is not 'development' -- it means nobody said. This endpoint used to print the field's default, which read as an assertion that production was a development deployment.
              */
             environment?: string | null;
+            /**
+             * Commit
+             * @description The git commit SHA this deployment was built from, taken verbatim from VERCEL_GIT_COMMIT_SHA, or null when the platform does not supply one. Answers 'what code is actually running?', which `version` cannot: that is a constant in the source.
+             */
+            commit?: string | null;
         };
         /** InboxResponse */
         InboxResponse: {

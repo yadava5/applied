@@ -66,8 +66,10 @@ class Settings(BaseSettings):
     # is therefore a check that cannot fail.
     environment: Literal["development", "production", "test"] = "development"
 
-    # Interactive API documentation: /docs (Swagger UI), /redoc, and the
-    # /openapi.json document that feeds them.
+    # Interactive API documentation for the CLOUD app: /docs (Swagger UI),
+    # /redoc, and the /openapi.json document that feeds them. The desktop app
+    # in jobtracker/main.py does not consult this setting -- it binds
+    # 127.0.0.1 and is not a published surface.
     #
     # OFF BY DEFAULT, AND DELIBERATELY NOT DERIVED FROM ``environment``.
     # The obvious gate -- "serve docs unless environment == production" --
@@ -81,10 +83,11 @@ class Settings(BaseSettings):
     enable_docs: bool = Field(
         default=False,
         description=(
-            "Serve the interactive API docs (/docs, /redoc, /openapi.json). "
-            "Off unless explicitly enabled -- set JOBTRACKER_ENABLE_DOCS=true "
-            "for local development. A deployment that configures nothing "
-            "serves no docs."
+            "Serve the cloud app's interactive API docs (/docs, /redoc, "
+            "/openapi.json). Off unless explicitly enabled -- set "
+            "JOBTRACKER_ENABLE_DOCS=true for local development. A cloud "
+            "deployment that configures nothing serves no docs. The desktop "
+            "app does not read this setting."
         ),
     )
 

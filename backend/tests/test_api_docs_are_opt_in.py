@@ -55,17 +55,27 @@ DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
 
 
 def _run_in_clean_env(script: str) -> dict:
-    """Execute ``script`` with every JOBTRACKER_* variable removed.
+    """Execute ``script`` with every JOBTRACKER_* and VERCEL_* variable removed.
 
     Returns the JSON object the script prints on its last stdout line. The
     child's ``cwd`` is the backend package root (this file's grandparent) so
     ``jobtracker`` imports the tree under test; ``PYTHONPATH`` carries it too
     in case the child is started from somewhere else.
+
+    VERCEL_* goes too because the app reads three of them directly --
+    VERCEL_URL and VERCEL_PROJECT_PRODUCTION_URL for CORS, VERCEL_GIT_COMMIT_SHA
+    for the build identity in /health. Leaving them inherited would make "a
+    deployment that configures nothing" depend on where the suite happens to
+    run.
     """
 
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    env = {k: v for k, v in os.environ.items() if not k.startswith("JOBTRACKER_")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("JOBTRACKER_", "VERCEL_"))
+    }
     env["PYTHONPATH"] = backend_dir
     # Desktop keyring is not on the cloud import path, but a stray macOS
     # Keychain prompt in CI would hang the child; the null backend is what
@@ -123,6 +133,7 @@ async def probe():
         "jobtracker_env_vars": sorted(
             k for k in os.environ if k.startswith("JOBTRACKER_")
         ),
+        "vercel_env_vars": sorted(k for k in os.environ if k.startswith("VERCEL_")),
     }}))
 
 asyncio.run(probe())
@@ -154,6 +165,10 @@ def test_unconfigured_deployment_serves_no_docs(unconfigured_probe: dict) -> Non
     assert unconfigured_probe["jobtracker_env_vars"] == ["JOBTRACKER_DEPLOYMENT"], (
         "the probe subprocess was not actually unconfigured: "
         f"{unconfigured_probe['jobtracker_env_vars']}"
+    )
+    assert unconfigured_probe["vercel_env_vars"] == [], (
+        "the probe subprocess inherited platform variables: "
+        f"{unconfigured_probe['vercel_env_vars']}"
     )
 
     assert unconfigured_probe["codes"] == dict.fromkeys(DOC_PATHS, 404), (
@@ -199,9 +214,32 @@ def test_unconfigured_health_does_not_claim_an_environment(
     )
 
 
+def test_unconfigured_health_omits_the_build_identity(
+    unconfigured_probe: dict,
+) -> None:
+    """No VERCEL_GIT_COMMIT_SHA -> null, never a stand-in.
+
+    The point of putting a SHA on /health is that it can be trusted. A
+    placeholder that reads like a value -- "unknown", "local", "HEAD", a
+    build-time stamp -- would make the field worse than absent, because it
+    would answer a question it cannot answer.
+    """
+
+    assert unconfigured_probe["health"]["commit"] is None, (
+        "/health reported commit="
+        f"{unconfigured_probe['health']['commit']!r} with no "
+        "VERCEL_GIT_COMMIT_SHA in the environment."
+    )
+
+
+# A syntactically real 40-hex SHA that belongs to no commit, so a test that
+# passes can only be reading the environment variable, not something on disk.
+_PROBE_SHA = "4f1c0d3e9a7b256868cf0d1e2a3b4c5d6e7f809a"
+
+
 @pytest.fixture(scope="module")
-def docs_enabled_probe() -> dict:
-    """Boot the cloud app with the docs opt-in explicitly turned on."""
+def configured_probe() -> dict:
+    """Boot the cloud app with docs, an environment and a build SHA supplied."""
 
     return _run_in_clean_env(
         _PROBE.format(
@@ -209,43 +247,62 @@ def docs_enabled_probe() -> dict:
             extra_env=(
                 'os.environ["JOBTRACKER_ENABLE_DOCS"] = "true"\n'
                 'os.environ["JOBTRACKER_ENVIRONMENT"] = "development"\n'
+                f'os.environ["VERCEL_GIT_COMMIT_SHA"] = "{_PROBE_SHA}"\n'
             ),
         )
     )
 
 
-def test_opt_in_serves_docs_redoc_and_openapi(docs_enabled_probe: dict) -> None:
+def test_opt_in_serves_docs_redoc_and_openapi(configured_probe: dict) -> None:
     """JOBTRACKER_ENABLE_DOCS=true brings all three endpoints back.
 
     Without this the "fix" could be a hard-coded ``None`` and every other test
     here would still pass, leaving no way to read the API locally.
     """
 
-    assert docs_enabled_probe["codes"] == dict.fromkeys(DOC_PATHS, 200), (
+    assert configured_probe["codes"] == dict.fromkeys(DOC_PATHS, 200), (
         "JOBTRACKER_ENABLE_DOCS=true did not restore the interactive docs: "
-        f"{docs_enabled_probe['codes']}"
+        f"{configured_probe['codes']}"
     )
-    assert docs_enabled_probe["enable_docs"] is True
+    assert configured_probe["enable_docs"] is True
 
 
-def test_opt_in_root_advertises_the_docs_it_serves(docs_enabled_probe: dict) -> None:
+def test_opt_in_root_advertises_the_docs_it_serves(configured_probe: dict) -> None:
     """When docs are mounted the root advertises them, and at the served path."""
 
-    root = docs_enabled_probe["root"]
+    root = configured_probe["root"]
     assert root["docs"] == "/docs"
-    assert docs_enabled_probe["codes"][root["docs"]] == 200
+    assert configured_probe["codes"][root["docs"]] == 200
 
 
 def test_configured_health_reports_the_configured_environment(
-    docs_enabled_probe: dict,
+    configured_probe: dict,
 ) -> None:
     """An environment that WAS configured is reported, not suppressed.
 
     The honesty fix must not degrade into "never say anything".
     """
 
-    assert docs_enabled_probe["health"]["environment"] == "development"
-    assert docs_enabled_probe["environment_is_configured"] is True
+    assert configured_probe["health"]["environment"] == "development"
+    assert configured_probe["environment_is_configured"] is True
+
+
+def test_configured_health_reports_the_build_identity(
+    configured_probe: dict,
+) -> None:
+    """VERCEL_GIT_COMMIT_SHA is reported verbatim, so "what is running?" is answerable.
+
+    Production ran a web app three hours newer than its API on 2026-08-12 and
+    said nothing about it; ``version`` is a constant in the source and cannot
+    tell the two apart. The SHA is checked for exact equality -- not merely
+    "not null" -- so a fix that reports *a* sha from somewhere else (a git
+    subprocess, a build-time stamp) fails here rather than passing by accident.
+    """
+
+    assert configured_probe["health"]["commit"] == _PROBE_SHA, (
+        f"/health reported commit={configured_probe['health']['commit']!r}, "
+        f"expected the environment's {_PROBE_SHA!r}."
+    )
 
 
 def test_openapi_document_is_still_buildable_without_the_route() -> None:

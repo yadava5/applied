@@ -119,6 +119,49 @@ def _build_cors_origin_regex() -> str:
 # build the web client's typed bindings.
 _docs_enabled = settings.enable_docs
 
+
+def _build_commit_sha() -> str | None:
+    """The git commit this deployment was built from, or None if unknowable.
+
+    WHY /health NEEDS THIS
+    ----------------------
+    On 2026-08-12 production ran a web app from one commit against an API from
+    a commit three hours older, and nothing anywhere said so. Establishing it
+    meant reading Vercel's deployment records and running
+    ``git merge-base --is-ancestor`` per project. The API could not help:
+
+        {"status":"ok","version":"0.1.0","deployment":"cloud", ...}
+
+    ``version`` is ``Settings.app_version``, a constant in the source. It has
+    never changed and it cannot answer "what code is actually running?". A SHA
+    can, with one curl, by anyone -- including after a Vercel CLI deploy, which
+    creates no GitHub deployment record at all and so leaves the platform's own
+    view of "production" pointing at a stale commit indefinitely.
+
+    HONESTY
+    -------
+    Reported verbatim from Vercel's own ``VERCEL_GIT_COMMIT_SHA`` and never
+    synthesised. No git subprocess, no build-time stamp, no "unknown" string
+    dressed up as a value: when the variable is absent -- a local run, or a
+    deployment where the project has "Automatically expose System Environment
+    Variables" turned off -- this returns None and /health omits the claim, the
+    same rule the ``environment`` field follows.
+
+    That the variable does reach the running function is not an assumption:
+    ``_build_cors_origin_regex`` above reads ``VERCEL_URL`` from the same
+    system-variable mechanism at import time, and CORS works in production.
+
+    Read at import, like the CORS hosts: the value cannot change during a
+    process lifetime, and both states are covered by subprocess probes in
+    tests/test_api_docs_are_opt_in.py rather than by reloading this module,
+    which corrupts a pytest session (see that file).
+    """
+
+    return os.environ.get("VERCEL_GIT_COMMIT_SHA", "").strip() or None
+
+
+_COMMIT_SHA = _build_commit_sha()
+
 app = FastAPI(
     title=f"{settings.app_name} (cloud)",
     description="Cloud (Vercel + Supabase) deployment of the Applied backend.",
@@ -189,6 +232,15 @@ class HealthResponse(BaseModel):
             "assertion that production was a development deployment."
         ),
     )
+    commit: str | None = Field(
+        default=None,
+        description=(
+            "The git commit SHA this deployment was built from, taken verbatim "
+            "from VERCEL_GIT_COMMIT_SHA, or null when the platform does not "
+            "supply one. Answers 'what code is actually running?', which "
+            "`version` cannot: that is a constant in the source."
+        ),
+    )
 
 
 @app.get(
@@ -219,6 +271,9 @@ async def health_check() -> HealthResponse:
         environment=(
             settings.environment if settings.environment_is_configured else None
         ),
+        # Null when the platform did not supply one. Never a placeholder --
+        # a made-up SHA is worse than no SHA, because it looks answerable.
+        commit=_COMMIT_SHA,
     )
 
 
