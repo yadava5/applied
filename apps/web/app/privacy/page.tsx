@@ -323,13 +323,13 @@ export default function PrivacyPage() {
               <p className="mt-3 text-[0.8125rem] leading-relaxed text-dim">
                 Those three stay empty because section 3 is true: the hosted app asks for metadata
                 and never fetches a body. Checked against the production database on {UPDATED} —{" "}
-                <M>body_text</M> was empty on every one of the 36 rows in it.
+                <M>body_text</M> was empty on every row in it.
               </p>
 
               <P>
                 So the honest summary is not “Applied stores your emails”. It stores a subject line,
-                a sender, a timestamp, Gmail’s two-hundred-character preview, and what the
-                classifier decided about them.
+                a sender, a timestamp, Gmail’s own short preview, and what the classifier decided
+                about them.
               </P>
             </Section>
 
@@ -374,8 +374,7 @@ export default function PrivacyPage() {
                 Beyond the mail rows, Applied keeps: your account — an email address, and a password
                 that Supabase Auth stores and Applied never sees; your preferences — display name,
                 notification and classification settings, kept in your Supabase user record; and the
-                applications, contacts and interviews the tracker builds, whether derived from mail
-                or typed in by you.
+                applications the tracker builds, whether derived from mail or typed in by you.
               </P>
               <P>
                 Your Gmail token is stored encrypted (Fernet) in a table called{" "}
