@@ -248,6 +248,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/mail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Mail Listing Cloud
+         * @description Every message this user has stored, whatever the classifier decided.
+         *
+         *     Declared ABOVE ``GET /{application_id}`` deliberately: FastAPI matches in
+         *     declaration order and would otherwise try ``"mail"`` as an int path param
+         *     and answer 422. Same pattern as ``/summary``, ``/review`` and ``/statuses``.
+         *
+         *     WHY THIS EXISTS
+         *     ---------------
+         *     ``/review`` is the only other listing of classified mail, and it filters to
+         *     ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
+         *     for a work queue and the wrong set for a correction surface, because those
+         *     three predicates make a verdict unreachable the moment it is touched:
+         *
+         *     * a message already reviewed once drops out for good — emails 58 and 59 of
+         *       the owner's account sit at ``needs_review`` with ``is_reviewed = true``
+         *       and no endpoint in the product could name them, so no screen could
+         *       change them;
+         *     * a message linked to an application drops out too, so a ``rejection``
+         *       filed as ``applied`` is a wrong stored verdict a user can see on the
+         *       board and never correct at its source;
+         *     * and for an account whose mail all classified confidently, ``/review``
+         *       returns zero rows and the review UI never renders at all.
+         *
+         *     The write path never had that restriction — :func:`classify_review_item`
+         *     selects on ``(user_id, message_id)`` alone — so correcting any of these
+         *     already worked. What was missing was a way to *find* them. This is that
+         *     read, and nothing more: no new write, no body, no state change.
+         *
+         *     SHAPE
+         *     -----
+         *     Newest first with an ``id`` tiebreak, for the same reason the applications
+         *     listing has one: a sync writes a batch of rows carrying identical
+         *     ``received_at`` values, tied rows are free to come back in a different
+         *     order per request on Postgres, and paging a partial order drops some rows
+         *     and repeats others.
+         *
+         *     One entry per MESSAGE — unlike ``/review``, which collapses a thread to its
+         *     newest message because being asked the same question twice is duplicated
+         *     work. Here the user is auditing what is stored, and every stored row is
+         *     correctable individually, so hiding siblings would hide exactly the rows
+         *     this endpoint exists to reach.
+         */
+        get: operations["mail_listing_cloud_applications_mail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{application_id}": {
         parameters: {
             query?: never;
@@ -966,6 +1026,88 @@ export interface components {
             company: string;
         };
         /**
+         * MailListResponse
+         * @description A page of the user's stored mail, plus the counts the chips need.
+         *
+         *     ``total`` is the size of the CURRENT query — it respects both ``category``
+         *     and ``q``, because it is the number ``page``/``page_size`` walk.
+         *
+         *     ``category_counts`` is deliberately different: it respects ``q`` but NOT
+         *     ``category``, so each filter chip can show its own total while one of them
+         *     is active. Counting only the filtered set would make every chip but the
+         *     selected one read zero.
+         */
+        MailListResponse: {
+            /** Messages */
+            messages: components["schemas"]["MailMessageResponse"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Category Counts */
+            category_counts: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * MailMessageResponse
+         * @description One stored message in the full mail listing.
+         *
+         *     Deliberately METADATA ONLY. ``snippet`` is the persisted ``body_snippet``
+         *     and there is no field for ``body_text`` or ``body_html``: the cloud sync
+         *     never fetches a body and this listing is not the place to start.
+         *
+         *     ``category``/``confidence``/``method`` are the stored verdict verbatim —
+         *     ``classified_as``, ``classification_confidence``, ``classification_method``
+         *     — so a reader can see WHAT was decided and HOW, which is the difference
+         *     between "the machine says applied" and "a rule matched at 0.71".
+         *
+         *     ``category`` carries the enum's own value (``"applied"``, ``"needs_review"``
+         *     …), the same lowercase vocabulary ``?category=`` accepts and
+         *     ``POST /review/{message_id}/classify`` takes back. One vocabulary end to
+         *     end, so a value read here can be sent straight back as a correction.
+         */
+        MailMessageResponse: {
+            /** Message Id */
+            message_id: string;
+            /** Thread Id */
+            thread_id?: string | null;
+            /** Subject */
+            subject?: string | null;
+            /** Sender Name */
+            sender_name?: string | null;
+            /** Sender Email */
+            sender_email?: string | null;
+            /** Received At */
+            received_at?: string | null;
+            /** Snippet */
+            snippet?: string | null;
+            /** Category */
+            category?: string | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Method */
+            method?: string | null;
+            /**
+             * User Corrected
+             * @default false
+             */
+            user_corrected: boolean;
+            /**
+             * Is Reviewed
+             * @default false
+             */
+            is_reviewed: boolean;
+            /** Application Id */
+            application_id?: number | null;
+            /** Company */
+            company?: string | null;
+            /** Gmail Link */
+            gmail_link?: string | null;
+        };
+        /**
          * MessageRefResponse
          * @description One underlying email surfaced in the click-through detail view.
          */
@@ -1535,6 +1677,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatusVocabularyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mail_listing_cloud_applications_mail_get: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: number;
+                /** @description Rows per page (capped so a single response stays bounded). */
+                page_size?: number;
+                /** @description Filter to one stored verdict. Does not affect `category_counts`. */
+                category?: components["schemas"]["EmailCategory"] | null;
+                /** @description Case-insensitive substring match on subject/sender. */
+                q?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailListResponse"];
                 };
             };
             /** @description Validation Error */
