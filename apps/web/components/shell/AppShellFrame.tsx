@@ -53,7 +53,7 @@ export function AppShellFrame({ children, rail, userEmail, demo = false }: AppSh
             (settings, inbox) cap their own measure inside it but start at the
             same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
             so this pane is the scroll context the whole app shares. */}
-        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
           <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
             {children}
           </div>

@@ -131,7 +131,7 @@ function StageWord({ word }: { word: string }) {
 /** The deadline a change brought with it, in the same words and the same ink
  *  the card's own tag uses — never a second vocabulary for one fact, and never
  *  a second day either: `today` comes from `useLocalToday`, the one read the
- *  card tag and the pulse strip already bucket against. Read from the UTC day
+ *  card tag and the pulse already bucket against. Read from the UTC day
  *  instead, this line said "due in 1d" beside a card reading "due in 2d" for
  *  every reader whose day differs from UTC. */
 function DueNote({ dueAt, today }: { dueAt: string; today: string }) {
@@ -332,7 +332,7 @@ export function SinceLastLook({
           <p className="min-w-0 truncate text-muted">
             Nothing new since <span className="font-mono text-[11px] text-dim">{moment}</span>
             {/* The slice this reading covers, where a phone has room for it —
-                the board and the pulse strip carry the same disclosure, in the
+                the board and the pulse carry the same disclosure, in the
                 same words, at every width. */}
             {scopeNote ? <span className="hidden text-dim sm:inline"> · {scopeNote}</span> : null}
           </p>

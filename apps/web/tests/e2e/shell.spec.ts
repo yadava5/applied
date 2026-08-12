@@ -54,14 +54,13 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
 
   /**
    * The dashboard's own H1 — `exact` and `level` on purpose. This shell tree
-   * legitimately holds a SECOND heading whose name contains "pipeline": the
-   * rail snapshot's h2 (`RailPipeline`), and Playwright's default role-name
-   * matching is case-insensitive substring, so the loose form resolved to
-   * both at desktop widths (and to one at 375, where the display:none rail
-   * leaves the accessibility tree) — a strict-mode violation that poisoned
-   * every geometry test in this describe on its first CI run. If a duplicate
-   * H1 ever appears, it should fail the one assertion that counts things,
-   * not every wait-for-load line.
+   * once held a SECOND heading whose name contained "pipeline" (the retired
+   * rail snapshot's h2), and Playwright's default role-name matching is
+   * case-insensitive substring, so the loose form resolved to both — a
+   * strict-mode violation that poisoned every geometry test in this describe
+   * on its first CI run. The strict form stays: if a duplicate H1 ever
+   * appears, it should fail the one assertion that counts things, not every
+   * wait-for-load line.
    */
   const pageHeading = (page: Page) =>
     page.getByRole("heading", { level: 1, name: "Pipeline", exact: true });
@@ -89,57 +88,92 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     });
   }
 
-  test("at desktop the worklist is the ONE scroll pane — main holds still and the list overflows", async ({
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 1280, height: 720 }, // the tightest common laptop pane
+  ]) {
+    test(`at ${viewport.width}×${viewport.height} the worklist is the ONE scroll pane — everything else holds still`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/demo/shell");
+      await expect(pageHeading(page)).toBeVisible();
+
+      // <main> fits its content exactly: header, notices and spine hold still.
+      // This is the assertion that catches the failure the document-level lock
+      // cannot — a broken min-h-0 chain scrolls the whole pane (SyncBar and
+      // all), which reads as "the dashboard still scrolls" even while the
+      // document technically holds.
+      const main = await page
+        .locator("main")
+        .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+      expect(
+        main.scroll,
+        `the shell pane scrolls: scrollHeight=${main.scroll} > clientHeight=${main.client}`,
+      ).toBeLessThanOrEqual(main.client + 1);
+
+      // NO other inner pane scrolls either — the first screen is still. This
+      // is the assertion PR #122 lacked: its rail-mounted pulse made the sidebar
+      // itself scroll (744px of column in a 537–717px middle pane at every
+      // common laptop height) while the document- and main-level locks passed,
+      // which the owner read — correctly — as "the dashboard still scrolls".
+      const rogue = await page.evaluate(() => {
+        const offenders: string[] = [];
+        for (const el of Array.from(document.querySelectorAll("*"))) {
+          const oy = getComputedStyle(el).overflowY;
+          if (
+            (oy === "auto" || oy === "scroll") &&
+            el.scrollHeight > el.clientHeight + 1 &&
+            el.getAttribute("data-testid") !== "worklist-pane"
+          ) {
+            offenders.push(
+              `${el.tagName.toLowerCase()}[${
+                el.getAttribute("data-testid") ?? el.getAttribute("aria-label") ?? el.className
+              }] ${el.scrollHeight}>${el.clientHeight}`,
+            );
+          }
+        }
+        return offenders;
+      });
+      expect(rogue, `inner panes scroll besides the worklist: ${rogue.join(", ")}`).toEqual([]);
+
+      // …and the lock is load-bearing, not satisfied by everything fitting:
+      // the fixture worklist genuinely overflows and scrolls itself.
+      const list = await page
+        .getByTestId("worklist-pane")
+        .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+      expect(
+        list.scroll,
+        `the worklist does not overflow (scrollHeight=${list.scroll}, clientHeight=${list.client}) — the lock is being asserted against nothing`,
+      ).toBeGreaterThan(list.client + 1);
+    });
+  }
+
+  test("the pulse lives in the board's stage spine — exactly one copy in the tree", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
     await expect(pageHeading(page)).toBeVisible();
 
-    // <main> fits its content exactly: header, notices and spine hold still.
-    // This is the assertion that catches the failure the document-level lock
-    // cannot — a broken min-h-0 chain scrolls the whole pane (SyncBar and
-    // all), which reads as "the dashboard still scrolls" even while the
-    // document technically holds.
-    const main = await page
-      .locator("main")
-      .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
-    expect(
-      main.scroll,
-      `the shell pane scrolls: scrollHeight=${main.scroll} > clientHeight=${main.client}`,
-    ).toBeLessThanOrEqual(main.client + 1);
-
-    // …and the lock is load-bearing, not satisfied by everything fitting:
-    // the fixture worklist genuinely overflows and scrolls itself.
-    const list = await page
-      .getByTestId("worklist-pane")
-      .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
-    expect(
-      list.scroll,
-      `the worklist does not overflow (scrollHeight=${list.scroll}, clientHeight=${list.client}) — the lock is being asserted against nothing`,
-    ).toBeGreaterThan(list.client + 1);
-  });
-
-  test("the pulse lives in the shell rail — exactly one copy in the tree", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/demo/shell");
-    await expect(pageHeading(page)).toBeVisible();
-
-    // One rendered pulse, inside the shell rail — and provably NOT back in
-    // the board's stage spine (the pre-move slot; the spine is the page's
-    // other <aside>, named "Stages") nor as a display-none twin under the
-    // list (the pre-move duplicate).
+    // One rendered pulse, inside the "Stages" aside — under the stage list,
+    // where the owner pointed — and provably NOT in the shell rail (the
+    // PR #122 slot, which the measured sidebar overflow retired) nor as a
+    // display-none twin under the list (the pre-#122 duplicate).
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
-    await expect(page.locator("aside").getByTestId("pipeline-pulse")).toBeVisible();
     await expect(
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
+    ).toBeVisible();
+    await expect(
+      page.locator('aside:has(nav[aria-label="Primary"])').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
     await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
 
-    // Below md the rail collapses and the pulse goes with it — a deliberate
-    // choice (the phone dashboard leads with the worklist; age/deadline tags
-    // on the cards carry the same ground truth), not a hidden duplicate.
+    // Below lg the spine collapses into the chip strip and the pulse goes
+    // with it — a deliberate choice (the phone dashboard leads with the
+    // worklist; age/deadline tags on the cards carry the same ground truth),
+    // not a hidden duplicate.
     await page.setViewportSize(MOBILE_375);
     await expect(pulse).toBeHidden();
     await expect(page.getByTestId("pipeline-pulse")).toHaveCount(1);

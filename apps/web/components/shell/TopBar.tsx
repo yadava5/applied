@@ -51,7 +51,7 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
   }
 
   return (
-    <header className="relative flex h-14 items-center justify-between border-b border-line-soft bg-surface px-4">
+    <header className="relative flex h-12 items-center justify-between border-b border-line-soft bg-surface px-4">
       <div className="flex min-w-0 items-center gap-2">
         <button
           type="button"
@@ -114,12 +114,12 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
             aria-hidden="true"
             tabIndex={-1}
             onClick={() => setMenuOpen(false)}
-            className="fixed bottom-0 left-0 right-0 top-14 z-40 bg-background/70 md:hidden"
+            className="fixed bottom-0 left-0 right-0 top-12 z-40 bg-background/70 md:hidden"
           />
           <nav
             id="mobile-nav"
             aria-label="Primary"
-            className="absolute inset-x-0 top-14 z-50 border-b border-line-soft bg-surface px-2 py-2 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)] md:hidden"
+            className="absolute inset-x-0 top-12 z-50 border-b border-line-soft bg-surface px-2 py-2 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)] md:hidden"
           >
             <ul className="space-y-1">
               {navItems.map((item) => {
