@@ -26,6 +26,15 @@ import type { InboxVerdict } from "@/lib/gmail/types";
 
 const HOUR = 60 * 60 * 1000;
 
+/**
+ * The deep-link shape the backend emits for a connected account — `authuser=`
+ * with the address, never the positional `/u/0/` slot. Reproduced here so the
+ * twin renders the same control the live view does; the ids are fictional, so
+ * following one lands on nothing, which is the correct outcome for a demo.
+ */
+const demoGmailLink = (threadId: string) =>
+  `https://mail.google.com/mail/?authuser=${encodeURIComponent("demo@applied.example")}#all/${threadId}`;
+
 /** Mail hosts that name a person, not an employer — the resolver rejects them. */
 const GENERIC_HOSTS = new Set(["gmail.com", "outlook.com", "yahoo.com", "icloud.com"]);
 
@@ -62,6 +71,12 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
       needs_review: false,
       received_at: at(3),
       company: "harboranalytics",
+      // The preview is what makes the mislabel obvious to a reader: "other" is
+      // plainly wrong once you can see the message says "complete the test".
+      snippet:
+        "Please complete the coding test within 5 days. The assessment takes " +
+        "about 90 minutes and covers data structures.",
+      gmail_link: demoGmailLink("demo-thread-1"),
     },
     {
       message_id: "demo-scan-2",
@@ -74,6 +89,10 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
       needs_review: false,
       received_at: at(26),
       company: "northwind",
+      snippet:
+        "Thank you for your interest in the Backend Engineer role. Your " +
+        "application is with our recruiting team and we'll be in touch.",
+      gmail_link: demoGmailLink("demo-thread-2"),
     },
     {
       // Sent from a personal address, so no employer can be read from it. The
@@ -88,6 +107,10 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
       needs_review: true,
       received_at: at(31),
       company: "",
+      snippet:
+        "Great speaking today! Sending over the take-home — you'll have a week " +
+        "to return it. Let me know if anything is unclear.",
+      gmail_link: demoGmailLink("demo-thread-3"),
     },
     {
       message_id: "demo-scan-4",
@@ -100,6 +123,10 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
       needs_review: false,
       received_at: at(52),
       company: "beaconhealth",
+      snippet:
+        "After careful consideration we've decided to move forward with other " +
+        "candidates. We appreciate the time you invested.",
+      gmail_link: demoGmailLink("demo-thread-4"),
     },
     {
       // Undated: Gmail listed it, its `Date` header would not parse. The store
@@ -116,6 +143,13 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
       needs_review: true,
       received_at: null,
       company: "cedarlabs",
+      // The ABSENT case, deliberately: Gmail returns no snippet for some
+      // messages and a link cannot always be built. This row is what proves
+      // the twin renders neither a blank preview line nor a dead "open"
+      // control — a fixture set where every row has both would have made the
+      // e2e green while the empty branch went unexercised.
+      snippet: null,
+      gmail_link: null,
     },
     {
       message_id: "demo-scan-6",
@@ -128,6 +162,10 @@ export function demoScanMine(now: number = Date.now()): InboxVerdict[] {
       needs_review: false,
       received_at: at(70),
       company: "jobboard",
+      snippet:
+        "Senior Platform Engineer at Vertex, Data Engineer at Lumen, and 10 " +
+        "more roles matching your saved search.",
+      gmail_link: demoGmailLink("demo-thread-6"),
     },
   ];
 }

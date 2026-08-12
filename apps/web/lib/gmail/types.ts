@@ -8,7 +8,18 @@
  * and for the filter options the UI offers.
  */
 
-/** One classifier verdict for one message. Never carries body content. */
+/**
+ * One classifier verdict for one message, and enough of the message to judge
+ * that verdict by.
+ *
+ * A hand-maintained mirror of the backend `InboxVerdict` (see
+ * `backend/jobtracker/cloud/gmail_oauth.py`) — NOT generated, so a field added
+ * there has to be added here too or the scan view silently drops it, which is
+ * how `snippet`/`gmail_link` were missing from this view for as long as it
+ * existed. `lib/api/schema.d.ts` is the generated contract; keep the two in
+ * step. Never a full body: `snippet` is Gmail's own preview, the same text the
+ * verdict was reached from, bounded to 500 chars by the backend.
+ */
 export interface InboxVerdict {
   message_id: string;
   subject: string;
@@ -22,6 +33,14 @@ export interface InboxVerdict {
   received_at: string | null;
   /** Normalized company token this message groups under. */
   company: string;
+  /**
+   * Gmail's preview of the message, or null when it has none. Optional because
+   * a verdict rehydrated from an older session snapshot predates the field —
+   * null and absent both mean "show nothing", never an empty preview line.
+   */
+  snippet?: string | null;
+  /** Deep link to the message in Gmail, or null when one can't be built. */
+  gmail_link?: string | null;
   /**
    * The reader corrected this verdict in the scan view. CLIENT-SIDE ONLY — the
    * mine never sets it (it reports what the classifier said, and the classifier

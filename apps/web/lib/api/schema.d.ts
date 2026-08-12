@@ -585,9 +585,11 @@ export interface paths {
          *     (batched metadata gets, no bodies) so it stays inside the Vercel function
          *     budget; big mines are many bounded pages, not one fragile mega-call.
          *
-         *     Bodies are never returned — only verdict metadata. The per-user, per-page
-         *     short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is verified
-         *     on every request before the cache is consulted.
+         *     Full bodies are never fetched or returned. Each verdict carries the Gmail
+         *     ``snippet`` the classification was made from plus a deep link to the
+         *     message, which is what makes a scan row judgeable at all. The per-user,
+         *     per-page short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is
+         *     verified on every request before the cache is consulted.
          */
         get: operations["gmail_inbox_gmail_inbox_get"];
         put?: never;
@@ -1025,7 +1027,21 @@ export interface components {
         };
         /**
          * InboxVerdict
-         * @description One classifier verdict for one recent message. No body is included.
+         * @description One classifier verdict for one recent message, and enough of the message
+         *     to judge that verdict by.
+         *
+         *     ``snippet`` is Gmail's own preview — the SAME text this verdict was reached
+         *     from (see the classify call below) — unescaped and truncated to 500 chars,
+         *     exactly as the filed ledger stores and serves it. Full bodies are still
+         *     never fetched in the cloud path and never returned; that is the privacy
+         *     line, and it has not moved. What changed is only that the preview the
+         *     classifier already read now reaches the reader too.
+         *
+         *     It has to, because without it a scan row was unjudgeable: subject, sender
+         *     and a category, with a correction control and no way to see what the
+         *     message actually said or to open it. The filed ledger has carried both
+         *     fields since it existed, so the live scan was the one mail surface in the
+         *     product showing a verdict the reader could not check.
          */
         InboxVerdict: {
             /** Message Id */
@@ -1051,6 +1067,10 @@ export interface components {
              * @default
              */
             company: string;
+            /** Snippet */
+            snippet?: string | null;
+            /** Gmail Link */
+            gmail_link?: string | null;
         };
         /**
          * MailListResponse
