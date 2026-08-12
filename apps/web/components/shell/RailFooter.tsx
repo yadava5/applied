@@ -94,7 +94,11 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[11px] text-dim">Gmail not connected</span>
-          <span className="block truncate text-[11px] text-dim transition-colors group-hover:text-muted">
+          {/* `muted`, not `dim`, and brighter than the state above it: this is
+              the only actionable thing in the not-connected state, and `dim` is
+              the ramp's FLOOR for text this size (Lc 60.7, see globals.css) —
+              the call to action must not be the quietest thing in the block. */}
+          <span className="block truncate text-[11px] text-muted transition-colors group-hover:text-strong">
             connect in settings <span aria-hidden="true">→</span>
           </span>
         </span>
