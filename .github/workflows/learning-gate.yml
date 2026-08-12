@@ -1,0 +1,92 @@
+name: Learning Gate
+
+# Measures the FULL three-layer cascade against rules-only on the committed v3
+# set, and checks it against backend/data/evaluation/baseline_cascade_v3.json.
+#
+# READ THIS BEFORE FIXING A RED RUN
+# ---------------------------------
+# On a GitHub-hosted runner this workflow FAILS, on purpose, with
+# "no SetFit checkpoint found" and the directory it searched. That is not a
+# broken build: SetFit checkpoints are trained on disk under the app's data
+# directory, are excluded by .gitignore, and none ships in this repository, so
+# a hosted runner has nothing to load. The failure is the finding.
+#
+# The alternative was worse and is what this repository keeps catching itself
+# doing: run `--mode hybrid` anyway, watch it degrade to the rules layer,
+# score 0.9791, print PASS, and report the regex engine as the cascade. The
+# harness refuses to do that (see _assert_layers_exercised), and so does this.
+#
+# It is therefore NOT scheduled. A weekly red build is a build people mute.
+# Dispatch it from a runner that has a checkpoint -- pass `checkpoint_path`, or
+# use a self-hosted runner whose app data directory holds one. Making it green
+# on hosted CI needs the checkpoint published as a downloadable artifact, which
+# is a decision about distributing a model trained on real mail, not a CI chore.
+#
+# The gate that DOES run on every backend change is in backend-ci.yml, and it
+# measures the deterministic path only. That is the gap this workflow names.
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkpoint_path:
+        description: "SetFit checkpoint directory on the runner (blank = newest in the app models dir)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: learning-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cascade:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -r requirements-dev.txt
+
+      - name: Report which learned artifacts this runner has
+        # Printed before the gate runs so a failure is legible at a glance, and
+        # so a PASS carries evidence next to it rather than being taken on faith.
+        working-directory: backend
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+        run: |
+          python -c "
+          from jobtracker.classifier.setfit_model import get_latest_model_path, get_models_dir
+          models_dir = get_models_dir()
+          latest = get_latest_model_path()
+          print(f'setfit models dir: {models_dir}')
+          print(f'newest checkpoint: {latest}')
+          print(f'contents: {sorted(p.name for p in models_dir.iterdir())}')
+          "
+
+      - name: Run cascade gate (rules vs full cascade on v3)
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+          JOBTRACKER_SETFIT_CHECKPOINT: ${{ inputs.checkpoint_path }}
+        run: scripts/cascade_gate.sh
