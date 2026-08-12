@@ -118,10 +118,13 @@ updates:
     # Scoped to the major deliberately: 4.x patch and minor updates must keep
     # flowing, because the cap holds open PYSEC-2026-2288/2289/2290 and
     # PYSEC-2025-217, which backend/requirements.txt records as accepted cost
-    # rather than hiding. Note that an ignore condition applies to Dependabot's
-    # security-update PRs as well as its version updates, so a security bump to
-    # 5.x is withheld too — the same trade already written down over there, made
-    # mechanical here so it survives the next monthly run.
+    # rather than hiding. What this rule is known to stop is the monthly
+    # VERSION-update PR that #60 was. Whether an ignore written here also
+    # withholds a Dependabot SECURITY update for those advisories is not
+    # something the docs state unambiguously for the dependabot.yml form of
+    # ignore — only for the @dependabot ignore comment command — so it is not
+    # claimed. Those four are accepted cost over there either way, and this
+    # file configures update pull requests, not the alerts themselves.
     ignore:
       - dependency-name: "transformers"
         update-types: ["version-update:semver-major"]
