@@ -34,7 +34,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jobtracker.config import settings
 from jobtracker.logging import setup_logging
@@ -97,13 +97,35 @@ def _build_cors_origin_regex() -> str:
     return rf"^https?://({'|'.join(parts)})$"
 
 
+# Interactive docs are OPT-IN. Until 2026-08-12 the three URLs below were
+# passed unconditionally, so the production API published its complete
+# interactive surface -- every path, every schema, a live "Try it out" -- to
+# anyone who loaded https://<api-host>/docs.
+#
+# WHY THE GATE IS `enable_docs` AND NOT `environment`
+# ---------------------------------------------------
+# The reflexive fix is ``if settings.environment != "production"``. It would
+# have changed nothing. Nothing sets JOBTRACKER_ENVIRONMENT on Vercel, so the
+# deployed API reports ``"development"`` -- the field's default -- and that
+# condition is false in production. A gate whose condition is never true where
+# it matters is not a gate.
+#
+# ``enable_docs`` defaults to False instead, which puts the safe state in the
+# default rather than in the configuration. The property that holds: a
+# deployment carrying no environment configuration at all serves no docs.
+# Passing None (rather than a path) is what makes that a 404 -- FastAPI does
+# not register the route at all, so there is nothing to probe. ``app.openapi()``
+# still works in-process, which is what scripts/generate_api_schema.sh uses to
+# build the web client's typed bindings.
+_docs_enabled = settings.enable_docs
+
 app = FastAPI(
     title=f"{settings.app_name} (cloud)",
     description="Cloud (Vercel + Supabase) deployment of the Applied backend.",
     version=settings.app_version,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 app.add_middleware(
@@ -158,7 +180,15 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     deployment: str
-    environment: str
+    environment: str | None = Field(
+        default=None,
+        description=(
+            "The configured environment, or null when the deployment does not "
+            "declare one. Null is not 'development' -- it means nobody said. "
+            "This endpoint used to print the field's default, which read as an "
+            "assertion that production was a development deployment."
+        ),
+    )
 
 
 @app.get(
@@ -180,7 +210,15 @@ async def health_check() -> HealthResponse:
         status="ok",
         version=settings.app_version,
         deployment=settings.deployment,
-        environment=settings.environment,
+        # Report the environment only when one was actually configured.
+        # ``settings.environment`` always holds a string; until now this
+        # endpoint printed it unconditionally, so production told every caller
+        # it was a "development" deployment on the strength of a default
+        # nobody had set. Null is the honest answer to "which environment?"
+        # when the deployment has never been told.
+        environment=(
+            settings.environment if settings.environment_is_configured else None
+        ),
     )
 
 
@@ -192,13 +230,22 @@ async def health_check() -> HealthResponse:
 async def root() -> dict[str, Any]:
     """Root endpoint with API information for the cloud deployment."""
 
-    return {
+    payload: dict[str, Any] = {
         "name": settings.app_name,
         "version": settings.app_version,
         "deployment": "cloud",
-        "docs": "/docs",
-        "health": "/health",
     }
+    # Advertise the docs only when they are actually mounted -- and read that
+    # off the app object rather than re-reading ``settings.enable_docs``, so
+    # "advertised if and only if served" is structural instead of two
+    # independent reads that happen to agree. Before this, the root of the
+    # production API handed out "/docs" as a directions sign to a page that
+    # should never have existed; the failure mode to avoid now is the mirror
+    # image, a sign pointing at a 404.
+    if app.docs_url:
+        payload["docs"] = app.docs_url
+    payload["health"] = "/health"
+    return payload
 
 
 # =============================================================================

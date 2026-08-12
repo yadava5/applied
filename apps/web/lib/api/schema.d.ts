@@ -982,8 +982,11 @@ export interface components {
             version: string;
             /** Deployment */
             deployment: string;
-            /** Environment */
-            environment: string;
+            /**
+             * Environment
+             * @description The configured environment, or null when the deployment does not declare one. Null is not 'development' -- it means nobody said. This endpoint used to print the field's default, which read as an assertion that production was a development deployment.
+             */
+            environment?: string | null;
         };
         /** InboxResponse */
         InboxResponse: {

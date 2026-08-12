@@ -55,7 +55,38 @@ class Settings(BaseSettings):
     # - development: normal local runs (uses on-disk SQLite DB)
     # - production: same as development for now, but reserved for future tuning
     # - test: in-memory SQLite DB for pytest (never touches real data)
+    #
+    # THIS VALUE IS A DEFAULT, NOT A MEASUREMENT. Nothing sets
+    # JOBTRACKER_ENVIRONMENT on Vercel, so the deployed production API has
+    # reported "development" since the day it shipped -- not because anyone
+    # decided that, but because nobody decided anything. Use
+    # ``environment_is_configured`` to tell the two apart, and never build a
+    # security decision on this field alone: a condition of the form
+    # ``if settings.environment == "production"`` is false in production and
+    # is therefore a check that cannot fail.
     environment: Literal["development", "production", "test"] = "development"
+
+    # Interactive API documentation: /docs (Swagger UI), /redoc, and the
+    # /openapi.json document that feeds them.
+    #
+    # OFF BY DEFAULT, AND DELIBERATELY NOT DERIVED FROM ``environment``.
+    # The obvious gate -- "serve docs unless environment == production" --
+    # cannot work here for the reason spelled out above: the deployed API
+    # *is* "development" as far as this config can tell, so that gate would
+    # keep publishing the full interactive API surface to anyone who asked.
+    # An independent switch whose default is the safe value inverts the
+    # failure mode: a deployment configured with nothing at all serves no
+    # docs, and a docs endpoint can only exist because somebody explicitly
+    # asked for one.
+    enable_docs: bool = Field(
+        default=False,
+        description=(
+            "Serve the interactive API docs (/docs, /redoc, /openapi.json). "
+            "Off unless explicitly enabled -- set JOBTRACKER_ENABLE_DOCS=true "
+            "for local development. A deployment that configures nothing "
+            "serves no docs."
+        ),
+    )
 
     # Deployment target. "desktop" keeps every existing assumption (SQLite,
     # Keychain, WebSocket router, localhost CORS). "cloud" selects the
@@ -64,6 +95,24 @@ class Settings(BaseSettings):
     # cloud paths in one at a time; this flag only gates which app builder
     # is imported.
     deployment: Literal["desktop", "cloud"] = "desktop"
+
+    @property
+    def environment_is_configured(self) -> bool:
+        """True only when ``environment`` was actually supplied by the operator.
+
+        Pydantic records the field names a model was *constructed* with in
+        ``model_fields_set``, and pydantic-settings feeds env vars and ``.env``
+        entries in as constructor values. A field left at its default is
+        therefore absent from that set. This is the only way to distinguish a
+        deployment that said ``JOBTRACKER_ENVIRONMENT=development`` from one
+        that said nothing and inherited the identical string -- which is
+        exactly the situation the deployed cloud API is in.
+
+        Not a ``computed_field``: this is a fact about how the settings were
+        loaded, not a setting, and it has no business in a serialised dump.
+        """
+
+        return "environment" in self.model_fields_set
 
     # -------------------------------------------------------------------------
     # API Server
