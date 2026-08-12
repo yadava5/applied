@@ -194,3 +194,87 @@ routers not yet mounted in `main_cloud` — the full-model classifier story is
 carried by the ML demo (`ml/demo`, Hugging Face Spaces) and the web `/demo`
 fixture. Until an owner completes Path C's Google setup, the deployed
 `/settings` page honestly reports Gmail as "not enabled on this deployment."
+
+## Which commits deploy
+
+Both Vercel projects build from this one repo, so every commit used to trigger
+two deployments — including workflow bumps and backend dependency updates that
+can change neither bundle. `vercel-ignore-build.sh` is now the Ignored Build
+Step for both, wired up through `ignoreCommand`:
+
+| Project          | Root Directory | Config                | Builds when these change                                             |
+| ---------------- | -------------- | --------------------- | -------------------------------------------------------------------- |
+| `jobtracker-api` | repo root      | `vercel.json`         | `api/`, `requirements.txt`, `backend/jobtracker/`, `vercel.json`, `.vercelignore` |
+| `jobtracker-web` | `apps/web`     | `apps/web/vercel.json`| `apps/web/`, `.vercelignore`                                          |
+
+`ignoreCommand` in `vercel.json` overrides whatever the dashboard's Ignored
+Build Step says, so the guard is version-controlled rather than a dashboard
+field — but JSON has no comments, and the exit codes are inverted (`exit 0`
+skips, `exit 1` builds). **The reasoning lives in the header of
+`vercel-ignore-build.sh`; read it before touching either config.** The path
+lists are an allowlist: a new build input that is not added there will never
+deploy.
+
+A branch's first preview always builds, so the e2e browser pass always has a
+preview URL.
+
+### The ignore step does not save quota — read this before "optimising" it
+
+An Ignored Build Step skip still costs a deployment. This is the opposite of
+the intuitive reading, so here it is verbatim, from
+<https://vercel.com/docs/project-configuration/project-settings#ignored-build-step>:
+
+> Canceled builds are counted as full deployments as they execute a build
+> command in the build step. This means that any canceled builds initiated
+> using the ignore build step will still count towards your deployment quotas
+> and concurrent build slots.
+
+The Hobby cap is 100 deployments per day, and this repo has hit it. What a skip
+buys is build minutes, the single Hobby concurrent-build slot released in well
+under a second instead of a full Next.js build, and a production deployment
+that no-op commits stop replacing. Worth having — but it is not the cap.
+
+### `git.deploymentEnabled` is the part that saves quota
+
+Both `vercel.json` files also carry:
+
+```json
+"git": { "deploymentEnabled": { "dependabot/**": false, "dependabot/*": false } }
+```
+
+Vercel never *triggers* a deployment for these branches, so nothing is created
+and nothing is counted. Dependabot previews were already being thrown away by
+the ignore step; this stops paying a deployment for the privilege. Dependabot
+branches never need a preview URL — the Claude-in-Chrome e2e pass only ever
+runs against real feature work.
+
+**The `**` is load-bearing.** These patterns are
+[minimatch](https://github.com/isaacs/minimatch), where `*` does not cross a
+`/`. Real branch names here look like
+`dependabot/pip/backend/beautifulsoup4-gte-4.15.0` — three slashes — so a
+lone `dependabot/*` would have matched *nothing* and silently done nothing.
+`dependabot/*` is kept alongside `dependabot/**` only as insurance against a
+matcher that treats `*` as crossing `/`; where rules conflict Vercel takes the
+permissive one, and both of these are `false`, so they cannot fight.
+
+`main` has no branch protection and no rulesets, so no Vercel status is a
+required check and a missing or skipped one cannot block a merge. Vercel's
+documented commit statuses are terminal in any case — a commit status reports
+that it "successfully deployed or failed, or skipped its Vercel deployment" —
+so there is no pending-forever state to get stuck on.
+
+### The dashboard "Skip deployments when there are no changes…" toggle is inert here
+
+Do not bother enabling it. Vercel's built-in
+[skipping of unaffected projects](https://vercel.com/docs/monorepos#skipping-unaffected-projects)
+requires npm/yarn/pnpm/Bun **workspaces**, "detected using the lockfile at the
+repository root". This repo has no root `package.json`, no root lockfile and no
+`pnpm-workspace.yaml` — the lockfile is `apps/web/pnpm-lock.yaml`. The
+documented fallback is that everything counts as a global change and "deploy
+all applications in the repository", followed by: "If your project does not
+meet these requirements, you can use the Ignored Build Step." That is exactly
+what the guard above is.
+
+If a root workspace definition is ever added, the toggle becomes the *better*
+lever and should replace the guard: unlike the Ignored Build Step it "does not
+occupy concurrent build slots".
