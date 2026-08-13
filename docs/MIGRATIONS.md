@@ -17,10 +17,11 @@ That is fixed. This document is the contract that keeps it fixed.
 
 ## The short version
 
-| you are doing | how it ships |
-|---|---|
-| new nullable column, new table, new index, new enum label | **one PR** — write the revision, merge, done |
-| drop, rename, narrow a type, add `NOT NULL`, add `UNIQUE` | **two merges** — see [Contract steps](#contract-steps) |
+| you are doing | how it ships | enforced |
+|---|---|---|
+| new nullable column, new table, new index, new enum label | **one PR** — write the revision, merge, done | — |
+| drop, rename, narrow a type, add `NOT NULL` | **two merges** — see [Contract steps](#contract-steps) | yes, by [the expand-only gate](#the-gate-that-enforces-this) |
+| add `UNIQUE` | **two merges** — see [Contract steps](#contract-steps) | no — review only, and [here is why](#what-the-gate-does-not-check) |
 
 ## How it works now
 
@@ -81,6 +82,98 @@ independently safe. A single `ALTER TABLE ... RENAME COLUMN` is not.
 
 **Adding `NOT NULL`** needs the backfill to complete *and* every writer to be
 supplying the value before the constraint goes on.
+
+## The gate that enforces this
+
+Everything above was a paragraph until `scripts/check_expand_only.py`. It runs
+as the `expand-only` job in Backend CI, walks the chain **one revision at a
+time** against a throwaway Postgres, fingerprints the schema after each step
+with `scripts/schema_fingerprint.sql`, and fails on exactly five facts:
+
+- a column disappears
+- a column's type changes
+- a column goes nullable → `NOT NULL`
+- a table disappears
+- an enum label disappears
+
+Those are the changes that break code *already running*, which is the only thing
+the deploy race can hurt. Adding or dropping an index, relaxing a constraint,
+adding a column, adding an enum label: all fine, none reported. The rule is
+narrow on purpose. A gate that also fired on `6e64c46d32fd`'s fourteen new
+indexes would be argued with, then disabled, and this repo has a documented
+history of exactly that.
+
+**Per revision, not end to end**, and that is the whole design. `6e64c46d32fd`
+adds `user_id` nullable, backfills it, then flips it to `NOT NULL` — all inside
+one revision, and it passes, because the narrowing lands on a column no deployed
+code could have been reading. The same three steps split across two merged
+revisions would fail the second one, correctly.
+
+### Declaring a contract step
+
+A revision that genuinely has to remove something says so, at module level:
+
+```python
+CONTRACT_STEP = (
+    "PR #204 removed the last reader and writer of applications.legacy_note; "
+    "that deploy is live (/health reports the new commit)."
+)
+```
+
+Its presence is what makes the gate pass for that revision, and it is what a
+reviewer looks for. Three rules, all of them the same rule:
+
+- **A string, not `True`.** A flag records that somebody wanted to merge. A
+  sentence records why it is safe. The reason is the artifact.
+- **At least 20 characters.** "yes" is not a reason.
+- **It must waive something.** A declaration on a revision that removes nothing
+  fails too. An inert waiver tells the next reviewer this was reasoned about
+  when it was not, and it would silently cover the first real drop somebody adds
+  to that file later.
+
+### What the gate does not check
+
+**`ADD UNIQUE`**, which is in the table at the top of this document. It is a
+different risk shape — a new UNIQUE breaks new *writes* that collide, not old
+*reads* — so it is not a removal and cannot be found as one, and deciding
+whether a constraint tightened or relaxed would fire on every index rename in
+the history. Four of the five triggers in that table are mechanical now. That
+one is still a review responsibility, and it is listed as such rather than
+quietly dropped.
+
+**VARCHAR length narrowing.** The fingerprint records `udt_name`, so
+`varchar(500) → varchar(50)` reads as no change at all. This schema declares a
+length exactly once (`emails.body_snippet`, via `max_length=500`), and
+`schema_fingerprint.sql` is deliberately left alone rather than widened for a
+case that has not happened: it is the artifact that proved production
+byte-identical to a from-empty build across all 196 facts.
+
+**A drop and re-add of the same shape inside one revision.** The snapshot after
+such a revision is identical to the one before it, so it passes — and the rows
+are gone. That is structural to comparing shapes rather than replaying history,
+and it is the boundary of what this gate can claim rather than something to
+patch: nobody writes that by accident, and the reviewer should know which of the
+two the gate is.
+
+**Whether the whole chain applies in one transaction.** That is
+`tests/test_migrations_postgres.py`, and it is not redundant with this. `env.py`
+wraps every pending revision in a single transaction; stepping one at a time
+gives each its own, so `b9e42f7c10ad`'s `autocommit_block()` is not exercised
+the same way. Both jobs are needed.
+
+Run it by hand:
+
+```sh
+docker run -d --name expandgate -e POSTGRES_PASSWORD=postgres \
+  -p 55433:5432 postgres:16
+
+JOBTRACKER_TEST_PG_ADMIN_URL="postgresql://postgres:postgres@127.0.0.1:55433/postgres" \
+  python scripts/check_expand_only.py
+```
+
+It drops and rebuilds the `public` schema to walk the chain from empty, so it
+refuses to read `DIRECT_URL` at all, refuses any host that is not loopback, and
+refuses a database that holds rows. Point it at a scratch Postgres.
 
 ## Writing a revision
 
