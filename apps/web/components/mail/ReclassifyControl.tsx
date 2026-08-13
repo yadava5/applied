@@ -8,6 +8,7 @@ import {
   CLASSIFY_FAILED,
   canNameCompany,
   classifyRequestBody,
+  confirmCompanyPrompt,
   employerPromptFor,
   readClassifyOutcome,
   rowStaysInQueue,
@@ -85,21 +86,34 @@ export function ReclassifyControl({
   /** Set when the backend filed nothing because it couldn't name the employer. */
   const [employerPrompt, setEmployerPrompt] = useState<string | null>(null);
   const [namedCompany, setNamedCompany] = useState(company ?? "");
+  /** The spelling already on the board that the typed company looks like. */
+  const [suggestion, setSuggestion] = useState<string | null>(null);
 
-  async function apply() {
+  async function apply(answer?: { company?: string; confirmNewCompany?: boolean }) {
     setBusy(true);
     setError(null);
-    const named = namedCompany.trim();
+    const named = (answer?.company ?? namedCompany).trim();
+    const sendCompany = answer?.company !== undefined || employerPrompt !== null;
     try {
       const res = await classify(
         messageId,
         // Only send the company once the backend has asked for it — sending
         // it up front would override an employer the mail itself names.
-        classifyRequestBody(category, employerPrompt ? named : null, null, message),
+        classifyRequestBody(
+          category,
+          sendCompany ? named : null,
+          null,
+          message,
+          answer?.confirmNewCompany,
+        ),
       );
       const outcome = readClassifyOutcome(res.ok, res.body);
       if (rowStaysInQueue(outcome)) {
-        if (outcome.kind === "needs-employer") {
+        if (outcome.kind === "needs-confirmation") {
+          setNamedCompany(named);
+          setSuggestion(outcome.suggestedCompany);
+        } else if (outcome.kind === "needs-employer") {
+          setSuggestion(null);
           setEmployerPrompt(employerPromptFor(employerPrompt ? named : ""));
         } else {
           setError(outcome.detail);
@@ -189,6 +203,7 @@ export function ReclassifyControl({
           setOpen(false);
           setError(null);
           setEmployerPrompt(null);
+          setSuggestion(null);
         }}
         disabled={busy}
         className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
@@ -196,7 +211,41 @@ export function ReclassifyControl({
         cancel
       </button>
 
-      {employerPrompt ? (
+      {/* The company named is one edit from one already on the board. Nothing
+          was filed and nothing was merged — the same closeness that catches a
+          typo catches two real employers, so the user answers it. */}
+      {suggestion ? (
+        <div className="flex basis-full flex-wrap items-center gap-2 rounded border border-review/40 bg-surface px-2.5 py-2">
+          <p role="status" className="basis-full text-xs leading-relaxed text-review">
+            {confirmCompanyPrompt(suggestion)}
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setSuggestion(null);
+              setNamedCompany(suggestion);
+              void apply({ company: suggestion });
+            }}
+            className="inline-flex items-center gap-1 rounded border border-review/50 px-2 py-1 text-xs font-medium text-strong transition-colors hover:border-review disabled:opacity-50"
+          >
+            yes — file it under {suggestion}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setSuggestion(null);
+              void apply({ confirmNewCompany: true });
+            }}
+            className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
+          >
+            no — a different company
+          </button>
+        </div>
+      ) : null}
+
+      {employerPrompt && !suggestion ? (
         <div className="flex basis-full flex-wrap items-center gap-2 rounded border border-review/40 bg-surface px-2.5 py-2">
           <p role="status" className="basis-full text-xs leading-relaxed text-review">
             {employerPrompt}

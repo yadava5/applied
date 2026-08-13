@@ -541,12 +541,20 @@ class ReviewClassifyRequest(BaseModel):
     whose rows may never have been stored (see :class:`ScannedMessageIn`).
     Consulted only when this message id is not already on file; a stored message
     is always corrected in place, so a client cannot use this to rewrite one.
+
+    ``confirm_new_company`` is the answer to "did you mean the one already on
+    your board?". A ``company`` one edit away from a stored employer stops and
+    asks rather than opening a second row under the new spelling (see
+    :func:`_misspelled_employer`); this flag is the human saying no, these really
+    are two employers. Deliberately an explicit acknowledgement and not a
+    default: the whole point is that the typo was accepted silently once.
     """
 
     category: EmailCategory
     company: str | None = None
     application_id: int | None = None
     message: ScannedMessageIn | None = None
+    confirm_new_company: bool = False
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -689,6 +697,45 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
             row.id or 0,
         ),
     )
+
+
+async def _misspelled_employer(session, user_id: uuid.UUID, token: str) -> str | None:
+    """The employer on the board that a NEW ``token`` is probably a typo of.
+
+    Returns the stored spelling to offer back, or None when the token names an
+    employer the board already answers to (nothing to ask about) or nothing near
+    enough (nothing to offer). The caller must treat a name it returns as a
+    QUESTION for the user, never as a row to file against — see
+    :func:`pipeline.near_miss_employer`.
+
+    Application 119 on the owner's board is what this exists for: a rejection
+    from ``no-reply@us.greenhouse-mail.io`` reached the review queue because the
+    relay names no employer, a human typed "Verkeda", and the lookup for token
+    ``verkeda`` found none of the four "Verkada" rows — so a status change minted
+    a fifth application instead of settling one of them. Identity here is
+    employer + (req_id or role); a near miss on the employer half defeats the
+    whole key before the other half is ever consulted.
+
+    LIVE rows only. A dismissed row is not on the board, and suggesting its name
+    would send the user's next answer onto a row they cannot see (``_company_rows``
+    puts live first, so an all-dismissed employer resolves to an invisible one).
+    A typo'd re-entry of a dismissed employer therefore mints, which is the
+    behaviour that path already had.
+    """
+
+    if await _company_rows(session, user_id, token):
+        return None
+    employers = (
+        await session.exec(
+            select(Application.company)
+            .where(
+                Application.user_id == user_id,
+                Application.dismissed_at.is_(None),
+            )
+            .distinct()
+        )
+    ).all()
+    return pipeline.near_miss_employer(token, employers)
 
 
 async def _resolve_application(
@@ -2248,6 +2295,7 @@ async def classify_review_item(
     company: str | None = None,
     application_id: int | None = None,
     scanned: ScannedMessageIn | None = None,
+    confirm_new_company: bool = False,
 ) -> dict[str, object]:
     """Classify a needs-review email into a category — persist + train.
 
@@ -2276,6 +2324,20 @@ async def classify_review_item(
     2xx — so the item vanished from the queue and never reached the board.
     ``training_data`` id 4 / ``emails`` id 58 in production are that bug.)
 
+    AND IT ASKS BEFORE OPENING AN EMPLOYER THAT LOOKS LIKE A TYPO. A ``company``
+    naming no stored row but sitting one edit from one that does gets the same
+    treatment: nothing is filed, the item stays in the queue, and the response
+    carries ``needs_company_confirmation`` plus the ``suggested_company`` to
+    offer back. Re-sending with that spelling files the mail against the row
+    that already exists; re-sending with ``confirm_new_company`` opens the
+    separate application. It never merges on the resemblance itself — joining
+    two genuinely different employers would move a live application to a
+    terminal status :func:`pipeline.advance_application_status` will not let it
+    leave, a worse and far less recoverable outcome than the duplicate row this
+    prevents. Application 119 ("Verkeda", a fifth row beside four "Verkada"
+    ones, holding the rejection that should have settled one of them) is the
+    duplicate in question.
+
     A message that is NOT on file is a 404 unless the caller supplies
     ``scanned``, in which case it is stored first and then corrected — that is
     the live-scan path (:class:`ScannedMessageIn`). The store happens BEFORE the
@@ -2302,12 +2364,17 @@ async def classify_review_item(
 
     status_value = _lifecycle_to_status(category)
     employer = None
+    # Whether the name below came from the HUMAN rather than from the mail. Only
+    # a hand-typed name can carry a typo, and only a hand-typed name has someone
+    # standing there to answer a question about it.
+    named_by_hand = False
     if status_value is not None:
         employer = pipeline.resolve_employer(
             email.sender_email or "", email.subject or "", email.sender_name
         )
         if employer is None and company:
             employer = pipeline.employer_from_text(company)
+            named_by_hand = employer is not None
 
     if status_value is not None and employer is None:
         # Visible failure: keep the label for training, keep the item in the
@@ -2333,6 +2400,48 @@ async def classify_review_item(
                 "same classification with a 'company' to file it."
             ),
         }
+
+    if named_by_hand and not confirm_new_company:
+        suggestion = await _misspelled_employer(session, user_id, employer[0])
+        if suggestion is not None:
+            # Same shape as the branch above, and for the same reason: keep the
+            # label, keep the item, file nothing, and say what is missing —
+            # which here is a yes or a no rather than a name.
+            #
+            # ``needs_employer`` rides along DELIBERATELY. A client that predates
+            # this flag reads the pair as the ordinary "name the company" prompt
+            # and keeps the row in the queue, where typing the offered spelling
+            # files it correctly. Sending only the new flag would have those
+            # clients read a resolved 2xx, drop the item off the queue and file
+            # nothing — the Crusoe incident this endpoint's honesty exists to
+            # prevent, reintroduced by the very change meant to make it safer.
+            await _add_training_example(session, user_id, email, category)
+            await session.commit()
+            # Ids only, no company strings. CodeQL's clear-text-logging rule
+            # reads an employer name reaching a log sink as private data, and it
+            # is right enough not to argue with: the two names are recoverable
+            # from this user_id and message_id by anyone entitled to them, so
+            # the line loses nothing an operator needs.
+            logger.info(
+                "Review classify for user_id=%s message_id=%s named a company one "
+                "edit from an employer already on the board — asked instead of filing",
+                user_id,
+                message_id,
+            )
+            return {
+                "classified_as": category.value,
+                "application_id": None,
+                "needs_employer": True,
+                "needs_company_confirmation": True,
+                "suggested_company": suggestion,
+                "message_id": message_id,
+                "detail": (
+                    f"'{employer[1]}' looks like '{suggestion}', which is already on "
+                    f"your board. Re-send with company='{suggestion}' to file this "
+                    "against it, or with 'confirm_new_company' to open a separate "
+                    "application."
+                ),
+            }
 
     email.classified_as = category
     email.is_reviewed = True
@@ -2962,6 +3071,13 @@ async def classify_review_item_cloud(
     the queue. Callers must branch on that flag (and may re-POST with
     ``company``) rather than assuming success.
 
+    A ``company`` one edit from an employer already on the board answers with
+    that flag PLUS ``needs_company_confirmation: true`` and a
+    ``suggested_company``, and still files nothing — "Verkeda" beside four
+    "Verkada" rows is how a rejection opened a fifth application instead of
+    settling one. Re-POST with the suggested spelling to file it there, or with
+    ``confirm_new_company: true`` to insist the two employers are different.
+
     Accepts a correction for a message this database has never seen, provided
     the caller sends its metadata as ``message`` — the live scan's rows are
     verdicts about un-stored mail, and without this they were 404s. The message
@@ -2978,6 +3094,7 @@ async def classify_review_item_cloud(
             data.company,
             data.application_id,
             data.message,
+            data.confirm_new_company,
         )
 
 

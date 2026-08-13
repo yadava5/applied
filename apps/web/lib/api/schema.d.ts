@@ -212,6 +212,13 @@ export interface paths {
          *     the queue. Callers must branch on that flag (and may re-POST with
          *     ``company``) rather than assuming success.
          *
+         *     A ``company`` one edit from an employer already on the board answers with
+         *     that flag PLUS ``needs_company_confirmation: true`` and a
+         *     ``suggested_company``, and still files nothing — "Verkeda" beside four
+         *     "Verkada" rows is how a rejection opened a fifth application instead of
+         *     settling one. Re-POST with the suggested spelling to file it there, or with
+         *     ``confirm_new_company: true`` to insist the two employers are different.
+         *
          *     Accepts a correction for a message this database has never seen, provided
          *     the caller sends its metadata as ``message`` — the live scan's rows are
          *     verdicts about un-stored mail, and without this they were 404s. The message
@@ -1270,6 +1277,13 @@ export interface components {
          *     whose rows may never have been stored (see :class:`ScannedMessageIn`).
          *     Consulted only when this message id is not already on file; a stored message
          *     is always corrected in place, so a client cannot use this to rewrite one.
+         *
+         *     ``confirm_new_company`` is the answer to "did you mean the one already on
+         *     your board?". A ``company`` one edit away from a stored employer stops and
+         *     asks rather than opening a second row under the new spelling (see
+         *     :func:`_misspelled_employer`); this flag is the human saying no, these really
+         *     are two employers. Deliberately an explicit acknowledgement and not a
+         *     default: the whole point is that the typo was accepted silently once.
          */
         ReviewClassifyRequest: {
             category: components["schemas"]["EmailCategory"];
@@ -1278,6 +1292,11 @@ export interface components {
             /** Application Id */
             application_id?: number | null;
             message?: components["schemas"]["ScannedMessageIn"] | null;
+            /**
+             * Confirm New Company
+             * @default false
+             */
+            confirm_new_company: boolean;
         };
         /**
          * ReviewItemResponse
