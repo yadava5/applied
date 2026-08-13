@@ -489,10 +489,16 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // The rows fold their stage select + Gmail slot while the pane is open —
-    // the 176px that pay for its width. The pane's own stage control is the
-    // one left standing, and exactly one row carries the open mark.
+    // the 176px that pay for its width. Since #173 the fold is a container
+    // query on the worklist's own measure (< 32rem folds, display not
+    // unmount — hence :visible, not node counts): /demo's max-w-6xl run
+    // leaves 504px beside the open pane at the suite's 1440 default, under
+    // the floor, so every per-row select is folded here and the pane's own
+    // stage control is the one left standing. The signed-in shell measures
+    // 588px+ at 1280+ and KEEPS its row controls; /demo/shell carries that
+    // geometry. Exactly one row carries the open mark.
     await expect(page.locator("select[id^='detail-status-']")).toHaveCount(1);
-    await expect(page.locator("select[id^='status-']")).toHaveCount(0);
+    await expect(page.locator("select[id^='status-']:visible")).toHaveCount(0);
     await expect(page.locator("[data-detail-open]")).toHaveCount(1);
 
     // "N of M · ↑ ↓": the header reports position over the board's visible
@@ -522,7 +528,7 @@ test.describe("live demo (/demo)", () => {
     await page.keyboard.press("Escape");
     await expect(pane).toBeHidden();
     await expect(page.getByRole("button", { name: /^Open Harbor Analytics/ })).toBeFocused();
-    await expect(page.locator("select[id^='status-']")).not.toHaveCount(0);
+    await expect(page.locator("select[id^='status-']:visible")).not.toHaveCount(0);
   });
 
   test("the pulse renders all four derived signals in the board's band", async ({ page }) => {

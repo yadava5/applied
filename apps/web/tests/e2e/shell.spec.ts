@@ -454,17 +454,26 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * regressions through green before.
    */
   for (const viewport of [
-    { width: 1024, height: 768 }, // the `lg` dock floor — the owner's width
-    { width: 1280, height: 800 },
+    // `keepsRowControls` is #173's law made testable: the per-row stage
+    // select + Gmail slot fold ONLY where the worklist measures under 32rem
+    // beside the open pane. This twin measures ~409px at 1024 (folded) and
+    // ~588px at 1280 (kept) — and the assertion is on PRESENCE, because the
+    // clipping probe that reviewed #171 was structurally blind to controls
+    // that never render (an absent node cannot clip).
+    { width: 1024, height: 768, keepsRowControls: false }, // the `lg` dock floor — the owner's width
+    { width: 1280, height: 800, keepsRowControls: true },
   ]) {
     test(`the docked detail pane holds the lock and the worklist's exact share at ${viewport.width}×${viewport.height}`, async ({
       page,
     }) => {
-      await page.setViewportSize(viewport);
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto("/demo/shell");
       await expect(pageHeading(page)).toBeVisible();
 
       const closed = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+      const rowSelects = page.locator("select[id^='status-']:visible");
+      const closedSelects = await rowSelects.count();
+      expect(closedSelects, "no per-row stage selects on the closed board").toBeGreaterThan(0);
 
       await page
         .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
@@ -473,6 +482,11 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       await expect(detail).toBeVisible();
       // Docked means NOT modal: no dialog role, no backdrop dimming the board.
       await expect(page.getByRole("dialog")).toHaveCount(0);
+
+      // Presence with the pane open: every row keeps its select where the
+      // worklist can hold one, none where it cannot — the pane's own select
+      // is the stage path there.
+      await expect(rowSelects).toHaveCount(viewport.keepsRowControls ? closedSelects : 0);
 
       const doc = await docHeights(page);
       expect(
