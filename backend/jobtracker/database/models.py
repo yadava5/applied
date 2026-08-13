@@ -460,6 +460,24 @@ class Email(TimestampMixin, table=True):
         default=None,
         description="Method used for classification (rules, embeddings, setfit, fallback, user_correction)",
     )
+    # The classifier's PROPOSAL, which is not the same thing as ``classified_as``.
+    #
+    # ``classified_as`` is the COMMITTED category — the one the system may act
+    # on — and ``NEEDS_REVIEW`` is its typed null: the linker refuses to act on
+    # it, and ``reconcile_orphaned_classifications`` files from it as
+    # human-owned. A parked queue item therefore had nowhere to record WHAT the
+    # classifier thought it was, only how strongly it thought it ("needs_review
+    # at 0.92"), and the verdict was destroyed at the two persist sites.
+    #
+    # Values here are always proposals, never assertions. NULL is the normal
+    # state (nothing pending, or a row that already has a commitment) and
+    # ``needs_review`` is deliberately NOT storable — this holds one of the
+    # eight predicted labels or nothing. Unindexed on purpose: no reader filters
+    # on it, and none should start.
+    suggested_category: Optional[EmailCategory] = Field(
+        default=None,
+        description="Classifier's proposed category while the verdict is unconfirmed",
+    )
 
     # User interaction
     user_corrected: bool = Field(default=False, description="Was classification corrected?")

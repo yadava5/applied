@@ -320,6 +320,19 @@ async def _apply_runtime_migrations(conn) -> None:
         await conn.execute(text("ALTER TABLE emails ADD COLUMN body_html TEXT"))
         logger.info("Applied migration: added emails.body_html")
 
+    if "suggested_category" not in columns:
+        # ``create_all`` above adds missing TABLES, never missing COLUMNS, so an
+        # existing desktop DB would otherwise keep a schema the shared SQLModel
+        # no longer matches — and every ``select(Email)`` emits an explicit
+        # column list, so the failure would be an OperationalError on the first
+        # read, not a silent degradation. VARCHAR(19) mirrors what
+        # ``create_all`` writes for this column on a fresh DB (the longest
+        # label, ``PENDING_APPLICATION``); SQLite ignores the length either way.
+        await conn.execute(
+            text("ALTER TABLE emails ADD COLUMN suggested_category VARCHAR(19)")
+        )
+        logger.info("Applied migration: added emails.suggested_category")
+
     await _ensure_fts_search_objects(conn)
 
 

@@ -125,6 +125,46 @@ class TestReviewQueueAPI:
         assert payload["needs_review_count"] == 1
 
     @pytest.mark.asyncio
+    async def test_needs_review_count_still_counts_a_row_carrying_a_suggestion(
+        self, test_client: AsyncClient
+    ) -> None:
+        """A parked row with a ``suggested_category`` is still a parked row.
+
+        ``get_needs_review_count`` is hand-written SQL against the ``emails``
+        table (``UPPER(classified_as) = 'NEEDS_REVIEW'``). No typechecker reads
+        that string, so adding a second category column next to the one it
+        filters on is exactly the change that could silently move rows out of
+        the dashboard's count — and the whole point of ``suggested_category``
+        is that no existing reader's predicate changes.
+
+        The row seeded here is the production shape: committed to nothing,
+        proposing a rejection.
+        """
+
+        await _reset_analytics_tables()
+
+        now = datetime.utcnow()
+
+        async with get_session() as session:
+            parked = Email(
+                source_account=EmailSource.GMAIL,
+                message_id=f"<suggestion-count-{now.timestamp()}@test.com>",
+                received_at=now,
+                subject="Update on your application",
+                sender_email="no-reply@myworkday.com",
+                classified_as=EmailCategory.NEEDS_REVIEW,
+                suggested_category=EmailCategory.REJECTION,
+                classification_confidence=0.92,
+                user_corrected=False,
+            )
+            session.add(parked)
+            await session.commit()
+
+        response = await test_client.get("/classify/needs-review/count")
+        assert response.status_code == 200
+        assert response.json()["needs_review_count"] == 1
+
+    @pytest.mark.asyncio
     async def test_needs_review_threshold_is_85_percent(self, test_client: AsyncClient):
         await _reset_analytics_tables()
         now = datetime.utcnow()

@@ -163,6 +163,32 @@ def _alembic(command_name: str, revision: str) -> str:
     return proc.stdout + proc.stderr
 
 
+def _script_head() -> str:
+    """The head of the revision chain, READ rather than pinned.
+
+    This used to be the literal ``ASSESSMENT_REVISION``, which made "the chain
+    applied in one invocation" a statement that had to be edited by hand every
+    time a revision was added — and it duly went red on the first one after it
+    (``c2e7f4a91b83``), reporting a moved head as a broken migration. The
+    revision under test is still named, above; what is derived here is only
+    "where the chain ends", which is the thing the assertion is actually about.
+
+    ``Config`` is constructed but never run: ``fileConfig(alembic.ini)`` lives in
+    ``env.py``, which ``ScriptDirectory`` does not import. So this keeps the
+    module's no-in-process-Alembic rule intact (see :func:`_alembic`) — it reads
+    the version files, it does not execute a migration.
+    """
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    assert head is not None, "the revision chain has no head"
+    return head
+
+
 def _enum_labels(engine: Engine, type_name: str = "applicationstatus") -> list[str]:
     """The type's labels in ``pg_enum`` sort order — i.e. lifecycle order."""
 
@@ -255,6 +281,10 @@ def test_the_whole_chain_applies_to_a_bare_database_in_one_invocation(
     label inside an ``autocommit_block``: a label added and then USED in the
     same transaction raises 55P04. Running the chain revision-by-revision would
     not exercise that at all, so this deliberately goes straight to ``head``.
+
+    Every later revision rides on this too: a chain that stops part-way leaves
+    ``alembic_version`` short of the head, whatever the newest revision happens
+    to be.
     """
 
     with migrated.connect() as c:
@@ -263,7 +293,7 @@ def test_the_whole_chain_applies_to_a_bare_database_in_one_invocation(
         ).scalar_one() is not None
         assert (
             c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == ASSESSMENT_REVISION
+            == _script_head()
         )
 
 
@@ -363,7 +393,12 @@ def test_the_downgrade_remaps_rows_and_leaves_the_label(migrated: Engine) -> Non
     assessment_id = _insert_application(migrated, ApplicationStatus.ASSESSMENT, "Roblox")
     applied_id = _insert_application(migrated, ApplicationStatus.APPLIED, "Untouched Co")
 
-    _alembic("downgrade", "-1")
+    # Downgrade to the NAMED parent rather than ``-1``. Relative steps assume
+    # the revision under test is head, which stopped being true the moment a
+    # revision was added after it; an explicit target keeps this a test of
+    # ``b9e42f7c10ad``'s downgrade for good, which is what the constants at the
+    # top of this file exist to guarantee.
+    _alembic("downgrade", PARENT_REVISION)
 
     with migrated.connect() as c:
         assert (
