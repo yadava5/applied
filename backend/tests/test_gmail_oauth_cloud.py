@@ -3500,6 +3500,171 @@ async def test_an_incremental_sync_also_reports_what_it_lost(
     # estimate for it — so no estimate is invented.
     assert body["stopped_by"] == "complete"
     assert body["result_size_estimate"] is None
+    # …and it did NOT step over what it lost: the cursor stays where it was, so
+    # the next run re-walks the same delta. See
+    # ``test_a_message_lost_between_two_syncs_is_not_skipped_forever``.
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9001"
+
+
+# =============================================================================
+# A message that arrives BETWEEN two syncs that both run (issue #166)
+# =============================================================================
+
+
+class _FakeMailbox:
+    """A Gmail stand-in that answers ``history.list`` from a real cursor.
+
+    ``_install_gmail_stubs`` hands back a scripted ``HistoryPage`` whatever
+    ``start_history_id`` it is asked for, which is fine for the tests that only
+    care what the RESPONSE says. It cannot express the defect this file's next
+    test is about, because that defect is entirely about which delta the second
+    request gets: a fake that ignores the cursor will hand back the missing
+    message no matter how far the cursor moved, and the test passes on a
+    product that lost it.
+
+    So this one models the mailbox. Messages carry a ``historyId``; a delta is
+    everything strictly newer than the requested cursor; and ``failing_gets``
+    names ids whose batched ``messages.get`` comes back empty — Gmail LISTED
+    them, we could not read them, which is exactly what ``unreadable`` counts
+    (``gmail_client._collect_history``: ``unreadable = len(ids) - len(out)``).
+    """
+
+    def __init__(self) -> None:
+        # (history_id, message) in arrival order.
+        self.messages: list[tuple[int, Any]] = []
+        self.failing_gets: set[str] = set()
+        self.deltas: list[tuple[str, list[str]]] = []
+
+    def deliver(self, history_id: int, message: Any) -> None:
+        self.messages.append((history_id, message))
+
+    @property
+    def current_history_id(self) -> str:
+        return str(max((h for h, _ in self.messages), default=1))
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import jobtracker.cloud.gmail_client as gmail_client_module
+        from jobtracker.cloud.gmail_client import HistoryPage, MessagePage
+
+        async def _fake_profile(user_id, **_kwargs):
+            return self.current_history_id
+
+        async def _fake_page(user_id, **_kwargs):
+            # The full scan re-lists the window newest-first.
+            ordered = [m for _h, m in sorted(self.messages, reverse=True, key=lambda e: e[0])]
+            return MessagePage(messages=ordered, next_page_token=None)
+
+        async def _fake_history(user_id, *, start_history_id, **_kwargs):
+            listed = [m for h, m in self.messages if h > int(start_history_id)]
+            read = [m for m in listed if m.message_id not in self.failing_gets]
+            self.deltas.append(
+                (str(start_history_id), [m.message_id for m in listed])
+            )
+            return HistoryPage(messages=read, unreadable=len(listed) - len(read))
+
+        monkeypatch.setattr(
+            gmail_client_module, "fetch_mailbox_history_id", _fake_profile
+        )
+        monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+        monkeypatch.setattr(
+            gmail_client_module, "fetch_history_messages", _fake_history
+        )
+
+
+async def test_a_message_lost_between_two_syncs_is_not_skipped_forever(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #166: a rejection inside a covered window, ingested by nothing.
+
+    The reported shape, verbatim: three messages on the same day, the first and
+    the third on the board, the middle one on neither the board nor in
+    ``emails`` — and syncs demonstrably ran on both sides of it.
+
+    The mechanism reproduced here is the one the issue's second candidate names.
+    An incremental delta LISTS a message and cannot read its metadata back: a
+    dropped sub-request inside the 100-message batch, which
+    ``_batch_fetch_metadata`` logs and counts and then carries on past, because
+    one bad message must not sink a page. The page is still ``usable`` — it is
+    not ``expired`` and not ``truncated`` — so ``_incremental_scan`` returns it,
+    and ``gmail_sync`` writes the baseline captured before the run.
+
+    That baseline is NEWER than the message that was lost. From the next sync on,
+    the delta starts after it, and no incremental run can ever name it again.
+    ``unreadable: 1`` is reported honestly on the response nobody reads, and the
+    message is gone — not from a window the scan never reached, but from the
+    middle of one it did.
+
+    A full scan would still re-list it, which is why this only bites once the
+    cursor exists; the first sync here establishes it exactly as production's did.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    rejection = _msg(
+        "m-together",
+        subject="Update on your application to Together AI",
+        sender="careers@together.ai",
+        snippet=(
+            "We regret to inform you that we will not be moving forward with "
+            "your application."
+        ),
+        day=12,
+        name="Together AI",
+    )
+    later = _msg(
+        "m-amazon",
+        subject="Thank you for Applying to Amazon!",
+        sender="no-reply@amazon.jobs",
+        snippet="Thank you for applying. Your application has been received.",
+        day=12,
+        name="Amazon",
+    )
+
+    mailbox = _FakeMailbox()
+    mailbox.deliver(9002, _applied_msg("m-earlier", day=11))
+    mailbox.install(monkeypatch)
+
+    # Sync 1 — no cursor yet, so this is the full scan, and it baselines at 9002.
+    first = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert first.status_code == 200, first.text
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9002"
+
+    # Both messages arrive. The rejection's metadata get fails this once —
+    # transient, the way a dropped batch sub-request is.
+    mailbox.deliver(9050, rejection)
+    mailbox.deliver(9080, later)
+    mailbox.failing_gets.add("m-together")
+
+    second = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert second.status_code == 200, second.text
+    body = second.json()
+    # The run LISTED both and read one. It says so.
+    assert mailbox.deltas[-1] == ("9002", ["m-together", "m-amazon"])
+    assert (body["scanned"], body["unreadable"]) == (1, 1)
+
+    # THE ASSERTION. A run that could not read everything it listed must not
+    # move the cursor past it: the baseline it captured (9080) sits after the
+    # message it lost, so recording it would put that message permanently out of
+    # every future delta's reach.
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9002"
+
+    # Sync 3 — the transient failure is over. Because the cursor was held, the
+    # delta still names the rejection, and it lands.
+    mailbox.failing_gets.clear()
+    third = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert third.status_code == 200, third.text
+    assert mailbox.deltas[-1][0] == "9002"
+    assert third.json()["unreadable"] == 0
+
+    listing = (await client.get("/applications", headers=headers)).json()
+    rows = {a["company"].lower(): a["status"] for a in listing["applications"]}
+    assert "together ai" in rows, f"the lost rejection never reached the board: {rows}"
+    assert rows["together ai"] == "rejected"
+
+    # A clean run DOES advance, so the fix costs one repeated delta, not a
+    # cursor that never moves again.
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9080"
 
 
 async def test_a_relayed_mine_says_the_server_did_not_scan_it(
