@@ -289,6 +289,58 @@ async def test_a_parked_row_gains_its_suggestion_on_the_next_sync(
     assert untouched.is_reviewed is True
 
 
+async def test_the_rebuild_path_records_the_verdict_too(cloud_app: Any) -> None:
+    """There are TWO persist sites, and "Re-sync" uses the other one.
+
+    Everything above reaches ``_persist_review_items_additive``, because a
+    relayed item set is what a routine sync is. The user-driven rebuild
+    (``mode: "rebuild"``) goes through ``_persist_review_items`` instead — a
+    second, independently hardcoded copy of the same construction. Removing the
+    writer from it alone leaves every other test in this file green, which was
+    measured, so without this one pressing "Re-sync" could silently drop every
+    suggestion on the board and nothing would say so.
+
+    Called directly rather than through the endpoint on purpose: a rebuild is
+    refused for relayed items, so driving it over HTTP would mean standing up
+    the Gmail scan stubs, and the thing under test here is which kwargs this
+    function passes on — not the scan.
+    """
+
+    from sqlmodel import select as sm_select
+
+    from jobtracker.cloud import pipeline
+    from jobtracker.cloud.applications import _persist_review_items
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Email, EmailCategory
+
+    item = pipeline.ReviewItem(
+        message_id="rebuild-relay-1",
+        thread_id=None,
+        subject=RELAY_SUBJECT,
+        sender_email=RELAY_SENDER,
+        sender_name=None,
+        received_at=datetime(2026, 8, 1, 12, 0, 0),
+        category="rejection",
+        confidence=0.90,
+        company_display=None,
+    )
+
+    async with get_session() as session:
+        surfaced = await _persist_review_items(session, uuid.UUID(USER), [item])
+        await session.commit()
+    assert surfaced == 1
+
+    async with get_session() as session:
+        row = (
+            await session.exec(
+                sm_select(Email).where(Email.message_id == "rebuild-relay-1")
+            )
+        ).first()
+    assert row is not None
+    assert row.classified_as == EmailCategory.NEEDS_REVIEW
+    assert row.suggested_category == EmailCategory.REJECTION
+
+
 async def test_a_suggestion_never_acts(cloud_app: Any) -> None:
     """The inversion canary: a proposal must not move an application. Ever.
 
