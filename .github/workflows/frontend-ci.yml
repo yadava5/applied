@@ -58,6 +58,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The `--max-warnings 0` that makes this step able to fail lives in the
+      # `lint` script in apps/web/package.json, not here, so a local `pnpm lint`
+      # returns the same verdict CI does. Until #176 this step ran bare
+      # `eslint`: next's six `jsx-a11y` rules are all severity `warn`, and
+      # eslint exits 0 on warnings, so an `<img>` with no `alt` reported two
+      # violations and the job still went green.
       - name: Lint
         run: pnpm lint
 

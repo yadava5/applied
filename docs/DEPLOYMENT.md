@@ -67,7 +67,7 @@ stale job.
   module import time with zod; missing values would crash `next build`.
 - Steps: `pnpm install --frozen-lockfile` ->
   `pnpm typecheck` (`tsc --noEmit`) ->
-  `pnpm lint` (Next.js ESLint defaults) ->
+  `pnpm lint` (Next.js ESLint defaults, `--max-warnings 0`) ->
   `pnpm build` (Next.js 16 Turbopack production build).
 
 Any non-zero exit fails the job. `--frozen-lockfile` ensures
