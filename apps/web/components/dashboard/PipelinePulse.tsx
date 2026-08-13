@@ -63,6 +63,23 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * Nothing here is interactive beyond the existing `Link`; the whole surface
  * still server-renders.
  *
+ * Ink policy (owner call, 2026-08-12: colour where the data is, not
+ * everywhere): the DRAWN elements carry chromatic ink; labels, counts and
+ * prose stay on the text ramp. These charts are not stage rollups — they
+ * count time and provenance — so they must not borrow stage ink: doing so is
+ * what rendered the whole band grey on the real account (every row in
+ * `applied`, whose stage accent is deliberately achromatic). Instead,
+ * recency wears the product's sky accent (`--viz-rules`, the nav-focus and
+ * brand-mark hue) on the momentum bars and the age bar's fresh segment, and
+ * the auto-filed share wears the verdict emerald (`--viz-setfit`, the brand
+ * mark's "delivered" node). Amber/red stay reserved for the attention states
+ * they already mean, and the neutral buckets (prior weeks, 1–2 wk, filed by
+ * hand) stay grey ON PURPOSE — a board with one hot bucket reads as one
+ * strong ink, not as a wash. Every fill measures ≥3:1 against its ground in
+ * BOTH themes (WCAG 1.4.11; worst case emerald on the light track, 3.43:1),
+ * and no distinction rides on colour alone — the caption's numbers restate
+ * every split the bars draw.
+ *
  * Honesty rules: the board fetch is one bounded page, so when the loaded rows
  * are fewer than the account's total the row-derived signals say they describe
  * the newest N rather than pretending to describe everything — once, as the
@@ -76,21 +93,30 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * an animation.
  */
 
-/** A thin proportional bar of coloured segments (zero segments not drawn). */
+/** A thin proportional bar of coloured segments (zero segments not drawn).
+ *  `widthClass` lets a cell trade bar width for its sentence: the auto-filed
+ *  cell's "nothing waiting on you" must not give way to decoration, and at
+ *  1280 its cell holds ~224px against ~168px of text — a w-16 bar truncated
+ *  the sentence (measured); w-12 fits both. */
 function SegmentBar({
   ariaLabel,
   total,
   segments,
+  widthClass = "w-16",
 }: {
   ariaLabel: string;
   total: number;
   segments: readonly (readonly [number, string])[];
+  widthClass?: string;
 }) {
   return (
     <div
       role="img"
       aria-label={ariaLabel}
-      className="flex h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-surface-2"
+      // gap-px: a hairline of ground between touching segments, so a bucket
+      // boundary never rides on hue alone (fresh|waiting sit at near-equal
+      // luminance by design — the ramp greys match the chromatic fills' weight).
+      className={`flex h-1.5 ${widthClass} shrink-0 gap-px overflow-hidden rounded-full bg-surface-2`}
     >
       {segments
         .filter(([count]) => count > 0)
@@ -210,14 +236,18 @@ export function PipelinePulse({
                 height: count > 0 ? `${Math.max(18, (count / peak) * 100)}%` : "2px",
                 // Two inks, one meaning: the delta sentence beside these bars
                 // compares the last 4 weeks against the prior 4, so the bars
-                // draw that same split — full stage ink for the recent half,
-                // a faded mix of the SAME hue for the prior. Colour encodes
-                // the comparison; it never decorates.
+                // draw that same split — the recency sky for the half the
+                // sentence leads with, the ramp's neutral grey for the prior
+                // baseline, mirroring the sentence's own strong-vs-muted
+                // weights. (A same-hue 45% fade was measured first: 1.8:1 on
+                // the light ground, invisible. Solid neutral keeps every
+                // filled bar ≥3:1 in both themes.) Colour encodes the
+                // comparison; it never decorates.
                 background:
                   count > 0
                     ? i >= weeks.length - 4
-                      ? "var(--stage-applied)"
-                      : "color-mix(in oklab, var(--stage-applied) 45%, transparent)"
+                      ? "var(--viz-rules)"
+                      : "var(--text-dim)"
                     : "var(--line-strong)",
                 ["--i" as string]: i,
               }}
@@ -236,11 +266,17 @@ export function PipelinePulse({
           <p className="text-xs text-dim">no open applications</p>
         ) : (
           <>
+            {/* A cool→warm staleness ramp: fresh wears the recency sky (the
+                same fact the momentum bars ink — days since filed), waiting
+                stays ramp-grey, quiet keeps the amber its card tags already
+                wear. A one-bucket board draws one solid ink — a young board
+                reads sky, a stalling one amber — instead of the uniform grey
+                the stage borrow used to produce. */}
             <SegmentBar
               ariaLabel={`Open applications by age: ${ages.fresh} under a week, ${ages.waiting} one to two weeks, ${ages.quiet} quiet two weeks or more`}
               total={openTotal}
               segments={[
-                [ages.fresh, "var(--stage-applied)"],
+                [ages.fresh, "var(--viz-rules)"],
                 [ages.waiting, "var(--text-dim)"],
                 [ages.quiet, "var(--amber)"],
               ]}
@@ -313,6 +349,22 @@ export function PipelinePulse({
 
       {/* auto-filed */}
       <PulseCell label="auto-filed · from your mail">
+        {/* The machine's own cell gets the machine's verdict ink: the
+            auto-filed share in emerald (`--viz-setfit`, the brand mark's
+            "delivered" node), the hand-filed remainder in ramp-grey. Same
+            inline h-1.5 geometry as the ageing bar, so the drawn element
+            costs the band no height — the two-line budget is the contract. */}
+        {applications.length > 0 ? (
+          <SegmentBar
+            ariaLabel={`${autoFiled} of ${applications.length} filed from your mail, ${applications.length - autoFiled} by hand`}
+            total={applications.length}
+            segments={[
+              [autoFiled, "var(--viz-setfit)"],
+              [applications.length - autoFiled, "var(--text-dim)"],
+            ]}
+            widthClass="w-12"
+          />
+        ) : null}
         <p className="tabular min-w-0 truncate text-xs text-muted">
           <span className="tabular text-strong">{autoFiled}</span> of {applications.length}
           {" · "}
