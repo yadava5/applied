@@ -315,13 +315,25 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
 
     const list = page.getByTestId("worklist-pane");
     const status = page.locator("[data-sync-surface]").getByRole("status");
+    // The board's own totals, matched by SHAPE so the assertion holds either
+    // side of the numbers changing mid-run (17→19 filed) rather than racing
+    // the simulated 1.2s sync.
+    const totals = page.getByText(/^\d+ filed · \d+ open · \d+ offers?$/);
     const idle = await list.boundingBox();
+    await expect(totals).toBeVisible();
 
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
     await expect(status).toContainText("checking Gmail");
+    // …and the totals are STILL THERE while it checks. They used to go with
+    // the slot: for the whole 11 seconds a sync plus its note lasts, the row
+    // said one sentence and nothing else, which is what a working sync looked
+    // like when it was reported as frozen (#160). The status takes the change
+    // ledger's width now, not the numbers'.
+    await expect(totals).toBeVisible();
     const checking = await list.boundingBox();
 
     await expect(status).toContainText("2 filed, 3 already known");
+    await expect(totals).toBeVisible();
     const settled = await list.boundingBox();
 
     // The note hands the slot back — a receipt, not a state. That is a fourth
