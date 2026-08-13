@@ -36,6 +36,12 @@ import {
   scanProgressLine,
   stopKind,
   stopReasonPhrase,
+  SYNC_FALLBACK_RANGE_MONTHS,
+  clampEstimate,
+  durationLabel,
+  syncMemoryLine,
+  syncReceiptNote,
+  syncScopeLine,
 } from "../../lib/gmail/sync-plan.ts";
 
 test("the default rebuild reproduces the old hardwired button exactly", () => {
@@ -167,6 +173,88 @@ test("scan progress is worded as an estimate — never a percentage", () => {
   assert.equal(scanProgressLine(750, 2400), "scanned 750 of roughly 2,400");
   assert.equal(scanProgressLine(750, null), "scanned 750 so far");
   assert.doesNotMatch(scanProgressLine(750, 2400), /%/);
+});
+
+test("a running sync states the scope it can know, and only that", () => {
+  // `hasCursor` is server truth and decides the backend's path, so it is the
+  // one honest thing about the scan available before the response lands.
+  assert.equal(syncScopeLine(true), "checking since last sync");
+  assert.equal(syncScopeLine(false), `first scan · last ${SYNC_FALLBACK_RANGE_MONTHS} months`);
+  // Mirrors the backend's `_SYNC_DEFAULT_RANGE_MONTHS`; a window is named or
+  // nothing is.
+  assert.equal(SYNC_FALLBACK_RANGE_MONTHS, 12);
+  for (const line of [syncScopeLine(true), syncScopeLine(false)]) {
+    assert.doesNotMatch(line, /%/, "no percentage on the running line");
+  }
+});
+
+test("an estimate is never allowed below what was actually read", () => {
+  // A denominator smaller than its own numerator is worse than none. The
+  // backend clamps within one response; this clamps again at display, which
+  // is where the two numbers finally sit side by side.
+  assert.equal(clampEstimate(412, 1200), 1200);
+  assert.equal(clampEstimate(900, 750), 900, "drifted estimate is floored at what was read");
+  assert.equal(clampEstimate(412, null), null, "a floor is not an estimate");
+  // And the clamped pair still reads as approximate, never as a fraction.
+  const line = scanProgressLine(900, clampEstimate(900, 750));
+  assert.equal(line, "scanned 900 of roughly 900");
+  assert.doesNotMatch(line, /%/);
+});
+
+test("a duration is a measurement, stated in the past tense", () => {
+  assert.equal(durationLabel(3085), "3 s");
+  assert.equal(durationLabel(2716), "3 s");
+  assert.equal(durationLabel(120), "1 s", "a sub-second run still reads as a duration");
+  assert.equal(durationLabel(-5), "1 s");
+  assert.match(syncMemoryLine({ ms: 3085, scanned: 0, at: 0 }), /^Your last sync took 3 s\.$/);
+  // Past tense, so it cannot be read as a promise about the run in flight.
+  assert.doesNotMatch(syncMemoryLine({ ms: 3085, scanned: 0, at: 0 }), /will|about|usually|~/);
+});
+
+test("the receipt appends coverage only when both numbers are real", () => {
+  // The measured routine case: the cursored path reads nothing and Gmail
+  // offers no estimate, so the note carries the outcome and the duration and
+  // invents no coverage.
+  assert.equal(
+    syncReceiptNote("no new mail since last sync", {
+      stoppedBy: "complete",
+      scanned: 0,
+      estimate: null,
+    }, 3085),
+    "no new mail since last sync · 3 s",
+  );
+  // The full-scan case: both numbers came off the response, so how far it got
+  // is stated — clamped, and worded "roughly".
+  assert.equal(
+    syncReceiptNote("3 filed", { stoppedBy: "complete", scanned: 412, estimate: 1200 }, 9400),
+    "3 filed · scanned 412 of roughly 1,200 · 9 s",
+  );
+  // …but a PARTIAL end must not say it here. That state renders its own
+  // `scanProgressLine` beside the stop reason and the "continue the scan"
+  // control, and appending it twice printed the same figure twice in one
+  // sentence on the real board.
+  assert.equal(
+    syncReceiptNote("3 filed", { stoppedBy: "target", scanned: 412, estimate: 1200 }, 9400),
+    "3 filed · 9 s",
+  );
+  assert.equal(
+    syncReceiptNote("3 filed", { stoppedBy: "deadline", scanned: 412, estimate: 1200 }, 9400),
+    "3 filed · 9 s",
+  );
+  // Scanned without an estimate stays uncounted rather than gaining a
+  // denominator nobody reported.
+  assert.equal(
+    syncReceiptNote("nothing to file", {
+      stoppedBy: "complete",
+      scanned: 41,
+      estimate: null,
+    }, 4000),
+    "nothing to file · 4 s",
+  );
+  assert.doesNotMatch(
+    syncReceiptNote("3 filed", { stoppedBy: "target", scanned: 412, estimate: 1200 }, 9400),
+    /%/,
+  );
 });
 
 test("readScanEnd reads the end-state facts defensively", () => {

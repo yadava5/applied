@@ -20,6 +20,8 @@ import {
   REBUILD_MEMORY_DEMO_KEY,
   REBUILD_MEMORY_KEY,
   REBUILD_RANGE_OPTIONS,
+  SYNC_MEMORY_DEMO_KEY,
+  SYNC_MEMORY_KEY,
   formatCount,
   formatElapsed,
   parseRebuildMemory,
@@ -33,6 +35,9 @@ import {
   scanProgressLine,
   stopKind,
   stopReasonPhrase,
+  syncMemoryLine,
+  syncReceiptNote,
+  syncScopeLine,
   type RebuildDepth,
   type RebuildOutcome,
   type RebuildRange,
@@ -87,6 +92,24 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * runs instead is honest — the scope stated up front, a count-up clock
  * (elapsed time is the one number the browser truly knows), and the measured
  * duration of the last rebuild remembered for the next dialog.
+ *
+ * That rule was re-tested against the real board rather than assumed (#160).
+ * Timed on the signed-in dashboard at 1024: `POST /api/gmail/sync` takes
+ * 2.7-3.1 s, the button disables for exactly that long, the clock ticks
+ * 0:00 -> 0:02, no `longtask` entry is recorded (the main thread is never
+ * blocked — `transport.sync` is an awaited `fetch`) and the document height
+ * never leaves `innerHeight`. It is not frozen; it was uninformative.
+ *
+ * The response is what settles the design:
+ * `{scanned: 0, result_size_estimate: null, stopped_by: "complete"}`. With a
+ * Gmail history cursor on file the backend reads only what changed, so a
+ * routine sync examines NO messages and Gmail offers NO estimate — there is
+ * no numerator and no denominator to advance, and a count that moved anyway
+ * would be exactly the fabrication this note forbids. So the run now states
+ * what it COVERS (`syncScopeLine`, from `hasCursor`), and the receipt states
+ * how long it took and — on the full-scan path, where both numbers are real —
+ * how far it got, clamped and worded "roughly". A percentage still appears
+ * nowhere.
  */
 
 /** The Gmail connection facts the server render hands down. `null` = unknown. */
@@ -221,6 +244,10 @@ export function SyncBar({
   const [range, setRange] = useState<RebuildRange>(REBUILD_DEFAULT_RANGE);
   const [depth, setDepth] = useState<RebuildDepth>(REBUILD_DEFAULT_DEPTH);
   const [memoryLine, setMemoryLine] = useState<string | null>(null);
+  /** `Your last sync took 3 s.` — the Sync button's tooltip tail once a run
+   *  has been timed. Held in state rather than read during render because
+   *  localStorage does not exist on the server pass. */
+  const [syncMemory, setSyncMemory] = useState<string | null>(null);
   /** Ticks while a sync/rebuild runs so the elapsed clock stays honest. */
   const [nowMs, setNowMs] = useState(() => Date.now());
   const autoRan = useRef(false);
@@ -235,10 +262,12 @@ export function SyncBar({
   const reduceMotion = useReducedMotion();
   const simulated = transport.mode === "simulated";
   const memoryKey = simulated ? REBUILD_MEMORY_DEMO_KEY : REBUILD_MEMORY_KEY;
+  const syncMemoryKey = simulated ? SYNC_MEMORY_DEMO_KEY : SYNC_MEMORY_KEY;
   const busy = phase.kind === "syncing" || phase.kind === "rebuilding";
 
   const runSync = useCallback(async () => {
-    setPhase({ kind: "syncing", startedAt: Date.now() });
+    const startedAt = Date.now();
+    setPhase({ kind: "syncing", startedAt });
     // Additive, and deliberately NO `count`/`range`: either of those makes
     // the backend treat the call as an explicit window request and disable
     // the incremental cursor (`_history_cursor_for`), restoring the full
@@ -254,6 +283,13 @@ export function SyncBar({
     }
     const data = res.body as Partial<SyncCounts>;
     const end = readScanEnd(res.body);
+    // Timed and remembered HERE, before the interrupted/receipt branches
+    // return: a run that broke mid-scan or took rows off the board still took
+    // real wall-clock time, and leaving those out made the button's tooltip
+    // report an older run as if it were the last one.
+    const elapsedMs = Date.now() - startedAt;
+    writeRebuildMemory(syncMemoryKey, elapsedMs, end.scanned);
+    setSyncMemory(syncMemoryLine({ ms: elapsedMs, scanned: end.scanned, at: Date.now() }));
     // Disconnected / unexpected mid-scan is not "press again" — it is
     // "something is wrong", and it gets the alert, not a resting note.
     if (stopKind(end.stoppedBy) === "broken") {
@@ -276,13 +312,23 @@ export function SyncBar({
       return;
     }
     const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
-    const note =
+    // When the scan read messages AND Gmail offered an estimate, the coverage
+    // fragment `syncReceiptNote` appends is where `scanned` gets said. Hand
+    // `filedSummary` the counts without it so the same number is not reported
+    // twice in two different vocabularies.
+    const reportsCoverage = end.scanned > 0 && end.estimate !== null;
+    const base =
       nothingFiled && hasCursor && stopKind(end.stoppedBy) === "complete"
-        ? "no new application mail since your last sync"
-        : filedSummary(data);
-    setPhase({ kind: "synced", note, end });
+        ? // Shortened from "no new application mail since your last sync",
+          // which measured 231px in this row's 208px status slot and was
+          // CLIPPED mid-word — the owner's screen read "…since your last".
+          "no new mail since last sync"
+        : filedSummary(
+            reportsCoverage ? { created: data.created, updated: data.updated } : data,
+          );
+    setPhase({ kind: "synced", note: syncReceiptNote(base, end, elapsedMs), end });
     router.refresh();
-  }, [hasCursor, router, transport]);
+  }, [hasCursor, router, syncMemoryKey, transport]);
 
   const runRebuild = useCallback(
     async (d: RebuildDepth, r: RebuildRange) => {
@@ -333,6 +379,19 @@ export function SyncBar({
 
   // The empty state's "Choose a window" button opens the same dialog.
   useEffect(() => onRebuildRequest(() => setDialogOpen(true)), []);
+
+  // The remembered duration of the last sync, read once per mount. Nothing
+  // shows until a run has actually been timed — an unmeasured "usually quick"
+  // is the kind of claim this surface does not make.
+  useEffect(() => {
+    // Deferred off the effect body (house rule — no synchronous setState in
+    // an effect), which also keeps the read off the server pass entirely.
+    const id = window.setTimeout(() => {
+      const memory = readRebuildMemoryFromStorage(syncMemoryKey);
+      setSyncMemory(memory ? syncMemoryLine(memory) : null);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [syncMemoryKey]);
 
   // Elapsed clock: tick only while something runs. The clock is aria-hidden —
   // announcing a ticking number every second is noise, and the sentence
@@ -399,8 +458,14 @@ export function SyncBar({
             what gives first: the SENTENCE does, with an ellipsis. Measured at
             1024 on the signed-in board, where the row's spare width runs out
             mid-clock. */}
+        {/* What the run COVERS, not just that one is happening. `hasCursor`
+            is server truth and picks the backend's path, so this is the one
+            honest thing about the scan that is knowable before it returns —
+            measured: a cursored sync comes back `scanned: 0` with no
+            estimate, so there is nothing to count while it runs and any
+            advancing number would be invented. See `syncScopeLine`. */}
         <span className="lg:min-w-0 lg:truncate">
-          {elapsed >= SLOW_SYNC_AFTER_MS ? "still checking" : "checking Gmail for new mail…"}
+          {elapsed >= SLOW_SYNC_AFTER_MS ? "still checking" : syncScopeLine(hasCursor)}
         </span>
         {/* The clock from the first tick, not only once the run is slow: a
             typical sync is ~3s, so under the old gate nothing in this line
@@ -444,7 +509,23 @@ export function SyncBar({
           </button>
         </span>
       ) : (
-        <>{phase.note}</>
+        // Truncating, not clipping. Beside the totals this box is
+        // `lg:overflow-hidden`, which cut the note off mid-word with no
+        // ellipsis — measured at 1024 on the signed-in board, the finished
+        // sentence overflowed its 208px slot by 23px and read "…since your
+        // last". The note is shorter now AND degrades to an ellipsis, so a
+        // longer receipt can never again look like the sentence broke.
+        //
+        // `title` because one receipt still cannot fit: a COMPLETED full scan
+        // reports its coverage too ("3 filed, 1 already known · scanned 412 of
+        // roughly 1,200 · 3 s" measures 313px in the 208px slot). That is the
+        // first-sync path, not the routine one — the cursored sync this issue
+        // is about fits at 169px — and the ellipsis is recoverable on hover
+        // rather than a number silently lost. The duration is also kept in the
+        // Sync button's own tooltip, so it survives the truncation regardless.
+        <span className="lg:min-w-0 lg:truncate" title={phase.note}>
+          {phase.note}
+        </span>
       );
   } else if (phase.kind === "idle" && connected && gmail?.syncStatus === "error") {
     // Resting after a failed run: the backend keeps `last_sync_at` at the last
@@ -669,7 +750,13 @@ export function SyncBar({
                 onClick={() => void runSync()}
                 disabled={busy}
                 aria-label="Sync new mail from Gmail"
-                title="Checks Gmail for new mail and adds what it finds. Never removes anything."
+                // The remembered duration rides HERE and nowhere else: the
+                // tooltip costs the header row no width, and that row already
+                // wraps to two lines at 1024 (#172). Absent until a run has
+                // been timed.
+                title={`Checks Gmail for new mail and adds what it finds. Never removes anything.${
+                  syncMemory ? ` ${syncMemory}` : ""
+                }`}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw className="h-4 w-4" aria-hidden />
