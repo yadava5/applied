@@ -56,12 +56,12 @@ import { cn } from "@/lib/utils";
  * add the JWT from cookies); the client only ever sees verdict metadata.
  *
  * Mining and FILING are separate, and both are visible. The mine is read-only;
- * an explicit "File N into pipeline" control persists it and then reports what
- * the sync actually did ("3 filed, 1 already known"). Previously this component
- * relayed the mine to `/gmail/sync` fire-and-forget, so the one thing the user
- * wanted — their pipeline filled from the mail they were looking at — happened
- * invisibly or not at all, and the only visible route to a filled board was the
- * dashboard's full re-scan.
+ * an explicit "File N into Applications" control persists it and then reports
+ * what the sync actually did ("3 filed, 1 already known"). Previously this
+ * component relayed the mine to `/gmail/sync` fire-and-forget, so the one thing
+ * the user wanted — their board filled from the mail they were looking at —
+ * happened invisibly or not at all, and the only visible route to a filled
+ * board was the dashboard's full re-scan.
  */
 
 type Phase = "loading" | "ready" | "not_connected" | "auth" | "error";
