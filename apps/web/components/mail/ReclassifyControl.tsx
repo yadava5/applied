@@ -144,7 +144,17 @@ export function ReclassifyControl({
   }
 
   return (
-    <div className="flex w-full flex-wrap items-center gap-2">
+    // `relative` covers BOTH `sr-only` labels below — this one and the
+    // company-prompt's. Tailwind's `.sr-only` is `position: absolute`, so
+    // without a positioned ancestor they resolve against the initial
+    // containing block, escaping every `overflow` above them; that is how the
+    // board's review queue made the whole shell scroll (#149). Measured on the
+    // signed-in /inbox: expanding a control put its label's `offsetParent` at
+    // `body`. Harmless there *today* only because /inbox is a flow page whose
+    // <main> already scrolls — geometry this component does not own and cannot
+    // rely on. It is also mounted by `FiledMailList`, so the honest fix is for
+    // the control to guarantee its own containing block.
+    <div className="relative flex w-full flex-wrap items-center gap-2">
       <label className="sr-only" htmlFor={`reclass-${messageId}`}>
         New category for “{subject}”
       </label>
