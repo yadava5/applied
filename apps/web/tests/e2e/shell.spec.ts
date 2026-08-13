@@ -4,16 +4,17 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
 
 /**
  * E2E for the authed app shell: the sidebar active-state indicator, the mobile
- * navigation menu, and `/import` rendering INSIDE the shell for a signed-in
- * user (so it is never a dead end).
+ * navigation menu, and the two DUAL-MODE routes — `/import` and `/privacy` —
+ * rendering INSIDE the shell for a signed-in user (so neither is a dead end)
+ * and standalone for everyone else.
  *
  * The shell only renders for an authenticated Supabase session, which this
  * suite can't stand up (see `connect.spec.ts` / `beta.spec.ts` for the same
  * constraint). So the shell assertions below `test.skip` themselves when a
  * visit to `/dashboard` bounces to `/login` — they become real coverage the
  * moment the suite runs against a session (locally or in a seeded CI), and
- * never turn red in the meantime. The signed-OUT half of the `/import`
- * dual-mode split IS driven here, since that is publicly reachable.
+ * never turn red in the meantime. The signed-OUT half of each dual-mode split
+ * IS driven here, since that is publicly reachable.
  */
 
 /** Skip the current test unless a real session lets us reach the app shell. */
@@ -619,6 +620,45 @@ test.describe("app shell — signed out (public)", () => {
     );
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
+
+  test("/privacy renders the standalone document, header and footer intact", async ({ page }) => {
+    const watch = startConsoleWatch(page);
+    await page.goto("/privacy");
+    await expect(page).toHaveURL(/\/privacy$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: /what applied reads/i }),
+    ).toBeVisible();
+
+    // No signed-in app chrome for an anonymous visitor. This half is the one
+    // that must NOT change: the policy is a public document — Google's OAuth
+    // reviewer fetches it without a session, and the landing page links to it.
+    await expect(page.locator('nav[aria-label="Primary"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(0);
+
+    // Its own chrome carries the way out, at both ends of a long document.
+    await expect(page.locator("header").getByRole("link", { name: /applied/i })).toHaveAttribute(
+      "href",
+      "/",
+    );
+    await expect(page.locator("footer").getByRole("link", { name: "Home" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+
+    // Standalone, the DOCUMENT is the scrollport — the opposite of shell mode
+    // below, and the reason the contents rail's sticky offset is mode-aware.
+    const doc = await page.evaluate(() => ({
+      scroll: document.documentElement.scrollHeight,
+      client: document.documentElement.clientHeight,
+    }));
+    expect(
+      doc.scroll,
+      `the standalone policy does not scroll the document (${doc.scroll} ≤ ${doc.client}) — it is a ~6000px page, so something clipped it`,
+    ).toBeGreaterThan(doc.client);
+
+    await expectNoHorizontalOverflow(page);
+    expect(watch.errors, watch.errors.join("\n")).toEqual([]);
+  });
 });
 
 test.describe("app shell — signed in (needs a session)", () => {
@@ -655,6 +695,58 @@ test.describe("app shell — signed in (needs a session)", () => {
     // ...and there is a way back into the rest of the app. `exact`: the brand
     // logo's own aria-label ("…go to your applications") substring-matches
     // the loose form now that the nav item is named "Applications".
+    await page.getByRole("link", { name: "Applications", exact: true }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+  });
+
+  test("/privacy renders inside the shell, scrolls in the pane, and nav can leave it", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await requireSession(page);
+    await page.goto("/privacy");
+
+    // The app chrome is here, and the page's standalone header/footer are not.
+    // This IS the fix for #155: the rail and the top bar are the way back, so
+    // a reader who followed the Settings or inbox link is no longer offered
+    // `href="/"` — the marketing page — as their only exit.
+    await expect(page.locator('aside nav[aria-label="Primary"]')).toBeVisible();
+    await expect(page.locator("footer")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { level: 1, name: /what applied reads/i }),
+    ).toBeVisible();
+    // Nothing is marked current: the policy is a document the app links to,
+    // not one of the four destinations.
+    await expect(page.locator('a[aria-current="page"]')).toHaveCount(0);
+
+    // The shell's viewport lock has to survive a ~6000px FLOW page. BOTH
+    // halves are asserted, because either alone is a check that cannot fail:
+    // a document that fits *because the content got clipped* satisfies the
+    // first, and this file's own mutation notes record the document lock
+    // staying green while <main> scrolled.
+    const geometry = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      return {
+        docScroll: document.documentElement.scrollHeight,
+        docClient: document.documentElement.clientHeight,
+        mainScroll: main?.scrollHeight ?? 0,
+        mainClient: main?.clientHeight ?? 0,
+      };
+    });
+    expect(
+      geometry.docScroll,
+      `the document scrolls: scrollHeight=${geometry.docScroll} > clientHeight=${geometry.docClient}`,
+    ).toBeLessThanOrEqual(geometry.docClient + 1);
+    expect(
+      geometry.mainScroll,
+      `the policy fits inside <main> (${geometry.mainScroll} ≤ ${geometry.mainClient}) — the document lock above is being asserted against nothing`,
+    ).toBeGreaterThan(geometry.mainClient + 1);
+
+    await expectNoHorizontalOverflow(page);
+
+    // ...and the way back is real. `exact`: the top bar's brand link is named
+    // "Applied — go to your applications", which substring-matches the loose
+    // form.
     await page.getByRole("link", { name: "Applications", exact: true }).click();
     await expect(page).toHaveURL(/\/dashboard$/);
   });
