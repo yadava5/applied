@@ -1,26 +1,44 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { bucketAges, daysBetween, momentumDelta, weeklyCounts } from "@/lib/dashboard/age";
+import {
+  MOMENTUM_DAYS,
+  QUIET_AFTER_DAYS,
+  ageHistogram,
+  bucketAges,
+  dailyCounts,
+  daysBetween,
+  weekOverWeek,
+} from "@/lib/dashboard/age";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt } from "@/lib/dashboard/dates";
 import { DUE_SOON_DAYS, deadlinePulse, duePhrase } from "@/lib/dashboard/deadline";
-import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
+import type { PulseFilter } from "@/lib/dashboard/pulseFilter";
+import { isOpenStage, type PulseRow } from "@/lib/dashboard/summary";
+import { cn } from "@/lib/utils";
+import { PulseDetail, type PulseDetailKind } from "./PulseDetail";
 
 /**
  * The pulse — the four signals the board's rows actually carry, drawn instead
  * of restated. Everything on it is NEW information the subtitle and the board
  * don't already say:
  *
- *   - **momentum** — applications filed per week (`MOMENTUM_WEEKS` weeks
- *     of bars, oldest first) and the last-4-weeks-vs-prior-4 delta, from the
- *     same one derivation (`lib/dashboard/age.ts`) so the arrow can never
- *     contradict the bars;
- *   - **ageing** — the open (applied + assessment + interviewing) rows
- *     bucketed by days since filed; the ≥2-week share is the amber "quiet"
- *     signal, the same threshold that tags individual cards;
+ *   - **momentum** — applications filed per DAY (`MOMENTUM_DAYS` days of
+ *     bars, oldest first) and the this-week-vs-last delta, from the same one
+ *     derivation (`lib/dashboard/age.ts`) so the arrow can never contradict
+ *     the bars. Days, not weeks (#156): the real account filed its whole
+ *     board inside four weeks, so weekly buckets rendered a 41-application
+ *     burst as 7 flat dashes and one filled tick — the daily bursts are the
+ *     shape worth drawing;
+ *   - **ageing** — the open (`isOpenStage`) rows as a day-of-age histogram,
+ *     oldest at the left so "recent" reads rightward in both charts; the
+ *     ≥2-week overflow bin is the amber "quiet" signal, the same threshold
+ *     that tags individual cards. The caption names only the non-zero
+ *     buckets — `0 1–2 wk · 0 quiet` was most of a line spent saying nothing
+ *     is there (#159);
  *   - **deadlines** — the rows carrying a `due_at`, bucketed
  *     overdue / due ≤{@link DUE_SOON_DAYS}d / later by the same derivation
  *     that inks the card tags (`lib/dashboard/deadline.ts`), plus the single
@@ -30,37 +48,53 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  *     most of the time, honestly have nothing due;
  *   - **auto-filed** — how much of this board arrived from the user's own
  *     mail (source = "gmail" rows) and what is being held for their review,
- *     deep-linked to the review queue. The mechanism's real names (the
+ *     deep-linked to the review queue. The visible caption now names the
+ *     remainder — `36 of 41` with five unexplained rows read as five rows
+ *     UNACCOUNTED FOR (#158), while the bar's aria-label was already telling
+ *     screen readers "5 by hand". The mechanism's real names (the
  *     classifier, the 0.85 gate) live in Settings, which is the page that
  *     controls them — here the user has a mailbox, not a classifier.
+ *
+ * THE CELLS OPEN. Momentum, ageing and auto-filed are buttons; pressing one
+ * docks a detail panel (`PulseDetail`) under the band — inside the dashboard,
+ * anchored to its cell, with the board still live around it. One panel, one
+ * interaction, three contents; every drawn unit inside it (a day bar, an age
+ * bin, a provenance group) narrows the WORKLIST to the rows it counts, which
+ * is what makes the band a work surface instead of a poster. Not a modal, on
+ * the record: the row-detail decision already rejected an exclusive overlay
+ * ("an overlay's exclusivity contract IS the complaint"), so this panel dims
+ * nothing, traps nothing, and closes on Escape, outside click, its own ✕ or
+ * the act of filtering. The deadline cell does not open — on most boards it
+ * would open onto nothing, and a panel of invented urgency is the exact
+ * failure its caption already refuses.
  *
  * ONE home, one layout: a full-width band across the top of the board's body
  * (`PipelineBoard` mounts it above the spine + worklist row). This is the
  * pre-#136 home restored at a fraction of the cost: the original strip spent
- * ~200px of every viewport (p-4 cells, h-9 bars, a week-axis line, a
- * two-line urgent block); this band says the same four things in ~56px —
- * label, drawn element and one figure line per cell, the urgent row riding
- * the deadline cell's own label line. The two rejected homes stay rejected:
- * the shell rail (PR #122) made the sidebar itself scroll, and the stage
- * spine (#136) took the pulse out of the dashboard's content area, which is
- * where the owner keeps putting it back. Left columns are closed territory
- * for this feature.
+ * ~200px of every viewport; this band says the same four things in ~56px —
+ * label, drawn element and one figure line per cell. The two rejected homes
+ * stay rejected: the shell rail (PR #122) made the sidebar itself scroll, and
+ * the stage spine (#136) took the pulse out of the dashboard's content area.
+ * Left columns are closed territory for this feature. The detail panel is
+ * `absolute` inside the band's own `relative` (its containing block — the
+ * #149/#152/#153 family is why that is stated, not assumed) and height-capped,
+ * so the document never scrolls and the worklist floors never move: the band's
+ * two-line budget is untouched, and depth is bought by OPENING, not by
+ * growing.
  *
  * `lg`-up only, one instance, no display-none twins: below `lg` the dashboard
  * leads with the worklist and every signal's ground truth already inks the
- * cards themselves (age tags, deadline tags, the review queue in the list).
- * Between `lg` and `xl` the band speaks without drawing: captions set one
- * notch down (11px on the same 16px line, so the band's height — and the
+ * cards themselves (age tags, deadline tags, the review queue in the list) —
+ * which is also why the panel needs no phone sheet: its triggers don't exist
+ * there. Between `lg` and `xl` the band speaks without drawing: captions set
+ * one notch down (11px on the same 16px line, so the band's height — and the
  * worklist's floors — never move) and every bar waits for `xl`. Measured at
  * 1024×768 the four cells hold 159–172px of content while the auto-filed
  * sentence alone is 176px, so no caption+bar pair fits at any bar width
- * (see SegmentBar). The words lose nothing the drawings said — every bar's
- * aria restates its caption's numbers — except the momentum cell's 8-week
- * shape, the one honest casualty; its delta sentence keeps that signal
- * until `xl` returns the bars. The deadline cell's bucket counts wait for
- * `xl` on the same terms and for the same reason: below it, that cell's
- * second line is the only place the most urgent row can be NAMED, and a
- * named row is worth more there than three numbers (see the cell).
+ * (see SegmentBar). The deadline cell's bucket counts wait for `xl` on the
+ * same terms and for the same reason: below it, that cell's second line is
+ * the only place the most urgent row can be NAMED, and a named row is worth
+ * more there than three numbers (see the cell).
  *
  * Rows arrive as {@link PulseRow} — the projection of a board row this
  * component actually reads; callers holding full rows pass them as-is
@@ -68,12 +102,8 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  *
  * This is a client component, and deliberately: the deadline cell counts what
  * is overdue, which is a claim about the READER's day, so its clock read has to
- * survive past the server render (`useLocalToday`). The alternative — keeping
- * it a server component and threading `today` down from the server — cannot
- * work, because the value threaded would be the UTC day, frozen at request
- * time, and never corrected once the browser could say what zone it is in.
- * Nothing here is interactive beyond the existing `Link`; the whole surface
- * still server-renders.
+ * survive past the server render (`useLocalToday`). The whole band still
+ * server-renders; the panel exists only after a click.
  *
  * Ink policy (owner call, 2026-08-12: colour where the data is, not
  * everywhere): the DRAWN elements carry chromatic ink; labels, counts and
@@ -81,22 +111,37 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * count time and provenance — so they must not borrow stage ink: doing so is
  * what rendered the whole band grey on the real account (every row in
  * `applied`, whose stage accent is deliberately achromatic). Instead,
- * recency wears the product's sky accent (`--viz-rules`, the nav-focus and
- * brand-mark hue) on the momentum bars and the age bar's fresh segment, and
- * the auto-filed share wears the verdict emerald (`--viz-setfit`, the brand
- * mark's "delivered" node). Amber/red stay reserved for the attention states
- * they already mean, and the neutral buckets (prior weeks, 1–2 wk, filed by
- * hand) stay grey ON PURPOSE — a board with one hot bucket reads as one
- * strong ink, not as a wash. Every fill measures ≥3:1 against its ground in
- * BOTH themes (WCAG 1.4.11; worst case emerald on the light track, 3.43:1),
- * and no distinction rides on colour alone — the caption's numbers restate
- * every split the bars draw.
+ * recency wears the product's sky accent (`--viz-rules`) — the momentum
+ * bars' last seven days and the age histogram's under-a-week bins — and the
+ * auto-filed share wears the verdict emerald (`--viz-setfit`). Amber/red stay
+ * reserved for the attention states they already mean (the quiet bin, the
+ * review queue), and the neutral bins stay grey ON PURPOSE. Every fill
+ * measures ≥3:1 against its ground in BOTH themes (WCAG 1.4.11; re-measured
+ * for the panel's `--surface` ground 2026-08-13 — worst case emerald 3.77:1
+ * light / 3.43:1 on the light track), and no distinction rides on colour
+ * alone — every split the bars draw is also positional (both charts run
+ * oldest→newest on one shared axis reading) and restated in numbers by the
+ * panel one click away, and a zero-day's 2px stub is distinguished by SIZE,
+ * not by its hairline ink.
+ *
+ * Caption grammar (Ayush, 2026-08-13, on `6 <1 wk · 5 1–2 wk · 3 quiet`:
+ * "these text are still there, they are lot confusing!"): a caption is ONE
+ * claim, two at most, each binding one figure to the words that own it —
+ * never the per-bucket recitation, which was six numerals in nine words
+ * restating a distribution the bar beside it already draws, its pairs
+ * colliding as they went (`6 <1` reads as a comparison; `5 1–2 wk` butts a
+ * count against a range). The bar carries the shape; the caption carries
+ * the claim worth acting on — the quiet share, the week-over-week
+ * direction, the named remainder — with figures bound FORWARD by words
+ * ("of", "up from", "by hand"), never left touching a unit's numeral. The
+ * lead figure sits a step brighter than its words (`text-strong`), and
+ * amber/red colour a claim as a unit, never a lone digit.
  *
  * Honesty rules: the board fetch is one bounded page, so when the loaded rows
  * are fewer than the account's total the row-derived signals say they describe
  * the newest N rather than pretending to describe everything — once, as the
  * band's trailing line, since every signal derives from the same slice.
- * Ages/weeks are calendar-day math on a day string — UTC for the server pass
+ * Ages/days are calendar-day math on a day string — UTC for the server pass
  * and the hydrating pass, the reader's own day thereafter — so the pulse
  * hydrates cleanly and then tells the truth about time left. The micro-bars
  * are `aria-hidden` decoration over the numbers, animate in with a
@@ -155,6 +200,47 @@ function SegmentBar({
   );
 }
 
+/** A day-resolution micro chart: one bar per day, `xl`-up, flexing into
+ *  whatever the caption leaves (same sentence-first contract as SegmentBar,
+ *  same reasons). ~2–3px bars at the cap — a rhythm strip, not a readable
+ *  axis; the numbers live in the caption and the full chart in the panel.
+ *  A zero day keeps a 2px stub so the RHYTHM (gaps between bursts) stays
+ *  visible; its meaning is carried by size, never by the hairline's ink. */
+function DayStrip({
+  ariaLabel,
+  counts,
+  testId,
+  colorAt,
+}: {
+  ariaLabel: string;
+  counts: number[];
+  testId: string;
+  /** Ink for a non-zero bar at index `i` — the caption's own split, drawn. */
+  colorAt: (i: number) => string;
+}) {
+  const peak = Math.max(...counts, 1);
+  return (
+    <div
+      role="img"
+      aria-label={ariaLabel}
+      className="hidden h-4 min-w-0 max-w-24 flex-1 items-end gap-px xl:flex"
+    >
+      {counts.map((count, i) => (
+        <span
+          key={i}
+          data-testid={testId}
+          className="pulse-seg min-w-0 flex-1 rounded-[1px]"
+          style={{
+            height: count > 0 ? `${Math.max(18, (count / peak) * 100)}%` : "2px",
+            background: count > 0 ? colorAt(i) : "var(--line-strong)",
+            ["--i" as string]: i,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /**
  * One cell of the band: caps label (with an optional aside — the deadline
  * cell's "act on this today" slot), then one content line. TWO LINES, `py-2`
@@ -178,26 +264,59 @@ function SegmentBar({
  * zero-height row that still costs a `gap-y-1`, and the band measured 60px at
  * 1024 against 55px everywhere else. A wrapper that renders nothing must not
  * hold a row; the cell that owns the layout is the one that can promise it.
+ *
+ * A cell given `expand` is a TRIGGER for the detail panel: a stretched button
+ * fills the whole cell (Ayush's ask was "click the whole momentum", not a
+ * disclosure glyph), the grid rides above it inert (`pointer-events-none`) so
+ * hits land on the button, and anything inside that must stay interactive
+ * (the review-queue link) opts back in with `pointer-events-auto`. The grid
+ * is one layer in from the cell's box only in that arm — same padding
+ * outside, same gaps inside, so the geometry the worklist floors gate is
+ * identical in both. The chevron is the resting affordance — dim until
+ * hover, focus or open, `aria-expanded` carrying the state for everyone
+ * else — and it holds the label line's far column: the slot the aside would
+ * take, and no cell has both, because the one cell WITH an aside (deadlines)
+ * deliberately does not open.
  */
 function PulseCell({
   label,
   aside,
+  expand,
+  triggerRef,
   children,
 }: {
   label: string;
   aside?: ReactNode;
+  expand?: {
+    name: string;
+    open: boolean;
+    onToggle: () => void;
+  };
+  /** The stretched button's ref — a separate prop, forwarded straight into
+   *  `ref`, so Escape/close can return focus to the trigger that opened. */
+  triggerRef?: RefObject<HTMLButtonElement | null>;
   children: ReactNode;
 }) {
-  return (
-    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 border-line-soft px-3 py-2 first:pl-0 last:pr-0 [&+&]:border-l xl:items-baseline">
+  const grid = (layer: string) => (
+    <div
+      className={cn(
+        "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 xl:items-baseline",
+        layer,
+      )}
+    >
       {/* `data-clip-ok`: labels are the one text in this band allowed to
           ellipsize — the auto-filed label measures 191px against a 171px cell
           at 1024 and gives way BY DESIGN rather than bleeding into its
           neighbour. The caption-integrity gate reads this attribute; nothing
-          else in the band carries it. */}
+          else in the band carries it. A trigger cell's label stays in column
+          one at every width — the chevron owns the far column — so it gives
+          way a chevron's width sooner, which is the same trade. */}
       <h2
         data-clip-ok=""
-        className="label-caps col-span-2 row-start-1 min-w-0 truncate xl:col-span-1"
+        className={cn(
+          "label-caps row-start-1 min-w-0 truncate",
+          expand ? "col-span-1" : "col-span-2 xl:col-span-1",
+        )}
       >
         {label}
       </h2>
@@ -205,6 +324,17 @@ function PulseCell({
         <div className="col-span-2 row-start-2 min-w-0 xl:col-span-1 xl:col-start-2 xl:row-start-1">
           {aside}
         </div>
+      ) : null}
+      {expand ? (
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "col-start-2 row-start-1 h-3 w-3 self-center justify-self-end text-dim transition-transform motion-reduce:transition-none",
+            expand.open
+              ? "rotate-180 opacity-100"
+              : "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
+          )}
+        />
       ) : null}
       <div
         className={`col-span-2 flex min-w-0 items-center gap-2 ${
@@ -215,12 +345,36 @@ function PulseCell({
       </div>
     </div>
   );
+  return (
+    <div className="group relative min-w-0 border-line-soft px-3 py-2 first:pl-0 last:pr-0 [&+&]:border-l">
+      {expand ? (
+        <>
+          <button
+            type="button"
+            ref={triggerRef}
+            aria-expanded={expand.open}
+            aria-controls="pulse-detail"
+            aria-label={expand.name}
+            onClick={expand.onToggle}
+            data-open={expand.open || undefined}
+            className="absolute inset-0 rounded-md transition-colors hover:bg-surface-2/50 data-[open]:bg-surface-2/50"
+          />
+          {/* Above the button in paint order (positioned + later), inert to
+              the pointer so the stretched hit area stays whole. */}
+          {grid("pointer-events-none relative")}
+        </>
+      ) : (
+        grid("")
+      )}
+    </div>
+  );
 }
 
 export function PipelinePulse({
   applications,
   total,
   needsReview,
+  onFilter,
 }: {
   /** The loaded rows — the same bounded page `PipelineBoard` renders. */
   applications: PulseRow[];
@@ -228,131 +382,257 @@ export function PipelinePulse({
   total: number;
   /** Verdicts held under the gate for the user (0 when the queue is clear). */
   needsReview: number;
+  /** The panel's click-through: narrow the worklist to the rows a drawn unit
+   *  counts. Owned by `PipelineBoard`, which holds the list being narrowed. */
+  onFilter: (filter: PulseFilter) => void;
 }) {
   const today = useLocalToday();
   /** True when the single board page holds every row the account has. */
   const complete = applications.length >= total;
 
+  /** Which cell's detail panel is open, if any — one panel, ever. */
+  const [open, setOpen] = useState<PulseDetailKind | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const momentumTrigger = useRef<HTMLButtonElement | null>(null);
+  const ageTrigger = useRef<HTMLButtonElement | null>(null);
+  const provenanceTrigger = useRef<HTMLButtonElement | null>(null);
+  const triggerFor = (kind: PulseDetailKind) =>
+    kind === "momentum" ? momentumTrigger : kind === "age" ? ageTrigger : provenanceTrigger;
+
+  // The panel is non-modal, so its lifecycle is: Escape closes and returns
+  // focus to the trigger; any press outside the band closes it and lets the
+  // press land where it fell (clicking a worklist row should select the row,
+  // not spend the click on dismissal).
+  useEffect(() => {
+    if (open === null) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        sectionRef.current &&
+        event.target instanceof Node &&
+        !sectionRef.current.contains(event.target)
+      ) {
+        setOpen(null);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(null);
+        triggerFor(open).current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  // Keyboard continuity: opening moves focus into the panel (it is DOM-last
+  // in the band, several tab stops away from the trigger that opened it).
+  useEffect(() => {
+    if (open !== null) panelRef.current?.focus();
+  }, [open]);
+
+  const toggle = (kind: PulseDetailKind) => setOpen((cur) => (cur === kind ? null : kind));
+
+  /** Filtering IS the panel's exit: the narrowed worklist is the answer, so
+   *  the panel clears out of the way and focus returns to the trigger. */
+  const applyFilter = (filter: PulseFilter) => {
+    onFilter(filter);
+    if (open !== null) triggerFor(open).current?.focus();
+    setOpen(null);
+  };
+
   // --- momentum -------------------------------------------------------------
-  const weeks = weeklyCounts(
+  const days = dailyCounts(
     applications.map((app) => filedAt(app)),
     today,
   );
-  const peak = Math.max(...weeks, 1);
-  const { recent, prior } = momentumDelta(weeks);
-  const arrow = recent > prior ? "↑" : recent < prior ? "↓" : "→";
+  const filedInWindow = days.reduce((a, b) => a + b, 0);
+  const { thisWeek, lastWeek } = weekOverWeek(days);
 
   // --- ageing (open rows only — a closed row's age answers nothing) ---------
-  //
-  // `assessment` is open, and naming it here is not optional: this is a stage
-  // ALLOW-list, not a `stageOf` lookup, so TypeScript would not have noticed
-  // its absence — assessment rows would simply have vanished from the ageing
-  // line and from `openTotal`. Same defect family as `stageOf`'s
-  // `?? "applied"` fallback, in a different disguise.
-  const openAges = applications
-    .filter((app) => {
-      const stage = stageOf(app.status);
-      return stage === "applied" || stage === "assessment" || stage === "interviewing";
-    })
-    .map((app) => daysBetween(filedAt(app), today));
+  const openRows = applications.filter((app) => isOpenStage(app.status));
+  const openAges = openRows.map((app) => daysBetween(filedAt(app), today));
   const ages = bucketAges(openAges);
   const openTotal = ages.fresh + ages.waiting + ages.quiet;
+  const ageBins = ageHistogram(openAges);
+  /** The panel's "longest waiting" names — top of the ageing curve. */
+  const oldestOpen = openRows
+    .map((app) => ({ company: app.company, age: daysBetween(filedAt(app), today) }))
+    .filter((row): row is { company: string; age: number } => row.age !== null && row.age >= 0)
+    .sort((a, b) => b.age - a.age)
+    .slice(0, 3);
 
   // --- deadlines (rows carrying a due_at; no due date, no claim) -------------
   const due = deadlinePulse(applications, today);
 
   // --- auto-filed -----------------------------------------------------------
   const autoFiled = applications.filter((app) => app.source === "gmail").length;
+  const byHand = applications.length - autoFiled;
+  /** Newest mail-sourced filing — the panel's "sync is alive" line. */
+  let lastFromMail: string | null = null;
+  {
+    let bestAge = Infinity;
+    for (const app of applications) {
+      if (app.source !== "gmail") continue;
+      const age = daysBetween(filedAt(app), today);
+      if (age !== null && age >= 0 && age < bestAge) {
+        bestAge = age;
+        lastFromMail = filedAt(app);
+      }
+    }
+  }
 
   const scopeNote = complete ? null : `newest ${applications.length} of ${total}`;
 
+  /** The ageing caption — ONE claim, per the band's caption grammar. The
+   *  first cut here (#159) omitted the empty buckets; Ayush re-reported it
+   *  on a board with NO empty buckets (`6 <1 wk · 5 1–2 wk · 3 quiet` —
+   *  "these text are still there, they are lot confusing!"), which is the
+   *  proof the recitation itself was the defect, not the zeroes. The bar
+   *  above this line and the panel behind it carry the distribution; the
+   *  line carries the one thing anyone acts on — the quiet share when it
+   *  exists, the bound every row clears when it doesn't. */
+  const ageCaption = (() => {
+    if (ages.fresh === openTotal)
+      return (
+        <>
+          all <span className="tabular text-strong">{openTotal}</span> under a wk
+        </>
+      );
+    if (ages.waiting === openTotal)
+      return (
+        <>
+          all <span className="tabular text-strong">{openTotal}</span> 1–2 wk old
+        </>
+      );
+    if (ages.quiet === openTotal)
+      return (
+        <span className="text-review">
+          all <span className="tabular">{openTotal}</span> quiet 2 wk+
+        </span>
+      );
+    // "quiet" is the band's one amber word — the same threshold that tags
+    // the individual cards — and the whole claim turns amber as a unit, the
+    // deadline cell's own "N overdue" contract. "of" is what binds the two
+    // figures into one ratio instead of two adjacent counts.
+    if (ages.quiet > 0)
+      return (
+        <span className="text-review">
+          <span className="tabular">{ages.quiet}</span> of{" "}
+          <span className="tabular">{openTotal}</span> quiet
+        </span>
+      );
+    // Fresh and waiting mixed, nothing quiet: the honest single claim is the
+    // bound they all clear — the same threshold quiet starts at.
+    return (
+      <>
+        all <span className="tabular text-strong">{openTotal}</span> under 2 wk
+      </>
+    );
+  })();
+
   return (
     <section
+      ref={sectionRef}
       aria-label="Board pulse"
       data-testid="pipeline-pulse"
-      className="hidden border-y border-line-soft lg:grid lg:grid-cols-4"
+      // `relative` is the panel's containing block — load-bearing, not
+      // styling: an absolute child with no positioned ancestor plants its box
+      // at document scale and the whole shell scrolls (#149's family).
+      className="relative hidden border-y border-line-soft lg:grid lg:grid-cols-4"
     >
       {/* momentum */}
-      <PulseCell label="momentum · filed per wk">
-        <div
-          role="img"
-          aria-label={`Applications filed per week, oldest first: ${weeks.join(", ")}`}
-          // Same xl gate and flex-absorb as SegmentBar: the delta sentence is
-          // 129px and the lg-range line holds 100px beside a w-16 bar —
-          // no width of week-columns fits without ellipsizing the sentence.
-          className="hidden h-4 min-w-0 max-w-16 flex-1 items-end gap-0.5 xl:flex"
-        >
-          {weeks.map((count, i) => (
-            <span
-              key={i}
-              data-testid="pulse-week"
-              title={`${count} filed`}
-              className="pulse-seg min-w-0 flex-1 rounded-sm"
-              style={{
-                height: count > 0 ? `${Math.max(18, (count / peak) * 100)}%` : "2px",
-                // Two inks, one meaning: the delta sentence beside these bars
-                // compares the last 4 weeks against the prior 4, so the bars
-                // draw that same split — the recency sky for the half the
-                // sentence leads with, the ramp's neutral grey for the prior
-                // baseline, mirroring the sentence's own strong-vs-muted
-                // weights. (A same-hue 45% fade was measured first: 1.8:1 on
-                // the light ground, invisible. Solid neutral keeps every
-                // filled bar ≥3:1 in both themes.) Colour encodes the
-                // comparison; it never decorates.
-                background:
-                  count > 0
-                    ? i >= weeks.length - 4
-                      ? "var(--viz-rules)"
-                      : "var(--text-dim)"
-                    : "var(--line-strong)",
-                ["--i" as string]: i,
-              }}
-            />
-          ))}
-        </div>
+      <PulseCell
+        label="momentum · filed per day"
+        expand={
+          filedInWindow > 0
+            ? {
+                name: "Momentum detail",
+                open: open === "momentum",
+                onToggle: () => toggle("momentum"),
+              }
+            : undefined
+        }
+        triggerRef={momentumTrigger}
+      >
+        <DayStrip
+          ariaLabel={`Filed per day, last ${MOMENTUM_DAYS} days: ${filedInWindow} total — this week ${thisWeek}, last week ${lastWeek}`}
+          counts={days}
+          testId="pulse-day"
+          // Two inks, one meaning: the delta sentence beside these bars
+          // compares this week against last, so the bars draw that same
+          // split — the recency sky for the seven days the sentence leads
+          // with, the ramp's neutral grey for everything before them. (A
+          // same-hue 45% fade was measured first: 1.8:1 on the light ground,
+          // invisible. Solid neutral keeps every filled bar ≥3:1 in both
+          // themes.) Colour encodes the comparison; it never decorates.
+          colorAt={(i) => (i >= days.length - 7 ? "var(--viz-rules)" : "var(--text-dim)")}
+        />
         <p
           data-testid="pulse-caption"
           className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
         >
-          <span className="tabular text-strong">{recent}</span> last 4 wk{" "}
-          <span aria-hidden="true">{arrow}</span> vs {prior} prior
+          {/* Direction is a word, not a glyph beside a bare pair: `↑ vs 0
+              last` put a count against a label with nothing binding them —
+              the same collision the ageing caption was reported for. "up
+              from 0" owns its figure; the baseline number stays on the muted
+              ramp the way the prior days' bars stay grey. */}
+          <span className="tabular text-strong">{thisWeek}</span> this wk
+          {" · "}
+          {thisWeek > lastWeek ? (
+            <>up from {lastWeek}</>
+          ) : thisWeek < lastWeek ? (
+            <>down from {lastWeek}</>
+          ) : (
+            <>same as last</>
+          )}
         </p>
       </PulseCell>
 
       {/* ageing */}
-      <PulseCell label="open · age since filed">
+      <PulseCell
+        label="open · age since filed"
+        expand={
+          openTotal > 0
+            ? {
+                name: "Ageing detail",
+                open: open === "age",
+                onToggle: () => toggle("age"),
+              }
+            : undefined
+        }
+        triggerRef={ageTrigger}
+      >
         {openTotal === 0 ? (
           <p data-testid="pulse-caption" className="text-[11px]/4 text-dim xl:text-xs">
             no open applications
           </p>
         ) : (
           <>
-            {/* A cool→warm staleness ramp: fresh wears the recency sky (the
-                same fact the momentum bars ink — days since filed), waiting
-                stays ramp-grey, quiet keeps the amber its card tags already
-                wear. A one-bucket board draws one solid ink — a young board
-                reads sky, a stalling one amber — instead of the uniform grey
-                the stage borrow used to produce. */}
-            <SegmentBar
-              ariaLabel={`Open applications by age: ${ages.fresh} under a week, ${ages.waiting} one to two weeks, ${ages.quiet} quiet two weeks or more`}
-              total={openTotal}
-              segments={[
-                [ages.fresh, "var(--viz-rules)"],
-                [ages.waiting, "var(--text-dim)"],
-                [ages.quiet, "var(--amber)"],
-              ]}
+            {/* The same day resolution as momentum, on the same axis reading:
+                recent is rightward in both charts (oldest — the amber
+                overflow bin — at the far left). A one-block SegmentBar drew
+                a 38-rows-one-bucket board as one undifferentiated slab
+                (#159); per-day bins give the bar the board's actual shape. */}
+            <DayStrip
+              ariaLabel={`Open applications by age, oldest left: ${ages.quiet} two weeks or more, ${ages.waiting} one to two weeks, ${ages.fresh} under a week`}
+              counts={[...ageBins].reverse()}
+              testId="pulse-age"
+              colorAt={(i) => {
+                const age = QUIET_AFTER_DAYS - i;
+                if (age >= QUIET_AFTER_DAYS) return "var(--amber)";
+                return age >= 7 ? "var(--text-dim)" : "var(--viz-rules)";
+              }}
             />
             <p
               data-testid="pulse-caption"
               className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
             >
-              <span className="tabular text-strong">{ages.fresh}</span> &lt;1 wk ·{" "}
-              <span className="tabular">{ages.waiting}</span> 1–2 wk ·{" "}
-              {/* "quiet" is the band's one amber word when it is non-zero —
-                  the same threshold that tags the individual cards. */}
-              <span className={ages.quiet > 0 ? "text-review" : ""}>
-                <span className="tabular">{ages.quiet}</span> quiet
-              </span>
+              {ageCaption}
             </p>
           </>
         )}
@@ -361,7 +641,9 @@ export function PipelinePulse({
       {/* deadlines — the label tail is cut here (unlike its siblings) to make
           room for the one thing on this surface to act on today: the row with
           the smallest days-left, so an overdue row outranks everything until
-          it is dealt with.
+          it is dealt with. NOT a panel trigger: the measured board has zero
+          deadlines set, and a detail pane over nothing would be exactly the
+          invented urgency this cell refuses.
 
           WHERE that row is named moves with the width, because at the lg
           boundary it cannot be named on the label's own line at all. Measured
@@ -435,7 +717,11 @@ export function PipelinePulse({
           // Counts, no bar: deadline counts are units, not proportions — two
           // overdue beside ten "later" is not a 1:5 wash of red. "N overdue"
           // turns red as a unit — a red word beside a white digit would put
-          // the emphasis on the wrong half.
+          // the emphasis on the wrong half. Zero buckets are omitted on the
+          // ageing caption's grounds (#159 — and this cell already refuses
+          // to draw counts at zero), and "due" stands between count and unit
+          // because `1 ≤2d` parses as arithmetic; `1 due ≤2d` parses as the
+          // claim it is (the band's caption grammar, see above).
           //
           // Below `xl` this line belongs to the named row instead, and
           // PulseCell is what hands it over — it does so only when an aside
@@ -445,37 +731,69 @@ export function PipelinePulse({
             data-testid="pulse-caption"
             className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
           >
-            <span className={due.overdue > 0 ? "font-medium text-reject-ink" : ""}>
-              <span className={due.overdue > 0 ? "tabular" : "tabular text-strong"}>
-                {due.overdue}
-              </span>{" "}
-              overdue
-            </span>{" "}
-            {/* "soon" takes the review amber only while it counts something —
-                the same ink its card tags already wear. */}
-            ·{" "}
-            <span className={due.soon > 0 ? "text-review" : ""}>
-              <span className="tabular">{due.soon}</span> ≤{DUE_SOON_DAYS}d
-            </span>{" "}
-            · <span className="tabular">{due.later}</span> later
+            {[
+              due.overdue > 0 ? (
+                <span key="overdue" className="font-medium text-reject-ink">
+                  <span className="tabular">{due.overdue}</span> overdue
+                </span>
+              ) : null,
+              // "soon" takes the review amber while it counts something —
+              // the same ink its card tags already wear.
+              due.soon > 0 ? (
+                <span key="soon" className="text-review">
+                  <span className="tabular">{due.soon}</span> due ≤{DUE_SOON_DAYS}d
+                </span>
+              ) : null,
+              due.later > 0 ? (
+                <span key="later">
+                  <span
+                    className={
+                      due.overdue === 0 && due.soon === 0 ? "tabular text-strong" : "tabular"
+                    }
+                  >
+                    {due.later}
+                  </span>{" "}
+                  later
+                </span>
+              ) : null,
+            ]
+              .filter((part) => part !== null)
+              .map((part, i) => (
+                <Fragment key={i}>
+                  {i > 0 ? " · " : null}
+                  {part}
+                </Fragment>
+              ))}
           </p>
         )}
       </PulseCell>
 
       {/* auto-filed */}
-      <PulseCell label="auto-filed · from your mail">
+      <PulseCell
+        label="auto-filed · from your mail"
+        expand={
+          applications.length > 0
+            ? {
+                name: "Auto-filed detail",
+                open: open === "provenance",
+                onToggle: () => toggle("provenance"),
+              }
+            : undefined
+        }
+        triggerRef={provenanceTrigger}
+      >
         {/* The machine's own cell gets the machine's verdict ink: the
             auto-filed share in emerald (`--viz-setfit`, the brand mark's
             "delivered" node), the hand-filed remainder in ramp-grey. Same
-            inline h-1.5 geometry as the ageing bar, so the drawn element
-            costs the band no height — the two-line budget is the contract. */}
+            inline h-1.5 geometry as ever, so the drawn element costs the
+            band no height — the two-line budget is the contract. */}
         {applications.length > 0 ? (
           <SegmentBar
-            ariaLabel={`${autoFiled} of ${applications.length} filed from your mail, ${applications.length - autoFiled} by hand`}
+            ariaLabel={`${autoFiled} of ${applications.length} filed from your mail, ${byHand} by hand`}
             total={applications.length}
             segments={[
               [autoFiled, "var(--viz-setfit)"],
-              [applications.length - autoFiled, "var(--text-dim)"],
+              [byHand, "var(--text-dim)"],
             ]}
             maxWidthClass="max-w-12"
           />
@@ -491,22 +809,45 @@ export function PipelinePulse({
           data-testid="pulse-caption"
           className="tabular -my-[4px] -mr-[4px] min-w-0 truncate py-[4px] pr-[4px] text-[11px]/4 text-muted xl:text-xs"
         >
-          <span className="tabular text-strong">{autoFiled}</span> of {applications.length}
-          {" · "}
-          {needsReview > 0 ? (
-            // "held for review", not "held for YOUR review": the queue this
-            // links to is headed "Needs review", so the link keeps the review
-            // family's name — and the short form is what fits beside the
-            // figure at the lg boundary (163px vs the long form's 190px,
-            // against a 171px cell).
-            <Link
-              href="/dashboard#needs-classification"
-              className="font-medium text-review underline-offset-2 hover:underline"
-            >
-              <span className="tabular">{needsReview}</span> held for review →
-            </Link>
+          {applications.length === 0 ? (
+            <span className="text-dim">nothing filed yet</span>
+          ) : needsReview > 0 ? (
+            <>
+              <span className="tabular text-strong">{autoFiled}</span> of {applications.length}
+              {" · "}
+              {/* "held for review", not "held for YOUR review": the queue this
+                  links to is headed "Needs review", so the link keeps the review
+                  family's name — and the short form is what fits beside the
+                  figure at the lg boundary (163px vs the long form's 190px,
+                  against a 171px cell). The remainder-by-hand answer waits in
+                  the panel while something actionable holds this slot.
+                  `pointer-events-auto`: the cell's stretched trigger owns every
+                  other pixel; this link opts back in. */}
+              <Link
+                href="/dashboard#needs-classification"
+                className="pointer-events-auto font-medium text-review underline-offset-2 hover:underline"
+              >
+                <span className="tabular">{needsReview}</span> held for review →
+              </Link>
+            </>
+          ) : byHand > 0 ? (
+            // The caption says what the aria-label always said (#158): the
+            // remainder is the user's own hand-filed rows — benign, and
+            // worrying only while it went unnamed. Two parallel claims for
+            // the two provenances the bar draws, each figure bound forward
+            // to its source: the earlier `36 of 41 · 5 by hand` left the
+            // reader to reconcile THREE numerals, `41 · 5` touching across
+            // the separator, and the total is the one number the subtitle
+            // already owns.
+            <>
+              <span className="tabular text-strong">{autoFiled}</span> from your mail
+              {" · "}
+              <span className="tabular">{byHand}</span> by hand
+            </>
           ) : (
-            <span className="text-dim">nothing waiting on you</span>
+            <>
+              all <span className="tabular text-strong">{applications.length}</span> from your mail
+            </>
           )}
         </p>
       </PulseCell>
@@ -518,6 +859,31 @@ export function PipelinePulse({
         <p className="tabular col-span-full border-t border-line-soft py-1 text-[11px] leading-snug text-dim">
           signals derive from the {scopeNote} rows
         </p>
+      ) : null}
+
+      {/* The detail panel — docked under the band, anchored to its cell,
+          board live around it. Mounted only while open, so the resting band
+          costs exactly what it cost before. */}
+      {open !== null ? (
+        <PulseDetail
+          panelRef={panelRef as RefObject<HTMLDivElement | null>}
+          kind={open}
+          today={today}
+          momentum={{ days, thisWeek, lastWeek }}
+          age={{ bins: ageBins, openTotal, quiet: ages.quiet, oldest: oldestOpen }}
+          provenance={{
+            mail: autoFiled,
+            hand: byHand,
+            total: applications.length,
+            needsReview,
+            lastFromMail,
+          }}
+          onFilter={applyFilter}
+          onClose={() => {
+            triggerFor(open).current?.focus();
+            setOpen(null);
+          }}
+        />
       ) : null}
     </section>
   );

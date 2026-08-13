@@ -98,6 +98,20 @@ export function stageOf(status: string): StageKey {
 }
 
 /**
+ * Whether a status counts as OPEN — applied + assessment + interviewing, the
+ * same trio `summarizeCounts` calls in motion. It is a `stageOf` lookup here
+ * (safe: stageOf's own fallback is `applied`, which IS open, so an unknown
+ * status can never silently vanish from an open-rows derivation the way it
+ * could from a stage allow-list). One definition, because the pulse's ageing
+ * cell, its detail panel and the board's pulse filter all ask this question
+ * and must never disagree about a row.
+ */
+export function isOpenStage(status: string): boolean {
+  const stage = stageOf(status);
+  return stage === "applied" || stage === "assessment" || stage === "interviewing";
+}
+
+/**
  * A status that is a terminal qualifier we tag on the card. These are statuses
  * whose stage does not tell you what happened: "closed" covers a rejection, a
  * withdrawal and a ghosting, and "offered" covers both an open offer and an

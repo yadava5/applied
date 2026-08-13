@@ -953,7 +953,10 @@ body {
 .pulse-seg {
   transform-origin: bottom;
   animation: pulse-seg-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(var(--i, 0) * 50ms);
+  /* 14ms, retuned from 50ms when the momentum strip went daily (#156): the
+   * stagger was sized for 8 weekly bars (350ms tail); at 30 day-bars it had
+   * become a 1.5s wave. 30 × 14ms ≈ the same ~400ms sweep as before. */
+  animation-delay: calc(var(--i, 0) * 14ms);
 }
 @keyframes pulse-seg-in {
   from {
@@ -968,9 +971,26 @@ body {
   animation: rail-seg-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: calc(var(--i, 0) * 70ms);
 }
+/* The pulse's detail panel (components/dashboard/PulseDetail.tsx): a short
+ * settle from 4px above, opacity + transform only — the panel's content is
+ * never hidden behind it, and it collapses with its sibling draws below. */
+.pulse-panel {
+  animation: pulse-panel-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes pulse-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .pulse-seg,
-  .pulse-seg-x {
+  .pulse-seg-x,
+  .pulse-panel {
     animation: none !important;
   }
 }
