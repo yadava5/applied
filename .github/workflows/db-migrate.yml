@@ -103,11 +103,19 @@ jobs:
           # chain from empty would bury two new lines in six hundred, and the
           # question a reviewer has is "what does MERGING THIS do to the live
           # database", which is exactly this range.
-          BASE=$(git show origin/main:backend/jobtracker/database/schema_version.py \
+          BASE=$(git show origin/main:backend/jobtracker/database/schema_version.py 2>/dev/null \
                  | sed -n 's/^EXPECTED_REVISION = "\(.*\)"$/\1/p')
           if [ -z "$BASE" ]; then
-            echo "::error::Could not read EXPECTED_REVISION from origin/main."
-            exit 1
+            # main has no schema_version.py yet — true only for the PR that
+            # introduces this workflow. There is no "before" to diff against, so
+            # say so and pass rather than failing a PR for a baseline that does
+            # not exist yet. Every later PR takes the branch below.
+            echo "No EXPECTED_REVISION on \`main\` yet, so there is no baseline" \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "to render a diff against. This is expected only for the PR" \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "that introduces this workflow." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           HEAD_REV=$(sed -n 's/^EXPECTED_REVISION = "\(.*\)"$/\1/p' \
                      jobtracker/database/schema_version.py)
