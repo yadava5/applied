@@ -31,6 +31,7 @@ import {
   NEEDS_EMPLOYER_RETRY,
   canNameCompany,
   classifyRequestBody,
+  confirmCompanyPrompt,
   employerPromptFor,
   readClassifyOutcome,
   reviewCandidates,
@@ -147,6 +148,87 @@ test("needs_employer is honoured only when it is literally true", () => {
       readClassifyOutcome(true, body).kind,
       "resolved",
       `readClassifyOutcome(true, ${JSON.stringify(body)})`,
+    );
+  }
+});
+
+/**
+ * The body the backend returns when the company typed is one edit from one
+ * already on the board — "Verkeda" against "Verkada". BOTH flags are set, and
+ * that pairing is deliberate on the backend's side: a client that has never
+ * heard of the confirmation still reads `needs_employer` and keeps the row in
+ * the queue, rather than reading a resolved 2xx and dropping an item that filed
+ * nothing (the Crusoe bug, at the presentation layer, again).
+ */
+const NEEDS_CONFIRMATION_BODY = {
+  classified_as: "rejection",
+  application_id: null,
+  needs_employer: true,
+  needs_company_confirmation: true,
+  suggested_company: "Verkada",
+  message_id: "198d0f2c9a1b4e78",
+  detail:
+    "'Verkeda' looks like 'Verkada', which is already on your board. Re-send with company='Verkada' to file this against it, or with 'confirm_new_company' to open a separate application.",
+};
+
+test("a near-miss company asks which employer it is, and files nothing", () => {
+  const outcome = readClassifyOutcome(true, NEEDS_CONFIRMATION_BODY);
+
+  assert.equal(outcome.kind, "needs-confirmation");
+  assert.equal(outcome.suggestedCompany, "Verkada");
+  assert.equal(rowStaysInQueue(outcome), true, "nothing was filed — the row must stay");
+  assert.equal(outcome.messageId, "198d0f2c9a1b4e78");
+  // The confirmation must WIN over the employer flag both are carrying, or the
+  // suggestion is thrown away and the user is asked to type the name again —
+  // which is how they typed the typo in the first place.
+  assert.notEqual(outcome.kind, "needs-employer");
+});
+
+test("the question names the company; it never merges on the user's behalf", () => {
+  assert.equal(confirmCompanyPrompt("Verkada"), "Did you mean Verkada? It's already on your board.");
+  assert.match(confirmCompanyPrompt("Verkada"), /Verkada/);
+  // Plain language, not the API's own wording.
+  assert.notEqual(confirmCompanyPrompt("Verkada"), NEEDS_CONFIRMATION_BODY.detail);
+});
+
+test("the confirmation is honoured only when the flag is literally true and names something", () => {
+  // Spoofed flags fall back to the employer prompt (which this body also
+  // carries), never to a resolved 2xx.
+  for (const spoof of [{ needs_company_confirmation: "true" }, { needs_company_confirmation: 1 }]) {
+    const outcome = readClassifyOutcome(true, { ...NEEDS_CONFIRMATION_BODY, ...spoof });
+    assert.equal(outcome.kind, "needs-employer", JSON.stringify(spoof));
+  }
+  // A confirmation with no name to offer is not a question anyone can answer.
+  for (const empty of [undefined, null, "", "   ", 42]) {
+    const outcome = readClassifyOutcome(true, {
+      ...NEEDS_CONFIRMATION_BODY,
+      suggested_company: empty,
+    });
+    assert.equal(outcome.kind, "needs-employer", `suggested_company: ${JSON.stringify(empty)}`);
+  }
+  // And a backend that has never sent the flag behaves exactly as before.
+  assert.equal(readClassifyOutcome(true, NEEDS_EMPLOYER_BODY).kind, "needs-employer");
+});
+
+test("both answers to the question are real requests, and neither is the default", () => {
+  // "Yes, it's the one on my board" — the suggested spelling, no override flag.
+  assert.deepEqual(classifyRequestBody("rejection", "Verkada"), {
+    category: "rejection",
+    company: "Verkada",
+  });
+  // "No, these are two companies" — the typed spelling plus the acknowledgement.
+  assert.deepEqual(classifyRequestBody("rejection", "Verkeda", null, null, true), {
+    category: "rejection",
+    company: "Verkeda",
+    confirm_new_company: true,
+  });
+  // Never sent otherwise: an override that rides along by default is the silent
+  // acceptance this whole round trip exists to stop.
+  for (const off of [undefined, null, false, "true", 1]) {
+    assert.deepEqual(
+      classifyRequestBody("rejection", "Verkeda", null, null, off),
+      { category: "rejection", company: "Verkeda" },
+      `confirmNewCompany: ${JSON.stringify(off)}`,
     );
   }
 });

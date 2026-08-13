@@ -1072,3 +1072,351 @@ def test_the_owners_real_mail_produces_no_deadlines():
     ]
 
     assert invented == []
+
+
+# --- an employer name one edit from one already on the board ------------------
+#
+# Applications 110 and 119 on the owner's board, 2026-08-13: the same Verkada
+# role twice, one reading APPLIED under "Verkada" and one reading REJECTED under
+# "Verkeda". Both messages came from no-reply@us.greenhouse-mail.io, which names
+# no employer, so the rejection reached the review queue and a human typed the
+# company — one letter wrong. Identity is employer + (req_id or role), so the
+# near miss on the employer half defeated the key before the role half was ever
+# consulted, and a status change minted a fifth row instead of settling one.
+#
+# The rule below is a QUESTION, never a merge. Every test here is written to
+# that distinction, because the failure it must not trade for is joining two
+# real employers: `advance_application_status` never leaves a terminal status,
+# so a wrongly-merged rejection is unreachable through the product afterwards.
+
+# The rejection as Greenhouse actually sends it: the subject names no employer
+# and no role, and the role is only in the body.
+VERKADA_ROLE_TOKEN = "embedded software engineer access control"
+REJECTION_SUBJECT = "Update on your application"
+REJECTION_SNIPPET = (
+    "Thank you for your interest in the Embedded Software Engineer, Access Control "
+    "position. Although your application was not selected to move forward, we "
+    "appreciate the time you invested."
+)
+GREENHOUSE = "no-reply@us.greenhouse-mail.io"
+
+
+def review_mail(message_id: str, snippet: str = REJECTION_SNIPPET) -> Email:
+    """One rejection sitting in the review queue: unlinked, un-reviewed."""
+
+    return Email(
+        user_id=USER,
+        source_account=EmailSource.GMAIL,
+        message_id=message_id,
+        subject=REJECTION_SUBJECT,
+        sender_email=GREENHOUSE,
+        body_snippet=snippet,
+        received_at=datetime.datetime(2026, 8, 13, 17, 30),
+        classified_as=EmailCategory.NEEDS_REVIEW,
+        classification_confidence=0.7,
+    )
+
+
+def test_the_relay_that_started_this_still_names_no_employer():
+    """The premise the rest of this section rests on, asserted rather than assumed.
+
+    If the resolver could name Verkada from this message the review queue would
+    never have asked, the human would never have typed a spelling, and the whole
+    path below would be unreachable. It cannot: an ATS relay's subject lead and
+    display name are the only signals it has, and this rejection carries neither.
+
+    Mutation: pointing the fixture at a sender whose own domain is the employer
+    → resolves, and the near-miss tests below stop exercising what they claim.
+    """
+
+    assert p.resolve_employer(GREENHOUSE, REJECTION_SUBJECT, None) is None
+    assert p.normalize_role_token(p.role_from_message(REJECTION_SUBJECT, REJECTION_SNIPPET)) == (
+        VERKADA_ROLE_TOKEN
+    )
+
+
+def test_a_one_letter_slip_is_offered_the_spelling_already_on_the_board():
+    """"Verkeda" against a board holding "Verkada" — the reported case, pure.
+
+    Mutation: `_within_one_edit` returning False for a substitution → None, and
+    the endpoint test below opens its second row again.
+    """
+
+    assert p.near_miss_employer("verkeda", ["Verkada", "Anthropic"]) == "Verkada"
+    # Every shape a hand slips in, not just the substitution that was reported.
+    assert p.near_miss_employer("verkada", ["Verkadaa"]) == "Verkadaa"  # doubled letter
+    assert p.near_miss_employer("verkda", ["Verkada"]) == "Verkada"  # dropped letter
+    assert p.near_miss_employer("verkaad", ["Verkada"]) == "Verkada"  # swapped pair
+    # A stored display name is compared by its LEADING word, the same way
+    # `matches_company_token` compares one — otherwise every multi-word employer
+    # on the board is invisible to this check.
+    assert p.near_miss_employer("verkeda", ["Verkada Security Inc"]) == "Verkada Security Inc"
+
+
+@pytest.mark.parametrize(
+    ("typed", "board"),
+    [
+        # Different first letters. The part of a brand a reader recognises.
+        ("notion", ["Motion"]),
+        ("figma", ["Sigma"]),
+        ("zoom", ["Loom"]),
+        # Short enough that one edit is most of the word. These two share their
+        # opening letters, so the length floor is the ONLY rule holding them
+        # apart — pairs the prefix rule already catches would leave it untested.
+        ("loom", ["Loop"]),
+        ("bolt", ["Bold"]),
+        # Two edits or more is not a slip, it is another company. Coinbase and
+        # Codebase clear the length floor and share their opening letters, so
+        # the edit budget is the only thing separating them — the far-apart
+        # pairs below never reach it.
+        ("coinbase", ["Codebase"]),
+        ("datadog", ["Databricks"]),
+        ("verkada", ["Verizon"]),
+        ("anthropic", ["Verkada"]),
+        # Already the same employer: the caller found no row for this token, so
+        # answering "did you mean the identical name?" would loop the user.
+        ("verkada", ["Verkada"]),
+        ("verkada", ["Verkada Security"]),
+        # Nothing on the board at all.
+        ("verkeda", []),
+    ],
+)
+def test_two_employers_that_are_not_one_typo_apart_are_never_offered(typed, board):
+    """The negative half, and the one that decides whether this is safe to ship.
+
+    Mutation: dropping the length floor → Zoom/Loom and Bolt/Volt are offered;
+    dropping the shared-prefix rule → Notion/Motion and Figma/Sigma are; raising
+    the edit budget to two → Datadog/Databricks is. Each was seen failing.
+    """
+
+    assert p.near_miss_employer(typed, board) is None
+
+
+def test_several_near_misses_ask_rather_than_falling_silent():
+    """Ambiguity is a reason to ASK, not a reason to mint the row it is about.
+
+    The board below is the owner's own, today: one employer already spelled two
+    ways. That is where a third typo is MOST likely, not least — so returning
+    None on "more than one candidate", which is the natural rule for an
+    auto-merge, would reproduce the entire defect in exactly the case that
+    already went wrong once. The pick is deterministic instead, and stable under
+    the order the rows come back in.
+
+    Mutation: `return None` when `len(matches) > 1` → both assertions fail and
+    a third spelling is minted silently.
+    """
+
+    assert p.near_miss_employer("verkida", ["Verkeda", "Verkada"]) == "Verkada"
+    assert p.near_miss_employer("verkida", ["Verkada", "Verkeda"]) == "Verkada"
+
+
+async def test_a_typod_employer_asks_instead_of_opening_a_second_application(test_session):
+    """THE case: existing "Verkada", incoming "Verkeda", same role → one row.
+
+    The first call is the human typing the typo. Nothing may be filed from it —
+    not the new row that production got, and not a silent merge onto the existing
+    one either. The second call is them accepting the offered spelling, and it
+    settles the application that was already there.
+
+    Mutation: skipping the `_misspelled_employer` check in `classify_review_item`
+    → the first call returns an `application_id`, `rows` is 2, and the assertion
+    on `needs_company_confirmation` fails first.
+    """
+
+    await _seed(
+        test_session,
+        [stored("Verkada", role_token=VERKADA_ROLE_TOKEN, source="gmail")],
+    )
+    test_session.add(review_mail("rejection-113"))
+    await test_session.commit()
+
+    asked = await apps.classify_review_item(
+        test_session,
+        USER,
+        "rejection-113",
+        EmailCategory.REJECTION,
+        company="Verkeda",
+    )
+
+    assert asked["needs_company_confirmation"] is True
+    assert asked["suggested_company"] == "Verkada"
+    assert asked["application_id"] is None
+    # The pair, deliberately: a client that predates the confirmation still
+    # reads this as "name the company" and keeps the row in the queue, rather
+    # than reading a resolved 2xx and dropping an item that filed nothing.
+    assert asked["needs_employer"] is True
+    assert len(await apps._company_rows(test_session, USER, "verkeda")) == 0
+    # ...and the existing application was not quietly settled on the guess.
+    verkada = await apps._company_rows(test_session, USER, "verkada")
+    assert [r.status for r in verkada] == [ApplicationStatus.APPLIED]
+
+    filed = await apps.classify_review_item(
+        test_session,
+        USER,
+        "rejection-113",
+        EmailCategory.REJECTION,
+        company="Verkada",
+    )
+
+    verkada = await apps._company_rows(test_session, USER, "verkada")
+    assert len(verkada) == 1, "the role appears twice on the board again"
+    assert verkada[0].status == ApplicationStatus.REJECTED
+    assert filed["application_id"] == verkada[0].id
+
+
+async def test_a_role_less_near_miss_asks_before_it_could_guess_a_sibling(test_session):
+    """The ask has to come first, or the employer's row count decides the answer.
+
+    A rejection that names no role reaches `_pick_application` with (None, None),
+    where rule 4 returns the employer's first row rather than minting. So at a
+    one-row employer a loose match would look harmless and at a four-row one it
+    would settle an arbitrary sibling — the same reason the queue asks "which
+    application is this about?" at all. Neither happens: the spelling is queried
+    before any of it.
+
+    Mutation: skipping the check → this mints a "Verkeda" row beside the two
+    Verkada ones and both assertions fail.
+    """
+
+    await _seed(
+        test_session,
+        [
+            stored("Verkada", role_token=VERKADA_ROLE_TOKEN, source="gmail"),
+            stored("Verkada", role_token="security engineer", source="gmail"),
+        ],
+    )
+    test_session.add(review_mail("rejection-role-less", snippet="Although your application"))
+    await test_session.commit()
+
+    asked = await apps.classify_review_item(
+        test_session,
+        USER,
+        "rejection-role-less",
+        EmailCategory.REJECTION,
+        company="Verkeda",
+    )
+
+    assert asked["needs_company_confirmation"] is True
+    rows = await apps._company_rows(test_session, USER, "verkada")
+    assert [r.status for r in rows] == [ApplicationStatus.APPLIED, ApplicationStatus.APPLIED]
+
+
+async def test_a_genuinely_different_employer_is_filed_without_a_question(test_session):
+    """The cost of the check, bounded: it must not stand between a user and a
+    company they have simply never applied to before.
+
+    Mutation: comparing on `startswith` instead of an edit budget → "Anthropic"
+    is offered "Verkada" (or vice versa) and this asks a question nobody can
+    answer usefully.
+    """
+
+    await _seed(test_session, [stored("Verkada", role_token=VERKADA_ROLE_TOKEN, source="gmail")])
+    test_session.add(review_mail("rejection-anthropic"))
+    await test_session.commit()
+
+    filed = await apps.classify_review_item(
+        test_session,
+        USER,
+        "rejection-anthropic",
+        EmailCategory.REJECTION,
+        company="Anthropic",
+    )
+
+    assert filed.get("needs_company_confirmation") is None
+    assert filed["application_id"] is not None
+    anthropic = await apps._company_rows(test_session, USER, "anthropic")
+    assert [r.company for r in anthropic] == ["Anthropic"]
+    # Verkada's row is untouched — the two employers did not merge.
+    verkada = await apps._company_rows(test_session, USER, "verkada")
+    assert [r.status for r in verkada] == [ApplicationStatus.APPLIED]
+
+
+async def test_a_confirmed_new_company_is_two_employers_not_one(test_session):
+    """Stripe and Strive are one edit apart and both real. The rule flags that
+    pair by design, so the human's "no" has to be the end of it.
+
+    This is the negative that matters more than the positive: it proves the
+    resemblance is never acted on. Nothing merges here — the board ends with two
+    applications at two employers, which is what the user said was true.
+
+    Mutation: treating the near miss as a match and filing against the suggested
+    row → one row named "Stripe" holding the other company's rejection, at a
+    terminal status `advance_application_status` will not let it leave.
+    """
+
+    await _seed(test_session, [stored("Stripe", role_token=VERKADA_ROLE_TOKEN, source="gmail")])
+    test_session.add(review_mail("rejection-strive"))
+    await test_session.commit()
+
+    asked = await apps.classify_review_item(
+        test_session, USER, "rejection-strive", EmailCategory.REJECTION, company="Strive"
+    )
+    assert asked["needs_company_confirmation"] is True
+    assert asked["suggested_company"] == "Stripe"
+
+    filed = await apps.classify_review_item(
+        test_session,
+        USER,
+        "rejection-strive",
+        EmailCategory.REJECTION,
+        company="Strive",
+        confirm_new_company=True,
+    )
+
+    strive = await apps._company_rows(test_session, USER, "strive")
+    assert [r.company for r in strive] == ["Strive"]
+    assert filed["application_id"] == strive[0].id
+    stripe = await apps._company_rows(test_session, USER, "stripe")
+    assert [r.status for r in stripe] == [ApplicationStatus.APPLIED]
+
+
+async def test_an_employer_only_on_a_dismissed_row_is_not_offered(test_session):
+    """A suggestion has to name something the user can see.
+
+    `_company_rows` puts live rows first, so accepting a dismissed employer's
+    name would file the mail against a row that is not on the board — worse than
+    the extra row, and invisible either way. Minting here is the behaviour this
+    path already had.
+
+    Mutation: dropping the `dismissed_at IS NULL` filter → this asks about a row
+    the board does not show.
+    """
+
+    dismissed = stored("Verkada", role_token=VERKADA_ROLE_TOKEN, source="gmail")
+    dismissed.dismissed_at = datetime.datetime(2026, 8, 12, 9, 0)
+    await _seed(test_session, [dismissed])
+    test_session.add(review_mail("rejection-dismissed"))
+    await test_session.commit()
+
+    filed = await apps.classify_review_item(
+        test_session, USER, "rejection-dismissed", EmailCategory.REJECTION, company="Verkeda"
+    )
+
+    assert filed.get("needs_company_confirmation") is None
+    assert filed["application_id"] is not None
+
+
+async def test_an_employer_the_mail_names_itself_is_never_second_guessed(test_session):
+    """Only a HAND-TYPED name can carry a typo.
+
+    A name the resolver read out of the mail is machine-derived and consistent
+    with itself; running it past this check would mean the SYNC could be stopped
+    by a question nobody is standing there to answer. The flag exists for that
+    reason, and this pins it.
+
+    Mutation: dropping the `named_by_hand` guard → this asks about a company the
+    message named itself, and the user's classification files nothing.
+    """
+
+    await _seed(test_session, [stored("Verkada", source="gmail")])
+    email = review_mail("rejection-named")
+    email.sender_email = "careers@verkeda.com"  # a different employer's own domain
+    test_session.add(email)
+    await test_session.commit()
+
+    filed = await apps.classify_review_item(
+        test_session, USER, "rejection-named", EmailCategory.REJECTION, company="Verkada"
+    )
+
+    assert filed.get("needs_company_confirmation") is None
+    assert filed["application_id"] is not None
