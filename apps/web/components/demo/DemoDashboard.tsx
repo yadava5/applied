@@ -114,6 +114,7 @@ export function DemoDashboard({
   variant = "flow",
   needsReview = 0,
   reviewSlot = "after",
+  sessionEdge = false,
 }: {
   pipeline?: DemoPipeline;
   /** `flow` — the /demo page twin: natural height, the page scrolls.
@@ -133,6 +134,18 @@ export function DemoDashboard({
    *  default, `lib/settings/notifications.ts`), and the one that produced the
    *  escaped-`sr-only` document scroll #149 fixed. */
   reviewSlot?: DemoReviewSlot;
+  /** Mounts the SIGNED-IN session edge on the header row instead of the demo
+   *  pill — `withSignOut` on, `trailing` unset, exactly what
+   *  `app/(app)/dashboard/page.tsx` passes. Off for every organic visitor;
+   *  /demo/shell's `?session=1` harness knob is the one caller that sets it,
+   *  and it is the whole reason that knob exists: the pill is what the twin
+   *  renders where the real page renders its session edge, so the one control
+   *  #172 moved rendered on NO surface a test could reach. The item's
+   *  behaviour is still fixture-mode, and the row's recency slot drops the
+   *  simulated frame for the live `LastSynced` over this same fixture state
+   *  (69px narrower, and the difference wraps the row) — both in `SyncBar`,
+   *  both keyed off `withSignOut`, neither reachable without the knob. */
+  sessionEdge?: boolean;
 }) {
   const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
@@ -417,7 +430,14 @@ export function DemoDashboard({
         gmail={DEMO_GMAIL}
         transport={syncTransport}
         title={locked ? "Applications" : undefined}
-        trailing={locked ? <DemoFixturePill /> : undefined}
+        // The session edge, and only one of them: the pill is the twin's
+        // honest default (no session to end), `sessionEdge` swaps in the
+        // signed-in page's own arrangement — nothing row-level, `Sign out`
+        // folded into the `⋯` menu — so the row that #172 is about can be
+        // measured at all. Never both: two session edges in one row would
+        // measure a shape no surface renders.
+        trailing={locked && !sessionEdge ? <DemoFixturePill /> : undefined}
+        withSignOut={sessionEdge}
         since={
           <SinceLastLook
             rows={ledgerRows}

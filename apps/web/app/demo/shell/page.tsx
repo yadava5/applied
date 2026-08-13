@@ -60,6 +60,44 @@ export const dynamic = "force-dynamic";
  *     user preference — "Needs review alerts" on puts the queue above the
  *     rows, off leaves it below — so both are reachable here.
  *
+ *   - `?session=1` mounts the SIGNED-IN session edge on the board's header
+ *     row in place of that identity block's pill — `withSignOut` on and
+ *     `trailing` unset, the exact pair `app/(app)/dashboard/page.tsx` passes
+ *     to `SyncBar`. Third harness knob, same reasoning as `?review=N`, and
+ *     the case it was written for is that sentence word for word: sign-out on
+ *     the board route is a user-facing control that renders on no other
+ *     testable surface, because this twin deliberately renders
+ *     `DemoFixturePill` exactly where the real page renders its session edge.
+ *     So when #172 folded that control out of the row and into the row's `⋯`
+ *     menu — to stop a ~97px button wrapping the row to two lines at 1024 and
+ *     taking the height out of the worklist — the change landed on a shape no
+ *     gate in this repo could see. `tests/e2e/session-edge.spec.ts` drives
+ *     this param; nothing links to it.
+ *
+ *     It swaps ONE other thing, and has to: the row's recency slot, which on
+ *     the simulated transport carries the frame "simulated account · nothing
+ *     is read" instead of the live row's `LastSynced`. That frame lays out
+ *     69px wider than the phrase it stands in for, and 69px is enough to wrap
+ *     this row at 1024 with the session edge in either arrangement — so a
+ *     twin that kept it reported a wrap the signed-in row does not have and
+ *     could not measure the one thing the knob exists for. Under `?session=1`
+ *     the slot renders the real `LastSynced` over the fixture Gmail state,
+ *     which has never synced, so it reads "not synced yet" — true of a
+ *     simulated account, and a state the signed-in page renders too. Nothing
+ *     else about the twin changes, and neither /demo nor this route's own
+ *     default is touched.
+ *
+ *     It does NOT hand an anonymous visitor a working sign-out: there is no
+ *     session here, and a control whose only outcome is a bounce to /login is
+ *     what the pill exists to prevent. The menu item renders with the real
+ *     label, the real width and the real menu chrome — that geometry is the
+ *     entire point — and leaves for /demo when picked, the pill's own
+ *     destination. See the item in `SyncBar`; the guard is the simulated
+ *     transport, which is already how this route keeps the auto-sync off.
+ *     The rail and TopBar stay in demo dress, which costs the measurement
+ *     nothing: on the board route at `lg`+ TopBar yields to this row
+ *     entirely, so the row IS the session edge at both widths under test.
+ *
  * `?pipeline=early` renders the same locked twin over the early-search
  * projection, exactly as /demo does — the measured production shape (every
  * row at `applied`, no deadlines, roles missing at the real rate). The
@@ -69,14 +107,23 @@ export const dynamic = "force-dynamic";
 export default async function DemoShellPage({
   searchParams,
 }: {
-  searchParams: Promise<{ pipeline?: string; review?: string; queue?: string }>;
+  searchParams: Promise<{
+    pipeline?: string;
+    review?: string;
+    queue?: string;
+    session?: string;
+  }>;
 }) {
-  const { pipeline, review, queue } = await searchParams;
+  const { pipeline, review, queue, session } = await searchParams;
   const needsReview = Math.min(99, Math.max(0, Number.parseInt(review ?? "", 10) || 0));
   // `after` for anything that is not literally "before": the default matches
   // the live account (the alerts pref is off unless the user turns it on) and
   // is the placement the escaped-`sr-only` defect needed.
   const reviewSlot: DemoReviewSlot = queue === "before" ? "before" : "after";
+  // Literal "1" only, the same shape as the knobs above: anything else leaves
+  // the twin in its honest default, so a stray `?session=` in a shared link
+  // cannot quietly put a sign-out in front of an anonymous visitor.
+  const sessionEdge = session === "1";
   const rail: RailData = {
     gmail: {
       connected: true,
@@ -99,6 +146,7 @@ export default async function DemoShellPage({
         pipeline={pipeline === "early" ? "early" : "seed"}
         needsReview={needsReview}
         reviewSlot={reviewSlot}
+        sessionEdge={sessionEdge}
       />
 
     </AppShellFrame>

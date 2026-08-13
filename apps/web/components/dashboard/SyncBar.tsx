@@ -243,7 +243,14 @@ export function SyncBar({
    *  edge. Menu chrome, not a row-level control (see `trailing`), and it also
    *  makes the menu render when Gmail is NOT connected: at `lg`+ the shell's
    *  TopBar yields on the board route, so this menu is the route's only
-   *  sign-out. The fixture twin passes nothing — no session, no item. */
+   *  sign-out. The fixture twin passes nothing — no session, no item — unless
+   *  it is deliberately standing in for the signed-in row
+   *  (/demo/shell?session=1), which is the one place this prop is true off
+   *  the signed-in page. It therefore means "render the SIGNED-IN
+   *  arrangement of this row", not only "add a menu item": the recency slot
+   *  below reads it for the same reason, because a stand-in that keeps the
+   *  fixture frame's extra 69px is not standing in for this row's geometry
+   *  at all. See that slot for the measurement. */
   withSignOut?: boolean;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
@@ -681,8 +688,16 @@ export function SyncBar({
           stacks and the status keeps its own line, as before. */}
       {/* `relative`: the change ledger's names panel anchors to THIS row
           (its own chip sits mid-row, where an anchored overlay ran past
-          <main>'s left edge and got clipped). */}
-      <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2">
+          <main>'s left edge and got clipped).
+
+          `data-sync-header-row` names the row for the one assertion that is
+          ABOUT the row itself — "does it still hold one line at 1024"
+          (`tests/e2e/session-edge.spec.ts`). Same reasoning as
+          `data-sync-surface` above: a geometry assertion that had to find
+          this box by its class list would go quietly vacuous the first time
+          the flex utilities were touched, and this row's height is exactly
+          what #172 was about. */}
+      <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2" data-sync-header-row="">
         {title ? (
           <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
         ) : null}
@@ -742,7 +757,28 @@ export function SyncBar({
           {connected ? (
             <>
               {showRecency ? (
-                simulated ? (
+                simulated && !withSignOut ? (
+                  // The fixture frame, and why `withSignOut` excludes it.
+                  // A row asked for the signed-in session edge is standing in
+                  // for the signed-in row — that is the whole contract of
+                  // /demo/shell's `?session=1` — and this frame is 69px wider
+                  // than the recency phrase the live row carries. Measured at
+                  // 1024 on the twin (headless Chromium, `next start`):
+                  // "simulated account · nothing is read" lays out at 184.5px
+                  // against 115.17px for "synced 3 minutes ago", and that
+                  // difference alone wraps this row to two lines with the
+                  // session edge in EITHER arrangement — so the twin reported
+                  // a wrap that the surface it stands in for does not have,
+                  // and the one measurement #172 rests on was unmeasurable
+                  // through it. With the real component in the slot the same
+                  // rig separates them cleanly: 38px on one line here, 82px
+                  // wrapped with a row-level sign-out.
+                  // Nothing is fabricated by the swap: the fixture state's
+                  // `lastSyncAt` is null, so `LastSynced` says "not synced
+                  // yet", which is exactly true of a simulated account that
+                  // reads no mail — and is a state the signed-in page renders
+                  // too. Only the knob reaches this branch; /demo and the
+                  // twin's own default still carry the frame.
                   <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
                     simulated account · nothing is read
                   </span>
@@ -820,7 +856,31 @@ export function SyncBar({
                     ]
                   : []),
                 ...(withSignOut
-                  ? [{ key: "sign-out", label: "Sign out", onSelect: () => void signOut() }]
+                  ? [
+                      {
+                        key: "sign-out",
+                        label: "Sign out",
+                        // Real label, real width, real menu chrome — that
+                        // geometry IS what `session-edge.spec.ts` measures, so
+                        // the item may not be special-cased into a different
+                        // shape on the fixture twin. What it may not do there
+                        // is END A SESSION: `/demo/shell?session=1` mounts this
+                        // edge over fixtures with no session behind it, and a
+                        // `supabase.auth.signOut()` from an anonymous visitor
+                        // can only bounce them to /login — the dead end
+                        // `DemoFixturePill` exists to prevent. It leaves for
+                        // the demo overview instead: the pill's own
+                        // destination, so the control still does something
+                        // true rather than silently nothing.
+                        // `simulated` is the transport's own word for "these
+                        // are fixtures" and already gates exactly this class of
+                        // decision here (the staleness auto-sync never runs on
+                        // it, and the recency slot says so out loud). The live
+                        // dashboard passes the live transport, so the signed-in
+                        // page is untouched by this branch.
+                        onSelect: simulated ? () => router.push("/demo") : () => void signOut(),
+                      },
+                    ]
                   : []),
               ]}
             />
