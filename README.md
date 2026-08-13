@@ -577,6 +577,7 @@ Every number above terminates in something you can open.
 | `e2e-ci.yml` | Playwright against a real backend + frontend pair, uploading traces and server logs |
 | `macos-ci.yml` | `xcodebuild` resolves packages and builds the `JobTracker` scheme |
 | `codeql.yml`, `gitleaks.yml` | SAST and full-history secret scanning |
+| `.githooks/pre-commit` (local, opt-in) | The same scan over the *staged* diff, before the commit exists. Not a workflow — git does not enable a hooks path for you, so each clone runs `git config core.hooksPath .githooks` once. CI is the net that always runs; this one exists because a credential that reaches GitHub is published even if the next commit deletes it |
 | `ml-monitoring-weekly.yml` | Scheduled drift/confidence report, artifacts uploaded, alert issue opened on threshold breach |
 | `scorecard.yml`, `booklet.yml` | Supply-chain grading; the system-card booklet build |
 | `readme-facts.yml` | `python3 scripts/readme_facts.py --check` — every number on this page recomputed from the source that defines it. Unfiltered by path, because a claim here can be invalidated from anywhere; and a claim site whose sentence was reworded so the checker can no longer find it fails the build rather than passing quietly |
