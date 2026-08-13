@@ -758,6 +758,18 @@ test.describe("app shell — signed out (public)", () => {
   });
 });
 
+/**
+ * Everything below goes through `requireSession()`, so in CI — where both e2e
+ * jobs boot against a placeholder Supabase project — every test here SKIPS.
+ * The assertions are right; they have simply never executed, which is how
+ * /inbox shipped two `aria-current="page"` elements (#163) with the count
+ * assertion below sitting on top of it. They stay as written, unweakened, and
+ * are the stronger check the day a seeded session exists.
+ *
+ * The one invariant that could be lifted out of the session gate has been:
+ * `tests/unit/aria-current.test.mjs` enforces "only the primary nav claims
+ * aria-current='page'" against the source tree, and that DOES run on every PR.
+ */
 test.describe("app shell — signed in (needs a session)", () => {
   for (const { path, label } of [
     { path: "/dashboard", label: "Applications" },

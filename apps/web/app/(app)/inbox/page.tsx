@@ -58,13 +58,19 @@ function ViewSwitch({ scan }: { scan: boolean }) {
     // Gmail card carries the other standing copy, at the consent moment.
     // Nothing equivalent goes on the dashboard (decided).
     <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* `aria-current="true"`, not `"page"`. These tabs pick a VIEW within
+          one page; the rail's Inbox item is the thing that names where you
+          are in the site, and `"page"` may identify exactly one element in a
+          document. Both said `"page"` until #163, so a screen reader on
+          /inbox announced two current-page landmarks. `"true"` is what the
+          filed-mail category chips below have used all along. */}
       <nav aria-label="Inbox views" className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5">
-        <Link href="/inbox" aria-current={!scan ? "page" : undefined} className={tab(!scan)}>
+        <Link href="/inbox" aria-current={!scan ? "true" : undefined} className={tab(!scan)}>
           Filed
         </Link>
         <Link
           href="/inbox?view=scan"
-          aria-current={scan ? "page" : undefined}
+          aria-current={scan ? "true" : undefined}
           className={tab(scan)}
         >
           Live scan
