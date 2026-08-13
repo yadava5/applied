@@ -520,7 +520,16 @@ export function SyncBar({
   return (
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
     // the sync UI") to this surface without leaning on copy or classes.
-    <div className="flex flex-col gap-2" data-sync-surface="">
+    // `relative` guards the alert region below, which wears `sr-only` while
+    // silent. Tailwind's `.sr-only` is `position: absolute`, so without a
+    // positioned ancestor it resolves against the INITIAL containing block —
+    // escaping every `overflow` above it and planting a box at document scale.
+    // That is exactly how the board's own review queue made the whole shell
+    // scroll (#149); measured here, this node's `offsetParent` really was
+    // `body`. It is inert today only because Tailwind pins `sr-only` to 1×1 at
+    // the top of the content column, which is a coincidence of position, not a
+    // guarantee — the same node one flex-column lower is the same bug.
+    <div className="relative flex flex-col gap-2" data-sync-surface="">
       {/* --- The header row -------------------------------------------------
           At `lg`+ in the shell this IS the screen's top line: TopBar yields
           on the board route, so the title, the state, the change ledger, the
