@@ -215,7 +215,7 @@ export function PipelinePulse({
 
   return (
     <section
-      aria-label="Pipeline pulse"
+      aria-label="Board pulse"
       data-testid="pipeline-pulse"
       className="hidden border-y border-line-soft lg:grid lg:grid-cols-4"
     >

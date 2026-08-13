@@ -199,7 +199,7 @@ export function AddApplicationForm({
         open={open}
         onClose={close}
         title="File an application"
-        description="Add a role to your pipeline. Only company and role are required."
+        description="For applications your mail doesn't know about. Only company and role are required."
       >
         <form onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-2">
           <label htmlFor={companyId} className="grid gap-1">

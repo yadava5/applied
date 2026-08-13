@@ -561,7 +561,7 @@ export function InboxWorkbench({
       <div className="rounded-xl border border-line-soft bg-surface p-5">
         <h2 className="text-base font-medium text-strong">Your Gmail session needs a refresh</h2>
         <p className="mt-1.5 text-sm text-muted">
-          The connection expired or was revoked. Reconnect Gmail to keep mining your pipeline.
+          The connection expired or was revoked. Reconnect Gmail to keep scanning your mail.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <ConnectGmailButton />
@@ -712,14 +712,14 @@ export function InboxWorkbench({
                       href="/dashboard"
                       className="underline-offset-4 hover:text-strong hover:underline"
                     >
-                      view pipeline →
+                      view applications →
                     </Link>
                   </>
                 ) : null}
               </p>
             ) : (
               <p className="mt-1 text-xs text-dim">
-                filing adds these to your pipeline — nothing is removed, and filing twice is harmless
+                filing adds these to your applications — nothing is removed, and filing twice is harmless
               </p>
             )}
           </div>
@@ -737,7 +737,7 @@ export function InboxWorkbench({
             ) : filing.phase === "done" ? (
               "File again"
             ) : (
-              `File ${jobRelatedTotal.toLocaleString()} into pipeline`
+              `File ${jobRelatedTotal.toLocaleString()} into Applications`
             )}
           </button>
         </div>

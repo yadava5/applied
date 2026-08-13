@@ -358,7 +358,7 @@ export function ReviewQueue({
         {/* Where the confidence gate's existence is told to the user — in
             terms of what it does for them, not as a CI metric. */}
         <span className="shrink-0 text-xs text-dim">
-          held under the confidence gate · your decision trains the classifier
+          held because Applied wasn&apos;t sure · your decision files them
         </span>
       </div>
       <ul className="space-y-2">

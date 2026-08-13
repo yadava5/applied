@@ -113,7 +113,7 @@ export function DashboardEmptyState() {
       <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
         <p className="label-caps">nothing filed yet</p>
         <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
-          Your pipeline is empty — let&apos;s fill it.
+          Your board is empty — let&apos;s fill it.
         </h2>
         <p className="mt-2 max-w-xl text-sm text-muted">
           File an application by hand, or connect a mail source and let the classifier build the
