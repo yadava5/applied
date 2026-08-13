@@ -3527,13 +3527,27 @@ class _FakeMailbox:
     names ids whose batched ``messages.get`` comes back empty — Gmail LISTED
     them, we could not read them, which is exactly what ``unreadable`` counts
     (``gmail_client._collect_history``: ``unreadable = len(ids) - len(out)``).
+
+    ``failing_gets`` is honoured by the FULL SCAN too, because the real client
+    loses ids there the same way and for the same reason
+    (``fetch_message_page``: ``unreadable = len(ids) - len(out)``, "the batch's
+    own losses PLUS metadata that came back and would not parse"). A fake that
+    only ever loses messages on a delta cannot express issue #180 at all.
+
+    ``expired`` makes ``history.list`` answer the way Gmail answers a cursor
+    older than its ~1-week window: a 404, surfaced as an unusable page, which
+    sends the caller down the full-scan-and-re-baseline path.
     """
 
     def __init__(self) -> None:
         # (history_id, message) in arrival order.
         self.messages: list[tuple[int, Any]] = []
         self.failing_gets: set[str] = set()
+        self.expired = False
         self.deltas: list[tuple[str, list[str]]] = []
+        # Every cursor history.list was asked for, expired answers included —
+        # ``deltas`` only records the walks that produced one.
+        self.history_requests: list[str] = []
 
     def deliver(self, history_id: int, message: Any) -> None:
         self.messages.append((history_id, message))
@@ -3550,11 +3564,20 @@ class _FakeMailbox:
             return self.current_history_id
 
         async def _fake_page(user_id, **_kwargs):
-            # The full scan re-lists the window newest-first.
-            ordered = [m for _h, m in sorted(self.messages, reverse=True, key=lambda e: e[0])]
-            return MessagePage(messages=ordered, next_page_token=None)
+            # The full scan re-lists the window newest-first — and loses the
+            # same ids the batch loses on a delta.
+            listed = [m for _h, m in sorted(self.messages, reverse=True, key=lambda e: e[0])]
+            read = [m for m in listed if m.message_id not in self.failing_gets]
+            return MessagePage(
+                messages=read,
+                next_page_token=None,
+                unreadable=len(listed) - len(read),
+            )
 
         async def _fake_history(user_id, *, start_history_id, **_kwargs):
+            self.history_requests.append(str(start_history_id))
+            if self.expired:
+                return HistoryPage(messages=[], expired=True)
             listed = [m for h, m in self.messages if h > int(start_history_id)]
             read = [m for m in listed if m.message_id not in self.failing_gets]
             self.deltas.append(
@@ -3665,6 +3688,120 @@ async def test_a_message_lost_between_two_syncs_is_not_skipped_forever(
     # A clean run DOES advance, so the fix costs one repeated delta, not a
     # cursor that never moves again.
     assert (await _sync_rows(USER_A))[0].gmail_history_id == "9080"
+
+
+async def test_a_first_full_scan_that_loses_a_message_still_baselines(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #180: the cursor hold must not fire on a full scan.
+
+    Holding the cursor means passing ``history_id=None``, which PRESERVES
+    whatever is stored. On the incremental branch that is the whole point. On a
+    first full scan there is nothing stored, so "preserve" means "record
+    nothing" — and the next sync full-scans again, hits the same unreadable ids
+    for the same reason, and again records nothing. An account whose first scan
+    loses one message never gets a cursor and full-scans forever.
+
+    The trigger is not exotic: ``unreadable`` counts every id Gmail listed that
+    could not be turned into a row, batch losses and unparseable metadata alike,
+    and a probe measured 68 of them on a 100-message page.
+
+    Recording is not free — the baseline is newer than the id that would not
+    read, so no later delta names it either. Holding is worse: the next full
+    scan loses the same id for the same reason, and there is no cursor to show
+    for it. Recording at least leaves the account on deltas, with the id still
+    reachable by a Re-sync, and says so in the log.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    mailbox = _FakeMailbox()
+    mailbox.deliver(9002, _applied_msg("m-applied", day=11))
+    mailbox.deliver(
+        9080,
+        _msg(
+            "m-lost",
+            subject="Your application to Northwind",
+            sender="careers@northwind.example",
+            snippet="Thank you for applying. Your application has been received.",
+            day=12,
+            name="Northwind",
+        ),
+    )
+    mailbox.failing_gets.add("m-lost")
+    mailbox.install(monkeypatch)
+
+    first = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert first.status_code == 200, first.text
+    body = first.json()
+    # No cursor was stored, so this ran the full scan — and it lost one of the
+    # two ids it listed, honestly reported.
+    assert mailbox.history_requests == []
+    assert (body["scanned"], body["unreadable"]) == (1, 1)
+
+    # THE ASSERTION. The baseline goes in regardless: a full scan steps past
+    # nothing, so withholding it would only cost the cursor.
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9080"
+
+    # And the consequence that makes it matter — the next sync is a DELTA off
+    # that cursor, not a third full re-list of the whole window.
+    second = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert second.status_code == 200, second.text
+    assert mailbox.history_requests == ["9080"]
+
+
+async def test_a_lossy_re_baseline_records_the_cursor_it_went_to_get(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other full-scan route, and the one that is easy to break.
+
+    When Gmail 404s a cursor out of its ~1-week history window the sync full-
+    scans *in order to* re-baseline. Scoping the hold to the incremental branch
+    has to leave that free to record, or the same permanent-full-scan bug comes
+    back by a different road: the cursor would expire once, the re-baseline
+    would find any unreadable id, and the account would never hold a usable
+    cursor again.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    mailbox = _FakeMailbox()
+    mailbox.deliver(9002, _applied_msg("m-applied", day=11))
+    mailbox.install(monkeypatch)
+
+    first = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert first.status_code == 200, first.text
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9002"
+
+    # Time passes; the cursor ages out. New mail arrives, and one id will not
+    # read back on the re-baselining scan.
+    mailbox.deliver(
+        9050,
+        _msg(
+            "m-lost",
+            subject="Your application to Northwind",
+            sender="careers@northwind.example",
+            snippet="Thank you for applying. Your application has been received.",
+            day=12,
+            name="Northwind",
+        ),
+    )
+    mailbox.failing_gets.add("m-lost")
+    mailbox.expired = True
+
+    second = await client.post("/gmail/sync", json={"mode": "additive"}, headers=headers)
+    assert second.status_code == 200, second.text
+    body = second.json()
+
+    # This really is the re-baseline path and not "no cursor stored": the run
+    # asked history.list for the stored cursor and was refused.
+    assert mailbox.history_requests == ["9002"]
+    assert body["unreadable"] == 1
+
+    # So the scan it fell back to must land the new baseline it went to get.
+    assert (await _sync_rows(USER_A))[0].gmail_history_id == "9050"
 
 
 async def test_a_relayed_mine_says_the_server_did_not_scan_it(
