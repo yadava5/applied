@@ -15,18 +15,27 @@ holds the *pure, Gmail-free* analytics that run over that accumulated set:
 
 Everything here is a pure function over plain data (:class:`PipelineItem`),
 which is what lets it be unit-tested without a Gmail token and re-used by the
-Phase 2 dashboard-persistence path. No network, no I/O, no side effects.
+Phase 2 dashboard-persistence path. No network, no I/O, no side effects — with
+ONE deliberate exception: :func:`collect_review_items` emits a log line for a
+confident verdict it drops. That drop is the module's only outcome that leaves
+no trace anywhere else (no application row, no queue row, no counter), and its
+invisibility is what let a whole class of persistence bug ship unnoticed. A log
+record is not a side effect the callers can observe, so purity as the tests use
+it — same input, same return value — still holds.
 """
 
 from __future__ import annotations
 
 import html
+import logging
 import re
 import urllib.parse
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 # The full category vocabulary the cloud rules classifier can emit. Kept in one
 # place so a summary always reports every bucket (a category with zero hits is
@@ -1771,7 +1780,11 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
         (0.70) — including one that clears the gate but whose employer could not
         be named (skipping is better than inventing a company).
 
-    Anything below the review floor, or plain ``other`` noise, is omitted.
+    Anything below the review floor, or plain ``other`` noise, is omitted — and
+    an omission the classifier was confident about (at/above ``AUTO_FILE_GATE``)
+    is LOGGED on the way out. That drop is terminal: it is the one path through
+    this module that leaves no row, no queue entry and no counter behind, so the
+    log line is the only evidence it happened.
 
     Deduplicated by THREAD (newest message wins), falling back to ``message_id``
     for mail with no thread id. One Gmail conversation is one decision: the
@@ -1799,6 +1812,40 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
             item.category in JOB_LIFECYCLE_CATEGORIES and item.category != "follow_up"
         )
         if not is_needs_review and not (is_lifecycle and item.confidence >= REVIEW_FLOOR):
+            # THE ONLY TERMINAL DROP IN THE PIPELINE, and until now a silent one.
+            #
+            # An item that gets here produces nothing at all: no application row
+            # (:func:`partition_applications` skipped it), no queue row, no
+            # counter, no log. A verdict the classifier was CONFIDENT about
+            # leaving by that door is worth a line, because the absence of one is
+            # how three separate persistence drops shipped without anyone
+            # noticing the product had recorded zero non-applied statuses.
+            #
+            # Gated at the auto-file threshold rather than logged unconditionally,
+            # and that gate does real work: the cloud rules classifier returns
+            # ``other`` at confidence 0.0, so ordinary inbox noise — the bulk of
+            # every scan — cannot reach this line. What does reach it is a
+            # confident ``follow_up`` (0.90 on "Following up on my application"),
+            # which is dropped BY DESIGN, and any category outside the canonical
+            # vocabulary, which is a bug. Both are things you want to see.
+            #
+            # Volume, stated honestly: this is per SYNC, not per message. A
+            # confident follow_up that stays inside the scan window is logged
+            # again on every sync, indefinitely — messages x syncs, not messages.
+            # Bounded and cheap, but do not read a repeated line as a new drop.
+            #
+            # Reporting only. Nothing below this line changes what is returned.
+            if item.confidence >= AUTO_FILE_GATE:
+                logger.warning(
+                    "Pipeline dropped a confident verdict: category=%s "
+                    "confidence=%.2f message_id=%s sender=%s. It is neither a "
+                    "lifecycle category that can be filed nor needs_review, so "
+                    "it produced no application row and no review-queue entry.",
+                    item.category,
+                    item.confidence,
+                    item.message_id,
+                    item.sender_email,
+                )
             continue
 
         employer = (
