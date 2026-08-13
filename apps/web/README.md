@@ -40,7 +40,7 @@ pnpm dev          # next dev (Turbopack) on http://localhost:3000
 pnpm build        # next build (Turbopack)
 pnpm start        # serve the production build
 pnpm typecheck    # tsc --noEmit
-pnpm lint         # eslint (next defaults)
+pnpm lint         # eslint, --max-warnings 0 (next's a11y rules ship as warnings)
 ```
 
 ## Layout

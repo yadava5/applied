@@ -2,6 +2,11 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+// Severities are left exactly as eslint-config-next ships them. What makes the
+// warn-level rules — the six `jsx-a11y/*` among them — actually block is
+// `--max-warnings 0` on the `lint` script in package.json. Promoting rules here
+// instead would have to be done one at a time and would silently miss whatever
+// next adds next.
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,

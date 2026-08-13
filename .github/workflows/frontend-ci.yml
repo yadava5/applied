@@ -58,6 +58,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The `--max-warnings 0` that makes this step able to fail lives on the
+      # `lint` script in apps/web/package.json, not here, so a local `pnpm lint`
+      # returns the same verdict CI does. It promotes all 25 warn-level rules in
+      # next's config, not only the six `jsx-a11y/*` — a hard failure on
+      # `react-hooks/exhaustive-deps` or an unused variable is this gate
+      # working, not misfiring. Until #176 the step ran bare `eslint`, and since
+      # eslint exits 0 on warnings, an `<img>` with no `alt` reported two
+      # violations and the job still went green.
       - name: Lint
         run: pnpm lint
 
