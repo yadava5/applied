@@ -101,6 +101,7 @@ function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
 export function DemoDashboard({
   pipeline = "seed",
   variant = "flow",
+  needsReview = 0,
 }: {
   pipeline?: DemoPipeline;
   /** `flow` — the /demo page twin: natural height, the page scrolls.
@@ -110,6 +111,10 @@ export function DemoDashboard({
    *  session. Both mount the pulse where the real page does: the board's
    *  full-width band. */
   variant?: "flow" | "locked";
+  /** Held-verdict count for the pulse band. 0 for every organic visitor —
+   *  see the mount comment below. /demo/shell's `?review=N` harness knob is
+   *  the one caller that sets it. */
+  needsReview?: number;
 }) {
   const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
@@ -356,11 +361,14 @@ export function DemoDashboard({
           keeps this twin honest evidence for the real page.
 
           The pulse is the board's full-width band here exactly as it is on
-          the signed-in dashboard. `needsReview` is 0 deliberately, not a
-          stub: /demo mounts no review queue for a held verdict to point at,
-          and the signal's non-zero branch deep-links to
+          the signed-in dashboard. `needsReview` defaults to 0 deliberately,
+          not as a stub: /demo mounts no review queue for a held verdict to
+          point at, and the signal's non-zero branch deep-links to
           /dashboard#needs-classification — an auth-gated route that would
-          dead-end an anonymous visitor. The fixture queue (DEMO_REVIEW_QUEUE)
+          dead-end an anonymous visitor. /demo/shell's `?review=N` harness
+          knob is the one caller that overrides it, so that branch — a
+          user-facing control that otherwise renders on NO testable surface —
+          stays measurable. The fixture queue (DEMO_REVIEW_QUEUE)
           does hold one sub-gate message; the DecisionTrace lower down /demo
           is where it is shown and explained. Below `lg` the band yields to
           the cards' own tags — the phone answer the old full-width strip
@@ -384,7 +392,7 @@ export function DemoDashboard({
       <PipelineBoard
         variant={locked ? "locked" : "flow"}
         applications={snapshot.apps}
-        pulse={{ needsReview: 0 }}
+        pulse={{ needsReview }}
         transport={boardTransport}
       />
     </section>

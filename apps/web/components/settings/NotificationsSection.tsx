@@ -87,7 +87,7 @@ export function NotificationsSection({
         <Toggle
           checked={prefs.weekly}
           onChange={(v) => persist({ ...prefs, weekly: v })}
-          label="Weekly pipeline summary"
+          label="Weekly summary"
           description="Adds this week's filings to your dashboard's header line."
         />
         <Toggle

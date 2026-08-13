@@ -56,12 +56,12 @@ import { cn } from "@/lib/utils";
  * add the JWT from cookies); the client only ever sees verdict metadata.
  *
  * Mining and FILING are separate, and both are visible. The mine is read-only;
- * an explicit "File N into pipeline" control persists it and then reports what
- * the sync actually did ("3 filed, 1 already known"). Previously this component
- * relayed the mine to `/gmail/sync` fire-and-forget, so the one thing the user
- * wanted — their pipeline filled from the mail they were looking at — happened
- * invisibly or not at all, and the only visible route to a filled board was the
- * dashboard's full re-scan.
+ * an explicit "File N into Applications" control persists it and then reports
+ * what the sync actually did ("3 filed, 1 already known"). Previously this
+ * component relayed the mine to `/gmail/sync` fire-and-forget, so the one thing
+ * the user wanted — their board filled from the mail they were looking at —
+ * happened invisibly or not at all, and the only visible route to a filled
+ * board was the dashboard's full re-scan.
  */
 
 type Phase = "loading" | "ready" | "not_connected" | "auth" | "error";
@@ -561,7 +561,7 @@ export function InboxWorkbench({
       <div className="rounded-xl border border-line-soft bg-surface p-5">
         <h2 className="text-base font-medium text-strong">Your Gmail session needs a refresh</h2>
         <p className="mt-1.5 text-sm text-muted">
-          The connection expired or was revoked. Reconnect Gmail to keep mining your pipeline.
+          The connection expired or was revoked. Reconnect Gmail to keep scanning your mail.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <ConnectGmailButton />
@@ -712,14 +712,14 @@ export function InboxWorkbench({
                       href="/dashboard"
                       className="underline-offset-4 hover:text-strong hover:underline"
                     >
-                      view pipeline →
+                      view applications →
                     </Link>
                   </>
                 ) : null}
               </p>
             ) : (
               <p className="mt-1 text-xs text-dim">
-                filing adds these to your pipeline — nothing is removed, and filing twice is harmless
+                filing adds these to your applications — nothing is removed, and filing twice is harmless
               </p>
             )}
           </div>
@@ -737,7 +737,7 @@ export function InboxWorkbench({
             ) : filing.phase === "done" ? (
               "File again"
             ) : (
-              `File ${jobRelatedTotal.toLocaleString()} into pipeline`
+              `File ${jobRelatedTotal.toLocaleString()} into Applications`
             )}
           </button>
         </div>

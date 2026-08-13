@@ -204,7 +204,7 @@ export default function Landing() {
             <p className="mt-5 text-muted">
               Tracking is bookkeeping — a symptom. The real task is classification: given an email,
               which job-search outcome is this, and how sure are we? Solve that at the source and the
-              tracker maintains itself — applications link, statuses advance, and the pipeline is just
+              tracker maintains itself — applications link, statuses advance, and the board is just
               a projection over labeled mail.
             </p>
           </Reveal>
@@ -468,7 +468,7 @@ export default function Landing() {
                 href: "/demo",
                 title: "Live demo",
                 arrow: "→",
-                body: "The pipeline board and decision trace, on fixture data. One click, no sign-in.",
+                body: "The application board and decision trace, on fixture data. One click, no sign-in.",
               },
               {
                 href: "/demo/inbox",

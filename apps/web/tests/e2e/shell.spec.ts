@@ -106,9 +106,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       // cannot — a broken min-h-0 chain scrolls the whole pane (SyncBar and
       // all), which reads as "the dashboard still scrolls" even while the
       // document technically holds.
-      const main = await page
-        .locator("main")
-        .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+      const main = await page.locator("main").evaluate((el) => ({
+        scroll: el.scrollHeight,
+        client: el.clientHeight,
+      }));
       expect(
         main.scroll,
         `the shell pane scrolls: scrollHeight=${main.scroll} > clientHeight=${main.client}`,
@@ -141,9 +142,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
 
       // …and the lock is load-bearing, not satisfied by everything fitting:
       // the fixture worklist genuinely overflows and scrolls itself.
-      const list = await page
-        .getByTestId("worklist-pane")
-        .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+      const list = await page.getByTestId("worklist-pane").evaluate((el) => ({
+        scroll: el.scrollHeight,
+        client: el.clientHeight,
+      }));
       expect(
         list.scroll,
         `the worklist does not overflow (scrollHeight=${list.scroll}, clientHeight=${list.client}) — the lock is being asserted against nothing`,
@@ -311,6 +313,65 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     });
   }
 
+  /**
+   * Caption integrity: every sentence the band renders is WHOLE at both
+   * desktop boundaries. This suite could not see the failure before:
+   * `truncate` is CSS ellipsis — textContent survives it and the box stays
+   * visible, so `getByText(...).toBeVisible()` stays green while the pixels
+   * read "nothing …" (shipped exactly so at 1024×768: 60.8px of the
+   * auto-filed sentence gone with 178 tests passing, because demo.spec only
+   * ever looks at the config's 1440×900, where nothing truncates). The one
+   * observable that moves with the pixels is scrollWidth > clientWidth on
+   * the caption box, so that is what this asserts — at the xl floor and the
+   * lg boundary, across every state the fixtures can render: seed, the
+   * early-search projection, and the held-verdicts branch (`?review=3`, the
+   * harness knob that exists because no other testable surface renders that
+   * control).
+   *
+   * Mutation-tested at introduction (dev Chromium, 2026-08-12): re-pinning
+   * the auto-filed bar to the shipped defect (`w-16 shrink-0`, no xl gate)
+   * reads +62px overflow at 1024×768 (+46px on the ageing caption, +51px on
+   * the review branch) and +13px at 1280×800 → red at both widths; restored
+   * → 0 everywhere. Labels are deliberately not covered:
+   * the auto-filed label measures 191px against a 171px cell at 1024 and
+   * gives way by design (PulseCell's own note says why).
+   */
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 1024, height: 768 }, // the lg boundary — the band's narrowest cells
+  ]) {
+    test(`the band's captions render whole at ${viewport.width}×${viewport.height} in every fixture state`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      for (const route of ["/demo/shell", "/demo/shell?pipeline=early", "/demo/shell?review=3"]) {
+        await page.goto(route);
+        await expect(pageHeading(page)).toBeVisible();
+
+        // The knob must actually flip the branch — a silently dead param
+        // would make the third loop a gate that cannot fail.
+        if (route.includes("review=")) {
+          await expect(page.getByRole("link", { name: /3 held for review/ })).toBeVisible();
+        }
+
+        const captions = page.getByTestId("pulse-caption");
+        await expect(captions, `${route}: one caption per cell`).toHaveCount(4);
+        const measured = await captions.evaluateAll((els) =>
+          els.map((el) => ({
+            text: (el.textContent ?? "").trim(),
+            clipped: el.scrollWidth - el.clientWidth,
+          })),
+        );
+        for (const cap of measured) {
+          expect(
+            cap.clipped,
+            `${route} @ ${viewport.width}px: "${cap.text}" loses ${cap.clipped}px to ellipsis`,
+          ).toBeLessThanOrEqual(0);
+        }
+      }
+    });
+  }
+
   test("light theme: still locked, still no horizontal overflow at 375", async ({ page }) => {
     // `jt-theme` is THEME_STORAGE_KEY (lib/theme.ts) — hardcoded here because
     // the e2e specs deliberately import nothing from the app source tree.
@@ -406,7 +467,9 @@ test.describe("app shell — signed in (needs a session)", () => {
     await page.goto("/dashboard");
 
     // The desktop sidebar is hidden; the menu button is the way in.
-    const menuButton = page.getByRole("button", { name: /open navigation menu/i });
+    const menuButton = page.getByRole("button", {
+      name: /open navigation menu/i,
+    });
     await expect(menuButton).toBeVisible();
 
     await menuButton.click();

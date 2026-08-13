@@ -39,9 +39,13 @@ export const dynamic = "force-dynamic";
  *     detail sheet, stage filter), the pulse band across the board, the
  *     theme.
  *   - fixture: the rows, the rail's Gmail state, and the identity block.
- *   - the pulse's `needsReview` is 0, same reasoning as /demo: the classifier
- *     signal's non-zero branch deep-links to an auth-gated route that would
- *     dead-end an anonymous visitor (`DemoDashboard` passes it).
+ *   - the pulse's `needsReview` is 0 by default, same reasoning as /demo: the
+ *     classifier signal's non-zero branch deep-links to an auth-gated route
+ *     that would dead-end an anonymous visitor (`DemoDashboard` passes it).
+ *     `?review=N` (clamped 0–99) overrides it — a harness knob, declared as
+ *     such, because that branch is a user-facing control that renders on no
+ *     other testable surface, which is exactly how a clipped link could ship
+ *     with every gate green. Tests drive the param; nothing links to it.
  *
  * `?pipeline=early` renders the same locked twin over the early-search
  * projection, exactly as /demo does — the measured production shape (every
@@ -52,9 +56,10 @@ export const dynamic = "force-dynamic";
 export default async function DemoShellPage({
   searchParams,
 }: {
-  searchParams: Promise<{ pipeline?: string }>;
+  searchParams: Promise<{ pipeline?: string; review?: string }>;
 }) {
-  const { pipeline } = await searchParams;
+  const { pipeline, review } = await searchParams;
+  const needsReview = Math.min(99, Math.max(0, Number.parseInt(review ?? "", 10) || 0));
   const rail: RailData = {
     gmail: {
       connected: true,
@@ -68,7 +73,11 @@ export default async function DemoShellPage({
 
   return (
     <AppShellFrame rail={rail} userEmail="demo@applied.example" demo>
-      <DemoDashboard variant="locked" pipeline={pipeline === "early" ? "early" : "seed"} />
+      <DemoDashboard
+        variant="locked"
+        pipeline={pipeline === "early" ? "early" : "seed"}
+        needsReview={needsReview}
+      />
     </AppShellFrame>
   );
 }

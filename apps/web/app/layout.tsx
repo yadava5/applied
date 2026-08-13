@@ -44,7 +44,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://getapplied.vercel.app"),
   title: { default: "Applied — your inbox, made legible", template: "%s · Applied" },
   description:
-    "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads the pipeline out of your inbox; the rules stage alone scores 0.9791 macro-F1, CI-gated at 0.95.",
+    "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads your applications out of your inbox; the rules stage alone scores 0.9791 macro-F1, CI-gated at 0.95.",
   openGraph: {
     type: "website",
     url: "https://getapplied.vercel.app",

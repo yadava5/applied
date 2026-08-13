@@ -49,6 +49,15 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * `lg`-up only, one instance, no display-none twins: below `lg` the dashboard
  * leads with the worklist and every signal's ground truth already inks the
  * cards themselves (age tags, deadline tags, the review queue in the list).
+ * Between `lg` and `xl` the band speaks without drawing: captions set one
+ * notch down (11px on the same 16px line, so the band's height — and the
+ * worklist's floors — never move) and every bar waits for `xl`. Measured at
+ * 1024×768 the four cells hold 159–172px of content while the auto-filed
+ * sentence alone is 176px, so no caption+bar pair fits at any bar width
+ * (see SegmentBar). The words lose nothing the drawings said — every bar's
+ * aria restates its caption's numbers — except the momentum cell's 8-week
+ * shape, the one honest casualty; its delta sentence keeps that signal
+ * until `xl` returns the bars.
  *
  * Rows arrive as {@link PulseRow} — the projection of a board row this
  * component actually reads; callers holding full rows pass them as-is
@@ -63,6 +72,23 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * Nothing here is interactive beyond the existing `Link`; the whole surface
  * still server-renders.
  *
+ * Ink policy (owner call, 2026-08-12: colour where the data is, not
+ * everywhere): the DRAWN elements carry chromatic ink; labels, counts and
+ * prose stay on the text ramp. These charts are not stage rollups — they
+ * count time and provenance — so they must not borrow stage ink: doing so is
+ * what rendered the whole band grey on the real account (every row in
+ * `applied`, whose stage accent is deliberately achromatic). Instead,
+ * recency wears the product's sky accent (`--viz-rules`, the nav-focus and
+ * brand-mark hue) on the momentum bars and the age bar's fresh segment, and
+ * the auto-filed share wears the verdict emerald (`--viz-setfit`, the brand
+ * mark's "delivered" node). Amber/red stay reserved for the attention states
+ * they already mean, and the neutral buckets (prior weeks, 1–2 wk, filed by
+ * hand) stay grey ON PURPOSE — a board with one hot bucket reads as one
+ * strong ink, not as a wash. Every fill measures ≥3:1 against its ground in
+ * BOTH themes (WCAG 1.4.11; worst case emerald on the light track, 3.43:1),
+ * and no distinction rides on colour alone — the caption's numbers restate
+ * every split the bars draw.
+ *
  * Honesty rules: the board fetch is one bounded page, so when the loaded rows
  * are fewer than the account's total the row-derived signals say they describe
  * the newest N rather than pretending to describe everything — once, as the
@@ -76,21 +102,38 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * an animation.
  */
 
-/** A thin proportional bar of coloured segments (zero segments not drawn). */
+/** A thin proportional bar of coloured segments (zero segments not drawn).
+ *
+ *  Sizing is the sentence-first contract, measured (dev Chromium,
+ *  2026-08-12): the bar renders from `xl` up and flexes into whatever the
+ *  caption leaves, capped at `maxWidthClass`. Below `xl` no cell can afford
+ *  it — at 1024×768 the auto-filed cell holds 171px against a 176px
+ *  sentence, so ANY bar width is bought with ellipsis (a fixed w-16 clipped
+ *  the sentence 77px there, w-12 still 61px; the bar-less base band already
+ *  clipped 4.8px). From 1280×800 the cells hold 223–235px, which fits
+ *  caption + full-cap bar with only 2–3px spare: `flex-1` (basis 0) is what
+ *  makes that safe — a caption that grows (three-digit counts) shrinks the
+ *  bar instead of ellipsizing, because decoration never holds a claim on
+ *  space the sentence needs. */
 function SegmentBar({
   ariaLabel,
   total,
   segments,
+  maxWidthClass = "max-w-16",
 }: {
   ariaLabel: string;
   total: number;
   segments: readonly (readonly [number, string])[];
+  maxWidthClass?: string;
 }) {
   return (
     <div
       role="img"
       aria-label={ariaLabel}
-      className="flex h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-surface-2"
+      // gap-px: a hairline of ground between touching segments, so a bucket
+      // boundary never rides on hue alone (fresh|waiting sit at near-equal
+      // luminance by design — the ramp greys match the chromatic fills' weight).
+      className={`hidden h-1.5 min-w-0 flex-1 gap-px overflow-hidden rounded-full bg-surface-2 xl:flex ${maxWidthClass}`}
     >
       {segments
         .filter(([count]) => count > 0)
@@ -189,7 +232,7 @@ export function PipelinePulse({
 
   return (
     <section
-      aria-label="Pipeline pulse"
+      aria-label="Board pulse"
       data-testid="pipeline-pulse"
       className="hidden border-y border-line-soft lg:grid lg:grid-cols-4"
     >
@@ -198,7 +241,10 @@ export function PipelinePulse({
         <div
           role="img"
           aria-label={`Applications filed per week, oldest first: ${weeks.join(", ")}`}
-          className="flex h-4 w-16 shrink-0 items-end gap-0.5"
+          // Same xl gate and flex-absorb as SegmentBar: the delta sentence is
+          // 129px and the lg-range line holds 100px beside a w-16 bar —
+          // no width of week-columns fits without ellipsizing the sentence.
+          className="hidden h-4 min-w-0 max-w-16 flex-1 items-end gap-0.5 xl:flex"
         >
           {weeks.map((count, i) => (
             <span
@@ -210,21 +256,28 @@ export function PipelinePulse({
                 height: count > 0 ? `${Math.max(18, (count / peak) * 100)}%` : "2px",
                 // Two inks, one meaning: the delta sentence beside these bars
                 // compares the last 4 weeks against the prior 4, so the bars
-                // draw that same split — full stage ink for the recent half,
-                // a faded mix of the SAME hue for the prior. Colour encodes
-                // the comparison; it never decorates.
+                // draw that same split — the recency sky for the half the
+                // sentence leads with, the ramp's neutral grey for the prior
+                // baseline, mirroring the sentence's own strong-vs-muted
+                // weights. (A same-hue 45% fade was measured first: 1.8:1 on
+                // the light ground, invisible. Solid neutral keeps every
+                // filled bar ≥3:1 in both themes.) Colour encodes the
+                // comparison; it never decorates.
                 background:
                   count > 0
                     ? i >= weeks.length - 4
-                      ? "var(--stage-applied)"
-                      : "color-mix(in oklab, var(--stage-applied) 45%, transparent)"
+                      ? "var(--viz-rules)"
+                      : "var(--text-dim)"
                     : "var(--line-strong)",
                 ["--i" as string]: i,
               }}
             />
           ))}
         </div>
-        <p className="tabular min-w-0 truncate text-xs text-muted">
+        <p
+          data-testid="pulse-caption"
+          className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
+        >
           <span className="tabular text-strong">{recent}</span> last 4 wk{" "}
           <span aria-hidden="true">{arrow}</span> vs {prior} prior
         </p>
@@ -233,19 +286,30 @@ export function PipelinePulse({
       {/* ageing */}
       <PulseCell label="open · age since filed">
         {openTotal === 0 ? (
-          <p className="text-xs text-dim">no open applications</p>
+          <p data-testid="pulse-caption" className="text-[11px]/4 text-dim xl:text-xs">
+            no open applications
+          </p>
         ) : (
           <>
+            {/* A cool→warm staleness ramp: fresh wears the recency sky (the
+                same fact the momentum bars ink — days since filed), waiting
+                stays ramp-grey, quiet keeps the amber its card tags already
+                wear. A one-bucket board draws one solid ink — a young board
+                reads sky, a stalling one amber — instead of the uniform grey
+                the stage borrow used to produce. */}
             <SegmentBar
               ariaLabel={`Open applications by age: ${ages.fresh} under a week, ${ages.waiting} one to two weeks, ${ages.quiet} quiet two weeks or more`}
               total={openTotal}
               segments={[
-                [ages.fresh, "var(--stage-applied)"],
+                [ages.fresh, "var(--viz-rules)"],
                 [ages.waiting, "var(--text-dim)"],
                 [ages.quiet, "var(--amber)"],
               ]}
             />
-            <p className="tabular min-w-0 truncate text-xs text-muted">
+            <p
+              data-testid="pulse-caption"
+              className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
+            >
               <span className="tabular text-strong">{ages.fresh}</span> &lt;1 wk ·{" "}
               <span className="tabular">{ages.waiting}</span> 1–2 wk ·{" "}
               {/* "quiet" is the band's one amber word when it is non-zero —
@@ -285,15 +349,24 @@ export function PipelinePulse({
         {due.total === 0 ? (
           // The state most users see most of the time — never a nag, never
           // counts drawn at zero, and it says where a deadline comes from.
-          <p className="min-w-0 truncate text-xs text-dim">
-            nothing due · set one in a card&apos;s detail
+          // "in a card", not "in a card's detail": the longer tail measured
+          // 201px against this cell's 159px at 1024×768 — the one caption no
+          // type size could save.
+          <p
+            data-testid="pulse-caption"
+            className="min-w-0 truncate text-[11px]/4 text-dim xl:text-xs"
+          >
+            nothing due · set one in a card
           </p>
         ) : (
           // Counts, no bar: deadline counts are units, not proportions — two
           // overdue beside ten "later" is not a 1:5 wash of red. "N overdue"
           // turns red as a unit — a red word beside a white digit would put
           // the emphasis on the wrong half.
-          <p className="tabular min-w-0 truncate text-xs text-muted">
+          <p
+            data-testid="pulse-caption"
+            className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
+          >
             <span className={due.overdue > 0 ? "font-medium text-reject-ink" : ""}>
               <span className={due.overdue > 0 ? "tabular" : "tabular text-strong"}>
                 {due.overdue}
@@ -313,15 +386,46 @@ export function PipelinePulse({
 
       {/* auto-filed */}
       <PulseCell label="auto-filed · from your mail">
-        <p className="tabular min-w-0 truncate text-xs text-muted">
+        {/* The machine's own cell gets the machine's verdict ink: the
+            auto-filed share in emerald (`--viz-setfit`, the brand mark's
+            "delivered" node), the hand-filed remainder in ramp-grey. Same
+            inline h-1.5 geometry as the ageing bar, so the drawn element
+            costs the band no height — the two-line budget is the contract. */}
+        {applications.length > 0 ? (
+          <SegmentBar
+            ariaLabel={`${autoFiled} of ${applications.length} filed from your mail, ${applications.length - autoFiled} by hand`}
+            total={applications.length}
+            segments={[
+              [autoFiled, "var(--viz-setfit)"],
+              [applications.length - autoFiled, "var(--text-dim)"],
+            ]}
+            maxWidthClass="max-w-12"
+          />
+        ) : null}
+        {/* The one caption holding a focusable control. `truncate`'s
+            overflow-hidden crops the app-wide focus ring (2px at +1px
+            offset) — measured, the link's box IS this p's content box, so
+            the ring lost its top, bottom and right edges. The 4px padding,
+            pulled back by equal negative margins, moves the clip boundary
+            past the ring without spending a pixel of layout: content width,
+            line height and the band's floors are unchanged. */}
+        <p
+          data-testid="pulse-caption"
+          className="tabular -my-[4px] -mr-[4px] min-w-0 truncate py-[4px] pr-[4px] text-[11px]/4 text-muted xl:text-xs"
+        >
           <span className="tabular text-strong">{autoFiled}</span> of {applications.length}
           {" · "}
           {needsReview > 0 ? (
+            // "held for review", not "held for YOUR review": the queue this
+            // links to is headed "Needs review", so the link keeps the review
+            // family's name — and the short form is what fits beside the
+            // figure at the lg boundary (163px vs the long form's 190px,
+            // against a 171px cell).
             <Link
               href="/dashboard#needs-classification"
-              className="font-medium text-review underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
+              className="font-medium text-review underline-offset-2 hover:underline"
             >
-              <span className="tabular">{needsReview}</span> held for your review →
+              <span className="tabular">{needsReview}</span> held for review →
             </Link>
           ) : (
             <span className="text-dim">nothing waiting on you</span>

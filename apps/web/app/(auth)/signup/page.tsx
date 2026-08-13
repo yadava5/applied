@@ -105,7 +105,7 @@ export default function SignupPage() {
             Create your Applied account
           </h1>
           <p className="text-sm text-muted">
-            Track your job pipeline from one place.
+            Track your job search from one place.
           </p>
         </header>
 
