@@ -60,6 +60,20 @@
 # checked with `git cat-file -e` before use; if neither yields a base commit
 # we cannot compute a diff, so we build.
 #
+# When the supplied base is outside the clone, we first try to widen the clone
+# by exactly one commit — `git fetch --depth=1 origin <sha>` — rather than give
+# up on it. That asks the remote for a single commit and its trees, not for a
+# deepened history, and it is what makes the correct wide window readable in a
+# ten-commit checkout. Verified against this repo: in a real `--depth=10` clone
+# at 374a07f4, 47fc1042 was absent, the fetch made it readable, and the diff
+# over the full window then answered correctly.
+#
+# The fetch is best effort and is never load-bearing. A build container may
+# have no network, no credential the remote still accepts, or a remote that
+# will not serve a bare SHA; GIT_TERMINAL_PROMPT=0 makes a stale credential
+# fail fast instead of blocking on a prompt nobody can answer. If the fetch
+# cannot run, or the base is still unreadable after it, we build.
+#
 # ---------------------------------------------------------------------------
 # WHY THE BASE IS NOT JUST `HEAD^`.
 # ---------------------------------------------------------------------------
@@ -71,9 +85,35 @@
 # against it covers everything that has accumulated since. `HEAD^` is only the
 # production fallback for when Vercel does not supply it.
 #
+# "Vercel supplied no previous SHA" and "Vercel supplied one we cannot read"
+# are not the same case, and this script used to conflate them. With nothing
+# supplied there is no wider window to measure and `HEAD^` is the best guess
+# available — that is the path that makes a project's first production deploy
+# work, and it stays. With one supplied but unreadable we *know* the window is
+# wider than one commit and we cannot see into it; narrowing to `HEAD^` there
+# answers a question nobody asked, and answers it with a confident SKIP.
+#
+# That is not hypothetical. Deployment dpl_2oExy742yPoteHNp4PHxbKXHJ6za
+# (jobtracker-api, commit 374a07f4) logged:
+#
+#   VERCEL_GIT_PREVIOUS_SHA 47fc1042... is outside the shallow clone; falling back
+#   api: no changes in ... between 439a4845... and 374a07f4...
+#
+# True of that one-commit window and false of the real one: 47fc1042..374a07f4
+# carries e67419e, +51 lines in backend/jobtracker/cloud/pipeline.py, plus
+# requirements.txt and vercel.json. Twelve of the twenty api production
+# deployments before this change were CANCELED, and that pipeline fix never got
+# a deployment at all — the live api alias still resolved to a hand-run CLI
+# deploy from before it merged. So an unresolvable supplied base exits BUILD,
+# and the two cases stay distinguishable in the log as well as in the code.
+#
 # On previews there is deliberately no `HEAD^` fallback: with no previous
 # deployment the branch has no preview URL yet, and the e2e pass needs one. A
-# branch's first build always happens.
+# branch's first build always happens — nothing supplied still means no fetch
+# and a build. Previews do get the fetch, so a preview whose supplied base sits
+# outside the clone is now decided on its real window instead of always
+# building; a push that touches nothing the project builds from can legitimately
+# skip where it used to not be measurable.
 #
 # ---------------------------------------------------------------------------
 # MAINTENANCE: THE PATH LISTS ARE AN ALLOWLIST.
@@ -159,13 +199,26 @@ if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
   exit "$BUILD"
 fi
 
+# A base Vercel supplied and a base it did not are handled differently on
+# purpose; see WHY THE BASE IS NOT JUST `HEAD^` above. Nothing below may blank
+# $base_sha once it has been supplied — that is exactly how the supplied case
+# used to fall through into the `HEAD^` fallback and skip real changes.
 base_sha="${VERCEL_GIT_PREVIOUS_SHA:-}"
 if [ -n "$base_sha" ] && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
-  log "VERCEL_GIT_PREVIOUS_SHA ${base_sha} is outside the shallow clone; falling back"
-  base_sha=''
+  log "VERCEL_GIT_PREVIOUS_SHA ${base_sha} is outside the shallow clone; fetching it"
+  GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin "$base_sha" >/dev/null 2>&1 || true
+  if git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+    log "fetched ${base_sha}; measuring the full window"
+  else
+    log "cannot resolve supplied base ${base_sha}; building rather than narrowing to HEAD^"
+    exit "$BUILD"
+  fi
 fi
 if [ -z "$base_sha" ] && [ "${VERCEL_ENV:-}" = 'production' ]; then
   base_sha="$(git rev-parse --verify -q "${head_sha}^" 2>/dev/null || true)"
+  if [ -n "$base_sha" ]; then
+    log "no previous deployment supplied; falling back to HEAD^ ${base_sha}"
+  fi
 fi
 if [ -z "$base_sha" ]; then
   log 'no usable base commit; building'
