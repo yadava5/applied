@@ -283,6 +283,13 @@ export function SyncBar({
     }
     const data = res.body as Partial<SyncCounts>;
     const end = readScanEnd(res.body);
+    // Timed and remembered HERE, before the interrupted/receipt branches
+    // return: a run that broke mid-scan or took rows off the board still took
+    // real wall-clock time, and leaving those out made the button's tooltip
+    // report an older run as if it were the last one.
+    const elapsedMs = Date.now() - startedAt;
+    writeRebuildMemory(syncMemoryKey, elapsedMs, end.scanned);
+    setSyncMemory(syncMemoryLine({ ms: elapsedMs, scanned: end.scanned, at: Date.now() }));
     // Disconnected / unexpected mid-scan is not "press again" — it is
     // "something is wrong", and it gets the alert, not a resting note.
     if (stopKind(end.stoppedBy) === "broken") {
@@ -304,12 +311,6 @@ export function SyncBar({
       router.refresh();
       return;
     }
-    const elapsedMs = Date.now() - startedAt;
-    // What this run MEASURED, remembered for the next press. "How long will
-    // the sync take" had no answer at all (#160); it has an honest one the
-    // moment a previous run has been timed, and none before that.
-    writeRebuildMemory(syncMemoryKey, elapsedMs, end.scanned);
-    setSyncMemory(syncMemoryLine({ ms: elapsedMs, scanned: end.scanned, at: Date.now() }));
     const nothingFiled = (data.created ?? 0) <= 0 && (data.updated ?? 0) <= 0;
     // When the scan read messages AND Gmail offered an estimate, the coverage
     // fragment `syncReceiptNote` appends is where `scanned` gets said. Hand

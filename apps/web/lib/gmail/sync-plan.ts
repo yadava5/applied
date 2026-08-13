@@ -271,6 +271,15 @@ export const SYNC_FALLBACK_RANGE_MONTHS = 12;
  * is doing something" and "it is doing THIS", and it costs no counts we do not
  * have.
  *
+ * The one thing it cannot vouch for: a cursor Gmail has AGED OUT (404, normal
+ * after about a week) makes `_incremental_scan` return None, and the backend
+ * silently falls back to the full 12-month window. So "checking since last
+ * sync" can be running over a wider scan than it names. It is still the best
+ * statement available before the response exists, and the receipt corrects it
+ * the moment one does — `stopped_by` plus the coverage line report what the
+ * scan ACTUALLY did. Said out loud here rather than left as a quiet
+ * overclaim.
+ *
  * Both strings are width-budgeted: this line rides beside the board's totals
  * at `lg`+, where the status slot measures 208px and the sentence's share of
  * it is 140px (measured at 1024 on the signed-in board — the icon, two gaps
