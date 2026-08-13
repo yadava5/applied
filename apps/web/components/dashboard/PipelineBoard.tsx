@@ -924,12 +924,27 @@ export function PipelineBoard({
             {/* `worklist-pane` is the geometry assertion's handle: the e2e
                 lock specs (shell.spec.ts, via /demo/shell) prove this region
                 overflows and scrolls while the document and <main> hold — a
-                lock nothing pushes against would pass vacuously. */}
+                lock nothing pushes against would pass vacuously.
+
+                `relative` is load-bearing and deliberately UNPREFIXED: a scroll
+                container has to be the containing block for its descendants'
+                absolutes, or they resolve against the initial containing block
+                and plant a box at document scale — which no `overflow` on any
+                ancestor clips, so the VIEWPORT becomes the scroll container and
+                the whole shell scrolls away. `beforeList`/`afterList` are
+                page-owned subtrees this component cannot audit, so the pane
+                must guarantee the containing block rather than trust what is
+                handed to it. Not hypothetical: `ReviewQueue` (the dashboard's
+                held-mail queue, passed as one of those slots) positions nothing
+                of its own, so its `sr-only` labels escaped exactly this way.
+                Unprefixed because the escape is width-independent — below `lg`
+                the pane has no `overflow`, but it still has to be the
+                containing block. */}
             <div
               data-testid="worklist-pane"
               className={cn(
                 "space-y-4",
-                locked && "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1",
+                locked && "relative lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1",
               )}
             >
               {beforeList}
