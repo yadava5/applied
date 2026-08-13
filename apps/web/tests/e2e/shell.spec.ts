@@ -464,6 +464,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     const at = `${viewport.width}×${viewport.height}`;
     test(`the band and the arrival line render whole at ${at} in every fixture state`, async ({
       page,
+      browser,
     }) => {
       await page.setViewportSize(viewport);
       for (const route of ["/demo/shell", "/demo/shell?pipeline=early", "/demo/shell?review=3"]) {
@@ -509,34 +510,64 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       }
 
       // --- the arrival line, in BOTH of the states a fixture can reach -----
-      // Driven, not inherited from the order the loop above happened to visit
-      // routes in: the first-run branch renders only while the marker on disk
-      // is the one THIS mount laid down, so it is reached by clearing storage
-      // and reloading, and the state is asserted before anything is measured.
-      // An un-asserted measurement of the wrong state is how the band's own
-      // gate stayed green through a defect.
-      await page.evaluate(() => window.localStorage.clear());
-      await page.reload();
-      const arrival = page.getByTestId("since-last-look");
-      await expect(arrival, "the first-run branch did not render").toContainText(
-        "No earlier visit",
-      );
-      const first = await clipped(page, ARRIVAL_TEXT);
-      expect(first.length, `first run @ ${at}: nothing measured`).toBe(1);
+      //
+      // A CONTEXT OF ITS OWN PER STATE, and one navigation per load. This
+      // line's branch is a function of `localStorage` and of how many times
+      // the component has MOUNTED, so it cannot be measured on the page the
+      // loop above just drove — the first version of this gate tried, by
+      // clearing storage and reloading, and was red in CI while green here.
+      // Measured under `next dev` (2026-08-13), which is what CI serves:
+      //
+      //   · clear + reload renders the QUIET branch even when the clear is
+      //     verified to have worked. `next dev` mounts the component twice;
+      //     the first mount writes the seed, the second finds it, takes the
+      //     "nothing to report" path and rewrites it WITHOUT `seed`, and
+      //     `seeded` is false from then on. A production build mounts once,
+      //     which is why `next start` passed and CI did not;
+      //   · the loop's own page is worse than useless for this: it crosses
+      //     TWO fixture boards (`?pipeline=early`), so the stored snapshot
+      //     describes a different board and the line renders the LOUD branch
+      //     instead — observed once in four runs.
+      //
+      // A fresh context with one navigation IS the declared first-visit
+      // condition, and it measured 6/6 deterministic; one reload on top of it
+      // measured 4/4 for the returning state. No fixture knob is needed —
+      // unlike `?review=N`, this branch does render on a reachable surface,
+      // as long as the surface is reached exactly once.
+      const { baseURL, timezoneId } = test.info().project.use;
+      for (const { state, loads, says } of [
+        { state: "first run", loads: 1, says: "No earlier visit" },
+        { state: "returning", loads: 2, says: "Nothing new" },
+      ]) {
+        const context = await browser.newContext({ viewport, baseURL, timezoneId });
+        try {
+          const own = await context.newPage();
+          for (let load = 0; load < loads; load += 1) {
+            if (load === 0) await own.goto("/demo/shell");
+            else await own.reload();
+            await expect(own.getByTestId("since-last-look")).toBeVisible();
+          }
+          // The state is asserted BEFORE anything is measured: an un-asserted
+          // measurement of the wrong branch is how the band's own gate stayed
+          // green through a defect, and all three branches of this line are
+          // distinguishable by their first two words.
+          await expect(
+            own.getByTestId("since-last-look"),
+            `the ${state} branch did not render`,
+          ).toContainText(says);
 
-      // Second load: the seed this visit wrote is now a previous visit, so the
-      // same line has to say the quiet state's sentence instead.
-      await page.reload();
-      await expect(arrival, "the quiet branch did not render").toContainText("Nothing new");
-      const returning = await clipped(page, ARRIVAL_TEXT);
-      expect(returning.length, `returning @ ${at}: nothing measured`).toBe(1);
-
-      for (const node of [...first, ...returning]) {
-        expect(node.text.length, `arrival line @ ${at}: empty line measured`).toBeGreaterThan(0);
-        expect(
-          node.lost,
-          `arrival line @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
-        ).toBeLessThanOrEqual(0);
+          const measured = await clipped(own, ARRIVAL_TEXT);
+          expect(measured.length, `${state} @ ${at}: nothing measured`).toBe(1);
+          for (const node of measured) {
+            expect(node.text.length, `${state} @ ${at}: empty line measured`).toBeGreaterThan(0);
+            expect(
+              node.lost,
+              `${state} @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
+            ).toBeLessThanOrEqual(0);
+          }
+        } finally {
+          await context.close();
+        }
       }
     });
   }
