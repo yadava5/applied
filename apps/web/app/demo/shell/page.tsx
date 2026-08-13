@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { DemoDashboard } from "@/components/demo/DemoDashboard";
+import { DemoDashboard, type DemoReviewSlot } from "@/components/demo/DemoDashboard";
 import { AppShellFrame } from "@/components/shell/AppShellFrame";
 import type { RailData } from "@/lib/shell/rail";
 
@@ -46,6 +46,19 @@ export const dynamic = "force-dynamic";
  *     such, because that branch is a user-facing control that renders on no
  *     other testable surface, which is exactly how a clipped link could ship
  *     with every gate green. Tests drive the param; nothing links to it.
+ *   - `?review=N` also mounts N held verdicts as a REAL `ReviewQueue` in the
+ *     board's slot, and `?queue=before|after` (default `after`) says which of
+ *     `PipelineBoard`'s two slots it lands in. Both knobs, same reasoning, and
+ *     this pair is why they were added: the twin used to render a strict
+ *     SUBSET of the signed-in page — no queue at all — so the document-lock
+ *     assertions in `tests/e2e/shell.spec.ts` were correct, executing, and
+ *     measuring a tree the defect could not be in. `ReviewQueue` positions
+ *     nothing of its own; in the `after` slot, below every row, its `sr-only`
+ *     labels resolved against the initial containing block, planted a box at
+ *     document scale that no ancestor's `overflow` could clip, and the whole
+ *     signed-in dashboard scrolled (#149). The live page picks the slot by a
+ *     user preference — "Needs review alerts" on puts the queue above the
+ *     rows, off leaves it below — so both are reachable here.
  *
  * `?pipeline=early` renders the same locked twin over the early-search
  * projection, exactly as /demo does — the measured production shape (every
@@ -56,10 +69,14 @@ export const dynamic = "force-dynamic";
 export default async function DemoShellPage({
   searchParams,
 }: {
-  searchParams: Promise<{ pipeline?: string; review?: string }>;
+  searchParams: Promise<{ pipeline?: string; review?: string; queue?: string }>;
 }) {
-  const { pipeline, review } = await searchParams;
+  const { pipeline, review, queue } = await searchParams;
   const needsReview = Math.min(99, Math.max(0, Number.parseInt(review ?? "", 10) || 0));
+  // `after` for anything that is not literally "before": the default matches
+  // the live account (the alerts pref is off unless the user turns it on) and
+  // is the placement the escaped-`sr-only` defect needed.
+  const reviewSlot: DemoReviewSlot = queue === "before" ? "before" : "after";
   const rail: RailData = {
     gmail: {
       connected: true,
@@ -81,6 +98,7 @@ export default async function DemoShellPage({
         variant="locked"
         pipeline={pipeline === "early" ? "early" : "seed"}
         needsReview={needsReview}
+        reviewSlot={reviewSlot}
       />
 
     </AppShellFrame>

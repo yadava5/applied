@@ -71,8 +71,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * `today` minus n whole days, as a plain calendar-day string. UTC arithmetic —
  * exactly what `daysBetween` inverts — so a row seeded at 16 reads back as "16
  * days old" on the server and in the browser alike, in any timezone.
+ *
+ * Exported so every fixture family dates itself the same way: `reviewQueue.ts`
+ * needs the identical arithmetic for its `received_at`, and a second copy of
+ * this three-liner is a second thing to drift.
  */
-function daysBefore(today: string, days: number): string {
+export function daysBefore(today: string, days: number): string {
   return new Date(Date.parse(`${today}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
 }
 
