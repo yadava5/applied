@@ -52,9 +52,14 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * subtitle, the change-ledger chip (`since`), the status/recency slot, the
  * controls, and the session edge (`trailing`). Sign-out therefore stays on
  * the top line of the screen, in this row, on the board route. The status
- * line never moves the page at `lg`+ — it swaps into the subtitle's own slot
- * for exactly as long as it speaks (the owner watched the board jump when
- * "checking Gmail…" used to take a line of its own). The alert and the
+ * line never moves the page at `lg`+ — it rides in the row for exactly as
+ * long as it speaks (the owner watched the board jump when "checking Gmail…"
+ * used to take a line of its own), and while a sync RUNS it takes the change
+ * ledger's width rather than the board's own totals: blanking
+ * `41 filed · 38 open · 0 offers` for the 11 seconds a sync and its note last
+ * is what made a working sync read as frozen (#160). Only the two statuses
+ * that wait on the user still borrow the subtitle's own slot; see the
+ * header-row note below for which, and why. The alert and the
  * receipt DO take lines below the row when present: failures and removals
  * are rare and must not be missable.
  *
@@ -110,12 +115,17 @@ type SyncPhase =
 const AUTOSYNC_KEY = "applied:dashboard:autosync:lastAt";
 const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
-/** The additive clock only appears once a sync stops feeling instant. */
+/** When a running sync stops feeling instant and starts saying so. The clock
+ *  beside the sentence runs from the first tick, not from here: a line that
+ *  did not move for the whole 3.2s a sync takes is the other half of what was
+ *  reported as frozen (#160), and elapsed is the one number the browser truly
+ *  knows. This constant only changes the WORDING. */
 const SLOW_SYNC_AFTER_MS = 8000;
 
-/** How long a finished sync's resting note keeps the status slot before the
- *  row goes back to the board's own totals. Long enough to read one short
- *  sentence, short enough that the totals are never gone for long. */
+/** How long a finished sync's resting note holds the status slot before the
+ *  row goes quiet again. Long enough to read one short sentence, short enough
+ *  that the change ledger is never gone for long — the board's own totals now
+ *  stay put right through the run (#160), so this dwell no longer costs them. */
 const SYNCED_NOTE_MS = 6000;
 
 function recentlyAutoSynced(): boolean {
@@ -384,18 +394,23 @@ export function SyncBar({
     const elapsed = nowMs - phase.startedAt;
     statusContent = (
       <>
-        <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
-        {elapsed >= SLOW_SYNC_AFTER_MS ? (
-          <>
-            still checking
-            <span className="tabular font-mono text-[11px]" aria-hidden>
-              {" "}
-              · {formatElapsed(elapsed)}
-            </span>
-          </>
-        ) : (
-          <>checking Gmail for new mail…</>
-        )}
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
+        {/* Beside the totals at `lg`+ this line cannot wrap, so it has to say
+            what gives first: the SENTENCE does, with an ellipsis. Measured at
+            1024 on the signed-in board, where the row's spare width runs out
+            mid-clock. */}
+        <span className="lg:min-w-0 lg:truncate">
+          {elapsed >= SLOW_SYNC_AFTER_MS ? "still checking" : "checking Gmail for new mail…"}
+        </span>
+        {/* The clock from the first tick, not only once the run is slow: a
+            typical sync is ~3s, so under the old gate nothing in this line
+            ever changed before it was over. Never shrinks — it is the one
+            thing here that MOVES, and a sync with nothing moving is what was
+            reported as frozen. aria-hidden: the sentence carries the state,
+            and announcing a number every second is noise. */}
+        <span className="tabular shrink-0 font-mono text-[11px]" aria-hidden>
+          · {formatElapsed(elapsed)}
+        </span>
       </>
     );
   } else if (phase.kind === "rebuilding") {
@@ -508,14 +523,30 @@ export function SyncBar({
   // instead — every other sentence in the machine stays the product's own.
   const showRecency = connected && statusContent === null && alertContent === null;
 
-  // Whether the status borrows the subtitle + ledger slot at `lg`+. Kept as
-  // "the status is speaking at all", deliberately: narrowing it (so a partial
-  // scan or a resting failure keeps its own line instead) un-hides the
-  // subtitle and the ledger in states where a long status ALSO sits on the
-  // row, and the header wrapping to two lines costs the worklist ~30px
-  // against a 7px floor margin. No test exercises those states, so that
-  // change cannot be made safely without a fixture for them first — task #96.
+  // Who yields to a speaking status at `lg`+.
+  //
+  // The change-ledger chip always yields: it is news, and the status is now.
+  // The board's own totals yield only to the two statuses that WAIT ON THE
+  // USER — the stopped-early scan (it carries "continue the scan") and the
+  // resting "last sync failed". Those hold the row indefinitely, they are
+  // long, and no fixture exercises them; the header wrapping to two lines
+  // costs the worklist ~30px against a 7px floor margin, so they keep the
+  // slot to themselves until task #96 gives them one.
+  //
+  // Everything routine rides ALONGSIDE the totals instead: the running sync
+  // and a finished sync's short note. That is #160 — the board's own
+  // `41 filed · 38 open · 0 offers` disappeared behind one sentence for the
+  // whole 11 seconds a sync plus its note lasts, and losing the numbers you
+  // were reading is what a working sync felt like when it was called frozen.
+  // An ALLOWLIST on purpose: a status added later defaults to owning the
+  // slot, which is the safe side of the wrap. `rebuilding` is deliberately
+  // not in it — its line restates window, depth and scope, and is the widest
+  // status this row has.
+  const statusRidesAlongTotals =
+    phase.kind === "syncing" ||
+    (phase.kind === "synced" && stopKind(phase.end.stoppedBy) !== "partial");
   const statusTakesSlot = statusContent !== null;
+  const statusOwnsSlot = statusTakesSlot && !statusRidesAlongTotals;
 
   return (
     // `data-sync-surface` scopes assertions (e.g. "no percentage anywhere in
@@ -538,18 +569,21 @@ export function SyncBar({
 
           ZERO LAYOUT SHIFT is a requirement of this row (the owner watched
           the whole page jump when "checking Gmail…" appeared): at `lg`+ the
-          status line does not get a line of its own — it takes over the
-          subtitle + ledger slot for exactly as long as it has something to
-          say, so idle → checking → result → idle never changes the row's
-          height. "As long as it has something to say" is enforced by the
-          decay above, not merely intended: a note that never expired held
-          this slot for the rest of the session.
-          Two statuses still have no end of their own and so still hold it —
-          the stopped-early scan (it carries a "continue the scan" control)
-          and the resting "last sync failed". Both wait on the user, and both
-          therefore keep the totals hidden while they wait; see task #96,
-          which owes them a fixture before that can be changed. Below `lg` the
-          row stacks and the status keeps its own line, as before. */}
+          status line does not get a line of its own — it takes the change
+          ledger's width for exactly as long as it has something to say, so
+          idle → checking → result → idle never changes the row's height. "As
+          long as it has something to say" is enforced by the decay above, not
+          merely intended: a note that never expired held this slot for the
+          rest of the session. Riding beside the totals it is also pinned
+          `nowrap` at `lg`+: a status that wrapped inside its own box would
+          grow this row just as surely as one on its own line.
+          The totals themselves no longer go with it — a sync blanked them for
+          11 seconds and that read as the page breaking (#160). Two statuses
+          still take the subtitle's slot, both because they wait on the user
+          with a control and have no end of their own: the stopped-early scan
+          and the resting "last sync failed". They are unchanged here; task
+          #96 owes them a fixture before that can be. Below `lg` the row
+          stacks and the status keeps its own line, as before. */}
       {/* `relative`: the change ledger's names panel anchors to THIS row
           (its own chip sits mid-row, where an anchored overlay ran past
           <main>'s left edge and got clipped). */}
@@ -558,7 +592,7 @@ export function SyncBar({
           <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
         ) : null}
         <p
-          className={`tabular shrink-0 text-[13px] text-muted ${statusTakesSlot ? "lg:hidden" : ""}`}
+          className={`tabular shrink-0 text-[13px] text-muted ${statusOwnsSlot ? "lg:hidden" : ""}`}
         >
           {subtitle}
         </p>
@@ -582,7 +616,14 @@ export function SyncBar({
           className={
             statusContent === null
               ? "sr-only"
-              : "min-w-0 text-xs text-muted max-lg:order-last max-lg:basis-full lg:flex-1"
+              : `min-w-0 text-xs text-muted max-lg:order-last max-lg:basis-full lg:flex-1 ${
+                  // Beside the totals the row has no spare height to give: at
+                  // `lg`+ this box clips rather than wraps. Clipping the tail
+                  // of a sentence the totals now carry the state for is the
+                  // cheaper failure — the row growing is the one the owner
+                  // reported.
+                  statusRidesAlongTotals ? "lg:overflow-hidden" : ""
+                }`
           }
         >
           <motion.span
@@ -590,7 +631,9 @@ export function SyncBar({
             initial={reduceMotion ? false : { opacity: 0, y: 3 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
-            className="flex flex-wrap items-center gap-2"
+            className={`flex flex-wrap items-center gap-2 ${
+              statusRidesAlongTotals ? "lg:flex-nowrap lg:whitespace-nowrap" : ""
+            }`}
           >
             {statusContent}
           </motion.span>
