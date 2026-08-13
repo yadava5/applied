@@ -75,6 +75,13 @@ WHAT THIS DOES NOT COVER — read this before trusting it
   (`models.py` declares `max_length` exactly once, on `emails.body_snippet`,
   and SQLModel renders every other string column as unbounded `AutoString`).
 
+* **A drop and re-add of the same shape inside ONE revision is invisible.** The
+  snapshot after that revision is identical to the one before it, so a revision
+  that drops `applications.notes` and re-creates it as the same type passes —
+  and every row in it is gone. That blind spot is structural to comparing
+  shapes rather than replaying history, and it is not a plausible accident, but
+  it is the boundary of what this gate can claim.
+
 * **It does not replace `tests/test_migrations_postgres.py`.** That module runs
   the whole chain in ONE `upgrade head`, which is the fragile case — `env.py`
   wraps every pending revision in a single transaction, and stepping revision by

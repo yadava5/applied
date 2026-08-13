@@ -148,6 +148,13 @@ length exactly once (`emails.body_snippet`, via `max_length=500`), and
 case that has not happened: it is the artifact that proved production
 byte-identical to a from-empty build across all 196 facts.
 
+**A drop and re-add of the same shape inside one revision.** The snapshot after
+such a revision is identical to the one before it, so it passes — and the rows
+are gone. That is structural to comparing shapes rather than replaying history,
+and it is the boundary of what this gate can claim rather than something to
+patch: nobody writes that by accident, and the reviewer should know which of the
+two the gate is.
+
 **Whether the whole chain applies in one transaction.** That is
 `tests/test_migrations_postgres.py`, and it is not redundant with this. `env.py`
 wraps every pending revision in a single transaction; stepping one at a time
