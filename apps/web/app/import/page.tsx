@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { AppShell } from "@/components/shell/AppShell";
 import { ImportMail } from "@/components/import/ImportMail";
 import { Logo } from "@/components/brand/Logo";
+import { userDisplayName } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -33,29 +34,22 @@ export default async function ImportPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Header voice shared by every tab: h1 + one quiet line of state. The
+  // privacy claim is NOT here — it is stated once, in ImportMail's note above
+  // the drop zone (see the comment there; the page used to say it four times
+  // before the first button). This line carries what the mode costs you:
+  // nothing to connect, nothing to sign in to.
   const intro = (
-    <div className="space-y-3">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
-        {/* Header voice shared by every tab: h1 + one quiet line of state. */}
-        <p className="mt-1 text-[13px] text-muted">
-          on-device · classified in your browser · nothing is uploaded
-        </p>
-      </header>
-      <p className="max-w-2xl text-muted">
-        Classify your own job-search mail without connecting Gmail and without signing in. Export
-        your mail from <span className="text-strong">Google Takeout</span> (or drop a single{" "}
-        <span className="font-mono text-dim">.eml</span>), and Applied runs the classifier on it
-        right here in your browser. Nothing is uploaded — this is the same privacy guarantee as the
-        rest of the app, made literal.
-      </p>
-    </div>
+    <header>
+      <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
+      <p className="mt-1 text-[13px] text-muted">no Gmail connection · no sign-in</p>
+    </header>
   );
 
   // --- Signed in: keep the whole app shell around the import tool ----------
   if (user) {
     return (
-      <AppShell userEmail={user.email ?? null}>
+      <AppShell userEmail={user.email ?? null} userName={userDisplayName(user)}>
         {/* Measure capped, but on the shell's shared left edge (no mx-auto). */}
         <div className="max-w-3xl space-y-8">
           {intro}
@@ -79,18 +73,16 @@ export default async function ImportPage() {
   return (
     <main className="mx-auto min-h-screen w-full max-w-3xl px-6 pb-20">
       <header className="flex min-h-14 flex-wrap items-center justify-between gap-y-2 border-b border-line-soft py-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/"
-            aria-label="Applied — home"
-            className="brand-logo-link min-h-11 items-center text-strong"
-          >
-            <Logo className="h-6 w-auto" />
-          </Link>
-          <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
-            import · on-device · no upload
-          </span>
-        </div>
+        {/* No mode pill here — it restated the on-device claim that now lives
+            exactly once, in ImportMail's note; the h1 two lines down already
+            names the page. */}
+        <Link
+          href="/"
+          aria-label="Applied — home"
+          className="brand-logo-link min-h-11 items-center text-strong"
+        >
+          <Logo className="h-6 w-auto" />
+        </Link>
         <Link
           href="/demo/inbox"
           className="inline-flex min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"

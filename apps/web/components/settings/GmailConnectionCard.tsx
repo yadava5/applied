@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
 
 import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { LastSynced } from "@/components/gmail/LastSynced";
+import { Disclosure } from "@/components/ui/Disclosure";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
 /**
@@ -49,21 +49,6 @@ const SAFEGUARDS: [string, string][] = [
     "Disconnect here to revoke access at Google and delete the stored token. You can also remove it at myaccount.google.com/permissions.",
   ],
 ];
-
-function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
-  return (
-    <details className="group border-t border-line-soft pt-3">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-muted transition-colors hover:text-strong [&::-webkit-details-marker]:hidden">
-        <ChevronDown
-          className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
-          aria-hidden
-        />
-        {summary}
-      </summary>
-      <div className="mt-3 space-y-3 pl-5">{children}</div>
-    </details>
-  );
-}
 
 export function GmailConnectionCard({
   result,
@@ -138,7 +123,7 @@ export function GmailConnectionCard({
             ) : null}
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-col items-end gap-2">
             {connected ? (
               demo ? (
                 <button
@@ -169,6 +154,18 @@ export function GmailConnectionCard({
             ) : (
               <ConnectGmailButton configured={configured} />
             )}
+            {/* STANDING, not folded — Google's API Services User Data Policy
+                wants the privacy policy "prominently displayed" in the app.
+                Until 2026-08 the only in-app path was inside the closed
+                disclosure below, which is not prominent. It sits with the
+                connect/disconnect control because that is the consent moment
+                the policy is about. Do not move it back behind the fold. */}
+            <Link
+              href="/privacy"
+              className="text-xs text-dim underline-offset-4 transition-colors hover:text-strong hover:underline"
+            >
+              privacy policy →
+            </Link>
           </div>
         </div>
 

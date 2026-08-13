@@ -72,12 +72,17 @@ export default async function DemoShellPage({
   };
 
   return (
-    <AppShellFrame rail={rail} userEmail="demo@applied.example" demo>
+    // The fixture gets a NAME as well as an email — the real rail shows the
+    // display name now, and a twin that still printed the address would drift
+    // from the surface it stands in for (the bug class this route exists to
+    // prevent). Same persona as /demo/settings' profile: one fixture identity.
+    <AppShellFrame rail={rail} userEmail="demo@applied.example" userName="Sam Fixture" demo>
       <DemoDashboard
         variant="locked"
         pipeline={pipeline === "early" ? "early" : "seed"}
         needsReview={needsReview}
       />
+
     </AppShellFrame>
   );
 }

@@ -9,6 +9,8 @@ type AppShellFrameProps = {
   children: ReactNode;
   rail: RailData;
   userEmail: string | null;
+  /** Display name for the identity block; `null` falls back to the email. */
+  userName?: string | null;
   /** Fixture mode (/demo/shell): the top bar trades sign-out for a demo pill. */
   demo?: boolean;
 };
@@ -43,7 +45,13 @@ type AppShellFrameProps = {
  * inside. The executing geometry specs (shell.spec.ts, via /demo/shell) hold
  * this: document locked, <main> still, worklist overflowing.
  */
-export function AppShellFrame({ children, rail, userEmail, demo = false }: AppShellFrameProps) {
+export function AppShellFrame({
+  children,
+  rail,
+  userEmail,
+  userName = null,
+  demo = false,
+}: AppShellFrameProps) {
   return (
     // The slot provider is what lets PAGE-owned interface reach SHELL-owned
     // geometry with one instance: the board portals its stage lens + search
@@ -51,9 +59,9 @@ export function AppShellFrame({ children, rail, userEmail, demo = false }: AppSh
     // reasoning), and page headers learn they are inside a shell at all.
     <ShellSlotProvider>
       <div className="flex h-dvh w-full overflow-hidden">
-        <Sidebar rail={rail} userEmail={userEmail} />
+        <Sidebar rail={rail} userEmail={userEmail} userName={userName} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar userEmail={userEmail} demo={demo} />
+          <TopBar userEmail={userEmail} userName={userName} demo={demo} />
           {/* ONE page geometry for every authed surface: a shared centred column
               with a common left edge. The dashboard fills it; narrower pages
               (settings, inbox) cap their own measure inside it but start at the

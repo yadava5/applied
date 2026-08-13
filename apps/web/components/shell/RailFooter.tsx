@@ -14,19 +14,25 @@ import type { RailGmailData } from "@/lib/shell/rail";
  * Google account you then connect. "Gmail · connected / aesh…@gmail.com" over
  * "aesh…@gmail.com / SIGNED IN" does not read as two facts, it reads as a bug.
  *
- * So the address is printed ONCE, in the identity row, and the connection is a
- * subordinate line beneath it. The order flipped with it — identity used to sit
- * under the chip; it is now the anchor, because the account is the thing and
- * the connection is something the account *has*. Identity still lives
+ * So the identity row leads, and the connection is a subordinate line beneath
+ * it. The order flipped with it — identity used to sit under the chip; it is
+ * now the anchor, because the account is the thing and the connection is
+ * something the account *has*. (Flipping the two lines back was considered
+ * again in Aug 2026 and rejected — the order stands.) Identity still lives
  * bottom-left (the Linear/Notion convention) and sign-out still lives in the
  * top bar.
  *
- * When the two accounts genuinely DIFFER — signed in as one, Gmail connected as
- * another — the connection line names its own address ("connected as
- * billing@corp.com") and both are on screen. Which means the *absence* of a
- * second address is what asserts the two are the same mailbox. That is a quiet
- * read, and it is the deliberate trade: the alternative is printing the
- * identical string twice, which is the defect this collapse exists to remove.
+ * The identity row shows the user's NAME, not the address — chosen explicitly
+ * ("(A) Ayush Yadav" over the email), falling back to the address only when no
+ * name is set. The email still ARRIVES as a prop and still matters: it is what
+ * `distinctMailbox` compares the connected Gmail account against, and it rides
+ * in the row's `title` and aria-label. When the two accounts genuinely DIFFER
+ * — signed in as one, Gmail connected as another — the connection line names
+ * its own address ("connected as billing@corp.com"). Which means the *absence*
+ * of a second address is what asserts the two are the same mailbox. That is a
+ * quiet read, and it is the deliberate trade — so never stop passing
+ * `userEmail` just because the row no longer prints it: the comparison is the
+ * assertion's whole basis.
  *
  * Connection line — the same three honest states as before:
  *   - connected     → live emerald dot (`.beta-dot` ping), the state, and when
@@ -59,6 +65,8 @@ import type { RailGmailData } from "@/lib/shell/rail";
 
 type FooterProps = {
   gmail: RailGmailData | null;
+  /** Display name; `null` falls back to the email so the row is never blank. */
+  userName?: string | null;
   userEmail: string | null;
 };
 
@@ -152,8 +160,10 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
   );
 }
 
-export function RailFooter({ gmail, userEmail }: FooterProps) {
-  const initial = userEmail?.charAt(0).toUpperCase() ?? "·";
+export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
+  // The avatar initial follows whatever the row prints, so the two agree.
+  const identity = userName ?? userEmail;
+  const initial = identity?.charAt(0).toUpperCase() ?? "·";
 
   return (
     <div className="space-y-0.5">
@@ -161,8 +171,17 @@ export function RailFooter({ gmail, userEmail }: FooterProps) {
         href="/settings"
         // Named, not just "Account": this link and the not-connected Gmail line
         // both point at /settings, and two adjacent links with near-identical
-        // accessible names is how a screen reader loses the plot.
-        aria-label={userEmail ? `Signed in as ${userEmail} — open settings` : "Account — open settings"}
+        // accessible names is how a screen reader loses the plot. The email
+        // stays in the name beside the visible text (WCAG 2.5.3 wants the
+        // rendered name contained in the accessible name) — with hover gone,
+        // this is where a screen reader still gets the mailbox.
+        aria-label={
+          userName && userEmail
+            ? `Signed in as ${userName} (${userEmail}) — open settings`
+            : identity
+              ? `Signed in as ${identity} — open settings`
+              : "Account — open settings"
+        }
         className={`${ROW} items-center gap-2.5`}
       >
         <span
@@ -175,7 +194,7 @@ export function RailFooter({ gmail, userEmail }: FooterProps) {
           title={userEmail ?? undefined}
           className="min-w-0 flex-1 truncate text-xs text-muted transition-colors group-hover:text-strong"
         >
-          {userEmail ?? "account"}
+          {identity ?? "account"}
         </span>
       </Link>
       {gmail ? <ConnectionLine gmail={gmail} userEmail={userEmail} /> : null}

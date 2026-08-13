@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
 import { GATE } from "@/lib/demo/sampleInbox";
+import { Disclosure } from "@/components/ui/Disclosure";
 import {
   DEFAULT_MESSAGE_CAP,
   parseMailFile,
@@ -22,6 +23,15 @@ import {
  * model (e5 embeddings + the SetFit head) needs the 23 MB ONNX weights, which
  * the strict CSP keeps out of the tab — that runs in `/demo/inbox` and the
  * Hugging Face Space. We label the layer-1 disposition on every row.
+ *
+ * Copy: the on-device claim is stated ONCE, in the note above the drop zone.
+ * The page used to restate it four times before the first button (subtitle,
+ * intro paragraph, this note, and a mechanism footnote naming e5/SetFit at an
+ * end user) — the pile-up read as protesting too much and pushed the control
+ * below the fold. The layer-1 vs full-model honesty above now lives behind
+ * the note's Disclosure, in user terms; the per-row traces keep the technical
+ * register. `import.spec.ts` pins "On-device only" and "the mail never leaves
+ * your device" as visible on load, so the surviving sentence is load-bearing.
  */
 
 const SPACE_URL = "https://huggingface.co/spaces/yadava5/jobtracker-classifier";
@@ -297,28 +307,40 @@ export function ImportMail() {
 
   return (
     <div className="space-y-6">
-      {/* privacy guarantee — the whole point */}
+      {/* The privacy guarantee — the whole point, said once. What runs (and
+          what doesn't) is real detail, so it folds rather than dies. */}
       <div
         role="note"
         className="rounded-xl border border-viz-rules/25 bg-surface px-4 py-3 text-sm text-muted"
       >
-        <span className="text-strong">On-device only.</span> Your file is read, parsed, and classified
-        entirely in this browser tab. There is no upload, no server, and no OAuth — the mail never
-        leaves your device. Only the deterministic layer-1 rules run here; the full three-layer model
-        (e5 + SetFit) runs in the{" "}
-        <a href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
-          sample inbox
-        </a>{" "}
-        and the{" "}
-        <a
-          href={SPACE_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="text-strong underline-offset-4 hover:underline"
-        >
-          Space ↗
-        </a>
-        .
+        <p>
+          <span className="text-strong">On-device only.</span> Your file is read and classified
+          entirely in this browser tab — nothing is uploaded, and the mail never leaves your
+          device.
+        </p>
+        <div className="mt-3">
+          <Disclosure summary="What runs on this page">
+            <p className="text-sm text-muted">
+              The classifier&apos;s fast first pass — the same deterministic rules the app runs
+              first on live mail. Clear signals are filed on the spot; anything borderline is held
+              for review rather than guessed. The full model that decides those borderline
+              messages is too large to run in this tab — see it work in the{" "}
+              <a href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
+                sample inbox
+              </a>{" "}
+              or the{" "}
+              <a
+                href={SPACE_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-strong underline-offset-4 hover:underline"
+              >
+                Space ↗
+              </a>
+              .
+            </p>
+          </Disclosure>
+        </div>
       </div>
 
       {/* drop zone / picker */}

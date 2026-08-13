@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/shell/AppShell";
-import { getCurrentUser } from "@/lib/supabase/auth";
+import { getCurrentUser, userDisplayName } from "@/lib/supabase/auth";
 
 /**
  * Protected shell for every route under `app/(app)/`.
@@ -27,5 +27,9 @@ export default async function ProtectedLayout({
     redirect("/login");
   }
 
-  return <AppShell userEmail={user.email ?? null}>{children}</AppShell>;
+  return (
+    <AppShell userEmail={user.email ?? null} userName={userDisplayName(user)}>
+      {children}
+    </AppShell>
+  );
 }
