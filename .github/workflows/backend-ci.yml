@@ -6,6 +6,13 @@ on:
       - "backend/**"
       - "scripts/install.sh"
       - "scripts/start_backend.sh"
+      # The expand-only gate and the fingerprint it reads. Both live outside
+      # backend/, so without these two lines a PR that edited only the gate
+      # would never run the gate — the same shape as the `integration/web-
+      # migration` branch below, where a job that could not trigger was
+      # indistinguishable from a job that did not exist. Edit BOTH blocks.
+      - "scripts/check_expand_only.py"
+      - "scripts/schema_fingerprint.sql"
       - ".github/workflows/backend-ci.yml"
   push:
     branches:
@@ -22,6 +29,8 @@ on:
       - "backend/**"
       - "scripts/install.sh"
       - "scripts/start_backend.sh"
+      - "scripts/check_expand_only.py"
+      - "scripts/schema_fingerprint.sql"
       - ".github/workflows/backend-ci.yml"
   workflow_dispatch:
 
@@ -260,6 +269,79 @@ jobs:
                   "UNVERIFIED by this build."
               )
           PY
+
+  expand-only:
+    # Refuses a revision that removes or narrows something without declaring it.
+    #
+    # A push to main starts `DB migrate` AND a Vercel deploy at the same moment
+    # and nothing orders them. Additive revisions survive that race — old code
+    # ignores a column it does not select. Destructive ones cannot: the old code
+    # is still serving when the column disappears, so there is no ordering in
+    # which one merge is safe. docs/MIGRATIONS.md has said so since the runner
+    # landed; this is what measures it.
+    #
+    # scripts/check_expand_only.py walks the chain one revision at a time
+    # against this service container, fingerprints the schema after each step
+    # with scripts/schema_fingerprint.sql, and fails on: a dropped column, a
+    # changed type, nullable -> NOT NULL, a dropped table, a dropped enum label.
+    # A revision that means it declares a module-level CONTRACT_STEP saying why.
+    #
+    # Deliberately NOT `needs: test`, unlike the two jobs around it. This job
+    # answers a question about the diff, not about whether the application's
+    # tests pass, and chaining it would hide "this schema change cannot be
+    # merged in one PR" behind an unrelated red until somebody fixed that first.
+    #
+    # It installs the ROOT requirements.txt plus backend/requirements-migrate.txt
+    # — the same pair db-migrate.yml uses, i.e. the environment a real migration
+    # runs in — rather than backend/requirements-dev.txt, which drags ~800 MB of
+    # torch along for a job that needs alembic and psycopg.
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            backend/requirements-migrate.txt
+
+      - name: Install migration dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r backend/requirements-migrate.txt
+
+      - name: Walk the chain, one revision at a time
+        env:
+          JOBTRACKER_ENVIRONMENT: test
+          # Plain `postgresql://` — the script normalises it to
+          # `postgresql+psycopg` for env.py and to libpq form for psycopg.
+          # DIRECT_URL is deliberately not what this reads: the script drops and
+          # rebuilds the public schema, so it refuses production's variable name
+          # and refuses any host that is not loopback.
+          JOBTRACKER_TEST_PG_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/test_db
+        run: python scripts/check_expand_only.py
 
   cloud-smoke:
     # Smoke-test the cloud FastAPI entrypoint (`api/index.py` /
