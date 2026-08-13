@@ -1598,12 +1598,45 @@ async def gmail_sync(
             # unit with them — but the ordering gives the property that matters:
             # the only way to fail is with the cursor NOT advanced, which costs
             # one more full scan and can never skip a message.
+            #
+            # …and only when the run READ EVERYTHING IT LISTED. ``unreadable``
+            # counts ids Gmail named and whose batched metadata get came back
+            # empty — a dropped sub-request, which ``_batch_fetch_metadata``
+            # logs and walks past so one bad message cannot sink a page. The
+            # page is still ``usable`` (not expired, not truncated), so the
+            # delta is returned and the baseline captured BEFORE the run gets
+            # written. That baseline is newer than the message that was lost, so
+            # every later delta starts after it and no incremental sync can ever
+            # name it again — the message is skipped from the middle of a window
+            # the scan did cover, which is issue #166's exact shape.
+            #
+            # Holding the cursor costs one repeated delta (the same mail, and
+            # every write on this path is idempotent); advancing it costs the
+            # message. Gmail keeps ~a week of history, so a failure that keeps
+            # repeating eventually 404s the cursor and re-baselines through a
+            # full scan — bounded, and still never silent.
+            #
+            # Deliberately NOT extended to ``stopped_by != STOPPED_COMPLETE``. A
+            # full scan that stops on its message target has not covered its
+            # window either, but holding the cursor there would pin a large
+            # mailbox into full-scanning forever without ever reaching further
+            # back — a real defect with a real trade-off, and a different one.
             if account_email is not None:
+                cursor_to_record = history_id
+                if history_id is not None and unreadable > 0:
+                    cursor_to_record = None
+                    logger.warning(
+                        "Gmail sync for user_id=%s could not read %s message(s) "
+                        "it listed; holding the history cursor so the next run "
+                        "re-covers them instead of stepping past them.",
+                        user_id,
+                        unreadable,
+                    )
                 await record_gmail_sync_success(
                     session,
                     user_id,
                     account_email=account_email,
-                    history_id=history_id,
+                    history_id=cursor_to_record,
                 )
                 await session.commit()
 
