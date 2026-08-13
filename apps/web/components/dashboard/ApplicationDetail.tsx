@@ -348,7 +348,15 @@ export function ApplicationDetail({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === "Escape") {
-        if (docked) onClose();
+        // Stacked with the pulse panel (#165 — possible at any docked
+        // width): the panel is the more transient surface — it dismisses on
+        // any press outside the band — so one Escape peels it alone and the
+        // next closes this pane. Read from the DOM at event time: the
+        // panel's own document-level handler closes it in this same
+        // dispatch whichever of the two registered first, and a prop here
+        // would teach the whole board about a popover it otherwise never
+        // needs to know.
+        if (docked && document.getElementById("pulse-detail") === null) onClose();
         return;
       }
       if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || !onTraverse) return;
