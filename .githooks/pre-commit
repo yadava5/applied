@@ -1,0 +1,50 @@
+#!/bin/sh
+# Secret scan over the STAGED diff, before the commit exists.
+#
+# Why this file is tracked instead of living in .git/hooks: it used to live
+# there, untracked, and `core.hooksPath` pointed at
+# /Users/ayush/Documents/Projects/jobtracker/.git/hooks. The jobtracker ->
+# applied rename deleted that directory, git skips a missing hooks path in
+# SILENCE, and so no local hook fired in this repo at all for weeks -- while
+# CLAUDE.md went on describing the secret-scanning pre-commit hook as a
+# backstop. A hook that only exists on one machine is a hook that vanishes
+# the next time a directory moves.
+#
+# Enable it (per clone, one time -- git will not do this for you):
+#
+#     git config core.hooksPath .githooks
+#
+# CI is the real net: .github/workflows/gitleaks.yml scans FULL HISTORY on
+# every PR, every push to main, and weekly. This hook is the earlier, weaker
+# net, and it exists for one reason CI cannot serve -- a credential that
+# reaches GitHub is published, even if the next commit deletes it. Catching it
+# here means it never leaves the machine.
+#
+# Bypassing: `git commit --no-verify` skips this. CLAUDE.md forbids that, and
+# CI will fail the PR anyway.
+
+set -e
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+	# Loud, not fatal. A missing scanner must never look like a clean scan --
+	# that is exactly the failure this hook was resurrected to fix -- but it
+	# also must not wedge a clone that has not installed gitleaks yet.
+	printf '\n  pre-commit: gitleaks is NOT installed, so this commit was NOT scanned.\n'
+	printf '  Install it (brew install gitleaks) or rely on CI, which always scans.\n\n'
+	exit 0
+fi
+
+# `git --staged` reads the index, so it sees exactly what is about to be
+# committed and nothing else. --redact keeps the finding out of scrollback.
+#
+# NOT `gitleaks protect --staged`: that subcommand was REMOVED in gitleaks 8.x
+# (8.30.1 here exposes only `git`, `dir`, `stdin`). Written that way the hook
+# exits non-zero on every commit for the wrong reason -- a backstop that
+# blocks everything is as broken as one that blocks nothing, and it teaches
+# people to reach for --no-verify. Verified against the installed binary.
+if ! gitleaks git --staged --redact --config .gitleaks.toml; then
+	printf '\n  pre-commit: gitleaks found a secret in the STAGED changes. Nothing was committed.\n'
+	printf '  Findings triaged as non-secrets belong in .gitleaks.toml, allowlisted BY VALUE\n'
+	printf '  with a reason -- not by excluding the path or disabling the rule.\n\n'
+	exit 1
+fi
