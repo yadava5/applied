@@ -1,0 +1,275 @@
+# Applies Alembic revisions to the production database.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Nothing used to run `alembic upgrade head` on a deploy. `vercel.json` builds
+# `api/index.py` as a function with no build step; `init_db()` returns early on
+# Postgres because Alembic owns the schema; and the runtime `ALTER TABLE` helper
+# beneath it is SQLite-only. So a revision merged to main landed in the repo and
+# stayed there, while the code that needed it went live within the minute. Every
+# `select(Email)` in `jobtracker.cloud` emits an explicit column list, so the
+# first read of a missing column is an `UndefinedColumn` 500 across the whole
+# board — with all CI checks green, because CI builds its database BY running
+# the migrations and therefore can only ever observe the post-migration world.
+#
+# WHY GITHUB ACTIONS AND NOT A VERCEL BUILD STEP
+# ----------------------------------------------
+# A Vercel `buildCommand` is the obvious alternative and it is worse here:
+#
+#   1. Deploys are rate-limited to a daily cap on this account. A migration that
+#      fails inside a build burns a deploy slot and ships nothing.
+#   2. The step would have to be gated on `VERCEL_ENV == "production"` or every
+#      preview would migrate the production database — and a gate like that
+#      means the runner is *only ever exercised in production*, which is exactly
+#      the "check that cannot fail before it matters" shape this repo keeps
+#      finding.
+#   3. `buildCommand` behaviour under the `fastapi` framework preset is
+#      unverified, so it would be a design resting on an assumption.
+#
+# THE RACE, AND WHY IT IS SURVIVABLE
+# ----------------------------------
+# Pushing to main starts this workflow AND a Vercel deploy at the same time, and
+# nothing orders them. That is fine for ADDITIVE revisions — a new nullable
+# column, a new enum label, a new index — because old code ignores a column it
+# does not select, so whichever lands first, both halves work. The exposure is
+# the few seconds where new code might query a column that is not there yet, and
+# it self-heals; before this workflow existed that state was permanent.
+#
+# It is NOT fine for contract steps: dropping, renaming, narrowing a type, or
+# adding NOT NULL. Those need two merges — migration first, verified, then the
+# code. docs/MIGRATIONS.md is the contract; this comment is here so the reason
+# survives next to the mechanism.
+
+name: DB migrate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/alembic/**'
+      - 'backend/jobtracker/database/models.py'
+      - 'backend/jobtracker/database/schema_version.py'
+      - '.github/workflows/db-migrate.yml'
+  # Shows the exact SQL a merge would run, on the PR, with no credentials.
+  pull_request:
+    paths:
+      - 'backend/alembic/**'
+      - 'backend/jobtracker/database/models.py'
+      - 'backend/jobtracker/database/schema_version.py'
+      - '.github/workflows/db-migrate.yml'
+  # Manual retry. Needed because the push trigger is path-filtered: if a
+  # revision merges while the secret is missing or the database is paused, no
+  # later push re-attempts it on its own. /health/schema is the backstop that
+  # makes such a gap visible; this is the button that closes it.
+  workflow_dispatch:
+
+# Never cancel a migration in flight. `cancel-in-progress: true` — the default
+# people copy — would kill a run mid-DDL and leave the advisory lock held by a
+# dying session.
+concurrency:
+  group: db-migrate-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # On a PR: render the SQL, touch nothing. No secret, no database.
+  # ---------------------------------------------------------------------------
+  preview:
+    name: Preview the SQL this PR would run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Needs main to know which revision production is expected to be at.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install migration dependencies
+        run: pip install -r requirements.txt -r backend/requirements-migrate.txt
+
+      - name: Render the upgrade as SQL
+        working-directory: backend
+        run: |
+          # The base is main's EXPECTED_REVISION, not `base`: rendering the whole
+          # chain from empty would bury two new lines in six hundred, and the
+          # question a reviewer has is "what does MERGING THIS do to the live
+          # database", which is exactly this range.
+          BASE=$(git show origin/main:backend/jobtracker/database/schema_version.py \
+                 | sed -n 's/^EXPECTED_REVISION = "\(.*\)"$/\1/p')
+          if [ -z "$BASE" ]; then
+            echo "::error::Could not read EXPECTED_REVISION from origin/main."
+            exit 1
+          fi
+          HEAD_REV=$(sed -n 's/^EXPECTED_REVISION = "\(.*\)"$/\1/p' \
+                     jobtracker/database/schema_version.py)
+          echo "### Migration preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BASE" = "$HEAD_REV" ]; then
+            echo "No new revision on this branch (still \`$BASE\`)." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "\`$BASE\` → \`$HEAD_REV\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```sql' >> "$GITHUB_STEP_SUMMARY"
+          # Offline mode: emits SQL, opens no connection. The URL is a dummy
+          # that only selects the Postgres dialect, so the rendered SQL is what
+          # production would receive rather than the SQLite rendering.
+          DIRECT_URL="postgresql+psycopg://preview:preview@localhost/preview" \
+            python -m alembic upgrade "$BASE:$HEAD_REV" --sql \
+            2>/dev/null >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # On main: actually apply it.
+  # ---------------------------------------------------------------------------
+  migrate:
+    name: alembic upgrade head (production)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Scopes DIRECT_URL to an environment so the credential is auditable and
+    # can carry required reviewers later without touching this file.
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install migration dependencies
+        run: pip install -r requirements.txt -r backend/requirements-migrate.txt
+
+      - name: Check the credential is present
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          if [ -z "${DIRECT_URL}" ]; then
+            echo "::error::DIRECT_URL is not set for the 'production' environment."
+            echo "Set it to the Supabase DIRECT (port 5432) connection string —"
+            echo "NOT the 6543 pooler, which cannot run DDL: PgBouncer in"
+            echo "transaction mode does not support the PREPARE statements"
+            echo "Alembic emits."
+            exit 1
+          fi
+          case "${DIRECT_URL}" in
+            *:6543/*)
+              echo "::error::DIRECT_URL points at port 6543 (the PgBouncer pooler)."
+              echo "DDL through the transaction pooler fails. Use port 5432."
+              exit 1
+              ;;
+          esac
+
+      - name: Confirm the database is reachable
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          # Distinguishes a PAUSED Supabase project from a broken migration.
+          # The free tier pauses a project after seven days idle, and a paused
+          # project fails at CONNECT — which, without this step, surfaces as a
+          # stack trace from inside alembic and reads like the revision is bad.
+          python - <<'PY'
+          import os, sys
+          import psycopg
+
+          url = os.environ["DIRECT_URL"]
+          # env.py accepts SQLAlchemy-style URLs; psycopg wants a plain one.
+          for prefix in ("postgresql+psycopg://", "postgresql+asyncpg://"):
+              if url.startswith(prefix):
+                  url = "postgresql://" + url[len(prefix):]
+                  break
+          try:
+              with psycopg.connect(url, connect_timeout=15) as conn:
+                  ver = conn.execute("SELECT version()").fetchone()[0]
+              print(f"connected: {ver.split(',')[0]}")
+          except psycopg.OperationalError as exc:
+              text = str(exc).lower()
+              paused = any(s in text for s in (
+                  "timeout", "could not translate host name",
+                  "connection refused", "no route to host",
+              ))
+              if paused:
+                  print("::error::Cannot reach the database. If this is the "
+                        "Supabase free tier, the project has most likely been "
+                        "PAUSED after 7 days idle — restore it from the "
+                        "dashboard and re-run this workflow. The migration was "
+                        "NOT applied and nothing was changed.")
+              else:
+                  print(f"::error::Database connection failed: {exc}")
+              sys.exit(1)
+          PY
+
+      - name: Record the revision before
+        id: before
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        working-directory: backend
+        run: |
+          echo "rev=$(python -m alembic current 2>/dev/null | tail -1)" >> "$GITHUB_OUTPUT"
+
+      - name: alembic upgrade head
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        working-directory: backend
+        run: python -m alembic upgrade head
+
+      - name: Verify the database reached the revision the code expects
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        working-directory: backend
+        run: |
+          # Closes the loop. `upgrade head` exiting 0 proves Alembic did what it
+          # was asked; it does NOT prove the result matches what the deployed
+          # code will select, which is the property that actually matters. If
+          # these disagree the migration "succeeded" and production is still
+          # broken.
+          python - <<'PY'
+          import os, sys
+          sys.path.insert(0, ".")
+          import psycopg
+          from jobtracker.database.schema_version import EXPECTED_REVISION
+
+          url = os.environ["DIRECT_URL"]
+          for prefix in ("postgresql+psycopg://", "postgresql+asyncpg://"):
+              if url.startswith(prefix):
+                  url = "postgresql://" + url[len(prefix):]
+                  break
+          with psycopg.connect(url, connect_timeout=15) as conn:
+              rows = [r[0] for r in conn.execute(
+                  "SELECT version_num FROM alembic_version").fetchall()]
+
+          if rows != [EXPECTED_REVISION]:
+              print(f"::error::alembic_version is {rows!r} but this commit's "
+                    f"EXPECTED_REVISION is {EXPECTED_REVISION!r}.")
+              sys.exit(1)
+          print(f"database is at {EXPECTED_REVISION}, matching the code")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(f"Database migrated to `{EXPECTED_REVISION}`.\n")
+          PY
+
+      - name: Verify row-level security survived the migration
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        # A real script rather than an inline heredoc, so it can be run by hand
+        # against any database and tested in isolation. Applied's public claim is
+        # that tenant isolation is enforced at the database layer; this is what
+        # checks that claim against the database users' rows are actually in,
+        # after an unattended process has just altered it.
+        run: python scripts/verify_rls.py
+
+      - name: Report
+        if: always()
+        run: |
+          echo "before: ${{ steps.before.outputs.rev }}" >> "$GITHUB_STEP_SUMMARY"
