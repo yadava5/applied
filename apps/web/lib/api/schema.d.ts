@@ -28,6 +28,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/health/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Schema Version Check (cloud)
+         * @description Report whether the database schema matches the code's expectation.
+         *
+         *     **Why this is not folded into ``/health``.** That probe is deliberately
+         *     credential-free and does no database work, and Supabase's free tier pauses a
+         *     project after seven days idle — so a database round-trip there would turn a
+         *     sleeping database into a red liveness probe and, worse, train the reader to
+         *     ignore it. Keeping the schema question on its own path means ``/health``
+         *     still answers "is the function up?" and this answers "does the database
+         *     agree with it?", which are different questions with different fixes.
+         *
+         *     **Always 200.** The status code reports whether the *check ran*, not what it
+         *     found; the verdict is in ``ok``. A 503 here would make an ordinary,
+         *     self-healing state (the seconds between a merge and its migration) look like
+         *     an outage to every uptime monitor pointed at the deployment.
+         *
+         *     The read is one row from ``alembic_version``, which carries no RLS and is
+         *     granted to the runtime role directly.
+         */
+        get: operations["schema_version_check_health_schema_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -1386,6 +1422,27 @@ export interface components {
             method?: string | null;
         };
         /**
+         * SchemaVersionResponse
+         * @description What this code expects of the schema, and what the database actually is.
+         */
+        SchemaVersionResponse: {
+            /**
+             * Expected
+             * @description The Alembic revision this deployment's code was written against, baked in at build time.
+             */
+            expected: string;
+            /**
+             * Applied
+             * @description The revision stamped in the database's alembic_version table. Null means the question could not be answered — no table, an empty table, or a failed query — never 'behind'. A '+'-joined value means the table holds several rows, i.e. the migration graph forked.
+             */
+            applied?: string | null;
+            /**
+             * Ok
+             * @description True only when the two agree. False is the signal that a revision was merged without being applied to this database.
+             */
+            ok: boolean;
+        };
+        /**
          * SplitCandidateResponse
          * @description One application hiding inside a row that was filed before identity existed.
          */
@@ -1549,6 +1606,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    schema_version_check_health_schema_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchemaVersionResponse"];
                 };
             };
         };
