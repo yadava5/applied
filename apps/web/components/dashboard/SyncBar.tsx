@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import { RowActionsMenu } from "@/components/dashboard/RowActionsMenu";
 import { LastSynced } from "@/components/gmail/LastSynced";
+import { useSignOut } from "@/components/shell/SessionControls";
 import { Dialog } from "@/components/ui/Dialog";
 import { Segmented } from "@/components/ui/Segmented";
 import { selectClass } from "@/components/ui/formStyles";
@@ -55,8 +56,11 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * (`title` — the page's one <h1>, at every width; at `lg`+ the shell's
  * TopBar yields to this row entirely, see TopBar), the
  * subtitle, the change-ledger chip (`since`), the status/recency slot, the
- * controls, and the session edge (`trailing`). Sign-out therefore stays on
- * the top line of the screen, in this row, on the board route. The status
+ * controls, and the session edge. Sign-out therefore stays reachable from
+ * the top line of the screen on the board route — inside the `⋯` menu
+ * (`withSignOut`), not as a row-level button: the button was the ~97px that
+ * wrapped this row to 82px at 1024 and cost the worklist the difference
+ * (#172), spent on the control the owner uses least. The status
  * line never moves the page at `lg`+ — it rides in the row for exactly as
  * long as it speaks (the owner watched the board jump when "checking Gmail…"
  * used to take a line of its own), and while a sync RUNS it takes the change
@@ -212,6 +216,7 @@ export function SyncBar({
   since,
   title,
   trailing,
+  withSignOut = false,
   children,
   transport = liveSyncTransport,
 }: {
@@ -229,9 +234,17 @@ export function SyncBar({
    *  exists for a locator to trip over. At `lg`+ this row is also the
    *  screen's top line, TopBar having yielded entirely. */
   title?: string;
-  /** The session-edge control for the same case — SignOutButton on the
-   *  signed-in page, the demo pill on the fixture twin. `lg`+ only. */
+  /** Row-level chrome at the session edge — the demo pill on the fixture
+   *  twin, and nothing else: a row-level button here is what wrapped the row
+   *  at 1024 (#172). The signed-in sign-out rides in the `⋯` menu via
+   *  `withSignOut` instead. `lg`+ only. */
   trailing?: ReactNode;
+  /** Folds `Sign out` into the row's `⋯` menu — the signed-in page's session
+   *  edge. Menu chrome, not a row-level control (see `trailing`), and it also
+   *  makes the menu render when Gmail is NOT connected: at `lg`+ the shell's
+   *  TopBar yields on the board route, so this menu is the route's only
+   *  sign-out. The fixture twin passes nothing — no session, no item. */
+  withSignOut?: boolean;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
   /** How sync requests reach data — Gmail via the proxy by default; the demo
@@ -239,6 +252,7 @@ export function SyncBar({
   transport?: SyncTransport;
 }) {
   const router = useRouter();
+  const { signOut } = useSignOut();
   const [phase, setPhase] = useState<SyncPhase>({ kind: "idle" });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [range, setRange] = useState<RebuildRange>(REBUILD_DEFAULT_RANGE);
@@ -751,9 +765,9 @@ export function SyncBar({
                 disabled={busy}
                 aria-label="Sync new mail from Gmail"
                 // The remembered duration rides HERE and nowhere else: the
-                // tooltip costs the header row no width, and that row already
-                // wraps to two lines at 1024 (#172). Absent until a run has
-                // been timed.
+                // tooltip costs the header row no width, and at 1024 this row
+                // has none to give — spending ~97px of it is how sign-out
+                // wrapped the row (#172). Absent until a run has been timed.
                 title={`Checks Gmail for new mail and adds what it finds. Never removes anything.${
                   syncMemory ? ` ${syncMemory}` : ""
                 }`}
@@ -762,26 +776,6 @@ export function SyncBar({
                 <RefreshCw className="h-4 w-4" aria-hidden />
                 Sync
               </button>
-              <RowActionsMenu
-                label="Sync options"
-                disabled={busy}
-                triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
-                triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
-                items={[
-                  {
-                    key: "rebuild",
-                    label: "Rebuild from Gmail…",
-                    hint: "replaces Gmail-filed rows · lists every removal",
-                    onSelect: openDialog,
-                  },
-                  {
-                    key: "inbox",
-                    label: "Open inbox workbench",
-                    hint: "mine, inspect and file mail by hand",
-                    onSelect: () => router.push("/inbox"),
-                  },
-                ]}
-              />
             </>
           ) : gmail !== null ? (
             // S0 — known not-connected. An unknown status (failed probe)
@@ -792,6 +786,44 @@ export function SyncBar({
             >
               gmail not connected · connect in settings →
             </Link>
+          ) : null}
+          {/* The `⋯` menu — OUTSIDE the connected branch, because with
+              `withSignOut` it is the board route's only sign-out at `lg`+
+              (TopBar yields there) and a session must stay endable with Gmail
+              disconnected. The sync-owned items still require a connection: a
+              menu must not offer a rebuild that can only 409. Sign-out is
+              last and unhinted — the label is the whole action. The trigger's
+              name follows its contents: the session edge makes it more than
+              sync options, and the demo (no session) keeps the old name its
+              specs assert. */}
+          {connected || withSignOut ? (
+            <RowActionsMenu
+              label={withSignOut ? "More actions" : "Sync options"}
+              disabled={busy}
+              triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+              triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
+              items={[
+                ...(connected
+                  ? [
+                      {
+                        key: "rebuild",
+                        label: "Rebuild from Gmail…",
+                        hint: "replaces Gmail-filed rows · lists every removal",
+                        onSelect: openDialog,
+                      },
+                      {
+                        key: "inbox",
+                        label: "Open inbox workbench",
+                        hint: "mine, inspect and file mail by hand",
+                        onSelect: () => router.push("/inbox"),
+                      },
+                    ]
+                  : []),
+                ...(withSignOut
+                  ? [{ key: "sign-out", label: "Sign out", onSelect: () => void signOut() }]
+                  : []),
+              ]}
+            />
           ) : null}
           {children}
         </div>

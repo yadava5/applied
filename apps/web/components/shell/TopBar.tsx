@@ -52,8 +52,8 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
 
   return (
     // On the BOARD route this bar yields at `lg`+: the board's own header row
-    // (SyncBar with the title and sign-out folded in) takes the top line, so
-    // the screen never spends 48px on a strip whose middle is empty. Every
+    // (SyncBar — title folded in, sign-out in its ⋯ menu) takes the top line,
+    // so the screen never spends 48px on a strip whose middle is empty. Every
     // other route — and every width below `lg`, where the mobile menu and the
     // stacked board header need it — keeps this bar exactly as it is.
     <header
