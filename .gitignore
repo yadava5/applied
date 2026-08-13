@@ -95,3 +95,19 @@ build/
 *.spec
 .vercel
 .claude/
+
+## Session working files
+# HANDOFF.md is regenerated from live context by the /handoff skill every time
+# a session hands over. It is scaffolding for the next session, not a record of
+# this repo, and it sat untracked-but-unignored in the root — one `git add -A`
+# away from becoming history that would then go stale in place.
+/HANDOFF.md
+
+## Stray root install artifacts
+# This repo installs per-app — `apps/web` is pnpm (`apps/web/pnpm-lock.yaml`),
+# `booklet` is npm — and there is no package.json at the root at all. So a
+# root-level `node_modules/` or `package-lock.json` is always the residue of an
+# `npm install` run from the wrong directory, and nothing ignored it. Anchored
+# with a leading `/` so the tracked `booklet/package-lock.json` is untouched.
+/node_modules/
+/package-lock.json
