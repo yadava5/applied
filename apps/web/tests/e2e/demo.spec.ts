@@ -279,7 +279,10 @@ test.describe("live demo (/demo)", () => {
     await page
       .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
       .click();
-    const sheet = page.getByRole("dialog");
+    // The shared handle for BOTH detail geometries (#157): at the suite's
+    // 1440 default this is the docked pane; below `xl` it is the sheet's
+    // content. The mail-trail contract is identical either way.
+    const sheet = page.getByTestId("application-detail");
     await expect(sheet).toBeVisible();
     await expect(sheet.getByText("the mail behind this card")).toBeVisible();
     // The verdict trail renders the fixture message with its classification.
@@ -422,6 +425,13 @@ test.describe("live demo (/demo)", () => {
     // because the browser's own mousedown focus fix-up runs after React has
     // already restored focus and blows it away. Both dialogs on this page are
     // driven, and all three paths are asserted the same way.
+    //
+    // Below `xl` on purpose: since #157 the card detail renders as this sheet
+    // (with the backdrop the third path clicks) only under 1280 — at the
+    // suite's 1440 default it docks as a pane with no backdrop at all, and
+    // that geometry's close/focus contract is the next test's. The
+    // centre-variant dialog exists at every width; it just shares the page.
+    await page.setViewportSize({ width: 1100, height: 800 });
     await page.goto("/demo");
 
     const opener = page.getByRole("button", {
@@ -452,6 +462,62 @@ test.describe("live demo (/demo)", () => {
     await fileDialog.locator("xpath=..").click({ position: { x: 5, y: 5 } });
     await expect(fileDialog).toBeHidden();
     await expect(fileOpener).toBeFocused();
+  });
+
+  test("at xl the detail docks beside the worklist — no overlay, and ↑/↓ traverse the board", async ({
+    page,
+  }) => {
+    // #157, the accepted geometry at the suite's 1440 default: the detail is
+    // a PANE in the board's own row, not a modal — the worklist stays
+    // readable and usable while a card is open, because the overlay's
+    // exclusivity contract was itself the complaint.
+    await page.goto("/demo");
+
+    const opener = page.getByRole("button", {
+      name: "Open Cedar Labs — Software Engineer, Platform",
+    });
+    await opener.click();
+    const pane = page.getByTestId("application-detail");
+    await expect(pane).toBeVisible();
+    await expect(pane).toBeFocused();
+    // Docked means NOT modal: no dialog role, no backdrop, no scroll lock.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    // The rows fold their stage select + Gmail slot while the pane is open —
+    // the 176px that pay for its width. The pane's own stage control is the
+    // one left standing, and exactly one row carries the open mark.
+    await expect(page.locator("select[id^='detail-status-']")).toHaveCount(1);
+    await expect(page.locator("select[id^='status-']")).toHaveCount(0);
+    await expect(page.locator("[data-detail-open]")).toHaveCount(1);
+
+    // "N of M · ↑ ↓": the header reports position over the board's visible
+    // order, and the arrow keys move through it without closing anything.
+    const counter = pane.locator("header").getByText(/^\d+ of \d+$/);
+    await expect(counter).toBeVisible();
+    const start = (await counter.textContent())!.split(" of ").map(Number);
+    const [n, m] = start;
+    expect(m).toBeGreaterThan(1);
+    const step = n < m ? 1 : -1;
+    const heading = pane.getByRole("heading");
+    const startCompany = await heading.textContent();
+    await page.keyboard.press(step === 1 ? "ArrowDown" : "ArrowUp");
+    await expect(counter).toHaveText(`${n + step} of ${m}`);
+    await expect(heading).not.toHaveText(startCompany!);
+    await page.keyboard.press(step === 1 ? "ArrowUp" : "ArrowDown");
+    await expect(counter).toHaveText(`${n} of ${m}`);
+
+    // The board behind the pane is still a work surface: another row's
+    // opener works directly, retargeting the pane — no close, no reopen.
+    await page.getByRole("button", { name: /^Open Harbor Analytics/ }).click();
+    await expect(pane.getByRole("heading", { name: "Harbor Analytics" })).toBeVisible();
+
+    // Escape closes the pane; focus is NOT yanked from the control the user
+    // chose since — it stays on the opener they clicked last. The folded
+    // controls come back with the width.
+    await page.keyboard.press("Escape");
+    await expect(pane).toBeHidden();
+    await expect(page.getByRole("button", { name: /^Open Harbor Analytics/ })).toBeFocused();
+    await expect(page.locator("select[id^='status-']")).not.toHaveCount(0);
   });
 
   test("the pulse renders all four derived signals in the board's band", async ({ page }) => {
@@ -767,12 +833,13 @@ test.describe("live demo (/demo)", () => {
     await expect(harbor.locator('[data-testid="deadline-tag"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
 
-    // The sheet states the deadline's provenance: this one was extracted from
+    // The detail states the deadline's provenance: this one was extracted from
     // mail — and the mail it came from, right below, spells the date out.
+    // (`application-detail` is the docked pane at this width — see #157.)
     await page
       .getByRole("button", { name: "Open Kestrel Dynamics — Software Engineer, Simulation" })
       .click();
-    const sheet = page.getByRole("dialog");
+    const sheet = page.getByTestId("application-detail");
     await expect(sheet.getByText("from your mail")).toBeVisible();
     await expect(sheet.getByText(/Complete your .* assessment by/)).toBeVisible();
     await page.keyboard.press("Escape");
@@ -820,7 +887,9 @@ test.describe("live demo (/demo)", () => {
     await page
       .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
       .click();
-    const sheet = page.getByRole("dialog");
+    // The docked pane at this width (#157); the deadline contract is the
+    // same in both detail geometries.
+    const sheet = page.getByTestId("application-detail");
     const deadline = sheet.getByTestId("detail-deadline");
     await deadline.getByRole("button", { name: "Add a deadline" }).click();
     await deadline.getByLabel(/Deadline date/).fill(dayISO);
@@ -997,13 +1066,15 @@ test.describe("live demo (/demo)", () => {
     await expect(
       band.getByRole("button", { name: "Stop filtering by Northstar Systems" }),
     ).toBeVisible();
-    // The set view keeps only Northstar cards, so open one of those.
+    // The set view keeps only Northstar cards, so open one of those. (The
+    // docked pane at this width — the set view is exactly where an exclusive
+    // overlay hurt most, hiding the sibling applications being compared.)
     await page
       .getByRole("button", { name: "Open Northstar Systems — ML Engineer, Platform" })
       .click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByTestId("application-detail")).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(page.getByTestId("application-detail")).toBeHidden();
   });
 
   test("the decision trace rows expand on click (real effect)", async ({ page }) => {

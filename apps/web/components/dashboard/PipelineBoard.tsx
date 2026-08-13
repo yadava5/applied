@@ -132,6 +132,33 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
 /** Below this many rows, search would be chrome without a job. */
 const SEARCH_AFTER = 5;
 
+/**
+ * Whether the detail DOCKS beside the worklist — Tailwind's `xl`, the
+ * accepted breakpoint (#157): beside the list the pane needs the width the
+ * folded row controls give back, and below 1280 there is no width to give,
+ * so the sheet keeps those widths. JS rather than CSS because the two
+ * geometries differ in behaviour (focus, Escape, scroll lock), not just
+ * position — exactly one of them may exist at a time, and rendering both
+ * would run the detail fetch twice. False until the subscription lands (the
+ * server has no viewport); a card can only be opened after it has.
+ */
+function useDetailDocked(): boolean {
+  const [docked, setDocked] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1280px)");
+    const sync = () => setDocked(mq.matches);
+    // First read deferred off the effect body (house rule — no synchronous
+    // setState in an effect), same as the board's own `hydrated`.
+    const id = window.setTimeout(sync, 0);
+    mq.addEventListener("change", sync);
+    return () => {
+      window.clearTimeout(id);
+      mq.removeEventListener("change", sync);
+    };
+  }, []);
+  return docked;
+}
+
 /** The spine's filter vocabulary: every stage, or all of them. */
 type StageFilter = StageKey | "all";
 
@@ -361,6 +388,7 @@ export function PipelineBoard({
    */
   const { inShell, rail } = useShellSlots();
   const railStages = inShell && interactive;
+  const detailDocked = useDetailDocked();
   const [query, setQuery] = useState("");
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
@@ -582,6 +610,56 @@ export function PipelineBoard({
 
   const locked = variant === "locked";
 
+  /**
+   * The board's visible order, flattened — the detail pane's traversal list
+   * (#157). Built from `groups` exactly as the list renders them (stage flow
+   * order, employer sets in place, members in their set order), so "next" in
+   * the pane is always the row the eye finds below. Members of COLLAPSED
+   * sets are included on purpose: M is the number of applications on view,
+   * the same number the stage headings sum to — traversal opens a set it
+   * lands in rather than silently skipping it (see `traverseDetail`).
+   */
+  const orderedVisible: Application[] = [];
+  /** Set membership by row id (`${stage}:${company}`), for the auto-open. */
+  const memberSetKey = new Map<number, string>();
+  for (const { column, items } of groups) {
+    if (grouping) {
+      for (const entry of groupByEmployer(items)) {
+        if (entry.kind === "single") {
+          orderedVisible.push(entry.app);
+        } else {
+          for (const member of entry.items) {
+            orderedVisible.push(member);
+            memberSetKey.set(member.id, `${column.key}:${entry.company}`);
+          }
+        }
+      }
+    } else {
+      orderedVisible.push(...items);
+    }
+  }
+  const detailIndex =
+    detailApp === null ? -1 : orderedVisible.findIndex((a) => a.id === detailApp.id);
+
+  /** ↑/↓ from the detail: move to the neighbouring visible card, clamped at
+   *  the ends. Landing on a member of a collapsed employer set opens the set
+   *  first — the "you are here" mark must never sit on a row that is not on
+   *  screen, which is where a naive pane breaks on the grouped board. */
+  const traverseDetail = (delta: -1 | 1) => {
+    if (detailIndex === -1) return;
+    const next = orderedVisible[detailIndex + delta];
+    if (!next) return;
+    const setKey = memberSetKey.get(next.id);
+    if (setKey !== undefined && openSets[setKey] !== true) {
+      setOpenSets((s) => ({ ...s, [setKey]: true }));
+    }
+    setDetailApp(next);
+  };
+
+  /** The docked pane is open: rows fold their stage select + Gmail slot to
+   *  pay for its width (see ApplicationRow). Never true below `xl`. */
+  const detailPaneOpen = interactive && detailDocked && detailApp !== null;
+
   /** One application row in its animated cell. `inSet` rows sit inside an
    *  employer set: the header owns the company-level affordance, so the
    *  member's own chip is suppressed. */
@@ -596,6 +674,8 @@ export function PipelineBoard({
             today={today}
             transport={transport}
             onOpenDetail={setDetailApp}
+            folded={detailPaneOpen}
+            detailOpen={detailApp !== null && detailApp.id === app.id}
             inSet={inSet}
             sameCompanyCount={inSet ? 0 : sameCompanyCount(app)}
             sameCompanyLabel={chip?.label ?? null}
@@ -1023,15 +1103,32 @@ export function PipelineBoard({
             </div>
           </LayoutGroup>
         </div>
-      </div>
 
-      {interactive ? (
-        <ApplicationDetail
-          app={detailApp}
-          onClose={() => setDetailApp(null)}
-          transport={transport}
-        />
-      ) : null}
+        {/* --- The detail (#157) -------------------------------------------
+            Mounted INSIDE the body row: at `xl+` it docks here, a pane
+            beside the worklist — the board stays readable and usable while a
+            card is open, which is the whole decision (the modal overlay's
+            exclusivity contract was the complaint). Below `xl` the same
+            component renders the fixed-position sheet, which ignores this
+            flex row entirely. In the locked variant the pane inherits the
+            row's height and scrolls itself; in flow it rides sticky like the
+            spine. Floors are height-based, so a pane that only spends width
+            cannot threaten them. */}
+        {interactive ? (
+          <ApplicationDetail
+            app={detailApp}
+            onClose={() => setDetailApp(null)}
+            docked={detailDocked ? variant : false}
+            position={
+              detailIndex === -1
+                ? null
+                : { index: detailIndex, count: orderedVisible.length }
+            }
+            onTraverse={traverseDetail}
+            transport={transport}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

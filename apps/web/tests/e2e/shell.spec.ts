@@ -398,6 +398,42 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
   }
 
   /**
+   * #157: the docked detail pane spends WIDTH, never height and never the
+   * document. Opened at the `xl` floor, both locks must read exactly as they
+   * do closed — the pane sits beside the list as its own scroller, the
+   * sheet's modal overlay is gone at this width, and nothing extends the
+   * document. The worklist share is asserted by EQUALITY against its own
+   * closed reading, not against the floor: the floor's ~7px slack has let
+   * height regressions through green before.
+   */
+  test("the docked detail pane holds the lock and the worklist's exact share at 1280×800", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    const closed = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+
+    await page
+      .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
+      .click();
+    const detail = page.getByTestId("application-detail");
+    await expect(detail).toBeVisible();
+    // Docked means NOT modal: no dialog role, no backdrop dimming the board.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    const doc = await docHeights(page);
+    expect(
+      doc.scroll,
+      `document scrolls with the pane open: scrollHeight=${doc.scroll} > clientHeight=${doc.client}`,
+    ).toBeLessThanOrEqual(doc.client + 1);
+
+    const open = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+    expect(open, "the docked pane changed the worklist's height").toBe(closed);
+  });
+
+  /**
    * Text integrity across the dashboard's two chrome surfaces: every sentence
    * the pulse band and the arrival line render is WHOLE at the desktop widths
    * a reader actually has. This suite could not see the failure before:

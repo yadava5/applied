@@ -177,6 +177,8 @@ export function ApplicationRow({
   dragging = false,
   onDragStart,
   onDragEnd,
+  folded = false,
+  detailOpen = false,
   transport = liveBoardTransport,
 }: {
   app: Application;
@@ -212,6 +214,17 @@ export function ApplicationRow({
   dragging?: boolean;
   onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd?: () => void;
+  /** True while the detail pane is DOCKED open beside the list (`xl+`, see
+   *  #157): the row folds its stage select + Gmail slot — the 176px that buy
+   *  the pane its width. Nothing is lost while folded: the pane carries its
+   *  own working stage control and Gmail link for the open card, and every
+   *  other row is one click from being that card. The board only sets this
+   *  when the pane is actually docked, so no breakpoint prefix is needed. */
+  folded?: boolean;
+  /** True when this row is the card open in the detail pane — the "you are
+   *  here" mark (border steps to `line-strong`, the same delta as hover),
+   *  and the scroll target while ↑/↓ traverse the list. */
+  detailOpen?: boolean;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
 }) {
@@ -232,6 +245,15 @@ export function ApplicationRow({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const committing = useRef(false);
   const refocusTrigger = useRef(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  // The highlight follows ↑/↓: when this row becomes the open card, keep it
+  // on screen. `nearest` scrolls the worklist the minimum distance and leaves
+  // every other scroll context alone; instant on purpose — rapid traversal
+  // must not queue smooth scrolls, and instant needs no reduced-motion fork.
+  useEffect(() => {
+    if (detailOpen) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [detailOpen]);
 
   // Server data caught up (to our value or to a different one): drop the
   // overlay and show the truth. Both arms matter — without the second, a
@@ -468,12 +490,16 @@ export function ApplicationRow({
 
   return (
     <div
+      ref={rowRef}
       aria-busy={busy !== null}
       draggable={onDragStart ? true : undefined}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       data-dragging={dragging || undefined}
-      className="board-row group/row relative flex flex-col gap-y-1.5 rounded-lg border border-line-soft bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:pr-1.5"
+      data-detail-open={detailOpen || undefined}
+      className={`board-row group/row relative flex flex-col gap-y-1.5 rounded-lg border ${
+        detailOpen ? "border-line-strong" : "border-line-soft"
+      } bg-surface-2 py-2 pl-3 pr-2 transition-colors hover:border-line-strong sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:pr-1.5`}
       style={{ borderLeft: `2px solid color-mix(in oklab, ${stage.color} 55%, transparent)` }}
     >
       {/* A row is an APPLICATION: company anchors it, the role discriminates
@@ -521,32 +547,42 @@ export function ApplicationRow({
         <span className="hidden sm:inline">
           <FiledStamp filed={filed} status={shownStatus} today={today} />
         </span>
-        <StageSelect
-          id={app.id}
-          company={app.company}
-          value={shownStatus}
-          disabled={busy !== null}
-          busy={busy === "status"}
-          onChange={onStatusChange}
-        />
-        {app.url ? (
-          <a
-            href={app.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Open the mail behind ${app.company} in Gmail`}
-            title="open in gmail"
-            className="grid h-6 w-6 place-items-center rounded text-dim transition-colors hover:bg-surface hover:text-strong"
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-          </a>
-        ) : (
-          // A rowed-up board needs this slot even when there is no mail to
-          // open — a hole here shifts the select column 32px on manual rows.
-          // Phone rows drop it: the controls line is left-anchored, not a
-          // column, and the space matters more.
-          <span className="hidden h-6 w-6 sm:block" aria-hidden="true" />
-        )}
+        {/* The fold (#157): while the detail pane is docked open, the select
+            and the Gmail slot leave — the pane holds both for the open card,
+            and their 176px (select 136 + slot 24 + two gaps) is exactly the
+            width the pane borrows from every row. Unmounted, not hidden:
+            the select is controlled and prop-driven, so it re-mounts on the
+            exact value it left. */}
+        {!folded ? (
+          <StageSelect
+            id={app.id}
+            company={app.company}
+            value={shownStatus}
+            disabled={busy !== null}
+            busy={busy === "status"}
+            onChange={onStatusChange}
+          />
+        ) : null}
+        {!folded ? (
+          app.url ? (
+            <a
+              href={app.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open the mail behind ${app.company} in Gmail`}
+              title="open in gmail"
+              className="grid h-6 w-6 place-items-center rounded text-dim transition-colors hover:bg-surface hover:text-strong"
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+            </a>
+          ) : (
+            // A rowed-up board needs this slot even when there is no mail to
+            // open — a hole here shifts the select column 32px on manual rows.
+            // Phone rows drop it: the controls line is left-anchored, not a
+            // column, and the space matters more.
+            <span className="hidden h-6 w-6 sm:block" aria-hidden="true" />
+          )
+        ) : null}
         <RowActionsMenu
           label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
           items={menuItems}
