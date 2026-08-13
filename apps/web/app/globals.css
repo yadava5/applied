@@ -64,6 +64,16 @@
    * helpers for what it replaced and how it was measured. 12.52 / 12.05 /
    * 11.56:1 on background / surface / surface-2. */
   --focus-ring: #c9ced6;
+  /* Scrollbar thumb — the one piece of chrome every scroll pane shares (the
+   * scrollbar block below the focus rules). A non-text indicator, so the
+   * floor is WCAG 1.4.11's 3:1, not the text ramp's Lc 60 — and it has to
+   * stay UNDER the ramp: a scrollbar brighter than the rows beside it was
+   * the complaint. Measured composited on every ground a scroller sits on:
+   * resting 3.01:1 on background, 3.08:1 on surface, 3.13:1 on surface-2
+   * (≈#5d5d5e — well below --text-dim, furniture not content); engaged
+   * 5.30 / 5.36 / 5.30:1. */
+  --scroll-thumb: rgb(255 255 255 / 0.34);
+  --scroll-thumb-hover: rgb(255 255 255 / 0.5);
   /* Data-viz sub-palette — the three classifier layers get their own
    * categorical hues so the pipeline reads as data, not just mono text. */
   --viz-rules: #38bdf8; /* layer 1 — regex rules, instant */
@@ -104,6 +114,8 @@
   --red-ink: #fca5a5;
   --stage-applied: #b3b9c2;
   --focus-ring: #c9ced6;
+  --scroll-thumb: rgb(255 255 255 / 0.34);
+  --scroll-thumb-hover: rgb(255 255 255 / 0.5);
   --viz-rules: #38bdf8;
   --viz-embeddings: #a78bfa;
   --viz-setfit: #34d399;
@@ -160,6 +172,11 @@
    * why the token is re-grounded rather than shared. Measured 9.51 / 9.93 /
    * 9.03:1 on background / surface / surface-2. */
   --focus-ring: #3f434b;
+  /* Ink thumb on paper, same 3:1 non-text floor as the dark pair above.
+   * Measured on the paper grounds: resting 3.22:1 on background, 3.23:1 on
+   * surface, 3.18:1 on surface-2; engaged 5.26 / 5.33 / 5.22:1. */
+  --scroll-thumb: rgb(0 0 0 / 0.44);
+  --scroll-thumb-hover: rgb(0 0 0 / 0.58);
   --viz-rules: #0284c7;
   --viz-embeddings: #7c3aed;
   --viz-setfit: #059669;
@@ -289,6 +306,63 @@ body {
  * the offset above outranks it. */
 .focus-inset:focus-visible {
   outline-offset: -2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Scrollbars — one definition for every scroll context: the worklist, the
+ * docked detail pane, the change ledger, the pulse detail panel, the shell's
+ * <main> pane (inbox, settings, import — flow pages scroll HERE, not on a box
+ * of their own), the sidebar's short-viewport valve, dialog overlays, the
+ * settings tab strip, and the landing/privacy documents. Left to the UA under
+ * macOS "Show scroll bars: Always", the worklist wore a wide system-grey
+ * bar — the brightest object on the near-black theme, hard against the row
+ * actions. Styled, the track dissolves into the pane's own ground and the
+ * thumb is a 5px pill floated 3px off every edge, so the bar reads as column
+ * geometry rather than an OS artifact.
+ *
+ * Quiet, not gone: the worklist is ~40 rows in a locked viewport and the
+ * thumb is the only statement of how much lies below, so `--scroll-thumb`
+ * holds a measured 3:1 on its grounds (numbers with the tokens) while
+ * staying far under the text ramp.
+ *
+ * Two engines, mutually exclusive ON PURPOSE. Chrome/Safari take the
+ * `::-webkit-scrollbar` parts — the only control over track, inset and
+ * radius. A non-`auto` `scrollbar-width`/`scrollbar-color` makes Chrome
+ * DISCARD those parts wholesale, so the standard properties are fenced to
+ * the engine without the pseudo-elements (Firefox). Styling the webkit parts
+ * also makes the bar classic — it takes its own 11px column of layout
+ * instead of painting over content — for every visitor, which is the overlap
+ * half of the fix, and why an overlay-scrollbar machine now renders the same
+ * geometry an "Always" machine does.
+ * ------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  /* The float: content-box clip keeps the pill off content and pane edge. */
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-color: var(--scroll-thumb);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scroll-thumb-hover);
+}
+/* Where a vertical and horizontal bar meet Chrome paints the corner
+ * UA-white — a bright square on the dark theme — unless told otherwise. */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
 }
 
 /* ---------------------------------------------------------------------------
