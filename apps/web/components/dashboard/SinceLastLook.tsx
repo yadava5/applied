@@ -678,16 +678,18 @@ export function SinceLastLook({
                 );
               })}
             </dl>
-
-            {/* The ledger reads one bounded page, so it says which page — the
-                same disclosure, in the same words, as the board and the pulse
-                band. */}
-            {scopeNote ? (
-              <p className="tabular mt-3.5 border-t border-line pt-2.5 text-xs text-dim">
-                reads the {scopeNote} · older rows aren&apos;t loaded
-              </p>
-            ) : null}
           </div>
+
+          {/* The ledger reads one bounded page, so it says which page — the
+              same disclosure, in the same words, as the board and the pulse
+              band. Deliberately OUTSIDE the scroller: it is the caveat on
+              everything above it, and a caveat that can scroll out of view is
+              one the reader can miss entirely. */}
+          {scopeNote ? (
+            <p className="tabular mt-3.5 shrink-0 border-t border-line pt-2.5 text-xs text-dim">
+              reads the {scopeNote} · older rows aren&apos;t loaded
+            </p>
+          ) : null}
         </div>
       ) : null}
     </section>
