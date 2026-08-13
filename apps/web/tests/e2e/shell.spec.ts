@@ -385,34 +385,86 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
   }
 
   /**
-   * Caption integrity: every sentence the band renders is WHOLE at both
-   * desktop boundaries. This suite could not see the failure before:
+   * Text integrity across the dashboard's two chrome surfaces: every sentence
+   * the pulse band and the arrival line render is WHOLE at the desktop widths
+   * a reader actually has. This suite could not see the failure before:
    * `truncate` is CSS ellipsis — textContent survives it and the box stays
    * visible, so `getByText(...).toBeVisible()` stays green while the pixels
    * read "nothing …" (shipped exactly so at 1024×768: 60.8px of the
    * auto-filed sentence gone with 178 tests passing, because demo.spec only
    * ever looks at the config's 1440×900, where nothing truncates). The one
-   * observable that moves with the pixels is scrollWidth > clientWidth on
-   * the caption box, so that is what this asserts — at the xl floor and the
-   * lg boundary, across every state the fixtures can render: seed, the
-   * early-search projection, and the held-verdicts branch (`?review=3`, the
-   * harness knob that exists because no other testable surface renders that
-   * control).
+   * observable that moves with the pixels is scrollWidth > clientWidth on the
+   * box, so that is what this asserts — across every state the fixtures can
+   * render: seed, the early-search projection, and the held-verdicts branch
+   * (`?review=3`, the harness knob that exists because no other testable
+   * surface renders that control).
+   *
+   * WHAT IT MEASURES, AND WHY THAT LIST GREW. Until 2026-08-13 the selector
+   * was `[data-testid="pulse-caption"]` — four nodes, one per cell — and it
+   * passed CLEAN at 1024 (118/118, 137/137, 129/129, 165/165) while the
+   * deadline cell's company name, two nodes away and outside the selector,
+   * was clipped to a rendered width of ZERO against an intrinsic 80px: the
+   * band drew `next ·  overdue 2d`, a sentence with a dangling separator and
+   * no subject. A gate that measures four of a surface's nodes and calls the
+   * surface clean is the defect it was written to prevent. It now measures
+   * EVERY truncating node in the band, which is what `truncate` marks, minus
+   * the labels — those carry `data-clip-ok` because they give way by design
+   * (the auto-filed label measures 191px against a 171px cell at 1024; see
+   * PulseCell). A node that starts truncating tomorrow is covered the day it
+   * is written, without anyone remembering to add a testid.
+   *
+   * Its one blind spot, stated rather than implied: a node with no `truncate`
+   * overflows VISIBLY instead of ellipsising, and scrollWidth === clientWidth
+   * says nothing about it. The empty-state captions ("no open applications",
+   * "nothing due · set one in a card") are in that class.
+   *
+   * WHY THREE VIEWPORTS. 1280 is the commonest laptop and the `xl` floor;
+   * 1024 is the `lg` boundary and the band's narrowest cells. 1240 is neither
+   * — it is where the header row's LAST flex-wrap collapses, measured by an
+   * 8px sweep of 1024→1440: the arrival line's slot drops from 320px to
+   * 161px there against a 194px sentence, and a gate that samples only the
+   * two round numbers sees a clean line on both sides of a 33px clip. Do not
+   * delete it as redundant with 1280.
    *
    * Mutation-tested at introduction (dev Chromium, 2026-08-12): re-pinning
    * the auto-filed bar to the shipped defect (`w-16 shrink-0`, no xl gate)
    * reads +62px overflow at 1024×768 (+46px on the ageing caption, +51px on
    * the review branch) and +13px at 1280×800 → red at both widths; restored
-   * → 0 everywhere. Labels are deliberately not covered:
-   * the auto-filed label measures 191px against a 171px cell at 1024 and
-   * gives way by design (PulseCell's own note says why).
+   * → 0 everywhere. Re-tested on the widened selector (`next start`,
+   * headless Chrome, 2026-08-13): reverting the deadline cell's reflow reads
+   * 80px of overflow on the company name at 1024 and 30px at 1280, and
+   * reverting the arrival line's middle rung reads 26px at 1280 and 33px at
+   * 1240 — red at every viewport; restored → 0 everywhere.
    */
+
+  /** Every node on a surface that ellipsises, measured in place — never a
+   *  clone, which loses the inherited `font-size` and inflates every reading
+   *  by ~11%. Nodes the CSS has hidden are dropped rather than measured as
+   *  0/0, which would pad the count with readings that cannot fail. */
+  const clipped = (page: Page, selector: string) =>
+    page.locator(selector).evaluateAll((els) =>
+      els
+        .filter((el) => el.getClientRects().length > 0)
+        .map((el) => ({
+          text: (el.textContent ?? "").trim(),
+          client: el.clientWidth,
+          scroll: el.scrollWidth,
+          lost: el.scrollWidth - el.clientWidth,
+        })),
+    );
+
+  const BAND_TEXT = '[data-testid="pipeline-pulse"] .truncate:not([data-clip-ok])';
+  const ARRIVAL_TEXT = '[data-testid="since-last-look"] .truncate';
+
   for (const viewport of [
-    { width: 1280, height: 800 },
+    { width: 1280, height: 800 }, // the xl floor, and the commonest laptop
+    { width: 1240, height: 800 }, // the header row's narrowest arrival slot
     { width: 1024, height: 768 }, // the lg boundary — the band's narrowest cells
   ]) {
-    test(`the band's captions render whole at ${viewport.width}×${viewport.height} in every fixture state`, async ({
+    const at = `${viewport.width}×${viewport.height}`;
+    test(`the band and the arrival line render whole at ${at} in every fixture state`, async ({
       page,
+      browser,
     }) => {
       await page.setViewportSize(viewport);
       for (const route of ["/demo/shell", "/demo/shell?pipeline=early", "/demo/shell?review=3"]) {
@@ -425,19 +477,96 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           await expect(page.getByRole("link", { name: /3 held for review/ })).toBeVisible();
         }
 
+        // One value line per cell at every width, hidden or not: the deadline
+        // cell hands its line to the named row below `xl`, and this is what
+        // catches a cell that hands it over and puts nothing there.
         const captions = page.getByTestId("pulse-caption");
         await expect(captions, `${route}: one caption per cell`).toHaveCount(4);
-        const measured = await captions.evaluateAll((els) =>
-          els.map((el) => ({
-            text: (el.textContent ?? "").trim(),
-            clipped: el.scrollWidth - el.clientWidth,
-          })),
-        );
-        for (const cap of measured) {
+
+        const band = await clipped(page, BAND_TEXT);
+        // Positive control on the SELECTOR, not just on the numbers: the
+        // deadline cell's own text has to be IN the measured set, in whichever
+        // branch this fixture renders — the named row on the seeded board, the
+        // honest empty state on the early-search one, which carries no due
+        // dates at all. Without this, a refactor that drops `truncate` from
+        // the company name silently un-covers the exact node this gate was
+        // widened for and every reading stays green, which is the failure the
+        // widening exists to end.
+        const deadlineText = route.includes("pipeline=early")
+          ? "nothing due · set one in a card"
+          : "Tidewater Labs";
+        expect(
+          band.map((node) => node.text),
+          `${route} @ ${at}: the band's truncating nodes`,
+        ).toContain(deadlineText);
+        expect(band.length, `${route} @ ${at}: too few nodes measured`).toBeGreaterThanOrEqual(4);
+
+        for (const node of band) {
           expect(
-            cap.clipped,
-            `${route} @ ${viewport.width}px: "${cap.text}" loses ${cap.clipped}px to ellipsis`,
+            node.lost,
+            `${route} @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
           ).toBeLessThanOrEqual(0);
+        }
+      }
+
+      // --- the arrival line, in BOTH of the states a fixture can reach -----
+      //
+      // A CONTEXT OF ITS OWN PER STATE, and one navigation per load. This
+      // line's branch is a function of `localStorage` and of how many times
+      // the component has MOUNTED, so it cannot be measured on the page the
+      // loop above just drove — the first version of this gate tried, by
+      // clearing storage and reloading, and was red in CI while green here.
+      // Measured under `next dev` (2026-08-13), which is what CI serves:
+      //
+      //   · clear + reload renders the QUIET branch even when the clear is
+      //     verified to have worked. `next dev` mounts the component twice;
+      //     the first mount writes the seed, the second finds it, takes the
+      //     "nothing to report" path and rewrites it WITHOUT `seed`, and
+      //     `seeded` is false from then on. A production build mounts once,
+      //     which is why `next start` passed and CI did not;
+      //   · the loop's own page is worse than useless for this: it crosses
+      //     TWO fixture boards (`?pipeline=early`), so the stored snapshot
+      //     describes a different board and the line renders the LOUD branch
+      //     instead — observed once in four runs.
+      //
+      // A fresh context with one navigation IS the declared first-visit
+      // condition, and it measured 6/6 deterministic; one reload on top of it
+      // measured 4/4 for the returning state. No fixture knob is needed —
+      // unlike `?review=N`, this branch does render on a reachable surface,
+      // as long as the surface is reached exactly once.
+      const { baseURL, timezoneId } = test.info().project.use;
+      for (const { state, loads, says } of [
+        { state: "first run", loads: 1, says: "No earlier visit" },
+        { state: "returning", loads: 2, says: "Nothing new" },
+      ]) {
+        const context = await browser.newContext({ viewport, baseURL, timezoneId });
+        try {
+          const own = await context.newPage();
+          for (let load = 0; load < loads; load += 1) {
+            if (load === 0) await own.goto("/demo/shell");
+            else await own.reload();
+            await expect(own.getByTestId("since-last-look")).toBeVisible();
+          }
+          // The state is asserted BEFORE anything is measured: an un-asserted
+          // measurement of the wrong branch is how the band's own gate stayed
+          // green through a defect, and all three branches of this line are
+          // distinguishable by their first two words.
+          await expect(
+            own.getByTestId("since-last-look"),
+            `the ${state} branch did not render`,
+          ).toContainText(says);
+
+          const measured = await clipped(own, ARRIVAL_TEXT);
+          expect(measured.length, `${state} @ ${at}: nothing measured`).toBe(1);
+          for (const node of measured) {
+            expect(node.text.length, `${state} @ ${at}: empty line measured`).toBeGreaterThan(0);
+            expect(
+              node.lost,
+              `${state} @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
+            ).toBeLessThanOrEqual(0);
+          }
+        } finally {
+          await context.close();
         }
       }
     });

@@ -57,7 +57,10 @@ import { stageOf, type PulseRow } from "@/lib/dashboard/summary";
  * (see SegmentBar). The words lose nothing the drawings said — every bar's
  * aria restates its caption's numbers — except the momentum cell's 8-week
  * shape, the one honest casualty; its delta sentence keeps that signal
- * until `xl` returns the bars.
+ * until `xl` returns the bars. The deadline cell's bucket counts wait for
+ * `xl` on the same terms and for the same reason: below it, that cell's
+ * second line is the only place the most urgent row can be NAMED, and a
+ * named row is worth more there than three numbers (see the cell).
  *
  * Rows arrive as {@link PulseRow} — the projection of a board row this
  * component actually reads; callers holding full rows pass them as-is
@@ -153,10 +156,28 @@ function SegmentBar({
 }
 
 /**
- * One cell of the band: caps label (with an optional right-aligned aside on
- * the same line — the deadline cell's "act on this today" slot), then one
- * content line. Two lines, `py-2` — the whole band's height budget lives
- * here, because every pixel it grows comes out of the worklist below it.
+ * One cell of the band: caps label (with an optional aside — the deadline
+ * cell's "act on this today" slot), then one content line. TWO LINES, `py-2`
+ * — the whole band's height budget lives here, because every pixel it grows
+ * comes out of the worklist below it.
+ *
+ * A grid rather than two flex rows, so the aside can change WHICH line it is
+ * on without existing twice. From `xl` it rides the label's own line, exactly
+ * as it always has; below `xl` it drops to the second line and takes the
+ * cell's full measure, because there it cannot share a line with the label
+ * and still say anything (measured: at 1024×768 the label + gap leave the
+ * aside 83px against the 97px its two fixed parts alone need, which is how
+ * the company name arrived at ZERO — see the deadlines cell). One node, two
+ * placements: a display-none twin would duplicate the row's name in the
+ * accessibility tree and in every `getByText`.
+ *
+ * The two-line budget survives that move because THIS component pairs it, not
+ * its callers: a cell whose aside has taken the second line hides its own
+ * content line there. Left to the caller it was got wrong immediately — the
+ * content wrapper stayed in flow while its only child was hidden, which is a
+ * zero-height row that still costs a `gap-y-1`, and the band measured 60px at
+ * 1024 against 55px everywhere else. A wrapper that renders nothing must not
+ * hold a row; the cell that owns the layout is the one that can promise it.
  */
 function PulseCell({
   label,
@@ -168,15 +189,30 @@ function PulseCell({
   children: ReactNode;
 }) {
   return (
-    <div className="min-w-0 border-line-soft px-3 py-2 first:pl-0 last:pr-0 [&+&]:border-l">
-      <div className="flex items-baseline justify-between gap-2">
-        {/* A cell WITH an aside keeps its (short) label whole and lets the
-            aside truncate; a cell without one lets the label give way at the
-            narrowest lg widths instead of bleeding into its neighbour. */}
-        <h2 className={aside ? "label-caps shrink-0" : "label-caps min-w-0 truncate"}>{label}</h2>
-        {aside}
+    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 border-line-soft px-3 py-2 first:pl-0 last:pr-0 [&+&]:border-l xl:items-baseline">
+      {/* `data-clip-ok`: labels are the one text in this band allowed to
+          ellipsize — the auto-filed label measures 191px against a 171px cell
+          at 1024 and gives way BY DESIGN rather than bleeding into its
+          neighbour. The caption-integrity gate reads this attribute; nothing
+          else in the band carries it. */}
+      <h2
+        data-clip-ok=""
+        className="label-caps col-span-2 row-start-1 min-w-0 truncate xl:col-span-1"
+      >
+        {label}
+      </h2>
+      {aside ? (
+        <div className="col-span-2 row-start-2 min-w-0 xl:col-span-1 xl:col-start-2 xl:row-start-1">
+          {aside}
+        </div>
+      ) : null}
+      <div
+        className={`col-span-2 flex min-w-0 items-center gap-2 ${
+          aside ? "row-start-2 max-xl:hidden" : "row-start-2"
+        }`}
+      >
+        {children}
       </div>
-      <div className="mt-1 flex min-w-0 items-center gap-2">{children}</div>
     </div>
   );
 }
@@ -323,17 +359,54 @@ export function PipelinePulse({
       </PulseCell>
 
       {/* deadlines — the label tail is cut here (unlike its siblings) to make
-          room for the one thing on this surface to act on today, named on the
-          label's own line: the row with the smallest days-left, so an overdue
-          row outranks everything until it is dealt with. */}
+          room for the one thing on this surface to act on today: the row with
+          the smallest days-left, so an overdue row outranks everything until
+          it is dealt with.
+
+          WHERE that row is named moves with the width, because at the lg
+          boundary it cannot be named on the label's own line at all. Measured
+          on /demo/shell (`next start`, headless Chrome, 2026-08-13), the cell
+          is (viewport − 288) / 4 wide and the aside gets (cell − 24) − 76:
+          148px at 1280 and 83px at 1024, against 177px for the full phrase.
+          The company name is the only part that may shrink, so it took the
+          whole shortfall — 50px of its 80px at 1280, and ZERO at 1024, where
+          the cell read `next ·  overdue 2d`: a sentence with a dangling
+          separator and no subject, which is worse than any ellipsis. So:
+
+            · below `xl` the row is named on the cell's OWN line (the full
+              measure, 160px at 1024 against the 137px name + phrase need) and
+              the bucket counts wait for `xl` — the same trade, in the same
+              words, that every bar in this band already makes. The counts are
+              context; the name is the thing to act on, and the ageing cell's
+              amber "quiet" still carries the same board's stalling signal;
+            · `next ·` waits for 1440, the width at which it measured 11px of
+              slack rather than 1px. Between `xl` and there the label, the name
+              and the phrase say the whole thing without it.
+
+          The name is never allowed to reach zero again at any width the band
+          renders; `shell.spec.ts`'s caption-integrity gate measures it. */}
       <PulseCell
         label="deadlines"
         aside={
           due.urgent ? (
             // The phrase is the urgent part, so it never truncates; a long
-            // company name gives way instead.
-            <p className="flex min-w-0 items-baseline gap-1 text-xs leading-snug text-muted">
-              <span className="shrink-0">next ·</span>
+            // company name gives way instead — but only down to what the
+            // cell's own line leaves it, never to nothing.
+            //
+            // Same type as every other caption in the band (11px on the same
+            // 16px line below `xl`), because below `xl` this IS the cell's
+            // caption line and sat one notch louder than its three siblings.
+            // `justify-end` only from `xl`, where it shares the label's line
+            // and has always sat at the cell's right edge.
+            // `h-[1lh]`: ONE line box of this element's own type, the same
+            // guarantee SinceLastLook's ArrivalLine makes and for the same
+            // reason — baseline-aligning 11px prose against a 10px mono stamp
+            // sums the larger ascent to the larger descent and returns a 17px
+            // box, which on its own row cost the band a pixel it does not
+            // have. Pinning the line means the type inside can change without
+            // the worklist paying for it.
+            <p className="flex h-[1lh] min-w-0 items-baseline gap-1 text-[11px]/4 text-muted xl:justify-end xl:text-xs">
+              <span className="hidden shrink-0 min-[1440px]:inline">next ·</span>
               <span className="min-w-0 truncate">{due.urgent.company}</span>
               <span
                 className={`tabular shrink-0 font-mono text-[10px] ${
@@ -363,6 +436,11 @@ export function PipelinePulse({
           // overdue beside ten "later" is not a 1:5 wash of red. "N overdue"
           // turns red as a unit — a red word beside a white digit would put
           // the emphasis on the wrong half.
+          //
+          // Below `xl` this line belongs to the named row instead, and
+          // PulseCell is what hands it over — it does so only when an aside
+          // exists to take it, so the counts can never stand down for an
+          // empty line. Nothing here has to know the width.
           <p
             data-testid="pulse-caption"
             className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"

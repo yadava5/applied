@@ -356,10 +356,22 @@ export function SinceLastLook({
         <ArrivalLine>
           {/* The clause that carries the fact is the whole sentence on a
               tight chip; the tail explaining what happens next is what a
-              roomier one has space for. One sentence, two lengths — never
-              two lines. */}
+              roomier one has space for. One sentence, THREE lengths — never
+              two lines — and every rung a prefix of the next, so no width
+              gets a differently-worded claim.
+
+              The middle rung exists because this chip's room is not a
+              function of the viewport: the header row wraps, and where it
+              wraps depends on the row-mates (see the `@container` note on
+              the loud state). Swept at 8px steps from 1024 to 1440 on
+              /demo/shell (`next start`, headless Chrome, 2026-08-13), the
+              slot collapses at each wrap boundary — 168px at 1080 and 161px
+              at 1240 — against 227px for the full sentence, so it lost up to
+              66px to the ellipsis and read "…in this brows". Between those
+              boundaries it holds 227px+ and says the whole thing. */}
           <p className="min-w-0 truncate text-dim">
-            No earlier visit recorded in this browser
+            No earlier visit
+            <span className="hidden @[16rem]:inline"> recorded in this browser</span>
             <span className="@[34rem]:hidden">.</span>
             <span className="hidden @[34rem]:inline">
               {" "}
@@ -382,7 +394,19 @@ export function SinceLastLook({
       >
         <ArrivalLine>
           <p className="min-w-0 truncate text-muted">
-            Nothing new since <span className="font-mono text-[11px] text-dim">{moment}</span>
+            {/* Same ladder as the first-run line above, and the moment rides
+                the SAME rung as the clause that introduces it: "Nothing new
+                since" with the moment ellipsised is a sentence whose object
+                has been cut off, which is the defect this pass exists to
+                remove — not a shorter way of saying it. Measured, this line
+                lost 33px at 1240 and 26px at 1080. `16rem` clears the
+                longest moment `momentLabel` can build ("yesterday 12:56 pm")
+                as well as today's, with room to spare. */}
+            Nothing new
+            <span className="hidden @[16rem]:inline">
+              {" "}
+              since <span className="font-mono text-[11px] text-dim">{moment}</span>
+            </span>
             {/* The slice this reading covers, where the chip has room for it
                 — the board and the pulse carry the same disclosure, in the
                 same words, at every width. */}
