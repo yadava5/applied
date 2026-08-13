@@ -3,6 +3,7 @@
 import { ArrowRight, ChevronDown, ChevronUp } from "lucide-react";
 import {
   Fragment,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -70,6 +71,19 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * rows plus "+N more" is ~300px on a laptop — so the busiest morning was the
  * morning the board itself got pushed out of view. Now not even the asked-for
  * expansion moves the work surface.
+ *
+ * An overlay still has to say WHERE IT CAME FROM, and this one did not: it
+ * took the header row's `right-0`, so a chip sitting mid-row (measured at
+ * x=523 in a row ending at 1256) opened a 608px panel starting at x=648 —
+ * beginning 29px to the RIGHT of the trigger's own right edge, touching
+ * nothing that produced it, and swallowing the pulse band's two right-hand
+ * cells whole. It is hung on the chip now: `placePanel` measures the chip's
+ * left edge onto the panel's, the accent rule runs unbroken from one into the
+ * other, and a 30rem measure both reads better than a 38rem slab and hands the
+ * band's last cell back. It still covers the band's middle, and that is the
+ * accepted trade — the band is a summary of the same story the ledger is
+ * spelling out, it is one press from returning, and coverage bounded to the
+ * middle beats the right 60% of the band disappearing.
  *
  * The expansion is never remembered. Restoring it on the next load would
  * re-create exactly the defect this shape removes — the server cannot know it
@@ -183,27 +197,38 @@ function ArrivalLine({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * One row of the ledger, in two lines: the NEWS, then the detail.
+ *
+ * The first line is who and where it landed — short, so the stage sits hard
+ * against the name it describes. It used to be pushed to the panel's right
+ * edge by `ml-auto` while the role ate the middle, and a row of "SimpliSafe"
+ * with "● APPLIED" a hand's width away reads as two unrelated halves rather
+ * than one claim; a long role pushed the stage onto a line of its own, so no
+ * two entries broke in the same place. Adjacency is the fix, not alignment.
+ *
+ * The role gets the second line and the panel's whole measure. It wraps rather
+ * than ellipsizing — its tail is what tells two requisitions at one employer
+ * apart (see ApplicationCard) — and it carries no leading dash down here: the
+ * line break already says it is subordinate to the name above it.
+ */
 function EntryLine({ entry, today }: { entry: ChangeEntry; today: string }) {
   return (
-    <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-snug">
-      <span className="font-medium text-strong">{entry.company}</span>
-      {/* The role wraps rather than ellipsizing — its tail is what tells two
-          requisitions at one employer apart (see ApplicationCard). */}
-      <span className="min-w-0 text-muted">— {entry.position}</span>
-      {/* Its own line on a phone, a right-hand column from `sm` up: trailing
-          after a long role, it wraps somewhere different on every entry. */}
-      <span className="flex w-full items-center gap-1.5 sm:ml-auto sm:w-auto">
+    <div>
+      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-snug">
+        <span className="font-medium text-strong">{entry.company}</span>
         {entry.from !== undefined ? (
           <>
             <span className="label-caps shrink-0 text-dim">{entry.from}</span>
-            <ArrowRight className="h-3 w-3 shrink-0 text-dim" aria-hidden />
+            <ArrowRight className="h-3 w-3 shrink-0 self-center text-dim" aria-hidden />
             <span className="sr-only">to</span>
           </>
         ) : null}
         <StageWord word={entry.to} />
         {entry.dueAt ? <DueNote dueAt={entry.dueAt} today={today} /> : null}
-      </span>
-    </p>
+      </p>
+      <p className="text-[13px] leading-snug text-muted">{entry.position}</p>
+    </div>
   );
 }
 
@@ -213,6 +238,12 @@ function EntryLine({ entry, today }: { entry: ChangeEntry; today: string }) {
  *  band measures stays exactly one line. */
 const LINE_CONTROL =
   "-my-1 rounded py-1 underline-offset-4 hover:text-strong hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong";
+
+/** Breathing room between the panel's bottom edge and the screen's, and the
+ *  measures below which it stops giving way and scrolls instead. */
+const PANEL_GUTTER = 16;
+const PANEL_MIN_HEIGHT = 160;
+const PANEL_MIN_WIDTH = 320;
 
 export function SinceLastLook({
   rows,
@@ -258,6 +289,77 @@ export function SinceLastLook({
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+
+  /**
+   * Hang the panel on the chip's OWN rule, and bound it to the screen.
+   *
+   * The panel is anchored to SyncBar's header row (see the `@container` note
+   * below for why it must not be the chip), and it used to take that row's
+   * `right-0` — so a chip sitting mid-row opened a panel against the far right
+   * edge, 29px clear of the trigger that opened it and detached from anything.
+   * This puts its left edge on `section.offsetLeft` instead: the chip's box,
+   * not the button's (`pl-2` inside the rule would miss by 10px), so the 2px
+   * accent down this panel's left side is collinear with the one down the chip
+   * and the two read as one stroke.
+   *
+   * The chip's own left offset is not a constant — it is whatever the title
+   * and the totals leave — so the fit is MEASURED here rather than assumed.
+   * When the 30rem measure would run past the row, the panel gives up WIDTH
+   * before it gives up alignment: sliding it left instead would break the one
+   * stroke that says which chip opened it, and the alignment is the whole
+   * repair. At 1024 — the tightest desktop, where the chip starts 259px into a
+   * 736px row — that is a 477px panel flush with the board's right edge rather
+   * than a 3px dogleg in a 2px rule. Below `PANEL_MIN_WIDTH` there is no
+   * alignment left worth protecting (at 768 the aligned measure is 221px), so
+   * it slides instead and takes the room. Height is capped the same way,
+   * against what is left of the screen, so a busy morning scrolls inside the
+   * panel instead of running off the bottom of a shell that must never scroll
+   * (#149).
+   * Everything is read against one `offsetParent`, so there is no viewport
+   * arithmetic to disagree with a scroll.
+   *
+   * A ref callback rather than a layout effect: it runs after insertion and
+   * before paint (so the panel never flashes at the row's left edge first),
+   * and it costs no `useLayoutEffect`, which warns on the server pass.
+   */
+  const placePanel = useCallback((panel: HTMLDivElement | null) => {
+    panelRef.current = panel;
+    const section = sectionRef.current;
+    const row = panel?.offsetParent;
+    if (!panel || !section || !(row instanceof HTMLElement)) return;
+    // Cleared first so this reads the measure the STYLESHEET asks for, not the
+    // cap a previous pass left behind — the 30rem lives in one place.
+    panel.style.maxWidth = "";
+    const room = row.clientWidth - section.offsetLeft;
+    const left =
+      room >= PANEL_MIN_WIDTH
+        ? section.offsetLeft
+        : Math.max(0, row.clientWidth - panel.offsetWidth);
+    panel.style.left = `${left}px`;
+    panel.style.maxWidth = `${row.clientWidth - left}px`;
+    // The gap the accent has to jump to reach the chip. It is 18px on one line
+    // and 62px at 1024, where the sync controls wrap and take the row with
+    // them — so the connector is drawn from the measurement, never a guess.
+    panel.style.setProperty(
+      "--stem",
+      `${Math.max(0, panel.offsetTop - (section.offsetTop + section.offsetHeight))}px`,
+    );
+    panel.style.maxHeight = `${Math.max(
+      PANEL_MIN_HEIGHT,
+      window.innerHeight - panel.getBoundingClientRect().top - PANEL_GUTTER,
+    )}px`;
+  }, []);
+
+  // Re-place on resize: every number above is a measurement, and the row
+  // re-wraps at `lg`. Listening only while the panel is open, like the
+  // dismissal handlers below.
+  useEffect(() => {
+    if (!named) return;
+    const onResize = () => placePanel(panelRef.current);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [named, placePanel]);
 
   // The panel is an overlay, so it gets an overlay's exits — the same three
   // RowActionsMenu earned the hard way (see its header): Escape (which hands
@@ -426,18 +528,26 @@ export function SinceLastLook({
 
   return (
     <section
+      ref={sectionRef}
       data-testid="since-last-look"
       aria-label="Changes since your last visit"
       /* `@container` because the chip's room depends on its row-mates, not
          the viewport: the /demo row carries a wider cluster than the signed-in
          one at the same width, and a viewport breakpoint cannot know that.
-         The blue rule is the loud state's across-the-room signal — the caps
-         heading it used to carry belongs to the section's aria-label now.
+         The rule is the loud state's across-the-room signal — the caps
+         heading it used to carry belongs to the section's aria-label now, and
+         the panel below borrows the same stroke to say where it came from.
 
          Deliberately NOT `relative`: the names panel positions against the
          HEADER ROW (SyncBar's row is the nearest positioned ancestor), not
-         this chip — anchored to the chip it extended past <main>'s left edge,
-         whose implicit overflow clip cut the first label off. */
+         this chip. Two reasons, both measured. Anchored to the chip it
+         extended past <main>'s left edge, whose implicit overflow clip cut the
+         first label off; and `top-full` on this chip resolves to the bottom of
+         the ONE LINE it occupies, which at 1024 — where the sync controls wrap
+         onto a second line and the row grows from 38px to 82px — drops a z-30
+         sheet straight over the Sync button and the ⋯ menu. The row's bottom
+         clears both at every width. The chip supplies the horizontal anchor
+         only, and `placePanel` measures it. */
       className="w-full border-l-2 border-stage-applied pl-2 @container"
     >
       <ArrivalLine>
@@ -488,47 +598,95 @@ export function SinceLastLook({
         </button>
       </ArrivalLine>
 
-      {/* Opened by the reader — and even then the board holds still: the
-          panel FLOATS under the row (anchored to the chip's right edge, so it
-          opens inward over the board rather than past the pane's edge). The
-          one movement this feature used to make on request is now no
-          movement at all. */}
+      {/* Opened by the reader — and even then the board holds still: the panel
+          FLOATS under the row. The one movement this feature used to make on
+          request is now no movement at all.
+
+          WHAT MAKES IT LOOK ATTACHED, and why a shadow could not
+          -------------------------------------------------------
+          `left` is measured onto the chip (see `placePanel`), so this panel
+          and the chip that opened it stand on one vertical line — the 2px
+          `--stage-applied` rule runs down the chip, jumps the row's own gap
+          through `--stem`, and continues down the panel's full left edge. The
+          left corners stay square so that stroke reads as a straight line
+          rather than bending away at the top.
+          That rule is also the only edge on this thing that can be SEEN.
+          Measured on the dark theme: the panel's ground (`--surface` #0f1011)
+          is 1.04:1 against both the page behind it (#0a0a0b) and the worklist
+          rows it covers (`--surface-2` #141517), and the `--line` border it
+          used to wear composites to #252626 — 1.30:1 and 1.20:1, APCA Lc 0.0,
+          which is invisible. The 50px black drop shadow contributed nothing
+          either: there is no darkening a #0a0a0b page. So the sheet had no
+          boundary at all, which is what "out of focus" was. `--line-strong`
+          (#3f4041, 1.90:1 / 1.76:1) is the best border the system has and is
+          what Dialog uses for the same job; the accent rule measures 10.02:1,
+          APCA Lc -64.1, and does the rest. On a near-black UI the edge has to
+          do the work the shadow physically cannot. */}
       {named ? (
         <div
-          ref={panelRef}
+          ref={placePanel}
           id={panelId}
-          className="absolute right-0 top-full z-30 mt-2 w-[min(38rem,85vw)] rounded-xl border border-line bg-surface p-4 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)]"
+          style={{ left: 0 }}
+          className="absolute top-full z-30 mt-2 flex w-[min(30rem,calc(100vw-2rem))] flex-col rounded-r-xl border border-l-2 border-line-strong border-l-stage-applied bg-surface p-4 shadow-[0_16px_36px_-16px_rgba(0,0,0,0.9)] before:absolute before:bottom-full before:-left-0.5 before:w-0.5 before:bg-stage-applied before:content-[''] before:h-[var(--stem,0px)]"
         >
-          {/* Baseline alignment across the two columns, not a nudge: the kind
-              label is 11px caps and the entries 13px, so the grid lines their
-              first baselines up rather than their boxes. */}
-          <dl className="grid items-baseline gap-x-5 gap-y-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
-            {groups.map((group) => {
-              const shown = group.entries.slice(0, LEDGER_ROWS);
-              const hidden = group.count - shown.length;
-              return (
-                <Fragment key={group.kind}>
-                  {/* The kind, not the count: the chip is already the counts
-                      (and on its total form, the entries under each kind ARE
-                      the count) — the same number twice is the thing this
-                      dashboard removed everywhere else. */}
-                  <dt className="label-caps">{group.label}</dt>
-                  <dd className="space-y-1.5">
-                    {shown.map((entry) => (
-                      <EntryLine key={entry.id} entry={entry} today={today} />
-                    ))}
-                    {hidden > 0 ? <p className="tabular text-xs text-dim">+{hidden} more</p> : null}
-                  </dd>
-                </Fragment>
-              );
-            })}
-          </dl>
+          {/* Since WHEN, which is half of what this panel answers and is said
+              nowhere else on a real board: the chip only prints the moment
+              from `@[34rem]` up, and its slot measures 181 / 341 / 500px at
+              1024 / 1280 / 1440 — it never reaches 544. Set in the text face
+              rather than the chip's mono: there it is a bare stamp, here it is
+              the object of a sentence. */}
+          <p className="shrink-0 text-xs text-dim">
+            since <span className="tabular text-muted">{moment}</span>
+          </p>
+
+          {/* The groups scroll, the frame does not: `max-height` is measured
+              against the screen in `placePanel`, so the busiest morning is
+              bounded here instead of running off the bottom of a shell that
+              must never scroll (#149). The scroller is this inner box so the
+              stem above stays outside a clip. */}
+          <div className="mt-3 min-h-0 overflow-y-auto overscroll-contain">
+            <dl className="space-y-3.5">
+              {groups.map((group) => {
+                const shown = group.entries.slice(0, LEDGER_ROWS);
+                const hidden = group.count - shown.length;
+                return (
+                  <Fragment key={group.kind}>
+                    {/* The kind, not the count: the chip is already the counts
+                        (and on its total form, the entries under each kind ARE
+                        the count) — the same number twice is the thing this
+                        dashboard removed everywhere else.
+
+                        A run-in heading, ruled to the panel's full width, so
+                        each kind reads as one block. It used to be a 7rem
+                        column beside a 5rem gutter, which marooned a 11px caps
+                        label ~180px from the rows it named and left "+N more"
+                        hanging under nothing. The rule is an `after:` pseudo
+                        rather than a child so this element's text stays
+                        exactly the group's word. */}
+                    <dt className="label-caps flex items-center after:ml-3 after:h-px after:flex-1 after:bg-line after:content-['']">
+                      {group.label}
+                    </dt>
+                    <dd className="mt-2 space-y-2.5">
+                      {shown.map((entry) => (
+                        <EntryLine key={entry.id} entry={entry} today={today} />
+                      ))}
+                      {hidden > 0 ? (
+                        <p className="tabular text-xs text-dim">+{hidden} more</p>
+                      ) : null}
+                    </dd>
+                  </Fragment>
+                );
+              })}
+            </dl>
+          </div>
 
           {/* The ledger reads one bounded page, so it says which page — the
               same disclosure, in the same words, as the board and the pulse
-              band. */}
+              band. Deliberately OUTSIDE the scroller: it is the caveat on
+              everything above it, and a caveat that can scroll out of view is
+              one the reader can miss entirely. */}
           {scopeNote ? (
-            <p className="tabular mt-2.5 text-xs text-dim">
+            <p className="tabular mt-3.5 shrink-0 border-t border-line pt-2.5 text-xs text-dim">
               reads the {scopeNote} · older rows aren&apos;t loaded
             </p>
           ) : null}
