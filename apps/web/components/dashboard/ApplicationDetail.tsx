@@ -54,17 +54,20 @@ import { CATEGORY_META } from "@/lib/gmail/types";
  * the same vocabulary as the landing's decision trace, because it is the same
  * fact ("your inbox already holds the verdict") shown on the user's own row.
  *
- * The two geometries (#157, the accepted design — do not reopen):
+ * The two geometries (#157 — the docked SHAPE is accepted; its floor moved
+ * `xl`→`lg` once 1280 proved to sit above the owner's actual 1024px window,
+ * where the accepted pane existed and never once rendered):
  *
- *   - **Docked pane at `xl+`** (`docked` non-false): the detail sits BESIDE
+ *   - **Docked pane at `lg+`** (`docked` non-false): the detail sits BESIDE
  *     the worklist, inside the board's own row, and the board stays readable
  *     and usable while it is open. The rejected alternative was the modal
  *     overlay this replaced — an overlay's exclusivity contract was itself
  *     the complaint (opening one card cost sight of every other). The rows
  *     fold their stage select + Gmail slot while the pane is open (see
  *     `ApplicationRow`), which is how the pane buys its width.
- *   - **Sheet below `xl`** (`docked={false}`): the `Dialog` sheet, unchanged
- *     — at those widths there is no board left to keep sight of.
+ *   - **Sheet below `lg`** (`docked={false}`): the `Dialog` sheet, unchanged
+ *     — below `lg` the shell itself flows as one column, so there is no
+ *     side-by-side board left to keep sight of.
  *
  * The traversal header — "N of M · ↑ ↓" — is what makes the pane a work
  * surface rather than a popup: moving between cards never costs a close and
@@ -255,10 +258,10 @@ export function ApplicationDetail({
   app: Application | null;
   onClose: () => void;
   /**
-   * How the open detail sits at `xl+`, where the board docks it beside the
+   * How the open detail sits at `lg+`, where the board docks it beside the
    * worklist: `"locked"` fills the shell's viewport pane and scrolls inside
    * itself, `"flow"` rides sticky on a page that scrolls (the /demo twin).
-   * `false` — every width below `xl` — keeps the modal sheet. JS-driven by
+   * `false` — every width below `lg` — keeps the modal sheet. JS-driven by
    * the board's own media query, not CSS, because the two geometries differ
    * in behaviour (focus, Escape, scroll lock), not just position.
    */
@@ -760,7 +763,11 @@ export function ApplicationDetail({
         initial={reduceMotion ? false : { opacity: 0, x: 12 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-        className={`relative flex w-[24rem] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-surface outline-none ${
+        // The width ramp: 30vw from the `lg` dock floor (~307px at 1024,
+        // beside a ~409px worklist) rising to the accepted 24rem cap, which
+        // 30vw reaches exactly at 1280 — the #157 geometry is unchanged at
+        // every width where it already worked.
+        className={`relative flex w-[min(30vw,24rem)] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-surface outline-none ${
           docked === "locked"
             ? "min-h-0"
             : "sticky top-5 max-h-[calc(100dvh-2.5rem)] self-start"

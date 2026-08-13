@@ -214,7 +214,7 @@ export function ApplicationRow({
   dragging?: boolean;
   onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd?: () => void;
-  /** True while the detail pane is DOCKED open beside the list (`xl+`, see
+  /** True while the detail pane is DOCKED open beside the list (`lg+`, see
    *  #157): the row folds its stage select + Gmail slot — the 176px that buy
    *  the pane its width. Nothing is lost while folded: the pane carries its
    *  own working stage control and Gmail link for the open card, and every
