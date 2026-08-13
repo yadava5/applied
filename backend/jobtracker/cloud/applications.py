@@ -725,7 +725,7 @@ async def _misspelled_employer(session, user_id: uuid.UUID, token: str) -> str |
 
     if await _company_rows(session, user_id, token):
         return None
-    names = (
+    employers = (
         await session.exec(
             select(Application.company)
             .where(
@@ -735,7 +735,7 @@ async def _misspelled_employer(session, user_id: uuid.UUID, token: str) -> str |
             .distinct()
         )
     ).all()
-    return pipeline.near_miss_employer(token, names)
+    return pipeline.near_miss_employer(token, employers)
 
 
 async def _resolve_application(
@@ -2417,14 +2417,16 @@ async def classify_review_item(
             # prevent, reintroduced by the very change meant to make it safer.
             await _add_training_example(session, user_id, email, category)
             await session.commit()
+            # Ids only, no company strings. CodeQL's clear-text-logging rule
+            # reads an employer name reaching a log sink as private data, and it
+            # is right enough not to argue with: the two names are recoverable
+            # from this user_id and message_id by anyone entitled to them, so
+            # the line loses nothing an operator needs.
             logger.info(
                 "Review classify for user_id=%s message_id=%s named a company one "
-                "edit from an existing employer: typed=%r suggested=%r — asked "
-                "instead of filing",
+                "edit from an employer already on the board — asked instead of filing",
                 user_id,
                 message_id,
-                employer[1],
-                suggestion,
             )
             return {
                 "classified_as": category.value,

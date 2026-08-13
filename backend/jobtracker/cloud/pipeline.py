@@ -1368,14 +1368,14 @@ def near_miss_employer(token: str, existing: Iterable[str]) -> str | None:
         return None
 
     matches: list[tuple[str, str]] = []
-    for name in existing:
-        stored = _normalize_token(name or "").split(" ")[0]
+    for display in existing:
+        stored = _normalize_token(display or "").split(" ")[0]
         if len(stored) < _NEAR_MISS_MIN_LENGTH or stored == typed:
             continue
         if stored[:_NEAR_MISS_PREFIX] != typed[:_NEAR_MISS_PREFIX]:
             continue
         if _within_one_edit(typed, stored):
-            matches.append((stored, name))
+            matches.append((stored, display))
 
     return min(matches)[1] if matches else None
 
