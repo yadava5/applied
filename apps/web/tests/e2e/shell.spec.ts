@@ -67,6 +67,62 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
   const pageHeading = (page: Page) =>
     page.getByRole("heading", { level: 1, name: "Applications", exact: true });
 
+  /**
+   * WHERE the needs-review queue sits inside the worklist, read off the DOM
+   * rather than off the URL. Presence alone would be a check that cannot fail:
+   * if `?queue=before` silently rendered in the `after` slot, every assertion
+   * below would still pass and the `before` state would be the `after` state
+   * measured twice. The queue and the stage groups are all direct <section>
+   * children of the pane, so their order settles it.
+   */
+  const queuePlacement = (page: Page) =>
+    page.evaluate(() => {
+      const pane = document.querySelector('[data-testid="worklist-pane"]');
+      if (!pane) return "no pane";
+      const kids = Array.from(pane.children);
+      const queue = kids.find((el) => el.id === "needs-classification");
+      if (!queue) return "absent";
+      const firstGroup = kids.find((el) => el.tagName === "SECTION" && el !== queue);
+      if (!firstGroup) return "no stage groups";
+      return kids.indexOf(queue) < kids.indexOf(firstGroup) ? "before" : "after";
+    });
+
+  /**
+   * The fixture states the document lock is measured in.
+   *
+   * The bare route was the only one for a while, and it is why the defect
+   * #149 fixed reached production with this describe green: /demo/shell
+   * rendered a strict SUBSET of the signed-in dashboard — no review queue in
+   * either of `PipelineBoard`'s slots, because nothing passed one. A missing
+   * subtree is harder to notice than a diverged one; there is no component to
+   * compare, only an absence. `ReviewQueue` positions nothing of its own, so
+   * its `sr-only` labels resolved against the initial containing block and
+   * planted a box at document y≈1812 that no ancestor's `overflow` could clip.
+   *
+   * Both slots are driven because the live page picks between them by user
+   * preference ("Needs review alerts"), not by build. They are NOT symmetric
+   * and the asymmetry is the point: an escaped absolute lands at its static
+   * position in document coordinates, so only the `after` slot — below all 37
+   * rows — puts one past the fold. Re-measured with the fix reverted
+   * (`relative` removed from `worklist-pane`, headless Chrome, `next start`,
+   * 2026-08-13): `?queue=after` reads doc scrollHeight 1837/800, 1837/768 and
+   * 3628/812 against clientHeights of 800/768/812 → red at all three
+   * viewports; restored → 800/800, 768/768, 812/812. `?queue=before` stays
+   * green either way, which is correct and is why it is not the only state
+   * here.
+   */
+  const LOCK_STATES = [
+    { url: "/demo/shell", label: "no held mail", queue: "absent" },
+    // Four held verdicts: the fixture queue's collapse threshold, so every row
+    // renders and every escaping label is in the tree.
+    { url: "/demo/shell?review=4&queue=after", label: "review queue under the rows", queue: "after" },
+    {
+      url: "/demo/shell?review=4&queue=before",
+      label: "review queue above the rows",
+      queue: "before",
+    },
+  ] as const;
+
   for (const viewport of [
     { width: 1280, height: 800 },
     { width: 1024, height: 768 }, // the lg boundary itself — the lock's smallest desktop
@@ -77,15 +133,30 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     }) => {
       const watch = startConsoleWatch(page);
       await page.setViewportSize(viewport);
-      await page.goto("/demo/shell");
-      await expect(pageHeading(page)).toBeVisible();
 
-      const doc = await docHeights(page);
-      expect(
-        doc.scroll,
-        `document scrolls: scrollHeight=${doc.scroll} > clientHeight=${doc.client}`,
-      ).toBeLessThanOrEqual(doc.client + 1);
-      await expectNoHorizontalOverflow(page);
+      for (const state of LOCK_STATES) {
+        await page.goto(state.url);
+        await expect(pageHeading(page)).toBeVisible();
+
+        // The knobs must actually build the tree they name — a dead param or a
+        // queue in the wrong slot would make two thirds of this loop vacuous.
+        expect(await queuePlacement(page), `${state.url}: queue slot`).toBe(state.queue);
+        // …and the subtree that escapes is the labels, so count THEM, not the
+        // section. `toHaveCount`, not `toBeVisible`: an `sr-only` box is 1px
+        // and clipped, and its visibility is exactly the ambiguity this
+        // assertion must not depend on.
+        await expect(
+          page.locator("#needs-classification label.sr-only"),
+          `${state.url}: the queue's sr-only labels`,
+        ).toHaveCount(state.queue === "absent" ? 0 : 4);
+
+        const doc = await docHeights(page);
+        expect(
+          doc.scroll,
+          `${state.label} — document scrolls: scrollHeight=${doc.scroll} > clientHeight=${doc.client}`,
+        ).toBeLessThanOrEqual(doc.client + 1);
+        await expectNoHorizontalOverflow(page);
+      }
       expect(watch.errors, watch.errors.join("\n")).toEqual([]);
     });
   }

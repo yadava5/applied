@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
+import { ReviewQueue } from "@/components/dashboard/ReviewQueue";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
@@ -22,6 +23,7 @@ import {
 } from "@/lib/demo/asApplications";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { datedById, redate } from "@/lib/demo/redate";
+import { demoReviewQueueAsApi } from "@/lib/demo/reviewQueue";
 
 /**
  * The demo dashboard: the REAL components — SyncBar, PipelineBoard, the cards,
@@ -89,6 +91,15 @@ function delay(ms: number): Promise<void> {
 /** Which fixture projection the twin renders — see `asApplications.ts`. */
 export type DemoPipeline = "seed" | "early";
 
+/**
+ * Which of `PipelineBoard`'s two slots the fixture review queue lands in.
+ * Named for the SLOT rather than for the Settings toggle that picks it on the
+ * live page ("Needs review alerts"), because the harness that drives this is
+ * measuring geometry: a test asking for `after` should not have to know that
+ * the pref is off. The live mapping is one line, in the dashboard page.
+ */
+export type DemoReviewSlot = "before" | "after";
+
 /** The whole fixture store, dated against one day — board and pool alike. */
 function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
   return {
@@ -102,6 +113,7 @@ export function DemoDashboard({
   pipeline = "seed",
   variant = "flow",
   needsReview = 0,
+  reviewSlot = "after",
 }: {
   pipeline?: DemoPipeline;
   /** `flow` — the /demo page twin: natural height, the page scrolls.
@@ -111,10 +123,16 @@ export function DemoDashboard({
    *  session. Both mount the pulse where the real page does: the board's
    *  full-width band. */
   variant?: "flow" | "locked";
-  /** Held-verdict count for the pulse band. 0 for every organic visitor —
-   *  see the mount comment below. /demo/shell's `?review=N` harness knob is
-   *  the one caller that sets it. */
+  /** Held verdicts: the pulse band's count AND the length of the fixture
+   *  review queue mounted in the board's slot. 0 for every organic visitor —
+   *  see the mount comment below — so no queue renders. /demo/shell's
+   *  `?review=N` harness knob is the one caller that sets it. */
   needsReview?: number;
+  /** Which slot that queue lands in. Defaults to `after` — the position the
+   *  live account actually renders (the "Needs review alerts" pref is off by
+   *  default, `lib/settings/notifications.ts`), and the one that produced the
+   *  escaped-`sr-only` document scroll #149 fixed. */
+  reviewSlot?: DemoReviewSlot;
 }) {
   const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
@@ -349,6 +367,25 @@ export function DemoDashboard({
     summary.offers === 1 ? "" : "s"
   }`;
 
+  /** The held verdicts, dated against the SAME day the store is (`datedFor`,
+   *  not a fresh clock read) — the queue prints `received_at` through
+   *  `shortDate`, and a fixture resolved outside this render is the hydration
+   *  mismatch `redate` exists to prevent. */
+  const reviewItems = useMemo(
+    () => (needsReview > 0 ? demoReviewQueueAsApi(needsReview, datedFor) : []),
+    [needsReview, datedFor],
+  );
+  // Built exactly as the signed-in page builds it: the REAL `ReviewQueue`, the
+  // board's own rows behind its assign-to-application picker, and null when
+  // there is nothing held. Only the transport is absent — the row's classify
+  // POST has no injection seam, so on this auth-free route it answers with the
+  // API's error rather than filing anything. That is a knob-only surface
+  // (`robots: noindex`, nothing links to it) and the geometry is the point.
+  const queue =
+    reviewItems.length > 0 ? (
+      <ReviewQueue items={reviewItems} applications={snapshot.apps} />
+    ) : null;
+
   return (
     <section className={locked ? LOCKED_PAGE_CLASS : "flex flex-col gap-6"}>
       {/* Exactly the signed-in composition: the sync surface is the page's
@@ -362,15 +399,17 @@ export function DemoDashboard({
 
           The pulse is the board's full-width band here exactly as it is on
           the signed-in dashboard. `needsReview` defaults to 0 deliberately,
-          not as a stub: /demo mounts no review queue for a held verdict to
-          point at, and the signal's non-zero branch deep-links to
+          not as a stub: with nothing held there is no queue to point at, and
+          the signal's non-zero branch deep-links to
           /dashboard#needs-classification — an auth-gated route that would
           dead-end an anonymous visitor. /demo/shell's `?review=N` harness
           knob is the one caller that overrides it, so that branch — a
           user-facing control that otherwise renders on NO testable surface —
-          stays measurable. The fixture queue (DEMO_REVIEW_QUEUE)
-          does hold one sub-gate message; the DecisionTrace lower down /demo
-          is where it is shown and explained. Below `lg` the band yields to
+          stays measurable, and it now also mounts the queue those N verdicts
+          are counting (`lib/demo/reviewQueue.ts`), which is the subtree this
+          twin was missing. The classifier's whole output, held and auto-filed
+          alike, is a different fixture (DEMO_REVIEW_QUEUE) shown by the
+          DecisionTrace lower down /demo. Below `lg` the band yields to
           the cards' own tags — the phone answer the old full-width strip
           needed a `max-sm:order-last` workaround to approximate. */}
       <SyncBar
@@ -389,11 +428,18 @@ export function DemoDashboard({
       >
         <AddApplicationForm mode="demo" compact />
       </SyncBar>
+      {/* The queue reaches the board through the same two slots the signed-in
+          page uses, and the same either/or shape: on the live dashboard the
+          "Needs review alerts" pref decides whether held mail interrupts the
+          rows or waits under them, and both placements live INSIDE the
+          worklist's scroll context so a long queue can never starve it. */}
       <PipelineBoard
         variant={locked ? "locked" : "flow"}
         applications={snapshot.apps}
         pulse={{ needsReview }}
         transport={boardTransport}
+        beforeList={reviewSlot === "before" ? queue : null}
+        afterList={reviewSlot === "after" ? queue : null}
       />
     </section>
   );
