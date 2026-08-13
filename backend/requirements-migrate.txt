@@ -1,3 +1,20 @@
 # Migration-only dependencies (alembic upgrade head against Supabase
 # direct URL). Cloud runtime uses asyncpg; DDL needs sync psycopg.
+#
+# Install alongside the ROOT requirements.txt, which carries sqlmodel /
+# sqlalchemy / pydantic-settings — alembic/env.py imports jobtracker.config and
+# jobtracker.database.models to resolve target_metadata, so the migration
+# environment needs the app's model layer but none of backend/requirements.txt's
+# ~800 MB of torch and sentence-transformers:
+#
+#   pip install -r requirements.txt -r backend/requirements-migrate.txt
+#
 psycopg[binary]>=3.3.4
+
+# Alembic itself. It is in backend/requirements.txt too, but that file drags the
+# whole ML stack along with it, and the root requirements.txt deliberately does
+# NOT ship alembic to the Vercel function (nothing runs migrations at runtime,
+# and the bundle has a size limit the .vercelignore exists to respect). Without
+# this line, "install the migration dependencies" quietly produces an
+# environment that cannot run a migration.
+alembic>=1.13.0

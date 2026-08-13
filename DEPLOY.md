@@ -45,12 +45,19 @@ backend and no Supabase**.
 Steps:
 1. Supabase: create free project; copy URL, anon key, JWT secret, DB
    password; disable email confirmation (portfolio friction).
-2. Migrations (local, once):
-   `cd backend && ./.venv311/bin/pip install -r requirements-migrate.txt &&
+2. Migrations — **bootstrap only**. Ongoing revisions are applied by the
+   `DB migrate` workflow on every push to main that touches
+   `backend/alembic/**`; see `docs/MIGRATIONS.md`, which is the contract for
+   schema changes (including why destructive ones need two merges). To bring a
+   brand-new project up from empty:
+   `cd backend && ./.venv311/bin/pip install -r ../requirements.txt -r requirements-migrate.txt &&
    DIRECT_URL="postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres" ./.venv311/bin/alembic upgrade head`
    (direct 5432 URL — the 6543 pooler breaks DDL).
+   Then set that same URL as the `DIRECT_URL` secret on the repo's `production`
+   environment so the workflow can take over.
 3. Vercel: two projects as above; env per matrix; deploy; smoke
-   `GET /health`, then signed-in `GET /auth/me` + `POST/GET /applications`.
+   `GET /health`, `GET /health/schema` (must report `ok: true`), then signed-in
+   `GET /auth/me` + `POST/GET /applications`.
 
 ## Path C — real Gmail connection (C5: connect → read → classify)
 
