@@ -532,9 +532,10 @@ test.describe("live demo (/demo)", () => {
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
 
-    // Momentum: exactly 8 week-bars plus the delta sentence derived from them.
-    await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
-    await expect(pulse.getByText(/last 4 wk/)).toBeVisible();
+    // Momentum: exactly 30 day-bars plus the delta sentence derived from them
+    // (#156 — daily resolution; weekly buckets flattened real filing bursts).
+    await expect(pulse.getByTestId("pulse-day")).toHaveCount(30);
+    await expect(pulse.getByText(/this wk/)).toBeVisible();
 
     // Ageing: the fixture board's open rows are weeks old, so the quiet share
     // is non-zero. `\d+` would also match "0 quiet", which is the claim this
@@ -546,16 +547,15 @@ test.describe("live demo (/demo)", () => {
     // `dueInfo` that inks the cards. (Name and phrase are separate spans —
     // the name truncates before the phrase ever does — so they are asserted
     // separately rather than as one string.)
-    await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
     await expect(pulse.getByText("next ·")).toBeVisible();
     await expect(pulse.getByText("Tidewater Labs")).toBeVisible();
     await expect(pulse.getByText("overdue 2d", { exact: true })).toBeVisible();
 
-    // Auto-filed: every fixture row is source="gmail", and nothing is held.
-    // (A user has a mailbox, not a classifier — the mechanism's real names,
-    // the gate included, live in Settings, which controls them.)
-    await expect(pulse.getByText(/17 of 17/)).toBeVisible();
-    await expect(pulse.getByText("nothing waiting on you")).toBeVisible();
+    // Auto-filed: every fixture row is source="gmail", and nothing is held —
+    // said as one whole claim, not as a fraction whose remainder is zero
+    // (#158: an unexplained remainder read as rows unaccounted for).
+    await expect(pulse.getByText("all 17 from your mail")).toBeVisible();
 
     // The card-level ageing tag agrees with the pulse's threshold. `.last()`,
     // not `.first()`: the filed stamp renders a phone-width twin earlier in
@@ -566,12 +566,12 @@ test.describe("live demo (/demo)", () => {
   test("the pulse moves when Sync files fresh mail", async ({ page }) => {
     await page.goto("/demo");
     const pulse = page.getByTestId("pipeline-pulse");
-    await expect(pulse.getByText(/17 of 17/)).toBeVisible();
+    await expect(pulse.getByText("all 17 from your mail")).toBeVisible();
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
-    // Two fixture rows arrive → the auto-filed fraction re-derives from the
+    // Two fixture rows arrive → the auto-filed count re-derives from the
     // new board. (No assertion on the ageing buckets here: the fixture dates
     // are static while real time passes, so any exact bucket count would rot.)
-    await expect(pulse.getByText(/19 of 19/)).toBeVisible();
+    await expect(pulse.getByText("all 19 from your mail")).toBeVisible();
   });
 
   test("the change ledger claims nothing on a first visit", async ({ page }) => {
@@ -851,7 +851,7 @@ test.describe("live demo (/demo)", () => {
   }) => {
     await page.goto("/demo");
     const pulse = page.getByTestId("pipeline-pulse");
-    await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
 
     // Cedar Labs (applied) has no deadline; give it one 5 days out.
     //
@@ -903,7 +903,7 @@ test.describe("live demo (/demo)", () => {
 
     // The card gained the tag; the pulse cell re-derived.
     await expect(cedar.locator('[data-testid="deadline-tag"]')).toContainText("due in 5d");
-    await expect(pulse.getByText(/1 overdue · 1 ≤2d · 2 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 2 later/)).toBeVisible();
 
     // Clearing is one click, obviously reversible — the Add control returns —
     // and both surfaces drop the date.
@@ -916,7 +916,7 @@ test.describe("live demo (/demo)", () => {
     await expect(sheet).toBeHidden();
 
     await expect(cedar.locator('[data-testid="deadline-tag"]')).toHaveCount(0);
-    await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
   });
 
   test("one employer, one card: the set opens inline and hides no application's stage", async ({
@@ -1016,23 +1016,22 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByText("Beacon Health", { exact: true })).toBeVisible();
 
     // `toBeVisible()` on a bordered, padded <section> passes on an EMPTY section,
-    // so assert the content itself — the three derived signals and eight drawn
+    // so assert the content itself — the three derived signals and thirty drawn
     // bars — exactly as the motion-on test does. A guard that survives its own
     // component rendering nothing is the shape this estate keeps producing.
     const pulse = page.getByTestId("pipeline-pulse");
-    await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
-    await expect(pulse.getByText(/17 of 17/)).toBeVisible();
-    await expect(pulse.getByText("nothing waiting on you")).toBeVisible();
+    await expect(pulse.getByTestId("pulse-day")).toHaveCount(30);
+    await expect(pulse.getByText("all 17 from your mail")).toBeVisible();
     // The change ledger carries no animation at all, so there is nothing for
     // this mode to collapse — its sentence is simply present.
     await expect(ledger(page)).toContainText("No earlier visit recorded in this browser");
     // The deadline surfaces are content, not motion: all three tags and the
     // pulse counts render statically too.
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
-    await expect(pulse.getByText(/1 overdue · 1 ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
     // A bar with zero drawn height would satisfy the count above.
     const barHeights = await pulse
-      .getByTestId("pulse-week")
+      .getByTestId("pulse-day")
       .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
     expect(Math.max(...barHeights)).toBeGreaterThan(0);
 

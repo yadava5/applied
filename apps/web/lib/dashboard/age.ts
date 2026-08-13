@@ -38,8 +38,15 @@ const CALENDAR_PREFIX = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/;
  */
 export const QUIET_AFTER_DAYS = 14;
 
-/** How many week-buckets the momentum strip renders. */
-export const MOMENTUM_WEEKS = 8;
+/**
+ * How many day-buckets the momentum strip renders. Days, not weeks, and that
+ * is the owner's measured complaint (#156): the real account filed its whole
+ * board inside four weeks, so 8 weekly buckets rendered a 41-application
+ * burst as 7 flat dashes and one filled tick. Filing happens in daily bursts
+ * ("9 on Tuesday, nothing Thursday") — the shape weekly bucketing destroys is
+ * exactly the one worth drawing.
+ */
+export const MOMENTUM_DAYS = 30;
 
 /**
  * Today's calendar day, UTC — identical on server and client, and therefore
@@ -114,31 +121,100 @@ export function bucketAges(ages: (number | null)[]): AgeBuckets {
 }
 
 /**
- * Filed-per-week counts for the momentum bars, oldest week first (index
- * `weeks - 1` is the current, still-running week). Dates outside the window —
- * or unparsable — simply don't count; the bars claim only what they can see.
+ * Filed-per-day counts for the momentum bars, oldest day first (index
+ * `days - 1` is today). Dates outside the window — or unparsable — simply
+ * don't count; the bars claim only what they can see.
  */
-export function weeklyCounts(
+export function dailyCounts(
   filedDates: (string | null | undefined)[],
   today: string,
-  weeks: number = MOMENTUM_WEEKS,
+  days: number = MOMENTUM_DAYS,
 ): number[] {
-  const counts = new Array<number>(weeks).fill(0);
+  const counts = new Array<number>(days).fill(0);
   for (const filed of filedDates) {
     const age = daysBetween(filed, today);
-    if (age === null || age < 0 || age >= weeks * 7) continue;
-    counts[weeks - 1 - Math.floor(age / 7)] += 1;
+    if (age === null || age < 0 || age >= days) continue;
+    counts[days - 1 - age] += 1;
   }
   return counts;
 }
 
 /**
- * The momentum comparison the delta line states: the last 4 full-ish weeks
- * against the 4 before them, from the same buckets the bars draw — one
- * derivation, so the arrow can never contradict the picture.
+ * The momentum comparison the delta line states: the last 7 days against the
+ * 7 before them, from the same buckets the bars draw — one derivation, so the
+ * arrow can never contradict the picture.
  */
-export function momentumDelta(counts: number[]): { recent: number; prior: number } {
-  const half = Math.floor(counts.length / 2);
+export function weekOverWeek(counts: number[]): { thisWeek: number; lastWeek: number } {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-  return { recent: sum(counts.slice(half)), prior: sum(counts.slice(0, half)) };
+  return {
+    thisWeek: sum(counts.slice(-7)),
+    lastWeek: sum(counts.slice(-14, -7)),
+  };
+}
+
+/**
+ * The window's heaviest day, as an offset from today (`daysAgo: 0` = today).
+ * Ties go to the most recent day — "your best day" should name the freshest
+ * proof, not the stalest. `null` when nothing in the window was filed at all.
+ */
+export function bestDay(counts: number[]): { daysAgo: number; count: number } | null {
+  let best: { daysAgo: number; count: number } | null = null;
+  for (let i = counts.length - 1; i >= 0; i -= 1) {
+    if (counts[i] > (best?.count ?? 0)) best = { daysAgo: counts.length - 1 - i, count: counts[i] };
+  }
+  return best;
+}
+
+/**
+ * Consecutive filing days ending at today — or at yesterday when today is
+ * still empty, because "your streak died at midnight" is not something to
+ * tell someone who simply hasn't opened their mail yet.
+ */
+export function currentStreak(counts: number[]): number {
+  let i = counts.length - 1;
+  if (counts[i] === 0) i -= 1; // today may still be in progress
+  let streak = 0;
+  for (; i >= 0 && counts[i] > 0; i -= 1) streak += 1;
+  return streak;
+}
+
+/**
+ * The calendar day `daysAgo` days before `today`, as `YYYY-MM-DD` — the
+ * inverse of {@link daysBetween}, for turning a bar index back into the date
+ * it counts. Pure UTC day arithmetic on the calendar prefix; `toISOString`
+ * here renders a UTC-midnight instant we constructed ourselves, so it cannot
+ * exhibit the local-midnight drift `localTodayISO` exists to avoid.
+ */
+export function isoDaysAgo(today: string, daysAgo: number): string | null {
+  const day = utcDay(today);
+  if (day === null) return null;
+  return new Date(day - daysAgo * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Weekday of a calendar day, Monday = 0 … Sunday = 6 (or `null` if
+ * unparsable). Day 0 of the UTC epoch was a Thursday, hence the +3.
+ */
+export function weekdayOf(iso: string): number | null {
+  const day = utcDay(iso);
+  if (day === null) return null;
+  return (day / DAY_MS + 3) % 7;
+}
+
+/**
+ * Open rows per day of age: index `0` = filed today … index `cap - 1`, with
+ * a final overflow bin at index `cap` holding everything at least `cap` days
+ * old — the same ≥{@link QUIET_AFTER_DAYS} share `bucketAges` calls quiet.
+ * Unknown/future ages are dropped, not guessed, matching `bucketAges`.
+ */
+export function ageHistogram(
+  ages: (number | null)[],
+  cap: number = QUIET_AFTER_DAYS,
+): number[] {
+  const bins = new Array<number>(cap + 1).fill(0);
+  for (const age of ages) {
+    if (age === null || age < 0) continue;
+    bins[Math.min(age, cap)] += 1;
+  }
+  return bins;
 }

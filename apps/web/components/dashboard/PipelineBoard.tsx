@@ -12,10 +12,12 @@ import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard
 import { CompanyBand } from "@/components/dashboard/CompanyBand";
 import { EmployerSetRow } from "@/components/dashboard/EmployerSetRow";
 import { PipelinePulse } from "@/components/dashboard/PipelinePulse";
+import { PulseFilterBand } from "@/components/dashboard/PulseFilterBand";
 import { useShellSlots } from "@/components/shell/shell-slots";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { boardColumns, cardQualifier, type BoardColumn } from "@/lib/dashboard/board";
 import { filedAt } from "@/lib/dashboard/dates";
+import { matchesPulseFilter, type PulseFilter } from "@/lib/dashboard/pulseFilter";
 import { elsewhereLabel, groupByEmployer } from "@/lib/dashboard/employerGroups";
 import { cn } from "@/lib/utils";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
@@ -391,6 +393,11 @@ export function PipelineBoard({
   const detailDocked = useDetailDocked();
   const [query, setQuery] = useState("");
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
+  /** The pulse detail panel's click-through (#156/#158/#159): a day, the
+   *  quiet share, or a provenance group, applied to the same list the other
+   *  filters narrow. State lives here because this is the component that owns
+   *  the list; the panel only ever proposes. */
+  const [pulseFilter, setPulseFilter] = useState<PulseFilter | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [detailApp, setDetailApp] = useState<Application | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -448,9 +455,10 @@ export function PipelineBoard({
   const shownStatus = (app: Application) => pendingMoves[app.id] ?? app.status;
 
   const q = query.trim().toLowerCase();
-  const filterActive = q !== "" || companyFilter !== null;
+  const filterActive = q !== "" || companyFilter !== null || pulseFilter !== null;
   const filtered = applications.filter((app) => {
     if (companyFilter !== null && app.company !== companyFilter) return false;
+    if (pulseFilter !== null && !matchesPulseFilter(app, pulseFilter, today)) return false;
     if (q !== "" && !`${app.company} ${app.position}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -922,6 +930,7 @@ export function PipelineBoard({
           applications={applications}
           total={total ?? applications.length}
           needsReview={pulse.needsReview}
+          onFilter={setPulseFilter}
         />
       ) : null}
 
@@ -988,6 +997,9 @@ export function PipelineBoard({
               partial={truncated}
               onClear={() => setCompanyFilter(null)}
             />
+          ) : null}
+          {pulseFilter !== null ? (
+            <PulseFilterBand filter={pulseFilter} onClear={() => setPulseFilter(null)} />
           ) : null}
 
           {moveError ? (

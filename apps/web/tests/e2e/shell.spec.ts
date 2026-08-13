@@ -246,7 +246,7 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(
       page.locator('aside:has(nav[aria-label="Primary"])').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
-    await expect(pulse.getByTestId("pulse-week")).toHaveCount(8);
+    await expect(pulse.getByTestId("pulse-day")).toHaveCount(30);
 
     // A BAND, not a column: it spans the board. A pulse that fits in a spine
     // again would pass every locator above and still be the rejected layout.
@@ -270,6 +270,48 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(pulse).toBeHidden();
     await expect(page.getByTestId("pipeline-pulse")).toHaveCount(1);
     await expect(page.locator("h1")).toHaveCount(1);
+  });
+
+  test("a pulse cell opens its docked detail in place, and a day-click narrows the worklist", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    // The cell is a button; the panel docks inside the band's own box.
+    const trigger = page.getByRole("button", { name: "Momentum detail" });
+    await trigger.click();
+    const panel = page.getByTestId("pulse-detail");
+    await expect(panel).toBeVisible();
+
+    // Non-exclusive by contract (the row-detail overlay rejection binds here
+    // too): no backdrop, and the worklist stays rendered around the panel.
+    await expect(page.getByTestId("worklist-pane")).toBeVisible();
+
+    // The document lock holds with the panel open — the panel lives inside
+    // the band's containing block, height-capped, never at document scale
+    // (#149's family, from the other direction).
+    const doc = await docHeights(page);
+    expect(doc.scroll).toBeLessThanOrEqual(doc.client + 1);
+
+    // Escape closes without filtering anything.
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
+
+    // A day-click IS the filter: the panel clears out of the way, the filter
+    // band states the narrowed view, and its clear control restores the list.
+    await trigger.click();
+    await panel
+      .getByRole("button", { name: / filed — show these on the board$/ })
+      .last()
+      .click();
+    await expect(panel).toBeHidden();
+    const filterBand = page.getByTestId("pulse-filter-band");
+    await expect(filterBand).toBeVisible();
+    await filterBand.getByRole("button", { name: /^Stop filtering by/ }).click();
+    await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
   });
 
   test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {
