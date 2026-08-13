@@ -1029,6 +1029,11 @@ class MessageRef:
     category: str
     confidence: float
     snippet: str = ""
+    # The classifier's PROPOSAL for a ref that carries no committed category —
+    # i.e. a review item, whose ``category`` is the literal ``"needs_review"``.
+    # None on the rolled-application path, where ``category`` already IS the
+    # commitment and there is nothing outstanding to propose.
+    suggested_category: str | None = None
 
 
 @dataclass(frozen=True)

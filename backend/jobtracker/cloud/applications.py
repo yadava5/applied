@@ -412,6 +412,11 @@ class ReviewItemResponse(BaseModel):
     snippet: str | None = None
     confidence: float | None = None
     gmail_link: str | None = None
+    # What the classifier thinks this is — a PROPOSAL, never a decision. The
+    # queue already reported ``confidence``, so it was showing the strength of
+    # an opinion whose content it did not have. None means the row predates the
+    # column or genuinely carries no proposal; it is not "unknown category".
+    suggested_category: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -880,6 +885,17 @@ async def _persist_message_refs(
             )
         ).first()
         category = _safe_category(ref.category)
+        # The classifier's PROPOSAL, which only a review ref carries. Written
+        # under the same settled-guard as the category below, and — like the
+        # category — written UNCONDITIONALLY within it, including to None. That
+        # is not an oversight of the kind the snippet and thread_id comments
+        # above describe: a ref from the rolled path leaves it None because that
+        # message now has a committed category, so there is no proposal
+        # outstanding. Within one sync the ordering agrees —
+        # ``upsert_applications_for_user`` runs before
+        # ``_persist_review_items_additive`` — so a message cannot be filed and
+        # then re-parked in the same pass.
+        suggestion = _safe_suggestion(ref.suggested_category)
         if existing is not None:
             if application_id is not None:
                 current = existing.application_id
@@ -912,6 +928,7 @@ async def _persist_message_refs(
                 existing.thread_id = ref.thread_id
             if not (existing.user_corrected or existing.is_reviewed):
                 existing.classified_as = category
+                existing.suggested_category = suggestion
                 existing.classification_confidence = ref.confidence
                 existing.classification_method = "rules"
             existing.thread_id = ref.thread_id
@@ -930,6 +947,7 @@ async def _persist_message_refs(
                     received_at=received_at,
                     body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
                     classified_as=category,
+                    suggested_category=suggestion,
                     classification_confidence=ref.confidence,
                     classification_method="rules",
                 )
@@ -1071,6 +1089,29 @@ def _safe_category(value: str) -> EmailCategory | None:
         return EmailCategory(value)
     except ValueError:
         return None
+
+
+def _safe_suggestion(value: str | None) -> EmailCategory | None:
+    """The eight PREDICTED labels, or None. ``needs_review`` is not one of them.
+
+    ``suggested_category`` records what the classifier thinks a parked message
+    is. ``needs_review`` is not an opinion about the message — it is the queue
+    state, already carried by ``classified_as`` — so a below-gate
+    ``needs_review`` verdict must not leak in here. Storing it would give the
+    row a "suggestion" no human could ever confirm into anything, which is the
+    frozen-forever shape ``docs/ML_CORPUS_INTEGRITY.md`` records.
+
+    ``other`` is admitted deliberately: it is a real verdict a human can confirm
+    (and the review queue does surface explicit ``needs_review`` mail that the
+    classifier separately believes is noise).
+    """
+
+    if value is None:
+        return None
+    category = _safe_category(value)
+    if category is EmailCategory.NEEDS_REVIEW:
+        return None
+    return category
 
 
 async def _reopening_evidence(
@@ -1573,6 +1614,12 @@ async def _reset_review_queue(
 async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
     """Persist uncertain verdicts as unlinked needs-review Email rows.
 
+    ``category`` stays ``needs_review`` — that is the COMMITTED state, and for a
+    parked row the honest commitment is "none yet". The classifier's actual
+    verdict rides in ``suggested_category``; before that column existed it was
+    thrown away here, which is why the production queue held rows reading
+    "needs_review at 0.92" and why no rejection ever reached the board.
+
     Returns the number of items surfaced to the queue (dated items only).
     """
 
@@ -1587,6 +1634,7 @@ async def _persist_review_items(session, user_id: uuid.UUID, review) -> int:
             category="needs_review",
             confidence=item.confidence,
             snippet=item.snippet,
+            suggested_category=item.category,
         )
         for item in review
     ]
@@ -1622,6 +1670,10 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
             category="needs_review",
             confidence=item.confidence,
             snippet=item.snippet,
+            # Second of the two hardcode sites. Same reasoning as
+            # :func:`_persist_review_items`: the queue state is the commitment,
+            # the verdict is the proposal.
+            suggested_category=item.category,
         )
         for item in review
     ]
@@ -2881,6 +2933,9 @@ async def review_queue_cloud(
                 received_at=e.received_at.isoformat() if e.received_at else None,
                 snippet=e.body_snippet,
                 confidence=e.classification_confidence,
+                suggested_category=(
+                    e.suggested_category.value if e.suggested_category else None
+                ),
                 gmail_link=pipeline.gmail_deeplink(
                     thread_id=e.thread_id,
                     message_id=e.message_id,

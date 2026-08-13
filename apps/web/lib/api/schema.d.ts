@@ -1302,6 +1302,8 @@ export interface components {
             confidence?: number | null;
             /** Gmail Link */
             gmail_link?: string | null;
+            /** Suggested Category */
+            suggested_category?: string | null;
         };
         /**
          * ReviewQueueResponse
