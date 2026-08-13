@@ -135,19 +135,29 @@ import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transpo
 const SEARCH_AFTER = 5;
 
 /**
- * Whether the detail DOCKS beside the worklist — Tailwind's `xl`, the
- * accepted breakpoint (#157): beside the list the pane needs the width the
- * folded row controls give back, and below 1280 there is no width to give,
- * so the sheet keeps those widths. JS rather than CSS because the two
- * geometries differ in behaviour (focus, Escape, scroll lock), not just
- * position — exactly one of them may exist at a time, and rendering both
- * would run the detail fetch twice. False until the subscription lands (the
- * server has no viewport); a card can only be opened after it has.
+ * Whether the detail DOCKS beside the worklist — Tailwind's `lg`, the same
+ * boundary where the shell's viewport lock and the board's side-by-side row
+ * begin, so the JS gate and the CSS geometry stop straddling breakpoints.
+ * #157 shipped this at `xl` on the claim that "below 1280 there is no width
+ * to give" — written before the rows folded their controls, and wrong by
+ * measurement once the pane narrows with the viewport (the width ramp lives
+ * on the pane, see ApplicationDetail): at 1024 the shell's content run is
+ * 736px (the w-60 rail and <main>'s px-6 off the viewport), and a ~307px
+ * pane leaves the worklist ~409px of folded rows — a working list beside a
+ * readable card, where the sheet it replaces dimmed, blurred and blocked the
+ * whole board at the owner's actual 1024px window. Below `lg` the shell
+ * releases the lock and the board is one flowing column: no second column
+ * exists to keep in sight, so the modal sheet stays. JS rather than CSS
+ * because the two geometries differ in behaviour (focus, Escape, scroll
+ * lock), not just position — exactly one of them may exist at a time, and
+ * rendering both would run the detail fetch twice. False until the
+ * subscription lands (the server has no viewport); a card can only be opened
+ * after it has.
  */
 function useDetailDocked(): boolean {
   const [docked, setDocked] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1280px)");
+    const mq = window.matchMedia("(min-width: 1024px)");
     const sync = () => setDocked(mq.matches);
     // First read deferred off the effect body (house rule — no synchronous
     // setState in an effect), same as the board's own `hydrated`.
@@ -665,7 +675,7 @@ export function PipelineBoard({
   };
 
   /** The docked pane is open: rows fold their stage select + Gmail slot to
-   *  pay for its width (see ApplicationRow). Never true below `xl`. */
+   *  pay for its width (see ApplicationRow). Never true below `lg`. */
   const detailPaneOpen = interactive && detailDocked && detailApp !== null;
 
   /** One application row in its animated cell. `inSet` rows sit inside an
@@ -1117,10 +1127,10 @@ export function PipelineBoard({
         </div>
 
         {/* --- The detail (#157) -------------------------------------------
-            Mounted INSIDE the body row: at `xl+` it docks here, a pane
+            Mounted INSIDE the body row: at `lg+` it docks here, a pane
             beside the worklist — the board stays readable and usable while a
             card is open, which is the whole decision (the modal overlay's
-            exclusivity contract was the complaint). Below `xl` the same
+            exclusivity contract was the complaint). Below `lg` the same
             component renders the fixed-position sheet, which ignores this
             flex row entirely. In the locked variant the pane inherits the
             row's height and scrolls itself; in flow it rides sticky like the

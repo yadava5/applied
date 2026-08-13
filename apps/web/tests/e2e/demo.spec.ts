@@ -280,7 +280,7 @@ test.describe("live demo (/demo)", () => {
       .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
       .click();
     // The shared handle for BOTH detail geometries (#157): at the suite's
-    // 1440 default this is the docked pane; below `xl` it is the sheet's
+    // 1440 default this is the docked pane; below `lg` it is the sheet's
     // content. The mail-trail contract is identical either way.
     const sheet = page.getByTestId("application-detail");
     await expect(sheet).toBeVisible();
@@ -426,12 +426,12 @@ test.describe("live demo (/demo)", () => {
     // already restored focus and blows it away. Both dialogs on this page are
     // driven, and all three paths are asserted the same way.
     //
-    // Below `xl` on purpose: since #157 the card detail renders as this sheet
-    // (with the backdrop the third path clicks) only under 1280 — at the
-    // suite's 1440 default it docks as a pane with no backdrop at all, and
-    // that geometry's close/focus contract is the next test's. The
-    // centre-variant dialog exists at every width; it just shares the page.
-    await page.setViewportSize({ width: 1100, height: 800 });
+    // Below `lg` on purpose: the card detail renders as this sheet (with the
+    // backdrop the third path clicks) only under 1024, the dock floor — from
+    // `lg` up it docks as a pane with no backdrop at all, and that
+    // geometry's close/focus contract is the next test's. The centre-variant
+    // dialog exists at every width; it just shares the page.
+    await page.setViewportSize({ width: 960, height: 800 });
     await page.goto("/demo");
 
     const opener = page.getByRole("button", {
@@ -464,13 +464,14 @@ test.describe("live demo (/demo)", () => {
     await expect(fileOpener).toBeFocused();
   });
 
-  test("at xl the detail docks beside the worklist — no overlay, and ↑/↓ traverse the board", async ({
+  test("from lg the detail docks beside the worklist — no overlay, and ↑/↓ traverse the board", async ({
     page,
   }) => {
-    // #157, the accepted geometry at the suite's 1440 default: the detail is
-    // a PANE in the board's own row, not a modal — the worklist stays
-    // readable and usable while a card is open, because the overlay's
-    // exclusivity contract was itself the complaint.
+    // #157, the accepted geometry at the suite's 1440 default (docked from
+    // `lg` — 1024 — since the threshold fix): the detail is a PANE in the
+    // board's own row, not a modal — the worklist stays readable and usable
+    // while a card is open, because the overlay's exclusivity contract was
+    // itself the complaint.
     await page.goto("/demo");
 
     const opener = page.getByRole("button", {
