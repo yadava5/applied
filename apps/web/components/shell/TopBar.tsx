@@ -12,6 +12,8 @@ import { DemoFixturePill, SignOutButton } from "./SessionControls";
 
 type TopBarProps = {
   userEmail: string | null;
+  /** Display name for the identity line; `null` falls back to the email. */
+  userName?: string | null;
   /**
    * Fixture mode (/demo/shell): there is no session to sign out of, so the
    * sign-out button becomes the demo provenance pill — same slot, same bar
@@ -21,7 +23,7 @@ type TopBarProps = {
   demo?: boolean;
 };
 
-export function TopBar({ userEmail, demo = false }: TopBarProps) {
+export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -122,10 +124,15 @@ export function TopBar({ userEmail, demo = false }: TopBarProps) {
           >
             {/* Identity lives here below `md` (the rail footer's job on
                 desktop) — it used to sit in the bar itself, where the route
-                title now goes. */}
-            {userEmail ? (
-              <p className="mb-2 truncate border-b border-line-soft px-3 pb-2 text-xs text-dim">
-                {userEmail}
+                title now goes. Same email→name substitution as the rail: the
+                name when one is set, the email otherwise, and the email kept
+                in `title` so the mailbox is still discoverable. */}
+            {userName || userEmail ? (
+              <p
+                title={userEmail ?? undefined}
+                className="mb-2 truncate border-b border-line-soft px-3 pb-2 text-xs text-dim"
+              >
+                {userName ?? userEmail}
               </p>
             ) : null}
             <ul className="space-y-1">

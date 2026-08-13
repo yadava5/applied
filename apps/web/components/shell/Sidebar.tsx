@@ -54,9 +54,11 @@ import { useShellSlots } from "./shell-slots";
 type SidebarProps = {
   rail: RailData;
   userEmail: string | null;
+  /** Display name for the identity block; `null` falls back to the email. */
+  userName?: string | null;
 };
 
-export function Sidebar({ rail, userEmail }: SidebarProps) {
+export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
   const pathname = usePathname();
   const { setRail } = useShellSlots();
 
@@ -121,7 +123,7 @@ export function Sidebar({ rail, userEmail }: SidebarProps) {
       </div>
 
       <div className="shrink-0 border-t border-line-soft px-3 py-3">
-        <RailFooter gmail={rail.gmail} userEmail={userEmail} />
+        <RailFooter gmail={rail.gmail} userName={userName} userEmail={userEmail} />
       </div>
     </aside>
   );

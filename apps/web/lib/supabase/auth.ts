@@ -42,6 +42,25 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
 });
 
 /**
+ * The user's display name for shell chrome (the rail footer, the mobile
+ * menu). Pure — no request read; callers already hold the user.
+ *
+ * The chain: `display_name` (written by Settings → Profile, and "" until the
+ * user sets it — an empty string is UNSET, not a name) → `full_name` (what a
+ * Google sign-in would write; sign-in is email & password today, so this is
+ * usually absent) → `null`. Callers fall back to the email on `null` — the
+ * rail must never render a blank identity row.
+ */
+export function userDisplayName(user: User | null): string | null {
+  const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  for (const key of ["display_name", "full_name"]) {
+    const value = meta[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/**
  * The Supabase session for this request (cookie-decoded; no network call),
  * memoized for the render pass.
  */

@@ -6,6 +6,8 @@ import { AppShellFrame } from "./AppShellFrame";
 type AppShellProps = {
   children: ReactNode;
   userEmail: string | null;
+  /** Display name for the identity block; `null` falls back to the email. */
+  userName?: string | null;
 };
 
 /**
@@ -23,11 +25,11 @@ type AppShellProps = {
  * wraps. `TopBar` is a Client Component because sign-out calls into
  * supabase-js in the browser.
  */
-export async function AppShell({ children, userEmail }: AppShellProps) {
+export async function AppShell({ children, userEmail, userName = null }: AppShellProps) {
   const rail = await loadRailData();
 
   return (
-    <AppShellFrame rail={rail} userEmail={userEmail}>
+    <AppShellFrame rail={rail} userEmail={userEmail} userName={userName}>
       {children}
     </AppShellFrame>
   );

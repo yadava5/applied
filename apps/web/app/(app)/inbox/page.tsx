@@ -52,18 +52,31 @@ function ViewSwitch({ scan }: { scan: boolean }) {
       active ? "bg-strong text-background" : "text-muted hover:text-strong",
     );
   return (
-    <nav aria-label="Inbox views" className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5">
-      <Link href="/inbox" aria-current={!scan ? "page" : undefined} className={tab(!scan)}>
-        Filed
-      </Link>
+    // The privacy link is STANDING on both views, not folded: Google's API
+    // Services User Data Policy wants the policy "prominently displayed",
+    // and this is the surface that displays what was read from Gmail. The
+    // Gmail card carries the other standing copy, at the consent moment.
+    // Nothing equivalent goes on the dashboard (decided).
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <nav aria-label="Inbox views" className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5">
+        <Link href="/inbox" aria-current={!scan ? "page" : undefined} className={tab(!scan)}>
+          Filed
+        </Link>
+        <Link
+          href="/inbox?view=scan"
+          aria-current={scan ? "page" : undefined}
+          className={tab(scan)}
+        >
+          Live scan
+        </Link>
+      </nav>
       <Link
-        href="/inbox?view=scan"
-        aria-current={scan ? "page" : undefined}
-        className={tab(scan)}
+        href="/privacy"
+        className="text-xs text-dim underline-offset-4 transition-colors hover:text-strong hover:underline"
       >
-        Live scan
+        how your mail is handled · privacy policy →
       </Link>
-    </nav>
+    </div>
   );
 }
 
