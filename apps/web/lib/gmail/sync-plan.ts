@@ -239,6 +239,124 @@ export function readScanEnd(body: unknown): ScanEnd {
   };
 }
 
+// --- What the dashboard sync says about itself --------------------------------
+//
+// Measured on the real signed-in board (1024 CSS px, #160): a routine sync is
+// ONE request that takes ~2.7-3.1 s and comes back
+// `{scanned: 0, result_size_estimate: null, stopped_by: "complete"}` — the
+// server took the Gmail history-cursor path, so it read no messages and Gmail
+// offered no estimate. There is nothing to count while that runs, and a number
+// that advanced anyway would be the timer-in-a-costume this module forbids.
+//
+// What IS knowable is stated instead: what the run covers (below), the elapsed
+// clock, and — once it returns — how long it actually took and how far it got.
+
+/**
+ * The window a CURSOR-LESS dashboard sync falls back to, mirroring the
+ * backend's `_SYNC_DEFAULT_RANGE_MONTHS` (gmail_oauth.py). Restated rather
+ * than imported for the same reason `REBUILD_DEFAULT_DEPTH` is: this module
+ * stays dependency-free, and the sentence must name a real window or say
+ * nothing at all.
+ */
+export const SYNC_FALLBACK_RANGE_MONTHS = 12;
+
+/**
+ * What a running sync is COVERING — the one thing about the scan the client
+ * honestly knows before the response lands.
+ *
+ * `hasCursor` is server truth (`GET /auth/gmail/status`), and it decides which
+ * path the backend takes: with a cursor it reads only what Gmail says changed
+ * since the last run (fast, and usually zero messages); without one it
+ * re-lists a bounded recent window. Saying which is the difference between "it
+ * is doing something" and "it is doing THIS", and it costs no counts we do not
+ * have.
+ *
+ * Both strings are width-budgeted: this line rides beside the board's totals
+ * at `lg`+, where the status slot measures 208px and the sentence's share of
+ * it is 140px (measured at 1024 on the signed-in board — the icon, two gaps
+ * and the clock take the rest). `checking since last sync` is 128px and
+ * `first scan · last 12 months` is 135px, so neither truncates at the width
+ * the owner actually runs.
+ */
+export function syncScopeLine(hasCursor: boolean): string {
+  return hasCursor
+    ? "checking since last sync"
+    : `first scan · last ${SYNC_FALLBACK_RANGE_MONTHS} months`;
+}
+
+/**
+ * A MEASURED duration in whole seconds — `3 s`. Never a prediction and never
+ * an average: it is only ever rendered about a run that already happened.
+ * Floors at 1 s so a sub-second run reads as a duration rather than `0 s`.
+ * Same vocabulary as {@link rebuildMemoryLine}, deliberately.
+ */
+export function durationLabel(ms: number): string {
+  return `${Math.max(1, Math.round(Math.max(0, ms) / 1000))} s`;
+}
+
+/**
+ * Gmail's `resultSizeEstimate` drifts between pages of the same query, so a
+ * client using it as a denominator must never let it sit BELOW what has
+ * already been read — a total smaller than its own numerator is worse than no
+ * total. The backend clamps within one response (`_full_scan`); this clamps
+ * again at the point of display, because that is where the two numbers are
+ * finally rendered side by side.
+ */
+export function clampEstimate(scanned: number, estimate: number | null): number | null {
+  return estimate === null ? null : Math.max(estimate, scanned);
+}
+
+/**
+ * A finished sync's one-line receipt: what it did, how far it got when the
+ * scan can say, and how long it took.
+ *
+ * `base` is the caller's already-composed outcome sentence (`filedSummary`,
+ * or the cursored-zero sentence). Coverage is appended ONLY when all three
+ * hold:
+ *
+ *   - the run actually read messages, and
+ *   - Gmail offered an estimate (the full-scan path; the incremental path
+ *     offers neither, so it gets no `scanned 0 of roughly 0`), and
+ *   - the scan ended COMPLETE. A partial end already renders its own
+ *     `scanProgressLine` beside "the scan hit its message limit" and a
+ *     "continue the scan" control, so adding it here printed the same
+ *     `scanned 412 of roughly 1,200` twice in one sentence — caught by
+ *     rendering an injected full-scan response on the real board.
+ *
+ * The duration is always appended: it is the direct answer to "how long will
+ * this take", stated as the measured fact it is rather than the forecast it
+ * is not.
+ */
+export function syncReceiptNote(base: string, end: ScanEnd, elapsedMs: number): string {
+  const parts = [base];
+  if (end.scanned > 0 && end.estimate !== null && stopKind(end.stoppedBy) === "complete") {
+    parts.push(scanProgressLine(end.scanned, clampEstimate(end.scanned, end.estimate)));
+  }
+  parts.push(durationLabel(elapsedMs));
+  return parts.join(" · ");
+}
+
+/** localStorage key for the last SYNC's measured duration (see below). */
+export const SYNC_MEMORY_KEY = "applied:sync:last";
+
+/** The demo's own key, so a fixture run is never reported as a real one —
+ *  same separation {@link REBUILD_MEMORY_DEMO_KEY} makes for rebuilds. */
+export const SYNC_MEMORY_DEMO_KEY = "applied:sync:last:demo";
+
+/**
+ * `Your last sync took 3 s.` — the Sync button's tooltip tail, and the closest
+ * honest answer to "when will it complete": a measurement of the previous run,
+ * worded in the past tense so it cannot be read as a promise about this one.
+ * It rides in `title`, which costs the header row no width — the row already
+ * wraps at 1024 (#172) and must not be made worse.
+ *
+ * Reuses {@link RebuildMemory}: a run's duration + what it scanned + when, on
+ * either path.
+ */
+export function syncMemoryLine(memory: RebuildMemory): string {
+  return `Your last sync took ${durationLabel(memory.ms)}.`;
+}
+
 // --- Reading the response -----------------------------------------------------
 
 /** One row a rebuild removed — id + company, exactly what the backend names. */

@@ -365,7 +365,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(totals).toBeVisible();
 
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
-    await expect(status).toContainText("checking Gmail");
+    // The running line names the SCOPE now, not just the fact that something
+    // is happening (#160): the fixture carries `hasCursor: true`, so this is
+    // the incremental sentence. A cursor-less account reads "first scan · …".
+    await expect(status).toContainText("checking since last sync");
     // …and the totals are STILL THERE while it checks. They used to go with
     // the slot: for the whole 11 seconds a sync plus its note lasts, the row
     // said one sentence and nothing else, which is what a working sync looked

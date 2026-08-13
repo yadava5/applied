@@ -200,8 +200,12 @@ test.describe("live demo (/demo)", () => {
     // A second sync has nothing new, and the cursored zero case says exactly
     // that — never a claim about a window it did not check.
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
+    // Shortened for width (#160): the old sentence measured 231px in this
+    // row's 208px status slot at 1024 and was clipped mid-word. `toContainText`
+    // so the measured duration the receipt now appends ("· 1 s") does not
+    // make this assertion race the fixture's own timing.
     await expect(syncSurface(page).getByRole("status")).toContainText(
-      "no new application mail since your last sync",
+      "no new mail since last sync",
     );
   });
 
