@@ -632,10 +632,12 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * WHY THREE VIEWPORTS. 1280 is the commonest laptop and the `xl` floor;
    * 1024 is the `lg` boundary and the band's narrowest cells. 1240 is neither
    * — it is where the header row's LAST flex-wrap collapses, measured by an
-   * 8px sweep of 1024→1440: the arrival line's slot drops from 320px to
+   * 8px sweep of 1024→1440: the arrival line's slot dropped from 320px to
    * 161px there against a 194px sentence, and a gate that samples only the
-   * two round numbers sees a clean line on both sides of a 33px clip. Do not
-   * delete it as redundant with 1280.
+   * two round numbers saw a clean line on both sides of a 33px clip. The
+   * arrival line has since moved to its own bar-wide line (#212), so its
+   * container no longer collapses at 1240 — but the row still wraps there
+   * and the band still measures, so do not delete it as redundant with 1280.
    *
    * Mutation-tested at introduction (dev Chromium, 2026-08-12): re-pinning
    * the auto-filed bar to the shipped defect (`w-16 shrink-0`, no xl gate)
@@ -777,42 +779,43 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
             ).toBeLessThanOrEqual(0);
           }
 
-          // #212: the chip is the row's notification centre — a plate on its
-          // slot's centre, attached to neither neighbour. Centring is
-          // asserted against the SLOT (the flexible middle the row hands the
-          // chip), which holds on the wrapped default twin too, where the
-          // row's other members sit on other lines. The clearance half is
-          // the #196 guard restated for the new placement: flush adjacency
-          // to the totals is what "caption on the numbers" was, so whenever
-          // the plate shares a line with the subtitle it must stand clear of
-          // it — measured 45–147px across both twins at these viewports
-          // (`next start`, 2026-08-14), against a 12px flex gap when flush.
+          // #212: the chip is the dashboard's notification line — a plate
+          // centred on the BAR, not on whatever room its old row-mates left.
+          // The first fix asserted slot-centring, and that gate passed on
+          // the layout the owner was complaining about: the slot's centre
+          // wandered 130px right of the bar's at 1024 and 137px left of it
+          // at 1280 (the flanks are that asymmetric), and at 1024 the
+          // wrapped row carried the plate to a line-end. So the invariant is
+          // against <main>'s own centre — the one reference that does not
+          // move with the row's contents. The second half is the #196 guard
+          // restated for the line: the caption read was the quiet sentence
+          // ON the totals' own line, so the plate must sit strictly BELOW
+          // the subtitle, a real gap down in reading order — measured 13px
+          // at 1024 (`next start`, 2026-08-14), against a negative reading
+          // when it shared the line.
           const geometry = await own.evaluate(() => {
             const section = document.querySelector('[data-testid="since-last-look"]');
             const chip = section?.querySelector("p, button");
-            const slot = section?.parentElement;
+            const main = document.querySelector("main");
             const subtitle = document.querySelector("[data-sync-header-row] > p.tabular");
-            if (!chip || !slot || !subtitle) return null;
+            if (!chip || !main || !subtitle) return null;
             const c = chip.getBoundingClientRect();
-            const s = slot.getBoundingClientRect();
+            const m = main.getBoundingClientRect();
             const t = subtitle.getBoundingClientRect();
-            const sharesLine = c.top < t.bottom && t.top < c.bottom;
             return {
-              offCentre: Math.abs((c.left + c.right) / 2 - (s.left + s.right) / 2),
-              clearance: sharesLine ? c.left - t.right : null,
+              offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
+              dropBelowTotals: c.top - t.bottom,
             };
           });
           expect(geometry, `${state} @ ${at}: chip geometry unreadable`).not.toBeNull();
           expect(
             geometry!.offCentre,
-            `${state} @ ${at}: chip centre sits ${geometry!.offCentre}px off its slot's`,
-          ).toBeLessThanOrEqual(1);
-          if (geometry!.clearance !== null) {
-            expect(
-              geometry!.clearance,
-              `${state} @ ${at}: ${geometry!.clearance}px from the totals — the #196 caption read`,
-            ).toBeGreaterThanOrEqual(24);
-          }
+            `${state} @ ${at}: chip centre sits ${geometry!.offCentre}px off the bar's`,
+          ).toBeLessThanOrEqual(1.5);
+          expect(
+            geometry!.dropBelowTotals,
+            `${state} @ ${at}: chip top is only ${geometry!.dropBelowTotals}px below the totals — back on their line is the #196 caption read`,
+          ).toBeGreaterThanOrEqual(8);
         } finally {
           await context.close();
         }

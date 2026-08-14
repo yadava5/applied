@@ -59,24 +59,45 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * box. The dedicated notice line it used to hold is a line the worklist got
  * back.
  *
- * THE PLATE, CENTRED (#212) — the chip is a miniature of its own panel.
- * Every state renders the same small plate: square left corners, rounded
- * right, hairline frame, a 2px rule down the left edge — the panel's exact
- * construction at chip scale, so the thing you press and the thing that
- * opens read as one object in two sizes. The loud state's rule is the
- * `--stage-applied` accent in full-strength ink; the quiet and first-run
- * states wear the SAME plate with the rule one register down
- * (`--line-strong`) and no chevron — the notification centre in its empty
- * condition, and the chevron's absence is what says there is nothing to
- * open. It sits on the slot's centre (`mx-auto`), not its right edge: hung
- * off the far end it read as a trailing annotation on the sync cluster, the
- * mirror image of the caption defect (#196) the far end was fixing. Centred
- * does not resurrect #196 — that defect was FLUSH adjacency (the quiet line
- * sat one 12px flex-gap from "46 filed · 46 open · 0 offers"); the plate
- * stands ~72px clear of the totals AND ~72px clear of the cluster at 1024
- * (measured on the twin, `next start`, 2026-08-14), with a frame that marks
- * where it begins, so it is symmetric slack + an edge, attached to neither
- * neighbour.
+ * THE PLATE, ON ITS OWN LINE, CENTRED ON THE BAR (#212) — the chip is a
+ * miniature of its own panel. Every state renders the same small plate:
+ * square left corners, rounded right, hairline frame, a 2px rule down the
+ * left edge — the panel's exact construction at chip scale, so the thing you
+ * press and the thing that opens read as one object in two sizes. The loud
+ * state's rule is the `--stage-applied` accent in full-strength ink; the
+ * quiet and first-run states wear the SAME plate with the rule one register
+ * down (`--line-strong`) and no chevron — the notification centre in its
+ * empty condition, and the chevron's absence is what says there is nothing
+ * to open.
+ *
+ * The line is the placement's third and final form, each earlier one
+ * measured out of existence. Flush after the subtitle the quiet line read as
+ * the totals' caption (#196). Hung off the row's far end (`ml-auto`) it read
+ * as a trailing annotation on the sync cluster — the same defect mirrored.
+ * And centred in the row's LEFTOVER middle it held the slot's centre
+ * perfectly while wandering against the bar — 130px right of the bar's
+ * centre at 1024, 137px left of it at 1280, because the flanks (title
+ * ~283px, sync cluster ~556px) are that asymmetric — and the moment the row
+ * wrapped (which the fixture twin does at 1024) the slot itself moved and
+ * carried the plate back to a line-end. No placement inside a wrapping flex
+ * row can hold the bar's centre, so the chip does not live inside the row:
+ * SyncBar mounts it on its own full-width line directly beneath, where
+ * `mx-auto` centres it on the bar itself — plate centre == <main>'s centre
+ * to the pixel at 1024/1280/1440, both twins (`next start`, 2026-08-14).
+ * That is also what the words asked for: a notification BAR owns a line.
+ *
+ * What it costs, stated: 26px of worklist at `lg`+ (one 18px line + the
+ * column's 8px gap) — the shell stays locked (#149, re-measured
+ * scrollHeight == clientHeight at 1024×768), the worklist scrolls inside
+ * itself, and the server pass reserves the line so hydration moves nothing.
+ * #196 stays dead by reading order, not by projection: the plate's top edge
+ * sits 13px below the subtitle's bottom at 1024 (42px on the fixture twin,
+ * whose row wraps), and though the loud plate's horizontal span can cross
+ * under the totals' (444..819 vs 352..511 at 1024), a framed, centred plate
+ * a full line below a left-set line of numbers is a toolbar relationship,
+ * not a caption one — the caption read needed the same baseline. The gate in
+ * shell.spec asserts both halves: centre on the bar, strictly below the
+ * totals.
  *
  * Space inside the chip varies with the viewport and its row-mates, so the
  * loud state is container-adaptive rather than truncated: per-kind counts
@@ -333,41 +354,41 @@ export function SinceLastLook({
   /**
    * Hang the panel on the chip's OWN rule, and bound it to the screen.
    *
-   * The panel is anchored to SyncBar's header row (see the `@container` note
-   * below for why it must not be the chip), and it used to take that row's
-   * `right-0` — so a chip sitting mid-row opened a panel against the far right
-   * edge, 29px clear of the trigger that opened it and detached from anything.
-   * This puts its left edge on the PLATE's (`triggerRef` — since #212 the
-   * whole plate is the trigger and its border box IS the chip's box, so the
-   * 2px accent down this panel's left side is collinear with the one down the
-   * plate and the two read as one stroke. It measured the section before the
-   * plate existed; a centred plate floats mid-slot, so the section's left
-   * edge now means nothing).
+   * The panel is anchored to the NOTIFICATION LINE — the `relative` wrapper
+   * SyncBar mounts this chip in, one full-width line under the header row
+   * (#212). It anchored to the header row itself while the chip lived inside
+   * that row, because hanging it on the chip's line put a z-30 sheet over the
+   * Sync button whenever the row wrapped (#172); with the line BELOW the row,
+   * its bottom clears every control by construction and the objection
+   * dissolves. Before that it took the row's `right-0` — a panel against the
+   * far right edge, 29px clear of the trigger that opened it and detached
+   * from anything. This puts its left edge on the PLATE's (`triggerRef` —
+   * the whole plate is the trigger and its border box IS the chip's box), so
+   * the 2px accent down this panel's left side is collinear with the one
+   * down the plate and the two read as one stroke.
    *
-   * The plate's own left offset is not a constant — it is whatever the title,
-   * the totals and the centring leave — so the fit is MEASURED here rather
-   * than assumed. When the 30rem measure would run past the row, the panel
-   * gives up WIDTH before it gives up alignment: sliding it left instead
-   * would break the one stroke that says which chip opened it, and the
-   * alignment is the whole repair. At 1024 — the tightest desktop, where the
-   * centred plate starts 319px into a 736px row (re-measured for #212 on the
-   * twin, `next start`, 2026-08-14) — that is a 417px panel flush with the
-   * board's right edge rather than a 3px dogleg in a 2px rule. Below
-   * `PANEL_MIN_WIDTH` there is no alignment left worth protecting, so it
-   * slides instead and takes the room. Height is capped the same way,
-   * against what is left of the screen, so a busy morning scrolls inside the
-   * panel instead of running off the bottom of a shell that must never scroll
-   * (#149).
+   * The plate's own left offset is not a constant — it is whatever the
+   * centring and the plate's container-adaptive width leave — so the fit is
+   * MEASURED here rather than assumed. When the 30rem measure would run past
+   * the line, the panel gives up WIDTH before it gives up alignment: sliding
+   * it left instead would break the one stroke that says which chip opened
+   * it, and the alignment is the whole repair. Below `PANEL_MIN_WIDTH` there
+   * is no alignment left worth protecting, so it slides instead and takes
+   * the room. Height is capped the same way, against what is left of the
+   * screen, so a busy morning scrolls inside the panel instead of running
+   * off the bottom of a shell that must never scroll (#149).
    * Everything is read against one `offsetParent`, so there is no viewport
    * arithmetic to disagree with a scroll.
    *
    * A ref callback rather than a layout effect: it runs after insertion and
-   * before paint (so the panel never flashes at the row's left edge first),
+   * before paint (so the panel never flashes at the line's left edge first),
    * and it costs no `useLayoutEffect`, which warns on the server pass.
    */
   const placePanel = useCallback((panel: HTMLDivElement | null) => {
     panelRef.current = panel;
     const plate = triggerRef.current;
+    // `offsetParent` is the notification line (SyncBar's `relative` wrapper);
+    // `row` kept as the name for its measure, which equals the row's.
     const row = panel?.offsetParent;
     if (!panel || !plate || !(row instanceof HTMLElement)) return;
     // Cleared first so this reads the measure the STYLESHEET asks for, not the
@@ -502,26 +523,26 @@ export function SinceLastLook({
               the short rung a prefix of the long, so no width gets a
               differently-worded claim.
 
-              The rung exists because this chip's room is not a function of
-              the viewport: the header row wraps, and where it wraps depends
-              on the row-mates (see the `@container` note on the loud state).
-              Swept at 8px steps from 1024 to 1440 on /demo/shell
-              (`next start`, headless Chrome, 2026-08-13), the slot collapses
-              at each wrap boundary — 168px at 1080 and 161px at 1240 — so a
-              single fixed sentence lost up to 66px to the ellipsis and read
-              "…in this brows". The old @34rem tail ("— from your next one,
+              The rung earned its keep when this chip lived inside the header
+              row, whose wrap boundaries collapsed the slot to 168px at 1080
+              and 161px at 1240 (8px sweep, 2026-08-13) and cost a fixed
+              sentence up to 66px to the ellipsis ("…in this brows"). On its
+              own full-width line (#212) the container is the bar and clears
+              every rung at `lg`+; the ladder now works below `lg`, where the
+              bar is a phone's. The old @34rem tail ("— from your next one,
               this line names what changed") went in the #200 sweep: roadmap
               prose explaining the control.
 
               The rung is 2rem above its pre-plate measurement (@[16rem] →
-              @[18rem]): the rungs measure the SLOT, and the plate spends
-              23px of it on chrome before the sentence starts — re-swept at
-              8px steps, 1024→1440, after the move (`next start`, headless
-              Chrome, 2026-08-14): 0px lost at every step on both rungs.
+              @[18rem]): the rungs measure the CONTAINER, and the plate
+              spends 23px of it on chrome before the sentence starts —
+              re-swept at 8px steps, 1024→1440 plus 375/768, after the move
+              (`next start`, headless Chrome, 2026-08-14): 0px lost at every
+              step on both rungs.
 
-              The dormant plate, centred (#212 — see the header): the same
-              object as the loud chip and its panel, rule one register down,
-              no chevron because there is nothing to open. */}
+              The dormant plate, centred on the bar (#212 — see the header):
+              the same object as the loud chip and its panel, rule one
+              register down, no chevron because there is nothing to open. */}
           <p className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-dim`}>
             No earlier visit
             <span className="hidden @[18rem]:inline"> recorded in this browser</span>.
@@ -582,25 +603,21 @@ export function SinceLastLook({
     <section
       data-testid="since-last-look"
       aria-label="Changes since your last visit"
-      /* `@container` because the chip's room depends on its row-mates, not
-         the viewport: the /demo row carries a wider cluster than the signed-in
-         one at the same width, and a viewport breakpoint cannot know that.
-         Full-width on purpose even though the plate inside is centred: an
-         inline-size container cannot size from its content, so a
+      /* `@container` guards the widths the bar itself gets narrow — the line
+         spans the full bar now (#212), so at `lg`+ it always clears every
+         rung and the ladder's work happens below `lg`, where the bar is the
+         phone's. Full-width on purpose even though the plate inside is
+         centred: an inline-size container cannot size from its content, so a
          shrink-wrapped section would collapse to nothing — the section keeps
-         the slot's measure and the plate floats on its centre.
+         the bar's measure and the plate floats on its centre.
 
          Deliberately NOT `relative`: the names panel positions against the
-         HEADER ROW (SyncBar's row is the nearest positioned ancestor), not
-         this chip. Two reasons, both measured. Anchored to the chip it
-         extended past <main>'s left edge, whose implicit overflow clip cut the
-         first label off; and `top-full` on this chip resolves to the bottom of
-         the ONE LINE it occupies, which — measured at 1024 back when sign-out
-         wrapped the row from 38px to 82px (#172) — drops a z-30 sheet
-         straight over the Sync button and the ⋯ menu the moment the row and
-         the chip's line disagree. The row's bottom clears both at every
-         width, wrapped or not. The plate supplies the horizontal anchor only,
-         and `placePanel` measures it. */
+         NOTIFICATION LINE (SyncBar's wrapper is the nearest positioned
+         ancestor), not this chip — anchored to the chip itself it once
+         extended past <main>'s left edge, whose implicit overflow clip cut
+         the first label off (see `placePanel` for the anchor's history). The
+         plate supplies the horizontal anchor only, and `placePanel` measures
+         it. */
       className="w-full @container"
     >
       <ArrivalLine>

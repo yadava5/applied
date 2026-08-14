@@ -63,8 +63,8 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * (#172), spent on the control the owner uses least. The status
  * line never moves the page at `lg`+ — it rides in the row for exactly as
  * long as it speaks (the owner watched the board jump when "checking Gmail…"
- * used to take a line of its own), and while a sync RUNS it takes the change
- * ledger's width rather than the board's own totals: blanking
+ * used to take a line of its own), and while a sync RUNS it takes the row's
+ * flexible middle rather than the board's own totals: blanking
  * `41 filed · 38 open · 0 offers` for the 11 seconds a sync and its note last
  * is what made a working sync read as frozen (#160). Only the two statuses
  * that wait on the user still borrow the subtitle's own slot; see the
@@ -150,9 +150,9 @@ const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 const SLOW_SYNC_AFTER_MS = 8000;
 
 /** How long a finished sync's resting note holds the status slot before the
- *  row goes quiet again. Long enough to read one short sentence, short enough
- *  that the change ledger is never gone for long — the board's own totals now
- *  stay put right through the run (#160), so this dwell no longer costs them. */
+ *  row goes quiet again. Long enough to read one short sentence — the board's
+ *  own totals stay put right through the run (#160), and the change ledger
+ *  rides its own line now (#212), so this dwell costs neither. */
 const SYNCED_NOTE_MS = 6000;
 
 function recentlyAutoSynced(): boolean {
@@ -224,14 +224,18 @@ export function SyncBar({
   subtitle: string;
   gmail: SyncGmailState | null;
   /** The change-ledger chip (`SinceLastLook`) — one line by that component's
-   *  own contract, mounted in the row's flexible middle, where it centres
-   *  itself: the row's notification centre, a plate standing clear of both
-   *  neighbours (#212). It must never read ON from the subtitle — "Nothing
-   *  new since…" hard against the totals read as their caption (#196), and
-   *  hung off the far side it read as a trailing annotation on the sync
-   *  cluster — see that component for the measured clearances. A slot rather
-   *  than an import: the ledger's rows/scope are the caller's business, and
-   *  the error/empty pages pass nothing. */
+   *  own contract, mounted on its OWN full-width line under the header row,
+   *  where it centres itself on the bar: the dashboard's notification line
+   *  (#212). Every in-row placement failed in sequence — flush after the
+   *  subtitle it read as the totals' caption (#196), hung off the far side
+   *  it read as a trailing annotation on the sync cluster, and centred in
+   *  the row's leftover middle it wandered against the bar (130px right of
+   *  the bar's centre at 1024, 137px left at 1280 — the flanks are that
+   *  asymmetric) and got carried to a line-end whenever the row wrapped.
+   *  A line of its own is the only placement a wrapping flex row cannot
+   *  move. See that component for the measured cost. A slot rather than an
+   *  import: the ledger's rows/scope are the caller's business, and the
+   *  error/empty pages pass nothing. */
   since?: ReactNode;
   /** The route title. Rendered as the page's ONE <h1>, at every width — the
    *  shell's TopBar renders no title on this route (see TopBar), so the
@@ -430,11 +434,11 @@ export function SyncBar({
   }, [busy]);
 
   // A finished run's note is a RECEIPT, not a state, so it decays. It has to:
-  // at `lg`+ that note takes the subtitle + ledger slot (see the header-row
-  // note below), and `synced` had no exit but the receipt dialog — which a
-  // plain sync never opens. So one press hid the board's totals and the
-  // change ledger for the rest of the session, on the signed-in dashboard as
-  // well as the demo. A partial scan is excluded on purpose: it carries a
+  // at `lg`+ that note takes the row's middle (see the header-row note
+  // below), and `synced` had no exit but the receipt dialog — which a
+  // plain sync never opens. So one press hid the board's totals for the rest
+  // of the session, on the signed-in dashboard as well as the demo. A
+  // partial scan is excluded on purpose: it carries a
   // "continue the scan" control, and a control must not vanish under the
   // cursor.
   useEffect(() => {
@@ -639,7 +643,9 @@ export function SyncBar({
 
   // Who yields to a speaking status at `lg`+.
   //
-  // The change-ledger chip always yields: it is news, and the status is now.
+  // The change ledger no longer competes at all: it rides its own line below
+  // the row (#212), so the row's middle is the status line's alone — hiding
+  // the ledger while a sync spoke was a width contest that no longer exists.
   // The board's own totals yield only to the two statuses that WAIT ON THE
   // USER — the stopped-early scan (it carries "continue the scan") and the
   // resting "last sync failed". Those hold the row indefinitely, they are
@@ -677,14 +683,15 @@ export function SyncBar({
     <div className="relative flex flex-col gap-2" data-sync-surface="">
       {/* --- The header row -------------------------------------------------
           At `lg`+ in the shell this IS the screen's top line: TopBar yields
-          on the board route, so the title, the state, the change ledger, the
-          sync controls and the session edge share one ~40px row instead of a
-          48px bar with an empty middle plus a second row under it.
+          on the board route, so the title, the state, the sync controls and
+          the session edge share one ~40px row instead of a 48px bar with an
+          empty middle plus a second row under it. (The change ledger rides
+          its own line just below — #212, see the notification-line note.)
 
           ZERO LAYOUT SHIFT is a requirement of this row (the owner watched
           the whole page jump when "checking Gmail…" appeared): at `lg`+ the
-          status line does not get a line of its own — it takes the change
-          ledger's width for exactly as long as it has something to say, so
+          status line does not get a line of its own — it takes the row's
+          flexible middle for exactly as long as it has something to say, so
           idle → checking → result → idle never changes the row's height. "As
           long as it has something to say" is enforced by the decay above, not
           merely intended: a note that never expired held this slot for the
@@ -698,9 +705,10 @@ export function SyncBar({
           and the resting "last sync failed". They are unchanged here; task
           #96 owes them a fixture before that can be. Below `lg` the row
           stacks and the status keeps its own line, as before. */}
-      {/* `relative`: the change ledger's names panel anchors to THIS row
-          (its own chip sits mid-row, where an anchored overlay ran past
-          <main>'s left edge and got clipped).
+      {/* `relative` is historical now that the ledger's panel anchors to its
+          own line below (#212) — kept because removing a containing block
+          silently re-parents any future absolute child (see the sr-only
+          lesson on the wrapper above).
 
           `data-sync-header-row` names the row for the one assertion that is
           ABOUT the row itself — "does it still hold one line at 1024"
@@ -718,14 +726,10 @@ export function SyncBar({
         >
           {subtitle}
         </p>
-        {/* The ledger chip takes the slack between state and controls — its
-            own fixed flex-basis, so hydration can never re-wrap the row (the
-            board below must not move when the ledger finds its words). */}
-        {since ? (
-          <div className={`min-w-0 flex-1 basis-40 ${statusTakesSlot ? "lg:hidden" : ""}`}>
-            {since}
-          </div>
-        ) : null}
+        {/* The change ledger used to ride here, in the row's flexible middle.
+            It lives on its own line below the row now (#212) — see the slot
+            comment on `since` — which also ends the width contest between it
+            and the status: the row's middle is the status line's alone. */}
         {/* The status live region — persistent (mounting live regions on
             demand drops announcements), sr-only while silent. When it speaks
             it takes the subtitle's slot at `lg`+ (see the row note above) and
@@ -935,6 +939,24 @@ export function SyncBar({
         </div>
         {trailing ? <div className="hidden shrink-0 items-center lg:flex">{trailing}</div> : null}
       </div>
+
+      {/* The notification line (#212): the change ledger's own full-width
+          line, directly under the command row. In the row it could not hold
+          the bar's centre — the flanks are asymmetric and the row wraps at
+          1024 on the fixture twin, so every in-row placement either wandered
+          or got carried to a line-end (see the `since` slot comment). Here
+          the chip centres on the bar itself, at every width, wrapped row or
+          not.
+
+          `relative` because the names panel anchors to THIS line: its bottom
+          is below every control in the header by construction, which is what
+          anchoring to the chip's own line could never guarantee while that
+          line lived inside a wrapping row (#172 — a z-30 sheet over the Sync
+          button). The line costs the worklist 26px at `lg`+ (one 18px chip
+          line + the column's 8px gap, measured at 1024); the shell stays
+          locked (#149) because the worklist scrolls inside itself, and the
+          server pass reserves the line, so hydration still moves nothing. */}
+      {since ? <div className="relative">{since}</div> : null}
 
       {/* The alert live region — persistent for the same announcement reason,
           its own line below the row when it speaks. A failure pushing the
