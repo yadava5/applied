@@ -755,6 +755,13 @@ FACTS: dict[str, dict] = {
     # README, because that file carries the same four numbers in three places
     # and drifted with the README rather than against it.
     "ciNodeMajor": {
+        # NOTE for --write: the pin and the floor are two different numbers and
+        # they move independently. This fact is the MAJOR the workflows pin
+        # (22). Every sentence carrying it also states the floor `test:unit`
+        # actually needs — 22.6, plus 21 for the built-in glob — as unchecked
+        # prose, because that floor is Node's, not this repository's. If the
+        # major ever moves, re-read those clauses; rewriting the digit alone
+        # leaves prose asserting a relationship that may no longer hold.
         "kind": "static",
         "describe": "node-version pinned across .github/workflows/",
         "compute": lambda: workflow_pin(r"node-version:\s*['\"]?(\d+)", "node-version"),
