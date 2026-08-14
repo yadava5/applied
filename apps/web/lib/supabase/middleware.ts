@@ -35,6 +35,16 @@ const PUBLIC_AUTH_PATHS = new Set(["/login", "/signup", "/callback"]);
  * and response cookie jars so that refreshed tokens flow through. Mutating
  * only one of them is the root cause of the "random logout" class of bugs
  * documented in `@supabase/ssr`.
+ *
+ * IMPORTANT: `setAll` takes a SECOND argument. Since `@supabase/ssr` 0.12.x it
+ * is called as `setAll(cookies, headers)`, where `headers` is a set of
+ * no-store directives that must land on the same response as the cookies —
+ * `applyServerStorage` in `@supabase/ssr/src/cookies.ts` passes them, and
+ * `src/types.ts` explains why: a cached response carrying auth cookies can
+ * serve one user's session token to a different user. Nothing warns you if you
+ * drop it. TypeScript assigns a one-parameter function to the two-parameter
+ * `SetAllCookies` type without complaint, so a `setAll` written against the
+ * old shape typechecks and silently discards the headers.
  */
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -53,13 +63,21 @@ export async function updateSession(request: NextRequest) {
             value: string;
             options: CookieOptions;
           }[],
+          headers: Record<string, string>,
         ) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
+          // Rebuilding the response is what propagates the mutated request
+          // cookies onward, so it has to happen here — but it discards
+          // everything already set on the old object. Both the cookies and the
+          // headers are therefore applied AFTER this line, never before.
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options),
+          );
+          Object.entries(headers).forEach(([name, value]) =>
+            supabaseResponse.headers.set(name, value),
           );
         },
       },
