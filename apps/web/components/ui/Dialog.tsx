@@ -8,6 +8,50 @@ const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /**
+ * The scrim's motion targets — enter, settled, and exit.
+ *
+ * WHY THIS IS A FUNCTION AND NOT THREE INLINE OBJECTS. The `pointerEvents`
+ * entries below are the whole of the fix for #263, and they are only
+ * observable while the dialog is CLOSING: a state that cannot be rendered
+ * under `node --test` (AnimatePresence's exit needs a real animation frame).
+ * Pulling the targets out into a pure function is what gives that contract an
+ * executable assertion instead of a comment — see
+ * `tests/unit/dialog-closing-hit-test.test.mjs`.
+ *
+ * WHY THE FIX HAS TO LIVE IN THE TARGETS. The overlay is `fixed inset-0
+ * z-[100]`, so while it is mounted it hit-tests the entire viewport. During
+ * the ~150 ms exit it is still mounted, so a click issued in that window lands
+ * on the scrim and is swallowed — the control the user aimed at never sees it.
+ * The obvious repair, a `pointer-events-none` class driven off `open`, does
+ * not work: `AnimatePresence` renders an exiting child from the element it
+ * saved on the previous render (`renderedChildren` in its source), so every
+ * prop of the closing overlay — className included — is frozen at the values
+ * it held while `open` was still true. `exit` is the one lever motion applies
+ * *after* the close is initiated, and `pointerEvents` is not an animatable
+ * value, so motion snaps it rather than tweening it: the scrim stops catching
+ * clicks on the first frame of the exit while the opacity fade plays out
+ * normally.
+ *
+ * `animate` carries the matching `"auto"` for a reason. Motion never reverts a
+ * value it has set, and re-opening mid-exit reuses the same DOM node, so
+ * without it a dialog closed-then-immediately-reopened would come back with a
+ * backdrop that no longer blocks anything.
+ *
+ * Reduced motion gets the same treatment. Its exit is instant, but "instant"
+ * is still a frame of `AnimatePresence` bookkeeping, and that frame is exactly
+ * the window this closes.
+ */
+export function overlayMotion(reduceMotion: boolean | null) {
+  return {
+    initial: reduceMotion ? (false as const) : { opacity: 0 },
+    animate: { opacity: 1, pointerEvents: "auto" },
+    exit: reduceMotion
+      ? { opacity: 1, pointerEvents: "none", transition: { duration: 0 } }
+      : { opacity: 0, pointerEvents: "none" },
+  };
+}
+
+/**
  * A minimal modal dialog: focus is moved in on open and restored to the
  * trigger on close, Tab is trapped inside the panel, Escape and backdrop
  * clicks dismiss, and body scroll is locked while open. Rendered as a fixed
@@ -141,9 +185,7 @@ export function Dialog({
       {open ? (
         <motion.div
           className={overlayClass}
-          initial={reduceMotion ? false : { opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={reduceMotion ? { opacity: 1, transition: { duration: 0 } } : { opacity: 0 }}
+          {...overlayMotion(reduceMotion)}
           transition={{ duration: 0.15, ease: "easeOut" }}
           onMouseDown={(e) => {
             if (e.target !== e.currentTarget) return;
