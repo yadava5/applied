@@ -776,6 +776,43 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
               `${state} @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
             ).toBeLessThanOrEqual(0);
           }
+
+          // #212: the chip is the row's notification centre — a plate on its
+          // slot's centre, attached to neither neighbour. Centring is
+          // asserted against the SLOT (the flexible middle the row hands the
+          // chip), which holds on the wrapped default twin too, where the
+          // row's other members sit on other lines. The clearance half is
+          // the #196 guard restated for the new placement: flush adjacency
+          // to the totals is what "caption on the numbers" was, so whenever
+          // the plate shares a line with the subtitle it must stand clear of
+          // it — measured 45–147px across both twins at these viewports
+          // (`next start`, 2026-08-14), against a 12px flex gap when flush.
+          const geometry = await own.evaluate(() => {
+            const section = document.querySelector('[data-testid="since-last-look"]');
+            const chip = section?.querySelector("p, button");
+            const slot = section?.parentElement;
+            const subtitle = document.querySelector("[data-sync-header-row] > p.tabular");
+            if (!chip || !slot || !subtitle) return null;
+            const c = chip.getBoundingClientRect();
+            const s = slot.getBoundingClientRect();
+            const t = subtitle.getBoundingClientRect();
+            const sharesLine = c.top < t.bottom && t.top < c.bottom;
+            return {
+              offCentre: Math.abs((c.left + c.right) / 2 - (s.left + s.right) / 2),
+              clearance: sharesLine ? c.left - t.right : null,
+            };
+          });
+          expect(geometry, `${state} @ ${at}: chip geometry unreadable`).not.toBeNull();
+          expect(
+            geometry!.offCentre,
+            `${state} @ ${at}: chip centre sits ${geometry!.offCentre}px off its slot's`,
+          ).toBeLessThanOrEqual(1);
+          if (geometry!.clearance !== null) {
+            expect(
+              geometry!.clearance,
+              `${state} @ ${at}: ${geometry!.clearance}px from the totals — the #196 caption read`,
+            ).toBeGreaterThanOrEqual(24);
+          }
         } finally {
           await context.close();
         }

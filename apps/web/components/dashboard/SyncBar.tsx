@@ -224,10 +224,12 @@ export function SyncBar({
   subtitle: string;
   gmail: SyncGmailState | null;
   /** The change-ledger chip (`SinceLastLook`) — one line by that component's
-   *  own contract, mounted in the row's flexible middle. It no longer reads
-   *  ON from the subtitle: "Nothing new since…" hard against the totals read
-   *  as their caption (#196), so the chip's quiet states anchor themselves
-   *  against the row's far side instead — see that component. A slot rather
+   *  own contract, mounted in the row's flexible middle, where it centres
+   *  itself: the row's notification centre, a plate standing clear of both
+   *  neighbours (#212). It must never read ON from the subtitle — "Nothing
+   *  new since…" hard against the totals read as their caption (#196), and
+   *  hung off the far side it read as a trailing annotation on the sync
+   *  cluster — see that component for the measured clearances. A slot rather
    *  than an import: the ledger's rows/scope are the caller's business, and
    *  the error/empty pages pass nothing. */
   since?: ReactNode;

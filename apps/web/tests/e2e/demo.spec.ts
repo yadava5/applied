@@ -680,9 +680,11 @@ test.describe("live demo (/demo)", () => {
     await page.goto("/demo");
     const band = ledger(page);
     // Wait for the LOUD state specifically — a quiet band would pass the
-    // geometry below while proving nothing about this case. "Mark as seen"
-    // exists only on the loud chip, at every chip width.
-    await expect(band.getByRole("button", { name: "Mark as seen" })).toBeVisible();
+    // geometry below while proving nothing about this case. The disclosure
+    // trigger exists only on the loud chip, at every chip width ("Mark as
+    // seen" no longer marks it: since #212 that control rides inside the
+    // panel, so it does not exist until the panel opens).
+    await expect(band.getByRole("button", { name: /Name the rows/ })).toBeVisible();
     const loudBox = await card(page).boundingBox();
     const bandBox = await band.boundingBox();
 
@@ -726,9 +728,11 @@ test.describe("live demo (/demo)", () => {
     // guaranteed strict-mode violation — assert the one accessible control
     // instead: its name is computed from rendered text only, whichever
     // variant is showing. The opened panel below is the width-independent
-    // claim about the content.
-    await expect(band.getByRole("button", { name: "Mark as seen" })).toBeVisible();
+    // claim about the content. "Mark as seen" is deliberately NOT here:
+    // since #212 it lives inside the panel (asserted after the open below),
+    // so the closed chip is one object with one control.
     await expect(band.getByRole("button", { name: /Name the rows/ })).toBeVisible();
+    await expect(band.getByRole("button", { name: "Mark as seen" })).toHaveCount(0);
 
     // Nobody is named until the reader asks: the chip holds its line, and
     // the names appear on a press.
@@ -764,6 +768,9 @@ test.describe("live demo (/demo)", () => {
     // Marking it seen is the only thing that advances the marker, and it holds
     // across a reload — the fixture board is identical on every mount, so any
     // reappearance would be the ledger re-deriving from a stale snapshot.
+    // The control lives in the opened panel (#212): the digest can only be
+    // spent with the named rows on screen, which is rule 2's own spirit.
+    await expect(band.getByRole("button", { name: "Mark as seen" })).toBeVisible();
     await band.getByRole("button", { name: "Mark as seen" }).click();
     await expect(band).toContainText("Nothing new since");
     await expect(band.getByText("2 filed")).toHaveCount(0);
