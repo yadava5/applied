@@ -174,9 +174,47 @@ def test_ordinary_inbox_noise_does_not_flood_the_log(caplog: pytest.LogCaptureFi
     ]
     # A lifecycle verdict too weak for even the review floor is dropped quietly
     # as well — that is the precision gate doing its job, not an anomaly.
-    weak = _real_shape("weak-1", "rejection", 0.42)
+    #
+    # The sender is NOT the Greenhouse relay. It used to be, and that made this
+    # fixture the #166 shape by accident: a ``rejection`` at 0.42 from a known
+    # ATS now reaches the review queue via the ATS floor instead of being
+    # dropped — ``test_the_ats_floor_rescues_the_weak_ats_rejection`` below is
+    # that same item asserted the other way round. What THIS test is about is
+    # the log staying quiet below the auto-file gate, so the fixture moves to a
+    # sender the floor does not cover and goes on testing exactly that.
+    weak = p.PipelineItem(
+        message_id="weak-1",
+        category="rejection",
+        sender_email="recruiting@acme.com",
+        subject="Update on your application",
+        sender_name=None,
+        received_at=WHEN,
+        confidence=0.42,
+    )
 
     with caplog.at_level(logging.WARNING, logger="jobtracker.cloud.pipeline"):
         assert p.collect_review_items([*noise, weak]) == []
 
     assert [r for r in caplog.records if r.name == "jobtracker.cloud.pipeline"] == []
+
+
+def test_the_ats_floor_rescues_the_weak_ats_rejection() -> None:
+    """The other half of the fixture above — issue #166's fix, on this shape.
+
+    ``rejection`` at 0.42 from ``no-reply@us.greenhouse-mail.io`` is precisely
+    the message that used to vanish: below ``REVIEW_FLOOR`` so no queue entry,
+    and below ``AUTO_FILE_GATE`` so not even a log line. It now reaches the
+    queue — and only the queue.
+
+    Note what does NOT change. The employer is still unnameable on this shape
+    (see the module docstring), so the queue entry names no company rather than
+    inventing one, and nothing reaches the board.
+    """
+
+    weak = _real_shape("weak-ats-1", "rejection", 0.42)
+
+    assert p.roll_up_applications([weak]) == []
+    review = p.collect_review_items([weak])
+    assert [r.message_id for r in review] == ["weak-ats-1"]
+    assert review[0].category == "rejection"
+    assert review[0].company_display is None

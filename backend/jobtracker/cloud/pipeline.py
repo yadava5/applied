@@ -1901,6 +1901,21 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
     return sorted(rolled, key=lambda r: (r.company_token, r.req_id or "", r.role_token or ""))
 
 
+def is_ats_sender(sender_email: str | None) -> bool:
+    """Is this address a known Applicant Tracking System relay?
+
+    Thin wrapper over ``classifier.rules.is_ats_sender``, imported inside the
+    function on purpose. This module is otherwise free of ``jobtracker`` imports
+    — that is what lets it be unit-tested without a Gmail token and what keeps
+    ``sqlmodel`` and the classifier out of its import graph on a cold start. The
+    list itself is NOT copied here: one definition, read late.
+    """
+
+    from jobtracker.classifier.rules import is_ats_sender as _rules_is_ats_sender
+
+    return _rules_is_ats_sender(sender_email)
+
+
 def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
     """Return the uncertain lifecycle verdicts that need a human decision.
 
@@ -1908,7 +1923,9 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
       - the classifier explicitly emitted ``needs_review``, or
       - it is a lifecycle verdict (not follow-up) at/above the review floor
         (0.70) — including one that clears the gate but whose employer could not
-        be named (skipping is better than inventing a company).
+        be named (skipping is better than inventing a company), or
+      - it is a lifecycle verdict (not follow-up) relayed by a known ATS, at ANY
+        confidence — the ATS floor, see below.
 
     Anything below the review floor, or plain ``other`` noise, is omitted — and
     an omission the classifier was confident about (at/above ``AUTO_FILE_GATE``)
@@ -1941,7 +1958,46 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
         is_lifecycle = (
             item.category in JOB_LIFECYCLE_CATEGORIES and item.category != "follow_up"
         )
-        if not is_needs_review and not (is_lifecycle and item.confidence >= REVIEW_FLOOR):
+        # THE ATS FLOOR — issue #166.
+        #
+        # Mail relayed by a known ATS is never dropped silently. A cloud scan
+        # classifies from Gmail's ~200-character ``snippet``, and an ATS
+        # rejection spends that entire budget on a polite preamble — so the
+        # classifier reads a CONFIRMATION and scores it as one. Whether the
+        # message clears ``REVIEW_FLOOR`` at all then comes down to whether its
+        # SUBJECT happens to contain a confirmation phrase: Verkada's did (+2,
+        # 0.70, the queue), Together AI's did not (0.60, gone). #166 is that
+        # knife-edge, and #238 proved it by execution.
+        #
+        # What this does and does not do. It routes to the HUMAN REVIEW QUEUE
+        # and nothing else — it never files a row, never asserts a status and
+        # never writes a verdict, because ``_qualifies_for_hard_row`` above still
+        # requires ``AUTO_FILE_GATE`` and is untouched. So a floored message
+        # cannot make the board confidently WRONG, which is the failure mode
+        # that ruled out the obvious alternative fix (adding Greenhouse's
+        # rejection subject template as a pattern scores the same message
+        # ``applied`` at +6 and would auto-file a rejection as APPLIED).
+        #
+        # Bounded three ways, so "never dropped" cannot become "queue floods":
+        #   - LIFECYCLE ONLY. ``other`` — which is what a classifier miss and
+        #     ATS job-alert noise both produce — still drops, and so does a
+        #     category outside the canonical vocabulary, which stays a logged
+        #     bug rather than becoming a queue entry.
+        #   - ``follow_up`` stays excluded, exactly as it is above the floor.
+        #   - the sender must be on ``rules.ATS_DOMAINS``, a closed list of
+        #     transactional relays. Ordinary company and personal mail below the
+        #     floor is dropped exactly as before.
+        #
+        # Known residual, stated rather than hidden: an ATS message that scores
+        # NOTHING in any category is ``other`` and still drops. Covering that
+        # means queueing mail on the strength of its sender alone, which is a
+        # wider decision than #166 needs.
+        ats_floor = is_lifecycle and is_ats_sender(item.sender_email)
+        if (
+            not is_needs_review
+            and not ats_floor
+            and not (is_lifecycle and item.confidence >= REVIEW_FLOOR)
+        ):
             # THE ONLY TERMINAL DROP IN THE PIPELINE, and until now a silent one.
             #
             # An item that gets here produces nothing at all: no application row
