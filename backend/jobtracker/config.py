@@ -157,6 +157,23 @@ class Settings(BaseSettings):
             "during DDL. Not consumed by the runtime app engine."
         ),
     )
+    database_pool_size: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Postgres only: connections each process keeps open for reuse. "
+            "0 (the default) preserves NullPool — a fresh connection per "
+            "request, the pooler owning all lifecycle — which costs ~216 ms "
+            "of TCP+TLS+auth on every DB-touching request (issue #203). "
+            "Setting this >0 is a deliberate opt-in to client-side reuse "
+            "through the transaction-mode pooler: identity GUCs are already "
+            "transaction-local so no user's claims can outlive their "
+            "transaction on a reused connection, and pre-ping/recycle guard "
+            "against pooler-killed idle connections. Keep it small (1-2): "
+            "every warm serverless instance multiplies it against the shared "
+            "free-tier pooler's client limit."
+        ),
+    )
 
     @computed_field  # type: ignore[misc]
     @property

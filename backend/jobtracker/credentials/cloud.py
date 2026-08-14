@@ -199,16 +199,28 @@ async def save_gmail_credentials(
         return False
 
 
-async def get_gmail_credentials(user_id: uuid.UUID) -> Optional[GmailCredentials]:
+async def get_gmail_credentials(
+    user_id: uuid.UUID, session: AsyncSession | None = None
+) -> Optional[GmailCredentials]:
     """Fetch + decrypt Gmail OAuth credentials for ``user_id``.
 
     Returns ``None`` on miss; logs-and-returns-``None`` on decrypt failure
     rather than raising so routers degrade gracefully.
+
+    ``session`` — reuse the caller's open session instead of opening one.
+    Under the cloud engine's NullPool a session is a fresh TCP+TLS+auth
+    connection (~216 ms from iad1, issue #203), so a read handler that already
+    holds a session must pass it in rather than pay a second connection for
+    one indexed SELECT. Callers with no session in hand (OAuth callback, cron
+    sync) omit it and get the previous behaviour.
     """
 
     fernet = _require_fernet()
-    async with get_session() as session:
+    if session is not None:
         row = await _fetch_credential(session, user_id=user_id, kind=KIND_GMAIL)
+    else:
+        async with get_session() as own_session:
+            row = await _fetch_credential(own_session, user_id=user_id, kind=KIND_GMAIL)
     if row is None:
         logger.debug("No Gmail credentials stored for user_id=%s", user_id)
         return None

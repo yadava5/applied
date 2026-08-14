@@ -2816,7 +2816,9 @@ def _lifecycle_to_status(category: EmailCategory) -> str | None:
     return status.value if status is not None else None
 
 
-async def _connected_account_email(user_id: uuid.UUID) -> str | None:
+async def _connected_account_email(
+    user_id: uuid.UUID, session=None
+) -> str | None:
     """The email of the user's connected Gmail account, or ``None``.
 
     Used only to retarget "Open in Gmail" deep links at the mailbox the user
@@ -2824,12 +2826,25 @@ async def _connected_account_email(user_id: uuid.UUID) -> str | None:
     ``/u/0/`` account). Best-effort — any lookup failure yields ``None`` and the
     link falls back to the ``/u/0/`` form rather than breaking the response.
     Imported lazily to keep the cloud cold-start import graph thin.
+
+    ``session`` — the calling handler's open session. The READ handlers must
+    pass it: without it this lookup opens a session of its own, which under
+    NullPool is a second serial TCP+TLS+auth connection per request — measured
+    at ~470 ms of ``GET /applications/{id}``'s 850 ms in issue #203. Two rules
+    keep the shared-session path as safe as the separate session was:
+
+    - call it LAST, after every row the response needs has been read. A failed
+      SELECT aborts the shared transaction, and "degrade to a /u/0/ link"
+      must not become "500 the endpoint";
+    - read-only handlers only. A handler that commits afterwards would turn
+      that same aborted transaction into a failed write, so the split/write
+      paths keep their own session and simply omit the argument.
     """
 
     try:
         from jobtracker.credentials.cloud import get_gmail_credentials
 
-        stored = await get_gmail_credentials(user_id)
+        stored = await get_gmail_credentials(user_id, session)
         return stored.email if stored else None
     except Exception:  # noqa: BLE001 — a link hint must never break the endpoint
         return None
@@ -2960,9 +2975,11 @@ async def list_applications_cloud(
         )
         rows = (await session.exec(stmt)).all()
 
-    # Retarget each row's "Open in Gmail" link at the connected mailbox so the
-    # dashboard cards open the right account, not the browser-default /u/0/.
-    account_email = await _connected_account_email(user_id)
+        # Retarget each row's "Open in Gmail" link at the connected mailbox so
+        # the dashboard cards open the right account, not the browser-default
+        # /u/0/. Same session, and last — see _connected_account_email.
+        account_email = await _connected_account_email(user_id, session)
+
     return CloudApplicationListResponse(
         applications=[_serialize(app, account_email) for app in rows],
         total=total,
@@ -3153,7 +3170,9 @@ async def review_queue_cloud(
             )
         ).all()
 
-    account_email = await _connected_account_email(user_id)
+        # Same session, and last — see _connected_account_email.
+        account_email = await _connected_account_email(user_id, session)
+
     items: list[ReviewItemResponse] = []
     seen_threads: set[str] = set()
     for e in rows:
@@ -3381,6 +3400,9 @@ async def mail_listing_cloud(
             ).all()
             company_by_application = dict(pairs)
 
+        # Same session, and last — see _connected_account_email.
+        account_email = await _connected_account_email(user_id, session)
+
     category_counts: dict[str, int] = {}
     for stored_category, count in grouped:
         if stored_category is None:
@@ -3395,7 +3417,6 @@ async def mail_listing_cloud(
         )
         category_counts[key] = count
 
-    account_email = await _connected_account_email(user_id)
     messages = [
         MailMessageResponse(
             message_id=e.message_id,
@@ -3447,10 +3468,6 @@ async def application_detail_cloud(
     anyone else's row).
     """
 
-    # Resolved before the row session opens so the deep-link retarget never
-    # nests a second session inside this one.
-    account_email = await _connected_account_email(user_id)
-
     async with get_session() as session:
         app = (
             await session.exec(
@@ -3473,6 +3490,9 @@ async def application_detail_cloud(
                 .order_by(Email.received_at.desc())
             )
         ).all()
+        # Same session, and last (all rows above are already read) — see
+        # _connected_account_email.
+        account_email = await _connected_account_email(user_id, session)
         serialized = _serialize(app, account_email)
         messages = [_message_ref_response(e, account_email) for e in emails]
         clusters = cluster_stored_mail(list(emails))
@@ -3524,6 +3544,11 @@ async def split_application_cloud(
     error the caller should treat as a failure.
     """
 
+    # Deliberately on its OWN session, unlike the read handlers: this handler
+    # COMMITS below, and a failed credential SELECT inside the shared session
+    # would abort the transaction and turn "degrade the link" into "fail the
+    # split". A rare interactive action can afford the extra connection; the
+    # navigation-path reads cannot (see _connected_account_email).
     account_email = await _connected_account_email(user_id)
 
     async with get_session() as session:

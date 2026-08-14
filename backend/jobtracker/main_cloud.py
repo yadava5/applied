@@ -217,6 +217,97 @@ class _RLSIdentityScopeMiddleware:
 app.add_middleware(_RLSIdentityScopeMiddleware)
 
 
+class _ServerTimingMiddleware:
+    """Report where each request's time went — the instrument issue #203 named.
+
+    Production measured ``GET /api/applications/{id}`` at 850 ms for 568 bytes
+    with ~500 ms unattributable from outside the process. This middleware makes
+    the split visible on every response, for free, via the standard
+    ``Server-Timing`` header (browser devtools render it; ``curl -sI`` shows
+    it; Vercel's function logs keep the slow-request lines):
+
+        Server-Timing: app;dur=712.4, db_connect;dur=431.9;desc="n=2",
+                       db_query;dur=95.1;desc="n=7"
+
+    - ``app``       — the whole request inside the ASGI app (excludes platform
+                      routing/edge, which #203 measured separately at ~130 ms).
+    - ``db_connect``— connection establishment: the NullPool tax. ``n`` is the
+                      count; two connects on a read endpoint was the bug.
+    - ``db_query``  — statement round trips, INCLUDING the transaction-GUC
+                      ``set_config`` — that is real request cost, not overhead
+                      to hide.
+
+    Pure ASGI (same reasoning as ``_RLSIdentityScopeMiddleware``): the phase
+    accumulator is a ContextVar and must be set in the same context the
+    handler runs in. Durations only, no identifiers, so the header leaks
+    nothing a caller does not already know. Requests slower than
+    ``_SLOW_REQUEST_MS`` additionally log one INFO line so production keeps a
+    queryable record without per-request log spam.
+    """
+
+    _SLOW_REQUEST_MS = 500.0
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        from time import perf_counter
+
+        from jobtracker.database.connection import (
+            begin_db_phase_capture,
+            end_db_phase_capture,
+            read_db_phases,
+        )
+
+        token = begin_db_phase_capture()
+        started = perf_counter()
+
+        async def send_with_timing(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                total_ms = (perf_counter() - started) * 1000.0
+                phases = read_db_phases() or {}
+                connect_ms = phases.get("connect_ms", 0.0)
+                connects = int(phases.get("connects", 0))
+                query_ms = phases.get("query_ms", 0.0)
+                queries = int(phases.get("queries", 0))
+                header = (
+                    f"app;dur={total_ms:.1f}, "
+                    f'db_connect;dur={connect_ms:.1f};desc="n={connects}", '
+                    f'db_query;dur={query_ms:.1f};desc="n={queries}"'
+                )
+                headers = list(message.get("headers", []))
+                headers.append((b"server-timing", header.encode("latin-1")))
+                message = {**message, "headers": headers}
+                if total_ms >= self._SLOW_REQUEST_MS:
+                    logger.info(
+                        "slow request: %s %s -> %s in %.0f ms "
+                        "(db_connect %.0f ms x%d, db_query %.0f ms x%d)",
+                        scope.get("method", "?"),
+                        scope.get("path", "?"),
+                        message.get("status", 0),
+                        total_ms,
+                        connect_ms,
+                        connects,
+                        query_ms,
+                        queries,
+                    )
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_timing)
+        finally:
+            end_db_phase_capture(token)
+
+
+# Outermost of the pure-ASGI middlewares (added last), so `app;dur=` covers
+# the RLS scope reset and CORS work as well as the handler itself.
+app.add_middleware(_ServerTimingMiddleware)
+
+
 class HealthResponse(BaseModel):
     """Cloud health response. Intentionally minimal until C2/C3/C4 land."""
 
