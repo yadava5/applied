@@ -382,7 +382,16 @@ export function ImportMail() {
       >
         <span className="text-strong">On-device only.</span> Your file is read and classified
         entirely in this browser tab — the mail never leaves your device.{" "}
-        <a href="/privacy#on-device" className="text-strong underline-offset-4 hover:underline">
+        {/* `whitespace-nowrap` because the link was breaking mid-phrase —
+            "Privacy" trailing line one, "policy →" orphaned on line two. It is
+            one destination, so it wraps as one unit or not at all. And it takes
+            the note's own `viz-rules` accent rather than `text-strong`: at
+            strong it was the same weight and colour as the "On-device only."
+            lead, so the one actionable thing in the box read as more prose. */}
+        <a
+          href="/privacy#on-device"
+          className="whitespace-nowrap text-viz-rules underline-offset-4 hover:underline"
+        >
           Privacy policy →
         </a>
       </p>
