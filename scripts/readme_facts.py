@@ -913,7 +913,15 @@ FACTS: dict[str, dict] = {
             # ── printed in the System Card booklet ──
             {"re": r"behind a ([\d.]+) confidence gate", "file": BOOKLET_CONTENT},
             {"re": r'key: "([\d.]+) gate", val:', "file": BOOKLET_CONTENT},
-            {"re": r'def: "([\d.]+) confidence cutoff to auto-file', "file": BOOKLET_CONTENT},
+            # Reworded by #251, same reason the lede below it was: "cutoff to
+            # auto-file" defined the gate as SUFFICIENT to file, and it is only
+            # necessary — `_qualifies_for_hard_row` also needs a nameable
+            # employer. A glossary entry is the form of that claim most likely
+            # to be quoted, so it says "floor" now. Anchored on the full
+            # "confidence floor — necessary to auto-file" rather than on
+            # "([\d.]+) confidence", which would also match the kicker at :60
+            # and quietly duplicate that site.
+            {"re": r'def: "([\d.]+) confidence floor — necessary to auto-file', "file": BOOKLET_CONTENT},
             # THRESHOLDS is a table of hand-written strings. Nothing imports it
             # today, so it is not itself a surface — but it is a copy of the gate
             # in a TS tree that the float-shaped `TS_GATE_DEF` census cannot see,

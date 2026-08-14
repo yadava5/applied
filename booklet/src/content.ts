@@ -111,7 +111,7 @@ export const TOC = {
     { term: "Cascade", def: "cheap-certain layers first, learned last." },
     { term: "e5", def: "pretrained embedding model for similarity." },
     { term: "SetFit", def: "few-shot text classifier, contrastive." },
-    { term: "Gate", def: "0.85 confidence cutoff to auto-file." },
+    { term: "Gate", def: "0.85 confidence floor — necessary to auto-file." },
     { term: "macro-F1", def: "per-class F1, averaged — no class hides." },
     { term: "ONNX", def: "portable model format; runs via WASM." },
   ],
@@ -308,7 +308,7 @@ export const HOW = {
     headline: "Similarity, not exact words.",
     body: [
       "When no rule is sure, the email is embedded with a pretrained e5-small-v2 model (384 dimensions) and matched by cosine similarity to the nearest labeled example. It catches the rejection that never says “rejected”.",
-      "The e5 weights are used off the shelf — not fine-tuned. Growing the neighbor set is how this layer would learn, and the code to do it exists — but nothing in the shipped product calls it, so a correction adds no neighbor. The set is the labeled corpus as shipped.",
+      "The e5 weights are used off the shelf — not fine-tuned. Growing the neighbor set is how this layer would learn, and the code to do it exists — but nothing in the codebase calls it, so a correction adds no neighbor. The set is the labeled corpus as shipped.",
     ],
     stat: { value: "384-d", label: "e5-small-v2 embedding" },
     stat2: { value: "1-NN", label: "cosine nearest neighbor" },
