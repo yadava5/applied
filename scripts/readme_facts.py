@@ -834,12 +834,24 @@ FACTS: dict[str, dict] = {
         "sites": [r"a static parse counts (\d+) `test_\*` functions"],
     },
     "rlsTests": {
+        # This fact used to be asserted inside the sentence that dates the
+        # never-executed-anywhere finding, and `--write` therefore rewrote the
+        # past every time the module grew: the clause read "The 10 that used to
+        # skip … as of 2026-08-02" until the 11th test landed, then said 11,
+        # then 12. On 2026-08-02 the module held 10 — see README:561's "ten
+        # silently skipped ones", which is the same event and is deliberately
+        # unbound. A count of what exists NOW cannot live in a clause about a
+        # moment; the paragraph now states the current figure in its own
+        # present-tense clause and leaves the historical 10 as a literal no
+        # fact may touch. Same shape as `testFunctions`/`testModules` below,
+        # whose sites are anchored on "at HEAD" so the unbound "300 across 25
+        # modules at 37dd805" beside them survives a rewrite.
         "kind": "static",
         "describe": "test_* functions in backend/tests/test_rls_postgres.py",
         "compute": lambda: test_functions(only="test_rls_postgres.py"),
         "sites": [
             {"re": r"(\w+) tests drive the real connection machinery", "word": True},
-            r"The (\d+) that used to skip",
+            r"and \*\*(\d+) tests\*\* now exercise it",
             r"(\d+) RLS enforcement tests",
         ],
     },
@@ -1330,7 +1342,7 @@ def parse_pytest(out: str) -> dict:
         2 failed, 303 passed in 33.10s
 
     Reading only "passed" would make a skipped suite indistinguishable from a
-    complete one — and the ten RLS tests are exactly the ones that skip when no
+    complete one — and the RLS tests are exactly the ones that skip when no
     Postgres is reachable, which is the failure this repository has already had
     once. So every outcome is parsed, and `skipped` is a fact in its own right.
     """
@@ -1423,7 +1435,7 @@ def record() -> None:
         # artifact must not be mistakable for a green suite: --record keeps the
         # counts from a failing run on purpose, so without this block a red run
         # and a clean one leave identical files behind. `dockerAvailable` is here
-        # because the ten RLS tests skip silently without it, and "0 skipped" is
+        # because the RLS tests skip silently without it, and "0 skipped" is
         # the one claim on the page that a skip would quietly satisfy.
         "suiteOutcome": {
             "passed": counts.get("passed", 0),
