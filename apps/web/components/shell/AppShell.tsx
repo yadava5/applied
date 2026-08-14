@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import type { RailData } from "@/lib/shell/rail";
 import { AppShellFrame } from "./AppShellFrame";
+import { ReturnRefresh } from "./ReturnRefresh";
 
 type AppShellProps = {
   children: ReactNode;
@@ -34,6 +35,14 @@ type AppShellProps = {
  * difference. The auth/session reads underneath are request-memoized, so the
  * shell shares them with the page it wraps. `TopBar` is a Client Component
  * because sign-out calls into supabase-js in the browser.
+ *
+ * `ReturnRefresh` hangs off THIS component rather than the frame, and outside
+ * the frame's tree rather than among the page's children: it is the signed-in
+ * half of the router-cache trade (`staleTimes.dynamic: 300` in
+ * `next.config.ts`), and mounting it here is what keeps it off `/demo/shell`,
+ * which renders `AppShellFrame` directly over fixtures with no server to
+ * refresh from. It renders `null`, so it touches neither the geometry contract
+ * nor the shared column.
  */
 export async function AppShell({
   children,
@@ -43,8 +52,11 @@ export async function AppShell({
   ambient = true,
 }: AppShellProps) {
   return (
-    <AppShellFrame rail={await rail} userEmail={userEmail} userName={userName} ambient={ambient}>
-      {children}
-    </AppShellFrame>
+    <>
+      <ReturnRefresh />
+      <AppShellFrame rail={await rail} userEmail={userEmail} userName={userName} ambient={ambient}>
+        {children}
+      </AppShellFrame>
+    </>
   );
 }

@@ -61,16 +61,50 @@ const nextConfig: NextConfig = {
    * `ƒ Dynamic`, and Next's default `staleTimes.dynamic` is 0, which means no
    * client cache at all, by construction.
    *
-   * WHAT `dynamic: 30` TRADES. Rail navigation within a 30-second window
-   * serves the payload the tab already has instead of asking the origin. In
-   * exchange, data that changed on the server in those 30 seconds — changed by
-   * something OTHER than this tab — is not seen until the window closes.
-   * Nothing in this app changes server-side on its own: every mutation is a
-   * user action in this tab, and `router.refresh()` bumps Next's global
-   * segment-cache version (`invalidateSegmentCacheEntries`), so a refresh
-   * invalidates EVERY route's entry, not just the one you are standing on.
-   * That was checked call-by-call, not assumed — sync, rebuild, stage change,
-   * file, reclassify, add, dismiss, restore, split and delete all refresh.
+   * WHAT A STALE WINDOW TRADES. Rail navigation within the window serves the
+   * payload the tab already has instead of asking the origin. In exchange,
+   * data that changed on the server inside that window — changed by something
+   * OTHER than this tab — is not seen until it closes. Every in-tab mutation
+   * heals itself: `router.refresh()` bumps Next's global segment-cache version
+   * (`invalidateSegmentCacheEntries`), so a refresh invalidates EVERY route's
+   * entry, not just the one you are standing on. That was checked
+   * call-by-call, not assumed — sync, rebuild, stage change, file, reclassify,
+   * add, dismiss, restore, split and delete all refresh.
+   *
+   * WHY IT IS 300 AND NOT 30. Thirty seconds was too short to be the thing it
+   * was for. Measured on production at `dynamic: 30`: /inbox on a first visit
+   * settled in 1124 ms and issued one `_rsc` request; back to /dashboard
+   * inside the window, 78 ms and zero requests; /inbox again inside the
+   * window, 33 ms and zero. The cache was never broken — it was 15–30× and
+   * then it expired. Visit a tab, work for a minute, come back, and the whole
+   * 1124 ms is re-paid, which is experienced as the app being randomly slow.
+   * Nothing pre-warms it away, either: `<Link prefetch={true}>` issues NOTHING
+   * for these `ƒ Dynamic` routes, and an explicit `router.prefetch()` on a cold
+   * route does fire requests but the navigation that follows still cost 460 ms
+   * and still hit the network — the prefetched payload was not reused. The
+   * window is the only knob that works, so it is set to the length of a
+   * working session rather than the length of a pause.
+   *
+   * WHAT MAKES 300 SAFE — AND THE SENTENCE THIS REPLACES. An earlier version of
+   * this note said "nothing in this app changes server-side on its own: every
+   * mutation is a user action in this tab". THAT IS NO LONGER TRUE. #284 added
+   * a scheduled sync — the `crons` entry in the repo-root `vercel.json`, on a
+   * fifteen-minute schedule, hitting `/cron/sync` on the backend project (the
+   * cron expression is not quoted here: its slash-star would close this block
+   * comment, which is exactly how the first draft of this note failed `tsc`).
+   * So mail is filed and the board moves every 15 minutes with no tab open and
+   * nobody watching. A five-minute cache on top of that, alone, would be a
+   * stale-data bug. It does not ship alone: `components/shell/ReturnRefresh`
+   * mounts one listener in the signed-in shell and calls `router.refresh()`
+   * when the reader comes back after being away longer than
+   * `AWAY_REFRESH_THRESHOLD_MS` (60 s — `lib/shell/awayRefresh.ts`). Away
+   * beyond a glance, and the cache is dropped wholesale on return; a glance,
+   * and nothing is spent. The threshold is deliberately BELOW this window and
+   * must stay there: past 300 s the next navigation refetches anyway, so the
+   * two numbers being different is what gives the rule anything to do. The
+   * residual exposure, stated plainly rather than left to be discovered: a
+   * reader who never leaves the tab at all can be up to 300 s behind a
+   * cron-written change, against a cron that runs every 900 s.
    *
    * `components/settings/**` saves to Supabase user metadata, and its writers
    * refresh too (#216/#231) — `/settings` used to pin itself out with
@@ -88,7 +122,7 @@ const nextConfig: NextConfig = {
    * REGRESSION dressed as a tuning knob.
    */
   experimental: {
-    staleTimes: { dynamic: 30, static: 300 },
+    staleTimes: { dynamic: 300, static: 300 },
   },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

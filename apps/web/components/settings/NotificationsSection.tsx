@@ -44,13 +44,14 @@ export function NotificationsSection({
      * THE OTHER HALF OF #216, and the reason the toggle read as dead.
      *
      * `next.config.ts` caches every route's RSC payload in the client router
-     * for 30 s (`experimental.staleTimes.dynamic`, #211 — a measured win
+     * for 300 s (`experimental.staleTimes.dynamic`, #211 — a measured win
      * against 700–1150 ms of origin time per navigation, which is why the
      * answer here is to invalidate on the mutation rather than to opt
      * `/dashboard` out). The dashboard is almost always ALREADY in that cache
      * when a user comes here: the sidebar `Link` prefetches it. So the write
      * below landed in Supabase, the user clicked Dashboard, and the cached
-     * payload rendered the OLD placement — self-correcting after 30 s, which
+     * payload rendered the OLD placement — self-correcting only once the
+     * window closes, five minutes later since the window went to 300 s, which
      * is worse than a hard failure, because the control reads as broken
      * exactly while it is being tested and works once you have given up.
      *

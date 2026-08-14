@@ -68,8 +68,14 @@ test("clearDetailCache drops everything", () => {
   assert.equal(readCachedDetail(2, 1), null);
 });
 
-test("the TTL matches the router cache's dynamic window — one trade, one number", () => {
-  // `next.config.ts` sets `staleTimes.dynamic: 30`. If either number moves,
-  // the other must be re-argued, not silently left behind.
+test("the TTL is 30 s — no longer the router's window, and re-argued", () => {
+  // These two WERE one number. `next.config.ts` moved `staleTimes.dynamic` to
+  // 300 (a working session on the fast path, made safe by the return-refresh
+  // in `components/shell/ReturnRefresh`); this one deliberately did NOT
+  // follow. A route's payload is re-fetched by that refresh on return, and
+  // this cache is per row: it is dropped on every mutation that can touch a
+  // trail, so its TTL only covers additions made elsewhere in the same tab,
+  // and 30 s is the bound that was measured for those. Any future move of
+  // either number is a re-argument, not a sync.
   assert.equal(DETAIL_CACHE_TTL_MS, 30_000);
 });

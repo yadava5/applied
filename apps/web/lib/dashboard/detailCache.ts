@@ -9,22 +9,24 @@
  * ↑/↓ pays it per step, in both directions.
  *
  * THE TRADE, stated. Within the window, a reopen can show a trail that is up
- * to 30 s old. That is the same trade — the same number, on purpose — the
- * router cache makes for whole routes (`experimental.staleTimes.dynamic`,
- * #211), and it is bounded the same way: nothing on this board changes
- * server-side except through THIS tab's own actions, and every one of those
- * actions invalidates here (see `lib/dashboard/transport.ts` — row mutations
- * drop the row's entry; a sync/rebuild, which can add messages to any
- * application's trail, clears the cache whole). What remains is the pure
- * TTL: a review-queue classify or a filed-mail correction elsewhere in the
- * tab can add to a trail and is healed by expiry within 30 s.
+ * to 30 s old. It is the same KIND of trade the router cache makes for whole
+ * routes (`experimental.staleTimes.dynamic`, #211) — but no longer the same
+ * number: that one is 300 s now, and this one stayed, on purpose. It is
+ * bounded differently. Every action of THIS tab's that can touch a trail
+ * invalidates here (see `lib/dashboard/transport.ts` — row mutations drop the
+ * row's entry; a sync/rebuild, which can add messages to any application's
+ * trail, clears the cache whole). What is left is the pure TTL, covering two
+ * things: an addition made elsewhere in this tab (a review-queue classify, a
+ * filed-mail correction), and — since #284 put a sync on a 15-minute cron —
+ * mail filed server-side with nobody watching. Both are healed by expiry
+ * within 30 s, which is why the number did not follow the router's.
  *
  * Module-scope state is per browser tab, exactly like the router cache it
  * mirrors; the server never imports this. `now` is injectable so the TTL is
  * testable without wall-clock sleeps (`tests/unit/detail-cache.test.mjs`).
  */
 
-/** Same window as `staleTimes.dynamic` — one trade, one number. */
+/** Held at 30 s while `staleTimes.dynamic` moved to 300 — see the trade above. */
 export const DETAIL_CACHE_TTL_MS = 30_000;
 
 type Entry = { body: unknown; at: number };
