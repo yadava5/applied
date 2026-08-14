@@ -43,13 +43,27 @@ const ROOTS = ["app", "components"];
 
 /**
  * The files allowed to set `aria-current="page"`: the authed app's primary
- * navigation, and only it. TWO files, because the desktop rail and the mobile
- * menu are two renderings of the SAME `navItems` source (`components/shell/
- * nav.ts`) at opposite sides of the `md` breakpoint — one nav, not two sets.
- * Anything else on a page — a view switch, a filter chip, a pager — is
- * navigation WITHIN the page and takes `aria-current="true"`.
+ * navigation, and only it. Anything else on a page — a view switch, a filter
+ * chip, a pager — is navigation WITHIN the page and takes
+ * `aria-current="true"`.
+ *
+ * ONE file now, where it used to be two. The desktop rail and the mobile menu
+ * were always two renderings of the SAME `navItems` source
+ * (`components/shell/nav.ts`) at opposite sides of the `md` breakpoint — one
+ * nav, not two sets — and they now render through one `NavLink`, which is
+ * where the attribute went with them. `Sidebar` and `TopBar` no longer write
+ * it themselves, which is why they are no longer listed.
+ *
+ * That consolidation would quietly weaken the positive control below: with the
+ * attribute in a leaf component, a rail that stopped rendering `NavLink`
+ * entirely would lose its active state while this file stayed green. So
+ * `NAV_RENDERERS` is checked separately — the two surfaces must still go
+ * through the component that carries the attribute.
  */
-const PRIMARY_NAV = ["components/shell/Sidebar.tsx", "components/shell/TopBar.tsx"];
+const PRIMARY_NAV = ["components/shell/NavLink.tsx"];
+
+/** The two surfaces that must render the primary nav through `NavLink`. */
+const NAV_RENDERERS = ["components/shell/Sidebar.tsx", "components/shell/TopBar.tsx"];
 
 function sourceFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -123,6 +137,23 @@ test("the scanner sees the attribute at all — the primary nav still claims the
       `${file} no longer sets aria-current="page" — either the primary nav lost ` +
         `its active state, or this file's matcher stopped working. Both make the ` +
         `check below unfalsifiable: ${JSON.stringify(claiming)}`,
+    );
+  }
+});
+
+test("both nav surfaces still route through the component that claims it", () => {
+  // The other half of the positive control, and the one the consolidation into
+  // `NavLink` made necessary. The test above proves the ATTRIBUTE still exists
+  // somewhere; this proves the rail and the mobile menu still reach it. Without
+  // this, a surface that dropped `NavLink` for a bare `<Link>` would lose its
+  // active state with every assertion in this file green.
+  for (const file of NAV_RENDERERS) {
+    const src = code(readFileSync(join(webRoot, ...file.split("/")), "utf8"));
+    assert.match(
+      src,
+      /<NavLink[\s>]/,
+      `${file} no longer renders <NavLink>, so the primary nav on that surface ` +
+        `may have lost aria-current="page" without this file noticing`,
     );
   }
 });
