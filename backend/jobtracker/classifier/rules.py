@@ -520,12 +520,36 @@ def is_ats_sender(sender_email: Optional[str]) -> bool:
     about which senders are ATS relays — a floor that fires on a sender the
     classifier does not recognise, or the reverse, is a bug nobody could read off
     either call site.
+
+    The match is ANCHORED: a sender qualifies only when its domain IS a listed
+    domain or is a proper subdomain of one (#260). Do not "simplify" this back
+    to ``ats in domain`` — unanchored containment matched an ATS name anywhere
+    in the host, so ``greenhouse.io.mailgun.net``, ``notlever.co.example.com``
+    and (through the shortest entry, ``hire.com``) ``sohire.comcast.net`` all
+    read as ATS relays. Since #252 that answer decides ROUTING and not just a
+    score, so a domain anyone can register was enough to reach the owner's
+    review queue — and on the 0.80 rung the +0.05 bonus lands exactly on
+    ``AUTO_FILE_GATE`` (0.85), the threshold at which the pipeline MAY assert a
+    hard status. (Filing also needs a named employer, so the gate is necessary
+    and not sufficient; the queue entry needed nothing else.)
+
+    The argument is a bare address, never a raw ``From`` header: every ingestion
+    path parses one first (``cloud/gmail_client.py``, ``email_clients/gmail.py``
+    and ``email_clients/icloud.py`` all go through ``email.utils.parseaddr``).
+    That matters here because containment tolerated the trailing ``>`` of
+    ``… <no-reply@us.greenhouse-mail.io>`` and anchoring does not.
+
+    Anchoring makes two list entries load-bearing that containment had made
+    redundant: ``myworkday.com`` does not end with ``.workday.com`` and
+    ``greenhouse-mail.io`` is not a suffix of ``greenhouse.io``. Both are real
+    relays; neither may be deduplicated away. ``ats.rippling.com`` stays listed
+    as the full host on purpose — bare ``rippling.com`` is payroll mail.
     """
 
     if not sender_email or "@" not in sender_email:
         return False
     domain = sender_email.lower().rsplit("@", 1)[-1]
-    return any(ats in domain for ats in ATS_DOMAINS)
+    return any(domain == ats or domain.endswith(f".{ats}") for ats in ATS_DOMAINS)
 
 
 # =============================================================================

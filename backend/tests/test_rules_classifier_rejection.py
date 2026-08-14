@@ -249,9 +249,11 @@ def test_the_real_confirmation_still_classifies_applied_at_090() -> None:
 
     assert result.category is EmailCategory.APPLIED, result.scores
     # 0.90 + the ATS bonus. Greenhouse's relay only started earning that bonus
-    # with #166: ``ATS_DOMAINS`` listed ``greenhouse.io``, which does not
-    # substring-match ``us.greenhouse-mail.io``. Both values are above
-    # AUTO_FILE_GATE, so what this message DOES is unchanged.
+    # with #166, which added ``greenhouse-mail.io`` to ``ATS_DOMAINS``: the list
+    # held only ``greenhouse.io``, and ``us.greenhouse-mail.io`` is not under it.
+    # Since #260 the sender is matched as a domain (exact or proper subdomain)
+    # rather than as a substring, and this address matches either way. Both
+    # values are above AUTO_FILE_GATE, so what this message DOES is unchanged.
     assert result.confidence == pytest.approx(0.95), result.scores
     assert result.scores["rejection"] <= 0, result.matched_patterns
 
