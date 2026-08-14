@@ -10,6 +10,7 @@ backend/.venv
 backend/.venv311
 backend/.pytest_cache
 backend/.ruff_cache
+backend/.mypy_cache
 # NOTE: this file is read from the repository root for *every* Vercel project
 # built from this repo, whatever its Root Directory. A blanket `apps` entry
 # therefore deleted apps/web before the jobtracker-web build could run, and
@@ -22,3 +23,15 @@ dist
 docs
 ml
 scripts
+# `.claude/` is untracked (see .gitignore) so it cannot exist in a git-triggered
+# build — this line does nothing there. It is here for the CLI path, which is the
+# break-glass route used when a deploy has to happen without a push, and which
+# does NOT consult .gitignore. Locally `.claude/worktrees/` accumulates full
+# checkouts of the repo: 29 GB across ~40 worktrees on 2026-08-14. A
+# `vercel --prod` from the repository root therefore tries to enumerate all of it
+# and dies with `Error: Request body too large. Limit: 10mb` — a file-count
+# failure, not a byte-size one. That is exactly what stranded a rotated database
+# password in the Vercel env while the running deployment kept the dead one, and
+# took production down. Deploying from a clean worktree also avoids it; this line
+# means you no longer have to remember to.
+.claude
