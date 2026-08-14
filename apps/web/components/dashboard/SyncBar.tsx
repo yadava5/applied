@@ -224,9 +224,12 @@ export function SyncBar({
   subtitle: string;
   gmail: SyncGmailState | null;
   /** The change-ledger chip (`SinceLastLook`) — one line by that component's
-   *  own contract, mounted right after the subtitle so state and news read as
-   *  one sentence. A slot rather than an import: the ledger's rows/scope are
-   *  the caller's business, and the error/empty pages pass nothing. */
+   *  own contract, mounted in the row's flexible middle. It no longer reads
+   *  ON from the subtitle: "Nothing new since…" hard against the totals read
+   *  as their caption (#196), so the chip's quiet states anchor themselves
+   *  against the row's far side instead — see that component. A slot rather
+   *  than an import: the ledger's rows/scope are the caller's business, and
+   *  the error/empty pages pass nothing. */
   since?: ReactNode;
   /** The route title. Rendered as the page's ONE <h1>, at every width — the
    *  shell's TopBar renders no title on this route (see TopBar), so the
@@ -473,7 +476,15 @@ export function SyncBar({
     const elapsed = nowMs - phase.startedAt;
     statusContent = (
       <>
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
+        {/* `lg:hidden`: at `lg`+ this line sits flush against the Sync button
+            (see the motion.span below) and the button's own icon is already
+            spinning — two spinners a gap apart read as two operations. Below
+            `lg` the line is on its own wrap-line, where the spinner is the
+            state's one moving mark besides the clock. */}
+        <Loader2
+          className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none lg:hidden"
+          aria-hidden
+        />
         {/* Beside the totals at `lg`+ this line cannot wrap, so it has to say
             what gives first: the SENTENCE does, with an ellipsis. Measured at
             1024 on the signed-in board, where the row's spare width runs out
@@ -740,8 +751,19 @@ export function SyncBar({
             initial={reduceMotion ? false : { opacity: 0, y: 3 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
+            // `lg:justify-end` for the riding statuses is #196's second half:
+            // the running counter and the finished note used to sit at the
+            // slot's LEFT edge — visually a tail on the totals, a full row
+            // away from the button that was pressed. Right-anchored, the
+            // sentence lands flush against the action cluster, exactly where
+            // the recency phrase (hidden while a status speaks) otherwise
+            // sits — feedback co-located with the control, in the same slot
+            // geometry, so the zero-shift contract above is untouched. The
+            // slot-owning statuses keep the left edge: they replace the
+            // subtitle, and a right-anchored "continue the scan" would strand
+            // its sentence mid-row.
             className={`flex flex-wrap items-center gap-2 ${
-              statusRidesAlongTotals ? "lg:flex-nowrap lg:whitespace-nowrap" : ""
+              statusRidesAlongTotals ? "lg:flex-nowrap lg:justify-end lg:whitespace-nowrap" : ""
             }`}
           >
             {statusContent}
@@ -818,7 +840,20 @@ export function SyncBar({
                 }`}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <RefreshCw className="h-4 w-4" aria-hidden />
+                {/* The pressed control is the first place feedback lands
+                    (#196/#160): while ITS run is in flight the icon spins in
+                    place — same box, so the button never changes width — and
+                    the counter line sits right beside it. A rebuild disables
+                    this button but keeps the still icon: a spinner here would
+                    claim a sync that is not running. */}
+                {phase.kind === "syncing" ? (
+                  <Loader2
+                    className="h-4 w-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden
+                  />
+                ) : (
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                )}
                 Sync
               </button>
             </>
