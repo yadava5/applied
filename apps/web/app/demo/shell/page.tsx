@@ -1,7 +1,9 @@
+import { cookies } from "next/headers";
 import type { Metadata } from "next";
 
 import { DemoDashboard, type DemoReviewSlot } from "@/components/demo/DemoDashboard";
 import { AppShellFrame } from "@/components/shell/AppShellFrame";
+import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 import type { RailData } from "@/lib/shell/rail";
 
 export const metadata: Metadata = {
@@ -120,10 +122,17 @@ export default async function DemoShellPage({
 }) {
   const { pipeline, review, queue, session } = await searchParams;
   const needsReview = Math.min(99, Math.max(0, Number.parseInt(review ?? "", 10) || 0));
-  // `after` for anything that is not literally "before": the default matches
-  // the live account (the alerts pref is off unless the user turns it on) and
-  // is the placement the escaped-`sr-only` defect needed.
-  const reviewSlot: DemoReviewSlot = queue === "before" ? "before" : "after";
+  // Exact-match both values, like every knob here, and fall through to
+  // UNDEFINED rather than to "after": absent, the slot comes from the
+  // preference the Settings twin wrote (#216), whose own default is "after" —
+  // the live account's placement (the alerts pref is off unless turned on)
+  // and the one the escaped-`sr-only` defect needed. A knob that silently
+  // shadowed the preference would make the pref→slot e2e untestable here.
+  const reviewSlot: DemoReviewSlot | undefined =
+    queue === "before" ? "before" : queue === "after" ? "after" : undefined;
+  const notifications = parseDemoNotificationPrefs(
+    (await cookies()).get(DEMO_NOTIFICATIONS_COOKIE)?.value,
+  );
   // Literal "1" only, the same shape as the knobs above: anything else leaves
   // the twin in its honest default, so a stray `?session=` in a shared link
   // cannot quietly put a sign-out in front of an anonymous visitor.
@@ -149,6 +158,7 @@ export default async function DemoShellPage({
         variant="locked"
         pipeline={pipeline === "early" ? "early" : "seed"}
         needsReview={needsReview}
+        notifications={notifications}
         reviewSlot={reviewSlot}
         sessionEdge={sessionEdge}
       />

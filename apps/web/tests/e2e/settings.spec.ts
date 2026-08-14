@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-import { startConsoleWatch } from "./helpers";
+import { queuePlacement, startConsoleWatch } from "./helpers";
 import { requireSession } from "./session";
 
 /**
@@ -226,6 +226,121 @@ test.describe("settings (via the public /demo/settings twin)", () => {
     // #213: "Saved" is a report of an event, not a standing fact — it removes
     // itself after STATUS_LINGER_MS rather than asserting the save forever.
     await expect(saved).toBeHidden({ timeout: 8000 });
+  });
+
+  /**
+   * #216 — THE PREFERENCE-TO-BOARD WIRING, which had no executable check of
+   * any kind: `grep "readNotificationPrefs\|reviewAlerts\|buildSubtitle"
+   * tests/` matched nothing. `shell.spec.ts` covers the two queue SLOTS well,
+   * but drives them from `/demo/shell?queue=`, so it proves the slots work and
+   * never that a preference reaches them — `readNotificationPrefs` could have
+   * returned constants and stayed green.
+   *
+   * These two drive the REAL toggles, on the real sections, and read the
+   * result off the demo board. The twin's prefs live in a session cookie the
+   * demo transport writes (`lib/demo/notificationPrefs.ts`) and the demo pages
+   * read on the server — the same topology as the live metadata read — and
+   * both flags reach the board through the SAME functions the signed-in page
+   * calls (`lib/dashboard/boardPrefs.ts`). That sharing is what gives a
+   * demo-driven test purchase on a session-gated surface: inverting
+   * `reviewSlotFor` or ignoring `buildSubtitle`'s `weekly` argument fails
+   * here AND changes `/dashboard`.
+   *
+   * Both cases are deliberately non-degenerate. On a board with
+   * `needsReview === 0` both `reviewAlerts` branches render nothing, and with
+   * `thisWeek === 0` both subtitles are identical (#216 records this as the
+   * innocent reason the controls look dead on a real account) — so the queue
+   * case forces four held verdicts and the subtitle case runs on the seed
+   * fixture, which files several rows inside the last seven days.
+   */
+
+  /** The board's one prose data line, inside the sync header row. Scoped:
+   *  "this wk" also appears in the pulse band's momentum chart, so an
+   *  unscoped text query would pass no matter what the subtitle said. */
+  const boardSubtitle = (page: Page) =>
+    page.locator("[data-sync-header-row]").getByText(/ filed · /);
+
+  const notificationToggle = (page: Page, name: string) => page.getByRole("switch", { name });
+
+  test("the weekly-summary toggle reaches the board's header line — without waiting out the router cache", async ({
+    page,
+  }) => {
+    const watch = startConsoleWatch(page);
+    await page.goto("/demo/settings");
+
+    const weekly = notificationToggle(page, "Weekly summary");
+    // The twin seeds from the same cookie the board reads, so a first visit
+    // shows the live default: off.
+    await expect(weekly).toHaveAttribute("aria-checked", "false");
+
+    // Visit the board FIRST, by client navigation. This is the whole point of
+    // the case: that visit puts /demo's RSC payload in Next's client router
+    // cache, which `next.config.ts` keeps for 30 s
+    // (`experimental.staleTimes.dynamic`, #211). Without a `router.refresh()`
+    // on the save below, the second visit re-serves THIS payload and the
+    // preference appears to do nothing for half a minute — the defect, and
+    // the reason it self-corrects instead of failing outright.
+    const toBoard = page.getByRole("link", { name: /dashboard demo/i });
+    await toBoard.click();
+    await expect(page).toHaveURL(/\/demo$/);
+    await expect(boardSubtitle(page)).not.toContainText("this wk");
+
+    // Back to Settings, still without a document load, and flip the pref.
+    await page.goBack();
+    await expect(page).toHaveURL(/\/demo\/settings$/);
+    await weekly.click();
+    await expect(weekly).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+    // …and the board says so on the very next navigation. The count itself is
+    // relative to the fixture dates and the hour of the run, so the assertion
+    // is on the fold, not on a number that would go flaky at a day boundary.
+    await toBoard.click();
+    await expect(page).toHaveURL(/\/demo$/);
+    await expect(boardSubtitle(page)).toContainText(/\+\d+ this wk/);
+
+    expect(watch.errors, watch.errors.join("\n")).toEqual([]);
+  });
+
+  test("the needs-review-alerts toggle moves the queue between the board's two slots", async ({
+    page,
+  }) => {
+    const watch = startConsoleWatch(page);
+    // Four held verdicts — the fixture queue's collapse threshold, and the
+    // non-degenerate case: at zero, neither branch renders anything.
+    const board = "/demo/shell?review=4";
+
+    await page.goto("/demo/settings");
+    const alerts = notificationToggle(page, "Needs-review alerts");
+    await expect(alerts).toHaveAttribute("aria-checked", "false");
+
+    // OFF (the default): held mail waits UNDER the rows.
+    await page.goto(board);
+    expect(await queuePlacement(page), "queue slot with the pref off").toBe("after");
+
+    // ON: it interrupts the board, above the stage groups.
+    await page.goto("/demo/settings");
+    await alerts.click();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+    await page.goto(board);
+    expect(await queuePlacement(page), "queue slot with the pref on").toBe("before");
+
+    // Back off again — asserted in both directions, because a wiring that
+    // only ever answers "before" would pass a one-way test.
+    await page.goto("/demo/settings");
+    await alerts.click();
+    await expect(alerts).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+    await page.goto(board);
+    expect(await queuePlacement(page), "queue slot after switching back off").toBe("after");
+
+    // …and the geometry harness still overrides the preference: shell.spec.ts
+    // measures both placements through `?queue=`, and a knob silently
+    // shadowed by a cookie would make a third of that suite vacuous.
+    await page.goto(`${board}&queue=before`);
+    expect(await queuePlacement(page), "?queue=before with the pref off").toBe("before");
+
+    expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
   test("account deletion is gated behind a typed confirmation — and the demo refuses honestly", async ({
