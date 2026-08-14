@@ -889,20 +889,38 @@ def test_junk_in_the_allowlist_fails_loudly_and_does_not_echo_the_value(
     The message names the failing INDEX and not the value: an operator can
     paste anything at all into a Vercel environment-variable box, and this
     error reaches the logs.
+
+    THE JUNK VALUE HERE IS DELIBERATELY THREE CHARACTERS LONG. An earlier
+    version of this test used a 32-character one and passed — not because the
+    value was withheld, but because pydantic **truncates** ``input_value`` for
+    display and the junk fell off the end. Pydantic v2 catches a ``ValueError``
+    raised in a validator and renders ``input_value=<the whole env string>``
+    alongside the message, so the no-echo property is only real if the
+    exception is NOT a ``ValueError``. A short value sits well inside any
+    truncation window, which is what makes the assertion below load-bearing
+    rather than accidental. Do not lengthen it.
     """
 
-    good = uuid.uuid4()
-    secret_shaped = "not-a-uuid-BUTsomethingSensitive"
+    from jobtracker.config import CronSyncUserIdsError
 
-    with pytest.raises(Exception) as excinfo:  # pydantic ValidationError
-        _settings_with_allowlist(monkeypatch, f"{good},{secret_shaped}")
+    good = uuid.uuid4()
+    junk = "zzz"
+
+    with pytest.raises(CronSyncUserIdsError) as excinfo:
+        _settings_with_allowlist(monkeypatch, f"{good},{junk}")
 
     rendered = str(excinfo.value)
     assert "entry #2" in rendered, (
         f"The error must name which entry failed; got: {rendered}"
     )
-    assert secret_shaped not in rendered, (
-        "The offending value was echoed into the error, which reaches the logs."
+    assert junk not in rendered, (
+        f"The offending value was echoed into the error, which reaches the "
+        f"logs. Rendered: {rendered}"
+    )
+    # The whole env string must not appear either — that is the exact carrier
+    # pydantic's ValidationError would have used.
+    assert str(good) not in rendered, (
+        f"The raw env var value was echoed. Rendered: {rendered}"
     )
 
 
