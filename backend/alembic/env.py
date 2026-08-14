@@ -60,6 +60,7 @@ from sqlmodel import SQLModel  # noqa: E402
 
 from jobtracker.config import settings  # noqa: E402
 from jobtracker.database import models  # noqa: E402,F401  # register tables
+from jobtracker.database.migration_url import normalise_sync_driver  # noqa: E402
 
 # Alembic Config object (from alembic.ini).
 config = context.config
@@ -79,14 +80,11 @@ def _resolve_url() -> str:
         or settings.database_url
     )
 
-    # Alembic runs synchronously; swap async drivers for sync equivalents
-    # so we don't require an event loop inside env.py.
-    if url.startswith("sqlite+aiosqlite"):
-        url = url.replace("sqlite+aiosqlite", "sqlite", 1)
-    elif url.startswith("postgresql+asyncpg"):
-        url = url.replace("postgresql+asyncpg", "postgresql+psycopg", 1)
-
-    return url
+    # Alembic runs synchronously; swap async drivers for sync equivalents so we
+    # don't require an event loop inside env.py. Shared with db-migrate.yml's
+    # reachability probe — see migration_url.py for why that sharing is the
+    # whole point.
+    return normalise_sync_driver(url)
 
 
 def run_migrations_offline() -> None:
