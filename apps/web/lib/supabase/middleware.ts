@@ -19,6 +19,48 @@ import { isProtectedPath } from "@/lib/supabase/protectedRoutes";
 const PUBLIC_AUTH_PATHS = new Set(["/login", "/signup", "/callback"]);
 
 /**
+ * A redirect that still carries everything `@supabase/ssr` wrote during this
+ * request: the rotated auth cookies, and the no-store headers it passes to
+ * `setAll`.
+ *
+ * `NextResponse.redirect(url)` is a BRAND-NEW response. Returning one throws
+ * away `supabaseResponse` — and Supabase has by then already rotated the
+ * refresh token server-side and spent the old one, so the browser is left
+ * presenting a token the server will not accept again. That is the "random
+ * logout" shape the module comment below warns about, arrived at from the
+ * other direction (#241). On the signed-out branch the discarded writes are
+ * `maxAge: 0` deletions, so dropping them strands chunked auth cookies.
+ *
+ * Two details that are not obvious:
+ *
+ *   - Cookies are copied through the cookie JAR, not by copying the
+ *     `set-cookie` header. `ResponseCookies` parses the header once when it is
+ *     constructed, so a response built by appending raw `set-cookie` strings
+ *     serves them to the browser correctly but reports `cookies.get(name)` as
+ *     `undefined` — which would leave every reader, tests included, blind.
+ *
+ *   - Headers are taken from what the library handed to `setAll`, NOT copied
+ *     off `supabaseResponse`. That response also carries Next's own
+ *     `x-middleware-next` / `x-middleware-override-headers` /
+ *     `x-middleware-request-*` plumbing, which instructs Next to continue to
+ *     the route with rewritten request headers. On a 307 there is no route to
+ *     continue to; copying the header set wholesale is the way this fix breaks
+ *     redirecting altogether.
+ */
+function redirectPreservingSession(
+  url: URL,
+  from: NextResponse,
+  sessionHeaders: Record<string, string>,
+): NextResponse {
+  const redirect = NextResponse.redirect(url);
+  from.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+  Object.entries(sessionHeaders).forEach(([name, value]) =>
+    redirect.headers.set(name, value),
+  );
+  return redirect;
+}
+
+/**
  * `updateSession` is called from `proxy.ts` for every request that matches
  * the matcher config. It:
  *
@@ -30,6 +72,11 @@ const PUBLIC_AUTH_PATHS = new Set(["/login", "/signup", "/callback"]);
  *      redirects to `/login?redirect=<original>`.
  *   4. Otherwise returns the (possibly cookie-updated) response so the
  *      refreshed session is persisted back to the browser.
+ *
+ * EVERY exit — the two redirects included — must hand back what step 2 wrote.
+ * `redirectPreservingSession` is how the redirects do it, and
+ * `tests/unit/middleware-redirect-session.test.mjs` enumerates the returns in
+ * this function to make sure a new branch cannot quietly skip it.
  *
  * IMPORTANT: the supabase client must be constructed with both the request
  * and response cookie jars so that refreshed tokens flow through. Mutating
@@ -48,6 +95,10 @@ const PUBLIC_AUTH_PATHS = new Set(["/login", "/signup", "/callback"]);
  */
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
+  // What the library handed to `setAll` this request, kept so a redirect exit
+  // can carry it too. Recorded rather than read back off `supabaseResponse`,
+  // for the reason spelled out on `redirectPreservingSession`.
+  let sessionHeaders: Record<string, string> = {};
 
   const supabase = createServerClient(
     publicEnv.NEXT_PUBLIC_SUPABASE_URL,
@@ -79,6 +130,7 @@ export async function updateSession(request: NextRequest) {
           Object.entries(headers).forEach(([name, value]) =>
             supabaseResponse.headers.set(name, value),
           );
+          sessionHeaders = { ...sessionHeaders, ...headers };
         },
       },
     },
@@ -97,14 +149,14 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", pathname);
-    return NextResponse.redirect(url);
+    return redirectPreservingSession(url, supabaseResponse, sessionHeaders);
   }
 
   if (user && PUBLIC_AUTH_PATHS.has(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
-    return NextResponse.redirect(url);
+    return redirectPreservingSession(url, supabaseResponse, sessionHeaders);
   }
 
   return supabaseResponse;
