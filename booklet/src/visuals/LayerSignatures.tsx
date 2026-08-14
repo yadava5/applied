@@ -227,8 +227,8 @@ export const E5Signature: React.FC = () => (
       </text>
     </svg>
     <div style={{ fontFamily: FONTS.SERIF, fontStyle: "italic", fontSize: 10.5, color: COLORS.INK_MUTED }}>
-      The query embedding takes the category of its closest labeled neighbor —
-      and every correction adds a new point.
+      The query embedding takes the category of its closest labeled neighbor,
+      drawn from the labeled corpus as shipped.
     </div>
   </div>
 );
