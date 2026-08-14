@@ -49,6 +49,10 @@ on:
       - 'backend/alembic/**'
       - 'backend/jobtracker/database/models.py'
       - 'backend/jobtracker/database/schema_version.py'
+      # env.py imports this to pick the driver, and so does the probe above.
+      # Off the list, a change that breaks URL resolution would never reach
+      # either — which is how the bare-`postgresql://` failure survived.
+      - 'backend/jobtracker/database/migration_url.py'
       - '.github/workflows/db-migrate.yml'
   # Shows the exact SQL a merge would run, on the PR, with no credentials.
   pull_request:
@@ -56,6 +60,10 @@ on:
       - 'backend/alembic/**'
       - 'backend/jobtracker/database/models.py'
       - 'backend/jobtracker/database/schema_version.py'
+      # env.py imports this to pick the driver, and so does the probe above.
+      # Off the list, a change that breaks URL resolution would never reach
+      # either — which is how the bare-`postgresql://` failure survived.
+      - 'backend/jobtracker/database/migration_url.py'
       - '.github/workflows/db-migrate.yml'
   # Manual retry. Needed because the push trigger is path-filtered: if a
   # revision merges while the secret is missing or the database is paused, no
