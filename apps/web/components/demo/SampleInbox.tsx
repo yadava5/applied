@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 import {
   GATE,
-  SAMPLE_EMAILS,
+  sampleEmails,
   sampleInboxStats,
   type LayerId,
   type SampleEmail,
@@ -324,7 +324,14 @@ function LivePlayground() {
 }
 
 export function SampleInbox() {
-  const [openId, setOpenId] = useState<string | null>(SAMPLE_EMAILS[0]?.id ?? null);
+  // Resolved once per mount, not per render: the seeds are offsets, and a
+  // fresh `sampleEmails()` on every keystroke in the playground below would
+  // rebuild eleven objects to produce identical output. The empty dep list is
+  // deliberate — this component has no clock to follow, because nothing it
+  // renders shows `receivedAt` (see `sampleInbox.ts`); the day is carried so
+  // the fixtures stay honest, not so the UI can print it.
+  const emails = useMemo(() => sampleEmails(), []);
+  const [openId, setOpenId] = useState<string | null>(emails[0]?.id ?? null);
   const stats = sampleInboxStats();
 
   const statCells: [string, string][] = [
@@ -367,7 +374,7 @@ export function SampleInbox() {
         </div>
 
         <ul className="divide-y divide-line-soft">
-          {SAMPLE_EMAILS.map((email) => (
+          {emails.map((email) => (
             <InboxRow
               key={email.id}
               email={email}
