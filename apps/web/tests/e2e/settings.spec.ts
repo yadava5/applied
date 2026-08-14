@@ -276,11 +276,13 @@ test.describe("settings (via the public /demo/settings twin)", () => {
 
     // Visit the board FIRST, by client navigation. This is the whole point of
     // the case: that visit puts /demo's RSC payload in Next's client router
-    // cache, which `next.config.ts` keeps for 30 s
+    // cache, which `next.config.ts` keeps for 300 s
     // (`experimental.staleTimes.dynamic`, #211). Without a `router.refresh()`
     // on the save below, the second visit re-serves THIS payload and the
-    // preference appears to do nothing for half a minute — the defect, and
-    // the reason it self-corrects instead of failing outright.
+    // preference appears to do nothing for the whole window — the defect, and
+    // the reason it self-corrects instead of failing outright. The window
+    // moved from 30 s to 300 s, which only makes this case harder to pass by
+    // accident: a run slow enough to wait the old one out no longer can.
     const toBoard = page.getByRole("link", { name: /dashboard demo/i });
     await toBoard.click();
     await expect(page).toHaveURL(/\/demo$/);

@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 
 /**
  * This route PARTICIPATES in the router cache `next.config.ts` turns on
- * (`experimental.staleTimes.dynamic = 30`). It used to pin itself out with
+ * (`experimental.staleTimes.dynamic = 300`). It used to pin itself out with
  * `unstable_dynamicStaleTime = 0`, which made Settings the one tab that could
  * never arrive warm: every dashboard→settings click re-paid the full origin
  * render — 700–1150 ms of measured server time (#203) — even ten seconds
