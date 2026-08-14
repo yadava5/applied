@@ -46,6 +46,18 @@ export function Dialog({
   const descId = useId();
   const reduceMotion = useReducedMotion();
 
+  // Read `onClose` through a ref so the effect below depends on `open` alone.
+  // Every caller passes an inline arrow, so with `onClose` in the deps the
+  // effect re-ran on each parent re-render — meaning every keystroke inside a
+  // dialog tore down and re-ran the focus setup, snapping focus back to the
+  // FIRST field. Invisible while the only form dialog had one field (delete's
+  // confirm box); typing in the second field of the password dialog surfaced
+  // it.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return;
 
@@ -63,7 +75,7 @@ export function Dialog({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !panel) return;
@@ -88,7 +100,7 @@ export function Dialog({
       document.body.style.overflow = overflow;
       previouslyFocused?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   const overlayClass =
     variant === "sheet"

@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
+import { DisconnectGmailButton } from "@/components/gmail/DisconnectGmailButton";
 import { LastSynced } from "@/components/gmail/LastSynced";
 import { Disclosure } from "@/components/ui/Disclosure";
 import type { GmailStatusResult } from "@/lib/gmail/server";
@@ -10,15 +11,19 @@ import type { GmailStatusResult } from "@/lib/gmail/server";
  * The Gmail connection surface, server-rendered. Status is read from the
  * backend with the user's JWT; "Connect" links to the server-side authorize
  * route; "Disconnect" is a native form POST — no token ever reaches the
- * browser. Failure modes stay DISTINCT and honest (auth rejection vs. not
- * enabled vs. transient backend error), and every state routes forward (the
- * import fallback, the sample inbox) so the card is never a dead end.
+ * browser — behind the centred confirmation dialog every sensitive Settings
+ * action shares (#213, `DisconnectGmailButton`). Failure modes stay DISTINCT
+ * and honest (auth rejection vs. not enabled vs. transient backend error),
+ * and every state routes forward (the import fallback, the sample inbox) so
+ * the card is never a dead end.
  *
- * The card leads with the STATE and the one control; the safeguards brief and
- * the restricted-scope scale story still live here — they are the product's
- * honesty and they stay — but behind disclosures, because they are reference
- * material, not something to re-read on every visit. That cut is most of what
- * "too much text for the user to read" was reacting to on this page.
+ * The card leads with the STATE and the one control. The safeguards brief
+ * that used to fold here moved into the privacy policy where it belongs
+ * (#201) — the app stops re-arguing its own safety on a screen, and the
+ * standing `privacy policy →` link beside the control is the way to the full
+ * argument. What stays folded is the scale note below: a CAPABILITY limit
+ * (who can connect today), which a user needs at the moment they press
+ * Connect, not in a policy document.
  *
  * A connected account also gets its sync state: when the board was last built,
  * whether the last attempt failed, and — only when a cursor actually exists —
@@ -26,29 +31,10 @@ import type { GmailStatusResult } from "@/lib/gmail/server";
  * a full scan, so nothing is claimed about it beyond the time.
  *
  * `demo` renders the same card on `/demo/settings` over a fixture status: the
- * disconnect POST would 401 without a session, so the control is disabled and
- * says why — a dead button with a reason beats a live one that lies.
+ * disconnect POST would 401 without a session, so the dialog's confirm is
+ * disabled and says why — a dead button with a reason beats a live one that
+ * lies.
  */
-
-/** One safeguard, one line — the details element carries the paragraph. */
-const SAFEGUARDS: [string, string][] = [
-  [
-    "Read-only",
-    "Applied requests only the gmail.readonly scope. It can read messages to classify them — it cannot send, delete, or modify anything.",
-  ],
-  [
-    "Standard OAuth",
-    "Sign-in happens on Google's own consent screen. Applied never sees your Google password.",
-  ],
-  [
-    "Encrypted at rest",
-    "The refresh token is stored Fernet-encrypted, scoped to your account. It is never shown in the browser, never logged, and never placed in a URL.",
-  ],
-  [
-    "Revocable anytime",
-    "Disconnect here to revoke access at Google and delete the stored token. You can also remove it at myaccount.google.com/permissions.",
-  ],
-];
 
 export function GmailConnectionCard({
   result,
@@ -125,25 +111,7 @@ export function GmailConnectionCard({
 
           <div className="flex shrink-0 flex-col items-end gap-2">
             {connected ? (
-              demo ? (
-                <button
-                  type="button"
-                  disabled
-                  title="Simulated account — there is no real connection to revoke."
-                  className="cursor-not-allowed rounded-lg border border-line px-4 py-2 text-sm text-dim opacity-60"
-                >
-                  Disconnect
-                </button>
-              ) : (
-                <form action="/api/gmail/disconnect" method="post">
-                  <button
-                    type="submit"
-                    className="rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-reject/60 hover:text-strong"
-                  >
-                    Disconnect
-                  </button>
-                </form>
-              )
+              <DisconnectGmailButton email={email} demo={demo} />
             ) : needsSignin ? (
               <Link
                 href="/login?redirect=/settings"
@@ -187,40 +155,20 @@ export function GmailConnectionCard({
           )}
         </p>
 
-        {/* ---- Reference material, foldered ------------------------------ */}
+        {/* ---- Reference material, foldered ------------------------------
+            One fold, not two: the safeguards brief moved to /privacy (#201).
+            This one is a capability limit — who can connect today — which
+            belongs at the moment a user decides to press Connect. */}
         <div className="mt-4 space-y-3">
-          <Disclosure summary="How the connection works — and why it's safe">
-            <ul className="grid gap-2 text-sm text-muted">
-              {SAFEGUARDS.map(([k, v]) => (
-                <li key={k} className="flex gap-2">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-live" aria-hidden />
-                  <span>
-                    <span className="text-strong">{k}.</span> {v}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {/* The safeguards above are the short version. The page that owns
-                the long one — every stored field, where it runs, how to delete
-                it — is linked from the place a user decides to connect. */}
-            <p className="mt-3 text-sm text-muted">
-              The full account — every field Applied stores, where it runs, and how to delete it —
-              is in the{" "}
-              <Link href="/privacy" className="text-strong underline-offset-4 hover:underline">
-                privacy policy →
-              </Link>
-            </p>
-          </Disclosure>
-
-          <Disclosure summary="A note on scale — the honest version">
+          <Disclosure summary="Why connecting is invite-only right now">
             <p className="text-sm text-muted">
               <code className="text-strong">gmail.readonly</code> is a Google{" "}
               {/* The space is an explicit expression because a literal one does not survive the
                   build. Production rendered "restrictedscope"; building this file's own committed
                   source with our toolchain compiles the children to `restricted"}),"scope. Until`,
-                  so the bundler drops the leading whitespace of this text node. The sibling
-                  paragraph below keeps its space, and the difference is the entity: a JSX text node
-                  containing &apos; loses its leading space, one without keeps it. This was the only
+                  so the bundler drops the leading whitespace of this text node. A sibling text
+                  node without an entity keeps its space — the difference is the entity: a JSX text
+                  node containing &apos; loses its leading space, one without keeps it. This was the only
                   such node in the app — see the landing page, where `</span> int8-ONNX` and
                   `</span> to classify` both survive. Do not "simplify" this back to a plain space. */}
               <span className="text-strong">restricted</span>{" "}
@@ -228,14 +176,6 @@ export function GmailConnectionCard({
               OAuth verification and an independent CASA security assessment, it can authorize at most{" "}
               <span className="text-strong">100 test users</span> added on the OAuth consent screen. So
               direct Gmail linking works, but is intentionally gated to invited testers.
-            </p>
-            <p className="text-sm text-muted">
-              The path that scales to the public <span className="text-strong">without</span>{" "}
-              restricted-scope verification is <span className="text-strong">forwarding ingestion</span>:
-              you set a Gmail filter that auto-forwards job-related mail to a per-user Applied address,
-              and the same classifier labels what arrives — no account access required. That is the
-              recommended route for broad, public use; the direct OAuth connection above is the right
-              fit for a small, invited group and for the desktop app.
             </p>
           </Disclosure>
         </div>

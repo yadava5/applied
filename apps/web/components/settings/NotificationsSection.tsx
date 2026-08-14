@@ -94,8 +94,10 @@ export function NotificationsSection({
         />
       </div>
       {/* The toggles' own lines say exactly what each does; the only feedback
-          left to carry is the save state (#200 cut the footer caption). */}
-      <div className="mt-2 flex justify-end">
+          left to carry is the save state (#200 cut the footer caption).
+          `min-h-4` reserves the status line's height so "Saved" arriving —
+          and clearing itself (#213) — never re-flows the card. */}
+      <div className="mt-2 flex min-h-4 justify-end">
         <SaveStatus state={state} />
       </div>
     </SettingsSection>
