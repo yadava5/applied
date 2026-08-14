@@ -2,7 +2,7 @@
 
 import { X } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode, RefObject } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { MOMENTUM_DAYS, QUIET_AFTER_DAYS, bestDay, currentStreak, isoDaysAgo, weekdayOf } from "@/lib/dashboard/age";
 import { shortDate } from "@/lib/dashboard/dates";
@@ -14,6 +14,7 @@ import {
   type DeadlinePulse,
 } from "@/lib/dashboard/deadline";
 import type { PulseFilter } from "@/lib/dashboard/pulseFilter";
+import { ageTip, dayName, momentumTip, runwayTip, type PulseTip } from "@/lib/dashboard/pulseTip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,13 +50,110 @@ import { cn } from "@/lib/utils";
 
 export type PulseDetailKind = "momentum" | "age" | "deadline" | "provenance";
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+/** How long a pointer may spend crossing the gap between a bar and its tip
+ *  before the tip concedes the pointer has left. Showing has NO delay — the
+ *  delay was the reported defect — this grace exists only so the tip is
+ *  hoverable, which WCAG 1.4.13 requires of hover-triggered content. */
+const TIP_HIDE_MS = 120;
 
-/** `Tue Aug 5` — the panel's day name: weekday first, because weekday
- *  structure ("my Tuesdays are heavy") is half of what a daily chart is for. */
-function dayName(iso: string): string {
-  const wd = weekdayOf(iso);
-  return wd === null ? shortDate(iso) : `${WEEKDAYS[wd]} ${shortDate(iso)}`;
+/**
+ * Shared hover/focus state for one chart's tip — the 1.4.13 contract in one
+ * place so DayBars and the Runway cannot drift apart:
+ *
+ *  - shows the instant a bar is entered OR focused (the `title` it replaces
+ *    never appeared on focus at all);
+ *  - hoverable: leaving a bar starts a {@link TIP_HIDE_MS} grace, and
+ *    entering the tip cancels it, so a magnified pointer can cross onto the
+ *    tip without it vanishing under the crossing;
+ *  - dismissable without moving anything: Escape clears the tip and STOPS
+ *    there (`stopPropagation`), so the first press peels the tip and only the
+ *    second closes the panel — a dismissal that also closed the panel would
+ *    make 1.4.13's escape cost the reader their place;
+ *  - persistent: it holds until hover/focus leaves or Escape says so, never
+ *    on its own timer.
+ */
+function useChartTip() {
+  const [active, setActive] = useState<number | null>(null);
+  const hideTimer = useRef<number | null>(null);
+  const cancelHide = () => {
+    if (hideTimer.current !== null) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  };
+  const show = (i: number) => {
+    cancelHide();
+    setActive(i);
+  };
+  const hide = () => {
+    cancelHide();
+    hideTimer.current = window.setTimeout(() => setActive(null), TIP_HIDE_MS);
+  };
+  /** Immediate — blur and Escape owe no grace. */
+  const dismiss = () => {
+    cancelHide();
+    setActive(null);
+  };
+  useEffect(() => cancelHide, []);
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Escape" || active === null) return;
+    event.stopPropagation();
+    dismiss();
+  };
+  return { active, show, hide, dismiss, onKeyDown };
+}
+
+/**
+ * The charts' own tooltip, and the whole of #195's repair: the native `title`
+ * it replaces waited out the OS hover delay ("you hover, nothing happens, you
+ * move on") and set date and figure in one line at one weight. This renders
+ * with no delay, the FIGURE leads (`tabular`, `text-strong` — the band's
+ * figure idiom, deliberately not mono: a count of applications is a figure,
+ * not a machine value), and the when/qualifier sits beneath in the text face
+ * as its label.
+ *
+ * Presentation only, by contract: every bar keeps its full aria-label
+ * sentence, so this box is `aria-hidden` and adds nothing to the tree a
+ * screen reader walks — no double announcement. Anchored above the chart's
+ * own top (one steady line, not the bar's moving tip), with the edge fifths
+ * pinned to the chart's edges so it can never overflow the panel's box and
+ * hand it a horizontal scrollbar. It takes the pointer on purpose — being
+ * hoverable is part of the contract above.
+ */
+function ChartTip({
+  tip,
+  at,
+  count,
+  onHold,
+  onRelease,
+}: {
+  tip: PulseTip;
+  at: number;
+  count: number;
+  onHold: () => void;
+  onRelease: () => void;
+}) {
+  const center = ((at + 0.5) / count) * 100;
+  const style =
+    center < 15
+      ? { left: `${(at / count) * 100}%` }
+      : center > 85
+        ? { right: `${((count - 1 - at) / count) * 100}%` }
+        : { left: `${center}%`, transform: "translateX(-50%)" };
+  return (
+    <div
+      aria-hidden="true"
+      style={style}
+      onPointerEnter={onHold}
+      onPointerLeave={onRelease}
+      className="absolute bottom-full z-10 mb-1.5 w-max rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 shadow-lg"
+    >
+      <p className="text-xs leading-tight text-muted">
+        <span className="tabular text-sm font-semibold text-strong">{tip.count}</span> {tip.words}
+      </p>
+      {tip.label ? <p className="mt-0.5 text-[10px] leading-tight text-dim">{tip.label}</p> : null}
+    </div>
+  );
 }
 
 /** Where the panel docks: under the cell that opened it. Grid maths, not
@@ -85,7 +183,9 @@ const TITLES: Record<PulseDetailKind, string> = {
 /** A clickable histogram: the shared chart of the momentum and age contents.
  *  Bars with a count are buttons; empty positions keep their 2px stub as
  *  inert rhythm. `gapBefore` marks a boundary (weeks, the quiet threshold)
- *  with space — structure drawn with layout, not with more ink. */
+ *  with space — structure drawn with layout, not with more ink. Pointing at
+ *  (or focusing) a bar shows its `tip` instantly — see `ChartTip` for the
+ *  contract the retired `title` attribute failed (#195). */
 function DayBars({
   bars,
   ariaLabel,
@@ -95,40 +195,58 @@ function DayBars({
     count: number;
     color: string;
     name: string;
+    tip: PulseTip;
     gapBefore?: boolean;
     onSelect?: () => void;
   }[];
 }) {
   const peak = Math.max(...bars.map((bar) => bar.count), 1);
+  const tip = useChartTip();
+  /** Narrowed once per render so the tip's own hold re-shows this bar. */
+  const held = tip.active;
   return (
-    <div role="group" aria-label={ariaLabel} className="flex h-20 items-end gap-px">
-      {bars.map((bar, i) =>
-        bar.count > 0 && bar.onSelect ? (
-          <button
-            key={i}
-            type="button"
-            title={bar.name}
-            aria-label={`${bar.name} — show these on the board`}
-            onClick={bar.onSelect}
-            className={cn(
-              "pulse-seg min-w-0 flex-1 rounded-t-[2px] transition-opacity hover:opacity-75 motion-reduce:transition-none",
-              bar.gapBefore && "ml-1",
-            )}
-            style={{
-              height: `${Math.max(10, (bar.count / peak) * 100)}%`,
-              background: bar.color,
-              ["--i" as string]: i,
-            }}
-          />
-        ) : (
-          <span
-            key={i}
-            aria-hidden="true"
-            className={cn("min-w-0 flex-1 rounded-[1px]", bar.gapBefore && "ml-1")}
-            style={{ height: "2px", background: "var(--line-strong)" }}
-          />
-        ),
-      )}
+    <div className="relative" onKeyDown={tip.onKeyDown}>
+      {held !== null && bars[held] ? (
+        <ChartTip
+          tip={bars[held].tip}
+          at={held}
+          count={bars.length}
+          onHold={() => tip.show(held)}
+          onRelease={tip.hide}
+        />
+      ) : null}
+      <div role="group" aria-label={ariaLabel} className="flex h-20 items-end gap-px">
+        {bars.map((bar, i) =>
+          bar.count > 0 && bar.onSelect ? (
+            <button
+              key={i}
+              type="button"
+              aria-label={`${bar.name} — show these on the board`}
+              onClick={bar.onSelect}
+              onPointerEnter={() => tip.show(i)}
+              onPointerLeave={tip.hide}
+              onFocus={() => tip.show(i)}
+              onBlur={tip.dismiss}
+              className={cn(
+                "pulse-seg min-w-0 flex-1 rounded-t-[2px] transition-opacity hover:opacity-75 motion-reduce:transition-none",
+                bar.gapBefore && "ml-1",
+              )}
+              style={{
+                height: `${Math.max(10, (bar.count / peak) * 100)}%`,
+                background: bar.color,
+                ["--i" as string]: i,
+              }}
+            />
+          ) : (
+            <span
+              key={i}
+              aria-hidden="true"
+              className={cn("min-w-0 flex-1 rounded-[1px]", bar.gapBefore && "ml-1")}
+              style={{ height: "2px", background: "var(--line-strong)" }}
+            />
+          ),
+        )}
+      </div>
     </div>
   );
 }
@@ -162,6 +280,10 @@ function Runway({
   bins: DeadlineBin[];
   onSelect: (bin: DeadlineBin) => void;
 }) {
+  /** Same instant-tip contract as DayBars — one treatment for every chart in
+   *  the four panels (#195), so the runway cannot lag behind the bars. */
+  const tip = useChartTip();
+  const held = tip.active;
   // One template, two grids (dots, then labels), so a label can never drift
   // off the column it names.
   const columns = { gridTemplateColumns: `repeat(${bins.length}, minmax(0, 1fr))` };
@@ -202,7 +324,16 @@ function Runway({
         : `${duePhrase(bin.days)} — ${bin.count}`;
 
   return (
-    <div className="mt-3">
+    <div className="relative mt-3" onKeyDown={tip.onKeyDown}>
+      {held !== null && bins[held] ? (
+        <ChartTip
+          tip={runwayTip(bins[held])}
+          at={held}
+          count={bins.length}
+          onHold={() => tip.show(held)}
+          onRelease={tip.hide}
+        />
+      ) : null}
       <div
         role="group"
         aria-label="Deadlines by time left, overdue first — select a column to filter the worklist"
@@ -214,9 +345,12 @@ function Runway({
             <button
               key={i}
               type="button"
-              title={name(bin)}
               aria-label={`${name(bin)} — show these on the board`}
               onClick={() => onSelect(bin)}
+              onPointerEnter={() => tip.show(i)}
+              onPointerLeave={tip.hide}
+              onFocus={() => tip.show(i)}
+              onBlur={tip.dismiss}
               style={column}
               className="flex flex-col-reverse items-center gap-1 rounded-t-md pb-1 transition-colors hover:bg-surface-2 motion-reduce:transition-none"
             >
@@ -259,14 +393,13 @@ function Runway({
   );
 }
 
-/** The panel's one-line figure sentence — the caption idiom, scaled up. */
+/** The panel's one-line figure sentence — the caption idiom, scaled up.
+ *  The trailing usage hints that used to close each content ("select a day to
+ *  see what you filed") were removed in the #200 sweep: a sentence explaining
+ *  a control the hover states, the cursor and the aria-labels already
+ *  explain. Nothing operational was in them. */
 function FigureLine({ children }: { children: ReactNode }) {
   return <p className="text-xs text-muted">{children}</p>;
-}
-
-/** The trailing usage hint, once per content, same sentence shape. */
-function Hint({ children }: { children: ReactNode }) {
-  return <p className="mt-3 text-[11px] leading-snug text-dim">{children}</p>;
 }
 
 export function PulseDetail({
@@ -346,6 +479,7 @@ export function PulseDetail({
                 count,
                 color: i >= days.length - 7 ? "var(--viz-rules)" : "var(--text-dim)",
                 name: date ? `${dayName(date)} — ${count} filed` : `${count} filed`,
+                tip: momentumTip(date, count),
                 // A breath before each Monday: the weekday structure Ayush
                 // asked the daily view for, drawn as space.
                 gapBefore: date !== null && i > 0 && weekdayOf(date) === 0,
@@ -359,7 +493,6 @@ export function PulseDetail({
             <span>today</span>
           </div>
         </div>
-        <Hint>select a day to see what you filed</Hint>
       </>
     );
   } else if (kind === "age") {
@@ -395,6 +528,7 @@ export function PulseDetail({
                   count,
                   color: "var(--amber)",
                   name: `open 2 wk or more — ${count}`,
+                  tip: ageTip(binAge, count),
                   onSelect: () => onFilter({ kind: "quiet" }),
                 };
               }
@@ -403,6 +537,7 @@ export function PulseDetail({
                 count,
                 color: binAge >= 7 ? "var(--text-dim)" : "var(--viz-rules)",
                 name: `filed ${binAge === 0 ? "today" : `${binAge} d ago`} — ${count} open`,
+                tip: ageTip(binAge, count),
                 // The quiet threshold, drawn as space: the amber overflow bin
                 // stands apart from the day-by-day curve.
                 gapBefore: binAge === QUIET_AFTER_DAYS - 1,
@@ -441,7 +576,6 @@ export function PulseDetail({
             </ul>
           </div>
         ) : null}
-        <Hint>select a day or a row to see it on the board</Hint>
       </>
     );
   } else if (kind === "deadline") {
@@ -515,18 +649,19 @@ export function PulseDetail({
             </p>
           ) : null}
         </div>
-        <Hint>select a column or a row to see those applications</Hint>
       </>
     );
   } else {
     const { mail, hand, total, needsReview, lastFromMail } = provenance;
+    // No per-group note beside the label (#200): "from your mail — filed for
+    // you from Gmail" said one fact twice, and "by hand — you added these
+    // yourself" restated its own words. The label and the figure are the row.
     const groups = [
       mail > 0
         ? {
             key: "mail",
             swatch: "var(--viz-setfit)",
             label: "from your mail",
-            note: "filed for you from Gmail",
             count: mail,
             onSelect: () => onFilter({ kind: "source", source: "mail" as const }),
           }
@@ -536,7 +671,6 @@ export function PulseDetail({
             key: "hand",
             swatch: "var(--text-dim)",
             label: "by hand",
-            note: "you added these yourself",
             count: hand,
             onSelect: () => onFilter({ kind: "source", source: "hand" as const }),
           }
@@ -582,8 +716,7 @@ export function PulseDetail({
                   className="h-2 w-2 shrink-0 self-center rounded-full"
                   style={{ background: group.swatch }}
                 />
-                <span className="shrink-0 font-medium text-strong">{group.label}</span>
-                <span className="min-w-0 truncate text-dim">— {group.note}</span>
+                <span className="min-w-0 truncate font-medium text-strong">{group.label}</span>
                 <span className="tabular ml-auto shrink-0 text-strong">{group.count}</span>
               </button>
             </li>
@@ -599,8 +732,7 @@ export function PulseDetail({
                   className="h-2 w-2 shrink-0 self-center rounded-full"
                   style={{ background: "var(--amber)" }}
                 />
-                <span className="shrink-0 font-medium text-review">held for review</span>
-                <span className="min-w-0 truncate text-dim">— mail waiting for your review</span>
+                <span className="min-w-0 truncate font-medium text-review">held for review</span>
                 <span className="tabular ml-auto shrink-0 text-strong">{needsReview} →</span>
               </Link>
             </li>
@@ -611,7 +743,6 @@ export function PulseDetail({
             last arrived from your mail · {shortDate(lastFromMail)}
           </p>
         ) : null}
-        <Hint>select a group to see those applications</Hint>
       </>
     );
   }

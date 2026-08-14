@@ -91,12 +91,15 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  *
  * Three states, all of them real:
  *
- *   · **first run** — no marker in this browser yet. It says so, and says the
- *     next visit is when this line starts working. It never counts the board
- *     you already have as news;
+ *   · **first run** — no marker in this browser yet. It says so. It never
+ *     counts the board you already have as news;
  *   · **quiet** — nothing changed, stated against the moment it is comparing
  *     from. "Nothing new since Aug 3" on August 11 is not filler: it says your
- *     pipeline has been silent for eight days;
+ *     pipeline has been silent for eight days. The quiet and first-run lines
+ *     anchor to the row's FAR side (`ml-auto`, a hairline rule at their left):
+ *     sitting flush after the subtitle they read as a caption on its totals
+ *     (#196), and beside the sync cluster they read as what they are —
+ *     account-freshness facts next to the control that changes them;
  *   · **changed** — the counts, marked with a rule down the left edge, and the
  *     names one press away. The contrast between one dim sentence and a ruled
  *     line of counts in full-strength ink is the signal; most opens are quiet,
@@ -458,28 +461,30 @@ export function SinceLastLook({
       >
         <ArrivalLine>
           {/* The clause that carries the fact is the whole sentence on a
-              tight chip; the tail explaining what happens next is what a
-              roomier one has space for. One sentence, THREE lengths — never
-              two lines — and every rung a prefix of the next, so no width
-              gets a differently-worded claim.
+              tight chip. One sentence, two lengths — never two lines — and
+              the short rung a prefix of the long, so no width gets a
+              differently-worded claim.
 
-              The middle rung exists because this chip's room is not a
-              function of the viewport: the header row wraps, and where it
-              wraps depends on the row-mates (see the `@container` note on
-              the loud state). Swept at 8px steps from 1024 to 1440 on
-              /demo/shell (`next start`, headless Chrome, 2026-08-13), the
-              slot collapses at each wrap boundary — 168px at 1080 and 161px
-              at 1240 — against 227px for the full sentence, so it lost up to
-              66px to the ellipsis and read "…in this brows". Between those
-              boundaries it holds 227px+ and says the whole thing. */}
-          <p className="min-w-0 truncate text-dim">
+              The rung exists because this chip's room is not a function of
+              the viewport: the header row wraps, and where it wraps depends
+              on the row-mates (see the `@container` note on the loud state).
+              Swept at 8px steps from 1024 to 1440 on /demo/shell
+              (`next start`, headless Chrome, 2026-08-13), the slot collapses
+              at each wrap boundary — 168px at 1080 and 161px at 1240 — so a
+              single fixed sentence lost up to 66px to the ellipsis and read
+              "…in this brows". The old @34rem tail ("— from your next one,
+              this line names what changed") went in the #200 sweep: roadmap
+              prose explaining the control.
+
+              `ml-auto` + the hairline: the quiet states used to sit hard
+              against the subtitle's totals and read as their caption (#196
+              — "it is placed near to the applications number"). Anchored to
+              the row's far side, against the sync cluster whose facts these
+              are, with a rule marking where the chip begins — the loud
+              state's accent rule, one register down. */}
+          <p className="ml-auto min-w-0 truncate border-l border-line-strong pl-3 text-dim">
             No earlier visit
-            <span className="hidden @[16rem]:inline"> recorded in this browser</span>
-            <span className="@[34rem]:hidden">.</span>
-            <span className="hidden @[34rem]:inline">
-              {" "}
-              — from your next one, this line names what changed.
-            </span>
+            <span className="hidden @[16rem]:inline"> recorded in this browser</span>.
           </p>
         </ArrivalLine>
       </section>
@@ -496,7 +501,12 @@ export function SinceLastLook({
         className="w-full @container"
       >
         <ArrivalLine>
-          <p className="min-w-0 truncate text-muted">
+          {/* `ml-auto` + the hairline: same anchoring as the first-run line
+              above, same reason (#196) — "Nothing new since today 12:53 am"
+              flush against "46 filed · 46 open · 0 offers" read as the
+              numbers' caption. On the far side it stands with the recency
+              phrase and the Sync button: the facts it is actually kin to. */}
+          <p className="ml-auto min-w-0 truncate border-l border-line-strong pl-3 text-muted">
             {/* Same ladder as the first-run line above, and the moment rides
                 the SAME rung as the clause that introduces it: "Nothing new
                 since" with the moment ellipsised is a sentence whose object
