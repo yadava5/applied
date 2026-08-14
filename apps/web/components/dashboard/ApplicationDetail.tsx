@@ -348,6 +348,14 @@ export function ApplicationDetail({
       setDueEditing(false);
       setDueError(null);
       setDueBusy(null);
+      // The role's four, for the deadline's reason and one sharper: the pane
+      // follows the board's selection without unmounting, so an override left
+      // behind here shows the PREVIOUS row's role on the next card — which is
+      // the invented data #72 exists to prevent, arriving by a different door.
+      setRoleOverride(null);
+      setRoleEditing(false);
+      setRoleError(null);
+      setRoleBusy(null);
       void load(app.id);
     }, 0);
     return () => window.clearTimeout(id);
