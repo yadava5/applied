@@ -921,7 +921,17 @@ FACTS: dict[str, dict] = {
             {"re": r'(?m)^  gate: "([\d.]+)",$', "file": BOOKLET_CONTENT},
             {"re": r'label: "Gate", detail: "human review", accept: "< ([\d.]+)"', "file": BOOKLET_CONTENT},
             {"re": r'headline: "Below ([\d.]+), a human decides', "file": BOOKLET_CONTENT},
-            {"re": r"A single confidence gate at ([\d.]+) separates", "file": BOOKLET_CONTENT},
+            # Reworded by #251: the card used to say a "single" gate "separates"
+            # auto-file from review, which was the defect — clearing the gate is
+            # necessary, not sufficient, because the employer must also be
+            # nameable. The claim site follows the corrected sentence. Anchored
+            # on "is the first thing" rather than on the looser "confidence gate
+            # at 0.85", which also matches the kicker at :60 and the glossary at
+            # :114 and would silently make this site a duplicate of those.
+            {
+                "re": r"A confidence gate at ([\d.]+) is the first thing",
+                "file": BOOKLET_CONTENT,
+            },
             {"re": r'range: "≥ ([\d.]+)", verb: "AUTO-FILE"', "file": BOOKLET_CONTENT},
             {"re": r'stage: "gate", detail: "([\d.]+) → auto / human"', "file": BOOKLET_CONTENT},
             {"re": r"Confidence is drawn against the ([\d.]+) gate", "file": BOOKLET_CONTENT},
