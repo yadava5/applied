@@ -39,12 +39,19 @@ import { publicEnv } from "@/lib/env";
  *
  * So `cookieStore.set` does succeed in a Route Handler (#242 reasoned this but
  * could not observe it), and the response really does carry a session with no
- * cache directive. It is not, however, reachable by a shared cache: 307 is not
- * one of the status codes a cache may store heuristically, so with no explicit
- * freshness header there is nothing to license storing it — and the Vercel CDN
- * stores a function response only when it opts in with `s-maxage` /
- * `CDN-Cache-Control`. That is why #242 stays open rather than being fixed with
- * an API change: the header is missing, and nothing currently caches it.
+ * cache directive.
+ *
+ * It is still not reachable by a shared cache, and the reason is the status
+ * code: 307 is not one of the statuses a cache may store heuristically, so with
+ * no explicit freshness header there is nothing to license storing it. What
+ * this does NOT establish is what Vercel's edge does with a function response
+ * that sets no `Cache-Control` — that was not measured, and #234 measured a
+ * real `s-maxage=31536000` coming out of this same deployment, so do not assume
+ * the platform declines by default.
+ *
+ * That is why #242 stays open rather than being closed by an API change: a
+ * missing header on a response nothing is known to cache. If a caching layer is
+ * ever put in front of `/callback`, revisit it then.
  */
 export async function createClient() {
   const cookieStore = await cookies();
