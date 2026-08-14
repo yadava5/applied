@@ -8,17 +8,21 @@ import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 
 /**
- * The session-edge controls, extracted so they can render in either piece of
- * top chrome: the shell `TopBar` below `lg`, and the board's own header row
- * at `lg`+ (which replaces the bar on the board route — see TopBar). One
- * implementation, two mount points, exactly one visible at a time.
+ * The session-edge controls. One sign-out implementation, two mount shapes:
+ * the shell `TopBar` renders the button (every route below `lg`, every
+ * non-board route above it); on the board at `lg`+, where TopBar yields to
+ * the header row, that row's `⋯` menu carries sign-out through `useSignOut`
+ * instead — a row-level button there is what wrapped the row at 1024 (#172).
  */
 
-export function SignOutButton() {
+export function useSignOut() {
   const router = useRouter();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  async function handleSignOut() {
+  async function signOut() {
+    // Guarded here, not only by a disabled button: the menu mount closes on
+    // select, so nothing visual stops a second press mid-flight.
+    if (isSigningOut) return;
     setIsSigningOut(true);
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -27,8 +31,14 @@ export function SignOutButton() {
     router.replace("/login");
   }
 
+  return { signOut, isSigningOut };
+}
+
+export function SignOutButton() {
+  const { signOut, isSigningOut } = useSignOut();
+
   return (
-    <Button type="button" variant="ghost" onClick={handleSignOut} disabled={isSigningOut}>
+    <Button type="button" variant="ghost" onClick={() => void signOut()} disabled={isSigningOut}>
       {isSigningOut ? "Signing out…" : "Sign out"}
     </Button>
   );
@@ -36,7 +46,7 @@ export function SignOutButton() {
 
 /**
  * Fixture-mode provenance (/demo/shell): there is no session to sign out of,
- * so the sign-out slot carries this pill instead — an anonymous visitor is
+ * so the session edge carries this pill instead — an anonymous visitor is
  * never handed a control that can only bounce them to /login.
  */
 export function DemoFixturePill() {

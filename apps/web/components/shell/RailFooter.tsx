@@ -19,8 +19,9 @@ import type { RailGmailData } from "@/lib/shell/rail";
  * now the anchor, because the account is the thing and the connection is
  * something the account *has*. (Flipping the two lines back was considered
  * again in Aug 2026 and rejected — the order stands.) Identity still lives
- * bottom-left (the Linear/Notion convention) and sign-out still lives in the
- * top bar.
+ * bottom-left (the Linear/Notion convention); sign-out lives in the top
+ * chrome — the bar, or the board header's ⋯ menu where the bar yields at
+ * `lg`+ (#172) — never here.
  *
  * The identity row shows the user's NAME, not the address — chosen explicitly
  * ("(A) Ayush Yadav" over the email), falling back to the address only when no

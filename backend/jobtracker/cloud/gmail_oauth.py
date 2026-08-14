@@ -1599,22 +1599,50 @@ async def gmail_sync(
             # the only way to fail is with the cursor NOT advanced, which costs
             # one more full scan and can never skip a message.
             #
-            # …and only when the run READ EVERYTHING IT LISTED. ``unreadable``
-            # counts ids Gmail named and whose batched metadata get came back
-            # empty — a dropped sub-request, which ``_batch_fetch_metadata``
-            # logs and walks past so one bad message cannot sink a page. The
-            # page is still ``usable`` (not expired, not truncated), so the
-            # delta is returned and the baseline captured BEFORE the run gets
-            # written. That baseline is newer than the message that was lost, so
-            # every later delta starts after it and no incremental sync can ever
-            # name it again — the message is skipped from the middle of a window
-            # the scan did cover, which is issue #166's exact shape.
+            # …and, ON AN INCREMENTAL DELTA, only when the run READ EVERYTHING
+            # IT LISTED. ``unreadable`` counts ids Gmail named and whose batched
+            # metadata get came back empty — a dropped sub-request, which
+            # ``_batch_fetch_metadata`` logs and walks past so one bad message
+            # cannot sink a page. The page is still ``usable`` (not expired, not
+            # truncated), so the delta is returned and the baseline captured
+            # BEFORE the run gets written. That baseline is newer than the
+            # message that was lost, so every later delta starts after it and no
+            # incremental sync can ever name it again — the message is skipped
+            # from the middle of a window the scan did cover, which is issue
+            # #166's exact shape.
             #
             # Holding the cursor costs one repeated delta (the same mail, and
             # every write on this path is idempotent); advancing it costs the
             # message. Gmail keeps ~a week of history, so a failure that keeps
             # repeating eventually 404s the cursor and re-baselines through a
             # full scan — bounded, and still never silent.
+            #
+            # Scoped to ``incremental`` because HOLDING only does anything
+            # there. The hold preserves a STORED cursor, and preserving it is
+            # what re-covers the lost message on the next delta. A full scan may
+            # have no stored cursor at all — ``history_id=None`` preserves what
+            # is stored, and preserving nothing records nothing — so an account
+            # whose FIRST scan lost a message would never establish a cursor and
+            # would full-scan on every sync forever (issue #180), which is
+            # exactly the outcome the next paragraph declines to accept for a
+            # different reason.
+            #
+            # Recording here is NOT free, and is not claimed to be: the baseline
+            # is newer than the id the scan could not read, so once it lands, no
+            # later delta can name that id either. What differs from the
+            # incremental case is the alternative. Holding loses the same
+            # message anyway — the next sync full-scans the same window and
+            # fails on the same id for the same reason — and loses the cursor
+            # with it. Recording keeps the cursor, and leaves the id reachable
+            # by the paths that re-list from the top: an explicit Re-sync, or a
+            # ``range``/``count`` request. Either way it is logged, below.
+            #
+            # Both full-scan routes get this and want it: the first sync of a
+            # fresh account, and the re-baseline below a cursor Gmail would no
+            # longer answer. ``incremental`` is True only inside ``if cursor:``
+            # and only after ``_incremental_scan`` returned a usable page, so a
+            # re-baseline arrives here as a full scan and records — which is the
+            # whole point of having run it.
             #
             # Deliberately NOT extended to ``stopped_by != STOPPED_COMPLETE``. A
             # full scan that stops on its message target has not covered its
@@ -1623,12 +1651,26 @@ async def gmail_sync(
             # back — a real defect with a real trade-off, and a different one.
             if account_email is not None:
                 cursor_to_record = history_id
-                if history_id is not None and unreadable > 0:
+                if incremental and history_id is not None and unreadable > 0:
                     cursor_to_record = None
                     logger.warning(
                         "Gmail sync for user_id=%s could not read %s message(s) "
                         "it listed; holding the history cursor so the next run "
                         "re-covers them instead of stepping past them.",
+                        user_id,
+                        unreadable,
+                    )
+                elif unreadable > 0 and cursor_to_record is not None:
+                    # The full-scan branch: the baseline lands even though the
+                    # run did not read everything it listed, which does put
+                    # those ids beyond every later delta — see above for why
+                    # that still beats never holding a cursor. Not silently.
+                    logger.info(
+                        "Gmail full scan for user_id=%s could not read %s "
+                        "message(s) it listed; recording the baseline anyway "
+                        "rather than pinning the account to full-scanning. "
+                        "Those ids are now past the cursor; a Re-sync re-lists "
+                        "them.",
                         user_id,
                         unreadable,
                     )

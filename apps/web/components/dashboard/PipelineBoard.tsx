@@ -675,7 +675,15 @@ export function PipelineBoard({
   };
 
   /** The docked pane is open: rows fold their stage select + Gmail slot to
-   *  pay for its width (see ApplicationRow). Never true below `lg`. */
+   *  pay for its width — but only where the worklist is actually too narrow
+   *  to hold both (#173). The fold is a container query against the
+   *  worklist's own measure (< 32rem folds; see ApplicationRow), not a
+   *  viewport rule, because the same board runs in runs of different width:
+   *  beside the open pane the shell measures 588/748px at 1280/1440 (rows
+   *  keep their controls), 409px at the 1024 dock floor (they fold, and the
+   *  pane's own select + ↑/↓ and drag-to-stage are the stage paths), and
+   *  /demo's max-w-6xl run 504px at every desktop width (folds). Never true
+   *  below `lg`. */
   const detailPaneOpen = interactive && detailDocked && detailApp !== null;
 
   /** One application row in its animated cell. `inSet` rows sit inside an
@@ -1041,11 +1049,17 @@ export function PipelineBoard({
                 of its own, so its `sr-only` labels escaped exactly this way.
                 Unprefixed because the escape is width-independent — below `lg`
                 the pane has no `overflow`, but it still has to be the
-                containing block. */}
+                containing block.
+
+                `@container` sizes the row-control fold (#173): a row keeps
+                its stage select + Gmail slot beside the open detail pane iff
+                THIS pane — the width the row actually has, not the viewport —
+                measures 32rem+. Same idiom as SinceLastLook's chip: the room
+                depends on the row-mates, and the pane is the row-mate. */}
             <div
               data-testid="worklist-pane"
               className={cn(
-                "space-y-4",
+                "space-y-4 @container",
                 locked && "relative lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1",
               )}
             >

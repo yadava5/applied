@@ -215,11 +215,14 @@ export function ApplicationRow({
   onDragStart?: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd?: () => void;
   /** True while the detail pane is DOCKED open beside the list (`lg+`, see
-   *  #157): the row folds its stage select + Gmail slot — the 176px that buy
-   *  the pane its width. Nothing is lost while folded: the pane carries its
-   *  own working stage control and Gmail link for the open card, and every
-   *  other row is one click from being that card. The board only sets this
-   *  when the pane is actually docked, so no breakpoint prefix is needed. */
+   *  #157): the row's stage select + Gmail slot yield ONLY where the
+   *  worklist cannot hold them (#173) — a container query against the
+   *  worklist's own measure, under 32rem the pair folds and its 176px is
+   *  what buys the pane its width. Nothing is lost while folded: the pane
+   *  carries its own working stage control and Gmail link for the open card,
+   *  drag-to-stage still works on every row, and every other row is one
+   *  click from being that card. The board only sets this when the pane is
+   *  actually docked, so no breakpoint prefix is needed. */
   folded?: boolean;
   /** True when this row is the card open in the detail pane — the "you are
    *  here" mark (border steps to `line-strong`, the same delta as hover),
@@ -547,13 +550,20 @@ export function ApplicationRow({
         <span className="hidden sm:inline">
           <FiledStamp filed={filed} status={shownStatus} today={today} />
         </span>
-        {/* The fold (#157): while the detail pane is docked open, the select
-            and the Gmail slot leave — the pane holds both for the open card,
-            and their 176px (select 136 + slot 24 + two gaps) is exactly the
-            width the pane borrows from every row. Unmounted, not hidden:
-            the select is controlled and prop-driven, so it re-mounts on the
-            exact value it left. */}
-        {!folded ? (
+        {/* The fold (#157/#173): while the detail pane is docked open, the
+            select and the Gmail slot yield only where the worklist cannot
+            hold them — their 176px (select 136 + slot 24 + two gaps) is what
+            the pane borrows from every row at the dock floor. The sensor is
+            the worklist's own measure (`@container` on the pane), never the
+            viewport: at 32rem+ a row holds identity AND controls beside the
+            open pane (the shell measures 588/748px at 1280/1440), while
+            under it the identity would starve (409px at the owner's 1024),
+            so the pair folds to the pane, which carries both for the open
+            card. One wrapper for the pair, `contents` so the cluster's flex
+            gap still reaches them; display, not unmount, so the fold cannot
+            perturb the controlled select and both states share one tree
+            shape (see BoardCell for why that matters). */}
+        <span className={folded ? "hidden @min-[32rem]:contents" : "contents"}>
           <StageSelect
             id={app.id}
             company={app.company}
@@ -562,9 +572,7 @@ export function ApplicationRow({
             busy={busy === "status"}
             onChange={onStatusChange}
           />
-        ) : null}
-        {!folded ? (
-          app.url ? (
+          {app.url ? (
             <a
               href={app.url}
               target="_blank"
@@ -581,8 +589,8 @@ export function ApplicationRow({
             // Phone rows drop it: the controls line is left-anchored, not a
             // column, and the space matters more.
             <span className="hidden h-6 w-6 sm:block" aria-hidden="true" />
-          )
-        ) : null}
+          )}
+        </span>
         <RowActionsMenu
           label={`Row actions for ${app.company}${role ? ` — ${role}` : ""}`}
           items={menuItems}

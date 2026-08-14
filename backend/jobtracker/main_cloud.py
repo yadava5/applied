@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_cors_origin_regex() -> str:
-    """Build the CORS ``allow_origin_regex`` from config.
+    r"""Build the CORS ``allow_origin_regex`` from config.
 
     Allows ``localhost``/``127.0.0.1`` (for local ``vercel dev``), THIS
     deployment's own Vercel hostnames, and any extra hosts from
@@ -274,6 +274,82 @@ async def health_check() -> HealthResponse:
         # Null when the platform did not supply one. Never a placeholder --
         # a made-up SHA is worse than no SHA, because it looks answerable.
         commit=_COMMIT_SHA,
+    )
+
+
+class SchemaVersionResponse(BaseModel):
+    """What this code expects of the schema, and what the database actually is."""
+
+    expected: str = Field(
+        description=(
+            "The Alembic revision this deployment's code was written against, "
+            "baked in at build time."
+        )
+    )
+    applied: str | None = Field(
+        default=None,
+        description=(
+            "The revision stamped in the database's alembic_version table. "
+            "Null means the question could not be answered — no table, an empty "
+            "table, or a failed query — never 'behind'. A '+'-joined value means "
+            "the table holds several rows, i.e. the migration graph forked."
+        )
+    )
+    ok: bool = Field(
+        description=(
+            "True only when the two agree. False is the signal that a revision "
+            "was merged without being applied to this database."
+        )
+    )
+
+
+@app.get(
+    "/health/schema",
+    response_model=SchemaVersionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Schema Version Check (cloud)",
+    tags=["System"],
+)
+async def schema_version_check() -> SchemaVersionResponse:
+    """Report whether the database schema matches the code's expectation.
+
+    **Why this is not folded into ``/health``.** That probe is deliberately
+    credential-free and does no database work, and Supabase's free tier pauses a
+    project after seven days idle — so a database round-trip there would turn a
+    sleeping database into a red liveness probe and, worse, train the reader to
+    ignore it. Keeping the schema question on its own path means ``/health``
+    still answers "is the function up?" and this answers "does the database
+    agree with it?", which are different questions with different fixes.
+
+    **Always 200.** The status code reports whether the *check ran*, not what it
+    found; the verdict is in ``ok``. A 503 here would make an ordinary,
+    self-healing state (the seconds between a merge and its migration) look like
+    an outage to every uptime monitor pointed at the deployment.
+
+    The read is one row from ``alembic_version``, which carries no RLS and is
+    granted to the runtime role directly.
+    """
+
+    from jobtracker.database.connection import get_session
+    from jobtracker.database.schema_version import (
+        EXPECTED_REVISION,
+        read_applied_revision,
+    )
+
+    async with get_session() as session:
+        applied = await read_applied_revision(session)
+
+    if applied != EXPECTED_REVISION:
+        logger.warning(
+            "Schema version mismatch: code expects %s, database reports %s",
+            EXPECTED_REVISION,
+            applied,
+        )
+
+    return SchemaVersionResponse(
+        expected=EXPECTED_REVISION,
+        applied=applied,
+        ok=applied == EXPECTED_REVISION,
     )
 
 

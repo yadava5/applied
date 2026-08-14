@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+import { requireSession } from "./session";
 
 /**
  * E2E for the authed app shell: the sidebar active-state indicator, the mobile
@@ -10,21 +11,13 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  *
  * The shell only renders for an authenticated Supabase session, which this
  * suite can't stand up (see `connect.spec.ts` / `beta.spec.ts` for the same
- * constraint). So the shell assertions below `test.skip` themselves when a
- * visit to `/dashboard` bounces to `/login` — they become real coverage the
- * moment the suite runs against a session (locally or in a seeded CI), and
- * never turn red in the meantime. The signed-OUT half of each dual-mode split
- * IS driven here, since that is publicly reachable.
+ * constraint). So the shell assertions below go through `requireSession()` from
+ * `./session`: without a session they skip — but LOUDLY, under one greppable
+ * token that CI counts into the job summary — and with `E2E_REQUIRE_SESSION=1`
+ * they FAIL rather than skip. See that file, and issue #188, for why the old
+ * silent form was the problem. The signed-OUT half of each dual-mode split IS
+ * driven here, since that is publicly reachable.
  */
-
-/** Skip the current test unless a real session lets us reach the app shell. */
-async function requireSession(page: Page): Promise<void> {
-  await page.goto("/dashboard");
-  test.skip(
-    /\/login/.test(page.url()),
-    "no authenticated Supabase session in this environment — shell is unreachable",
-  );
-}
 
 /**
  * The shell's GEOMETRY, measured on /demo/shell — a public fixture route that
@@ -314,6 +307,105 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
   });
 
+  /**
+   * The deadline cell — the fourth panel, and the two things the owner
+   * reported on 2026-08-13: "it has the same issue with text that we fixed for
+   * other, and has no drop down or pop up for detailed analysis like other 3".
+   *
+   * Both halves are asserted where they can fail. The caption is the exact
+   * rendered string on the seeded fixture (which carries one overdue, one
+   * inside the window and one beyond it) — the shipped line there was
+   * `1 overdue · 1 due ≤2d · 1 later`, so this is red on any tree without the
+   * caption-grammar fix. The panel half opens the cell that used to be inert.
+   *
+   * AT 1024, not 1280, and that is the load-bearing part: the band is
+   * `viewport − 288` wide, so this third-of-four cell's own quarter-line puts
+   * a 26rem panel 48px past the band's right edge at exactly the width Ayush
+   * works at. `docHeights` alone cannot see that — an `overflow-hidden`
+   * ancestor hides the scroll while the panel is clipped — so the panel's
+   * right edge is measured against the band's.
+   */
+  test("the deadline cell states one claim and opens its runway, inside the band at 1024", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    // ONE claim, two at most, each figure bound forward by its own words: the
+    // per-bucket recitation (and the `≤2d` that put a numeral against a unit)
+    // is what was reported, twice.
+    const caption = page
+      .getByTestId("pipeline-pulse")
+      .getByTestId("pulse-caption")
+      .nth(2);
+    await expect(caption).toHaveText("1 overdue · 1 due within 2 days");
+
+    const trigger = page.getByRole("button", { name: "Deadlines detail" });
+    await trigger.click();
+    const panel = page.getByTestId("pulse-detail");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("3 with a deadline")).toBeVisible();
+
+    // Inside its own containing block, at the width where it is tightest.
+    const panelBox = await panel.boundingBox();
+    const bandBox = await page.getByTestId("pipeline-pulse").boundingBox();
+    expect(
+      (panelBox?.x ?? 0) + (panelBox?.width ?? 0),
+      "the deadline panel overhangs the band's right edge",
+    ).toBeLessThanOrEqual((bandBox?.x ?? 0) + (bandBox?.width ?? 0) + 1);
+    expect(panelBox?.x ?? 0).toBeGreaterThanOrEqual((bandBox?.x ?? 0) - 1);
+    const doc = await docHeights(page);
+    expect(doc.scroll).toBeLessThanOrEqual(doc.client + 1);
+
+    // A runway column IS the filter, and it opens the rows it drew: the
+    // fixture's single overdue row.
+    await panel.getByRole("button", { name: /^overdue — 1/ }).click();
+    await expect(panel).toBeHidden();
+    const filterBand = page.getByTestId("pulse-filter-band");
+    await expect(filterBand).toBeVisible();
+    await expect(filterBand.getByText("overdue", { exact: true })).toBeVisible();
+    await filterBand.getByRole("button", { name: /^Stop filtering by/ }).click();
+
+    // Escape closes without filtering and hands focus back to the trigger —
+    // the same lifecycle its three siblings have.
+    await trigger.click();
+    await expect(panel).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
+
+    // The claim, where the reader actually reads it. Below `xl` this line is
+    // display:none — the named row has taken it — so the assertion above is
+    // about textContent, and the owner quoted the caption AND the named row in
+    // one breath, which only happens from 1280 up. The panel's own trigger
+    // moves to this line at that width (see PulseCell), so a caption that
+    // collides with the chevron shows up here as a clipped sentence.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(caption).toBeVisible();
+    await expect(caption).toHaveText("1 overdue · 1 due within 2 days");
+    // Scoped to the band, and it has to be: the fixture's most urgent employer
+    // is also a worklist row and an `sr-only` stage label, so an unscoped
+    // getByText resolves to THREE nodes and strict mode kills the assertion
+    // before it can mean anything. Caught by a full-suite run; it had never
+    // been green, in any project, on any tree.
+    await expect(page.getByTestId("pipeline-pulse").getByText("Tidewater Labs")).toBeVisible();
+    const captionClip = await caption.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(captionClip, "the claim loses characters to the chevron at 1280").toBeLessThanOrEqual(0);
+
+    // A board with nothing due has nothing to open, on the same terms as the
+    // three cells that gate on having data at all — and its caption is still
+    // the honest empty state, not a panel of invented urgency.
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/demo/shell?pipeline=early");
+    await expect(pageHeading(page)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Deadlines detail" })).toHaveCount(0);
+    await expect(
+      page.getByTestId("pipeline-pulse").getByTestId("pulse-caption").nth(2),
+    ).toHaveText("nothing due · set one in a card");
+  });
+
   test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
@@ -416,11 +508,15 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * green. The floors are measured on /demo/shell (recorded 2026-08-12,
    * `next start`, headless Chrome, after the header row replaced the top bar
    * and the stage lens moved to the rail): worklist-pane clientHeight 652 at
-   * 1280×800, 572 at 1280×720, 592 at 1024×768 (the demo pill wraps the
-   * header to two lines at that width; the signed-in row holds one). A small
-   * tolerance absorbs sub-pixel/font drift; a real regression (a fatter
-   * band, a second header row, a reinstated notice line) costs tens of
-   * pixels and lands far below it.
+   * 1280×800, 572 at 1280×720, 592 at 1024×768 — the twin's header holds two
+   * lines at 1024 because the fixture recency frame ("simulated account ·
+   * nothing is read", 184.5px) lays out ~69px wider than the live row's
+   * phrase and wraps the row regardless of the pill (measured 2026-08-13 with
+   * the pill removed); the signed-in arrangement holds one line, asserted in
+   * session-edge.spec.ts rather than recorded here. A small tolerance absorbs
+   * sub-pixel/font drift; a real regression (a fatter band, a second header
+   * row, a reinstated notice line) costs tens of pixels and lands far below
+   * it.
    */
   for (const { viewport, floor } of [
     { viewport: { width: 1280, height: 800 }, floor: 645 },
@@ -454,17 +550,26 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * regressions through green before.
    */
   for (const viewport of [
-    { width: 1024, height: 768 }, // the `lg` dock floor — the owner's width
-    { width: 1280, height: 800 },
+    // `keepsRowControls` is #173's law made testable: the per-row stage
+    // select + Gmail slot fold ONLY where the worklist measures under 32rem
+    // beside the open pane. This twin measures ~409px at 1024 (folded) and
+    // ~588px at 1280 (kept) — and the assertion is on PRESENCE, because the
+    // clipping probe that reviewed #171 was structurally blind to controls
+    // that never render (an absent node cannot clip).
+    { width: 1024, height: 768, keepsRowControls: false }, // the `lg` dock floor — the owner's width
+    { width: 1280, height: 800, keepsRowControls: true },
   ]) {
     test(`the docked detail pane holds the lock and the worklist's exact share at ${viewport.width}×${viewport.height}`, async ({
       page,
     }) => {
-      await page.setViewportSize(viewport);
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto("/demo/shell");
       await expect(pageHeading(page)).toBeVisible();
 
       const closed = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+      const rowSelects = page.locator("select[id^='status-']:visible");
+      const closedSelects = await rowSelects.count();
+      expect(closedSelects, "no per-row stage selects on the closed board").toBeGreaterThan(0);
 
       await page
         .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
@@ -473,6 +578,11 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       await expect(detail).toBeVisible();
       // Docked means NOT modal: no dialog role, no backdrop dimming the board.
       await expect(page.getByRole("dialog")).toHaveCount(0);
+
+      // Presence with the pane open: every row keeps its select where the
+      // worklist can hold one, none where it cannot — the pane's own select
+      // is the stage path there.
+      await expect(rowSelects).toHaveCount(viewport.keepsRowControls ? closedSelects : 0);
 
       const doc = await docHeights(page);
       expect(
@@ -769,6 +879,13 @@ test.describe("app shell — signed out (public)", () => {
  * assertion below sitting on top of it. They stay as written, unweakened, and
  * are the stronger check the day a seeded session exists.
  *
+ * What the skip no longer is, since #188, is quiet. Each one names the coverage
+ * it costs, carries the shared `E2E_NO_SESSION_SKIP (#188):` token so the class
+ * is one grep, and is counted into the CI job summary — and setting
+ * `E2E_REQUIRE_SESSION=1` makes every one of them a hard failure instead. The
+ * hole is not closed (that needs a seeded account, which is the owner's call);
+ * it is merely impossible to stop noticing.
+ *
  * The one invariant that could be lifted out of the session gate has been:
  * `tests/unit/aria-current.test.mjs` enforces "only the primary nav claims
  * aria-current='page'" against the source tree, and that DOES run on every PR.
@@ -780,7 +897,7 @@ test.describe("app shell — signed in (needs a session)", () => {
     { path: "/settings", label: "Settings" },
   ]) {
     test(`the sidebar marks "${label}" as the current page on ${path}`, async ({ page }) => {
-      await requireSession(page);
+      await requireSession(page, `the sidebar's active-state indicator on ${path}`);
       await page.goto(path);
 
       const current = page.locator('a[aria-current="page"]');
@@ -793,7 +910,7 @@ test.describe("app shell — signed in (needs a session)", () => {
   test("/import renders inside the shell with 'Import mail' active, and nav can leave it", async ({
     page,
   }) => {
-    await requireSession(page);
+    await requireSession(page, "/import rendering inside the app shell, with a way back out");
     await page.goto("/import");
 
     // The app sidebar is present and "Import mail" is the current item.
@@ -815,7 +932,7 @@ test.describe("app shell — signed in (needs a session)", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await requireSession(page);
+    await requireSession(page, "/privacy rendering inside the shell, scrolling in the pane (#155)");
     await page.goto("/privacy");
 
     // The app chrome is here, and the page's standalone header/footer are not.
@@ -867,7 +984,7 @@ test.describe("app shell — signed in (needs a session)", () => {
     page,
   }) => {
     await page.setViewportSize(MOBILE_375);
-    await requireSession(page);
+    await requireSession(page, "the mobile hamburger revealing the primary nav");
     await page.goto("/dashboard");
 
     // The desktop sidebar is hidden; the menu button is the way in.

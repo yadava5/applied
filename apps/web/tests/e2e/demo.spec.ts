@@ -489,10 +489,16 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // The rows fold their stage select + Gmail slot while the pane is open —
-    // the 176px that pay for its width. The pane's own stage control is the
-    // one left standing, and exactly one row carries the open mark.
+    // the 176px that pay for its width. Since #173 the fold is a container
+    // query on the worklist's own measure (< 32rem folds, display not
+    // unmount — hence :visible, not node counts): /demo's max-w-6xl run
+    // leaves 504px beside the open pane at the suite's 1440 default, under
+    // the floor, so every per-row select is folded here and the pane's own
+    // stage control is the one left standing. The signed-in shell measures
+    // 588px+ at 1280+ and KEEPS its row controls; /demo/shell carries that
+    // geometry. Exactly one row carries the open mark.
     await expect(page.locator("select[id^='detail-status-']")).toHaveCount(1);
-    await expect(page.locator("select[id^='status-']")).toHaveCount(0);
+    await expect(page.locator("select[id^='status-']:visible")).toHaveCount(0);
     await expect(page.locator("[data-detail-open]")).toHaveCount(1);
 
     // "N of M · ↑ ↓": the header reports position over the board's visible
@@ -522,7 +528,7 @@ test.describe("live demo (/demo)", () => {
     await page.keyboard.press("Escape");
     await expect(pane).toBeHidden();
     await expect(page.getByRole("button", { name: /^Open Harbor Analytics/ })).toBeFocused();
-    await expect(page.locator("select[id^='status-']")).not.toHaveCount(0);
+    await expect(page.locator("select[id^='status-']:visible")).not.toHaveCount(0);
   });
 
   test("the pulse renders all four derived signals in the board's band", async ({ page }) => {
@@ -547,12 +553,14 @@ test.describe("live demo (/demo)", () => {
     // is here to make — so require a non-zero leading digit.
     await expect(pulse.getByText(/[1-9]\d* quiet/)).toBeVisible();
 
-    // Deadlines: the three fixture states, counted, and the most urgent row
-    // named on the cell's label line. The counts derive from the same
-    // `dueInfo` that inks the cards. (Name and phrase are separate spans —
-    // the name truncates before the phrase ever does — so they are asserted
-    // separately rather than as one string.)
-    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
+    // Deadlines: the claim the cell makes about the three fixture states, and
+    // the most urgent row named on the cell's label line. The claim derives
+    // from the same `dueInfo` that inks the cards, and it is a claim rather
+    // than a bucket recitation since 2026-08-13 — the row due later is real,
+    // counted, and deliberately silent here (`deadlineCaption`). (Name and
+    // phrase are separate spans — the name truncates before the phrase ever
+    // does — so they are asserted separately rather than as one string.)
+    await expect(pulse.getByText(/1 overdue · 1 due within 2 days/)).toBeVisible();
     await expect(pulse.getByText("next ·")).toBeVisible();
     await expect(pulse.getByText("Tidewater Labs")).toBeVisible();
     await expect(pulse.getByText("overdue 2d", { exact: true })).toBeVisible();
@@ -856,7 +864,7 @@ test.describe("live demo (/demo)", () => {
   }) => {
     await page.goto("/demo");
     const pulse = page.getByTestId("pipeline-pulse");
-    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due within 2 days/)).toBeVisible();
 
     // Cedar Labs (applied) has no deadline; give it one 5 days out.
     //
@@ -906,9 +914,17 @@ test.describe("live demo (/demo)", () => {
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
 
-    // The card gained the tag; the pulse cell re-derived.
+    // The card gained the tag; the pulse re-derived. NOT read off the caption:
+    // a deadline five days out changes no claim the caption makes (it names
+    // what is overdue and what is inside the window, and this row is neither),
+    // so asserting the caption here would be a check that cannot fail. The
+    // tracked total lives in the cell's own panel, and that is where the new
+    // row has to show up.
     await expect(cedar.locator('[data-testid="deadline-tag"]')).toContainText("due in 5d");
-    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 2 later/)).toBeVisible();
+    await pulse.getByRole("button", { name: "Deadlines detail" }).click();
+    await expect(page.getByTestId("pulse-detail").getByText("4 with a deadline")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("pulse-detail")).toBeHidden();
 
     // Clearing is one click, obviously reversible — the Add control returns —
     // and both surfaces drop the date.
@@ -921,7 +937,10 @@ test.describe("live demo (/demo)", () => {
     await expect(sheet).toBeHidden();
 
     await expect(cedar.locator('[data-testid="deadline-tag"]')).toHaveCount(0);
-    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due within 2 days/)).toBeVisible();
+    await pulse.getByRole("button", { name: "Deadlines detail" }).click();
+    await expect(page.getByTestId("pulse-detail").getByText("3 with a deadline")).toBeVisible();
+    await page.keyboard.press("Escape");
   });
 
   test("one employer, one card: the set opens inline and hides no application's stage", async ({
@@ -1033,7 +1052,7 @@ test.describe("live demo (/demo)", () => {
     // The deadline surfaces are content, not motion: all three tags and the
     // pulse counts render statically too.
     await expect(page.locator('[data-testid="deadline-tag"]')).toHaveCount(3);
-    await expect(pulse.getByText(/1 overdue · 1 due ≤2d · 1 later/)).toBeVisible();
+    await expect(pulse.getByText(/1 overdue · 1 due within 2 days/)).toBeVisible();
     // A bar with zero drawn height would satisfy the count above.
     const barHeights = await pulse
       .getByTestId("pulse-day")

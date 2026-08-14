@@ -10,6 +10,7 @@ import {
   CLASSIFY_FAILED,
   canNameCompany,
   classifyRequestBody,
+  confirmCompanyPrompt,
   employerPromptFor,
   readClassifyOutcome,
   reviewCandidates,
@@ -70,6 +71,12 @@ function ReviewRow({
   /** Set when the backend filed nothing because it couldn't name the employer. */
   const [employerPrompt, setEmployerPrompt] = useState<string | null>(null);
   const [company, setCompany] = useState("");
+  /**
+   * The spelling already on the board that the typed company looks like. Set
+   * when the backend asked rather than filing — it never merges on the
+   * resemblance itself, so this is a question with two buttons, not a notice.
+   */
+  const [suggestion, setSuggestion] = useState<string | null>(null);
   /** The application this verdict answers, when one employer holds several. */
   const [applicationId, setApplicationId] = useState<number | null>(null);
 
@@ -83,11 +90,15 @@ function ReviewRow({
    * Send the decision. A 2xx is NOT success on its own: `needs_employer: true`
    * means nothing was filed and the row is still in the queue, so we keep it on
    * screen, say so, and ask for the company instead of refreshing the row away.
+   *
+   * `answer` carries what the user just clicked, because the two confirmation
+   * buttons both re-send immediately and React state has not settled by then —
+   * reading `company` here would send the previous attempt's value.
    */
-  async function classify() {
+  async function classify(answer?: { company?: string; confirmNewCompany?: boolean }) {
     setBusy(true);
     setError(null);
-    const named = company.trim();
+    const named = (answer?.company ?? company).trim();
     try {
       const res = await fetch(
         `/api/applications/review/${encodeURIComponent(item.message_id)}/classify`,
@@ -95,7 +106,13 @@ function ReviewRow({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            classifyRequestBody(category, named, showPicker ? applicationId : null),
+            classifyRequestBody(
+              category,
+              named,
+              showPicker ? applicationId : null,
+              null,
+              answer?.confirmNewCompany,
+            ),
           ),
         },
       );
@@ -106,8 +123,13 @@ function ReviewRow({
         // what is missing and let the user answer it here. Never leave the
         // button spinning: that is what made the 2xx-that-filed-nothing look
         // like the click had simply done nothing.
-        if (outcome.kind === "needs-employer") setEmployerPrompt(employerPromptFor(named));
-        else setError(outcome.detail);
+        if (outcome.kind === "needs-confirmation") {
+          setCompany(named); // keep the typed spelling for the "no" answer
+          setSuggestion(outcome.suggestedCompany);
+        } else if (outcome.kind === "needs-employer") {
+          setSuggestion(null);
+          setEmployerPrompt(employerPromptFor(named));
+        } else setError(outcome.detail);
         setBusy(false);
         return;
       }
@@ -189,7 +211,10 @@ function ReviewRow({
         </select>
         <button
           type="button"
-          onClick={classify}
+          // Wrapped, not passed by reference: `classify` now takes the answer to
+          // the did-you-mean question, and a bare handler would hand it the
+          // click event as that answer.
+          onClick={() => void classify()}
           disabled={busy || !hasChosen}
           className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
         >
@@ -252,10 +277,51 @@ function ReviewRow({
         </fieldset>
       ) : null}
 
+      {/* --- Did you mean the one already on your board? --------------------
+          The typed company is one edit from a stored employer. Nothing has been
+          filed and nothing has been merged: a resemblance close enough to catch
+          "Verkeda"/"Verkada" also catches two real companies, so the answer is
+          the user's. Both buttons re-send the decision; neither is preselected.
+          Shown INSTEAD of the company input — one question at a time — and the
+          typed spelling is still there behind it if they answer "no". */}
+      {suggestion ? (
+        <div className="mt-2 rounded border border-review/40 bg-surface px-2.5 py-2">
+          <p role="status" className="text-xs leading-relaxed text-review">
+            {confirmCompanyPrompt(suggestion)}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setSuggestion(null);
+                setCompany(suggestion);
+                void classify({ company: suggestion });
+              }}
+              className="inline-flex items-center gap-1 rounded border border-review/50 px-2 py-1 text-xs font-medium text-strong transition-colors hover:border-review disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+              yes — file it under {suggestion}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setSuggestion(null);
+                void classify({ confirmNewCompany: true });
+              }}
+              className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
+            >
+              no — {company.trim() || "this company"} is a different company
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* The correction affordance for a decision the backend accepted but
           could not file: amber (the needs-review hue), not red — nothing broke,
           the message simply doesn't name its employer. */}
-      {employerPrompt ? (
+      {employerPrompt && !suggestion ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();

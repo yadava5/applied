@@ -6,12 +6,21 @@ import type { ReactNode, RefObject } from "react";
 
 import { MOMENTUM_DAYS, QUIET_AFTER_DAYS, bestDay, currentStreak, isoDaysAgo, weekdayOf } from "@/lib/dashboard/age";
 import { shortDate } from "@/lib/dashboard/dates";
+import {
+  DUE_SOON_DAYS,
+  DUE_SOON_WORDS,
+  duePhrase,
+  type DeadlineBin,
+  type DeadlinePulse,
+} from "@/lib/dashboard/deadline";
 import type { PulseFilter } from "@/lib/dashboard/pulseFilter";
 import { cn } from "@/lib/utils";
 
 /**
- * The pulse's detail panel — one panel, one interaction, three contents
- * (#156/#158/#159 asked for "one coherent system, not three popovers").
+ * The pulse's detail panel — one panel, one interaction, four contents
+ * (#156/#158/#159 asked for "one coherent system, not three popovers"; the
+ * deadline content joined them on 2026-08-13, when the owner overruled the
+ * cell's standing refusal to open — see `PipelinePulse`'s header).
  * `PipelinePulse` mounts it inside the band's own `relative`, so it is an
  * `absolute` box under the band, anchored to the cell that opened it, with
  * the board fully live around it: no backdrop, no focus trap, no route. The
@@ -38,7 +47,7 @@ import { cn } from "@/lib/utils";
  * captions/labels restate every count so no distinction rides on colour.
  */
 
-export type PulseDetailKind = "momentum" | "age" | "provenance";
+export type PulseDetailKind = "momentum" | "age" | "deadline" | "provenance";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -50,16 +59,26 @@ function dayName(iso: string): string {
 }
 
 /** Where the panel docks: under the cell that opened it. Grid maths, not
- *  measurement — the band is four equal columns. */
+ *  measurement — the band is four equal columns.
+ *
+ *  Except that the third column's own quarter-line cannot hold the panel at
+ *  every width, which is why the fourth cell anchors right rather than at
+ *  `left-3/4`: the band is `viewport − 288` wide, so `left-1/2` puts this
+ *  26rem box 48px past the band's right edge at 1024 — outside its own
+ *  containing block, over the shell's padding. It clears from ~1120 up, so the
+ *  cell's true anchor is an `xl` refinement of the same right edge its
+ *  neighbour uses, never the other way round. */
 const ANCHOR: Record<PulseDetailKind, string> = {
   momentum: "left-0",
   age: "left-1/4",
+  deadline: "right-0 xl:left-1/2 xl:right-auto",
   provenance: "right-0",
 };
 
 const TITLES: Record<PulseDetailKind, string> = {
   momentum: `momentum · the last ${MOMENTUM_DAYS} days`,
   age: "open applications · by age",
+  deadline: "deadlines · by time left",
   provenance: "auto-filed · how applications arrived",
 };
 
@@ -114,6 +133,132 @@ function DayBars({
   );
 }
 
+/** How many dots a runway column draws before it counts the rest in figures.
+ *  Five 8px dots and their gaps fill the column's 80px; the sixth would have
+ *  to shrink them, and a dot that changes size stops being one unit. */
+const RUNWAY_DOTS = 5;
+
+/**
+ * The runway — the deadline content's drawn element, and the pulse's only
+ * chart that looks FORWARD: what is already late, then each day of the soon
+ * window on its own, then everything past it.
+ *
+ * A dot per deadline, not a bar per bucket. The deadline cell has always said
+ * its counts are units and not proportions ("two overdue beside ten later is
+ * not a 1:5 wash of red"), and a unit chart is that sentence drawn: on the
+ * board this was built for — one deadline, two days out — a bar chart draws
+ * one full-height bar and four empty bins, which reads as "everything is due",
+ * while one dot on the +2 column reads as the one thing it is. Height is a
+ * count you can recount, not a scale.
+ *
+ * The whole column is the control, the way the whole cell is the trigger
+ * upstairs, and each one narrows the worklist to exactly the rows its dots
+ * stand for.
+ */
+function Runway({
+  bins,
+  onSelect,
+}: {
+  bins: DeadlineBin[];
+  onSelect: (bin: DeadlineBin) => void;
+}) {
+  // One template, two grids (dots, then labels), so a label can never drift
+  // off the column it names.
+  const columns = { gridTemplateColumns: `repeat(${bins.length}, minmax(0, 1fr))` };
+  // The chart reserves exactly the tallest stack it has to draw — the same
+  // peak-scaling DayBars does, and the reason this content is dots at all: a
+  // fixed 5-dot column spent ~50px of an empty panel proving that a board with
+  // one deadline could have had five. 28px keeps the shortest column a
+  // comfortable target; the extra rung is the "+N" figure's line.
+  const peak = Math.min(Math.max(...bins.map((bin) => bin.count), 1), RUNWAY_DOTS);
+  const column = {
+    height: `${Math.max(28, peak * 12 + 4 + (bins.some((bin) => bin.count > RUNWAY_DOTS) ? 12 : 0))}px`,
+  };
+  const label = (bin: DeadlineBin) =>
+    bin.kind === "overdue"
+      ? "overdue"
+      : bin.kind === "later"
+        ? "later"
+        : bin.days === 0
+          ? "today"
+          : `+${bin.days} d`;
+  // The inks the card tags already wear, on the panel's own `--surface`
+  // ground: red-ink 10.04:1 dark / 6.47:1 light, amber 8.87:1 / 5.02:1, the
+  // ramp grey 9.14:1 / 5.35:1 (WCAG 2.1, measured 2026-08-13 — the bar is
+  // 3:1 for non-text). Nothing rides on hue alone: every column is named
+  // beneath it, counted in its own accessible name, and named again in the
+  // list below.
+  const ink = (bin: DeadlineBin) =>
+    bin.kind === "overdue"
+      ? "var(--red-ink)"
+      : bin.kind === "later"
+        ? "var(--text-dim)"
+        : "var(--amber)";
+  const name = (bin: DeadlineBin) =>
+    bin.kind === "overdue"
+      ? `overdue — ${bin.count}`
+      : bin.kind === "later"
+        ? `due after ${DUE_SOON_WORDS} — ${bin.count}`
+        : `${duePhrase(bin.days)} — ${bin.count}`;
+
+  return (
+    <div className="mt-3">
+      <div
+        role="group"
+        aria-label="Deadlines by time left, overdue first — select a column to filter the worklist"
+        className="grid gap-1 border-b border-line-soft"
+        style={columns}
+      >
+        {bins.map((bin, i) =>
+          bin.count > 0 ? (
+            <button
+              key={i}
+              type="button"
+              title={name(bin)}
+              aria-label={`${name(bin)} — show these on the board`}
+              onClick={() => onSelect(bin)}
+              style={column}
+              className="flex flex-col-reverse items-center gap-1 rounded-t-md pb-1 transition-colors hover:bg-surface-2 motion-reduce:transition-none"
+            >
+              {Array.from({ length: Math.min(bin.count, RUNWAY_DOTS) }, (_, dot) => (
+                <span
+                  key={dot}
+                  className="pulse-dot h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: ink(bin), ["--i" as string]: i * 2 + dot }}
+                />
+              ))}
+              {bin.count > RUNWAY_DOTS ? (
+                <span className="tabular text-[10px] leading-none text-dim">
+                  +{bin.count - RUNWAY_DOTS}
+                </span>
+              ) : null}
+            </button>
+          ) : (
+            // An empty column keeps a hairline on the baseline: the runway's
+            // gaps are the reassurance ("nothing lands tomorrow"), so they
+            // have to be visible as gaps rather than as missing columns.
+            <div
+              key={i}
+              aria-hidden="true"
+              style={column}
+              className="flex flex-col-reverse items-center pb-1"
+            >
+              <span className="h-px w-3" style={{ background: "var(--line-strong)" }} />
+            </div>
+          ),
+        )}
+      </div>
+      <div className="mt-1 grid gap-1 text-center text-[10px] leading-snug text-dim" style={columns}>
+        {bins.map((bin, i) => (
+          <span key={i} className="min-w-0 truncate">
+            {label(bin)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** The panel's one-line figure sentence — the caption idiom, scaled up. */
 function FigureLine({ children }: { children: ReactNode }) {
   return <p className="text-xs text-muted">{children}</p>;
@@ -130,6 +275,7 @@ export function PulseDetail({
   today,
   momentum,
   age,
+  deadline,
   provenance,
   onFilter,
   onClose,
@@ -147,6 +293,10 @@ export function PulseDetail({
     quiet: number;
     oldest: { company: string; age: number }[];
   };
+  /** The deadline cell's own derivation, bucketed once upstairs: the counts
+   *  its caption speaks, the rows it names, and those rows binned into the
+   *  runway this content draws. */
+  deadline: { pulse: DeadlinePulse; runway: DeadlineBin[] };
   provenance: {
     mail: number;
     hand: number;
@@ -292,6 +442,80 @@ export function PulseDetail({
           </div>
         ) : null}
         <Hint>select a day or a row to see it on the board</Hint>
+      </>
+    );
+  } else if (kind === "deadline") {
+    const { pulse, runway } = deadline;
+    /** Long enough to show a working week's worth of deadlines, short enough
+     *  that the panel never becomes the worklist it filters. */
+    const listed = pulse.rows.slice(0, 5);
+    content = (
+      <>
+        {/* The one figure the cell's caption deliberately does not carry: how
+            many deadlines this board is tracking at all. The overdue count
+            keeps its place beside it because it is the one state that must not
+            be missed; the soon count does NOT — the caption says it a line
+            above, the runway draws it in amber and the list dates it, and a
+            fourth telling was the panel reading as padding. */}
+        <FigureLine>
+          <span className="tabular text-strong">{pulse.total}</span> with a deadline
+          {pulse.overdue > 0 ? (
+            <span className="text-reject-ink">
+              {" · "}
+              <span className="tabular">{pulse.overdue}</span> overdue
+            </span>
+          ) : null}
+        </FigureLine>
+        <Runway
+          bins={runway}
+          onSelect={(bin) =>
+            onFilter(
+              bin.kind === "day"
+                ? { kind: "dueIn", days: bin.days }
+                : { kind: "due", state: bin.kind === "overdue" ? "overdue" : "ahead" },
+            )
+          }
+        />
+        <div className="mt-3">
+          <p className="label-caps">what is due</p>
+          <ul className="mt-1 space-y-0.5">
+            {listed.map((row, i) => (
+              <li key={i}>
+                {/* Filtered by days-left, not by name: the worklist takes sets,
+                    and "everything due the same day as this" is the honest set
+                    a row belongs to — the same one its runway column counts. */}
+                <button
+                  type="button"
+                  aria-label={`${row.company}, ${duePhrase(row.daysLeft)} — show it on the board`}
+                  onClick={() => onFilter({ kind: "dueIn", days: row.daysLeft })}
+                  className="-mx-2 flex w-[calc(100%+1rem)] items-baseline gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-surface-2 motion-reduce:transition-none"
+                >
+                  <span className="min-w-0 truncate text-strong">{row.company}</span>
+                  <span
+                    className={cn(
+                      "tabular ml-auto shrink-0",
+                      row.daysLeft < 0
+                        ? "text-reject-ink"
+                        : row.daysLeft <= DUE_SOON_DAYS
+                          ? "text-review"
+                          : "text-muted",
+                    )}
+                  >
+                    {duePhrase(row.daysLeft)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {pulse.rows.length > listed.length ? (
+            // Not a control: these are the furthest-out rows, and the runway's
+            // "later" column above already opens exactly this set.
+            <p className="mt-1 text-[11px] leading-snug text-dim">
+              <span className="tabular">+{pulse.rows.length - listed.length}</span> more further out
+            </p>
+          ) : null}
+        </div>
+        <Hint>select a column or a row to see those applications</Hint>
       </>
     );
   } else {

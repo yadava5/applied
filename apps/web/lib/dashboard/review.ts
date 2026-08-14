@@ -36,6 +36,20 @@ export const NEEDS_EMPLOYER_PROMPT =
 export const NEEDS_EMPLOYER_RETRY =
   "That didn't read as a company name. Try the employer as it's written in the message.";
 
+/**
+ * What the user is asked when the company they typed is one edit from one
+ * already on their board — "Verkeda" against four "Verkada" rows, which is how
+ * a rejection opened a fifth application instead of settling one of them.
+ *
+ * A question, never a correction applied for them: the same resemblance test
+ * that catches a typo also catches two real employers (Stripe and Strive are
+ * one edit apart), and joining those would move a live application to a
+ * terminal stage the product cannot walk back.
+ */
+export function confirmCompanyPrompt(suggested: string): string {
+  return `Did you mean ${suggested}? It's already on your board.`;
+}
+
 /** Fallback when the request itself failed and the backend named no reason. */
 export const CLASSIFY_FAILED = "Couldn't classify this item.";
 
@@ -64,6 +78,13 @@ export interface ClassifyRequestBody {
    * filed ledger, whose rows are stored by definition.
    */
   message?: ScanMessagePayload;
+  /**
+   * "No — these really are two different employers." Sent only to answer a
+   * `needs-confirmation` outcome, and only on a click that says so: a default
+   * of `true` would be the silent acceptance this whole round trip exists to
+   * stop.
+   */
+  confirm_new_company?: boolean;
 }
 
 /**
@@ -74,11 +95,21 @@ export interface ClassifyRequestBody {
  *   resolves without filing one.
  * - `needs-employer` — nothing was filed, the item is still in the queue, and
  *   naming the company will file it.
+ * - `needs-confirmation` — nothing was filed either, and the company that was
+ *   named looks like `suggestedCompany`, which the board already holds. Two
+ *   answers file it: re-send with the suggested spelling, or re-send with
+ *   `confirm_new_company` to open a separate application.
  * - `failed` — the request was rejected; nothing changed.
  */
 export type ClassifyOutcome =
   | { kind: "resolved"; applicationId: number | null }
   | { kind: "needs-employer"; messageId: string | null; detail: string | null }
+  | {
+      kind: "needs-confirmation";
+      suggestedCompany: string;
+      messageId: string | null;
+      detail: string | null;
+    }
   | { kind: "failed"; detail: string };
 
 /** Build the request body; optional fields are sent only when they carry a value. */
@@ -87,10 +118,12 @@ export function classifyRequestBody(
   company?: string | null,
   applicationId?: number | null,
   message?: ScanMessagePayload | null,
+  confirmNewCompany?: boolean | null,
 ): ClassifyRequestBody {
   const named = typeof company === "string" ? company.trim() : "";
   const body: ClassifyRequestBody = { category };
   if (named) body.company = named;
+  if (confirmNewCompany === true) body.confirm_new_company = true;
   if (typeof applicationId === "number" && Number.isInteger(applicationId) && applicationId > 0) {
     body.application_id = applicationId;
   }
@@ -120,12 +153,31 @@ function asRecord(body: unknown): Record<string, unknown> {
  * backend that omits the flag is read as `resolved`, which is the behaviour it
  * actually has. We never infer "nothing was filed" from a null `application_id`
  * — "not job-related" legitimately files nothing and still leaves the queue.
+ *
+ * The confirmation is read FIRST because the backend sends both flags on that
+ * response. The pair is deliberate on its side (a client that has never heard
+ * of the confirmation still keeps the row in the queue and prompts, instead of
+ * dropping an item that filed nothing); reading them in the other order here
+ * would throw away the suggestion and show the generic prompt.
  */
 export function readClassifyOutcome(ok: boolean, body: unknown): ClassifyOutcome {
   const data = asRecord(body);
   const detail = typeof data.detail === "string" ? data.detail : null;
 
   if (!ok) return { kind: "failed", detail: detail ?? CLASSIFY_FAILED };
+
+  // A confirmation with no name to offer is not a question anyone can answer,
+  // so it falls through to the employer prompt rather than rendering "Did you
+  // mean ?".
+  const suggested = typeof data.suggested_company === "string" ? data.suggested_company.trim() : "";
+  if (data.needs_company_confirmation === true && suggested) {
+    return {
+      kind: "needs-confirmation",
+      suggestedCompany: suggested,
+      messageId: typeof data.message_id === "string" ? data.message_id : null,
+      detail,
+    };
+  }
 
   if (data.needs_employer === true) {
     return {
@@ -149,7 +201,10 @@ export function readClassifyOutcome(ok: boolean, body: unknown): ClassifyOutcome
  */
 export function rowStaysInQueue(
   outcome: ClassifyOutcome,
-): outcome is Extract<ClassifyOutcome, { kind: "needs-employer" | "failed" }> {
+): outcome is Extract<
+  ClassifyOutcome,
+  { kind: "needs-employer" | "needs-confirmation" | "failed" }
+> {
   return outcome.kind !== "resolved";
 }
 

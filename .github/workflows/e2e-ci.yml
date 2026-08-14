@@ -47,6 +47,13 @@ jobs:
       PLAYWRIGHT_BASE_URL: http://localhost:3000
       JOBTRACKER_ENVIRONMENT: test
       PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+      # The switch that turns "no Supabase session, so 13 tests skipped" from a
+      # silent green into a red job (#188). Read from a REPOSITORY VARIABLE so
+      # the owner can enforce it the day a seeded test account exists — one
+      # setting, no code change. Unset it evaluates to the empty string, and
+      # `tests/e2e/session.ts` only enforces on the exact string "1", so leaving
+      # it unset is inert.
+      E2E_REQUIRE_SESSION: ${{ vars.E2E_REQUIRE_SESSION }}
 
     steps:
       - name: Checkout
@@ -176,6 +183,33 @@ jobs:
         working-directory: apps/web
         run: pnpm exec playwright test
 
+      # -----------------------------------------------------------------------
+      # THE NO-SESSION CENSUS (#188)
+      #
+      # 13 tests across four spec files need an authenticated Supabase session,
+      # and this job boots against a placeholder project — so all 13 skip, on
+      # every run, and a skip is green. That is how PR #184 merged with none of
+      # the signed-in coverage having executed, and how #163 (two
+      # `aria-current="page"` elements on /inbox) shipped underneath an assertion
+      # written to catch it.
+      #
+      # The gap is not closed here — closing it needs a seeded test account,
+      # which is the owner's decision. What this does is publish the NUMBER
+      # where it cannot be missed: the job summary, visible in the PR checks UI
+      # without opening a log.
+      #
+      # `if: always()` so it also reports on a red run. The script exits 0 on
+      # EVERY path, including a missing report, so it can neither fail this job
+      # nor mask the Playwright step above — a failed step still fails the job.
+      # A missing report is announced loudly rather than counted as zero: this
+      # repo has shipped "0 matches" checks that could not fail more than once,
+      # and a census is exactly the shape that goes wrong that way.
+      # -----------------------------------------------------------------------
+      - name: Census — coverage that did not run for want of a session
+        if: always()
+        working-directory: apps/web
+        run: node scripts/no-session-census.mjs test-results/results.json "playwright (dev server)"
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v7
@@ -238,6 +272,12 @@ jobs:
       PLAYWRIGHT_BASE_URL: http://localhost:3000
       # The switch that un-skips tests/e2e/production.spec.ts.
       PLAYWRIGHT_PROD_BUILD: "1"
+      # …and the unrelated one that would un-skip the 13 session-gated tests by
+      # making them fail instead. Same repository variable as the job above, so
+      # one setting governs both; inert while unset. See #188 and
+      # `apps/web/tests/e2e/session.ts` — and note these two switches answer
+      # different questions and must not be conflated.
+      E2E_REQUIRE_SESSION: ${{ vars.E2E_REQUIRE_SESSION }}
 
     steps:
       - name: Checkout
@@ -294,6 +334,17 @@ jobs:
       - name: Run Playwright against the production build
         working-directory: apps/web
         run: pnpm exec playwright test
+
+      # Same census as the dev-server job, and it must report the SAME 13. This
+      # job satisfies `PLAYWRIGHT_PROD_BUILD`, so production.spec.ts's 12 skips
+      # do not happen here — and because the count is prefix-matched to
+      # `tests/e2e/session.ts` rather than taken from the skip total, that
+      # difference cannot move the number. A total that means 25 on one job and
+      # 13 on the other would be the very ambiguity this step exists to remove.
+      - name: Census — coverage that did not run for want of a session
+        if: always()
+        working-directory: apps/web
+        run: node scripts/no-session-census.mjs test-results/results.json "playwright (production build)"
 
       - name: Upload Playwright report
         if: always()

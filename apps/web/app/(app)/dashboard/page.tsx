@@ -9,7 +9,6 @@ import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
-import { SignOutButton } from "@/components/shell/SessionControls";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
@@ -237,7 +236,7 @@ export default async function DashboardPage() {
           subtitle="connection issue · your data could not be loaded"
           gmail={null}
           title="Applications"
-          trailing={<SignOutButton />}
+          signedIn
         >
           <AddApplicationForm compact />
         </SyncBar>
@@ -293,7 +292,7 @@ export default async function DashboardPage() {
             }${reviewNote}`}
             gmail={gmail}
             title="Applications"
-            trailing={<SignOutButton />}
+            signedIn
           >
             <AddApplicationForm compact />
           </SyncBar>
@@ -335,7 +334,7 @@ export default async function DashboardPage() {
           subtitle="0 filed · nothing tracked yet"
           gmail={gmail}
           title="Applications"
-          trailing={<SignOutButton />}
+          signedIn
         >
           <AddApplicationForm compact />
         </SyncBar>
@@ -360,8 +359,10 @@ export default async function DashboardPage() {
     <section className={LOCKED_PAGE_CLASS}>
       {/* The sync surface is the page's top line: at `lg`+ the shell's TopBar
           yields on this route and this row carries the title, the state, the
-          change ledger, the sync controls and sign-out — one line where a
-          92%-empty bar plus a second header row used to sit. The /demo twin
+          change ledger and the sync controls — one line where a 92%-empty bar
+          plus a second header row used to sit. Sign-out rides inside the
+          row's ⋯ menu (`signedIn`), not as a row-level button: the button
+          is what wrapped this row to 82px at 1024 (#172). The /demo twin
           composes the identical row (with the demo pill in the trailing
           slot), so the two cannot drift.
 
@@ -384,7 +385,7 @@ export default async function DashboardPage() {
         subtitle={subtitle}
         gmail={gmail}
         title="Applications"
-        trailing={<SignOutButton />}
+        signedIn
         since={
           user?.id ? (
             <SinceLastLook

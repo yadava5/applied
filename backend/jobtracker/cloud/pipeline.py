@@ -1273,6 +1273,113 @@ def employer_from_text(raw: str | None) -> tuple[str, str] | None:
     return token, display
 
 
+# How far apart two employer names may be and still be one employer typed twice:
+# ONE edit — a substitution, an insertion, a deletion, or a swap of two adjacent
+# letters, which is every way a hand slips on a keyboard.
+_NEAR_MISS_MAX_EDITS = 1
+
+# ...and the shortest name that edit may be applied to. Below five characters a
+# single edit is most of the word, and the pairs it produces are real, DIFFERENT
+# employers: Zoom/Loom, Bolt/Volt, Ramp/Rump.
+_NEAR_MISS_MIN_LENGTH = 5
+
+# The opening letters a reader recognises a brand by. Requiring them to agree is
+# what separates "Verkada"/"Verkeda" — a slipped key in the middle of a name —
+# from "Figma"/"Sigma" and "Notion"/"Motion", which are one edit apart and not
+# the same company by any reading.
+_NEAR_MISS_PREFIX = 2
+
+
+def _within_one_edit(left: str, right: str) -> bool:
+    """Is ``right`` reachable from ``left`` in at most one keyboard slip?
+
+    Substitution, insertion, deletion, or a transposition of adjacent letters —
+    the Damerau-Levenshtein neighbourhood at distance 1 — decided by walking the
+    two strings once instead of filling a matrix. A bounded question does not
+    need the general algorithm, and answering it this way keeps the serverless
+    bundle free of a fuzzy-matching dependency it would otherwise carry for
+    fifteen lines of work.
+    """
+
+    if left == right:
+        return True
+    short, long = (left, right) if len(left) <= len(right) else (right, left)
+    if len(long) - len(short) > _NEAR_MISS_MAX_EDITS:
+        return False
+
+    i = j = 0
+    edits = 0
+    while i < len(short) and j < len(long):
+        if short[i] == long[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > _NEAR_MISS_MAX_EDITS:
+            return False
+        if len(short) == len(long):
+            # Same length, so it is a substitution — unless the very next letter
+            # on each side is the other's, which makes it one transposition
+            # rather than the two substitutions it would otherwise count as.
+            if short[i + 1 : i + 2] == long[j : j + 1] and short[i : i + 1] == long[j + 1 : j + 2]:
+                i += 2
+                j += 2
+                continue
+            i += 1
+            j += 1
+        else:
+            j += 1  # the longer side carries the extra letter
+    # Whatever is left unconsumed on either side is the edit that ends it.
+    return edits + (len(long) - j) + (len(short) - i) <= _NEAR_MISS_MAX_EDITS
+
+
+def near_miss_employer(token: str, existing: Iterable[str]) -> str | None:
+    """The stored employer name ``token`` is probably a MISSPELLING of, or None.
+
+    ``token`` is a match key that named no stored row; ``existing`` is the set of
+    company names already on the board. Both sides are reduced to their leading
+    normalized word before comparison, the same way :func:`matches_company_token`
+    compares them, because a stored display name and a match key are minted
+    differently — otherwise every multi-word employer on the board is invisible
+    to this check.
+
+    A candidate qualifies only when all four hold: at least
+    :data:`_NEAR_MISS_MIN_LENGTH` characters on both sides, the same first
+    :data:`_NEAR_MISS_PREFIX` characters, at most :data:`_NEAR_MISS_MAX_EDITS`
+    edits apart, and not already equal (an equal token is not a near miss — the
+    caller would have found the row).
+
+    THIS RESULT IS A QUESTION, NEVER AN ACTION. It exists so the one caller —
+    the review queue's naming path — can offer the stored spelling back to the
+    human who just typed a new one. Nothing merges on it. That is the whole
+    safety argument: the rule above is deliberately loose enough that two real
+    and distinct employers can trip it (Stripe/Strive are one edit apart and
+    share their first two letters), and loose is affordable precisely because
+    the answer is shown to a person rather than acted on.
+
+    Several candidates return the alphabetically first rather than None. Under
+    confirm-semantics, ambiguity is a reason to ASK, not a reason to fall silent
+    and mint the row that ambiguity was about — a board already holding both
+    "Verkada" and "Verkata" is where a typo is most likely, not least.
+    """
+
+    typed = _normalize_token(token or "").split(" ")[0]
+    if len(typed) < _NEAR_MISS_MIN_LENGTH:
+        return None
+
+    matches: list[tuple[str, str]] = []
+    for display in existing:
+        stored = _normalize_token(display or "").split(" ")[0]
+        if len(stored) < _NEAR_MISS_MIN_LENGTH or stored == typed:
+            continue
+        if stored[:_NEAR_MISS_PREFIX] != typed[:_NEAR_MISS_PREFIX]:
+            continue
+        if _within_one_edit(typed, stored):
+            matches.append((stored, display))
+
+    return min(matches)[1] if matches else None
+
+
 def _brand_display(brand: str, sender_name: str | None) -> str:
     """Human display for an employer identified by its own mail domain."""
 

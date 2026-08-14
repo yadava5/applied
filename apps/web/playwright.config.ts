@@ -27,13 +27,16 @@ const desktopChrome = {
 
 /**
  * The specs whose assertions depend on WHICH CALENDAR DAY IT IS — the only
- * ones the offset projects below re-run. `demo.spec.ts` is the whole list:
- * it is the only file in `tests/e2e` that mentions a deadline state at all
- * (`overdue`, `due ≤2d`, `due in Nd`), because /demo is the only surface CI
- * can reach without a Supabase session. If a day-dependent assertion is ever
- * added to another spec, add that file here too.
+ * ones the offset projects below re-run. `demo.spec.ts` was the whole list
+ * while it was the only file naming a deadline state (`overdue`, `due in Nd`,
+ * the pulse cell's window claim), because /demo is the only surface CI can
+ * reach without a Supabase session. `shell.spec.ts` joined it on 2026-08-13:
+ * the deadline cell's caption and its detail panel are asserted there against
+ * the same date-derived fixtures, so both are re-run at the two extreme
+ * offsets. If a day-dependent assertion is ever added to another spec, add
+ * that file here too.
  */
-const DAY_DEPENDENT_SPECS = /demo\.spec\.ts/;
+const DAY_DEPENDENT_SPECS = /(demo|shell)\.spec\.ts/;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -41,8 +44,16 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
+  // The JSON reporter is the machine-readable half, and it exists for one
+  // reason: `e2e-ci.yml` counts the tests that skipped for want of a Supabase
+  // session (issue #188) and writes the number to the job summary. Counting
+  // that from `list` output would mean parsing prose meant for humans; the JSON
+  // carries each test's status AND its skip annotation, so the count is derived
+  // rather than pattern-matched out of a log. It lands inside `test-results/`,
+  // which Playwright clears BEFORE the run and this job already uploads as an
+  // artifact, so the file survives the run and needs no new ignore rule.
   reporter: process.env.CI
-    ? [["html", { open: "never" }], ["list"]]
+    ? [["html", { open: "never" }], ["json", { outputFile: "test-results/results.json" }], ["list"]]
     : [["list"]],
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",

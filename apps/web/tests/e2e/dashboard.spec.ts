@@ -1,6 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+import { requireSession } from "./session";
 
 /**
  * E2E for the dashboard's content.
@@ -10,8 +11,11 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * `PipelineBoard` component as the public `/demo` twin — the header hierarchy,
  * the stage spine, the grouped worklist with search/company-filter — fed by
  * fixture rows adapted to the exact API shape. So we drive that content on
- * `/demo` here, and add a skip-guarded pass that becomes real coverage of
- * `/dashboard` itself the moment the suite runs against a session.
+ * `/demo` here, and add a `requireSession()`-guarded pass that becomes real
+ * coverage of `/dashboard` itself the moment the suite runs against a session.
+ * Until then it skips — under the shared `E2E_NO_SESSION_SKIP (#188):` token
+ * that CI counts into the job summary, and as a hard FAILURE rather than a skip
+ * once `E2E_REQUIRE_SESSION=1`. See `./session` and issue #188.
  *
  * The board is a worklist now, not a kanban: stage groups render as regions
  * ONLY while they hold rows; an empty stage is a line in the spine (a button
@@ -25,14 +29,6 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * distribution bars and the recent-activity feed were removed from every
  * signed-in surface and from this twin — their reappearance is a regression.
  */
-
-async function reachDashboardOrSkip(page: Page): Promise<void> {
-  await page.goto("/dashboard");
-  test.skip(
-    /\/login/.test(page.url()),
-    "no authenticated Supabase session in this environment — /dashboard is unreachable",
-  );
-}
 
 test.describe("dashboard content (via the public /demo twin)", () => {
   test("the header is one honest line of state, and the worklist leads", async ({ page }) => {
@@ -193,7 +189,7 @@ test.describe("dashboard content (via the public /demo twin)", () => {
 
 test.describe("dashboard (signed in — needs a session)", () => {
   test("shows the pipeline header and a way to file an application", async ({ page }) => {
-    await reachDashboardOrSkip(page);
+    await requireSession(page, "the real /dashboard's pipeline header and file-application entry");
     // Either populated (the worklist) or empty (the empty-state hero) — both
     // must offer the file-application entry point and never be a blank page.
     await expect(page.getByRole("button", { name: /file an application/i }).first()).toBeVisible();
@@ -206,7 +202,7 @@ test.describe("dashboard (signed in — needs a session)", () => {
   test("the dashboard is viewport-locked at desktop: the page itself does not scroll", async ({
     page,
   }) => {
-    await reachDashboardOrSkip(page);
+    await requireSession(page, "the dashboard's viewport lock at the owner's real data volume");
     await page.setViewportSize({ width: 1440, height: 900 });
     // The shell is h-dvh with the worklist as the one scroll region — the
     // document never grows past the viewport (complaint: "the dashboard means

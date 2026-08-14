@@ -1045,6 +1045,24 @@ body {
   animation: rail-seg-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: calc(var(--i, 0) * 70ms);
 }
+/* One deadline, one dot — the runway's units land along the panel's own
+ * entrance (PulseDetail). A dot is not a bar: `pulse-seg`'s scaleY would flatten
+ * it into a lens on the way in, so this scales uniformly instead. Decoration
+ * over a list that already names every row, and it collapses below. */
+.pulse-dot {
+  animation: pulse-dot-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 30ms);
+}
+@keyframes pulse-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
 /* The pulse's detail panel (components/dashboard/PulseDetail.tsx): a short
  * settle from 4px above, opacity + transform only — the panel's content is
  * never hidden behind it, and it collapses with its sibling draws below. */
@@ -1064,6 +1082,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .pulse-seg,
   .pulse-seg-x,
+  .pulse-dot,
   .pulse-panel {
     animation: none !important;
   }
