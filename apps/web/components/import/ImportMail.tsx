@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { Mail } from "lucide-react";
 
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
 import { GATE } from "@/lib/demo/sampleInbox";
-import { Disclosure } from "@/components/ui/Disclosure";
 import {
   DEFAULT_MESSAGE_CAP,
   parseMailFile,
@@ -24,17 +24,18 @@ import {
  * the strict CSP keeps out of the tab — that runs in `/demo/inbox` and the
  * Hugging Face Space. We label the layer-1 disposition on every row.
  *
- * Copy: the on-device claim is stated ONCE, in the note above the drop zone.
- * The page used to restate it four times before the first button (subtitle,
- * intro paragraph, this note, and a mechanism footnote naming e5/SetFit at an
- * end user) — the pile-up read as protesting too much and pushed the control
- * below the fold. The layer-1 vs full-model honesty above now lives behind
- * the note's Disclosure, in user terms; the per-row traces keep the technical
- * register. `import.spec.ts` pins "On-device only" and "the mail never leaves
- * your device" as visible on load, so the surviving sentence is load-bearing.
+ * Copy: the on-device claim is ONE line, directly under the drop zone it
+ * covers — the in-context disclosure at the exact moment a user hands over a
+ * file — linking to the privacy policy's "On-device import" section, which
+ * owns the mechanism detail (what runs on this page, what never does; #201).
+ * The page used to restate the claim four times before the first button; the
+ * pile-up read as protesting too much and pushed the control below the fold.
+ * #198 finished the thought: the drop zone leads, sized like the page's one
+ * action, and the note reads as its caveat. The per-row traces keep the
+ * technical register. `import.spec.ts` pins "On-device only" and "the mail
+ * never leaves your device" as visible on load, so the surviving sentence is
+ * load-bearing — reword it only together with the spec.
  */
-
-const SPACE_URL = "https://huggingface.co/spaces/yadava5/jobtracker-classifier";
 
 /** Layer-1 accept bar from the shipped pipeline: rules answer at ≥ 0.90. */
 const RULES_ACCEPT = 0.9;
@@ -274,9 +275,7 @@ export function ImportMail() {
       });
     } catch {
       setState(null);
-      setError(
-        "Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export — nothing was uploaded.",
-      );
+      setError("Couldn't parse that file. Make sure it's a valid .mbox, .eml, or JSON export.");
     }
   }, []);
 
@@ -307,43 +306,13 @@ export function ImportMail() {
 
   return (
     <div className="space-y-6">
-      {/* The privacy guarantee — the whole point, said once. What runs (and
-          what doesn't) is real detail, so it folds rather than dies. */}
-      <div
-        role="note"
-        className="rounded-xl border border-viz-rules/25 bg-surface px-4 py-3 text-sm text-muted"
-      >
-        <p>
-          <span className="text-strong">On-device only.</span> Your file is read and classified
-          entirely in this browser tab — nothing is uploaded, and the mail never leaves your
-          device.
-        </p>
-        <div className="mt-3">
-          <Disclosure summary="What runs on this page">
-            <p className="text-sm text-muted">
-              The classifier&apos;s fast first pass — the same deterministic rules the app runs
-              first on live mail. Clear signals are filed on the spot; anything borderline is held
-              for review rather than guessed. The full model that decides those borderline
-              messages is too large to run in this tab — see it work in the{" "}
-              <a href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
-                sample inbox
-              </a>{" "}
-              or the{" "}
-              <a
-                href={SPACE_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-strong underline-offset-4 hover:underline"
-              >
-                Space ↗
-              </a>
-              .
-            </p>
-          </Disclosure>
-        </div>
-      </div>
-
-      {/* drop zone / picker */}
+      {/* Drop zone / picker — the page's ONE action, so it leads and it is
+          sized like a target, not a form row (#198: "the drop zone is the
+          visual centre of the page"). The glyph is an envelope, deliberately
+          NOT an upload arrow: nothing here uploads, and the icon must not
+          contradict the note below it. `relative` parents the sr-only file
+          input. Extensions are set in mono — machine values — while the
+          sentence around them stays in the text face. */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -355,7 +324,7 @@ export function ImportMail() {
           setDragging(false);
           void onFile(e.dataTransfer.files?.[0]);
         }}
-        className={`rounded-xl border border-dashed p-6 text-center transition-colors ${
+        className={`relative rounded-xl border border-dashed px-6 py-12 text-center transition-colors sm:py-16 ${
           dragging ? "border-viz-rules bg-surface-2" : "border-line bg-surface"
         }`}
       >
@@ -367,12 +336,20 @@ export function ImportMail() {
           className="sr-only"
           onChange={(e) => void onFile(e.target.files?.[0] ?? undefined)}
         />
-        <p className="text-sm text-muted">
-          Drop a <span className="text-strong">.mbox</span>,{" "}
-          <span className="text-strong">.eml</span>, or <span className="text-strong">.json</span>{" "}
-          file here, or
+        <Mail
+          aria-hidden="true"
+          strokeWidth={1.5}
+          className={`mx-auto h-8 w-8 transition-colors ${
+            dragging ? "text-viz-rules" : "text-dim"
+          }`}
+        />
+        <p className="mt-4 text-[15px] font-medium text-strong">Drop your mail export here</p>
+        <p className="mt-1 text-[13px] text-muted">
+          a Google Takeout <span className="font-mono text-xs text-strong">.mbox</span>, a single{" "}
+          <span className="font-mono text-xs text-strong">.eml</span>, or a{" "}
+          <span className="font-mono text-xs text-strong">.json</span> batch
         </p>
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
@@ -389,13 +366,26 @@ export function ImportMail() {
             Try a sample export
           </button>
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-dim">
-          Export from Gmail via{" "}
-          <span className="text-muted">Google Takeout → Mail</span> (an .mbox). Up to{" "}
+        <p className="mt-6 text-xs leading-relaxed text-dim">
+          Export from Gmail via <span className="text-muted">Google Takeout → Mail</span>. Up to{" "}
           {DEFAULT_MESSAGE_CAP} messages are classified per file to keep the tab responsive.
         </p>
         {busy && <p className="mt-2 text-xs text-dim">reading…</p>}
       </div>
+
+      {/* The privacy guarantee — the whole point, said once, at the moment of
+          drop. The mechanism detail lives in the policy's "On-device import"
+          section this line links to. */}
+      <p
+        role="note"
+        className="rounded-xl border border-viz-rules/25 bg-surface px-4 py-3 text-sm text-muted"
+      >
+        <span className="text-strong">On-device only.</span> Your file is read and classified
+        entirely in this browser tab — the mail never leaves your device.{" "}
+        <a href="/privacy#on-device" className="text-strong underline-offset-4 hover:underline">
+          Privacy policy →
+        </a>
+      </p>
 
       {error && (
         <div
@@ -430,15 +420,14 @@ export function ImportMail() {
 
           <p className="tabular text-xs text-dim">
             {state.fileName} · {state.totalFound} message{state.totalFound === 1 ? "" : "s"} found
-            {state.truncated ? ` · classified the first ${state.items.length}` : ""} · layer-1 rules,
-            on-device
+            {state.truncated ? ` · classified the first ${state.items.length}` : ""}
           </p>
 
           <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line-soft px-4 py-3">
               <span className="flex items-center gap-2 text-xs text-muted">
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--viz-rules)" }} />
-                layer 1 · rules · on-device
+                layer 1 · rules
               </span>
               <span className="ml-auto flex items-center gap-2 text-xs text-review">
                 <span className="inline-block h-2 w-2 rounded-full bg-review" /> below {GATE} → review
@@ -460,7 +449,7 @@ export function ImportMail() {
             }}
             className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
           >
-            clear — nothing was stored anyway
+            Clear results
           </button>
         </div>
       )}
