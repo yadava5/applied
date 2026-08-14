@@ -11,6 +11,7 @@ import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
+import { deletionEnabled } from "@/lib/supabase/admin";
 import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
@@ -153,7 +154,11 @@ export default async function SettingsPage({
           <NotificationsSection initial={readNotificationPrefs(meta)} />
           <ClassificationSection />
           <DataSection />
-          <AccountSection email={email} />
+          {/* Read server-side, not fetched: the user must learn deletion is
+              unavailable on this deployment BEFORE arming the typed
+              confirmation, and a client fetch would arrive after the dialog
+              was already readable (#218). */}
+          <AccountSection email={email} deletionEnabled={deletionEnabled()} />
         </div>
       </div>
     </section>

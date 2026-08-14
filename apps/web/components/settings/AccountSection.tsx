@@ -12,15 +12,41 @@ import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
 const CONFIRM_WORD = "DELETE";
 
 /**
+ * Shown wherever the deployment cannot delete — the standing caption, the
+ * dialog, and the disabled confirm's tooltip all say the same sentence, so the
+ * user meets the limitation once and recognises it.
+ */
+const UNAVAILABLE_REASON =
+  "Account deletion isn’t enabled on this deployment yet. Email the admin to have your data removed.";
+
+/**
  * Account: sign out, and a gated "danger zone" delete. Deletion requires typing
- * DELETE to arm, then calls the server route that removes the account. If the
- * deployment hasn't enabled deletion (no service-role key), the route says so
- * honestly rather than silently doing nothing — the button is never a no-op.
+ * DELETE to arm, then calls the server route that removes the account.
+ *
+ * `deletionEnabled` is the deployment's own answer to "can this work at all",
+ * read server-side from the same predicate the route depends on
+ * (`lib/supabase/admin.ts`). Before #218 it was not surfaced anywhere: the
+ * route's honest 501 was correct but arrived *after* the user had read "this
+ * cannot be undone", typed DELETE and pressed a destructive button. Now the
+ * reason is visible standing text and the destructive confirm is the dead
+ * control — the same resolution as the Gmail disconnect dialog, and for the
+ * same reason: a dead button that says why beats a live one that lies. The
+ * typed-DELETE gate is untouched, so the flow stays reviewable end to end.
+ *
  * On the `/demo/settings` twin the same gate runs end to end; the transport's
  * answer is the one honest difference ("simulated account — nothing exists to
  * delete").
  */
-export function AccountSection({ email, mode = "live" }: { email: string; mode?: SettingsMode }) {
+export function AccountSection({
+  email,
+  mode = "live",
+  deletionEnabled = true,
+}: {
+  email: string;
+  mode?: SettingsMode;
+  /** Defaults to `true` so the demo twin keeps exercising the whole machine. */
+  deletionEnabled?: boolean;
+}) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutNote, setSignOutNote] = useState<string | null>(null);
@@ -80,8 +106,15 @@ export function AccountSection({ email, mode = "live" }: { email: string; mode?:
       </div>
 
       <p className="mt-3 text-[12px] leading-relaxed text-dim">
-        Deleting removes your applications and revokes any connected Gmail. This can’t be undone.
+        Deleting removes your applications and revokes Applied’s access to any connected Gmail at
+        Google. This can’t be undone.
       </p>
+
+      {!deletionEnabled ? (
+        <p role="status" className="mt-2 text-[12px] leading-relaxed text-reject-ink">
+          {UNAVAILABLE_REASON}
+        </p>
+      ) : null}
 
       <Dialog
         open={open}
@@ -99,6 +132,12 @@ export function AccountSection({ email, mode = "live" }: { email: string; mode?:
         }
       >
         <div className="space-y-4">
+          {!deletionEnabled ? (
+            <p role="status" className="text-xs text-dim">
+              {UNAVAILABLE_REASON}
+            </p>
+          ) : null}
+
           <label className="grid gap-1">
             <span className="label-caps">
               type <span className="font-mono text-reject-ink">{CONFIRM_WORD}</span> to confirm
@@ -133,7 +172,8 @@ export function AccountSection({ email, mode = "live" }: { email: string; mode?:
             <button
               type="button"
               onClick={deleteAccount}
-              disabled={confirm !== CONFIRM_WORD || deleting}
+              disabled={!deletionEnabled || confirm !== CONFIRM_WORD || deleting}
+              title={deletionEnabled ? undefined : UNAVAILABLE_REASON}
               className={dangerBtnClass}
             >
               {deleting ? "Deleting…" : "Permanently delete"}
