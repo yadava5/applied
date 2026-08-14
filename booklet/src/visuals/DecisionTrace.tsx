@@ -309,7 +309,7 @@ const GateMeter: React.FC<{ item: Row }> = ({ item }) => {
         }}
       >
         confidence sits below the 0.85 gate — nothing is auto-filed. the email
-        waits for a human, and the correction becomes new SetFit training data.
+        waits for a human, and that answer is recorded on it for good.
       </div>
     </div>
   );

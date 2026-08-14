@@ -17,7 +17,10 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * stand-in for the auth-gated dashboard.)
  */
 
-/** The sync surface's own live regions, scoped off its `data-sync-surface`. */
+/** The sync surface's own live regions, scoped off its `data-sync-surface`.
+ *  The sync STATUS line specifically is `[data-sync-status]` within it: the
+ *  surface holds a second `role="status"` since #81 (the `+`'s filing
+ *  receipt), so a bare-role locator resolves to two elements. */
 function syncSurface(page: Page) {
   return page.locator("[data-sync-surface]");
 }
@@ -182,7 +185,7 @@ test.describe("live demo (/demo)", () => {
 
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
     // The additive path reports through the one status line…
-    await expect(syncSurface(page).getByRole("status")).toContainText("2 filed, 3 already known");
+    await expect(syncSurface(page).locator("[data-sync-status]")).toContainText("2 filed, 3 already known");
     // …and the board actually gained the two filed fixture rows.
     await expect(page.getByRole("region", { name: /applied — 12/i })).toBeVisible();
     await expect(page.getByText("Twitch", { exact: true })).toBeVisible();
@@ -204,7 +207,7 @@ test.describe("live demo (/demo)", () => {
     // row's 208px status slot at 1024 and was clipped mid-word. `toContainText`
     // so the measured duration the receipt now appends ("· 1 s") does not
     // make this assertion race the fixture's own timing.
-    await expect(syncSurface(page).getByRole("status")).toContainText(
+    await expect(syncSurface(page).locator("[data-sync-status]")).toContainText(
       "no new mail since last sync",
     );
   });
@@ -326,7 +329,7 @@ test.describe("live demo (/demo)", () => {
     await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
     // The running line restates the chosen window; the only number ticking is
     // the elapsed clock — never a percentage, here or on the receipt.
-    await expect(syncSurface(page).getByRole("status")).toContainText(
+    await expect(syncSurface(page).locator("[data-sync-status]")).toContainText(
       "rebuilding · up to 750 messages · last 12 months · all mail",
     );
     await expect(syncSurface(page)).not.toContainText("%");
@@ -546,7 +549,19 @@ test.describe("live demo (/demo)", () => {
     // Momentum: exactly 30 day-bars plus the delta sentence derived from them
     // (#156 — daily resolution; weekly buckets flattened real filing bursts).
     await expect(pulse.getByTestId("pulse-day")).toHaveCount(30);
-    await expect(pulse.getByText(/this wk/)).toBeVisible();
+    // The week's filings must be NON-ZERO, the same shape as the quiet
+    // assertion below and for the same reason: `/this wk/` alone matches
+    // "0 this wk", so it is green on exactly the defect it looks like it
+    // guards. applied#80 was that defect — the fixtures were absolute dates,
+    // the demo's first number aged to 0, and no spec noticed for 28 days.
+    //
+    // Safe at both offset projects: the seeds inside the 7-day window are at
+    // 1,2,3,3,5,6 days (`demoData.ts`), so the count is 6, and the ±1 day a
+    // UTC−10/+14 reader's calendar can shift it by moves it to 5 or 7 — never
+    // near 0. It is a staleness gate, not a fixture-census one; the exact
+    // count deliberately is not asserted so re-spreading the seeds does not
+    // have to touch this line.
+    await expect(pulse.getByText(/[1-9]\d* this wk/)).toBeVisible();
 
     // Ageing: the fixture board's open rows are weeks old, so the quiet share
     // is non-zero. `\d+` would also match "0 quiet", which is the claim this

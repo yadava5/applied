@@ -80,7 +80,9 @@ count toward that gate.
 Options, in the order they get more destructive:
 
 1. **Do nothing.** Five rows cannot train anything; if the corpus is ever
-   discarded and rebuilt from the review queue, the problem evaporates.
+   discarded and rebuilt from the review queue, the problem evaporates — with
+   the caveat below, because the queue is not a neutral sample of the
+   classifier's mistakes.
 2. **Fix row 4's mailbox side** (no corpus change): clear `user_corrected` /
    `is_reviewed` on `emails` id 58 and let the next sync re-classify it, or set
    its `classified_as` to `APPLIED` to match the label the user actually gave.
@@ -93,13 +95,86 @@ Options, in the order they get more destructive:
 4. **Delete every row whose email no longer exists.** Blunt: it would also
    discard legitimate review-queue labels whose message was later purged.
 
+**A rebuild from the queue inherits the queue's bias.** Applied has
+auto-detected **zero** rejections in its lifetime (#166, diagnosed in #238):
+every `REJECTION` row on the production board carries `user_corrected = true`,
+and the stored rejections read `suggested_category = 'APPLIED'` because Gmail's
+~200-character metadata snippet ends inside the ATS preamble, before the
+decision sentence. An ATS rejection reaches the queue at all only when its
+subject happens to carry a confirmation phrase; without one it scores a notch
+lower and hits the terminal drop in `collect_review_items`, leaving no row, no
+queue entry and no counter. So a corpus rebuilt from the queue would be
+enriched in exactly one correction shape — "the classifier said `applied`, the
+human said `rejection`" — and blind to every message that never reached the
+band. That does not make option 1 wrong; it means "the problem evaporates" is a
+claim about these five rows, not a claim about the corpus that would replace
+them.
+
+## What actually reaches the review queue
+
+This section exists because the sentence it replaces was **false**, and had
+been since before the queue was written the way it is now. The queue is not the
+sub-gate band. `collect_review_items`
+(`backend/jobtracker/cloud/pipeline.py`) admits an item that is not a hard-row
+contributor — or that is one but cannot be placed — and that is three routes,
+two of which carry confidence at or above the 0.85 auto-file gate:
+
+1. **Under the gate.** A lifecycle verdict in `[0.70, 0.85)`.
+   `_qualifies_for_hard_row` refuses it on confidence alone.
+2. **Over the gate, no employer.** A lifecycle verdict at or above 0.85 whose
+   `resolve_employer` returns `None` — a shared ATS relay with nothing nameable
+   in the sender domain, the subject or the display name.
+   `_qualifies_for_hard_row` returns `None` because the *employer* failed, not
+   the confidence, so a verdict at 1.0 is as review-worthy as one at 0.70.
+3. **Over the gate, employer named, unplaceable.** A verdict at or above 0.85
+   with a resolvable employer that names no role at an employer already holding
+   several applications (`unplaceable_message_ids`). It is explicitly
+   re-admitted past the "already a real application row" skip, because guessing
+   one of four Amazon rows for it would settle the wrong application terminally
+   and `advance_application_status` would then refuse to let that row leave.
+
+None of this is exotic, and this document already depended on route 2 before it
+denied it: the tolerated difference in the invariant above is "an item still
+sitting in the review queue … whose label was kept because the employer could
+not be named", and `training_data` id 4 is a production instance of exactly
+that.
+
+A fourth route is in the code and dead in production. An explicit `needs_review`
+verdict bypasses the 0.70 floor entirely — but the cloud runs
+`_cloud_rules_only`, which returns from `hybrid.classify` before the
+`NEEDS_REVIEW` safety net further down ever executes. Nothing a Vercel sync
+classifies is ever `needs_review`. Stored queue rows read that category anyway,
+because `_persist_review_items` writes it as the committed state and carries the
+classifier's actual verdict in `suggested_category`.
+
 ## Known consequences of the fix
 
-- A dismissal no longer teaches the classifier anything. That was the only
-  signal Applied had for a **confident** false positive (the review queue only
-  ever sees verdicts under 0.85). If that signal is wanted back it needs a
-  per-message affordance — "this message is not job mail", on the message — not
-  a row-level action reinterpreted as one.
+- A dismissal no longer teaches the classifier anything. The **narrow** version
+  of that loss is the true one: a dismissal was the only signal Applied had for
+  a **confident** false positive *that had been filed as a row* — one whose
+  employer was resolvable and whose application was placeable. It was never the
+  only signal for confident false positives in general. A confident `applied`
+  verdict on a job-alert digest whose employer cannot be named lands in the
+  queue by route 2 above, and `POST /review/{message_id}/classify` with `other`
+  sets `classified_as`, `is_reviewed` and `user_corrected` and writes the
+  training example. That is already a per-message "this message is not job
+  mail", and it already ships.
+
+  The remedy survives because the two sets never overlap. A row exists only for
+  mail that cleared the gate **and** named an employer **and** could be placed;
+  the confident mail in the queue is precisely the mail that failed the second
+  or the third of those. The affordance the queue provides therefore cannot
+  reach the mail a dismissal used to speak for. So the conclusion holds with a
+  sharper shape than it had: the per-message affordance is not something to
+  invent, it is something to **extend** from the queue to filed mail — still
+  not a row-level action reinterpreted as one.
+
+  **Open, and deliberately not settled here:** there is no queue-level
+  dismissal — the only exit from the queue is a classification — so an `other`
+  on a confident-but-unplaceable item and an `other` on a 0.72 item are stored
+  identically, both as `user_corrected` examples. Whether they should be is a
+  decision about what a correction means, and it belongs to whoever owns the
+  correction vocabulary, not to a documentation edit.
 - `_orphan_training_examples` sets `email_id = NULL` rather than deleting the
   example when its email is deleted. The label and its text survive; the link
   does not. A review-queue message that a rebuild deletes and re-persists comes

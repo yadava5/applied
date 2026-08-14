@@ -32,7 +32,11 @@ Main confidence behavior:
 - rules shortcut when confidence `>= 0.90`
 - embeddings accepted when similarity `>= 0.85`
 - SetFit accepted when confidence `>= 0.70`
-- review queue threshold: `< 0.85` for job-relevant/uncertain items
+- review queue: lifecycle verdicts from `0.70` up to the `0.85` auto-file gate,
+  **plus** verdicts that clear the gate but whose employer could not be named or
+  whose application could not be picked. The gate is not the only condition for
+  auto-filing, so the queue is not the sub-gate band — see
+  [ML_CORPUS_INTEGRITY.md](ML_CORPUS_INTEGRITY.md#what-actually-reaches-the-review-queue)
 
 Content guards force obvious non-application content (newsletters/job-alert digests/promotions/security codes) to `other`.
 

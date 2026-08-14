@@ -50,7 +50,7 @@ export const HowGatePage: React.FC<{
       {HOW.gate.body}
     </p>
 
-    {/* The feedback loop */}
+    {/* What a correction records — NOT a retrain loop; nothing consumes it. */}
     <div
       style={{
         marginTop: 22,
@@ -71,7 +71,7 @@ export const HowGatePage: React.FC<{
         }}
         aria-hidden
       >
-        ↻
+        ✓
       </span>
       <div>
         <div
@@ -85,7 +85,7 @@ export const HowGatePage: React.FC<{
             marginBottom: 4,
           }}
         >
-          The loop that closes itself
+          The correction sticks
         </div>
         <p
           style={{
@@ -97,7 +97,7 @@ export const HowGatePage: React.FC<{
             margin: 0,
           }}
         >
-          {HOW.gate.loopNote}
+          {HOW.gate.recordNote}
         </p>
       </div>
     </div>
