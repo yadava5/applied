@@ -113,8 +113,22 @@ function Scene({ run, reduced }: { run: number; reduced: boolean }) {
           { x: 800, color: "var(--viz-setfit)", n: "3", label: "SetFit", d: "2.2s" },
         ].map((b) => (
           <g key={b.label} className="sig__band" style={{ color: b.color, ["--d" as string]: b.d }}>
-            <line x1={b.x} y1="24" x2={b.x} y2="104" stroke="currentColor" strokeWidth="1.5" />
-            <text x={b.x + 9} y="21" fontSize="10.5" fill="currentColor" className="font-mono">
+            <line
+              className="sig__rail"
+              x1={b.x}
+              y1="24"
+              x2={b.x}
+              y2="104"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+            <text
+              x={b.x + 9}
+              y="21"
+              fontSize="10.5"
+              fill="currentColor"
+              className="sig__tag font-mono"
+            >
               {b.n} · {b.label}
             </text>
           </g>
@@ -123,6 +137,7 @@ function Scene({ run, reduced }: { run: number; reduced: boolean }) {
         {/* gate */}
         <g className="sig__band sig__gate" style={{ color: "var(--amber)", ["--d" as string]: "2.75s" }}>
           <line
+            className="sig__rail"
             x1="980"
             y1="24"
             x2="980"
@@ -131,7 +146,7 @@ function Scene({ run, reduced }: { run: number; reduced: boolean }) {
             strokeWidth="1.5"
             strokeDasharray="5 4"
           />
-          <text x="989" y="21" fontSize="10.5" fill="currentColor" className="font-mono">
+          <text x="989" y="21" fontSize="10.5" fill="currentColor" className="sig__tag font-mono">
             0.85 · gate
           </text>
         </g>

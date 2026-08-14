@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useState } from "react";
 import { Plus } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { Dialog } from "@/components/ui/Dialog";
 import {
@@ -70,6 +71,7 @@ export function AddApplicationForm({
   compact?: boolean;
 }) {
   const router = useRouter();
+  const reduceMotion = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,7 +173,12 @@ export function AddApplicationForm({
   }
 
   return (
-    <div className={`flex flex-col gap-1.5 ${align === "end" ? "items-end" : "items-start"}`}>
+    // `relative` parents BOTH states of the receipt below: the overlay plate
+    // anchors to this box, and the silent `sr-only` frame resolves against it
+    // rather than the initial containing block (Tailwind's `.sr-only` is
+    // `position: absolute` — unparented it plants a box at document scale,
+    // the same shape that once made the whole shell scroll, #149).
+    <div className={`relative flex flex-col ${align === "end" ? "items-end" : "items-start"}`}>
       {compact ? (
         <button
           type="button"
@@ -189,11 +196,51 @@ export function AddApplicationForm({
         </button>
       )}
 
-      {confirmation ? (
-        <p role="status" className="text-xs text-live">
-          {confirmation}
-        </p>
-      ) : null}
+      {/* The filing receipt — persistent and out of flow, both by contract
+          (#81). Persistent: a live region mounted on demand drops its first
+          announcement, so a screen-reader user was never told their filing
+          happened; this <p> is in the DOM from the first render and `role=
+          "status"` announces whatever lands in it. Out of flow: the in-flow
+          line used to push everything below the button down ~13px on /demo —
+          and on the dashboard this component sits INSIDE the header row whose
+          zero-shift contract SyncBar defends (#160) — so when it speaks it is
+          an anchored plate over the content below, costing no height
+          anywhere. `data-filing-receipt` names it for the spec that asserts
+          both halves (file-application.spec.ts). */}
+      <p
+        role="status"
+        aria-live="polite"
+        data-filing-receipt=""
+        title={confirmation ?? undefined}
+        // Below `sm` the anchored form clips: the compact `+` sits mid-row on
+        // the stacked cluster line, and a right-anchored 274px plate ran 90px
+        // off the left screen edge at 375 (measured — the receipt read
+        // "…d Labs" — demo only, not saved."). Down there it is a fixed
+        // snackbar instead: the one anchor a phone always has is the
+        // viewport, and fixed takes no flow space either.
+        className={
+          confirmation === null
+            ? "sr-only"
+            : `absolute top-full z-30 mt-1.5 max-w-[min(20rem,80vw)] whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-live shadow-md max-sm:fixed max-sm:inset-x-3 max-sm:bottom-4 max-sm:top-auto max-sm:mt-0 max-sm:max-w-none ${
+                align === "end" ? "right-0" : "left-0"
+              }`
+        }
+      >
+        {confirmation ? (
+          // The fade-rise every arriving surface here wears (0.18s, static
+          // under reduced motion): out of flow, nothing moves to mark the
+          // receipt's arrival, so the entrance is what draws the eye.
+          <motion.span
+            key={confirmation}
+            initial={reduceMotion ? false : { opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="block truncate"
+          >
+            {confirmation}
+          </motion.span>
+        ) : null}
+      </p>
 
       <Dialog
         open={open}

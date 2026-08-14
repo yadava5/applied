@@ -436,13 +436,19 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(pageHeading(page)).toBeVisible();
 
     const list = page.getByTestId("worklist-pane");
-    const status = page.locator("[data-sync-surface]").getByRole("status");
+    // The NAMED status line: the surface carries a second role="status" now
+    // (the `+`'s filing receipt, #81), so the bare-role locator resolves to 2.
+    const status = page.locator("[data-sync-status]");
     // The board's own totals, matched by SHAPE so the assertion holds either
     // side of the numbers changing mid-run (17→19 filed) rather than racing
     // the simulated 1.2s sync.
     const totals = page.getByText(/^\d+ filed · \d+ open · \d+ offers?$/);
     const idle = await list.boundingBox();
     await expect(totals).toBeVisible();
+
+    // The ledger chip rides the row's centre while the row is quiet…
+    const chip = page.getByTestId("since-last-look");
+    await expect(chip).toBeVisible();
 
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
     // The running line names the SCOPE now, not just the fact that something
@@ -455,6 +461,11 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // like when it was reported as frozen (#160). The status takes the change
     // ledger's width now, not the numbers'.
     await expect(totals).toBeVisible();
+    // …and the chip overlay YIELDS while the status speaks (#160): centred
+    // over the same middle, its plate occluded the head of the running line
+    // (34px at 1024 in the signed-in arrangement — "…ng since last sync").
+    // It returns with the idle row below.
+    await expect(chip).toBeHidden();
     const checking = await list.boundingBox();
 
     await expect(status).toContainText("2 filed, 3 already known");
@@ -467,6 +478,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // session, which is a product regression a shift test alone cannot see.
     await expect(status).not.toContainText("2 filed", { timeout: 15_000 });
     await expect(page.getByText("19 filed · 16 open · 0 offers")).toBeVisible();
+    // The ledger chip is back the moment the row goes quiet — its news is
+    // durable; the status was the transient thing.
+    await expect(chip).toBeVisible();
     const restored = await list.boundingBox();
 
     expect(

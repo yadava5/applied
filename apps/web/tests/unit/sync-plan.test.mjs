@@ -36,11 +36,14 @@ import {
   scanProgressLine,
   stopKind,
   stopReasonPhrase,
+  SLOW_SYNC_AFTER_MS,
+  SLOW_SYNC_GRACE_MS,
   SYNC_FALLBACK_RANGE_MONTHS,
   clampEstimate,
   durationLabel,
   syncMemoryLine,
   syncReceiptNote,
+  syncRunningSentence,
   syncScopeLine,
 } from "../../lib/gmail/sync-plan.ts";
 
@@ -185,6 +188,45 @@ test("a running sync states the scope it can know, and only that", () => {
   assert.equal(SYNC_FALLBACK_RANGE_MONTHS, 12);
   for (const line of [syncScopeLine(true), syncScopeLine(false)]) {
     assert.doesNotMatch(line, /%/, "no percentage on the running line");
+  }
+});
+
+test("the running line answers 'how long' only when the question is live", () => {
+  // No e2e fixture reaches the swap (the demo's simulated 1.2 s sync ends
+  // before its own swap point), so this test IS the branch's coverage.
+  const last = { ms: 3085, scanned: 0, at: 0 };
+  // Until the run is slow, the sentence is the scope statement, unchanged.
+  assert.equal(syncRunningSentence(true, 1000, last), syncScopeLine(true));
+  assert.equal(syncRunningSentence(false, 1000, null), syncScopeLine(false));
+  // With a measured memory, the swap fires once THIS run outlasts it (plus
+  // grace — real runs drift a few hundred ms between presses)…
+  assert.equal(
+    syncRunningSentence(true, last.ms + SLOW_SYNC_GRACE_MS, last),
+    "still checking · last run 3 s",
+  );
+  assert.equal(
+    syncRunningSentence(true, last.ms + SLOW_SYNC_GRACE_MS - 1, last),
+    syncScopeLine(true),
+  );
+  // …but never LATER than the fixed fallback: a 41 s full-scan memory must
+  // not hold the bare scope line for 40 s.
+  const slowMemory = { ms: 41000, scanned: 512, at: 0 };
+  assert.equal(
+    syncRunningSentence(true, SLOW_SYNC_AFTER_MS, slowMemory),
+    "still checking · last run 41 s",
+  );
+  assert.equal(syncRunningSentence(true, SLOW_SYNC_AFTER_MS - 1, slowMemory), syncScopeLine(true));
+  // No memory means no number, not an invented one.
+  assert.equal(syncRunningSentence(true, SLOW_SYNC_AFTER_MS, null), "still checking");
+  // Every state stays inside the module's honesty rules: past tense, no
+  // percentage, no forecast vocabulary.
+  for (const line of [
+    syncRunningSentence(true, 0, last),
+    syncRunningSentence(true, 60_000, last),
+    syncRunningSentence(false, 60_000, null),
+  ]) {
+    assert.doesNotMatch(line, /%/, "no percentage on the running line");
+    assert.doesNotMatch(line, /will|about|usually|~/, "no forecast on the running line");
   }
 });
 

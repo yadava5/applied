@@ -331,6 +331,16 @@ def embeddings_accept_threshold() -> float:
 TS_GATE_ROOTS = ("apps/web", "booklet/src")
 WEB_MODEL = "apps/web/lib/dashboard/model.ts"
 
+# Surfaces that DRAW the gate rather than define it — the rendered-string claim
+# sites added by #247. Named here because several carry more than one claim and
+# a path repeated inline is a path that gets corrected in one place only.
+LANDING_CASCADE = "apps/web/components/landing/Cascade.tsx"
+LANDING_SIGNATURE = "apps/web/components/landing/SignatureEnding.tsx"
+WEB_SAMPLE_INBOX = "apps/web/components/demo/SampleInbox.tsx"
+WEB_IMPORT_MAIL = "apps/web/components/import/ImportMail.tsx"
+BROWSER_DEMO_JS = "ml/browser/site/app.js"
+BOOKLET_CONTENT = "booklet/src/content.ts"
+
 DEMO_SPACE_HYBRID = "ml/demo/space/jobtracker/classifier/hybrid.py"
 DEMO_SPACE_CLASSIFICATION = "ml/demo/space/jobtracker/api/classification.py"
 
@@ -837,6 +847,41 @@ FACTS: dict[str, dict] = {
         ],
     },
     # ── the cascade's thresholds ──
+    #
+    # THE RENDERED STRINGS (#247). #229 pinned every place the gate is DEFINED —
+    # twelve named constants across three trees — by invariant. It deliberately
+    # did not pin the places it is DRAWN, and those are the ones a user reads.
+    # The failure is asymmetric in the worst direction: retune the gate and every
+    # definition moves as one while the landing page keeps saying the old number,
+    # so the product would make a specific, checkable, false claim on its
+    # marketing surface.
+    #
+    # These are `sites` and not an invariant, which is the opposite of the call
+    # made for the constants at the bottom of this file — and for the same
+    # reason. `--write` rewriting `const GATE = 0.85;` would let a Python edit
+    # silently retune live TypeScript; `--write` rewriting "Below the 0.85 gate
+    # nothing is auto-filed" only corrects a sentence, which is exactly what a
+    # prose checker is for. So every pattern below is anchored on its
+    # surrounding PROSE and cannot match a definition line.
+    #
+    # DELIBERATELY NOT PINNED, each an omission rather than an oversight:
+    #   - `left: "85%"` in booklet/src/visuals/ConfidenceGate.tsx. A CSS
+    #     position, not a claim. `same_number` sees no decimal point and would
+    #     compare 85.0 against 0.85, so it would be red forever.
+    #   - Every `const … = 0.85;` (apps/web/lib/demo/sampleInbox.ts,
+    #     booklet/src/visuals/DecisionTrace.tsx). Held by the cross-language
+    #     invariant already; a site there is the hazard described above.
+    #   - `gate {GATE}` in SampleInbox.tsx and ImportMail.tsx. Interpolated from
+    #     the pinned constant, so it cannot drift and there is nothing to check.
+    #   - Comments and docstrings. They restate the number all over the tree and
+    #     none of them is a surface.
+    #   - apps/macos. De-scoped, and its 0.85s are float comparisons, not text.
+    #
+    # WIDER THAN THE SIX THE ISSUE LISTED, because #229's own lesson is that a
+    # first grep finds the tree you were already looking at. #229's covered
+    # .py/.ts/.tsx and missed two whole trees; this one adds `ml/browser/site`
+    # (plain .js, the in-browser demo) and `ml/demo` + its vendored `ml/demo/
+    # space` copy (Gradio, Python), neither of which any web check can see.
     "confidenceAuto": {
         "kind": "static",
         "describe": f"CONFIDENCE_AUTO in {HYBRID}",
@@ -846,6 +891,55 @@ FACTS: dict[str, dict] = {
             r"CONFIDENCE_AUTO = ([\d.]+)",
             r"confidence ≥ ([\d.]+) \?",
             r"the ([\d.]+) auto-classify threshold",
+            # ── drawn on apps/web: the landing page ──
+            {"re": r"The ([\d.]+) confidence gate</p>", "file": LANDING_CASCADE},
+            {"re": r'text-live">≥ ([\d.]+) <', "file": LANDING_CASCADE},
+            {"re": r'text-review">&lt; ([\d.]+) <', "file": LANDING_CASCADE},
+            # The label the signature band draws, and the label a screen reader
+            # is read instead of it — both are the number a user is told.
+            {"re": r"(?m)^\s+([\d.]+) · gate$", "file": LANDING_SIGNATURE},
+            {"re": r"clears the ([\d.]+) gate, and resolves", "file": LANDING_SIGNATURE},
+            # ── drawn on apps/web: /demo and the import flow ──
+            {"re": r"Below the ([\d.]+) gate nothing is auto-filed", "file": "apps/web/app/demo/page.tsx"},
+            {"re": r"([\d.]+) auto-file gate\.", "file": "apps/web/app/demo/inbox/page.tsx"},
+            {"re": r"Confidence sits below the ([\d.]+) gate", "file": WEB_SAMPLE_INBOX},
+            {"re": r"Confidence clears the ([\d.]+) gate", "file": WEB_SAMPLE_INBOX},
+            {"re": r"Clears the ([\d.]+) gate — Applied would file", "file": WEB_IMPORT_MAIL},
+            {"re": r"Below the ([\d.]+) gate — nothing is auto-filed", "file": WEB_IMPORT_MAIL},
+            # ── drawn by the two demos no web or backend test can see ──
+            {"re": r"below ([\d.]+) — production queues this", "file": BROWSER_DEMO_JS},
+            {"re": r"auto-classified \(≥([\d.]+)\)", "file": "ml/demo/app.py"},
+            {"re": r"auto-classified \(≥([\d.]+)\)", "file": "ml/demo/space/app.py"},
+            # ── printed in the System Card booklet ──
+            {"re": r"behind a ([\d.]+) confidence gate", "file": BOOKLET_CONTENT},
+            {"re": r'key: "([\d.]+) gate", val:', "file": BOOKLET_CONTENT},
+            {"re": r'def: "([\d.]+) confidence cutoff to auto-file', "file": BOOKLET_CONTENT},
+            # THRESHOLDS is a table of hand-written strings. Nothing imports it
+            # today, so it is not itself a surface — but it is a copy of the gate
+            # in a TS tree that the float-shaped `TS_GATE_DEF` census cannot see,
+            # which is precisely how booklet/src went unnoticed through #229.
+            {"re": r'(?m)^  gate: "([\d.]+)",$', "file": BOOKLET_CONTENT},
+            {"re": r'label: "Gate", detail: "human review", accept: "< ([\d.]+)"', "file": BOOKLET_CONTENT},
+            {"re": r'headline: "Below ([\d.]+), a human decides', "file": BOOKLET_CONTENT},
+            {"re": r"A single confidence gate at ([\d.]+) separates", "file": BOOKLET_CONTENT},
+            {"re": r'range: "≥ ([\d.]+)", verb: "AUTO-FILE"', "file": BOOKLET_CONTENT},
+            {"re": r'stage: "gate", detail: "([\d.]+) → auto / human"', "file": BOOKLET_CONTENT},
+            {"re": r"Confidence is drawn against the ([\d.]+) gate", "file": BOOKLET_CONTENT},
+            {"re": r'legendGate: "below ([\d.]+) → human"', "file": BOOKLET_CONTENT},
+            {"re": r"Confidence gate · ([\d.]+)", "file": "booklet/src/visuals/LayerCascade.tsx"},
+            {"re": r'head="≥ ([\d.]+)"', "file": "booklet/src/visuals/LayerCascade.tsx"},
+            {"re": r'head="< ([\d.]+)"', "file": "booklet/src/visuals/LayerCascade.tsx"},
+            {"re": r"(?m)^\s+([\d.]+) gate$", "file": "booklet/src/visuals/ConfidenceGate.tsx"},
+            # Line-anchored so it binds the drawn <text> and not the header
+            # comment that describes it — comments are not surfaces.
+            {"re": r"(?m)^\s+CONFIDENCE · ([\d.]+)$", "file": "booklet/src/visuals/CoverField.tsx"},
+            {
+                "re": r"confidence sits below the ([\d.]+) gate — nothing is auto-filed",
+                "file": "booklet/src/visuals/DecisionTrace.tsx",
+            },
+            {"re": r"it is where the ([\d.]+) gate routes every email", "file": "booklet/src/visuals/ClassGrid.tsx"},
+            {"re": r'<Fact value="([\d.]+)" unit="gate"', "file": "booklet/src/pages/EndpaperPage.tsx"},
+            {"re": r"drop below ([\d.]+) and land in needs_review", "file": "booklet/src/pages/BuildClosingPage.tsx"},
         ],
     },
     "confidenceMin": {
@@ -859,6 +953,14 @@ FACTS: dict[str, dict] = {
             r"the ([\d.]+) minimum for trusting",
         ],
     },
+    # The OTHER 0.85, and the reason the sites below are split off rather than
+    # folded into `confidenceAuto`. Layer 2 accepts on a bare `emb_confidence >=
+    # 0.85` literal; the auto-file gate is the named constant `CONFIDENCE_AUTO`.
+    # They are equal today and nothing in the code makes them move together, so
+    # a chip reading "accept ≥ 0.85" beside `2 · e5 similarity` is a claim about
+    # the literal, not about the gate. Binding it to the gate would make the
+    # check assert something false the moment either one is retuned — the same
+    # count-the-definition-not-the-name discipline as the top of this file.
     "embeddingsAccept": {
         "kind": "static",
         "describe": f"the bare `emb_confidence >= ...` literal in {HYBRID}",
@@ -866,6 +968,18 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"cosine similarity vs stored examples<br/>accepts at ≥ ([\d.]+)",
             r'E -->\|"≥ ([\d.]+)"\| Out4',
+            # The layer-2 chip on the landing page's cascade. Anchored through
+            # the layer's own label, because the same key holds 0.90 and 0.70
+            # a few lines either side of it.
+            {"re": r'label: "e5 similarity",[\s\S]*?accept: "accept ≥ ([\d.]+)"', "file": LANDING_CASCADE},
+            # Trace notes on rows the embeddings layer PASSED ON, i.e. fell
+            # short of this literal — not of the gate.
+            {"re": r"% — below ([\d.]+)\", confidence:", "file": "apps/web/lib/demo/sampleInbox.ts"},
+            {"re": r"% — below ([\d.]+)`", "file": BROWSER_DEMO_JS},
+            {"re": r'label: "e5 similarity",[\s\S]*?accept: "accept ≥ ([\d.]+)"', "file": BOOKLET_CONTENT},
+            {"re": r'(?m)^  embeddings: "([\d.]+)",$', "file": BOOKLET_CONTENT},
+            {"re": r'label: "e5 similarity", detail: "cosine 1-NN", accept: "≥ ([\d.]+)"', "file": BOOKLET_CONTENT},
+            {"re": r'stage: "e5", detail: "cosine 1-NN · ≥ ([\d.]+)"', "file": BOOKLET_CONTENT},
         ],
     },
     "emailCategories": {

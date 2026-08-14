@@ -245,7 +245,7 @@ const GateRow: React.FC = () => (
           <Outcome
             color={COLORS.SETFIT_DEEP}
             head="≥ 0.85"
-            body="auto-file under its category"
+            body="auto-file, if the employer is named"
           />
           <Outcome
             color={COLORS.GATE_DEEP}

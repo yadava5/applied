@@ -10,10 +10,10 @@ const STAGE_ACCENT: Record<string, string> = {
   e5: COLORS.E5_VIOLET,
   setfit: COLORS.SETFIT_GREEN,
   gate: COLORS.GATE_AMBER,
-  learn: COLORS.STEEL,
+  record: COLORS.STEEL,
 };
 
-/** Page 15 — the layer architecture as one pipeline with a feedback loop. */
+/** Page 15 — the layer architecture as one pipeline, and what it records. */
 export const InsideArchPage: React.FC<{
   parity: "recto" | "verso";
   pageNumber: number;
@@ -146,7 +146,7 @@ export const InsideArchPage: React.FC<{
             marginBottom: 8,
           }}
         >
-          The loop feeds the model
+          What a correction records
         </div>
         <p
           style={{
@@ -158,14 +158,14 @@ export const InsideArchPage: React.FC<{
             margin: 0,
           }}
         >
-          Corrections write to training_data, embeddings persist in
-          email_embeddings, and SetFit retrains once enough data accrues — the
-          same email is decided unaided next time.
+          A correction is not a hint. It sets user_corrected, and every later
+          sync refuses to overwrite a row the human settled &mdash; the answer
+          holds until the human changes it.
         </p>
       </div>
     </div>
 
-    {/* Where the loop persists — the two stores that make it stateful */}
+    {/* Where a correction persists — the two stores that make it stateful */}
     <div style={{ marginTop: 30 }}>
       <div
         style={{
@@ -178,11 +178,11 @@ export const InsideArchPage: React.FC<{
           marginBottom: 10,
         }}
       >
-        What the loop writes to
+        Where it persists
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <PersistBox table="training_data" desc="every human correction, kept as a labeled example for the next SetFit retrain." />
-        <PersistBox table="email_embeddings" desc="e5 vectors persisted so the similarity layer keeps growing its neighbor set." />
+        <PersistBox table="training_data" desc="every human correction, kept as a labeled example. No retrain consumes it automatically." />
+        <PersistBox table="email_embeddings" desc="e5 vectors persisted for the similarity layer's lookups." />
       </div>
     </div>
 

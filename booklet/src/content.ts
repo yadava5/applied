@@ -150,7 +150,7 @@ export const LAYERS = [
     note: "semantic match",
     accept: "accept ≥ 0.85",
     blurb:
-      "When no rule is sure, the email is embedded with a pretrained e5-small-v2 model and matched by cosine similarity to the nearest labeled example. It generalizes past the exact wording the rules require — and every human correction is stored as a new neighbor.",
+      "When no rule is sure, the email is embedded with a pretrained e5-small-v2 model and matched by cosine similarity to the nearest labeled example. It generalizes past the exact wording the rules require. Its neighbor set is the labeled corpus as shipped; corrections do not feed back into it.",
   },
   {
     id: "setfit",
@@ -308,7 +308,7 @@ export const HOW = {
     headline: "Similarity, not exact words.",
     body: [
       "When no rule is sure, the email is embedded with a pretrained e5-small-v2 model (384 dimensions) and matched by cosine similarity to the nearest labeled example. It catches the rejection that never says “rejected”.",
-      "The e5 weights are used off the shelf — not fine-tuned. The layer “learns” by growing its neighbor set: every human correction becomes a new labeled example the next lookup can match against.",
+      "The e5 weights are used off the shelf — not fine-tuned. Growing the neighbor set is how this layer would learn, and the code to do it exists — but nothing in the shipped product calls it, so a correction adds no neighbor. The set is the labeled corpus as shipped.",
     ],
     stat: { value: "384-d", label: "e5-small-v2 embedding" },
     stat2: { value: "1-NN", label: "cosine nearest neighbor" },
@@ -330,17 +330,17 @@ export const HOW = {
     eyebrow: "§02 · THE GATE",
     headline: "Below 0.85, a human decides.",
     lede:
-      "The cascade never auto-files a guess. A single confidence gate at 0.85 separates “file it” from “ask a person”.",
+      "The cascade never auto-files a guess. A confidence gate at 0.85 is the first thing standing between “file it” and “ask a person” — and not the only one.",
     body:
-      "Clear the gate and Applied files the email under its predicted category. Fall short and it lands in a review queue as needs_review — nothing is written, and the human’s correction becomes new SetFit training data. The gate is why a wrong label is rare and a silent wrong label is rarer.",
+      "Clearing the gate is necessary to file, not sufficient. Applied must also name the employer and place the mail against a single application; a verdict at 1.0 with no nameable employer is not filed — it joins the review queue alongside everything below 0.85. A human’s answer there is recorded on the email, and no later sync overwrites it.",
     bands: [
-      { range: "≥ 0.85", verb: "AUTO-FILE", tone: "setfit", detail: "confident — filed under its category." },
+      { range: "≥ 0.85", verb: "AUTO-FILE", tone: "setfit", detail: "confident — filed, if the employer can be named." },
       { range: "0.70 – 0.84", verb: "FLAG", tone: "gate", detail: "uncertain — queued for a human." },
       { range: "< 0.70", verb: "FALL BACK", tone: "danger", detail: "no confident layer — needs_review." },
     ],
-    loopNote:
-      "Every correction below the gate is captured as training data → the SetFit head retrains → the gate is crossed unaided next time.",
-    source: "source · classification.py:25, 512–559 (review queue) · hybrid.py:301–474",
+    recordNote:
+      "Every correction is stored in training_data — every category, other included — and flags the email user_corrected, so a later sync leaves the human’s answer alone. Nothing retrains on it: the deployed classifier is rules-only.",
+    source: "source · cloud/pipeline.py · _qualifies_for_hard_row + unplaceable_message_ids · cloud/applications.py · _add_training_example",
   },
 } as const;
 
@@ -353,16 +353,16 @@ export const INSIDE = {
 
   architecture: {
     eyebrow: "§03 · ARCHITECTURE",
-    headline: "One pipeline, one feedback loop.",
+    headline: "One pipeline, and what it records.",
     body:
-      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data; embeddings persist in email_embeddings; SetFit retrains once enough data accrues.",
+      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. Nothing retrains on them automatically — retraining is an operator command, not a loop.",
     flow: [
       { stage: "guard", detail: "force non-job → other" },
       { stage: "rules", detail: "201 regex · ≥ 0.90" },
       { stage: "e5", detail: "cosine 1-NN · ≥ 0.85" },
       { stage: "setfit", detail: "few-shot · ≥ 0.70" },
       { stage: "gate", detail: "0.85 → auto / human" },
-      { stage: "learn", detail: "correction → retrain" },
+      { stage: "record", detail: "correction → training_data" },
     ],
     source: "source · classifier/hybrid.py · docs/ARCHITECTURE.md:36–60",
   },
@@ -430,8 +430,8 @@ export const PROOF = {
     eyebrow: "§04 · THE TAXONOMY",
     headline: "Nine categories, eight learned.",
     lede:
-      "The classifier files into nine categories. Eight are model-predicted outcomes; the ninth, needs_review, is not a label the model emits — it is where the confidence gate sends everything it is not sure about.",
-    note: "needs_review is the gate’s output, not a trained class — which is the whole safety story in one row.",
+      "The classifier files into nine categories. Eight are model-predicted outcomes; the ninth, needs_review, is not a label the model emits — it is where the pipeline puts what it will not file unaided: everything below the gate, and confident mail whose employer it cannot name.",
+    note: "needs_review is a routing decision, not a trained class — which is the whole safety story in one row.",
     source: "source · database/models.py:94–105",
   },
 
