@@ -143,11 +143,15 @@ async def test_the_cloud_path_never_reaches_the_fallback_block(cloud_classifier)
     short-circuit). ``fallback`` means execution ran off the end of
     ``classify()``, which is where the safety net sits.
 
-    But ``method`` alone is environment-dependent. Locally the semantic layers
-    are not installed, so removing the short-circuit lands in ``fallback``; in
-    CI, where torch and sentence-transformers ARE installed, the same removal
-    could answer ``embeddings`` and — if a future edit widened the allowed set
-    — slip past. The lazy loaders do not have that problem. Layer 2 evaluates
+    But ``method`` alone is environment-dependent, and that dependence is what
+    makes it a bad gate. Locally the semantic layers are not installed, so
+    removing the short-circuit lands in ``fallback`` — red. In CI, where torch
+    and sentence-transformers ARE installed, the same removal may not reach the
+    fallback at all: Layer 2 or Layer 3 can answer first, and ``method`` is then
+    whichever of them did. (Which value that is, is not measured here and is not
+    claimed.) The consequence is what matters — a future edit widening the
+    allowed set could disarm this pin in CI while it still looked green
+    locally. The lazy loaders do not have that problem. Layer 2 evaluates
     ``self._embeddings.is_available()`` unconditionally, and that property
     access populates ``_embeddings_instance``. Both instances staying ``None``
     after a full battery is proof that execution never got past the
