@@ -12,7 +12,6 @@ import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
-import { DEFAULT_GATE_PREFERENCE } from "@/lib/dashboard/model";
 import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
@@ -121,8 +120,16 @@ export default async function DemoSettingsPage() {
                   instead of leaving it looking inert. */}
               <AppearanceSection mode="demo" />
               <GmailConnectionCard result={fixtureGmail()} demo />
+              {/* #216: the twin's toggles and its board now read ONE cookie.
+                  They used to disagree — this page seeded `{weekly: true,
+                  reviewAlerts: true}` while the board twin behaved as though
+                  both were off, so a test driving either proved nothing about
+                  the other. */}
               <NotificationsSection mode="demo" initial={notifications} />
-              <ClassificationSection mode="demo" initialGate={DEFAULT_GATE_PREFERENCE} />
+              {/* No `mode` and no props: since #208 removed the inert gate
+                  control this section writes nothing, so the twin and the
+                  signed-in page render the identical output by construction. */}
+              <ClassificationSection />
               <DataSection mode="demo" />
               <AccountSection mode="demo" email="demo@applied.example" />
             </div>
