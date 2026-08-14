@@ -371,11 +371,26 @@ test("the DEFAULT twin still wears its fixture signage", async ({ page }) => {
     "the demo pill is gone from the default twin's header row",
   ).toBeVisible();
   // The fixture recency frame — the phrase the knob swaps the live component
-  // in for, and the one that says plainly that no mail is being read.
+  // in for, and the one that says plainly that no mail is being read. Since
+  // #212 it yields to the pill at `lg`+ (two badges saying "fixtures" on one
+  // line was the 184.5px of row-middle the bar-centred notification chip
+  // needs), so the signage contract is per-width: the PILL carries it at
+  // `lg`+ and the phrase carries it below, where the `trailing` slot is
+  // gone. Both halves asserted, so stripping either still goes red here.
   await expect(
     row.getByText(/simulated account/),
-    "the default twin's recency slot no longer says the account is simulated",
+    "the frame phrase must yield to the pill at lg — over the row's middle it collides with the centred chip",
+  ).toBeHidden();
+  await page.setViewportSize({ width: 900, height: 700 });
+  await expect(
+    row.getByText(/simulated account/),
+    "below lg the pill is gone, so the frame phrase alone says no mail is read — it may not disappear there",
   ).toBeVisible();
+  await expect(
+    row.getByRole("link", { name: /fixture data/ }),
+    "the trailing slot is lg-only; a pill below lg means the slot's gate moved",
+  ).toBeHidden();
+  await page.setViewportSize({ width: 1024, height: 768 });
   // And the menu keeps its fixture name: no session here, so nothing to end
   // and no reason for the trigger to promise more than sync options.
   await expect(row.getByRole("button", { name: "Sync options" })).toBeVisible();

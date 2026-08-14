@@ -52,14 +52,13 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * A CHIP ON THE COMMAND ROW — the shape, and why it is this shape
  * ----------------------------------------------------------------
  * The two levels are literally two levels: the arrival CHIP carries the
- * counts, and opening it names the rows. The chip lives on the dashboard's
- * one command row (SyncBar's `since` slot, between the subtitle and the sync
- * controls), inside a wrapper whose flex-basis is FIXED — so hydration can
- * never re-wrap the row, and every state of this chip occupies the same line
- * box. The dedicated notice line it used to hold is a line the worklist got
- * back.
+ * counts, and opening it names the rows. The chip is the command row's
+ * notification centre (SyncBar's `since` slot, overlaid on the row's centre
+ * at `lg`+ — see the placement story below), and every state of it occupies
+ * the same line box, so no state change can move the board. The dedicated
+ * notice line it once held is a line the worklist got back — twice.
  *
- * THE PLATE, ON ITS OWN LINE, CENTRED ON THE BAR (#212) — the chip is a
+ * THE PLATE, CENTRED ON THE BAR (#212) — the chip is a
  * miniature of its own panel. Every state renders the same small plate:
  * square left corners, rounded right, hairline frame, a 2px rule down the
  * left edge — the panel's exact construction at chip scale, so the thing you
@@ -95,7 +94,12 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * keep it clear of both neighbours — measured at 1024 (`next start`,
  * 2026-08-14), the compact plate stands ~72px clear of the totals and
  * ~74px clear of the cluster, against the 12px flex-gap that #196 called a
- * caption. This spends nothing the reader had: before #212 the real board's
+ * caption. Where a neighbour still reaches past the bar's centre — the
+ * fixture twin's pill-furnished row at 1024 is the one measured case — the
+ * plate yields exactly what the neighbour forces and no more (`placePlate`,
+ * a 23–26px slide there), because a centred plate OVER a control is worse
+ * than one standing 26px off the centre it means. This spends nothing the
+ * reader had: before #212 the real board's
  * slot never reached the wide rungs at these widths either, so desktop
  * showed exactly these compact forms — the moment, the kinds and the scope
  * note live one press away in the panel, which now says all of it at every
@@ -354,6 +358,64 @@ export function SinceLastLook({
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const plateRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * Centre on the BAR; yield only what a neighbour forces — measured.
+   *
+   * `mx-auto` puts the plate on the bar's centre, which is the invariant.
+   * But the overlay shares the row's line with the totals and the sync
+   * cluster, and their widths are content ("214 filed · 32 open · 1 offer"
+   * is 41px wider than the usual subtitle; the fixture twin's pill spends
+   * 167px of right flank the real board does not have) — so the centred
+   * position is checked against both neighbours here, placePanel-style,
+   * and the plate slides exactly as far as the nearer one forces, never
+   * further. Measured on the default twin at 1024 (`next start`,
+   * 2026-08-14): the centred loud plate ends 3px past the cluster's left
+   * edge, so it yields 26px (23 on the quiet form); every other measured arrangement yields 0 and
+   * keeps the centre to the pixel. When both neighbours bind at once the
+   * totals win — #196 is the defect with a number on it.
+   *
+   * A transform rather than a margin: it never re-enters layout, so the
+   * @container measure and the row's wrap cannot feed back. Below `lg` the
+   * chip is an in-flow line and this is a no-op (the transform is cleared,
+   * then the guard returns). The panel follows the nudged plate because
+   * `placePanel` reads bounding rects, which include transforms.
+   */
+  const placePlate = useCallback((plate: HTMLElement | null) => {
+    plateRef.current = plate;
+    if (!plate) return;
+    // Cleared first so the measurement reads the stylesheet's own centred
+    // position, not the slide a previous pass applied.
+    plate.style.transform = "";
+    const overlay = plate.closest("section")?.parentElement;
+    const row = overlay?.parentElement;
+    if (!overlay || !row || getComputedStyle(overlay).position !== "absolute") return;
+    /** What the plate keeps from a same-line neighbour. Under the gate's
+     *  24px floor for the arrangement that fits (the neighbours there are
+     *  70px+ away and never bind); the crowded fixture twin is gated at 12. */
+    const CLEAR = 16;
+    const p = plate.getBoundingClientRect();
+    const sameLine = (el: Element | null) => {
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return b.width > 0 && p.top < b.bottom && b.top < p.bottom ? b : null;
+    };
+    const cluster = sameLine(row.querySelector("[data-sync-cluster]"));
+    const totals = sameLine(row.querySelector("[data-sync-subtitle]"));
+    let dx = 0;
+    if (cluster) dx = Math.min(dx, cluster.left - CLEAR - p.right);
+    if (totals) dx = Math.max(dx, totals.right + CLEAR - p.left);
+    if (dx !== 0) plate.style.transform = `translateX(${dx}px)`;
+  }, []);
+
+  // Re-place on resize: both neighbours' edges are content-sized readings.
+  // Form/state changes re-run the ref callback on their own.
+  useEffect(() => {
+    const onResize = () => placePlate(plateRef.current);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [placePlate]);
 
   /**
    * Hang the panel on the chip's OWN rule, and bound it to the screen.
@@ -400,9 +462,12 @@ export function SinceLastLook({
     // Cleared first so this reads the measure the STYLESHEET asks for, not the
     // cap a previous pass left behind — the 30rem lives in one place.
     panel.style.maxWidth = "";
-    const room = row.clientWidth - plate.offsetLeft;
-    const left =
-      room >= PANEL_MIN_WIDTH ? plate.offsetLeft : Math.max(0, row.clientWidth - panel.offsetWidth);
+    // Bounding rects, not offsetLeft: the plate may be riding a translateX
+    // from placePlate, which offsets ignore — measured on the fixture twin
+    // at 1024, offsetLeft put the panel 26px right of the plate it hangs on.
+    const plateLeft = plate.getBoundingClientRect().left - row.getBoundingClientRect().left;
+    const room = row.clientWidth - plateLeft;
+    const left = room >= PANEL_MIN_WIDTH ? plateLeft : Math.max(0, row.clientWidth - panel.offsetWidth);
     panel.style.left = `${left}px`;
     panel.style.maxWidth = `${row.clientWidth - left}px`;
     // The gap the accent has to jump to reach the plate. It is ~14px on the
@@ -549,7 +614,7 @@ export function SinceLastLook({
               The dormant plate, centred on the bar (#212 — see the header):
               the same object as the loud chip and its panel, rule one
               register down, no chevron because there is nothing to open. */}
-          <p className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-dim`}>
+          <p ref={placePlate} className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-dim`}>
             {/* `max-lg` on every wide rung here and below: at `lg`+ the chip
                 overlays the row's own line, where only the compact form has
                 measured clearance from the totals and the cluster — the
@@ -577,7 +642,7 @@ export function SinceLastLook({
               above and as the loud chip below (#212, see the header for the
               placement history: caption on the totals in #196, trailing
               annotation on the cluster after it). */}
-          <p className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-muted`}>
+          <p ref={placePlate} className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-muted`}>
             {/* Same ladder as the first-run line above (rungs re-based +2rem
                 for the plate's 23px of chrome, re-swept 2026-08-14), and the
                 moment rides the SAME rung as the clause that introduces it:
@@ -642,7 +707,10 @@ export function SinceLastLook({
             behind the open means the names are on screen when the reader
             destroys the digest — rule 2's own spirit. */}
         <button
-          ref={triggerRef}
+          ref={(el) => {
+            triggerRef.current = el;
+            placePlate(el);
+          }}
           type="button"
           aria-expanded={named}
           aria-controls={panelId}

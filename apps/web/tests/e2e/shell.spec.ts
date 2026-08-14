@@ -496,12 +496,16 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * green. The floors are measured on /demo/shell (recorded 2026-08-12,
    * `next start`, headless Chrome, after the header row replaced the top bar
    * and the stage lens moved to the rail): worklist-pane clientHeight 652 at
-   * 1280×800, 572 at 1280×720, 592 at 1024×768 — the twin's header holds two
-   * lines at 1024 because the fixture recency frame ("simulated account ·
-   * nothing is read", 184.5px) lays out ~69px wider than the live row's
-   * phrase and wraps the row regardless of the pill (measured 2026-08-13 with
-   * the pill removed); the signed-in arrangement holds one line, asserted in
-   * session-edge.spec.ts rather than recorded here. A small tolerance absorbs
+   * 1280×800, 572 at 1280×720, 592 at 1024×768 — recorded when the twin's
+   * header held two lines at 1024: the fixture recency frame ("simulated
+   * account · nothing is read", 184.5px) laid out ~69px wider than the live
+   * row's phrase and wrapped the row regardless of the pill (measured
+   * 2026-08-13 with the pill removed). Since #212 that frame yields to the
+   * pill at `lg`+ (see SyncBar), so the twin's header holds ONE line at 1024
+   * and measures ~620 — comfortably above a floor recorded against the
+   * two-line header, which stays as the minimum. The signed-in arrangement
+   * holds one line, asserted in session-edge.spec.ts rather than recorded
+   * here. A small tolerance absorbs
    * sub-pixel/font drift; a real regression (a fatter band, a second header
    * row, a reinstated notice line) costs tens of pixels and lands far below
    * it.
@@ -776,49 +780,80 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           // at 1024 the wrapped row carried the plate to a line-end. The
           // second fix centred a dedicated line and was caught by the
           // worklist floors below (and by session-edge's) spending 26px of
-          // the #172 refund. So: the invariant is against <main>'s own
-          // centre — the one reference that does not move with the row's
-          // contents — and the #196 guard is horizontal again, because the
-          // overlaid plate shares the row's line with the totals and the
-          // cluster: it must stand clear of BOTH boxes whenever it overlaps
-          // them vertically. Measured on this layout at 1024: 72px from the
-          // totals, 74px from the cluster, against the 12px flex-gap that
-          // read as a caption in #196. The worklist floors above are the
-          // height half of this gate: the overlay must cost 0px.
-          const geometry = await own.evaluate(() => {
-            const section = document.querySelector('[data-testid="since-last-look"]');
-            const chip = section?.querySelector("p, button");
-            const main = document.querySelector("main");
-            const subtitle = document.querySelector("[data-sync-header-row] > p.tabular");
-            const cluster = document.querySelector("[data-sync-header-row] > div.flex");
-            if (!chip || !main || !subtitle || !cluster) return null;
-            const c = chip.getBoundingClientRect();
-            const m = main.getBoundingClientRect();
-            const overlaps = (b: DOMRect) => c.top < b.bottom && b.top < c.bottom;
-            const t = subtitle.getBoundingClientRect();
-            const k = cluster.getBoundingClientRect();
-            return {
-              offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
-              fromTotals: overlaps(t) ? c.left - t.right : null,
-              fromCluster: overlaps(k) ? k.left - c.right : null,
-            };
-          });
-          expect(geometry, `${state} @ ${at}: chip geometry unreadable`).not.toBeNull();
-          expect(
-            geometry!.offCentre,
-            `${state} @ ${at}: chip centre sits ${geometry!.offCentre}px off the bar's`,
-          ).toBeLessThanOrEqual(1.5);
-          if (geometry!.fromTotals !== null) {
+          // the #172 refund. The worklist floors are the height half of
+          // this gate: the overlay must cost 0px.
+          //
+          // TWO ARRANGEMENTS, TWO HALVES — the split is the honest
+          // instrument, not a soft one. The DEFAULT twin's row is furnished
+          // (pill + fixture chrome, 167px of right flank the live board
+          // does not have), and at 1024 its cluster ends 48px past where a
+          // centred compact plate needs clearance — there is NO bar-centred
+          // room on that surface, by arithmetic, so demanding centring
+          // there would only force overlap. On the furnished row the gate
+          // therefore asserts SAFETY: the plate stands clear of both
+          // neighbours (placePlate yields a measured 19px there; 12 is the
+          // drift floor under its 16px promise). The centring invariant is
+          // asserted on `?session=1` — the signed-in arrangement, the same
+          // surface session-edge.spec measures for row geometry, because
+          // the default twin misrepresents the live row's shape (its
+          // documented purpose for existing).
+          const measureChip = () =>
+            own.evaluate(() => {
+              const section = document.querySelector('[data-testid="since-last-look"]');
+              const chip = section?.querySelector("p, button");
+              const main = document.querySelector("main");
+              const subtitle = document.querySelector("[data-sync-subtitle]");
+              const cluster = document.querySelector("[data-sync-cluster]");
+              if (!chip || !main || !subtitle || !cluster) return null;
+              const c = chip.getBoundingClientRect();
+              const m = main.getBoundingClientRect();
+              const overlaps = (b: DOMRect) => c.top < b.bottom && b.top < c.bottom;
+              const t = subtitle.getBoundingClientRect();
+              const k = cluster.getBoundingClientRect();
+              return {
+                offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
+                fromTotals: overlaps(t) && t.width > 0 ? c.left - t.right : null,
+                fromCluster: overlaps(k) && k.width > 0 ? k.left - c.right : null,
+              };
+            });
+
+          const furnished = await measureChip();
+          expect(furnished, `${state} @ ${at}: chip geometry unreadable on the twin`).not.toBeNull();
+          if (furnished!.fromTotals !== null) {
             expect(
-              geometry!.fromTotals,
-              `${state} @ ${at}: ${geometry!.fromTotals}px from the totals — the #196 caption read`,
-            ).toBeGreaterThanOrEqual(24);
+              furnished!.fromTotals,
+              `${state} @ ${at}: ${furnished!.fromTotals}px from the totals — the #196 caption read`,
+            ).toBeGreaterThanOrEqual(12);
           }
-          if (geometry!.fromCluster !== null) {
+          if (furnished!.fromCluster !== null) {
             expect(
-              geometry!.fromCluster,
-              `${state} @ ${at}: ${geometry!.fromCluster}px from the sync cluster — a trailing annotation again`,
-            ).toBeGreaterThanOrEqual(24);
+              furnished!.fromCluster,
+              `${state} @ ${at}: ${furnished!.fromCluster}px from the sync cluster — the plate is overlapping the controls`,
+            ).toBeGreaterThanOrEqual(12);
+          }
+
+          // The signed-in arrangement: the centring invariant itself. The
+          // marker in this context's storage survives the navigation, so
+          // both loop iterations land on the quiet branch here — the plate
+          // geometry is the same object in every state.
+          await own.goto("/demo/shell?session=1");
+          await expect(own.getByTestId("since-last-look")).toContainText("Nothing new");
+          const signedIn = await measureChip();
+          expect(signedIn, `${state} @ ${at}: chip geometry unreadable signed-in`).not.toBeNull();
+          expect(
+            signedIn!.offCentre,
+            `${state} @ ${at}: chip centre sits ${signedIn!.offCentre}px off the bar's on the signed-in row`,
+          ).toBeLessThanOrEqual(1.5);
+          for (const [name, gap] of [
+            ["totals", signedIn!.fromTotals],
+            ["sync cluster", signedIn!.fromCluster],
+          ] as const) {
+            if (gap !== null) {
+              expect(
+                gap,
+                `${state} @ ${at}: ${gap}px from the ${name} on the signed-in row`,
+              ).toBeGreaterThanOrEqual(24);
+            }
           }
         } finally {
           await context.close();

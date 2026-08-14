@@ -725,6 +725,7 @@ export function SyncBar({
           <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
         ) : null}
         <p
+          data-sync-subtitle=""
           className={`tabular shrink-0 text-[13px] text-muted ${statusOwnsSlot ? "lg:hidden" : ""}`}
         >
           {subtitle}
@@ -783,7 +784,15 @@ export function SyncBar({
             an application" on its own right-aligned line with a dead gap
             beside it. The recency phrase drops to a quiet line of its own
             down there (`order-last`), so the controls read as one bar. */}
-        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+        {/* `data-sync-subtitle` / `data-sync-cluster` name the chip's two
+            row-neighbours for measurement — the overlaid plate keeps a
+            measured clearance from both (see SinceLastLook's placePlate and
+            shell.spec's gate), and a class-list selector for either would go
+            vacuous the first time the utilities moved. */}
+        <div
+          data-sync-cluster=""
+          className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end"
+        >
           {connected ? (
             <>
               {showRecency ? (
@@ -819,7 +828,23 @@ export function SyncBar({
                   // `lastSyncAt` on a simulated sync.
                   // Only the knob reaches this branch; /demo and the
                   // twin's own default still carry the frame.
-                  <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
+                  // One honesty badge per row (#212): where the trailing
+                  // pill is on the row (`lg`+ — the slot is lg-only), this
+                  // phrase is the SECOND element saying "these are fixtures"
+                  // on one line, and its 184.5px is exactly the middle the
+                  // bar-centred notification chip needs — measured, the
+                  // centred plate overlapped this phrase by 63px at 1280 on
+                  // the default twin. So the phrase yields to the pill at
+                  // `lg`+ and carries the signage alone below it, where the
+                  // pill is gone; session-edge.spec asserts both halves, so
+                  // stripping either stays red. Surfaces without the pill
+                  // (/demo passes no `trailing`) keep the phrase at every
+                  // width.
+                  <span
+                    className={`order-last w-full text-xs text-dim sm:order-none sm:w-auto${
+                      trailing ? " lg:hidden" : ""
+                    }`}
+                  >
                     simulated account · nothing is read
                   </span>
                 ) : (
