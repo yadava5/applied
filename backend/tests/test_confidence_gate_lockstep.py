@@ -1,11 +1,8 @@
 """One auto-file gate, and every copy of it checked against that one.
 
 ``0.85`` is hand-written in four separate backend modules, and until this file
-existed the only thing holding them together was a comment::
-
-    # Confidence gates — kept in lock-step with classifier/hybrid.py
-    # (CONFIDENCE_AUTO / CONFIDENCE_MIN_CLASSIFICATION) …
-    AUTO_FILE_GATE = 0.85  # cloud/pipeline.py
+existed the only thing holding them together was a comment in
+``cloud/pipeline.py`` saying they were kept in lock-step.
 
 A comment cannot fail. These tests can, which is the whole point: the day
 someone tunes one copy — the pipeline's gate, the classifier's, the review
@@ -30,7 +27,15 @@ Split them and the product tells the user one story on the dashboard, a second
 in the queue, and trains on a third — the classic shape where every gate is
 green and the behaviour is still wrong. Filed with #208, which removed a
 Settings slider that pretended this number was per-user: it is one number, for
-every account, and this file is what keeps it one number.
+every account, and this file is what keeps it one number *in Python*.
+
+The other half is TypeScript. The gate is also drawn on every surface a user
+looks at, and no pytest can import a `.tsx` file — a check that reads one side
+cannot fail on drift across the boundary, which is precisely how the web copies
+went unpinned while these four were covered (#229). That half lives in
+``scripts/readme_facts.py``, which reads ``hybrid.CONFIDENCE_AUTO`` and each
+TypeScript gate constant and fails when they disagree. Neither check subsumes
+the other; changing this number means editing both languages deliberately.
 
 The fourth copy is a FUNCTION SIGNATURE DEFAULT, not a module constant, so it
 is read with :mod:`inspect` rather than an attribute lookup. Asserting on the
@@ -100,8 +105,10 @@ def test_every_auto_file_gate_copy_is_the_canonical_gate(name: str) -> None:
 
     assert AUTO_FILE_GATE_COPIES[name] == AUTO_FILE_GATE, (
         f"{name} is {AUTO_FILE_GATE_COPIES[name]!r}, not the canonical auto-file "
-        f"gate {AUTO_FILE_GATE!r}. These four are lock-stepped by comment in "
-        f"cloud/pipeline.py:500-501 — change all of them or none."
+        f"gate {AUTO_FILE_GATE!r}. These four are lock-stepped by THIS FILE — change "
+        f"all of them or none. The web side draws the same gate and is held against "
+        f"hybrid.CONFIDENCE_AUTO by an invariant in scripts/readme_facts.py, so a "
+        f"real change to this number is an edit in two languages."
     )
 
 

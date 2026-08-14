@@ -101,12 +101,27 @@ export function DecisionTrace() {
                     const passed = i < fired;
                     return (
                       <span key={l.id} className="flex items-center">
+                        {/* Same chip anatomy, same fix, same reasoning as
+                            `SampleInbox`'s `LayerTrack` — see the comment there
+                            for the measurements. This copy was NOT named in
+                            applied#223 (its audit only walked /demo/inbox), but
+                            it carries the identical defect on 7 chips and it
+                            renders on BOTH /demo and the landing, so leaving it
+                            would fix the twin and ship the original. The old
+                            `passed ? "var(--text-dim)" : "var(--text-dim)"`
+                            is the fossil that gives the bug away: a
+                            differentiation was meant to live in the colour, got
+                            written into `opacity` instead, and the ramp step it
+                            should have used was never picked. */}
                         <span
                           className="grid h-6 w-6 place-items-center rounded-md border font-mono text-[10px] transition"
                           style={
                             isFired
                               ? { borderColor: l.color, color: l.color, background: `color-mix(in oklab, ${l.color} 16%, transparent)`, boxShadow: `0 0 14px -4px ${l.color}` }
-                              : { borderColor: "var(--line)", color: passed ? "var(--text-dim)" : "var(--text-dim)", opacity: passed ? 0.7 : 0.35 }
+                              : {
+                                  borderColor: passed ? "var(--line)" : "var(--line-soft)",
+                                  color: passed ? "var(--text-muted)" : "var(--text-dim)",
+                                }
                           }
                         >
                           {passed ? "✓" : i + 1}

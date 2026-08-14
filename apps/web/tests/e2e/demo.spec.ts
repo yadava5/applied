@@ -546,7 +546,19 @@ test.describe("live demo (/demo)", () => {
     // Momentum: exactly 30 day-bars plus the delta sentence derived from them
     // (#156 — daily resolution; weekly buckets flattened real filing bursts).
     await expect(pulse.getByTestId("pulse-day")).toHaveCount(30);
-    await expect(pulse.getByText(/this wk/)).toBeVisible();
+    // The week's filings must be NON-ZERO, the same shape as the quiet
+    // assertion below and for the same reason: `/this wk/` alone matches
+    // "0 this wk", so it is green on exactly the defect it looks like it
+    // guards. applied#80 was that defect — the fixtures were absolute dates,
+    // the demo's first number aged to 0, and no spec noticed for 28 days.
+    //
+    // Safe at both offset projects: the seeds inside the 7-day window are at
+    // 1,2,3,3,5,6 days (`demoData.ts`), so the count is 6, and the ±1 day a
+    // UTC−10/+14 reader's calendar can shift it by moves it to 5 or 7 — never
+    // near 0. It is a staleness gate, not a fixture-census one; the exact
+    // count deliberately is not asserted so re-spreading the seeds does not
+    // have to touch this line.
+    await expect(pulse.getByText(/[1-9]\d* this wk/)).toBeVisible();
 
     // Ageing: the fixture board's open rows are weeks old, so the quiet share
     // is non-zero. `\d+` would also match "0 quiet", which is the claim this
