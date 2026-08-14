@@ -4,7 +4,6 @@ import { Suspense } from "react";
 import { summarizeSignIn } from "@/components/settings/accountSecurity";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
-import { ClassificationSection } from "@/components/settings/ClassificationSection";
 import { DataSection } from "@/components/settings/DataSection";
 import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
@@ -17,7 +16,7 @@ import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
   title: "Settings",
-  description: "Manage your profile, appearance, notifications, classification, data, and Gmail.",
+  description: "Manage your profile, appearance, notifications, data, and Gmail.",
 };
 
 /**
@@ -37,7 +36,6 @@ export const metadata: Metadata = {
  *     return cycle is executable e2e: `tests/e2e/settings.spec.ts`, "without
  *     waiting out the router cache".
  *   - The remaining sections write no server-rendered state at all:
- *     `ClassificationSection` is propless and writes nothing (#208),
  *     `AppearanceSection` is a device-local theme, `DataSection` only reads,
  *     `AccountSection` leaves the route on both of its actions (sign-out
  *     refreshes then replaces, delete replaces), and `ChangePasswordForm`
@@ -56,13 +54,20 @@ export const metadata: Metadata = {
 
 /**
  * The real product Settings surface: Profile, Appearance, the Gmail
- * connection, Notifications, Classification, Data, and Account — each actually
- * wired. Profile/Notifications/Classification persist to the Supabase user's
- * metadata; Appearance is a device-local theme; Data exports through the
- * server-side proxy; Account signs out or deletes via the admin route. The
- * `(app)` layout guarantees an authenticated user before this renders.
+ * connection, Notifications, Data, and Account — each actually wired.
+ * Profile/Notifications persist to the Supabase user's metadata; Appearance is
+ * a device-local theme; Data exports through the server-side proxy; Account
+ * signs out or deletes via the admin route. The `(app)` layout guarantees an
+ * authenticated user before this renders.
  *
- * Layout: a sticky section rail beside the sections at desktop, so seven
+ * A Classification section used to sit between Notifications and Data. Once
+ * #208 removed the gate slider it held nothing to change — a card of reference
+ * prose on the one page whose whole promise is "these are the things you can
+ * edit". The rule it stated is still told where it is acted on: the review
+ * queue draws each verdict against the gate, and the landing cascade and the
+ * System Card state the number and what clearing it does and does not license.
+ *
+ * Layout: a sticky section rail beside the sections at desktop, so six
  * cards stop being one blind scroll — the rail is the page's table of
  * contents, and the shell's scroll pane honours the anchor jumps. The copy
  * across the sections is cut to one working line per control; the long-form
@@ -116,11 +121,20 @@ async function LiveGmailCard() {
   return <GmailConnectionCard result={result} />;
 }
 
-/** Same border/surface/padding as the card it stands in for. */
+/**
+ * Same border/surface/padding as the card it stands in for.
+ *
+ * Deliberately WITHOUT `id="gmail"` (#268): `GmailConnectionCard` declares that
+ * id, and streaming SSR can have this fallback and the resolved card in the
+ * document at the same moment — two elements answering to one id, so
+ * `getElementById` and the rail's `a[href="#gmail"]` resolve to whichever React
+ * left first. The card carries the anchor from the instant it resolves, which
+ * is the only instant a jump to it can mean anything. `scroll-mt` stays: it is
+ * what keeps the heading clear of the pinned strip once the card lands here.
+ */
 function GmailCardFallback() {
   return (
     <div
-      id="gmail"
       aria-busy="true"
       aria-label="Checking your Gmail connection"
       className="scroll-mt-16 rounded-xl border border-line-soft bg-surface p-5 lg:scroll-mt-4"
@@ -189,7 +203,6 @@ export default async function SettingsPage({
             <LiveGmailCard />
           </Suspense>
           <NotificationsSection initial={readNotificationPrefs(meta)} />
-          <ClassificationSection />
           <DataSection />
           {/* Read server-side, not fetched: the user must learn deletion is
               unavailable on this deployment BEFORE arming the typed

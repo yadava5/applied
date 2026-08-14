@@ -21,7 +21,6 @@ const ITEMS: { id: string; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "gmail", label: "Gmail" },
   { id: "notifications", label: "Notifications" },
-  { id: "classification", label: "Classification" },
   { id: "data", label: "Your data" },
   { id: "account", label: "Account" },
 ];
