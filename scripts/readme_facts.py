@@ -900,7 +900,24 @@ FACTS: dict[str, dict] = {
             {"re": r"(?m)^\s+([\d.]+) · gate$", "file": LANDING_SIGNATURE},
             {"re": r"clears the ([\d.]+) gate, and resolves", "file": LANDING_SIGNATURE},
             # ── drawn on apps/web: /demo and the import flow ──
-            {"re": r"Below the ([\d.]+) gate nothing is auto-filed", "file": "apps/web/app/demo/page.tsx"},
+            #
+            # `apps/web/app/demo/page.tsx` used to draw this claim too
+            # ("Below the 0.85 gate nothing is auto-filed"). That site is gone,
+            # deliberately: PR #283 rebuilt /demo as the signed-in shell over
+            # fixtures, and the verdict-trace section it hosted was retired
+            # because the landing renders the same component and the rail's
+            # Inbox item now leads to /demo/inbox, where the traces carry real
+            # model verdicts instead of fixture ones.
+            #
+            # Deleted rather than re-pointed, which is the branch this file's
+            # own failure message offers when a claim is genuinely gone. It
+            # opens no hole: the demo SURFACE still states the gate at
+            # /demo/inbox (the next line) and through `SampleInbox`, which
+            # /demo/inbox renders. Checked by execution, not by assumption —
+            # with this entry removed `--check` reports 53 facts across 164
+            # sites all agreeing, and corrupting a SIBLING site
+            # (`SampleInbox`'s pattern) still fails, so the fact remains
+            # genuinely guarded rather than merely quiet.
             {"re": r"([\d.]+) auto-file gate\.", "file": "apps/web/app/demo/inbox/page.tsx"},
             {"re": r"Confidence sits below the ([\d.]+) gate", "file": WEB_SAMPLE_INBOX},
             {"re": r"Confidence clears the ([\d.]+) gate", "file": WEB_SAMPLE_INBOX},
