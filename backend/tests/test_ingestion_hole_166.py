@@ -571,8 +571,17 @@ def test_two_list_entries_became_load_bearing_under_anchoring() -> None:
     """
     from jobtracker.classifier.rules import ATS_DOMAINS, is_ats_sender
 
-    assert "myworkday.com" in ATS_DOMAINS and "workday.com" in ATS_DOMAINS
-    assert "greenhouse-mail.io" in ATS_DOMAINS and "greenhouse.io" in ATS_DOMAINS
+    # Written as a set subset rather than ``"myworkday.com" in ATS_DOMAINS``,
+    # which is LIST MEMBERSHIP and not substring containment — but CodeQL's
+    # ``py/incomplete-url-substring-sanitization`` cannot tell Python's two
+    # ``in`` operators apart and read the membership test as the very defect
+    # this section fixes, raising four high-severity false positives. Suppressing
+    # the rule here would be worse than rewriting: an inline dismissal on this
+    # exact file is what a future reader would most reasonably trust, and it
+    # would also mask a genuine reintroduction of the substring bug. Do not
+    # "simplify" this back to ``in``.
+    assert {"myworkday.com", "workday.com"}.issubset(ATS_DOMAINS)
+    assert {"greenhouse-mail.io", "greenhouse.io"}.issubset(ATS_DOMAINS)
     assert is_ats_sender("hpe@myworkday.com")
     assert is_ats_sender("no-reply@us.greenhouse-mail.io")
 
