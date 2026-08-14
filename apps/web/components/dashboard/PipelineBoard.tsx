@@ -611,7 +611,6 @@ export function PipelineBoard({
   /** "all" must equal the columns it sits above, so it is summed from the same
    *  source rather than read off `applications.length`. */
   const spineTotal = columns.reduce((n, column) => n + spineCounts[column.key], 0);
-  const spineMax = Math.max(1, ...columns.map((c) => spineCounts[c.key]));
 
   /** Groups actually rendered in the list: the selected stage (even empty, so
    *  "none yet"/"none match" has a place to be said), or every stage that has
@@ -811,24 +810,27 @@ export function PipelineBoard({
           </span>
           <span className="tabular ml-auto font-mono text-[11px] text-strong">{count}</span>
         </span>
-        {/* The meter: this stage's count as a fraction of the BIGGEST stage's
-            (`count / spineMax`), not of the total — the largest stage always
-            draws a full bar. It is a relative-size comparison between stages,
-            so the only honest reading is "this stage against the fullest one".
-            Stated exactly because the previous wording said "share of the
-            loaded rows", which is a share of the TOTAL and is not what this
-            computes: applied#78 was that same mismatch with a percentage label
-            attached, and the comment is what would talk the next person into
-            re-adding one. Nothing on screen asserts the wrong number today —
-            the label beside it prints a raw count and never a percentage — so
-            this stays a relative bar deliberately. If a share-of-total reading
-            is ever wanted, it needs `spineCounts` summed rather than maxed,
-            AND a label that says which of the two it means.
+        {/* The meter: this stage's share of the TOTAL (`count / spineTotal`).
+
+            It used to be a share of the BIGGEST stage (`count / spineMax`), so
+            the largest stage always drew a full bar by construction. On the
+            owner's real board — 40 applications, 34 of them at "applied" — that
+            painted "applied" full and he read it, correctly, as a lie: "if we
+            have 40 in total, and 35 applied, why the hell is the applied row
+            full!". A bar that is full when the thing is not complete has no
+            honest reading, whatever the comment above it says, and the previous
+            comment said the quiet part out loud while keeping the behaviour.
+
+            Share-of-total has one reading and the "all" row teaches its scale:
+            `allStagesRow` draws a full-width track, so full means "all of
+            them" and 34/40 lands at 85%. The label beside each bar still prints
+            a raw count and never a percentage — applied#78 was a percentage
+            label disagreeing with the geometry beside it, and one number stated
+            once is what keeps them from drifting again.
 
             Only drawn when the count is non-zero — the 0 beside the label
-            already states emptiness, and on the real account's shape (every
-            row in one stage) an empty track under each of four zeros was five
-            bars representing nothing. */}
+            already states emptiness, and on the real account's shape an empty
+            track under each of three zeros was bars representing nothing. */}
         {count > 0 ? (
           <span
             className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
@@ -837,7 +839,7 @@ export function PipelineBoard({
             <span
               className="block h-full rounded-full"
               style={{
-                width: `${(count / spineMax) * 100}%`,
+                width: `${(count / spineTotal) * 100}%`,
                 background: column.color,
               }}
             />
@@ -892,6 +894,21 @@ export function PipelineBoard({
         </span>
         <span className="tabular ml-auto font-mono text-[11px] text-strong">{spineTotal}</span>
       </span>
+      {/* The reference track — a FULL bar, because this row genuinely is all of
+          them. Without it the stage meters below are shares of a denominator
+          nothing on screen shows, which is how the old max-relative bar got
+          read as a share of the total in the first place. Same height, same
+          radius, same track colour as a stage meter; neutral fill, because
+          "all" is every stage at once and no single stage's hue may stand for
+          it. Drawn only when there is something to be a share OF. */}
+      {spineTotal > 0 ? (
+        <span
+          className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
+          aria-hidden="true"
+        >
+          <span className="block h-full w-full rounded-full bg-line-strong" />
+        </span>
+      ) : null}
     </button>
   );
 
