@@ -46,6 +46,7 @@ export function toChangeRow(app: Application): ChangeRow {
     filed: filedAt(app),
     dueAt: app.due_at ?? null,
     dueSource: app.due_source ?? null,
+    source: app.source ?? null,
   };
 }
 
