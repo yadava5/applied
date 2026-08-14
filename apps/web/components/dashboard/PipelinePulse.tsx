@@ -57,10 +57,12 @@ import { PulseDetail, type PulseDetailKind } from "./PulseDetail";
  *     remainder — `36 of 41` with five unexplained rows read as five rows
  *     UNACCOUNTED FOR (#158), while the bar's aria-label was already telling
  *     screen readers "5 by hand". The mechanism's real names (the
- *     classifier, the 0.85 gate) are stated in Settings, which is the page
- *     that explains them — here the user has a mailbox, not a classifier.
- *     Stated, not controlled: the gate is one number for every account and
- *     Settings never offered a working way to move it (#208).
+ *     classifier, the 0.85 gate) belong to the review queue this cell links
+ *     into, which draws every held verdict against that gate — here the user
+ *     has a mailbox, not a classifier. Settings used to carry the same
+ *     explanation and no longer does: the gate is one number for every account
+ *     and there was never a working way to move it (#208), so a whole card of
+ *     prose about it was sitting on the page of things you can change.
  *
  * THE CELLS OPEN — all four of them. Pressing one docks a detail panel
  * (`PulseDetail`) under the band — inside the dashboard, anchored to its

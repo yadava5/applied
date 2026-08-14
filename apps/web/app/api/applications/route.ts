@@ -34,6 +34,11 @@ import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/statu
  * page-fetcher, so they can be executed by a test. Inline here they needed the
  * Next runtime and a Supabase cookie jar, which is why the original shipped
  * covered by types and review only.
+ *
+ * The one read-path proxy that does NOT pass the backend's `Server-Timing`
+ * through (#269): it fans out into a backend call per page, and one header
+ * cannot describe N round trips — whichever page's numbers were copied, the
+ * name `app;dur` would claim to be the cost of this request and not be.
  */
 export async function GET() {
   try {

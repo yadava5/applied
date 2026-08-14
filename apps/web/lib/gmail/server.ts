@@ -76,9 +76,17 @@ export type GmailFailure =
 
 export type GmailStatusResult = { kind: "ok"; status: GmailStatus } | GmailFailure;
 
-/** One fetched page of the classified inbox, or a labelled failure. */
+/**
+ * One fetched page of the classified inbox, or a labelled failure.
+ *
+ * `response` is the backend's own response with its body already read — the
+ * `/api/gmail/inbox` proxy copies its `Server-Timing` onto what it returns
+ * (#269): the workbench loops this call, so it is the one read where the
+ * backend's own phase split is worth watching page over page. Headers only;
+ * the body is consumed.
+ */
 export type GmailInboxPageResult =
-  | { kind: "ok"; page: InboxPage }
+  | { kind: "ok"; page: InboxPage; response?: Response }
   | { kind: "not_connected" }
   | GmailFailure;
 
@@ -212,7 +220,7 @@ export async function fetchGmailInboxPage(search: string): Promise<GmailInboxPag
     });
     if (res.status === 409) return { kind: "not_connected" };
     if (!res.ok) return classifyBadResponse(res.status);
-    return { kind: "ok", page: (await res.json()) as InboxPage };
+    return { kind: "ok", page: (await res.json()) as InboxPage, response: res };
   } catch (err) {
     return networkFailure(err);
   }

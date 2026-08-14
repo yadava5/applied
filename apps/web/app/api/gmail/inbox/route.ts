@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { withServerTiming } from "@/lib/api/serverTiming";
 import { fetchGmailInboxPage } from "@/lib/gmail/server";
 
 /**
@@ -18,7 +19,11 @@ export async function GET(request: NextRequest) {
 
   switch (result.kind) {
     case "ok":
-      return NextResponse.json(result.page, { status: 200 });
+      // Only the success branch carries timing. The failures below are either
+      // decided before the fetch (`unauthenticated`) or re-labelled from a
+      // status the helper kept nothing else from — there is no backend
+      // response left to copy, and inventing one would misreport.
+      return withServerTiming(result.response, NextResponse.json(result.page, { status: 200 }));
     case "not_connected":
       return NextResponse.json({ detail: "not_connected" }, { status: 409 });
     case "unauthenticated":

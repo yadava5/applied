@@ -6,7 +6,6 @@ import { Logo } from "@/components/brand/Logo";
 import { summarizeSignIn } from "@/components/settings/accountSecurity";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
-import { ClassificationSection } from "@/components/settings/ClassificationSection";
 import { DataSection } from "@/components/settings/DataSection";
 import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
@@ -126,10 +125,11 @@ export default async function DemoSettingsPage() {
                   both were off, so a test driving either proved nothing about
                   the other. */}
               <NotificationsSection mode="demo" initial={notifications} />
-              {/* No `mode` and no props: since #208 removed the inert gate
-                  control this section writes nothing, so the twin and the
-                  signed-in page render the identical output by construction. */}
-              <ClassificationSection />
+              {/* A Classification section used to render here and on the
+                  signed-in page. It was pure prose after #208 took the inert
+                  gate slider out, so it is gone from both — removing it from
+                  one only would have re-created the drift that having the twin
+                  render the identical sections exists to prevent. */}
               <DataSection mode="demo" />
               <AccountSection mode="demo" email="demo@applied.example" />
             </div>
