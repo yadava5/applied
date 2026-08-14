@@ -292,6 +292,186 @@ def embeddings_accept_threshold() -> float:
     return float(m.group(1))
 
 
+# ── the auto-file gate, across the language boundary ─────────────────────
+#
+# The gate is `CONFIDENCE_AUTO` in Python, and it is also drawn — in TypeScript
+# — on every surface a user actually looks at. It is hand-written as a NAMED
+# CONSTANT in twelve places across three trees:
+#
+#   backend/            4   pinned by tests/test_confidence_gate_lockstep.py
+#   apps/web/ + booklet 4   pinned by nothing until #229 (one of the four, the
+#                           duplicate `AUTO_FILE_GATE` in components/viz/
+#                           GateMeter.tsx, was deleted; booklet's is the third
+#                           TypeScript tree and was never counted at all)
+#   ml/demo/space/      3   the vendored second copy of the classifier, also
+#                           pinned by nothing
+#
+# and the comment that claimed to keep them in step named `lib/dashboard/
+# model.ts`, which the dashboard barely read: `ReviewQueue` and
+# `ApplicationDetail` imported a SECOND `AUTO_FILE_GATE` from
+# `components/viz/GateMeter.tsx`. So the named invariant could hold while the
+# number a user sees drifted — the same shape as a check that cannot fail.
+#
+# `backend/tests/test_confidence_gate_lockstep.py` pins the four Python copies
+# under `backend/` to each other. It cannot see TypeScript, does not import
+# `ml/demo/space`, and no web test can see Python — a check that reads one side
+# cannot fail on drift ACROSS the boundary, and that is the drift being guarded
+# here. This script already parses all three trees, and `readme-facts.yml` is
+# the only workflow with no path filter, so it is the one gate that fires
+# whichever side moves. See the invariants at the bottom.
+#
+# NOT covered, and deliberately so: `0.85` also appears as a bare literal in
+# comparisons (`hybrid.py`'s `emb_confidence >= 0.85`, `ml/browser/site/app.js`)
+# and as rendered prose in a dozen components and the booklet's content map.
+# The literals are a separate fact by the rule stated at the top of this file;
+# the prose is not a definition and is left to the README's own claim sites.
+
+# TypeScript trees that draw the gate. Roots, because a census that names files
+# can only find the copies someone remembered to name.
+TS_GATE_ROOTS = ("apps/web", "booklet/src")
+WEB_MODEL = "apps/web/lib/dashboard/model.ts"
+
+DEMO_SPACE_HYBRID = "ml/demo/space/jobtracker/classifier/hybrid.py"
+DEMO_SPACE_CLASSIFICATION = "ml/demo/space/jobtracker/api/classification.py"
+
+# A `const NAME = <float>;` whose name is SCREAMING_CASE. Anchored at the start
+# of a line so prose in a `//` or ` *` comment can never match — comments
+# restate this number all over the tree and none of them is a definition.
+#
+# What this does NOT match, stated plainly rather than implied by the invariant
+# names below: a lowerCamel or lowercase constant (`const gate = 0.85`), a
+# non-const binding, a value built by an expression, and anything without a
+# trailing semicolon. Prettier's config makes the semicolon reliable here and
+# every existing copy is SCREAMING_CASE, but this is a pattern match and not a
+# parser, so it is a floor on coverage rather than a proof of completeness.
+TS_GATE_DEF = re.compile(
+    r"^\s*(?:export\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*(?::\s*number\s*)?=\s*([0-9]*\.?[0-9]+)\s*;",
+    re.MULTILINE,
+)
+
+# name → (file, TypeScript constant) for every hand-written TS copy of the gate.
+# Same shape, and the same reason, as ``AUTO_FILE_GATE_COPIES`` in the backend
+# lock-step test: a red run has to name WHICH copy drifted.
+TS_AUTO_FILE_GATE_COPIES: dict[str, tuple[str, str]] = {
+    "apps/web/lib/dashboard/model.ts::AUTO_FILE_GATE": (WEB_MODEL, "AUTO_FILE_GATE"),
+    "apps/web/components/viz/DecisionTrace.tsx::GATE": (
+        "apps/web/components/viz/DecisionTrace.tsx",
+        "GATE",
+    ),
+    "apps/web/lib/demo/sampleInbox.ts::GATE": ("apps/web/lib/demo/sampleInbox.ts", "GATE"),
+    "booklet/src/visuals/DecisionTrace.tsx::GATE": (
+        "booklet/src/visuals/DecisionTrace.tsx",
+        "GATE",
+    ),
+}
+
+# The vendored second copy of the classifier that ships to the Hugging Face
+# Space. Python, but invisible to the backend suite, which never imports it —
+# exactly the position `ml/demo/space/jobtracker/classifier/rules.py` is in, and
+# it is held the same way: by invariant, from here.
+DEMO_SPACE_AUTO_FILE_GATE_COPIES: dict[str, tuple[str, str, str]] = {
+    "ml/demo/space::hybrid.py::CONFIDENCE_AUTO": (DEMO_SPACE_HYBRID, "CONFIDENCE_AUTO", ""),
+    "ml/demo/space::classification.py::REVIEW_QUEUE_CONFIDENCE_THRESHOLD": (
+        DEMO_SPACE_CLASSIFICATION,
+        "REVIEW_QUEUE_CONFIDENCE_THRESHOLD",
+        "",
+    ),
+    # A FUNCTION SIGNATURE DEFAULT, not a module constant — the same fourth copy
+    # the backend test reads with `inspect`, read here with `ast` because this
+    # tree is not importable from the checker.
+    "ml/demo/space::classification.py::seed_training_data(min_confidence=…)": (
+        DEMO_SPACE_CLASSIFICATION,
+        "min_confidence",
+        "seed_training_data",
+    ),
+}
+
+# Gate-shaped TypeScript constants that are NOT the auto-file gate. Listed by
+# name so each exclusion is a decision rather than a hole: this one is the 0.95
+# CI macro-F1 floor drawn as a marker on the per-class F1 chart. A different
+# number that merely shares a variable name; folding it in would make the
+# invariant below assert something false.
+NOT_THE_AUTO_FILE_GATE = {"apps/web/components/landing/ClassF1Bars.tsx::GATE"}
+
+
+def ts_float_const(rel: str, name: str) -> float:
+    """Read a `const <name> = <float>;` out of a TypeScript module.
+
+    Raises rather than returning a default when the constant is absent or
+    defined twice. That is the same rule as a claim site matching zero times: a
+    reader that quietly yields nothing when it can no longer find what it was
+    reading is not a check, and renaming a constant is exactly how a copy
+    escapes one.
+    """
+
+    hits = [m for m in TS_GATE_DEF.finditer(read(rel)) if m.group(1) == name]
+    if not hits:
+        raise SystemExit(
+            f"  ✗ {rel}: no `const {name} = <float>;` found. It was renamed, moved or "
+            f"deleted — update TS_AUTO_FILE_GATE_COPIES in scripts/readme_facts.py."
+        )
+    if len(hits) > 1:
+        raise SystemExit(f"  ✗ {rel}: `{name}` is defined {len(hits)} times.")
+    return float(hits[0].group(2))
+
+
+def py_arg_default(rel: str, func: str, arg: str) -> float:
+    """Read a function parameter's default out of a Python module, statically.
+
+    `float_const` covers module constants; this covers the signature-default
+    shape, which looks like coverage to a reader and is invisible to an
+    attribute lookup. Raises when the function or the parameter is gone.
+    """
+
+    for node in ast.walk(_module(rel)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != func:
+            continue
+        positional = node.args.posonlyargs + node.args.args
+        pairs: dict[str, ast.expr] = {
+            a.arg: d for a, d in zip(positional[len(positional) - len(node.args.defaults):], node.args.defaults)
+        }
+        pairs.update(
+            {a.arg: d for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults) if d is not None}
+        )
+        if arg in pairs:
+            return float(ast.literal_eval(pairs[arg]))
+    raise SystemExit(f"  ✗ {rel}: no `{func}(..., {arg}=<float>)` default found.")
+
+
+def demo_space_gate(rel: str, name: str, func: str) -> float:
+    """One registry entry from DEMO_SPACE_AUTO_FILE_GATE_COPIES, resolved."""
+
+    return py_arg_default(rel, func, name) if func else float_const(rel, name)
+
+
+def ts_gate_definitions() -> dict[str, float]:
+    """Census every SCREAMING_CASE gate-named float constant in the TS trees.
+
+    The registry pins the copies it knows about; this finds the ones it does
+    not. Without it a thirteenth copy could be hand-written tomorrow and the
+    invariant would still pass, having checked four of five — the failure mode
+    the backend test's count assertion exists to prevent, and the one that let
+    `booklet/src/visuals/DecisionTrace.tsx` sit unnoticed while #229 was being
+    written about `apps/web`.
+    """
+
+    found: dict[str, float] = {}
+    for root_rel in TS_GATE_ROOTS:
+        root = REPO / root_rel
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in (".ts", ".tsx") or not path.is_file():
+                continue
+            if {"node_modules", ".next", "dist"} & set(path.relative_to(root).parts):
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            for m in TS_GATE_DEF.finditer(path.read_text(encoding="utf-8")):
+                if "GATE" in m.group(1):
+                    found[f"{rel}::{m.group(1)}"] = float(m.group(2))
+    return found
+
+
 def enum_members(rel: str, name: str) -> int:
     for node in ast.walk(_module(rel)):
         if isinstance(node, ast.ClassDef) and node.name == name:
@@ -1056,6 +1236,80 @@ INVARIANTS = [
             f"v3: cascade {f['cascadeMacroF1']} vs rules {round(f['rulesMacroF1'], 4)}. "
             f"The README says the cascade beat the rules on v2 and lost on v3; one of those "
             f"comparisons has flipped and the surrounding prose no longer follows."
+        ),
+    },
+    {
+        # THE CROSS-LANGUAGE ONE (#229). Everything else in this list compares
+        # two Python facts, or Python against JSON. This compares Python
+        # against TypeScript, because that boundary is where the gate actually
+        # drifted and neither language's test suite can see across it.
+        #
+        # Deliberately an invariant and not a `sites` entry, even though the
+        # sites mechanism already reaches into apps/web. `--write` REWRITES a
+        # site match in place; pointing it at `const GATE = 0.85;` would let a
+        # Python edit silently retune live TypeScript, turning a check into an
+        # unreviewed code change. An invariant cannot be auto-repaired, so the
+        # second edit stays deliberate — which is the whole point of pinning a
+        # threshold that is the fix for a named production defect.
+        "name": "every TypeScript copy of the auto-file gate equals the backend's CONFIDENCE_AUTO",
+        "holds": lambda f: all(
+            ts_float_const(*where) == f["confidenceAuto"]
+            for where in TS_AUTO_FILE_GATE_COPIES.values()
+        ),
+        "explain": lambda f: (
+            f"{HYBRID} sets CONFIDENCE_AUTO = {f['confidenceAuto']}, but "
+            + "; ".join(
+                f"{name} is {ts_float_const(*where)}"
+                for name, where in sorted(TS_AUTO_FILE_GATE_COPIES.items())
+                if ts_float_const(*where) != f["confidenceAuto"]
+            )
+            + ". The gate a user sees drawn has drifted from the gate the backend files on. "
+            "Change every copy or none — and note the value is the fix for a named "
+            "precision defect, not a dial."
+        ),
+    },
+    {
+        # Scope stated exactly: SCREAMING_CASE `const NAME = <float>;` whose
+        # name contains GATE, under TS_GATE_ROOTS. Not "every gate in the web
+        # tree" — see the note on TS_GATE_DEF for what slips past it.
+        "name": (
+            "the TS trees hand-write GATE-named constants in exactly the registered places"
+        ),
+        "holds": lambda f: (
+            set(ts_gate_definitions()) - NOT_THE_AUTO_FILE_GATE
+            == set(TS_AUTO_FILE_GATE_COPIES)
+        ),
+        "explain": lambda f: (
+            f"registered: {sorted(TS_AUTO_FILE_GATE_COPIES)}; "
+            f"found on disk: {sorted(set(ts_gate_definitions()) - NOT_THE_AUTO_FILE_GATE)}. "
+            f"A gate constant was added, renamed or removed under {TS_GATE_ROOTS} without "
+            f"being registered in scripts/readme_facts.py, so the invariant above would "
+            f"check every copy but that one. Register it, or add it to "
+            f"NOT_THE_AUTO_FILE_GATE with a reason if it is a different number that "
+            f"happens to be gate-shaped."
+        ),
+    },
+    {
+        # The vendored classifier under ml/demo/space carries its own three
+        # copies of the gate. The backend suite never imports that tree, so
+        # test_confidence_gate_lockstep.py cannot see them — the same position
+        # the second copy of rules.py is in, held the same way. Without this the
+        # Space could auto-file at one threshold while the product used another.
+        "name": "the vendored classifier under ml/demo/space carries the same auto-file gate",
+        "holds": lambda f: all(
+            demo_space_gate(*where) == f["confidenceAuto"]
+            for where in DEMO_SPACE_AUTO_FILE_GATE_COPIES.values()
+        ),
+        "explain": lambda f: (
+            f"{HYBRID} sets CONFIDENCE_AUTO = {f['confidenceAuto']}, but "
+            + "; ".join(
+                f"{name} is {demo_space_gate(*where)}"
+                for name, where in sorted(DEMO_SPACE_AUTO_FILE_GATE_COPIES.items())
+                if demo_space_gate(*where) != f["confidenceAuto"]
+            )
+            + ". There are two copies of the classifier on purpose; their gates have "
+            "diverged, so the Hugging Face Space would auto-file at a threshold the "
+            "product does not use."
         ),
     },
     {
