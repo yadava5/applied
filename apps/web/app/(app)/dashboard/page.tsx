@@ -388,8 +388,8 @@ export default async function DashboardPage() {
           composes the identical row (with the demo pill in the trailing
           slot), so the two cannot drift.
 
-          SinceLastLook is the notification line under that row (#212):
-          client-only (the marker is
+          SinceLastLook is the notification chip overlaid on that row's
+          centre (#212): client-only (the marker is
           this browser's), per user, and silent until it has a previous visit
           to compare against. The rows are projected here so the flight
           payload carries six fields per row rather than the whole record

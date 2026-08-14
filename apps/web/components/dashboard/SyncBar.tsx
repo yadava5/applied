@@ -224,18 +224,21 @@ export function SyncBar({
   subtitle: string;
   gmail: SyncGmailState | null;
   /** The change-ledger chip (`SinceLastLook`) — one line by that component's
-   *  own contract, mounted on its OWN full-width line under the header row,
-   *  where it centres itself on the bar: the dashboard's notification line
-   *  (#212). Every in-row placement failed in sequence — flush after the
-   *  subtitle it read as the totals' caption (#196), hung off the far side
-   *  it read as a trailing annotation on the sync cluster, and centred in
-   *  the row's leftover middle it wandered against the bar (130px right of
-   *  the bar's centre at 1024, 137px left at 1280 — the flanks are that
-   *  asymmetric) and got carried to a line-end whenever the row wrapped.
-   *  A line of its own is the only placement a wrapping flex row cannot
-   *  move. See that component for the measured cost. A slot rather than an
-   *  import: the ledger's rows/scope are the caller's business, and the
-   *  error/empty pages pass nothing. */
+   *  own contract, mounted as an overlay on the bar's centre at `lg`+ and as
+   *  the stacked header's own line below: the dashboard's notification
+   *  centre (#212). Every in-FLOW desktop placement failed in sequence —
+   *  flush after the subtitle it read as the totals' caption (#196), hung
+   *  off the far side it read as a trailing annotation on the sync cluster,
+   *  centred in the row's leftover middle it wandered against the bar
+   *  (130px right of the bar's centre at 1024, 137px left at 1280 — the
+   *  flanks are that asymmetric) and got carried to a line-end whenever the
+   *  row wrapped, and a dedicated line under the row held the centre but
+   *  spent 26px the worklist owns (#172's refund; session-edge.spec's floor
+   *  caught it). Out of the row's flow, over its empty middle, is the one
+   *  placement that is centred on the bar AND free. See the notification
+   *  overlay below for the mechanics. A slot rather than an import: the
+   *  ledger's rows/scope are the caller's business, and the error/empty
+   *  pages pass nothing. */
   since?: ReactNode;
   /** The route title. Rendered as the page's ONE <h1>, at every width — the
    *  shell's TopBar renders no title on this route (see TopBar), so the
@@ -727,9 +730,9 @@ export function SyncBar({
           {subtitle}
         </p>
         {/* The change ledger used to ride here, in the row's flexible middle.
-            It lives on its own line below the row now (#212) — see the slot
-            comment on `since` — which also ends the width contest between it
-            and the status: the row's middle is the status line's alone. */}
+            It overlays the row now (#212) — mounted below as the row's last
+            child — which also ends the width contest between it and the
+            status: the row's middle is the status line's alone. */}
         {/* The status live region — persistent (mounting live regions on
             demand drops announcements), sr-only while silent. When it speaks
             it takes the subtitle's slot at `lg`+ (see the row note above) and
@@ -937,26 +940,43 @@ export function SyncBar({
           ) : null}
           {children}
         </div>
+        {/* The notification overlay (#212): the change ledger, centred on
+            the BAR. At `lg`+ it is absolutely positioned over this row —
+            `inset-0`, so its box IS the row's box at every wrap state, and
+            the chip's `mx-auto` centre is the bar's centre exactly. Out of
+            flow, it costs the worklist nothing: a dedicated line under the
+            row read best but spent 26px of the fold's #172 refund, and
+            session-edge.spec's floor (613px at 1024×768) caught it at 594 —
+            that height is the worklist's, not this chip's to spend. The
+            chip wears its compact form at `lg`+ (see its ladder), which is
+            what keeps it clear of the totals on its left and the cluster on
+            its right — measured clearances in that component's header.
+
+            `pointer-events-none` because the overlay blankets the row; the
+            plate and the opened panel opt back in individually, so the
+            title, totals and every control stay clickable through it.
+            `pt-2.5` drops the 18px chip line to the vertical centre of the
+            row's one-line band ((38 − 18) / 2); on the fixture twin's
+            wrapped 82px row that same offset pins it to LINE ONE, whose
+            right side is free past the totals.
+
+            Below `lg` the shell unlocks and there is no floor: the same
+            node becomes an in-flow full-width line at the row's end
+            (`order-last`), the stacked header's own notification bar, and
+            the server pass reserves it there so hydration moves nothing.
+
+            `relative` below `lg` / `absolute` at `lg`+ also makes this the
+            names panel's containing block in BOTH schemes: `top-full` is
+            the row's bottom at `lg`+ (below every control, wrapped or not —
+            the #172 sheet-over-the-Sync-button failure cannot recur) and
+            the chip line's bottom in the stack below `lg`. */}
+        {since ? (
+          <div className="relative max-lg:order-last max-lg:w-full lg:pointer-events-none lg:absolute lg:inset-0 lg:pt-2.5">
+            {since}
+          </div>
+        ) : null}
         {trailing ? <div className="hidden shrink-0 items-center lg:flex">{trailing}</div> : null}
       </div>
-
-      {/* The notification line (#212): the change ledger's own full-width
-          line, directly under the command row. In the row it could not hold
-          the bar's centre — the flanks are asymmetric and the row wraps at
-          1024 on the fixture twin, so every in-row placement either wandered
-          or got carried to a line-end (see the `since` slot comment). Here
-          the chip centres on the bar itself, at every width, wrapped row or
-          not.
-
-          `relative` because the names panel anchors to THIS line: its bottom
-          is below every control in the header by construction, which is what
-          anchoring to the chip's own line could never guarantee while that
-          line lived inside a wrapping row (#172 — a z-30 sheet over the Sync
-          button). The line costs the worklist 26px at `lg`+ (one 18px chip
-          line + the column's 8px gap, measured at 1024); the shell stays
-          locked (#149) because the worklist scrolls inside itself, and the
-          server pass reserves the line, so hydration still moves nothing. */}
-      {since ? <div className="relative">{since}</div> : null}
 
       {/* The alert live region — persistent for the same announcement reason,
           its own line below the row when it speaks. A failure pushing the

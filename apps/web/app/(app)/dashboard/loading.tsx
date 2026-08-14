@@ -15,11 +15,9 @@ export default function DashboardLoading() {
         <div className="h-9 w-40 animate-pulse rounded-lg bg-surface-2" />
       </div>
 
-      {/* The notification line the loaded SyncBar renders under its row
-          (#212) — reserved here so the skeleton→loaded swap does not move
-          the board by the line's height. Centred like the plate it stands
-          for; h matches the chip's one-line contract (~18px). */}
-      <div className="mx-auto h-[18px] w-56 animate-pulse rounded bg-surface-2" />
+      {/* No stand-in for the notification chip (#212): at `lg`+ it overlays
+          the header row and costs no height, so the skeleton's geometry is
+          already the loaded one's. */}
 
       {/* Spine (stages + pulse column) + worklist — the same geometry the
           loaded board renders into, so the swap from skeleton to rows never

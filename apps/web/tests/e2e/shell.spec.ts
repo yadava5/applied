@@ -779,32 +779,40 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
             ).toBeLessThanOrEqual(0);
           }
 
-          // #212: the chip is the dashboard's notification line — a plate
-          // centred on the BAR, not on whatever room its old row-mates left.
-          // The first fix asserted slot-centring, and that gate passed on
-          // the layout the owner was complaining about: the slot's centre
-          // wandered 130px right of the bar's at 1024 and 137px left of it
-          // at 1280 (the flanks are that asymmetric), and at 1024 the
-          // wrapped row carried the plate to a line-end. So the invariant is
-          // against <main>'s own centre — the one reference that does not
-          // move with the row's contents. The second half is the #196 guard
-          // restated for the line: the caption read was the quiet sentence
-          // ON the totals' own line, so the plate must sit strictly BELOW
-          // the subtitle, a real gap down in reading order — measured 13px
-          // at 1024 (`next start`, 2026-08-14), against a negative reading
-          // when it shared the line.
+          // #212: the chip is the dashboard's notification centre — a plate
+          // overlaid on the BAR's centre, not centred in whatever room its
+          // old row-mates left. The first fix asserted slot-centring, and
+          // that gate passed on the layout the owner was complaining about:
+          // the slot's centre wandered 130px right of the bar's at 1024 and
+          // 137px left of it at 1280 (the flanks are that asymmetric), and
+          // at 1024 the wrapped row carried the plate to a line-end. The
+          // second fix centred a dedicated line and was caught by the
+          // worklist floors below (and by session-edge's) spending 26px of
+          // the #172 refund. So: the invariant is against <main>'s own
+          // centre — the one reference that does not move with the row's
+          // contents — and the #196 guard is horizontal again, because the
+          // overlaid plate shares the row's line with the totals and the
+          // cluster: it must stand clear of BOTH boxes whenever it overlaps
+          // them vertically. Measured on this layout at 1024: 72px from the
+          // totals, 74px from the cluster, against the 12px flex-gap that
+          // read as a caption in #196. The worklist floors above are the
+          // height half of this gate: the overlay must cost 0px.
           const geometry = await own.evaluate(() => {
             const section = document.querySelector('[data-testid="since-last-look"]');
             const chip = section?.querySelector("p, button");
             const main = document.querySelector("main");
             const subtitle = document.querySelector("[data-sync-header-row] > p.tabular");
-            if (!chip || !main || !subtitle) return null;
+            const cluster = document.querySelector("[data-sync-header-row] > div.flex");
+            if (!chip || !main || !subtitle || !cluster) return null;
             const c = chip.getBoundingClientRect();
             const m = main.getBoundingClientRect();
+            const overlaps = (b: DOMRect) => c.top < b.bottom && b.top < c.bottom;
             const t = subtitle.getBoundingClientRect();
+            const k = cluster.getBoundingClientRect();
             return {
               offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
-              dropBelowTotals: c.top - t.bottom,
+              fromTotals: overlaps(t) ? c.left - t.right : null,
+              fromCluster: overlaps(k) ? k.left - c.right : null,
             };
           });
           expect(geometry, `${state} @ ${at}: chip geometry unreadable`).not.toBeNull();
@@ -812,10 +820,18 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
             geometry!.offCentre,
             `${state} @ ${at}: chip centre sits ${geometry!.offCentre}px off the bar's`,
           ).toBeLessThanOrEqual(1.5);
-          expect(
-            geometry!.dropBelowTotals,
-            `${state} @ ${at}: chip top is only ${geometry!.dropBelowTotals}px below the totals — back on their line is the #196 caption read`,
-          ).toBeGreaterThanOrEqual(8);
+          if (geometry!.fromTotals !== null) {
+            expect(
+              geometry!.fromTotals,
+              `${state} @ ${at}: ${geometry!.fromTotals}px from the totals — the #196 caption read`,
+            ).toBeGreaterThanOrEqual(24);
+          }
+          if (geometry!.fromCluster !== null) {
+            expect(
+              geometry!.fromCluster,
+              `${state} @ ${at}: ${geometry!.fromCluster}px from the sync cluster — a trailing annotation again`,
+            ).toBeGreaterThanOrEqual(24);
+          }
         } finally {
           await context.close();
         }
