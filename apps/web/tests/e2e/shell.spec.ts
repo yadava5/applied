@@ -847,10 +847,15 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           const visible = await own
             .getByTestId("since-last-look")
             .evaluate((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim());
+          // "since {moment}" at the widths that fit the sentence, the loud
+          // chip's "· {moment}" stamp at `lg`→`xl` — where " since " plus
+          // the WORST clock string ("12:58 am") measured 196.6px against
+          // the 244.5px window and left 22.7px on the #196 clearance below.
+          // Either way the moment itself must be there.
           expect(
             visible,
             `${state} @ ${at}: the quiet chip renders "${visible}" — the moment is gone from the visible sentence`,
-          ).toMatch(/Nothing new since /);
+          ).toMatch(/Nothing new (since|·) \S/);
           const signedIn = await measureChip();
           expect(signedIn, `${state} @ ${at}: chip geometry unreadable signed-in`).not.toBeNull();
           expect(

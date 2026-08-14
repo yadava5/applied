@@ -677,12 +677,17 @@ export function SinceLastLook({
                 Three renderings of one moment now, so no width says less
                 than main said there:
                   · below `lg` — the container ladder, `momentLabel` whole;
-                  · `lg`→`xl` — `momentShortLabel`, the day-word elided
-                    exactly where the rest still implies it (a bare clock is
-                    today's), because the full form's ~194px of text cannot
-                    hold the bar's centre beside the totals at 1024 (the
-                    half-window is 121px less 24px clearance a side) and
-                    the short form's worst case measures inside it;
+                  · `lg`→`xl` — `momentShortLabel` on the loud chip's own
+                    stamp idiom ("Nothing new · 4:32 am"): the day-word is
+                    elided exactly where the rest still implies it (a bare
+                    clock is today's), and the "·" is not a nicety — with
+                    " since " kept, the WORST clock string ("12:58 am";
+                    CI's timezone projects draw these) measured 196.6px
+                    against a 244.5px window at 1024 and left 22.7px where
+                    the #196 guard demands 24. The stamp saves ~24px and
+                    holds the floor with ~9px to spare at the worst
+                    string — a lesson in measuring the worst case, not the
+                    clock you happened to load at;
                   · `xl`+ — `momentLabel` whole again: the window is 476px+
                     on every measured arrangement and the full sentence
                     centres with clearance to spare. */}
@@ -697,7 +702,7 @@ export function SinceLastLook({
                 rendered on that twin's unwrapped widths. */}
             <span className="hidden lg:max-xl:[display:var(--chip-tight,inline)]">
               {" "}
-              since{" "}
+              ·{" "}
               <span className="font-mono text-[11px] text-dim">
                 {momentShortLabel(record.at, now)}
               </span>
