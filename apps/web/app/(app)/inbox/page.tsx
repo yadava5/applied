@@ -5,6 +5,7 @@ import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { InboxWorkbench } from "@/components/gmail/InboxWorkbench";
 import { FiledMailList } from "@/components/mail/FiledMailList";
+import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { getMail } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { FILED_PAGE_SIZE, readFiledMailPage } from "@/lib/mail/filed";
@@ -36,6 +37,19 @@ export const metadata: Metadata = {
  * The Filed view is driven entirely by the URL (`category`, `q`, `page`), so
  * the chips and pager are links, a filter state is shareable, and the server
  * renders the truth on every visit — no client cache to go stale.
+ *
+ * GEOMETRY (#197). Both views opt into the shell's locked-page contract
+ * (`LOCKED_PAGE_CLASS`, see `components/shell/geometry.ts`): the page fills
+ * the pane, the view switch and the filter plates hold still, and ONLY the
+ * message list scrolls. Below `lg` the lock releases by the contract's own
+ * design — a phone's one content pane should not hide behind a nested
+ * scroller — and the page flows in <main> as before.
+ *
+ * HEADING (#197). The rail names this place and the top bar prints "Inbox"
+ * beside the menu, so the page renders no visible title of its own — the
+ * third copy, plus its subtitle, was the complaint. One `sr-only` <h1> keeps
+ * the document outline for assistive tech; the stored-message count survives
+ * as the filter row's "all N" chip, where it is a control rather than prose.
  */
 
 type SearchParams = Promise<{
@@ -64,7 +78,10 @@ function ViewSwitch({ scan }: { scan: boolean }) {
           document. Both said `"page"` until #163, so a screen reader on
           /inbox announced two current-page landmarks. `"true"` is what the
           filed-mail category chips below have used all along. */}
-      <nav aria-label="Inbox views" className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5">
+      <nav
+        aria-label="Inbox views"
+        className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5"
+      >
         <Link href="/inbox" aria-current={!scan ? "true" : undefined} className={tab(!scan)}>
           Filed
         </Link>
@@ -90,10 +107,11 @@ function ImportFallback() {
   return (
     <div className="rounded-xl border border-line-soft bg-surface p-5">
       <h2 className="text-base font-medium text-strong">See it on your own mail — right now</h2>
+      {/* How-to only — the no-upload reassurance prose moved to the policy the
+          standing /privacy link reaches (#200/#201). */}
       <p className="mt-1.5 text-sm text-muted">
         No beta seat needed: export from Google Takeout (or one{" "}
-        <span className="font-mono text-dim">.eml</span>) and classify it{" "}
-        <span className="text-strong">entirely in your browser</span> — no upload, no OAuth.
+        <span className="font-mono text-dim">.eml</span>) and classify it here.
       </p>
       <Link
         href="/import"
@@ -112,14 +130,11 @@ function ScanFallback({ configured }: { configured: boolean }) {
   return (
     <>
       <div className="rounded-xl border border-line-soft bg-surface p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-base font-medium text-strong">Connect Gmail to scan live</h2>
-            <p className="mt-1.5 text-sm text-muted">
-              Read-only, on Google&apos;s own consent screen. The classifier labels your job-search
-              mail — it <span className="text-strong">cannot</span> send, delete, or modify anything.
-            </p>
-          </div>
+        {/* The scopes/read-only reassurance paragraph is gone (#200): the
+            consent moment carries it (Gmail card + Google's own screen), and
+            the standing /privacy link above is the durable copy. */}
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h2 className="text-base font-medium text-strong">Connect Gmail to scan live</h2>
           <ConnectGmailButton className="shrink-0" />
         </div>
         <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
@@ -145,21 +160,21 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
     const result = await getGmailStatus();
     const connected = result.kind === "ok" && result.status.configured && result.status.connected;
     return (
-      <section className="space-y-5">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight text-strong">Inbox</h1>
-          <p className="mt-1 text-[13px] text-muted">
-            live scan · read-only mine of your Gmail · one verdict per message
-          </p>
-        </header>
+      <section className={cn("relative", LOCKED_PAGE_CLASS)}>
+        {/* The page's ONE heading, for the document outline only — the rail
+            and the top bar already name this place (#197). `sr-only` is
+            `position: absolute`, so the root is `relative`: the containing
+            block that keeps the 1×1 box inside the pane's own scroll math
+            (the escaped-`sr-only` document-scroll family, #149). */}
+        <h1 className="sr-only">Inbox</h1>
         <ViewSwitch scan />
         {connected ? (
           <InboxWorkbench email={result.status.email} />
         ) : result.kind === "auth" ? (
           <div className="rounded-xl border border-line-soft bg-surface p-5">
             <p className="text-sm text-muted">
-              Your session couldn&apos;t be verified for the mail backend
-              {" "}(<span className="font-mono text-dim">{result.status}</span>).
+              Your session couldn&apos;t be verified for the mail backend (
+              <span className="font-mono text-dim">{result.status}</span>).
             </p>
             <Link
               href="/login?redirect=/inbox"
@@ -194,17 +209,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
   const page = result.ok ? readFiledMailPage(result.data) : null;
 
   return (
-    <section className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-strong">Inbox</h1>
-        <p className="mt-1 text-[13px] text-muted">
-          {page
-            ? `everything Applied has read · ${page.total} message${page.total === 1 ? "" : "s"}${
-                category || q ? " in this view" : " stored"
-              } · every verdict correctable`
-            : "everything Applied has read, and how it judged it"}
-        </p>
-      </header>
+    <section className={cn("relative", LOCKED_PAGE_CLASS)}>
+      {/* Same one-heading + containment arrangement as the scan view above. */}
+      <h1 className="sr-only">Inbox</h1>
       <ViewSwitch scan={false} />
       {page ? (
         <FiledMailList page={page} activeCategory={category} q={q} />
