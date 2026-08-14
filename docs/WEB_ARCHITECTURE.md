@@ -225,8 +225,15 @@ event: the change ledger can otherwise only report changes the open tab
 itself just fetched. It calls `gmail_sync` directly with an explicit
 `user_id`, wrapped in `user_id_scope(user_id)` so every read inside runs
 under that user's RLS identity — the endpoint has no JWT, but nothing
-inside it is unscoped. Setup, bounds, cost and a **known limitation**
-(the enumeration returns nobody under Postgres RLS) are in
+inside it is unscoped.
+
+That identity is also what makes the enumeration work at all. A cron
+cannot *discover* its users: `user_credentials` is FORCE-RLS on
+`auth.uid()`, so an identity-less read of it matches no row. The users
+come from `JOBTRACKER_CRON_SYNC_USER_IDS` instead, and each is probed and
+synced inside its own `user_id_scope` — an identity, not an exemption, so
+no policy, migration or extra database credential is involved. Setup,
+bounds, cost and the list-rot cost of enumerating from config are in
 [`DEPLOYMENT.md`](./DEPLOYMENT.md#scheduled-sync-vercel-cron).
 
 **No WebSocket on cloud.** The Vercel Python runtime does not support it,
