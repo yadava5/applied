@@ -314,6 +314,105 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
   });
 
+  /**
+   * The deadline cell — the fourth panel, and the two things the owner
+   * reported on 2026-08-13: "it has the same issue with text that we fixed for
+   * other, and has no drop down or pop up for detailed analysis like other 3".
+   *
+   * Both halves are asserted where they can fail. The caption is the exact
+   * rendered string on the seeded fixture (which carries one overdue, one
+   * inside the window and one beyond it) — the shipped line there was
+   * `1 overdue · 1 due ≤2d · 1 later`, so this is red on any tree without the
+   * caption-grammar fix. The panel half opens the cell that used to be inert.
+   *
+   * AT 1024, not 1280, and that is the load-bearing part: the band is
+   * `viewport − 288` wide, so this third-of-four cell's own quarter-line puts
+   * a 26rem panel 48px past the band's right edge at exactly the width Ayush
+   * works at. `docHeights` alone cannot see that — an `overflow-hidden`
+   * ancestor hides the scroll while the panel is clipped — so the panel's
+   * right edge is measured against the band's.
+   */
+  test("the deadline cell states one claim and opens its runway, inside the band at 1024", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/demo/shell");
+    await expect(pageHeading(page)).toBeVisible();
+
+    // ONE claim, two at most, each figure bound forward by its own words: the
+    // per-bucket recitation (and the `≤2d` that put a numeral against a unit)
+    // is what was reported, twice.
+    const caption = page
+      .getByTestId("pipeline-pulse")
+      .getByTestId("pulse-caption")
+      .nth(2);
+    await expect(caption).toHaveText("1 overdue · 1 due within 2 days");
+
+    const trigger = page.getByRole("button", { name: "Deadlines detail" });
+    await trigger.click();
+    const panel = page.getByTestId("pulse-detail");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("3 with a deadline")).toBeVisible();
+
+    // Inside its own containing block, at the width where it is tightest.
+    const panelBox = await panel.boundingBox();
+    const bandBox = await page.getByTestId("pipeline-pulse").boundingBox();
+    expect(
+      (panelBox?.x ?? 0) + (panelBox?.width ?? 0),
+      "the deadline panel overhangs the band's right edge",
+    ).toBeLessThanOrEqual((bandBox?.x ?? 0) + (bandBox?.width ?? 0) + 1);
+    expect(panelBox?.x ?? 0).toBeGreaterThanOrEqual((bandBox?.x ?? 0) - 1);
+    const doc = await docHeights(page);
+    expect(doc.scroll).toBeLessThanOrEqual(doc.client + 1);
+
+    // A runway column IS the filter, and it opens the rows it drew: the
+    // fixture's single overdue row.
+    await panel.getByRole("button", { name: /^overdue — 1/ }).click();
+    await expect(panel).toBeHidden();
+    const filterBand = page.getByTestId("pulse-filter-band");
+    await expect(filterBand).toBeVisible();
+    await expect(filterBand.getByText("overdue", { exact: true })).toBeVisible();
+    await filterBand.getByRole("button", { name: /^Stop filtering by/ }).click();
+
+    // Escape closes without filtering and hands focus back to the trigger —
+    // the same lifecycle its three siblings have.
+    await trigger.click();
+    await expect(panel).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
+
+    // The claim, where the reader actually reads it. Below `xl` this line is
+    // display:none — the named row has taken it — so the assertion above is
+    // about textContent, and the owner quoted the caption AND the named row in
+    // one breath, which only happens from 1280 up. The panel's own trigger
+    // moves to this line at that width (see PulseCell), so a caption that
+    // collides with the chevron shows up here as a clipped sentence.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(caption).toBeVisible();
+    await expect(caption).toHaveText("1 overdue · 1 due within 2 days");
+    // Scoped to the band, and it has to be: the fixture's most urgent employer
+    // is also a worklist row and an `sr-only` stage label, so an unscoped
+    // getByText resolves to THREE nodes and strict mode kills the assertion
+    // before it can mean anything. Caught by a full-suite run; it had never
+    // been green, in any project, on any tree.
+    await expect(page.getByTestId("pipeline-pulse").getByText("Tidewater Labs")).toBeVisible();
+    const captionClip = await caption.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(captionClip, "the claim loses characters to the chevron at 1280").toBeLessThanOrEqual(0);
+
+    // A board with nothing due has nothing to open, on the same terms as the
+    // three cells that gate on having data at all — and its caption is still
+    // the honest empty state, not a panel of invented urgency.
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/demo/shell?pipeline=early");
+    await expect(pageHeading(page)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Deadlines detail" })).toHaveCount(0);
+    await expect(
+      page.getByTestId("pipeline-pulse").getByTestId("pulse-caption").nth(2),
+    ).toHaveText("nothing due · set one in a card");
+  });
+
   test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
