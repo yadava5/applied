@@ -13,6 +13,8 @@ type AppShellFrameProps = {
   userName?: string | null;
   /** Fixture mode (/demo/shell): the top bar trades sign-out for a demo pill. */
   demo?: boolean;
+  /** The ambient-mail pref for the rail's background field (Sidebar). */
+  ambient?: boolean;
 };
 
 /**
@@ -51,6 +53,7 @@ export function AppShellFrame({
   userEmail,
   userName = null,
   demo = false,
+  ambient = true,
 }: AppShellFrameProps) {
   return (
     // The slot provider is what lets PAGE-owned interface reach SHELL-owned
@@ -59,7 +62,7 @@ export function AppShellFrame({
     // reasoning), and page headers learn they are inside a shell at all.
     <ShellSlotProvider>
       <div className="flex h-dvh w-full overflow-hidden">
-        <Sidebar rail={rail} userEmail={userEmail} userName={userName} />
+        <Sidebar rail={rail} userEmail={userEmail} userName={userName} ambient={ambient} />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar userEmail={userEmail} userName={userName} demo={demo} />
           {/* ONE page geometry for every authed surface: a shared centred column

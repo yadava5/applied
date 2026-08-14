@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/shell/AppShell";
+import { readAmbientPref } from "@/lib/settings/ambient";
 import { loadRailData } from "@/lib/shell/rail";
 import { getCurrentUser, userDisplayName } from "@/lib/supabase/auth";
 
@@ -55,7 +56,15 @@ export default async function ProtectedLayout({
   }
 
   return (
-    <AppShell rail={rail} userEmail={user.email ?? null} userName={userDisplayName(user)}>
+    <AppShell
+      rail={rail}
+      userEmail={user.email ?? null}
+      userName={userDisplayName(user)}
+      // Rides on the user the layout already verified — no extra read. The
+      // Appearance toggle's router.refresh() re-runs this layout, which is
+      // how a saved change reaches the rail server-side.
+      ambient={readAmbientPref((user.user_metadata ?? {}) as Record<string, unknown>)}
+    >
       {children}
     </AppShell>
   );
