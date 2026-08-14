@@ -34,6 +34,8 @@ so ordinary CI / desktop runs (no Postgres) stay green.
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -95,11 +97,50 @@ def _resolve_admin_url():
 ADMIN_URL, _OWNED_CONTAINER = _resolve_admin_url()
 
 
+_CONTAINER_STOPPED = False
+
+
+def _stop_owned_container() -> None:
+    """Stop the throwaway container once, from whichever path reaches it first.
+
+    WHY ``teardown_module`` ALONE IS NOT ENOUGH
+    -------------------------------------------
+    The container is started at **import** time (``_resolve_admin_url`` runs at
+    module scope), but ``teardown_module`` only fires once pytest has actually
+    *executed* a test in this module. Every run that imports the module without
+    running its tests therefore leaves a ``postgres:16`` up forever:
+    ``--collect-only``, a ``-k`` expression that deselects everything here, or
+    an earlier ``-x`` failure that aborts the session before this file's turn.
+
+    That is not a hypothesis. ``pytest tests/test_rls_postgres.py
+    --collect-only`` leaves a container running, and nothing reaps it — watched
+    for 90 s, still up — which is exactly the reported "postgres:16 still
+    running 15 minutes after the suite exited 0". A full run stops it correctly,
+    which is why it looked intermittent.
+
+    ``atexit`` covers every one of those paths. ``teardown_module`` still calls
+    this so the normal case releases the port promptly rather than at process
+    exit, and the flag makes the second call a no-op — ``stop()`` on an
+    already-removed container raises.
+    """
+
+    global _CONTAINER_STOPPED
+
+    if _OWNED_CONTAINER is None or _CONTAINER_STOPPED:
+        return
+    _CONTAINER_STOPPED = True
+    with contextlib.suppress(Exception):  # already gone, or the daemon went away
+        _OWNED_CONTAINER.stop()
+
+
+if _OWNED_CONTAINER is not None:
+    atexit.register(_stop_owned_container)
+
+
 def teardown_module(module) -> None:  # noqa: ANN001 - pytest hook signature
     """Stop the container we started, if we started one."""
 
-    if _OWNED_CONTAINER is not None:
-        _OWNED_CONTAINER.stop()
+    _stop_owned_container()
 
 
 pytestmark = pytest.mark.skipif(
@@ -340,9 +381,15 @@ async def pg_app() -> AsyncIterator[AsyncEngine]:
         await _admin_build(admin)
         _SCHEMA_READY = True
 
-    # Clean the tenant tables before each test for independence.
+    # Clean the tenant tables before each test for independence. ``sync_state``
+    # belongs here for the same reason the other two do: with two tests now
+    # writing cursor rows, leaving it dirty makes the second one inherit the
+    # first one's A/B rows — which is order-dependence that would either mask a
+    # real failure or invent a fake one.
     async with admin.begin() as c:
-        await c.execute(text("TRUNCATE applications, user_credentials RESTART IDENTITY CASCADE"))
+        await c.execute(
+            text("TRUNCATE applications, user_credentials, sync_state RESTART IDENTITY CASCADE")
+        )
 
     instances = _live_settings_instances()
     # Per-instance originals: an incomplete restore would silently leave later
@@ -773,6 +820,166 @@ async def test_sync_state_writes_are_rls_scoped_and_fail_closed(
         async with get_session() as s:
             after = (await s.exec(select(SyncState))).all()
     assert {r.account_email for r in after} == {"a@example.test"}
+
+
+async def test_sync_state_cross_tenant_overwrite_is_refused(
+    pg_app: AsyncEngine,
+) -> None:
+    """B can neither read nor **overwrite** A's Gmail sync cursor.
+
+    The sibling test above exercises SELECT (``USING``) and INSERT
+    (``WITH CHECK``). Neither touches ``sync_state_update`` — and an overwrite
+    is the realistic attack on this table, because unlike ``applications`` the
+    row already exists. The damage is not a forged cursor appearing, it is
+    somebody else's cursor being *moved*: an advanced ``gmail_history_id`` makes
+    their next incremental sync skip everything before it, so the loss is
+    silent mail rather than a visible bad row (see the "Cursor safety" note in
+    ``jobtracker/cloud/sync_state.py``).
+
+    The UPDATE policy's two halves fail by DIFFERENT mechanisms, and each is
+    asserted here against the one it actually uses:
+
+    * ``USING`` decides which rows an UPDATE may even see, so B's *unqualified*
+      UPDATE matches zero of A's rows and **does not raise** — it quietly
+      touches only B's own. Wrapping this in ``pytest.raises`` would assert the
+      wrong mechanism and would still pass with ``USING`` removed entirely.
+    * ``WITH CHECK`` validates the row as it will be AFTER the update, so
+      re-assigning ``user_id`` to another tenant **raises**. That is the half
+      that stops a row being handed away, and the half issue #74 names.
+    """
+
+    from sqlmodel import select
+
+    from jobtracker.cloud.sync_state import record_gmail_sync_success
+    from jobtracker.database import get_session, user_id_scope
+    from jobtracker.database.models import SyncState
+
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            await record_gmail_sync_success(
+                s, USER_A, account_email="a@example.test", history_id="9001"
+            )
+            await s.commit()
+
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            await record_gmail_sync_success(
+                s, USER_B, account_email="b@example.test", history_id="7001"
+            )
+            await s.commit()
+
+    # --- read half: B cannot see the row at all ---------------------------
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            # Raw and UNFILTERED: only RLS can bound this to B's own row.
+            visible = (
+                await s.exec(
+                    text("SELECT count(*) FROM sync_state WHERE gmail_history_id = '9001'")
+                )
+            ).scalar()
+    assert visible == 0, "B can see A's cursor row"
+
+    # --- overwrite half, USING: B's blind UPDATE cannot reach A's row -----
+    # Deliberately NOT in pytest.raises. RLS answers a cross-tenant UPDATE by
+    # making the row invisible, so the statement succeeds and affects nothing.
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            res = await s.exec(text("UPDATE sync_state SET gmail_history_id = 'hijacked'"))
+            assert res.rowcount == 1, (
+                f"B's unqualified UPDATE touched {res.rowcount} rows; with two "
+                "cursor rows in the table it must reach exactly B's own"
+            )
+            await s.commit()
+
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            rows_a = (await s.exec(select(SyncState))).all()
+    assert [r.gmail_history_id for r in rows_a] == ["9001"], "A's cursor was overwritten by B"
+
+    # --- overwrite half, WITH CHECK: A cannot hand its row to B -----------
+    # USING passes here (the row IS A's), so this is WITH CHECK and nothing
+    # else: Postgres validates the post-update row and refuses it.
+    #
+    # Unqualified on purpose, and that is the whole point of this first form.
+    # An UPDATE that *reads* the relation needs SELECT rights too, and the
+    # SELECT policy is then applied to the existing **and the new** row
+    # (PostgreSQL 16, CREATE POLICY, "Policies Applied by Command Type",
+    # note a). So any statement carrying a WHERE clause is refused by
+    # `sync_state_select` even with `sync_state_update`'s WITH CHECK gone —
+    # measured, see the table below. Without a WHERE there is no second
+    # defence, so this line and only this line is a red/green probe on the
+    # WITH CHECK expression the issue names.
+    with (
+        pytest.raises(DBAPIError, match="new row violates row-level security policy"),
+        user_id_scope(USER_A),
+    ):
+        async with get_session() as s:
+            await s.exec(text(f"UPDATE sync_state SET user_id = '{USER_B}'::uuid"))
+            await s.commit()
+
+    # The same refusal in the shape production actually emits — an ORM flush,
+    # which always carries `WHERE id = ...`. Kept as well as the probe above,
+    # not instead of it: this is the statement the app runs, and the one above
+    # is the one that can be made to fail.
+    #
+    # ``match=`` is load-bearing, not decoration. A bare
+    # ``pytest.raises(DBAPIError)`` here passed even with this policy's
+    # WITH CHECK weakened to ``true``, because ``IntegrityError`` is also a
+    # ``DBAPIError``: moving A's row to B collides with the composite
+    # ``uq_sync_state_user_account`` as soon as B holds the same address. The
+    # test was green off the uniqueness constraint, not off RLS. Pinning the
+    # message is what makes this assert the mechanism it claims to.
+    #
+    # It also has to happen BEFORE B is given a row for A's address below, so
+    # the constraint is not even in a position to fire first.
+    #
+    # Two policies refuse this write independently, which is worth knowing
+    # before anyone tries to prove this line can fail. Measured on postgres:16,
+    # for `UPDATE ... SET user_id = <B> WHERE id = 1` run as A:
+    #
+    #   update WITH CHECK | select USING | result
+    #   ------------------+--------------+--------
+    #   intact            | intact       | refused
+    #   true              | intact       | refused   <- SELECT policy catches it
+    #   intact            | true         | refused
+    #   true              | true         | ALLOWED
+    #
+    # That second column is not folklore: an UPDATE needing read access to the
+    # existing or new row applies the SELECT policy in addition to the UPDATE
+    # policies, so a row cannot be updated into a state its updater can no
+    # longer see. (Drop the WHERE clause and that defence goes away: the same
+    # statement unqualified is allowed once WITH CHECK is weakened, which is
+    # exactly why the probe above is unqualified.) Weakening either policy
+    # alone therefore leaves THIS line green — a real property of the schema,
+    # not a hole in the test.
+    with (
+        pytest.raises(DBAPIError, match="new row violates row-level security policy"),
+        user_id_scope(USER_A),
+    ):
+        async with get_session() as s:
+            row = (await s.exec(select(SyncState))).one()
+            row.user_id = USER_B
+            s.add(row)
+            await s.commit()
+
+    # The same refusal through the PRODUCTION writer: B syncing the address A
+    # has linked gets B's own row (the uniqueness constraint is composite), it
+    # does not upsert onto A's — ``_upsert``'s scoped load cannot see A's row.
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            await record_gmail_sync_success(
+                s, USER_B, account_email="a@example.test", history_id="666"
+            )
+            await s.commit()
+        async with get_session() as s:
+            rows_b = (await s.exec(select(SyncState))).all()
+    assert len(rows_b) == 2, "B should now own two cursor rows of its own"
+
+    # Nothing moved: A still owns exactly its own untouched cursor.
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            after = (await s.exec(select(SyncState))).all()
+    assert [(r.account_email, r.gmail_history_id) for r in after] == [("a@example.test", "9001")]
 
 
 async def test_credential_save_read_is_scoped_and_cross_user_blocked(
