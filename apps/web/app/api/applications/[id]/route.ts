@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { withServerTiming } from "@/lib/api/serverTiming";
 import {
   deleteApplication,
   getApplicationDetail,
@@ -28,7 +29,10 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   const id = await resolveId(ctx.params);
   if (id === null) return badId();
   const r = await getApplicationDetail(id);
-  return NextResponse.json(r.data ?? {}, { status: r.status });
+  // The read #203 measured at 850 ms for 568 bytes — the one this instrument
+  // was built for. `badId()` above returns before any of this, and correctly
+  // carries no timing: nothing was measured.
+  return withServerTiming(r.response, NextResponse.json(r.data ?? {}, { status: r.status }));
 }
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {

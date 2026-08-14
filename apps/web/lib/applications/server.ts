@@ -26,6 +26,14 @@ export interface ApiCallResult {
   ok: boolean;
   status: number;
   data: unknown;
+  /**
+   * The backend's own response, once the body has been read off it. Present
+   * only when the call actually reached the backend — absent for the
+   * unauthenticated short-circuit and for a network failure — so a proxy route
+   * can pass it to `withServerTiming` and copy nothing when there is nothing to
+   * copy (#269). Read HEADERS off this, never the body: it is already consumed.
+   */
+  response?: Response;
 }
 
 const UNAUTHENTICATED: ApiCallResult = { ok: false, status: 401, data: { detail: "unauthenticated" } };
@@ -50,7 +58,7 @@ async function call(
       cache: "no-store",
     });
     const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, data };
+    return { ok: res.ok, status: res.status, data, response: res };
   } catch (err) {
     return {
       ok: false,

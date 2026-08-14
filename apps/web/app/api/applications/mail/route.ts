@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { withServerTiming } from "@/lib/api/serverTiming";
 import { getMail } from "@/lib/applications/server";
 
 /**
@@ -18,5 +19,5 @@ import { getMail } from "@/lib/applications/server";
  */
 export async function GET(request: NextRequest) {
   const r = await getMail(new URL(request.url).searchParams);
-  return NextResponse.json(r.data ?? {}, { status: r.status });
+  return withServerTiming(r.response, NextResponse.json(r.data ?? {}, { status: r.status }));
 }

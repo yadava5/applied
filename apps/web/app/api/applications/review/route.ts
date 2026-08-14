@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { withServerTiming } from "@/lib/api/serverTiming";
 import { getReviewQueue } from "@/lib/applications/server";
 
 /**
@@ -9,5 +10,5 @@ import { getReviewQueue } from "@/lib/applications/server";
  */
 export async function GET() {
   const r = await getReviewQueue();
-  return NextResponse.json(r.data ?? {}, { status: r.status });
+  return withServerTiming(r.response, NextResponse.json(r.data ?? {}, { status: r.status }));
 }
