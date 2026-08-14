@@ -419,11 +419,30 @@ export function InboxWorkbench({
   // Refresh button calls `run` directly and always re-mines. The state update
   // runs inside the timeout (not synchronously in the effect body) so hydration
   // never triggers a cascading render.
+  //
+  // THE FLAG IS BURNED INSIDE THE TIMEOUT, NOT IN THE EFFECT BODY, and that is
+  // load-bearing. React StrictMode invokes an effect create → cleanup → create;
+  // setting `didInitRef` at creation time marked the mount as "already done" on
+  // the invocation whose timeout the cleanup then cleared, so the invocation
+  // that actually survived saw `firstMount === false`, skipped the snapshot
+  // read entirely, and re-mined Gmail — silently replacing a verdict the user
+  // had corrected with the classifier's original one. Setting it inside the
+  // callback means only a timeout that RAN counts as the mount having happened.
+  //
+  // Found by a dependency bump: Next 16.3.0 began applying StrictMode in dev
+  // and `scan-correct.spec.ts`'s "the correction survives leaving the view and
+  // coming back" went red on 16.3.0 while passing on 16.2.11 — measured, the
+  // mount effect ran twice and the snapshot read never executed. Production
+  // never double-invokes, so this was invisible in every production build and
+  // to every user; it was one identity change away from not being (a
+  // non-stable `run` or `filters`, React Compiler, any future double-invoke),
+  // and losing a correction here is the "did my click do anything?" bug with
+  // the user's own judgement thrown away.
   useEffect(() => {
     const firstMount = !didInitRef.current;
-    didInitRef.current = true;
     const t = setTimeout(
       () => {
+        didInitRef.current = true;
         if (firstMount) {
           const snap = readSnapshot(filtersSig(filters));
           if (snap) {
