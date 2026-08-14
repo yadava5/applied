@@ -14,6 +14,12 @@
       "includeFiles": "backend/jobtracker/**"
     }
   },
+  "crons": [
+    {
+      "path": "/cron/sync",
+      "schedule": "*/15 * * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

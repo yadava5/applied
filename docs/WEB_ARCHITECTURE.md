@@ -208,13 +208,45 @@ client — that arrives in C10 as a typed `fetch` wrapper bound to
   tampered row) causes `cloud.get_*_credentials` to log and return
   `None` — routers degrade gracefully.
 
+## Sync (cloud) — three triggers, one code path
+
+`POST /gmail/sync` (`jobtracker/cloud/gmail_oauth.py`) is the only sync
+implementation. Everything below is a different way of *calling* it, not
+a second sync:
+
+| Trigger | Who fires it | Budget | Notes |
+|---|---|---|---|
+| "Sync now" | The user | 60 s | The path that completes a first backfill |
+| Arrival auto-sync | `apps/web/components/dashboard/SyncBar.tsx` when the board is stale, with a per-tab cooldown | 60 s | Why "the board never refreshes" is no longer true |
+| `GET\|POST /cron/sync` | Vercel Cron, `*/15 * * * *` | 10 s per user, 45 s per run | The only one that runs **while nobody is looking** |
+
+The cron is what makes "something happened while you were gone" a real
+event: the change ledger can otherwise only report changes the open tab
+itself just fetched. It calls `gmail_sync` directly with an explicit
+`user_id`, wrapped in `user_id_scope(user_id)` so every read inside runs
+under that user's RLS identity — the endpoint has no JWT, but nothing
+inside it is unscoped. Setup, bounds, cost and a **known limitation**
+(the enumeration returns nobody under Postgres RLS) are in
+[`DEPLOYMENT.md`](./DEPLOYMENT.md#scheduled-sync-vercel-cron).
+
+**No WebSocket on cloud.** The Vercel Python runtime does not support it,
+so `main_cloud.py` never includes `jobtracker/api/websocket.py` — and,
+per `tests/test_desktop_routers_are_not_mounted.py`, never imports it.
+`sync_ws_manager.broadcast()` is an explicit no-op wherever
+`settings.deployment == "cloud"`, so the call sites in
+`jobtracker/api/sync.py` are unconditional and identical in both
+deployments. The web UI polls; progress after "Sync now" comes from the
+sync response and `GET /auth/gmail/status`, not from a stream.
+
 ## Cloud entrypoints
 
 - `api/index.py` — Vercel Python runtime entry. Prepends `backend/` to
   `sys.path`, forces `JOBTRACKER_DEPLOYMENT=cloud`, re-exports
   `jobtracker.main_cloud.app`.
-- `vercel.json` — routes every path to `api/index.py`, pins Python 3.11,
-  declares the placeholder cron for `/cron/sync` (implemented in C7).
+- `vercel.json` (repo root — the `jobtracker-api` project's config; the
+  web project reads `apps/web/vercel.json`) — routes every path to
+  `api/index.py`, caps it at `maxDuration: 60`, and declares the
+  `*/15 * * * *` cron for `/cron/sync` (C7, shipped).
 - `requirements.txt` (repo root) — Vercel-safe dependency set, no torch
   or keyring; `backend/requirements.txt` keeps the full desktop set.
 
@@ -249,7 +281,7 @@ Supabase Postgres (asyncpg, transaction-mode pooler)
 | Encrypted credentials | #21 (C4) |
 | Gmail web OAuth | C5 |
 | Rules-only cloud classifier | #17 (C6) |
-| WebSocket → polling + cron | C7 |
+| WebSocket → polling + cron | #23 (C7) |
 | test_cloud pytest marker | C8 |
 | Next.js scaffold | C9 |
 | Typed API client | C10 |
