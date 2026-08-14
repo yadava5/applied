@@ -343,9 +343,10 @@ def test_greenhouse_and_rippling_are_recognised_as_ats_senders(sender: str) -> N
     """Greenhouse is the most common ATS in the production corpus and, until
     this change, had never once received the +0.05 ATS confidence bonus.
 
-    Asserted through ``is_ats_sender`` rather than by re-implementing the
-    substring walk, because that function is now what BOTH call sites read — the
-    classifier's bonus and ``collect_review_items``' floor.
+    Asserted through ``is_ats_sender`` rather than by re-implementing its match,
+    because that function is now what BOTH call sites read — the classifier's
+    bonus and ``collect_review_items``' floor. (The match was an unanchored
+    substring walk until #260; section 5 below is why it no longer is.)
     """
     from jobtracker.classifier.rules import is_ats_sender
 
@@ -486,3 +487,157 @@ def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() ->
             snippet=TOGETHER_SNIPPET_PREAMBLE,
         )
         assert pipeline.collect_review_items([item]) == [], (category, confidence)
+
+
+# ===========================================================================
+# 5. Issue #260 — the relay list is a list of DOMAINS, not of substrings.
+#
+# ``is_ats_sender`` matched with ``ats in domain``: unanchored containment, so
+# an ATS name anywhere in the host counted. Anyone who can register a domain
+# could therefore put themselves on a closed list — and since #252 that list
+# decides ROUTING (the floor above), not merely a +0.05 nudge.
+#
+# The tests below are deliberately of two kinds and it matters which is which:
+#
+#   - ``..._is_not_an_ats_sender`` / ``..._cannot_reach_the_review_queue`` /
+#     ``..._earns_no_confidence_bonus`` FAIL on the pre-#260 implementation.
+#     They are the proof the defect was real.
+#   - ``..._are_still_ats_senders`` / ``..._load_bearing...`` /
+#     ``..._bare_rippling...`` pass on the old code too. They are regression
+#     guards for the fix, not evidence of the bug, and must not be read as it.
+# ===========================================================================
+
+# Hosts that contain a listed ATS name but are NOT that ATS. Every one is
+# registrable by a stranger; the third works through ``hire.com``, the shortest
+# entry on the list, which is why a short generic entry is the sharpest edge.
+LOOKALIKE_SENDERS = [
+    "no-reply@greenhouse.io.mailgun.net",  # ATS name as the LEFT label
+    "careers@notlever.co.example.com",  # ATS name in the MIDDLE, glued left
+    "hr@sohire.comcast.net",  # "hire.com" straddling a label boundary
+    "jobs@xgreenhouse.io",  # one character short of the real relay
+    "noreply@workday.com.phish.example",  # the classic suffix-looking prefix
+]
+
+# The forms that legitimately match and must keep matching: the bare domain,
+# and real subdomains production actually sees.
+REAL_RELAY_SENDERS = [
+    "no-reply@greenhouse.io",
+    "no-reply@mail.greenhouse.io",
+    "no-reply@us.greenhouse-mail.io",
+    "no-reply@us-east.smartrecruiters.com",
+    "no-reply@ats.rippling.com",
+    "no-reply@mail.ats.rippling.com",
+    "no-reply@lever.co",
+    "hpe@myworkday.com",
+]
+
+
+@pytest.mark.parametrize("sender", LOOKALIKE_SENDERS)
+def test_a_lookalike_domain_is_not_an_ats_sender(sender: str) -> None:
+    """FAILS before #260. Containment let a stranger's domain onto the list.
+
+    ``"greenhouse.io" in "greenhouse.io.mailgun.net"`` is True, and so is
+    ``"hire.com" in "sohire.comcast.net"``. Neither host is operated by an ATS.
+    A closed list whose membership test any registrar can satisfy is not closed.
+    """
+    from jobtracker.classifier.rules import is_ats_sender
+
+    assert not is_ats_sender(sender), sender
+
+
+@pytest.mark.parametrize("sender", REAL_RELAY_SENDERS)
+def test_the_real_relay_forms_are_still_ats_senders(sender: str) -> None:
+    """Passes on the OLD implementation too — a regression guard, not proof.
+
+    Anchoring is only correct if it keeps every sender that legitimately matched.
+    Checked against every e-mail address in the tracked tree (357 distinct
+    domains, including the three committed evaluation corpora): the anchored form
+    and the containment form disagree on none of them.
+    """
+    from jobtracker.classifier.rules import is_ats_sender
+
+    assert is_ats_sender(sender), sender
+
+
+def test_two_list_entries_became_load_bearing_under_anchoring() -> None:
+    """Passes on the OLD implementation too, and exists to stop a "cleanup".
+
+    Under containment ``myworkday.com`` was redundant with ``workday.com`` and
+    ``greenhouse-mail.io`` looked like a variant of ``greenhouse.io``; a tidying
+    pass could have deleted either without a test noticing. Under anchoring
+    neither is redundant — ``myworkday.com`` does not end in ``.workday.com`` —
+    and deleting one silently stops recognising a relay production really uses
+    (``us.greenhouse-mail.io`` is the sender on Ayush's own Greenhouse mail).
+    """
+    from jobtracker.classifier.rules import ATS_DOMAINS, is_ats_sender
+
+    assert "myworkday.com" in ATS_DOMAINS and "workday.com" in ATS_DOMAINS
+    assert "greenhouse-mail.io" in ATS_DOMAINS and "greenhouse.io" in ATS_DOMAINS
+    assert is_ats_sender("hpe@myworkday.com")
+    assert is_ats_sender("no-reply@us.greenhouse-mail.io")
+
+
+def test_bare_rippling_com_is_still_not_an_ats_sender() -> None:
+    """Passes on the OLD implementation too. Anchoring must not widen the list.
+
+    ``ats.rippling.com`` is listed as a full host on purpose: Rippling is a
+    payroll and HR product as well as an ATS, and a bare ``rippling.com`` would
+    sweep in payroll mail. Anchoring is a NARROWING change everywhere, and this
+    pins that it did not accidentally promote the host to a registrable domain.
+    """
+    from jobtracker.classifier.rules import is_ats_sender
+
+    assert not is_ats_sender("payroll@rippling.com")
+    assert is_ats_sender("no-reply@ats.rippling.com")
+
+
+def test_a_lookalike_sender_cannot_reach_the_review_queue() -> None:
+    """FAILS before #260. The consequence, at the call site that routes.
+
+    The exact message the ATS floor is FOR — Together AI's shape, ``applied`` at
+    0.60, under ``REVIEW_FLOOR`` — but relayed by a host that merely contains an
+    ATS name. Before #260 the floor caught it and it landed in Ayush's queue;
+    the queue is a human's attention, and filling it from a domain anyone can
+    register is how a safety net becomes spam.
+    """
+    for sender in LOOKALIKE_SENDERS:
+        result, item = _item(
+            TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, sender, f"spoof-{sender}"
+        )
+        assert result.confidence < pipeline.REVIEW_FLOOR, (sender, result.scores)
+        assert pipeline.collect_review_items([item]) == [], sender
+        assert not _leaves_a_trace(item), sender
+
+
+def test_a_lookalike_sender_earns_no_confidence_bonus() -> None:
+    """FAILS before #260, and this is the sharpest edge of the defect.
+
+    The +0.05 bonus is added to the ladder's OUTPUT, and 0.80 + 0.05 is exactly
+    ``AUTO_FILE_GATE``. So a lookalike domain does not only reach the queue: on
+    the 0.80 rung it hands a message the confidence at which the pipeline may
+    assert a hard status. The subject/body below is a real row from
+    ``data/evaluation/classifier_eval_v*.jsonl`` — the only lifecycle message in
+    the three corpora that lands on that rung — so this is not a shape invented
+    to make the point.
+
+    Asserted at the confidence, which is where the defect is. Filing also needs
+    an employer, so this particular fixture would not have filed; a message that
+    names one would.
+    """
+    subject = "Next step: interview"
+    body = "We would like to invite you to interview for this role."
+
+    unsigned = CLASSIFIER.classify(subject, body, None)
+    assert unsigned.confidence == pytest.approx(0.80), unsigned.scores
+    assert unsigned.confidence < pipeline.AUTO_FILE_GATE
+
+    # The real relay earns the bonus, and that lands ON the gate. This is the
+    # documented, intended behaviour — it is what makes the lookalike dangerous.
+    genuine = CLASSIFIER.classify(subject, body, GREENHOUSE)
+    assert genuine.confidence == pytest.approx(0.85), genuine.scores
+    assert genuine.confidence >= pipeline.AUTO_FILE_GATE
+
+    for sender in LOOKALIKE_SENDERS:
+        spoofed = CLASSIFIER.classify(subject, body, sender)
+        assert spoofed.confidence == pytest.approx(0.80), (sender, spoofed.scores)
+        assert spoofed.confidence < pipeline.AUTO_FILE_GATE, sender

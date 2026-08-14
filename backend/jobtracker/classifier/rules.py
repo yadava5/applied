@@ -520,12 +520,28 @@ def is_ats_sender(sender_email: Optional[str]) -> bool:
     about which senders are ATS relays — a floor that fires on a sender the
     classifier does not recognise, or the reverse, is a bug nobody could read off
     either call site.
+
+    The match is ANCHORED: a sender qualifies only when its domain IS a listed
+    domain or is a proper subdomain of one (#260). Do not "simplify" this back
+    to ``ats in domain`` — unanchored containment matched an ATS name anywhere
+    in the host, so ``greenhouse.io.mailgun.net``, ``notlever.co.example.com``
+    and (through the shortest entry, ``hire.com``) ``sohire.comcast.net`` all
+    read as ATS relays. Since #252 that answer decides ROUTING and not just a
+    score, so a domain anyone can register was enough to reach the owner's
+    review queue — and on the 0.80 rung the +0.05 bonus lands exactly on
+    ``AUTO_FILE_GATE`` (0.85), which auto-files a status.
+
+    Anchoring makes two list entries load-bearing that containment had made
+    redundant: ``myworkday.com`` does not end with ``.workday.com`` and
+    ``greenhouse-mail.io`` is not a suffix of ``greenhouse.io``. Both are real
+    relays; neither may be deduplicated away. ``ats.rippling.com`` stays listed
+    as the full host on purpose — bare ``rippling.com`` is payroll mail.
     """
 
     if not sender_email or "@" not in sender_email:
         return False
     domain = sender_email.lower().rsplit("@", 1)[-1]
-    return any(ats in domain for ats in ATS_DOMAINS)
+    return any(domain == ats or domain.endswith(f".{ats}") for ats in ATS_DOMAINS)
 
 
 # =============================================================================
