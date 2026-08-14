@@ -1019,76 +1019,312 @@ async def test_credential_save_read_is_scoped_and_cross_user_blocked(
 
 
 # =============================================================================
-# The scheduled sync cannot enumerate anybody (issue #23 / C7).
+# The scheduled sync: a configured identity, not an exemption (issue #23 / C7).
+#
+# HISTORY, because the shape of these two tests only makes sense with it. The
+# first implementation enumerated ``user_credentials`` directly and found
+# NOBODY on Postgres: that table is FORCE-RLS on ``auth.uid()`` against a
+# NOBYPASSRLS role, and a cron carries no JWT, so the policy matched no row.
+# The test that lived here asserted that defect on purpose, and said that when
+# the gap was closed it should be INVERTED rather than deleted. This is that
+# inversion — restructured rather than merely negated, because the fix changed
+# how enumeration works, not just its result.
+#
+# The cron now takes its users from ``settings.cron_sync_user_ids`` and runs
+# each one's work inside ``user_id_scope(uid)``. No policy changed, no DDL ran,
+# and no new database credential exists.
 # =============================================================================
 
 
-async def test_cron_enumeration_sees_no_users_without_identity(
-    pg_app: AsyncEngine,
+def _gmail_creds(email: str):
+    from jobtracker.credentials.types import GmailCredentials
+
+    return GmailCredentials(
+        access_token="at",
+        refresh_token="rt",
+        token_expiry=datetime(2027, 1, 1),
+        email=email,
+        scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+    )
+
+
+def _set_allowlist(monkeypatch: pytest.MonkeyPatch, *user_ids: uuid.UUID) -> None:
+    """Point the cron's allowlist at ``user_ids`` on the instance it reads.
+
+    ``monkeypatch.setattr(cron_module.settings, ...)`` and NOT
+    ``monkeypatch.setenv`` + reload: four sibling modules reload
+    ``jobtracker.config`` and orphan the ``settings`` object other modules
+    hold, which is the trap ``_live_settings_instances`` above exists to
+    document. Reaching through ``cron_module.settings`` cannot pick the wrong
+    one. The env-var parse itself is covered in ``tests/test_cron_sync.py``.
+    """
+
+    import jobtracker.cloud.cron as cron_module
+
+    monkeypatch.setattr(cron_module.settings, "cron_sync_user_ids", list(user_ids))
+
+
+async def test_cron_enumeration_uses_the_configured_allowlist(
+    pg_app: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``POST /cron/sync`` cannot find a single user to sync on Postgres.
+    """The enumeration now returns users — because it binds an identity per user.
 
-    THIS TEST ASSERTS A DEFECT, DELIBERATELY.
+    This is the inversion of ``test_cron_enumeration_sees_no_users_without_
+    identity``. It is called with **no identity bound at all**, exactly as the
+    cron runs, and it must return the configured users anyway.
 
-    ``jobtracker.cloud.cron.list_syncable_user_ids`` reads ``user_credentials``
-    to find users with a connected mailbox. That table has RLS ENABLEd and
-    FORCEd (alembic ``c4user_creds_rls`` + ``c5_force_user_credentials_rls``)
-    with ``USING (user_id = auth.uid())``, and the runtime role is
-    NOBYPASSRLS. A cron carries no JWT, so
-    ``connection._apply_transaction_gucs`` leaves ``request.jwt.claims``
-    unset, ``auth.uid()`` is NULL, and the policy matches nothing.
-
-    SQLite has no RLS, so ``tests/test_cron_sync.py`` is green either way —
-    which is exactly the "check that cannot fail" shape this repo keeps
-    finding. Pinning the real behaviour here converts an invisible production
-    outcome (a cron that fires every 15 minutes and syncs nobody, while the
-    Vercel dashboard shows it succeeding with a 200) into a recorded fact with
-    a test name.
-
-    The positive control is the second half: bind an identity and the SAME
-    query returns that user. Without it, "returns nothing" would be
-    indistinguishable from a query that is simply broken.
-
-    WHEN THE GAP IS CLOSED, this test must be inverted rather than deleted —
-    the no-identity call is then expected to return both users, and that
-    assertion is what proves the fix reached production semantics.
+    THE CONTROL IS THE FIRST ASSERTION, and it is what makes the rest mean
+    something. An unscoped raw ``SELECT count(*) FROM user_credentials`` on the
+    very same engine returns **0**, because RLS is genuinely enforcing. If that
+    line ever returns 2, this module is not testing RLS at all (wrong backend,
+    or a BYPASSRLS role) and every assertion below would pass for free. So:
+    same connection machinery, same absence of an ambient identity, one read
+    returns nothing and the other returns both users. The only difference is
+    the per-user ``user_id_scope`` inside the enumeration.
     """
 
     from jobtracker.cloud.cron import list_syncable_user_ids
     from jobtracker.credentials.cloud import save_gmail_credentials
-    from jobtracker.credentials.types import GmailCredentials
-    from jobtracker.database import user_id_scope
-
-    def _creds(email: str) -> GmailCredentials:
-        return GmailCredentials(
-            access_token="at",
-            refresh_token="rt",
-            token_expiry=datetime(2027, 1, 1),
-            email=email,
-            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-        )
+    from jobtracker.database import get_session, user_id_scope
 
     with user_id_scope(USER_A):
-        assert await save_gmail_credentials(USER_A, _creds("a@example.com")) is True
+        assert await save_gmail_credentials(USER_A, _gmail_creds("a@example.com")) is True
     with user_id_scope(USER_B):
-        assert await save_gmail_credentials(USER_B, _creds("b@example.com")) is True
+        assert await save_gmail_credentials(USER_B, _gmail_creds("b@example.com")) is True
 
-    # Positive control FIRST, so a failure below can never be "the rows were
-    # never written". With an identity bound, the query finds that user.
-    with user_id_scope(USER_A):
-        visible_to_a = await list_syncable_user_ids(100)
-    assert visible_to_a == [USER_A], (
-        f"The enumeration query itself is broken: with USER_A bound it "
-        f"returned {visible_to_a}, not [USER_A]."
+    # CONTROL: RLS really is denying the identity-less read this used to rely on.
+    async with get_session() as s:
+        blind = (await s.exec(text("SELECT count(*) FROM user_credentials"))).scalar()
+    assert blind == 0, (
+        f"An unscoped read of user_credentials returned {blind} rows. RLS is "
+        "NOT being enforced on this run, so nothing below is a real test."
     )
 
-    # The cron's actual conditions: no identity bound anywhere.
+    # …and yet the enumeration, called with no identity bound, finds both.
+    _set_allowlist(monkeypatch, USER_A, USER_B)
     candidates = await list_syncable_user_ids(100)
-    assert candidates == [], (
-        "The cron enumeration returned users without an RLS identity bound. "
-        "If this is now green because the gap was closed (a GUC-gated SELECT "
-        "policy, or a privileged read), invert this test rather than deleting "
-        "it — and update the warning on "
-        "jobtracker.cloud.cron.list_syncable_user_ids, which still tells "
-        "readers the cron syncs nobody."
+    assert candidates == [USER_A, USER_B], (
+        f"The configured enumeration returned {candidates}. Each configured id "
+        "must be probed inside its own user_id_scope; without the binding RLS "
+        "returns nothing and the cron is back to syncing nobody."
+    )
+
+    # The allowlist is the ONLY thing that selects users: B still has a
+    # credential row, and still must not be enumerated.
+    _set_allowlist(monkeypatch, USER_A)
+    assert await list_syncable_user_ids(100) == [USER_A]
+
+    # Empty is FAIL-CLOSED — nobody, not everybody.
+    _set_allowlist(monkeypatch)
+    assert await list_syncable_user_ids(100) == []
+
+    # A configured id with no Gmail credential is skipped rather than handed to
+    # gmail_sync to fail on every run forever. USER_A is kept alongside so a
+    # blanket "returns nothing" cannot pass this.
+    stranger = uuid.uuid4()
+    _set_allowlist(monkeypatch, USER_A, stranger)
+    assert await list_syncable_user_ids(100) == [USER_A]
+
+
+async def test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity(
+    pg_app: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The isolation property, end to end, through the real handler.
+
+    Two users exist with identical shapes. Only USER_A is allowlisted. Three
+    things must hold afterwards, and each targets a different way the identity
+    binding can be got wrong:
+
+    1. **The sync could only SEE USER_A's data.** The stand-in for
+       ``gmail_sync`` issues an UNFILTERED ``select(Application)`` — no
+       ``WHERE user_id``, deliberately — so the only thing that can bound the
+       result is the bound identity plus RLS. Breaks if the wrong id is bound.
+    2. **USER_B's rows are byte-identical.** Snapshotted through the ADMIN
+       engine (a superuser, which bypasses RLS) as ``to_jsonb`` of every row of
+       every table this run could touch, before and after. Breaks if one
+       tenant's identity is live while another tenant's work runs.
+    3. **The identity did not survive the run.** A post-run *unscoped*
+       ``get_session()`` read must return nothing. Breaks if the binding is
+       applied without a reset — a session-level ``SET`` instead of
+       ``set_config(..., is_local => true)``, or a bare
+       ``set_current_user_id`` with no ``user_id_scope`` around it. That is
+       the one that matters under PgBouncer transaction pooling, where the
+       physical connection goes to the next tenant.
+
+    WHY THE PROBE TABLE IS ``user_credentials`` AND NOT ``applications``: both
+    users have a credential row, so an unscoped ``count(*)`` of 0 means RLS is
+    denying rather than that the table happens to be empty. The test asserts
+    that premise directly against the admin engine — a leak probe whose own
+    subject is empty is a check that cannot fail, which is the defect shape
+    this repo keeps finding.
+
+    WHAT THE FAKE SYNC WRITES, AND WHY IT WRITES IT THAT WAY: it inserts a row
+    attributed to ``get_current_user_id()`` — the *bound* identity — rather
+    than to the ``user_id`` argument. That is what any write trusting
+    ``auth.uid()`` does, and it is the only shape under which mis-binding
+    shows up as corruption rather than as an error: a row explicitly carrying
+    USER_A's id would simply be refused by USER_B's ``WITH CHECK``, which is a
+    red test for the wrong reason. Reshaping the instrument to make the
+    hazard observable is calibration; the assertions are untouched.
+    """
+
+    from sqlmodel import select
+    from starlette.requests import Request
+
+    import jobtracker.cloud.cron as cron_module
+    import jobtracker.cloud.gmail_oauth as gmail_module
+    from jobtracker.cloud.sync_state import record_gmail_sync_success
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.database import get_session, user_id_scope
+    from jobtracker.database.connection import get_current_user_id
+    from jobtracker.database.models import Application, ApplicationStatus
+
+    cron_secret = "rls-cron-probe-secret-at-least-16-chars"
+
+    # ---- seed two identically-shaped tenants -----------------------------
+    for user_id, company in ((USER_A, "Acme"), (USER_B, "Hooli")):
+        with user_id_scope(user_id):
+            assert (
+                await save_gmail_credentials(
+                    user_id, _gmail_creds(f"{company.lower()}@example.com")
+                )
+                is True
+            )
+            async with get_session() as s:
+                s.add(
+                    Application(
+                        user_id=user_id,
+                        company=company,
+                        position="SWE",
+                        status=ApplicationStatus.APPLIED,
+                    )
+                )
+                await s.commit()
+            async with get_session() as s:
+                await record_gmail_sync_success(
+                    s,
+                    user_id,
+                    account_email=f"{company.lower()}@example.com",
+                    history_id="1000",
+                )
+                await s.commit()
+
+    async def _snapshot_b() -> dict[str, list]:
+        """Every one of B's rows, read as a superuser so RLS cannot hide a change."""
+
+        snapshot: dict[str, list] = {}
+        async with pg_app.connect() as c:
+            for table in ("applications", "user_credentials", "sync_state"):
+                rows = (
+                    await c.execute(
+                        # ORDER BY the jsonb itself, not by ``id``:
+                        # ``user_credentials`` is keyed on (user_id, kind) and
+                        # has no ``id`` column at all. jsonb has a total order
+                        # in Postgres, so this is deterministic on every table.
+                        text(
+                            f"SELECT to_jsonb(t.*) FROM {table} t "
+                            "WHERE user_id = :uid ORDER BY 1"
+                        ),
+                        {"uid": str(USER_B)},
+                    )
+                ).all()
+                snapshot[table] = [r[0] for r in rows]
+        return snapshot
+
+    before = await _snapshot_b()
+    assert all(before[t] for t in before), (
+        f"USER_B was not seeded on every table ({ {k: len(v) for k, v in before.items()} }); "
+        "an unchanged-rows assertion over empty tables proves nothing."
+    )
+
+    # ---- the fake sync: reads unfiltered, writes as whoever is bound ------
+    seen_by_sync: list[tuple[uuid.UUID | None, list[str]]] = []
+
+    async def fake_sync(payload, user_id=None, **_):  # noqa: ANN001, ANN202
+        bound = get_current_user_id()
+        async with get_session() as s:
+            # UNFILTERED on purpose: only auth.uid() + RLS can bound this.
+            visible = (await s.exec(select(Application))).all()
+            seen_by_sync.append((bound, sorted(a.company for a in visible)))
+            s.add(
+                Application(
+                    user_id=bound,
+                    company="CronMarker",
+                    position="scheduled",
+                    status=ApplicationStatus.APPLIED,
+                )
+            )
+            await s.commit()
+
+    monkeypatch.setattr(gmail_module, "gmail_sync", fake_sync)
+    monkeypatch.setattr(cron_module.settings, "vercel_cron_secret", cron_secret)
+    _set_allowlist(monkeypatch, USER_A)
+
+    # ---- run the real handler, gate included -----------------------------
+    # Called directly rather than through an ASGI client, deliberately: the
+    # leak probe below must observe the handler's OWN context, and a transport
+    # that copies the context would hide a ContextVar that was never reset.
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/cron/sync",
+            "headers": [(b"x-vercel-cron-secret", cron_secret.encode())],
+            "query_string": b"",
+        }
+    )
+    response = await cron_module.cron_sync(request)
+
+    assert response.errors == [], f"the scheduled run reported errors: {response.errors}"
+    assert (response.candidates, response.users_synced) == (1, 1)
+
+    # 1. The sync saw exactly USER_A's board — never USER_B's row.
+    assert seen_by_sync == [(USER_A, ["Acme"])], (
+        f"The sync ran as {seen_by_sync}. It must run bound to USER_A and see "
+        "only USER_A's applications; 'Hooli' appearing here is a cross-tenant "
+        "read, and a bound identity of USER_B is the identity-bleed defect."
+    )
+
+    # 2. USER_B's rows are byte-identical.
+    after = await _snapshot_b()
+    assert after == before, (
+        "USER_B's rows changed during a run that was only ever allowed to act "
+        "for USER_A. This is identity bleed: the binding is reaching work it "
+        "does not belong to."
+    )
+
+    # …and the marker really did land, on USER_A, so 'nothing changed' above
+    # is not just 'nothing happened'.
+    with user_id_scope(USER_A):
+        async with get_session() as s:
+            a_companies = sorted(
+                a.company for a in (await s.exec(select(Application))).all()
+            )
+    assert a_companies == ["Acme", "CronMarker"], (
+        f"USER_A's board is {a_companies}; the run wrote nothing, so the "
+        "unchanged-USER_B assertion above is vacuous."
+    )
+
+    # 3. THE LEAK PROBE. No identity may survive the run — not in the
+    #    ContextVar, and not on the pooled connection.
+    assert get_current_user_id() is None, (
+        "The RLS identity is still bound after the run. Under PgBouncer "
+        "transaction pooling this is how the next tenant inherits it."
+    )
+    async with get_session() as s:
+        leaked = (await s.exec(text("SELECT * FROM user_credentials"))).all()
+    assert leaked == [], (
+        f"An unscoped read after the run returned {len(leaked)} credential "
+        "row(s). The cron's identity outlived its transaction."
+    )
+
+    # NON-VACUITY of the probe: the table it reads is not empty. Without this,
+    # `[] == []` would hold just as well on a table with no rows in it.
+    async with pg_app.connect() as c:
+        real_rows = (
+            await c.execute(text("SELECT count(*) FROM user_credentials"))
+        ).scalar()
+    assert real_rows == 2, (
+        f"The leak probe read a table holding {real_rows} rows. It must hold "
+        "both users' credentials, or an empty result proves nothing."
     )

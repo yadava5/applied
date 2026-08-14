@@ -9,13 +9,26 @@ real secret gate, the real enumeration query against a real (SQLite) database.
 
 WHAT THIS FILE CANNOT PROVE
 ---------------------------
-That the enumeration returns anybody **in production**. ``user_credentials``
-carries FORCE'd Row-Level Security keyed on ``auth.uid()``, and a cron has no
-authenticated user, so on Postgres the query below matches no row. SQLite has
-no RLS, so these tests are green either way. The Postgres-backed proof lives in
-``tests/test_rls_postgres.py::test_cron_enumeration_sees_no_users_without_identity``
-and it asserts the *failure*, deliberately, so the gap is a recorded fact
-rather than a surprise. See ``jobtracker.cloud.cron.list_syncable_user_ids``.
+Anything about RLS. SQLite has no row-level security, so the per-user identity
+binding that makes the enumeration work on Postgres is inert here — these tests
+would be equally green with it removed. Two properties therefore have to be
+proven on a real Postgres and are, in
+``tests/test_rls_postgres.py``: that the configured allowlist really does
+enumerate under each user's own identity
+(``test_cron_enumeration_uses_the_configured_allowlist``), and that syncing one
+user neither touches another's rows nor leaves an identity bound afterwards
+(``test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity``).
+
+What this file *does* prove is the surrounding contract: the gate, the
+allowlist being the only thing that selects users, the per-user credential
+probe, ordering, bounding, and isolation of one user's failure.
+
+THE ALLOWLIST IS SET EXPLICITLY IN EVERY TEST THAT EXPECTS WORK
+---------------------------------------------------------------
+``settings.cron_sync_user_ids`` defaults to empty and empty means "sync
+nobody". So a test that seeds credentials and forgets ``_allow`` gets zero
+candidates — a *visible* red, not a silent pass. That is the intended
+direction: the fail-closed default cannot be forgotten into a green run.
 
 THE GATE MUST BE ABLE TO FAIL
 -----------------------------
@@ -190,6 +203,30 @@ async def _connect_gmail(user_id: uuid.UUID, *, last_sync_at: datetime | None) -
         await session.commit()
 
 
+def _allow(monkeypatch: pytest.MonkeyPatch, *user_ids: uuid.UUID) -> None:
+    """Configure the scheduled sync's allowlist for this test.
+
+    Patches the attribute on the ``settings`` object ``jobtracker.cloud.cron``
+    is actually holding, NOT the environment. Four sibling test modules call
+    ``importlib.reload(jobtracker.config)``, which rebinds
+    ``jobtracker.config.settings`` to a new object while every module that did
+    ``from jobtracker.config import settings`` keeps the old one — the trap
+    documented at length in ``test_rls_postgres._live_settings_instances``.
+    Reaching through ``cron_module.settings`` cannot pick the wrong instance.
+
+    Real ``uuid.UUID`` objects, deliberately: the connection module's GUC
+    listener binds an identity only for a ``uuid.UUID`` and silently binds
+    nothing for a ``str``, so a test that passed strings would exercise a code
+    path production can never take.
+    """
+
+    import jobtracker.cloud.cron as cron_module
+
+    for user_id in user_ids:
+        assert isinstance(user_id, uuid.UUID), "the allowlist holds UUIDs, not strings"
+    monkeypatch.setattr(cron_module.settings, "cron_sync_user_ids", list(user_ids))
+
+
 def _fake_sync(record: list[uuid.UUID], **behaviour: Any):
     """A stand-in for ``gmail_sync`` that records who it was asked to sync.
 
@@ -331,6 +368,7 @@ async def test_correct_secret_syncs_every_connected_user(
     import jobtracker.cloud.cron as cron_module
     import jobtracker.cloud.gmail_oauth as gmail_module
 
+    _allow(monkeypatch, USER_A, USER_B)
     await _connect_gmail(USER_A, last_sync_at=None)
     await _connect_gmail(USER_B, last_sync_at=datetime(2026, 8, 1, 12, 0, 0))
 
@@ -361,17 +399,25 @@ async def test_correct_secret_syncs_every_connected_user(
 async def test_users_without_a_mailbox_are_not_iterated(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only users with a connected Gmail credential are candidates.
+    """Being on the allowlist is not enough — the credential probe still runs.
 
-    Guards the enumeration against the lazy version of itself — "every user in
-    the database" — which would spend a Gmail call per run on people who have
-    never connected anything.
+    All three users are configured here. Only USER_A has Gmail linked, and only
+    USER_A may be iterated. The allowlist is a set of *identities the cron may
+    act as*, not an assertion that those users have a mailbox: without the
+    per-user probe, a configured user who never connected (or who
+    disconnected) would be handed to ``gmail_sync`` and would produce an
+    ``errors[]`` entry on every run, forever.
+
+    Also guards the enumeration against the lazy version of itself — "every
+    user in the database" — which would spend a Gmail call per run on people
+    who have never connected anything.
     """
 
     import jobtracker.cloud.gmail_oauth as gmail_module
     from jobtracker.database import get_session
     from jobtracker.database.models import Application, ApplicationStatus, UserCredential
 
+    _allow(monkeypatch, USER_A, USER_B, USER_C)
     await _connect_gmail(USER_A, last_sync_at=None)
     async with get_session() as session:
         # USER_B exists in the product but has no mailbox linked.
@@ -413,6 +459,7 @@ async def test_least_recently_synced_users_go_first(
     import jobtracker.cloud.gmail_oauth as gmail_module
 
     now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A, USER_B, USER_C)
     await _connect_gmail(USER_A, last_sync_at=now)
     await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=3))
     await _connect_gmail(USER_C, last_sync_at=None)  # never synced
@@ -445,6 +492,7 @@ async def test_one_users_timeout_does_not_abort_the_batch(
     monkeypatch.setattr(cron_module, "_CRON_PER_USER_TIMEOUT_SECONDS", 0.05)
 
     now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A, USER_B, USER_C)
     await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=3))
     await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=2))
     await _connect_gmail(USER_C, last_sync_at=now - timedelta(hours=1))
@@ -486,6 +534,7 @@ async def test_one_users_exception_does_not_abort_the_batch_and_leaks_nothing(
     import jobtracker.cloud.gmail_oauth as gmail_module
 
     now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A, USER_B)
     await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=2))
     await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=1))
 
@@ -517,6 +566,7 @@ async def test_batch_size_bounds_the_users_touched(
     import jobtracker.cloud.gmail_oauth as gmail_module
 
     now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A, USER_B, USER_C)
     await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=3))
     await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=2))
     await _connect_gmail(USER_C, last_sync_at=now - timedelta(hours=1))
@@ -551,6 +601,7 @@ async def test_run_deadline_stops_the_batch_before_the_function_limit(
     import jobtracker.cloud.gmail_oauth as gmail_module
 
     now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A, USER_B, USER_C)
     await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=3))
     await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=2))
     await _connect_gmail(USER_C, last_sync_at=now - timedelta(hours=1))
@@ -578,9 +629,17 @@ async def test_run_deadline_stops_the_batch_before_the_function_limit(
 
 
 async def test_return_shape_when_nobody_has_connected_a_mailbox(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The documented shape holds on the empty case too."""
+    """The documented shape holds on the empty case too.
+
+    The allowlist is deliberately POPULATED here while the database is empty,
+    so this exercises the case it names — "configured users, none of whom has
+    a mailbox" — rather than the trivially-empty allowlist, which is a
+    different branch and gets its own test below.
+    """
+
+    _allow(monkeypatch, USER_A, USER_B, USER_C)
 
     response = await client.post(
         "/cron/sync", headers={"x-vercel-cron-secret": CRON_SECRET}
@@ -609,6 +668,7 @@ async def test_the_sync_runs_under_the_users_own_rls_identity(
     import jobtracker.cloud.gmail_oauth as gmail_module
     from jobtracker.database.connection import get_current_user_id
 
+    _allow(monkeypatch, USER_A)
     await _connect_gmail(USER_A, last_sync_at=None)
 
     seen: list[uuid.UUID | None] = []
@@ -628,6 +688,222 @@ async def test_the_sync_runs_under_the_users_own_rls_identity(
 
     # …and it is released afterwards, so nothing inherits it.
     assert get_current_user_id() is None
+
+
+# =============================================================================
+# The allowlist: it is the ONLY thing that selects users, and empty is closed.
+# =============================================================================
+
+
+async def test_only_the_configured_users_are_synced(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connected mailbox is not sufficient — the id must be configured.
+
+    USER_B here is a fully syncable user: a Gmail credential row and a cursor,
+    identical to USER_A in every respect except membership of the allowlist.
+    That is what makes this test non-vacuous — if the allowlist were ignored
+    and the old "read every credential row" enumeration were still in place,
+    USER_B would be synced and this would go red.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A)
+    await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=2))
+    await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=1))
+
+    record: list[uuid.UUID] = []
+    monkeypatch.setattr(gmail_module, "gmail_sync", _fake_sync(record))
+
+    response = await client.post(
+        "/cron/sync", headers={"x-vercel-cron-secret": CRON_SECRET}
+    )
+    assert response.status_code == 200, response.text
+    assert record == [USER_A], (
+        f"The run synced {record}; only the configured USER_A may be touched."
+    )
+    assert response.json()["candidates"] == 1
+
+
+async def test_an_empty_allowlist_syncs_nobody(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unset or empty is FAIL-CLOSED: zero users, not every user.
+
+    The tempting reading of "no allowlist configured" is "no restriction",
+    which would make a deployment that forgot the env var walk every mailbox
+    in the database on a schedule. Two users with connected mailboxes are
+    seeded precisely so that "syncs nobody" cannot be true for the boring
+    reason.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch)  # deliberately empty
+    await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=2))
+    await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=1))
+
+    record: list[uuid.UUID] = []
+    monkeypatch.setattr(gmail_module, "gmail_sync", _fake_sync(record))
+
+    response = await client.post(
+        "/cron/sync", headers={"x-vercel-cron-secret": CRON_SECRET}
+    )
+    assert response.status_code == 200, response.text
+    assert record == [], "An empty allowlist synced somebody."
+    assert response.json()["candidates"] == 0
+
+
+async def test_the_handler_ignores_any_user_selecting_input(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CONFUSED DEPUTY. Nothing the caller sends may name whose mailbox is touched.
+
+    This route authenticates a *caller* (a shared secret) and then acts with
+    *other people's* authority. If any request input could select a user,
+    anyone holding the cron secret — or anything that leaked it, e.g. a log —
+    could sync an arbitrary tenant's mailbox on demand. The handler's only
+    parameter is the raw ``Request`` and the invariant is written on it; this
+    is the assertion that keeps it true.
+
+    NON-VACUITY: USER_B is a fully seeded, genuinely syncable user. Naming a
+    random UUID with no rows would pass forever regardless of the handler,
+    because there would be nothing to sync even if the input WERE honoured.
+    Here, if ``user_id`` were ever read, USER_B would appear in ``record``.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    now = datetime(2026, 8, 14, 12, 0, 0)
+    _allow(monkeypatch, USER_A)
+    await _connect_gmail(USER_A, last_sync_at=now - timedelta(hours=2))
+    await _connect_gmail(USER_B, last_sync_at=now - timedelta(hours=1))
+
+    record: list[uuid.UUID] = []
+    monkeypatch.setattr(gmail_module, "gmail_sync", _fake_sync(record))
+
+    # Every carrier a handler could plausibly read from, at once: query string,
+    # JSON body, and a header, under both spellings the codebase uses.
+    response = await client.post(
+        f"/cron/sync?user_id={USER_B}&user_ids={USER_B}",
+        headers={
+            "x-vercel-cron-secret": CRON_SECRET,
+            "x-user-id": str(USER_B),
+        },
+        json={"user_id": str(USER_B), "user_ids": [str(USER_B)]},
+    )
+    assert response.status_code == 200, response.text
+    assert record == [USER_A], (
+        f"The run synced {record}. Request input selected a user — this route "
+        "must sync exactly settings.cron_sync_user_ids and nothing else."
+    )
+
+    # The GET carrier Vercel actually uses, same probe.
+    record.clear()
+    getted = await client.get(
+        f"/cron/sync?user_id={USER_B}",
+        headers={"authorization": f"Bearer {CRON_SECRET}"},
+    )
+    assert getted.status_code == 200, getted.text
+    assert record == [USER_A]
+
+    # And the handler genuinely declares no user-selecting parameter, checked
+    # against the signature rather than inferred from behaviour — a handler
+    # that read `request.query_params` would still be caught above, but a
+    # signature assertion is what stops one being ADDED.
+    import inspect
+
+    import jobtracker.cloud.cron as cron_module
+
+    params = set(inspect.signature(cron_module.cron_sync).parameters)
+    assert params == {"request"}, (
+        f"cron_sync now takes {sorted(params)}. Any parameter beyond the raw "
+        "Request is a way for the caller to name a victim."
+    )
+
+
+# =============================================================================
+# The allowlist's env-var parse: real UUIDs, and junk stops the process.
+# =============================================================================
+
+
+def _settings_with_allowlist(monkeypatch: pytest.MonkeyPatch, raw: str):
+    """Build a fresh ``Settings`` from the env var, as a deployment would."""
+
+    from jobtracker.config import Settings
+
+    monkeypatch.setenv("JOBTRACKER_CRON_SYNC_USER_IDS", raw)
+    return Settings()
+
+
+def test_the_allowlist_parses_from_the_env_var_as_uuid_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Comma-separated env string → ``list[uuid.UUID]``, whitespace tolerated.
+
+    ``uuid.UUID`` and not ``str`` is the load-bearing part.
+    ``database.connection._apply_transaction_gucs`` binds the RLS identity only
+    for a ``uuid.UUID`` — for a string it takes an early return and sets no
+    claims at all, which RLS answers with zero rows and NO error. A list of
+    strings here would therefore produce exactly the silent "syncs nobody"
+    this whole change exists to end, so the element type is asserted directly.
+    """
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    settings = _settings_with_allowlist(monkeypatch, f" {a} , {b} ")
+
+    assert settings.cron_sync_user_ids == [a, b]
+    assert all(isinstance(x, uuid.UUID) for x in settings.cron_sync_user_ids), (
+        "Entries must be uuid.UUID objects; the GUC listener silently binds "
+        "nothing for a str."
+    )
+
+
+def test_an_unset_or_empty_allowlist_parses_to_the_fail_closed_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty string and unset both mean "nobody", not "everybody"."""
+
+    from jobtracker.config import Settings
+
+    assert _settings_with_allowlist(monkeypatch, "").cron_sync_user_ids == []
+    assert _settings_with_allowlist(monkeypatch, " , ").cron_sync_user_ids == []
+
+    monkeypatch.delenv("JOBTRACKER_CRON_SYNC_USER_IDS", raising=False)
+    assert Settings().cron_sync_user_ids == []
+
+
+def test_junk_in_the_allowlist_fails_loudly_and_does_not_echo_the_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed entry raises at config load — it must not degrade to silence.
+
+    The alternative failure mode is the dangerous one: a non-UUID entry that
+    survived parsing would reach the ContextVar as a ``str``, the GUC listener
+    would bind no identity for it, and the sync would read zero rows and report
+    success. Loud beats silent here even though a bad value stops the process.
+
+    The message names the failing INDEX and not the value: an operator can
+    paste anything at all into a Vercel environment-variable box, and this
+    error reaches the logs.
+    """
+
+    good = uuid.uuid4()
+    secret_shaped = "not-a-uuid-BUTsomethingSensitive"
+
+    with pytest.raises(Exception) as excinfo:  # pydantic ValidationError
+        _settings_with_allowlist(monkeypatch, f"{good},{secret_shaped}")
+
+    rendered = str(excinfo.value)
+    assert "entry #2" in rendered, (
+        f"The error must name which entry failed; got: {rendered}"
+    )
+    assert secret_shaped not in rendered, (
+        "The offending value was echoed into the error, which reaches the logs."
+    )
 
 
 # =============================================================================
