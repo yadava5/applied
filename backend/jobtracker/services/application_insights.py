@@ -2,6 +2,38 @@
 Application insight services (ghosting + follow-up suggestions).
 """
 
+# =============================================================================
+# UNSCOPED -- DESKTOP ONLY. DO NOT CALL THIS MODULE FROM THE CLOUD APP.
+# =============================================================================
+#
+# Every row read in this module ignores ``user_id``. Cited by symbol, not
+# line number, so the citation cannot go stale under an edit:
+# ``mark_ghosted_applications`` and ``get_follow_up_reminders`` filter
+# ``Application`` on ``status`` alone, sweeping every user's rows --
+# and the first of the two then *writes* to the rows it found.
+#
+# The tables it touches are multi-tenant: ``database/models.py`` gives each
+# entity a ``user_id`` FK to ``auth.users``. Reached from the cloud app, each
+# read here returns any row whose id a caller can enumerate, regardless of who
+# owns it -- the IDOR shape this project has already shipped once.
+#
+# It is safe today for exactly one reason: it is not mounted. The deployed ASGI
+# app is ``api/index.py``, which forces ``JOBTRACKER_DEPLOYMENT=cloud`` and
+# serves ``jobtracker.main_cloud``, whose route table holds only the user-scoped
+# routers under ``jobtracker.cloud``. That is a property of the deployment, not
+# of this file; nothing below defends itself.
+#
+# ``backend/tests/test_desktop_routers_are_not_mounted.py`` enforces it. It
+# builds the deployed app the way Vercel does and fails if any route in it
+# resolves to a handler defined under ``jobtracker.api`` or
+# ``jobtracker.services``.
+#
+# If you need one of these endpoints in the cloud, add a user-scoped twin under
+# ``jobtracker/cloud/`` (``jobtracker/cloud/applications.py`` is the worked
+# example) -- do not mount this one, and do not "just add a filter" here: this
+# surface is de-scoped (``apps/macos``, 2026-08-12) and its scoping is untested.
+# Issue #73.
+
 from __future__ import annotations
 
 import logging
