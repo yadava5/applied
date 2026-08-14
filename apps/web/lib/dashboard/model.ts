@@ -15,9 +15,10 @@ export const AUTO_FILE_GATE = 0.85;
 export const MACRO_F1 = 0.979;
 export const CI_FLOOR = 0.95;
 
-/** Default auto-file gate a user starts from before they tune it in Settings. */
-export const DEFAULT_GATE_PREFERENCE = AUTO_FILE_GATE;
-
-/** Bounds the classification-preference slider can move the gate between. */
-export const GATE_MIN = 0.5;
-export const GATE_MAX = 0.99;
+// `DEFAULT_GATE_PREFERENCE`, `GATE_MIN` and `GATE_MAX` used to live here, to
+// bound a Settings slider. The slider wrote a per-user threshold into Supabase
+// user metadata and no backend ever read it (#208), and the gate is ONE number for
+// every account — so a "default a user starts from before they tune it" and a
+// range to tune it across were both describing a product that does not exist.
+// `AUTO_FILE_GATE` above is the whole story; the per-message override is the
+// review queue.

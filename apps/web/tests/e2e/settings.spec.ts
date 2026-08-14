@@ -154,10 +154,22 @@ test.describe("settings (via the public /demo/settings twin)", () => {
       .toBe("dark");
   });
 
-  test("the classification gate shows a live consequence as it moves", async ({ page }) => {
+  // #208: the gate slider wrote a per-user threshold into Supabase user
+  // metadata and no backend ever read it, so this section now STATES the rule
+  // instead of
+  // pretending to set it. Both halves are asserted — the sentence is there,
+  // and no control that would imply the gate is movable came back.
+  test("classification states the filing rule, and offers no gate control", async ({ page }) => {
     await page.goto("/demo/settings");
-    await expect(page.getByText(/would wait for your review/i)).toBeVisible();
-    await expect(page.getByRole("slider", { name: /gate/i })).toBeVisible();
+    const section = page.getByRole("region", { name: /^classification$/i });
+    await expect(section.getByText(/only when both are true/i)).toBeVisible();
+    await expect(
+      section.getByText(/the employer can be named from the message itself/i),
+    ).toBeVisible();
+    await expect(section.getByText(/nothing is written/i)).toBeVisible();
+    await expect(section.getByRole("slider")).toHaveCount(0);
+    await expect(section.getByRole("button", { name: /save gate/i })).toHaveCount(0);
+    await expect(page.getByText(/would wait for your review/i)).toHaveCount(0);
   });
 
   test("a profile save runs the whole machine, reports Saved, and the report clears itself", async ({
@@ -250,11 +262,17 @@ test.describe("settings sections (signed in — needs a session)", () => {
     await group.getByRole("radio", { name: /dark/i }).click();
   });
 
-  test("the classification gate shows a live review count", async ({ page }) => {
-    await requireSession(page, "the classification gate's live review count, against real data");
+  // Was "the classification gate shows a live review count", guarded for "real
+  // data" — a check that could not fail as titled. The count it asserted was
+  // computed from DEMO_REVIEW_QUEUE unconditionally, so on the signed-in page
+  // it measured demo fixtures; the real data it claimed to read never reached
+  // the component. #208 deleted the count with the control.
+  test("classification states the filing rule on the signed-in page too", async ({ page }) => {
+    await requireSession(page, "the classification rule statement on the real /settings");
     await page.goto("/settings");
-    await expect(page.getByText(/would wait for your review/i)).toBeVisible();
-    await expect(page.getByRole("slider", { name: /gate/i })).toBeVisible();
+    const section = page.getByRole("region", { name: /^classification$/i });
+    await expect(section.getByText(/only when both are true/i)).toBeVisible();
+    await expect(section.getByRole("slider")).toHaveCount(0);
   });
 
   test("account deletion is gated behind a typed confirmation", async ({ page }) => {

@@ -11,7 +11,6 @@ import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
-import { DEFAULT_GATE_PREFERENCE } from "@/lib/dashboard/model";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
@@ -112,7 +111,10 @@ export default function DemoSettingsPage() {
               <AppearanceSection mode="demo" />
               <GmailConnectionCard result={fixtureGmail()} demo />
               <NotificationsSection mode="demo" initial={{ weekly: true, reviewAlerts: true }} />
-              <ClassificationSection mode="demo" initialGate={DEFAULT_GATE_PREFERENCE} />
+              {/* No `mode` and no props: since #208 removed the inert gate
+                  control this section writes nothing, so the twin and the
+                  signed-in page render the identical output by construction. */}
+              <ClassificationSection />
               <DataSection mode="demo" />
               <AccountSection mode="demo" email="demo@applied.example" />
             </div>

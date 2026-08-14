@@ -9,7 +9,6 @@ import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
-import { DEFAULT_GATE_PREFERENCE, GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
@@ -25,9 +24,9 @@ export const metadata: Metadata = {
  * caching is wrong in general — it is wrong HERE, and for a reason specific
  * to this page.
  *
- * Every section below seeds its own `useState` from a prop this server
- * component read out of the Supabase user's metadata (`initialName`,
- * `initial`, `initialGate`), saves through `settingsTransport.saveMetadata`,
+ * Every stateful section below seeds its own `useState` from a prop this
+ * server component read out of the Supabase user's metadata (`initialName`,
+ * `initial`), saves through `settingsTransport.saveMetadata`,
  * and — unlike every mutating surface on the dashboard and the inbox — does
  * NOT call `router.refresh()`. Today that is harmless, because leaving and
  * returning re-renders this page against fresh metadata. Under a 30-second
@@ -95,12 +94,6 @@ const TONE_CLASS: Record<"ok" | "warn" | "error", string> = {
   error: "border-reject/50 text-strong",
 };
 
-function clampGate(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return DEFAULT_GATE_PREFERENCE;
-  return Math.min(GATE_MAX, Math.max(GATE_MIN, n));
-}
-
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -150,7 +143,7 @@ export default async function SettingsPage({
           <AppearanceSection />
           <GmailConnectionCard result={gmailResult} />
           <NotificationsSection initial={readNotificationPrefs(meta)} />
-          <ClassificationSection initialGate={clampGate(meta.gate_threshold)} />
+          <ClassificationSection />
           <DataSection />
           <AccountSection email={email} />
         </div>

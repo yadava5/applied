@@ -1,14 +1,5 @@
-"use client";
-
-import { useMemo, useState } from "react";
-
-import { SaveStatus, SettingsSection } from "./SettingsSection";
-import { primaryBtnClass } from "@/components/ui/formStyles";
-import { GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
-import { DEMO_REVIEW_QUEUE } from "@/lib/demo/demoData";
-import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
-
-type SaveState = "idle" | "saving" | "saved" | "error";
+import { SettingsSection } from "./SettingsSection";
+import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 
 const CATEGORIES = [
   "applied",
@@ -22,36 +13,37 @@ const CATEGORIES = [
 ];
 
 /**
- * Classification preferences. The auto-file gate is the one knob with a
- * defensible user-facing meaning: below it, a verdict is held for human review
- * instead of auto-filed. The slider shows a LIVE, honest consequence — how many
- * of a fixed sample batch would be held at the chosen gate — and the value
- * persists to the user's metadata. (The hosted classifier still files at the
- * shipped 0.85 gate today; the caption that said so was roadmap hedging and
- * was removed with the rest of them in #200.)
+ * Classification: the rule the pipeline actually files by, and the categories
+ * it predicts.
+ *
+ * There is no gate control here, and the one that used to be here never
+ * worked. It wrote a per-user threshold into the user's Supabase metadata and
+ * nothing on the backend ever read it (#208) — `AUTO_FILE_GATE` is a module
+ * constant in `cloud/pipeline.py`, kept in lock-step with
+ * `classifier/hybrid.py` and `api/classification.py` (and now by
+ * `tests/test_confidence_gate_lockstep.py`, not by comment alone).
+ *
+ * Wiring it up would not have made its caption true either. "The rest
+ * auto-file" was false at every position of the slider, because clearing the
+ * gate is NECESSARY but not SUFFICIENT: `pipeline._qualifies_for_hard_row`
+ * also demands a lifecycle category that is not `follow_up` and an employer
+ * `resolve_employer` can name, and `collect_review_items` holds gated mail
+ * that cannot be placed against one application. And the slider's lower half
+ * was a regression dial — 0.85 is the fix for a named production defect ("far
+ * too eager, low precision… 21 fake rows"), so `GATE_MIN = 0.5` sold the user
+ * a way back into it.
+ *
+ * What replaces it is that rule, stated: written off `pipeline.py`'s precision
+ * gate (:500-503), `_qualifies_for_hard_row` and `collect_review_items`'
+ * docstring. The per-message override is the real control and it already
+ * exists — held mail keeps `classified_as = NEEDS_REVIEW` with the proposal in
+ * `suggested_category`, and a correction sets `user_corrected`, which
+ * `applications.py:976` refuses to overwrite on the next sync.
+ *
+ * Propless on purpose: the signed-in page and the `/demo/settings` twin now
+ * render literally the same output, so the two surfaces cannot drift.
  */
-export function ClassificationSection({
-  initialGate,
-  mode = "live",
-}: {
-  initialGate: number;
-  mode?: SettingsMode;
-}) {
-  const [gate, setGate] = useState(initialGate);
-  const [state, setState] = useState<SaveState>("idle");
-  const transport = settingsTransport(mode);
-
-  const held = useMemo(
-    () => DEMO_REVIEW_QUEUE.filter((v) => v.confidence < gate).length,
-    [gate],
-  );
-
-  async function save() {
-    setState("saving");
-    const { ok } = await transport.saveMetadata({ gate_threshold: gate });
-    setState(ok ? "saved" : "error");
-  }
-
+export function ClassificationSection() {
   return (
     <SettingsSection id="classification" title="Classification">
       <div className="space-y-5">
@@ -59,39 +51,17 @@ export function ClassificationSection({
           <div className="flex items-baseline justify-between">
             <span className="label-caps">auto-file gate</span>
             <span className="tabular font-mono text-lg font-semibold text-strong">
-              {gate.toFixed(2)}
+              {AUTO_FILE_GATE.toFixed(2)}
             </span>
           </div>
-          <input
-            type="range"
-            min={GATE_MIN}
-            max={GATE_MAX}
-            step={0.01}
-            value={gate}
-            onChange={(e) => {
-              setGate(Number(e.target.value));
-              setState("idle");
-            }}
-            aria-label="Auto-file confidence gate"
-            className="mt-2 w-full accent-[var(--viz-embeddings)]"
-          />
-          <p className="mt-2 text-[12px] leading-relaxed text-muted">
-            At <span className="tabular font-mono text-strong">{gate.toFixed(2)}</span>,{" "}
-            <span className="tabular font-mono text-review">{held}</span> of{" "}
-            {DEMO_REVIEW_QUEUE.length} sample messages would wait for your review; the rest auto-file.
+          <p className="mt-2 text-[13px] leading-relaxed text-muted">
+            Applied sets a status on its own only when both are true: the classifier is at least{" "}
+            <span className="tabular font-mono text-strong">{AUTO_FILE_GATE.toFixed(2)}</span>{" "}
+            confident, and the employer can be named from the message itself. Job mail that misses
+            either waits in your review queue with the category it proposed — you decide it, and
+            your decision is kept through every later sync. Mail it can&rsquo;t read as job-search
+            at all is left where it is; nothing is written.
           </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={save}
-            disabled={state === "saving" || gate === initialGate}
-            className={primaryBtnClass}
-          >
-            Save gate
-          </button>
-          <SaveStatus state={state} />
         </div>
 
         <div className="border-t border-line-soft pt-4">
