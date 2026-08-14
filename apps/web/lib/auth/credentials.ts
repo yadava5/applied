@@ -71,12 +71,33 @@ export function credentialProblem(
   password: string,
   minPassword: number,
 ): CredentialProblem | null {
+  return emailProblem(email) ?? passwordProblem(password, minPassword);
+}
+
+/** The first problem with this address, or null. */
+export function emailProblem(email: string): CredentialProblem | null {
   if (email.trim().length === 0) {
     return { field: "email", message: "Enter your email address." };
   }
   if (!isValidEmail(email)) {
     return { field: "email", message: "That doesn’t look like an email address." };
   }
+  return null;
+}
+
+/**
+ * The first problem with this password, or null.
+ *
+ * Split out of {@link credentialProblem} so that the page which sets a NEW
+ * password (`/reset-password`) enforces the same floor, with the same
+ * sentence, as `/signup` — one implementation rather than a second standard
+ * that drifts from the first. The password is never trimmed: whitespace is a
+ * legitimate part of a password.
+ */
+export function passwordProblem(
+  password: string,
+  minPassword: number,
+): CredentialProblem | null {
   if (password.length === 0) {
     return { field: "password", message: "Enter your password." };
   }
@@ -85,6 +106,37 @@ export function credentialProblem(
       field: "password",
       message: `Password must be at least ${minPassword} characters.`,
     };
+  }
+  return null;
+}
+
+/** Which field a set-a-new-password form is complaining about. */
+export type NewPasswordField = "password" | "confirmation";
+
+export interface NewPasswordProblem {
+  field: NewPasswordField;
+  message: string;
+}
+
+/**
+ * The first problem with a password someone is setting for the first time or
+ * replacing, or null when there is none.
+ *
+ * The floor is `SIGNUP_MIN_PASSWORD`, deliberately: this is a password being
+ * chosen, so the rule is the one `/signup` promises, not the lower one
+ * `/login` accepts so that older accounts can still sign in. The confirmation
+ * check is an ADDITIONAL rule layered on top — it is about typing, not about
+ * strength — so it runs only once the shared floor is satisfied and the form
+ * has a single problem to point at.
+ */
+export function newPasswordProblem(
+  password: string,
+  confirmation: string,
+): NewPasswordProblem | null {
+  const problem = passwordProblem(password, SIGNUP_MIN_PASSWORD);
+  if (problem) return { field: "password", message: problem.message };
+  if (confirmation !== password) {
+    return { field: "confirmation", message: "Those passwords don’t match." };
   }
   return null;
 }

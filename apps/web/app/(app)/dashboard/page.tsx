@@ -12,6 +12,11 @@ import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
+// Both derivations the notification prefs drive here are pure and now live in
+// `lib/dashboard/boardPrefs.ts` — a Server Component page cannot be imported
+// by `node --test`, so nothing about them was assertable while they sat in
+// this file (#216).
+import { buildSubtitle, reviewSlotFor } from "@/lib/dashboard/boardPrefs";
 import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
 import { toChangeRow } from "@/lib/dashboard/lastLookStore";
 import {
@@ -157,20 +162,6 @@ async function loadDashboard(): Promise<LoadState> {
       message: err instanceof Error ? err.message : "Unknown fetch error",
     };
   }
-}
-
-/** The page's one prose data line — its only rendering of the totals. The
- *  needs-review count is NOT here: the pulse's classifier signal owns it
- *  (with the deep link), so the number renders once. `weekly` folds the
- *  this-week count in — the pref's digest used to be its own banner line
- *  restating everything else this line already says. */
-function buildSubtitle(summary: PipelineSummary, weekly: boolean): string {
-  const thisWeek = weekly && summary.thisWeek > 0 ? ` · +${summary.thisWeek} this wk` : "";
-  // "open", not "in motion": the pulse already calls these same rows open,
-  // and an applied-and-waiting row is precisely the one NOT moving.
-  return `${summary.total} filed${thisWeek} · ${summary.inMotion} open · ${summary.offers} offer${
-    summary.offers === 1 ? "" : "s"
-  }`;
 }
 
 export default async function DashboardPage() {
@@ -446,8 +437,8 @@ export default async function DashboardPage() {
         total={state.total}
         stageTotals={stageCountsOf(state.summary)}
         pulse={{ needsReview: state.needsReview }}
-        beforeList={notifPrefs.reviewAlerts ? queue : null}
-        afterList={!notifPrefs.reviewAlerts ? queue : null}
+        beforeList={reviewSlotFor(notifPrefs) === "before" ? queue : null}
+        afterList={reviewSlotFor(notifPrefs) === "after" ? queue : null}
       />
     </section>
   );

@@ -13,8 +13,8 @@ runs.
 | Workflow | File | Trigger (paths) | Runtime | Gates |
 |---|---|---|---|---|
 | **Backend CI** | `backend-ci.yml` | `backend/**`, `scripts/install.sh`, `scripts/start_backend.sh`, itself | ubuntu-latest, Python 3.11 | pytest + classifier rules-v3 gate + hybrid v3 deterministic gate + cloud-smoke |
-| **Frontend CI** | `frontend-ci.yml` | `apps/web/**`, itself | ubuntu-latest, Node 20 + pnpm 10 | `pnpm install --frozen-lockfile` -> `typecheck` -> `lint` -> `build` |
-| **E2E CI** | `e2e-ci.yml` | `apps/web/**`, `backend/**`, `api/**`, itself | ubuntu-latest, Node 20 + Python 3.11 | Boots uvicorn + Next.js dev, runs Playwright chromium smoke, uploads `playwright-report` + `test-results` (videos, traces) as artifacts |
+| **Frontend CI** | `frontend-ci.yml` | `apps/web/**`, itself | ubuntu-latest, Node 22 + pnpm 10 | `pnpm install --frozen-lockfile` -> `typecheck` -> `lint` -> `test:unit` -> `build` |
+| **E2E CI** | `e2e-ci.yml` | `apps/web/**`, `backend/**`, `api/**`, itself | ubuntu-latest, Node 22 + Python 3.11 | Boots uvicorn + Next.js dev, runs Playwright chromium smoke, uploads `playwright-report` + `test-results` (videos, traces) as artifacts |
 | **macOS CI** | `macos-ci.yml` | `apps/macos/**`, `scripts/bundle.sh`, `scripts/generate_icons.sh`, itself | macos-latest, Xcode | `xcodebuild` Debug build of the SwiftUI app |
 | **ML monitoring (weekly)** | `ml-monitoring-weekly.yml` | cron | ubuntu-latest | Rolling classifier drift check |
 
@@ -60,15 +60,30 @@ stale job.
 
 `frontend-ci.yml` runs a single `build` job:
 
-- pnpm 10 via `pnpm/action-setup@v4`, Node 20 via `actions/setup-node@v4`
+- pnpm 10 via `pnpm/action-setup@v6`, Node 22 via `actions/setup-node@v7`
   with the built-in pnpm cache keyed off `apps/web/pnpm-lock.yaml`.
+- **The Node major is load-bearing.** `pnpm test:unit` runs `.mjs` test
+  files that import `.ts` modules directly, on the runtime's built-in
+  type stripping — Node **22.6 or newer** — plus the built-in glob
+  (21+). This job used to pin Node 20, where those imports raise
+  `ERR_UNKNOWN_FILE_EXTENSION`: the tests existed and no job ran them.
+  So "restoring consistency" by pinning back to 20 does not turn the
+  job red, it silently deletes a suite. Change the pin only together
+  with `test:unit`.
 - Placeholder public env vars (`NEXT_PUBLIC_SUPABASE_URL` etc.) are
   injected via `env:` because `apps/web/lib/env.ts` validates them at
   module import time with zod; missing values would crash `next build`.
 - Steps: `pnpm install --frozen-lockfile` ->
   `pnpm typecheck` (`tsc --noEmit`) ->
   `pnpm lint` (Next.js ESLint defaults, `--max-warnings 0`) ->
+  `pnpm test:unit` (`node --test`, the suite the Node pin exists for) ->
   `pnpm build` (Next.js 16 Turbopack production build).
+- `--max-warnings 0` lives on the `lint` script in
+  `apps/web/package.json`, not on the workflow step, so a local
+  `pnpm lint` returns the verdict CI returns. It promotes every
+  warn-level rule `eslint-config-next` ships, not only the six
+  `jsx-a11y/*`; before #179 the step ran bare `eslint`, which exits 0
+  on warnings, and the whole accessibility ruleset was decorative.
 
 Any non-zero exit fails the job. `--frozen-lockfile` ensures
 `pnpm-lock.yaml` drift (e.g. a hand-edited `package.json`) is caught.

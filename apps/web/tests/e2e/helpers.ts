@@ -67,3 +67,32 @@ export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 export const MOBILE_375 = { width: 375, height: 812 };
+
+/**
+ * WHERE the needs-review queue sits inside the worklist, read off the DOM
+ * rather than off the URL or the preference that asked for it.
+ *
+ * Presence alone would be a check that cannot fail: if a `before` request
+ * silently rendered in the `after` slot, an assertion about the queue existing
+ * would still pass and the two states would be one state measured twice. The
+ * queue and the stage groups are all direct <section> children of the pane, so
+ * their order settles it.
+ *
+ * Shared, not duplicated: `shell.spec.ts` drives the slots from the
+ * `/demo/shell?queue=` harness knob and this probe is what keeps that knob
+ * honest; `settings.spec.ts` drives them from a real notification PREFERENCE
+ * (#216) and needs the identical reading, or the two specs could disagree
+ * about what "before" means.
+ */
+export async function queuePlacement(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const pane = document.querySelector('[data-testid="worklist-pane"]');
+    if (!pane) return "no pane";
+    const kids = Array.from(pane.children);
+    const queue = kids.find((el) => el.id === "needs-classification");
+    if (!queue) return "absent";
+    const firstGroup = kids.find((el) => el.tagName === "SECTION" && el !== queue);
+    if (!firstGroup) return "no stage groups";
+    return kids.indexOf(queue) < kids.indexOf(firstGroup) ? "before" : "after";
+  });
+}

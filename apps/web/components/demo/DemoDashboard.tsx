@@ -9,7 +9,9 @@ import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
 import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { DemoFixturePill } from "@/components/shell/SessionControls";
+import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 import { todayISO } from "@/lib/dashboard/age";
+import { buildSubtitle, reviewSlotFor, type ReviewSlot } from "@/lib/dashboard/boardPrefs";
 import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
 import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
 import { isApplicationStatus } from "@/lib/dashboard/status";
@@ -96,9 +98,15 @@ export type DemoPipeline = "seed" | "early";
  * Named for the SLOT rather than for the Settings toggle that picks it on the
  * live page ("Needs review alerts"), because the harness that drives this is
  * measuring geometry: a test asking for `after` should not have to know that
- * the pref is off. The live mapping is one line, in the dashboard page.
+ * the pref is off. The pref → slot mapping is `reviewSlotFor`, shared with
+ * the signed-in dashboard page.
  */
-export type DemoReviewSlot = "before" | "after";
+export type DemoReviewSlot = ReviewSlot;
+
+/** The twin's default prefs — the live default for a never-set flag
+ *  (`readNotificationPrefs`), so an organic visitor sees exactly what a new
+ *  account sees: the queue under the rows, no this-week fold. */
+const DEFAULT_PREFS: NotificationPrefs = { weekly: false, reviewAlerts: false };
 
 /** The whole fixture store, dated against one day — board and pool alike. */
 function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
@@ -113,7 +121,8 @@ export function DemoDashboard({
   pipeline = "seed",
   variant = "flow",
   needsReview = 0,
-  reviewSlot = "after",
+  notifications = DEFAULT_PREFS,
+  reviewSlot,
   sessionEdge = false,
 }: {
   pipeline?: DemoPipeline;
@@ -129,10 +138,19 @@ export function DemoDashboard({
    *  see the mount comment below — so no queue renders. /demo/shell's
    *  `?review=N` harness knob is the one caller that sets it. */
   needsReview?: number;
-  /** Which slot that queue lands in. Defaults to `after` — the position the
-   *  live account actually renders (the "Needs review alerts" pref is off by
-   *  default, `lib/settings/notifications.ts`), and the one that produced the
-   *  escaped-`sr-only` document scroll #149 fixed. */
+  /** The twin's notification preferences — the demo's stand-in for the
+   *  Supabase user metadata the signed-in page reads, carried in a session
+   *  cookie the Settings twin writes (`lib/demo/notificationPrefs.ts`). Both
+   *  flags reach the board through the SAME two functions the live page uses,
+   *  `buildSubtitle` and `reviewSlotFor`, which is what makes the twin's e2e
+   *  a gate on the real wiring instead of a test of a parallel copy (#216). */
+  notifications?: NotificationPrefs;
+  /** A HARNESS OVERRIDE for the slot, and only that: /demo/shell's
+   *  `?queue=before|after` needs to measure a placement without owning a
+   *  preference. Unset — every organic visitor, and /demo — the slot comes
+   *  from `notifications` above, whose default is `after`: the position a
+   *  live account actually renders (the pref is off until turned on) and the
+   *  one that produced the escaped-`sr-only` document scroll #149 fixed. */
   reviewSlot?: DemoReviewSlot;
   /** Mounts the SIGNED-IN session edge on the header row instead of the demo
    *  pill — `signedIn` on, `trailing` unset, exactly what
@@ -376,9 +394,12 @@ export function DemoDashboard({
    *  passed below: on this twin the store IS the whole account, so there is no
    *  slice to disclose. */
   const ledgerRows = useMemo(() => snapshot.apps.map(toChangeRow), [snapshot.apps]);
-  const subtitle = `${summary.total} filed · ${summary.inMotion} open · ${summary.offers} offer${
-    summary.offers === 1 ? "" : "s"
-  }`;
+  // The signed-in page's own builder, not a copy of its format string — the
+  // twin used to hand-roll this line WITHOUT the `weekly` fold, so the one
+  // pref that is visible on a quiet board rendered on no testable surface.
+  const subtitle = buildSubtitle(summary, notifications.weekly);
+  /** The harness knob wins where it is set; otherwise the preference does. */
+  const slot = reviewSlot ?? reviewSlotFor(notifications);
 
   /** The held verdicts, dated against the SAME day the store is (`datedFor`,
    *  not a fresh clock read) — the queue prints `received_at` through
@@ -458,8 +479,8 @@ export function DemoDashboard({
         applications={snapshot.apps}
         pulse={{ needsReview }}
         transport={boardTransport}
-        beforeList={reviewSlot === "before" ? queue : null}
-        afterList={reviewSlot === "after" ? queue : null}
+        beforeList={slot === "before" ? queue : null}
+        afterList={slot === "after" ? queue : null}
       />
     </section>
   );

@@ -3,6 +3,8 @@
 import { useRef, useState } from "react";
 
 import { newPasswordProblem, type NewPasswordField } from "./accountSecurity";
+import { STATUS_LINGER_MS, TransientStatus, useLinger } from "./SettingsSection";
+import { Dialog } from "@/components/ui/Dialog";
 import { inputClass, primaryBtnClass, secondaryBtnClass, fieldLabelClass } from "@/components/ui/formStyles";
 import { SIGNUP_MIN_PASSWORD } from "@/lib/auth/credentials";
 import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
@@ -14,8 +16,15 @@ import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
  *
  * Only mounted when the account holds an `email` identity — ProfileSection
  * gates on the derived summary, so a Google-only account is never shown a
- * control that cannot work. Collapsed to one button until asked for: changing
- * a password is a rare task and the card should not carry two open forms.
+ * control that cannot work.
+ *
+ * The page holds ONE button; the form itself lives in the centred Dialog
+ * (#213). The old inline form grew two fields under the card and re-flowed
+ * everything beneath it, and its "Password updated" line persisted for the
+ * life of the mount. Now a sensitive action is separated from the settings it
+ * sits among the same way deletion always was, the card never changes shape,
+ * and success is reported by a status that clears itself after
+ * `STATUS_LINGER_MS`.
  *
  * Validation is the signup form's own standard (`SIGNUP_MIN_PASSWORD`,
  * imported and passed to the shared predicate — not a second floor), checked
@@ -31,6 +40,7 @@ export function ChangePasswordForm({ mode = "live" }: { mode?: SettingsMode }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updated, setUpdated] = useState(false);
+  const showUpdated = useLinger(updated, STATUS_LINGER_MS);
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLInputElement>(null);
   const transport = settingsTransport(mode);
@@ -66,80 +76,77 @@ export function ChangePasswordForm({ mode = "live" }: { mode?: SettingsMode }) {
     close();
   }
 
-  if (!open) {
-    return (
-      <div className="flex items-center gap-3 border-t border-line-soft pt-4">
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(true);
-            setUpdated(false);
-          }}
-          className={secondaryBtnClass}
-        >
-          Change password
-        </button>
-        {updated ? (
-          <span role="status" className="text-xs text-live">
-            Password updated
-          </span>
-        ) : null}
-      </div>
-    );
-  }
-
   return (
-    // `noValidate` + hand checks, the same trade both auth forms make: the
-    // app's own error copy and focus handling instead of browser bubbles.
-    <form onSubmit={submit} noValidate className="space-y-4 border-t border-line-soft pt-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-1">
-          <span className={fieldLabelClass}>new password</span>
-          <input
-            ref={passwordRef}
-            type="password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              setError(null);
-            }}
-            autoComplete="new-password"
-            className={inputClass}
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className={fieldLabelClass}>confirm new password</span>
-          <input
-            ref={confirmRef}
-            type="password"
-            value={confirm}
-            onChange={(e) => {
-              setConfirm(e.target.value);
-              setError(null);
-            }}
-            autoComplete="new-password"
-            className={inputClass}
-          />
-        </label>
-      </div>
+    <div className="flex items-center gap-3 border-t border-line-soft pt-4">
+      <button
+        type="button"
+        onClick={() => {
+          setUpdated(false);
+          setOpen(true);
+        }}
+        className={secondaryBtnClass}
+      >
+        Change password
+      </button>
+      <TransientStatus show={showUpdated} className="text-live">
+        Password updated
+      </TransientStatus>
 
-      {/* The one operational constraint; same sentence the signup hint makes. */}
-      <p className="text-xs text-dim">At least {SIGNUP_MIN_PASSWORD} characters.</p>
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Change password"
+        description={`At least ${SIGNUP_MIN_PASSWORD} characters — you’ll use it the next time you sign in.`}
+      >
+        {/* `noValidate` + hand checks, the same trade both auth forms make:
+            the app's own error copy and focus handling instead of browser
+            bubbles. Fields stack — a dialog reads top to bottom. */}
+        <form onSubmit={submit} noValidate className="space-y-4">
+          <label className="grid gap-1">
+            <span className={fieldLabelClass}>new password</span>
+            <input
+              ref={passwordRef}
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setError(null);
+              }}
+              autoComplete="new-password"
+              className={inputClass}
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className={fieldLabelClass}>confirm new password</span>
+            <input
+              ref={confirmRef}
+              type="password"
+              value={confirm}
+              onChange={(e) => {
+                setConfirm(e.target.value);
+                setError(null);
+              }}
+              autoComplete="new-password"
+              className={inputClass}
+            />
+          </label>
 
-      {error ? (
-        <p role="alert" className="text-xs text-reject-ink">
-          {error}
-        </p>
-      ) : null}
+          {error ? (
+            <p role="alert" className="text-xs text-reject-ink">
+              {error}
+            </p>
+          ) : null}
 
-      <div className="flex items-center gap-3">
-        <button type="submit" disabled={saving} className={primaryBtnClass}>
-          {saving ? "Updating…" : "Update password"}
-        </button>
-        <button type="button" onClick={close} className={secondaryBtnClass}>
-          Cancel
-        </button>
-      </div>
-    </form>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={close} className={secondaryBtnClass}>
+              Cancel
+            </button>
+            <button type="submit" disabled={saving} className={primaryBtnClass}>
+              {saving ? "Updating…" : "Update password"}
+            </button>
+          </div>
+        </form>
+      </Dialog>
+    </div>
   );
 }
