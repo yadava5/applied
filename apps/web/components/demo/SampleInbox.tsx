@@ -57,6 +57,32 @@ function LayerTrack({ trace }: { trace: TraceStep[] }) {
         const passed = step.state === "passed";
         return (
           <span key={step.layer} className="flex items-center">
+            {/* The unfired chips carry their quietness in the RAMP and the
+                border, never in alpha. They used to be `--text-dim` under
+                `opacity: 0.35`, which measured 2.12:1 composited over the row's
+                painted ground — 10px text less than half of AA's 4.5:1, on 17
+                chips across the eleven rows (applied#223). `dim` already sits
+                near the APCA Lc 60 floor for secondary text, so transparency on
+                top of it is what made it unreadable; #79 hit the same trap on
+                this component's expanded trace.
+
+                The passed/skipped ladder survives without the alpha because it
+                was never really carried by it: `→` versus a digit is a
+                CATEGORICAL difference, and the border does the rest — `--line`
+                for a layer that ran and handed off, `--line-soft` for one that
+                never ran. Measured on a production build at 1024, composited
+                over the real painted backdrop (rgb(15,16,17)): passed (`muted`)
+                10.88:1 and skipped (`dim`) 9.14:1, where they were 4.98:1 and
+                2.12:1. Do not copy the 10.7:1 / 8.98:1 pair from the expanded
+                trace below — those were measured at 11px over a different
+                ground, and the ground is half the number.
+
+                Both now out-contrast the fired chip's 5.56–7.42:1, and that is
+                deliberate rather than an oversight: the fired chip is the only
+                one with hue, a tinted plate and a glow, which is what makes it
+                read as primary. Luminance against a near-black ground is not
+                the channel doing that work — checked by rendering, not by
+                reasoning about the numbers. */}
             <span
               className="grid h-6 w-6 place-items-center rounded-md border font-mono text-[10px]"
               style={
@@ -67,10 +93,13 @@ function LayerTrack({ trace }: { trace: TraceStep[] }) {
                       background: `color-mix(in oklab, ${meta.color} 16%, transparent)`,
                       boxShadow: `0 0 14px -4px ${meta.color}`,
                     }
-                  : { borderColor: "var(--line)", color: "var(--text-dim)", opacity: passed ? 0.7 : 0.35 }
+                  : {
+                      borderColor: passed ? "var(--line)" : "var(--line-soft)",
+                      color: passed ? "var(--text-muted)" : "var(--text-dim)",
+                    }
               }
             >
-              {passed ? "→" : isFired ? meta.n : meta.n}
+              {passed ? "→" : meta.n}
             </span>
             {i < trace.length - 1 && (
               <span
