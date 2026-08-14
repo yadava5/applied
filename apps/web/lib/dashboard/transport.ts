@@ -16,6 +16,12 @@
  * `lib/dashboard/rowActions.ts`, so the which-endpoint-does-what guarantees
  * asserted in `tests/unit/row-actions.test.mjs` keep holding here.
  */
+import {
+  cacheDetail,
+  clearDetailCache,
+  invalidateDetail,
+  readCachedDetail,
+} from "@/lib/dashboard/detailCache";
 import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
 import { noteUserStageChange } from "@/lib/dashboard/lastLookStore";
 import {
@@ -105,16 +111,47 @@ export const liveBoardTransport: BoardTransport = {
     // ledger reporting the reader's own drag back at them. A failed write
     // changes nothing, so it folds nothing.
     if (result.ok) noteUserStageChange(LAST_LOOK_KEY, id, result.status ?? status);
+    if (result.ok) invalidateDetail(id);
     return result;
   },
-  setDeadline: (id, dueAt) => send(deadlineChangeRequest(id, dueAt)),
-  setRole: (id, role) => send(roleChangeRequest(id, role)),
-  dismiss: (id) => send(removeFromBoardRequest(id)),
-  deleteRow: (id) => send(permanentDeleteRequest(id)),
+  // Every row-scoped write drops that row's cached detail on success, so the
+  // next open re-reads a trail its own tab just changed. A failed write
+  // changed nothing and invalidates nothing.
+  async setDeadline(id, dueAt) {
+    const result = await send(deadlineChangeRequest(id, dueAt));
+    if (result.ok) invalidateDetail(id);
+    return result;
+  },
+  async setRole(id, role) {
+    const result = await send(roleChangeRequest(id, role));
+    if (result.ok) invalidateDetail(id);
+    return result;
+  },
+  async dismiss(id) {
+    const result = await send(removeFromBoardRequest(id));
+    if (result.ok) invalidateDetail(id);
+    return result;
+  },
+  async deleteRow(id) {
+    const result = await send(permanentDeleteRequest(id));
+    if (result.ok) invalidateDetail(id);
+    return result;
+  },
+  /**
+   * Served from the in-tab cache inside its 30 s window — reopening a row, or
+   * ↑/↓-traversing back to one, stops re-paying the measured 820–850 ms
+   * origin round-trip (#203 §7). See `lib/dashboard/detailCache.ts` for the
+   * trade and every invalidation path. The demo transport neither reads nor
+   * writes this cache; its fixture reads are already instant.
+   */
   async detail(id) {
+    const cached = readCachedDetail(id);
+    if (cached !== null) return { ok: true, body: cached };
     try {
       const res = await fetch(`/api/applications/${id}`, { cache: "no-store" });
-      return { ok: res.ok, body: await res.json().catch(() => ({})) };
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) cacheDetail(id, body);
+      return { ok: res.ok, body };
     } catch {
       return { ok: false, body: {} };
     }
@@ -131,6 +168,9 @@ export const liveSyncTransport: SyncTransport = {
         body: JSON.stringify(body),
         cache: "no-store",
       });
+      // A sync/rebuild can create rows and append to ANY application's
+      // verdict trail, so no per-id invalidation can be right here.
+      if (res.ok) clearDetailCache();
       return { ok: res.ok, status: res.status, body: await res.json().catch(() => ({})) };
     } catch {
       return { ok: false, status: 0, body: {} };
@@ -139,6 +179,7 @@ export const liveSyncTransport: SyncTransport = {
   async restore(id) {
     try {
       const res = await fetch(`/api/applications/${id}/restore`, { method: "POST" });
+      if (res.ok) invalidateDetail(id);
       return res.ok;
     } catch {
       return false;

@@ -324,10 +324,21 @@ export function ApplicationDetail({
    *  mounted. Read here, above the early return, because it is a hook. */
   const today = useLocalToday();
 
+  /** Monotonic ticket for {@link load}: only the LATEST requested card may
+   *  write the pane's state. Always latent (two in-flight opens could always
+   *  resolve out of order), it became likely once `transport.detail` started
+   *  answering from the in-tab cache (`lib/dashboard/detailCache`): traverse
+   *  from an uncached row to a cached one and the cached answer lands first —
+   *  then the stale network response would have painted row A's trail under
+   *  row B's header. */
+  const loadTicket = useRef(0);
+
   const load = useCallback(
     async (id: number) => {
+      const ticket = ++loadTicket.current;
       setState({ kind: "loading" });
       const res = await transport.detail(id);
+      if (ticket !== loadTicket.current) return; // a newer card owns the pane
       if (!res.ok) {
         setState({ kind: "error" });
         return;

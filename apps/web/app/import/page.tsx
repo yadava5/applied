@@ -36,6 +36,16 @@ export const metadata: Metadata = {
  * keeps its visible h1 (pinned by import.spec.ts).
  */
 export default async function ImportPage() {
+  // Fired BEFORE the auth read, not after it: the probe resolves its own
+  // token from the cookie jar (no network) and never throws, so nothing is
+  // gained by serialising it behind `getUser` — and that serial chain (auth
+  // round-trip, THEN backend round-trip) was this page's entire origin cost.
+  // Signed out, the floating promise resolves to `unauthenticated` without
+  // touching the network and is simply never awaited; `getGmailStatus`
+  // returns labelled failures rather than rejecting, so it cannot become an
+  // unhandled rejection (same contract the dashboard's floated review-queue
+  // read relies on).
+  const gmailPromise = getGmailStatus();
   const supabase = await createClient();
   const {
     data: { user },
@@ -49,7 +59,7 @@ export default async function ImportPage() {
     // the old static subtitle said "no Gmail connection" beside a rail saying
     // "Gmail connected" (#198). Anything stateful here now derives from the
     // same probe the rail reads.
-    const gmail = await getGmailStatus();
+    const gmail = await gmailPromise;
     const gmailKnownDisconnected =
       gmail.kind === "ok" && !(gmail.status.configured && gmail.status.connected);
 

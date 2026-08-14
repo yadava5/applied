@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { summarizeSignIn } from "@/components/settings/accountSecurity";
 import { AccountSection } from "@/components/settings/AccountSection";
@@ -20,39 +21,38 @@ export const metadata: Metadata = {
 };
 
 /**
- * This route opts OUT of the router cache `next.config.ts` turns on for every
- * other page (`experimental.staleTimes.dynamic = 30`). Nothing about the
- * caching is wrong in general — it is wrong HERE, and for a reason specific
- * to this page.
+ * This route PARTICIPATES in the router cache `next.config.ts` turns on
+ * (`experimental.staleTimes.dynamic = 30`). It used to pin itself out with
+ * `unstable_dynamicStaleTime = 0`, which made Settings the one tab that could
+ * never arrive warm: every dashboard→settings click re-paid the full origin
+ * render — 700–1150 ms of measured server time (#203) — even ten seconds
+ * after the last one. That pin is gone, deliberately, and these are the
+ * invariants that replace it (every one checked against the sections as they
+ * are TODAY, not as the old comment remembered them):
  *
- * Every stateful section below seeds its own `useState` from a prop this
- * server component read out of the Supabase user's metadata (`initialName`,
- * `initial`). Under a 30-second cache, a stale entry for THIS route is a
- * just-saved setting reverting in front of you: toggle the weekly digest on,
- * click Dashboard, click Settings, and the toggle sits there visibly switched
- * back off until the window expires. That is a bug, not a stale number.
- *
- * `initialGate` used to be in that list. It is gone with the inert gate
- * control (#208) — the section is propless now and writes nothing at all.
- *
- * `0` means "never reuse", and it is a distinct value rather than a fallback —
- * Next's sentinel for "the page said nothing" is `-1`
- * (`UnknownDynamicStaleTime`), so this genuinely pins the route.
- *
- * The other half of the fix — the sections calling `router.refresh()` after a
- * successful save, so the DASHBOARD stops serving a cached payload with the
- * old placement — landed with #216: `NotificationsSection` and
- * `ProfileSection` publish now. (`ClassificationSection` did too, until #208
- * removed the control it was publishing; it writes nothing at all today.)
- * This pin stays anyway, and
- * deliberately. It costs one cheap render of a route nobody navigates in a
- * loop, and it is the backstop for the case the refreshes cannot cover: a
- * section that writes metadata WITHOUT refreshing (the next one added, or the
- * OAuth round-trip that returns to `/settings?gmail=connected` from outside
- * the router entirely). The failure it prevents is a control lying about its
- * own state, which is the worst kind here.
+ *   - Every metadata writer on this page publishes. `ProfileSection` and
+ *     `NotificationsSection` call `router.refresh()` on a successful save
+ *     (#216/#231), which bumps Next's GLOBAL segment-cache version — a stale
+ *     entry of THIS route cannot survive its own save. The save→navigate→
+ *     return cycle is executable e2e: `tests/e2e/settings.spec.ts`, "without
+ *     waiting out the router cache".
+ *   - The remaining sections write no server-rendered state at all:
+ *     `ClassificationSection` is propless and writes nothing (#208),
+ *     `AppearanceSection` is a device-local theme, `DataSection` only reads,
+ *     `AccountSection` leaves the route on both of its actions (sign-out
+ *     refreshes then replaces, delete replaces), and `ChangePasswordForm`
+ *     changes a credential nothing on this page renders.
+ *   - The Gmail round-trips cannot meet a cached entry: OAuth re-enters at
+ *     `/settings?gmail=connected` from OUTSIDE the router (a document load —
+ *     a fresh router cache by construction), and disconnect is a native form
+ *     POST whose redirect is likewise a document load.
+ *   - The case the pin stood guard for — the NEXT section added writing
+ *     metadata without publishing — is guarded by a gate that can actually
+ *     fail instead of a standing per-navigation tax:
+ *     `tests/unit/settings-publish-contract.test.mjs` rejects any
+ *     `components/settings` source that calls `saveMetadata` without also
+ *     calling `router.refresh`.
  */
-export const unstable_dynamicStaleTime = 0;
 
 /**
  * The real product Settings surface: Profile, Appearance, the Gmail
@@ -103,6 +103,38 @@ const TONE_CLASS: Record<"ok" | "warn" | "error", string> = {
   error: "border-reject/50 text-strong",
 };
 
+/**
+ * The page's ONE backend read, isolated behind Suspense so the rest of
+ * Settings — which needs only the request-memoized Supabase user — streams to
+ * the client without waiting on the FastAPI round-trip (measured at 700–1150
+ * ms of the page's origin time, #203). The card fills in when the status
+ * answers; until then the fallback below holds a same-shape plate so the
+ * sections after it don't jump when it lands.
+ */
+async function LiveGmailCard() {
+  const result = await getGmailStatus();
+  return <GmailConnectionCard result={result} />;
+}
+
+/** Same border/surface/padding as the card it stands in for. */
+function GmailCardFallback() {
+  return (
+    <div
+      id="gmail"
+      aria-busy="true"
+      aria-label="Checking your Gmail connection"
+      className="scroll-mt-16 rounded-xl border border-line-soft bg-surface p-5 lg:scroll-mt-4"
+    >
+      <div className="h-6 w-24 animate-pulse rounded bg-surface-2" />
+      <div className="mt-2 h-4 w-full max-w-sm animate-pulse rounded bg-surface-2" />
+      <div className="mt-4 h-4 w-40 animate-pulse rounded bg-surface-2" />
+      <div className="mt-6 border-t border-line-soft pt-4">
+        <div className="h-4 w-56 animate-pulse rounded bg-surface-2" />
+      </div>
+    </div>
+  );
+}
+
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -111,7 +143,10 @@ export default async function SettingsPage({
   const { gmail: flag } = await searchParams;
   const banner = flag ? FLAG_BANNERS[flag] : undefined;
 
-  const [gmailResult, user] = await Promise.all([getGmailStatus(), getCurrentUser()]);
+  // The Gmail status is NOT awaited here — `LiveGmailCard` reads it behind
+  // its Suspense boundary, so this render blocks only on the (memoized,
+  // shared-with-the-layout) Supabase user read.
+  const user = await getCurrentUser();
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
   const email = user?.email ?? "";
   const displayName = typeof meta.display_name === "string" ? meta.display_name : "";
@@ -150,7 +185,9 @@ export default async function SettingsPage({
             signIn={summarizeSignIn(user)}
           />
           <AppearanceSection />
-          <GmailConnectionCard result={gmailResult} />
+          <Suspense fallback={<GmailCardFallback />}>
+            <LiveGmailCard />
+          </Suspense>
           <NotificationsSection initial={readNotificationPrefs(meta)} />
           <ClassificationSection />
           <DataSection />
