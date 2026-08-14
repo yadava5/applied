@@ -24,7 +24,7 @@
  *   by zod at first access.
  */
 import { createApiClient, type ApiClient } from "@/lib/api/client";
-import { serverEnv } from "@/lib/env";
+import { serverEnv } from "@/lib/env.server";
 import { getAccessToken } from "@/lib/supabase/auth";
 
 /**

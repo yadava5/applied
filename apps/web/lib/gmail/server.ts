@@ -34,7 +34,7 @@
  * re-parses the body defensively — but moving these onto the typed client is
  * a follow-up worth doing.
  */
-import { serverEnv } from "@/lib/env";
+import { serverEnv } from "@/lib/env.server";
 import type { InboxPage, PipelineAnalysis } from "@/lib/gmail/types";
 import { getAccessToken } from "@/lib/supabase/auth";
 

@@ -174,6 +174,28 @@ function buildSubtitle(summary: PipelineSummary, weekly: boolean): string {
 }
 
 export default async function DashboardPage() {
+  /**
+   * Started here, awaited below — the queue used to be fetched only AFTER the
+   * three calls below had all resolved, because the `needsReview > 0` gate it
+   * sits behind is read off the summary. Two ~850 ms backend calls in series
+   * where one wait would do: measured at 1090 ms for the dashboard's own RSC
+   * render (issue #203 §8).
+   *
+   * This is NOT free, and calling it a pure win would be wrong. The gate is
+   * what made it serial, so the only way to overlap the two is to issue the
+   * request before its answer is known — which means a user with nothing in
+   * review now pays one extra backend call they did not make before. It costs
+   * them no wall-clock time (it runs inside the same wait), but it takes the
+   * dashboard's fan-out from 3 concurrent calls to 4, and issue #203 §4
+   * measured CONCURRENCY, not idleness, as what triggers a cold start. 4 is
+   * well inside the fan-out that came back clean there (3 → zero cold starts;
+   * 8 → three), so the trade is taken deliberately rather than assumed away.
+   *
+   * Floating it until the gate is read is safe because `loadReviewQueue` never
+   * rejects — every failure path returns `[]` — so an un-awaited promise
+   * cannot become an unhandled rejection.
+   */
+  const reviewQueue = loadReviewQueue();
   const [state, gmailStatus, user] = await Promise.all([
     loadDashboard(),
     getGmailStatus(),
@@ -279,7 +301,7 @@ export default async function DashboardPage() {
     if (connected) {
       // Zero *filed* applications does not mean zero work: the classifier may
       // be holding low-confidence lifecycle mail for review.
-      const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
+      const reviewItems = state.needsReview > 0 ? await reviewQueue : [];
       const reviewNote =
         state.needsReview > 0
           ? ` · ${state.needsReview} ${state.needsReview === 1 ? "needs" : "need"} review`
@@ -348,7 +370,7 @@ export default async function DashboardPage() {
   const subtitle = buildSubtitle(summary, notifPrefs.weekly);
 
   // Only fetch the queue's rows when the summary says there is something to show.
-  const reviewItems = state.needsReview > 0 ? await loadReviewQueue() : [];
+  const reviewItems = state.needsReview > 0 ? await reviewQueue : [];
 
   const queue =
     reviewItems.length > 0 ? (
