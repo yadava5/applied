@@ -94,6 +94,13 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(() =>
     humaniseAuthError(searchParams.get("error")),
   );
+  /**
+   * `/reset-password` sends the browser here with `?reset=success` after
+   * `updateUser({ password })` succeeded and every session was revoked. It is
+   * a flag, not a message: nothing about the account, and nothing that came
+   * back from Supabase, travels in the URL.
+   */
+  const justReset = searchParams.get("reset") === "success";
   /** Which field the current error is about — null for a server-side one. */
   const [invalidField, setInvalidField] = useState<CredentialField | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -145,6 +152,15 @@ function LoginForm() {
 
   return (
     <div className="space-y-4">
+      {justReset ? (
+        <p
+          role="status"
+          className="rounded-md border border-live/40 bg-live/10 px-3 py-2 text-sm text-live"
+        >
+          Your password has been changed. Sign in with your new one.
+        </p>
+      ) : null}
+
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div className="space-y-1">
           <label htmlFor="email" className="block text-sm font-medium">
@@ -169,9 +185,17 @@ function LoginForm() {
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="password" className="block text-sm font-medium">
-            Password
-          </label>
+          <div className="flex items-baseline justify-between gap-3">
+            <label htmlFor="password" className="block text-sm font-medium">
+              Password
+            </label>
+            <Link
+              href="/forgot-password"
+              className="text-sm text-muted underline underline-offset-4 hover:text-strong"
+            >
+              Forgot your password?
+            </Link>
+          </div>
           <input
             id="password"
             ref={passwordRef}

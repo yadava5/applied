@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { type SignInSummary } from "./accountSecurity";
@@ -37,12 +38,18 @@ export function ProfileSection({
   const [state, setState] = useState<SaveState>("idle");
   const dirty = name.trim() !== initialName.trim();
   const transport = settingsTransport(mode);
+  const router = useRouter();
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setState("saving");
     const { ok } = await transport.saveMetadata({ display_name: name.trim() });
     setState(ok ? "saved" : "error");
+    // #216, same reason as `NotificationsSection.persist` — see the note
+    // there. This name is server-rendered into the shell (the rail's account
+    // block, the TopBar), and every one of those routes can be sitting in the
+    // 30 s router cache when the save lands.
+    if (ok) router.refresh();
   }
 
   return (
