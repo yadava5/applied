@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { LastSynced } from "@/components/gmail/LastSynced";
 import type { RailGmailData } from "@/lib/shell/rail";
@@ -65,7 +66,20 @@ import type { RailGmailData } from "@/lib/shell/rail";
  */
 
 type FooterProps = {
-  gmail: RailGmailData | null;
+  /**
+   * The connection line, as a SLOT rather than as data.
+   *
+   * The identity row above it needs nothing from the backend — the layout
+   * already holds the user — so it renders at once, while the Gmail probe is
+   * still in flight. Only this line waits, inside its own Suspense boundary
+   * (`AppShell`). Taking a `ReactNode` here rather than a promise keeps that
+   * boundary on the server side of the client/server line: `Sidebar` is a
+   * Client Component, and a resolved element passes through it untouched.
+   *
+   * `/demo/shell` passes a fully-resolved `<ConnectionLine>` with fixture data,
+   * so the twin renders the identical markup with no boundary at all.
+   */
+  connection: ReactNode;
   /** Display name; `null` falls back to the email so the row is never blank. */
   userName?: string | null;
   userEmail: string | null;
@@ -89,7 +103,19 @@ function distinctMailbox(gmailEmail: string | null, userEmail: string | null): s
 const ROW =
   "group flex rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2 focus-accent";
 
-function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail: string | null }) {
+export function ConnectionLine({
+  gmail,
+  userEmail,
+}: {
+  gmail: RailGmailData | null;
+  userEmail: string | null;
+}) {
+  // An unknown probe is not a disconnection — the line is omitted entirely
+  // rather than guessed. Hoisted in here from the caller's `gmail ? … : null`
+  // so that whatever the Suspense boundary resolves to is always this one
+  // component, including when the honest answer is "render nothing".
+  if (!gmail) return null;
+
   if (!gmail.connected) {
     return (
       <Link
@@ -161,7 +187,38 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
   );
 }
 
-export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
+/**
+ * What stands in the connection line's place while the probe is in flight.
+ *
+ * ONE line box of the line's own type (`h-[1lh]` on an 11px block), inside the
+ * same `ROW` padding the real line wears — so the reserve and the settled
+ * server render are the same height by construction, and the rail's anchored
+ * footer does not jump when the answer lands. That is the identical device
+ * `SinceLastLook`'s `ArrivalLine` uses, and for the identical reason: a band
+ * that changes height after first paint moved a whole board there and made a
+ * real click land on the wrong element.
+ *
+ * It matches ONE line because that is what the server pass of the settled line
+ * actually renders — `LastSynced` deliberately renders EMPTY until the browser
+ * knows `now`, so the second line has no height on the server either.
+ *
+ * Two states are honestly shorter than this: an unknown probe renders nothing
+ * at all, and those collapse the reserve when they land. That is the accepted
+ * trade — reserving the common case and collapsing on the rare one beats
+ * pushing the footer down on every load.
+ */
+function ConnectionReserve() {
+  return (
+    <div className={`${ROW} items-start gap-2`} aria-hidden="true">
+      <span className="mt-[0.3rem] h-[0.45rem] w-[0.45rem] shrink-0 rounded-full bg-line-soft" />
+      <span className="block h-[1lh] flex-1 text-[11px]" />
+    </div>
+  );
+}
+
+export { ConnectionReserve };
+
+export function RailFooter({ connection, userName = null, userEmail }: FooterProps) {
   // The avatar initial follows whatever the row prints, so the two agree.
   const identity = userName ?? userEmail;
   const initial = identity?.charAt(0).toUpperCase() ?? "·";
@@ -198,7 +255,7 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
           {identity ?? "account"}
         </span>
       </Link>
-      {gmail ? <ConnectionLine gmail={gmail} userEmail={userEmail} /> : null}
+      {connection}
     </div>
   );
 }
