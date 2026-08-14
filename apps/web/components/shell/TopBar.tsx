@@ -8,6 +8,7 @@ import { Menu, X } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import { isNavItemActive, navItems } from "./nav";
+import { NavLink } from "./NavLink";
 import { DemoFixturePill, SignOutButton } from "./SessionControls";
 
 type TopBarProps = {
@@ -141,12 +142,18 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
                 const active = isNavItemActive(pathname, item.href);
                 return (
                   <li key={item.href}>
-                    <Link
+                    <NavLink
                       href={item.href}
-                      aria-current={active ? "page" : undefined}
+                      active={active}
                       onClick={() => setMenuOpen(false)}
+                      /* `relative` so the pending accent has a containing block
+                         — the desktop item already carried it for the active
+                         bar, this one did not. An `absolute` child with no
+                         positioned ancestor escapes to the nearest one it can
+                         find, which is how a stray `sr-only` once made the whole
+                         document scroll (#149). */
                       className={cn(
-                        "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
+                        "relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
                         active
                           ? "bg-surface-2 text-strong"
                           : "text-muted hover:bg-surface-2 hover:text-strong",
@@ -157,7 +164,7 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
                         aria-hidden="true"
                       />
                       {item.label}
-                    </Link>
+                    </NavLink>
                   </li>
                 );
               })}

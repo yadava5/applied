@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/shell/AppShell";
+import { loadRailData } from "@/lib/shell/rail";
 import { getCurrentUser, userDisplayName } from "@/lib/supabase/auth";
 
 /**
@@ -21,6 +22,32 @@ export default async function ProtectedLayout({
 }: {
   children: ReactNode;
 }) {
+  /**
+   * Started here, awaited inside `AppShell` — the same shape the dashboard uses
+   * for its review queue, and for the same reason. These are TWO INDEPENDENT
+   * NETWORK ROUND-TRIPS that were running strictly in series: this layout
+   * awaited `getCurrentUser()` (which `@supabase/ssr` verifies against the
+   * Supabase Auth server — a real request, not a cookie decode), and only then
+   * did `AppShell` await `loadRailData()` (an HTTP call to the FastAPI backend
+   * for the Gmail connection state). Nothing forced that order. The rail's
+   * probe reaches the backend with the access token from
+   * `getAccessToken()` → `getCurrentSession()`, which decodes the cookie and
+   * makes no network call at all, so it never needed the verified user.
+   *
+   * Overlapping them is safe on the auth side as well as the timing side: the
+   * probe is scoped by the caller's own JWT, `loadRailData` never throws (every
+   * failure degrades to `null` and the rail omits the chip), and the redirect
+   * below still happens before any of it can reach the screen. A signed-out
+   * request now issues one backend call whose answer is discarded — the proxy
+   * redirects those before they arrive here, so it should be unreachable, and
+   * it costs a user with no session nothing they can see.
+   *
+   * This does NOT unblock `children`: `AppShell` still awaits the rail before
+   * returning the tree the page renders inside, so the page's own data still
+   * starts after the rail's answer. Streaming the rail into a Suspense boundary
+   * would fix that too, and it is the larger, separately-verified change.
+   */
+  const rail = loadRailData();
   const user = await getCurrentUser();
 
   if (!user) {
@@ -28,7 +55,7 @@ export default async function ProtectedLayout({
   }
 
   return (
-    <AppShell userEmail={user.email ?? null} userName={userDisplayName(user)}>
+    <AppShell rail={rail} userEmail={user.email ?? null} userName={userDisplayName(user)}>
       {children}
     </AppShell>
   );
