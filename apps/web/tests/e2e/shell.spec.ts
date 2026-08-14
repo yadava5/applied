@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+import { requireSession } from "./session";
 
 /**
  * E2E for the authed app shell: the sidebar active-state indicator, the mobile
@@ -10,21 +11,13 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  *
  * The shell only renders for an authenticated Supabase session, which this
  * suite can't stand up (see `connect.spec.ts` / `beta.spec.ts` for the same
- * constraint). So the shell assertions below `test.skip` themselves when a
- * visit to `/dashboard` bounces to `/login` — they become real coverage the
- * moment the suite runs against a session (locally or in a seeded CI), and
- * never turn red in the meantime. The signed-OUT half of each dual-mode split
- * IS driven here, since that is publicly reachable.
+ * constraint). So the shell assertions below go through `requireSession()` from
+ * `./session`: without a session they skip — but LOUDLY, under one greppable
+ * token that CI counts into the job summary — and with `E2E_REQUIRE_SESSION=1`
+ * they FAIL rather than skip. See that file, and issue #188, for why the old
+ * silent form was the problem. The signed-OUT half of each dual-mode split IS
+ * driven here, since that is publicly reachable.
  */
-
-/** Skip the current test unless a real session lets us reach the app shell. */
-async function requireSession(page: Page): Promise<void> {
-  await page.goto("/dashboard");
-  test.skip(
-    /\/login/.test(page.url()),
-    "no authenticated Supabase session in this environment — shell is unreachable",
-  );
-}
 
 /**
  * The shell's GEOMETRY, measured on /demo/shell — a public fixture route that
@@ -783,6 +776,13 @@ test.describe("app shell — signed out (public)", () => {
  * assertion below sitting on top of it. They stay as written, unweakened, and
  * are the stronger check the day a seeded session exists.
  *
+ * What the skip no longer is, since #188, is quiet. Each one names the coverage
+ * it costs, carries the shared `E2E_NO_SESSION_SKIP (#188):` token so the class
+ * is one grep, and is counted into the CI job summary — and setting
+ * `E2E_REQUIRE_SESSION=1` makes every one of them a hard failure instead. The
+ * hole is not closed (that needs a seeded account, which is the owner's call);
+ * it is merely impossible to stop noticing.
+ *
  * The one invariant that could be lifted out of the session gate has been:
  * `tests/unit/aria-current.test.mjs` enforces "only the primary nav claims
  * aria-current='page'" against the source tree, and that DOES run on every PR.
@@ -794,7 +794,7 @@ test.describe("app shell — signed in (needs a session)", () => {
     { path: "/settings", label: "Settings" },
   ]) {
     test(`the sidebar marks "${label}" as the current page on ${path}`, async ({ page }) => {
-      await requireSession(page);
+      await requireSession(page, `the sidebar's active-state indicator on ${path}`);
       await page.goto(path);
 
       const current = page.locator('a[aria-current="page"]');
@@ -807,7 +807,7 @@ test.describe("app shell — signed in (needs a session)", () => {
   test("/import renders inside the shell with 'Import mail' active, and nav can leave it", async ({
     page,
   }) => {
-    await requireSession(page);
+    await requireSession(page, "/import rendering inside the app shell, with a way back out");
     await page.goto("/import");
 
     // The app sidebar is present and "Import mail" is the current item.
@@ -829,7 +829,7 @@ test.describe("app shell — signed in (needs a session)", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await requireSession(page);
+    await requireSession(page, "/privacy rendering inside the shell, scrolling in the pane (#155)");
     await page.goto("/privacy");
 
     // The app chrome is here, and the page's standalone header/footer are not.
@@ -881,7 +881,7 @@ test.describe("app shell — signed in (needs a session)", () => {
     page,
   }) => {
     await page.setViewportSize(MOBILE_375);
-    await requireSession(page);
+    await requireSession(page, "the mobile hamburger revealing the primary nav");
     await page.goto("/dashboard");
 
     // The desktop sidebar is hidden; the menu button is the way in.

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+import { requireSession } from "./session";
 
 /**
  * E2E for "File an application".
@@ -10,6 +11,11 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * identical component on `/dashboard` (posts to the API) and on the public
  * `/demo` (demo mode: validated, confirmed, never saved) — so the reveal,
  * layout, validation, and submit UX are all exercisable here without a session.
+ *
+ * The one thing only a session can prove — that the DASHBOARD's button opens
+ * that same dialog — sits behind `requireSession()` at the bottom. Without a
+ * session it skips under the shared `E2E_NO_SESSION_SKIP (#188):` token, which
+ * CI counts into the job summary; with `E2E_REQUIRE_SESSION=1` it fails instead.
  */
 
 async function openForm(page: Page) {
@@ -82,8 +88,7 @@ test.describe("file an application (via /demo)", () => {
 
 test.describe("file an application (signed in — needs a session)", () => {
   test("the dashboard button opens the same modal", async ({ page }) => {
-    await page.goto("/dashboard");
-    test.skip(/\/login/.test(page.url()), "no session — /dashboard is unreachable");
+    await requireSession(page, "the real dashboard's file-application button opening the modal");
     await page.getByRole("button", { name: /file an application/i }).first().click();
     await expect(page.getByRole("dialog")).toBeVisible();
   });
