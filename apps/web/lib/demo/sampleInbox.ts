@@ -18,7 +18,33 @@
  *
  * Distribution (the real cascade at work): 8 answered by rules, 1 by the
  * embedding layer, 2 held below the 0.85 gate for human review.
+ *
+ * Arrival dates are RELATIVE, for the reason `demoData.ts` and `reviewQueue.ts`
+ * already are: they were absolute (`2026-07-15` down to `2026-07-08`) and so
+ * aged a day per day against a clock that kept moving — by the time applied#80
+ * was filed the freshest mail here was 28 days old. Each seed carries
+ * `receivedDaysAgo`, resolved against one "now" per render, which preserves the
+ * fixtures' SHAPE (the 0,0,1,1,2,3,4,4,5,6,7 spread is exactly the spacing the
+ * original calendar days had) while the days themselves stay current.
+ *
+ * Re-anchoring cannot invalidate a verdict, which is the specific worry #80
+ * raised: `classifyWithRules(subject, body)` takes no date, and neither did the
+ * offline pipeline that produced the layer-2/3 traces. Nothing here is
+ * classified BY its arrival day, so moving that day changes no category, no
+ * confidence and no trace. The page's claim that these are the real
+ * classifier's output stays true.
+ *
+ * A function rather than a resolved constant, the same rule the other two
+ * fixture families follow: frozen at module load it would bake the process's
+ * start day in. One caveat stated plainly, because it is not fixed here —
+ * `/demo/inbox` is a STATIC route, so a module-level resolution would bake the
+ * BUILD day. Nothing renders `receivedAt` today, so there is no hydration
+ * mismatch to have; if it is ever displayed, that route needs
+ * `dynamic = "force-dynamic"` the way `/demo` already does, and the comment at
+ * the top of `app/demo/page.tsx` explains why nothing weaker works.
  */
+import { todayISO } from "@/lib/dashboard/age";
+import { daysBefore } from "@/lib/demo/demoData";
 
 export type LayerId = "rules" | "embeddings" | "setfit";
 export type LayerState = "answered" | "passed" | "skipped";
@@ -54,22 +80,29 @@ export interface SampleEmail {
   subject: string;
   /** Full body — also fed to the live layer-1 recompute. */
   body: string;
-  /** ISO date the sample "arrived". */
+  /** Calendar day the sample "arrived" — resolved from the seed against the
+   *  render's "today". */
   receivedAt: string;
   verdict: SampleVerdict;
 }
 
+/** A fixture email before its date is resolved: an age, not a calendar day. */
+type SampleEmailSeed = Omit<SampleEmail, "receivedAt"> & {
+  /** Whole days before "today" this message arrived. */
+  receivedDaysAgo: number;
+};
+
 /** The confidence gate: below this, nothing is auto-filed. */
 export const GATE = 0.85;
 
-export const SAMPLE_EMAILS: SampleEmail[] = [
+const SAMPLE_SEEDS: SampleEmailSeed[] = [
   {
     id: "s01",
     senderName: "Cedar Labs Recruiting",
     senderEmail: "no-reply@greenhouse.io",
     subject: "We received your application",
     body: "Thank you for applying to the Software Engineer, Platform role at Cedar Labs. Your application has been received and our team is reviewing it. We will be in touch if there is a match.",
-    receivedAt: "2026-07-15",
+    receivedDaysAgo: 0,
     verdict: {
       category: "applied",
       confidence: 0.95,
@@ -88,7 +121,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "no-reply@myworkday.com",
     subject: "Action required: complete your application",
     body: "Your application for the Full-Stack Engineer role is incomplete. Please complete the additional steps and submit your application to be considered. Additional information is required before we can review your application.",
-    receivedAt: "2026-07-15",
+    receivedDaysAgo: 0,
     verdict: {
       category: "pending_application",
       confidence: 0.95,
@@ -107,7 +140,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "talent@harboranalytics.com",
     subject: "Next step: online assessment (90 minutes)",
     body: "As the next step in your application, please complete the HackerRank coding assessment linked below within 5 days. It should take about 90 minutes and covers data structures and SQL.",
-    receivedAt: "2026-07-14",
+    receivedDaysAgo: 1,
     verdict: {
       category: "assessment",
       confidence: 0.95,
@@ -126,7 +159,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "recruiting@junipercloud.io",
     subject: "Let's schedule your technical interview",
     body: "We enjoyed reviewing your application and would like to schedule a 45-minute technical interview next week. Please use the Calendly link to book a time that works for you to meet the hiring team.",
-    receivedAt: "2026-07-14",
+    receivedDaysAgo: 1,
     verdict: {
       category: "interview",
       confidence: 0.95,
@@ -145,7 +178,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "coordinator@meridianrobotics.com",
     subject: "Your onsite loop",
     body: "Your onsite loop is being arranged. We will confirm the schedule and the panel shortly so you can plan your day.",
-    receivedAt: "2026-07-13",
+    receivedDaysAgo: 2,
     verdict: {
       category: "interview",
       confidence: 0.8772,
@@ -164,7 +197,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "people@beaconhealth.io",
     subject: "Congratulations — offer details inside",
     body: "We are pleased to extend an offer for the ML Engineer position. The compensation package, base salary, and your start date are in the attached offer letter. Please confirm and sign to accept the offer.",
-    receivedAt: "2026-07-12",
+    receivedDaysAgo: 3,
     verdict: {
       category: "offer",
       confidence: 0.95,
@@ -183,7 +216,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "careers@atlasfreight.com",
     subject: "Update on your application to Atlas Freight",
     body: "Thank you for your interest in the Software Engineer II role. After careful consideration we have decided to move forward with other candidates at this time. We appreciate the time you invested and wish you the best in your job search.",
-    receivedAt: "2026-07-11",
+    receivedDaysAgo: 4,
     verdict: {
       category: "rejection",
       confidence: 0.9,
@@ -202,7 +235,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "sam@cedarlabs.com",
     subject: "Following up on your application status",
     body: "Hi Ayush, I wanted to follow up on your application for the Platform Engineer role and let you know it is still under review with the hiring committee. I will reach out with an update on your candidacy by the end of the week.",
-    receivedAt: "2026-07-11",
+    receivedDaysAgo: 4,
     verdict: {
       category: "follow_up",
       confidence: 0.95,
@@ -221,7 +254,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "no-reply@lever.co",
     subject: "Thanks for applying to Quarry Data",
     body: "Thanks for applying to the Data Engineer position at Quarry Data. We have received your application and it is now in review. You will hear from us about next steps soon.",
-    receivedAt: "2026-07-10",
+    receivedDaysAgo: 5,
     verdict: {
       category: "applied",
       confidence: 0.9,
@@ -240,7 +273,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "dana@northstar.dev",
     subject: "Interested in chatting about a Backend Engineer role?",
     body: "Hi Ayush, I came across your background and think you could be a strong fit for a Backend Engineer opening on our team. Would you be open to a quick call to learn more about your experience?",
-    receivedAt: "2026-07-09",
+    receivedDaysAgo: 6,
     verdict: {
       category: "needs_review",
       confidence: 0.1922,
@@ -259,7 +292,7 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
     senderEmail: "maya@earlystage.xyz",
     subject: "Quick question about your background",
     body: "Hi Ayush, I had a quick question about your background and some of the projects you have worked on recently. Do you have a few minutes this week?",
-    receivedAt: "2026-07-08",
+    receivedDaysAgo: 7,
     verdict: {
       category: "needs_review",
       confidence: 0.1947,
@@ -274,6 +307,14 @@ export const SAMPLE_EMAILS: SampleEmail[] = [
   },
 ];
 
+/** The sample inbox's eleven emails, dated against one `today`. */
+export function sampleEmails(today: string = todayISO()): SampleEmail[] {
+  return SAMPLE_SEEDS.map(({ receivedDaysAgo, ...email }) => ({
+    ...email,
+    receivedAt: daysBefore(today, receivedDaysAgo),
+  }));
+}
+
 export interface SampleInboxStats {
   scanned: number;
   autoClassified: number;
@@ -281,8 +322,16 @@ export interface SampleInboxStats {
   autoPct: number;
 }
 
-/** Stats derived from the verdicts above — computed, never hardcoded. */
-export function sampleInboxStats(emails: SampleEmail[] = SAMPLE_EMAILS): SampleInboxStats {
+/**
+ * Stats derived from the verdicts above — computed, never hardcoded.
+ *
+ * Defaults to the SEEDS rather than to `sampleEmails()`: every number here
+ * counts verdicts, and no verdict depends on a date, so resolving eleven
+ * calendar days to throw them away would be work in service of nothing.
+ */
+export function sampleInboxStats(
+  emails: Pick<SampleEmail, "verdict">[] = SAMPLE_SEEDS,
+): SampleInboxStats {
   const scanned = emails.length;
   const heldForReview = emails.filter((e) => e.verdict.needsReview).length;
   const autoClassified = scanned - heldForReview;

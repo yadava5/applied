@@ -811,11 +811,24 @@ export function PipelineBoard({
           </span>
           <span className="tabular ml-auto font-mono text-[11px] text-strong">{count}</span>
         </span>
-        {/* The meter: this stage's share of the loaded rows. Only drawn when
-            there is a share to draw — the 0 beside the label already states
-            emptiness, and on the real account's shape (every row in one
-            stage) an empty track under each of four zeros was five bars
-            representing nothing. */}
+        {/* The meter: this stage's count as a fraction of the BIGGEST stage's
+            (`count / spineMax`), not of the total — the largest stage always
+            draws a full bar. It is a relative-size comparison between stages,
+            so the only honest reading is "this stage against the fullest one".
+            Stated exactly because the previous wording said "share of the
+            loaded rows", which is a share of the TOTAL and is not what this
+            computes: applied#78 was that same mismatch with a percentage label
+            attached, and the comment is what would talk the next person into
+            re-adding one. Nothing on screen asserts the wrong number today —
+            the label beside it prints a raw count and never a percentage — so
+            this stays a relative bar deliberately. If a share-of-total reading
+            is ever wanted, it needs `spineCounts` summed rather than maxed,
+            AND a label that says which of the two it means.
+
+            Only drawn when the count is non-zero — the 0 beside the label
+            already states emptiness, and on the real account's shape (every
+            row in one stage) an empty track under each of four zeros was five
+            bars representing nothing. */}
         {count > 0 ? (
           <span
             className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
