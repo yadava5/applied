@@ -49,6 +49,10 @@ import { cn } from "@/lib/utils";
  *   · purge is best-effort, 501 when the
  *     service-role key is missing           — app/api/account/delete/route.ts:31-56
  *   · nothing expires                       — no `crons` in either vercel.json
+ *   · on-device import never uploads        — components/import/ImportMail.tsx ("use client":
+ *     the file is read with File.text() and classified by lib/import/parseMail.ts +
+ *     lib/demo/rulesLayer.ts in the tab; no fetch on that path, no storage write —
+ *     results are React state only)
  *
  * Apostrophes are the typographic character, never `&apos;`. A JSX text node
  * containing an entity loses its LEADING space in this toolchain — the defect
@@ -70,7 +74,13 @@ export const metadata: Metadata = {
     "What Applied reads from your Gmail, what it stores, where it runs, and how to delete it. One scope — gmail.readonly — metadata only, no message bodies, and no third-party model ever sees your mail.",
 };
 
-const UPDATED = "12 August 2026";
+const UPDATED = "14 August 2026";
+/**
+ * The database measurements in §4 were taken on this date and stay pinned to
+ * it — bumping `UPDATED` must never silently re-date a measurement that was
+ * not re-run.
+ */
+const MEASURED = "12 August 2026";
 const CONTACT = "aesh.03.23@gmail.com";
 const GOOGLE_PERMISSIONS = "https://myaccount.google.com/permissions";
 const GOOGLE_USER_DATA_POLICY = "https://developers.google.com/terms/api-services-user-data-policy";
@@ -85,6 +95,7 @@ const SECTIONS = [
   { id: "retention", title: "How long it is kept" },
   { id: "delete", title: "Disconnecting and deleting" },
   { id: "training", title: "Training, and what is forbidden" },
+  { id: "on-device", title: "On-device import" },
   { id: "changes", title: "Changes, and how to reach a human" },
 ] as const;
 
@@ -291,7 +302,7 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
                 <Field name="received_at">when it arrived</Field>
                 <Field name="body_snippet">
                   Gmail’s own preview of the message. The column stops at 500 characters;
-                  measured in the production database on {UPDATED}, the snippets held there
+                  measured in the production database on {MEASURED}, the snippets held there
                   averaged 193 characters and the longest was 201.
                 </Field>
                 <Field name="classified_as">
@@ -333,7 +344,7 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
 
             <p className="mt-3 text-[0.8125rem] leading-relaxed text-dim">
               Those three stay empty because section 3 is true: the hosted app asks for metadata
-              and never fetches a body. Checked against the production database on {UPDATED} —{" "}
+              and never fetches a body. Checked against the production database on {MEASURED} —{" "}
               <M>body_text</M> was empty on every row in it.
             </p>
 
@@ -464,7 +475,24 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
             </P>
           </Section>
 
-          <Section id="changes" n={10} title="Changes, and how to reach a human">
+          <Section id="on-device" n={10} title="On-device import">
+            <P>
+              The import page (<M>/import</M>) is the other way to try Applied on your mail, and
+              it is the inverse of everything above: nothing reaches a server at all. You hand it
+              a mail export — a Google Takeout <M>.mbox</M>, a single <M>.eml</M>, or a JSON
+              batch — and the file is read and classified entirely in your browser tab. The page
+              makes no network request with your file, and it works signed out, with no Google
+              connection.
+            </P>
+            <P>
+              What runs there is the classifier’s fast first pass — deterministic rules, in the
+              tab. The machine-learning model does not run on that page. Nothing is written down
+              anywhere: the results live in the tab’s memory and are gone when you clear them or
+              close the tab.
+            </P>
+          </Section>
+
+          <Section id="changes" n={11} title="Changes, and how to reach a human">
             <P>
               If this policy changes, the date at the top changes with it, and the reason is a
               change in the code — this page is maintained as a description of the system, not as a
