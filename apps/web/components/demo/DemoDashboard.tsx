@@ -279,6 +279,29 @@ export function DemoDashboard({
         });
         return { ok: true };
       },
+      async setRole(id, role) {
+        await delay(300);
+        const s = store.current;
+        commit({
+          ...s,
+          apps: s.apps.map((app) =>
+            app.id === id
+              ? // The live backend's exact semantics (issue #72): the endpoint
+                // normalises, so a blank draft clears both the title and the
+                // claim on it, and anything else is the user's word —
+                // `position_source: "user"`, which no sync overwrites.
+                {
+                  ...app,
+                  position: role ?? "",
+                  position_source: role === null ? null : ("user" as const),
+                }
+              : app,
+          ),
+          // Naming a role is a correction — a rebuild keeps the row.
+          touched: s.touched.includes(id) ? s.touched : [...s.touched, id],
+        });
+        return { ok: true };
+      },
       async dismiss(id) {
         await delay(300);
         const s = store.current;

@@ -32,7 +32,7 @@ from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, or_
 from sqlalchemy import update as sa_update
@@ -68,6 +68,29 @@ _NO_ROLE = ""
 # newer message may legitimately supersede it.
 DUE_FROM_USER = "user"
 DUE_FROM_MAIL = "mail"
+
+# Who set the ROLE. Issue #72: nothing in the Gmail path can ever supply one —
+# ``format=metadata`` means no body is fetched and the ATS acknowledgement
+# subjects that are fetched name the employer ("Thanks for applying to
+# Supabase"), so ``_role_from_subject`` returns None for all three of the
+# owner's real production subjects. ``position`` is therefore permanently "" on
+# every auto-filed row, and the honest fix is to let the user type it.
+#
+# NULL means the sync owns the field, which is the state of every row that
+# exists today; ``user`` means a human typed it and the sync must not argue.
+# There is deliberately no ``mail`` counterpart — unlike ``due_source``, the
+# only question anyone asks of this column is "may the sync write here?", and a
+# value written at four creation sites to answer a question nobody asks is four
+# places to drift.
+#
+# Only the ROLE is claimed. See :func:`record_role_correction` for why this is a
+# column of its own rather than the ``source`` flip a status correction uses.
+ROLE_FROM_USER = "user"
+
+# A job title is a line of text, not a document. Nothing downstream truncates
+# ``position`` and the column is unbounded TEXT, so the ceiling lives at the
+# write.
+_MAX_ROLE_LEN = 200
 
 # ``Application.source`` doubles as an origin+ownership tag so a re-sync can
 # safely REPLACE the Gmail-derived pipeline while preserving anything the user
@@ -315,6 +338,12 @@ class CloudApplicationResponse(BaseModel):
     # together — a deadline with no origin would be a claim nobody made.
     due_at: str | None = None
     due_source: str | None = None
+    # Who named the role: ``user`` when a human typed it, null when the field is
+    # still the sync's. Sent for the same reason ``due_source`` is — the UI has
+    # to be able to say whose word a value is without guessing, and an empty
+    # role is a permanent fact about Gmail-sourced rows (issue #72) rather than
+    # something still loading.
+    position_source: str | None = None
 
 
 class ApplicationStatusUpdate(BaseModel):
@@ -332,6 +361,22 @@ class ApplicationDeadlineUpdate(BaseModel):
     """
 
     due_at: datetime | None = None
+
+
+class ApplicationRoleUpdate(BaseModel):
+    """Body for setting or clearing the role a human typed (issue #72).
+
+    ``None`` — or a string that is only whitespace — clears it. Same rule as the
+    deadline: set and clear are one decision, and here clearing matters more,
+    because once the field is the user's the sync may no longer correct a typo
+    in it.
+
+    ``max_length`` is on the wire rather than in the handler so a title that is
+    plainly a paste of a whole job description is refused by the schema, and
+    says so in the OpenAPI document the web app's bindings are generated from.
+    """
+
+    role: str | None = Field(default=None, max_length=_MAX_ROLE_LEN)
 
 
 class StatusVocabularyResponse(BaseModel):
@@ -1341,16 +1386,29 @@ async def upsert_applications_for_user(
                     and pipeline.matches_company_token(existing.company, r.company_token)
                 ):
                     existing.company = r.company_display
-            if r.role and (
-                not existing.position
-                # An auto row's role belongs to the sync, exactly as its company
-                # does. Filling only an EMPTY position means every improvement to
-                # role extraction reaches new rows and never the ones already on
-                # the board: "Path Robotics · interest in the Software Engineer,
-                # C#" survived the fix that stopped producing it, because the
-                # wrong string was already stored. A user-corrected or manual row
-                # keeps whatever the human wrote.
-                or (_is_auto_row(existing.source) and r.role != existing.position)
+            if (
+                r.role
+                # A role the USER typed is theirs, and no extraction result
+                # supersedes it — including the one that finally starts working.
+                # This is checked first and separately from the clauses below
+                # because it must also beat the ``not existing.position`` case:
+                # clearing a typed role sets ``position_source`` back to NULL, so
+                # a row that is both empty AND still marked as the user's cannot
+                # occur, and if it ever did the human's silence would still be an
+                # answer. See :func:`record_role_correction`.
+                and existing.position_source != ROLE_FROM_USER
+                and (
+                    not existing.position
+                    # An auto row's role belongs to the sync, exactly as its
+                    # company does. Filling only an EMPTY position means every
+                    # improvement to role extraction reaches new rows and never
+                    # the ones already on the board: "Path Robotics · interest in
+                    # the Software Engineer, C#" survived the fix that stopped
+                    # producing it, because the wrong string was already stored.
+                    # A user-corrected or manual row keeps whatever the human
+                    # wrote.
+                    or (_is_auto_row(existing.source) and r.role != existing.position)
+                )
             ):
                 existing.position = r.role
             # A deadline the mail states refreshes one the mail previously
@@ -2078,6 +2136,75 @@ async def record_status_correction(
     return app
 
 
+async def record_role_correction(
+    session,
+    user_id: uuid.UUID,
+    application_id: int,
+    role: str | None,
+) -> Application | None:
+    """Store the role a human typed, and stop the sync writing over it.
+
+    Issue #72. Nothing in the Gmail path can produce a role: bodies are never
+    fetched and the subjects that are name the company. So ``position`` is ""
+    forever on an auto-filed row, and this is the only way one ever gets a title.
+
+    Set and clear are one call, as they are for a deadline. ``None`` — or
+    anything that is only whitespace — CLEARS both the value and the claim, and
+    clearing is not optional: a UI that offers "type a role" without "I was
+    wrong, forget it" leaves a typo permanently welded to the row, since the sync
+    is now forbidden from correcting it. The empty string is stored rather than
+    NULL because ``position`` is NOT NULL and "" is what the whole codebase
+    already means by "no role" (:data:`_NO_ROLE`).
+
+    WHY A COLUMN AND NOT THE ``source`` FLIP
+    ----------------------------------------
+    :func:`record_status_correction` makes a status stick by moving the row from
+    ``gmail`` to ``gmail_user``, and that would have been free here. It is wrong
+    here. ``_is_auto_row(source)`` gates far more than the role inside
+    :func:`upsert_applications_for_user`: the status advance, the
+    reopen-after-rejection evidence and the employer-name restyle all sit in the
+    same ``if``. Flipping it would mean that typing a job title silently stops
+    every future rejection, interview and offer email from moving that card —
+    trading the missing field for a much worse one, in a way the user could not
+    possibly predict from the action they took. ``position_source`` claims one
+    field and leaves the row the sync's in every other respect.
+
+    WHAT IT DELIBERATELY DOES NOT TOUCH
+    -----------------------------------
+    ``role_token``. That is the MAIL's identity key: ``_pick_application``
+    matches a cluster's normalised title against it, and treats a row with
+    ``req_id`` and ``role_token`` both NULL as adoptable in place. Writing the
+    user's phrasing into it would change which future clusters resolve onto this
+    row — one that would have been adopted now finds no unidentified row and
+    mints a second card beside it — and since the Gmail path extracts no role
+    for these rows, a token in the user's words could never be matched by
+    anything anyway. Risk without benefit. It stays NULL, and the sync stays
+    free to identify the row from real mail evidence later.
+
+    Scoped to the owner; returns the updated row, or None when it is not theirs.
+    """
+
+    app = (
+        await session.exec(
+            select(Application).where(
+                Application.user_id == user_id, Application.id == application_id
+            )
+        )
+    ).first()
+    if app is None:
+        return None
+
+    cleaned = (role or "").strip()
+    app.position = cleaned or _NO_ROLE
+    app.position_source = ROLE_FROM_USER if cleaned else None
+    app.updated_at = datetime.utcnow()
+    session.add(app)
+
+    await session.commit()
+    await session.refresh(app)
+    return app
+
+
 async def dismiss_application(
     session, user_id: uuid.UUID, application_id: int
 ) -> bool:
@@ -2735,6 +2862,9 @@ def _serialize(
         dismissed_reason=app.dismissed_reason,
         due_at=app.due_at.isoformat() if app.due_at else None,
         due_source=app.due_source if app.due_at else None,
+        # Gated on the value being present, exactly as ``due_source`` is: a
+        # provenance for a field holding nothing is a claim about nothing.
+        position_source=app.position_source if app.position else None,
     )
 
 
@@ -3427,7 +3557,11 @@ async def split_application_cloud(
 
         app.req_id = retained.req_id
         app.role_token = retained.role_token
-        if retained.role:
+        # A title the user typed outlives the split, for the same reason it
+        # outlives a sync: the mail is being re-read, and the mail is the source
+        # that never had a role in it. The identity above is still re-derived —
+        # that IS what the split is for, and it is the mail's to own.
+        if retained.role and app.position_source != ROLE_FROM_USER:
             app.position = retained.role
         # The retained row's stage is recomputed from its OWN remaining mail for
         # exactly the reason each sibling's is. A merged row is ``rejected`` if
@@ -3547,6 +3681,35 @@ async def set_application_deadline_cloud(
         await session.commit()
         await session.refresh(app)
         return _serialize(app)
+
+
+@router.put("/{application_id}/role", response_model=CloudApplicationResponse)
+async def set_application_role_cloud(
+    application_id: int,
+    data: ApplicationRoleUpdate,
+    user_id: uuid.UUID = Depends(current_user),
+) -> CloudApplicationResponse:
+    """Fill in the job title the mail never said — issue #72.
+
+    The Gmail path is metadata-only and the ATS subjects it reads name the
+    employer, so an auto-filed row's ``position`` is "" and stays "" no matter
+    how good the extraction gets. This is the only way one ever gets a title,
+    and the title is then the user's: later syncs will not overwrite it. Sending
+    ``null``, or only whitespace, clears both the title and that claim.
+
+    Nothing is inferred here and nothing may be. An empty role stays empty until
+    a human names it — no placeholder, no guess from the company, no default.
+
+    404 when the row is not the caller's.
+    """
+
+    async with get_session() as session:
+        app = await record_role_correction(session, user_id, application_id, data.role)
+    if app is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
+        )
+    return _serialize(app)
 
 
 @router.post("/{application_id}/dismiss", response_model=dict)

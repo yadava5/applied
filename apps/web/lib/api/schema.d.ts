@@ -467,6 +467,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{application_id}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Application Role Cloud
+         * @description Fill in the job title the mail never said — issue #72.
+         *
+         *     The Gmail path is metadata-only and the ATS subjects it reads name the
+         *     employer, so an auto-filed row's ``position`` is "" and stays "" no matter
+         *     how good the extraction gets. This is the only way one ever gets a title,
+         *     and the title is then the user's: later syncs will not overwrite it. Sending
+         *     ``null``, or only whitespace, clears both the title and that claim.
+         *
+         *     Nothing is inferred here and nothing may be. An empty role stays empty until
+         *     a human names it — no placeholder, no guess from the company, no default.
+         *
+         *     404 when the row is not the caller's.
+         */
+        put: operations["set_application_role_cloud_applications__application_id__role_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{application_id}/dismiss": {
         parameters: {
             query?: never;
@@ -792,6 +823,23 @@ export interface components {
             split_candidates: components["schemas"]["SplitCandidateResponse"][];
         };
         /**
+         * ApplicationRoleUpdate
+         * @description Body for setting or clearing the role a human typed (issue #72).
+         *
+         *     ``None`` — or a string that is only whitespace — clears it. Same rule as the
+         *     deadline: set and clear are one decision, and here clearing matters more,
+         *     because once the field is the user's the sync may no longer correct a typo
+         *     in it.
+         *
+         *     ``max_length`` is on the wire rather than in the handler so a title that is
+         *     plainly a paste of a whole job description is refused by the schema, and
+         *     says so in the OpenAPI document the web app's bindings are generated from.
+         */
+        ApplicationRoleUpdate: {
+            /** Role */
+            role?: string | null;
+        };
+        /**
          * ApplicationStatus
          * @description Possible statuses for a job application.
          *
@@ -942,6 +990,8 @@ export interface components {
             due_at?: string | null;
             /** Due Source */
             due_source?: string | null;
+            /** Position Source */
+            position_source?: string | null;
         };
         /**
          * EmailCategory
@@ -2091,6 +2141,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ApplicationDeadlineUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudApplicationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_application_role_cloud_applications__application_id__role_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                application_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationRoleUpdate"];
             };
         };
         responses: {
