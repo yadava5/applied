@@ -392,7 +392,12 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(caption).toBeVisible();
     await expect(caption).toHaveText("1 overdue · 1 due within 2 days");
-    await expect(page.getByText("Tidewater Labs")).toBeVisible();
+    // Scoped to the band, and it has to be: the fixture's most urgent employer
+    // is also a worklist row and an `sr-only` stage label, so an unscoped
+    // getByText resolves to THREE nodes and strict mode kills the assertion
+    // before it can mean anything. Caught by a full-suite run; it had never
+    // been green, in any project, on any tree.
+    await expect(page.getByTestId("pipeline-pulse").getByText("Tidewater Labs")).toBeVisible();
     const captionClip = await caption.evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(captionClip, "the claim loses characters to the chevron at 1280").toBeLessThanOrEqual(0);
 
