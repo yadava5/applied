@@ -25,7 +25,9 @@ export type SettingsMode = "live" | "demo";
 
 export interface SettingsTransport {
   mode: SettingsMode;
-  /** Persist a patch of the user's metadata (display name, prefs, gate). */
+  /** Persist a patch of the user's metadata (display name, notification
+   *  prefs). Not the classification gate: that write existed and was inert —
+   *  the backend read a module constant, never the metadata (#208). */
   saveMetadata(data: Record<string, unknown>): Promise<{ ok: boolean }>;
   /** Change the account password. Only offered when an `email` identity
    *  exists (the section gates on that), so `live` can always ask Supabase.

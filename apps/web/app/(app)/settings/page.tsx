@@ -9,7 +9,6 @@ import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
-import { DEFAULT_GATE_PREFERENCE, GATE_MAX, GATE_MIN } from "@/lib/dashboard/model";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
@@ -25,13 +24,15 @@ export const metadata: Metadata = {
  * caching is wrong in general — it is wrong HERE, and for a reason specific
  * to this page.
  *
- * Every section below seeds its own `useState` from a prop this server
- * component read out of the Supabase user's metadata (`initialName`,
- * `initial`, `initialGate`). Under a 30-second cache, a stale entry for THIS
- * route is a just-saved setting reverting in front of you: toggle the weekly
- * digest on, click Dashboard, click Settings, and the toggle sits there
- * visibly switched back off until the window expires. That is a bug, not a
- * stale number.
+ * Every stateful section below seeds its own `useState` from a prop this
+ * server component read out of the Supabase user's metadata (`initialName`,
+ * `initial`). Under a 30-second cache, a stale entry for THIS route is a
+ * just-saved setting reverting in front of you: toggle the weekly digest on,
+ * click Dashboard, click Settings, and the toggle sits there visibly switched
+ * back off until the window expires. That is a bug, not a stale number.
+ *
+ * `initialGate` used to be in that list. It is gone with the inert gate
+ * control (#208) — the section is propless now and writes nothing at all.
  *
  * `0` means "never reuse", and it is a distinct value rather than a fallback —
  * Next's sentinel for "the page said nothing" is `-1`
@@ -39,8 +40,10 @@ export const metadata: Metadata = {
  *
  * The other half of the fix — the sections calling `router.refresh()` after a
  * successful save, so the DASHBOARD stops serving a cached payload with the
- * old placement — landed with #216: `NotificationsSection`, `ProfileSection`
- * and `ClassificationSection` all publish now. This pin stays anyway, and
+ * old placement — landed with #216: `NotificationsSection` and
+ * `ProfileSection` publish now. (`ClassificationSection` did too, until #208
+ * removed the control it was publishing; it writes nothing at all today.)
+ * This pin stays anyway, and
  * deliberately. It costs one cheap render of a route nobody navigates in a
  * loop, and it is the backstop for the case the refreshes cannot cover: a
  * section that writes metadata WITHOUT refreshing (the next one added, or the
@@ -99,12 +102,6 @@ const TONE_CLASS: Record<"ok" | "warn" | "error", string> = {
   error: "border-reject/50 text-strong",
 };
 
-function clampGate(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return DEFAULT_GATE_PREFERENCE;
-  return Math.min(GATE_MAX, Math.max(GATE_MIN, n));
-}
-
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -154,7 +151,7 @@ export default async function SettingsPage({
           <AppearanceSection />
           <GmailConnectionCard result={gmailResult} />
           <NotificationsSection initial={readNotificationPrefs(meta)} />
-          <ClassificationSection initialGate={clampGate(meta.gate_threshold)} />
+          <ClassificationSection />
           <DataSection />
           <AccountSection email={email} />
         </div>
