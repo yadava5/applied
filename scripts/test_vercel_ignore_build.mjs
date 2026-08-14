@@ -151,6 +151,40 @@ const C = {
     absent: ['apps/web/', 'backend/'],
     subject: 'fix(ci): build when the ignore step cannot resolve the base',
   },
+  // One file: api/index.py, the Vercel Python entrypoint. The `api` entry in
+  // the allowlist has no other commit in this repository's history, so without
+  // this fixture it could be deleted from the allowlist and nothing would
+  // notice — the entrypoint of the whole cloud function would stop deploying.
+  apiEntrypointOnly: {
+    sha: 'dc1711e0732cf895a2a7e6a23a41379cfa13e318',
+    base: '8d8d375eb4b08219a045008465d4c7b61c193d3d',
+    touches: ['api/'],
+    absent: ['apps/web/', 'backend/'],
+    subject: 'feat(vercel): add api/index.py Vercel serverless entrypoint',
+  },
+  // One file: the ROOT requirements.txt, which is what Vercel pip-installs.
+  // backend/requirements.txt is deliberately a different, much heavier file and
+  // is NOT an input — which is why this fixture matters: the two are easy to
+  // confuse and only one of them can change the deployed function.
+  rootRequirementsOnly: {
+    sha: 'da4555e428574cc70668078c1fb5c0fc6e214ff3',
+    base: '0195f4d2e5257829e7dc7c40fd76750e25c60c57',
+    touches: ['requirements.txt'],
+    absent: ['apps/web/', 'backend/'],
+    subject: 'chore(deps): update sqlalchemy requirement (#125)',
+  },
+  // One file: .vercelignore — the only entry in BOTH allowlists, and the one
+  // with the worst history in the file. It is read from the repository root for
+  // every project whatever its Root Directory, and this is literally the commit
+  // that undid a blanket `apps` entry after it deleted apps/web before the web
+  // build could run and every push failed with NEXT_NO_VERSION.
+  vercelignoreOnly: {
+    sha: 'fd34a7081cea228cd11193c25d86beeb4664fcb3',
+    base: 'd2ac5b01b2035076b1c7c373f4c9989af1e8e352',
+    touches: ['.vercelignore'],
+    absent: ['apps/web/', 'backend/'],
+    subject: 'fix(deploy): stop excluding the web app from its own build',
+  },
   // vercel-ignore-build.sh + vercel.json. vercel.json is in the api allowlist
   // and deliberately not in web's.
   guardAndApiConfig: {
@@ -357,6 +391,27 @@ test('a commit touching only the guard script deploys neither project', () => {
 test('root vercel.json is an api input and not a web input', () => {
   expect('api', prod(C.guardAndApiConfig), BUILD, 'api: changes found');
   expect('web', prod(C.guardAndApiConfig), SKIP, 'web: no changes in');
+});
+
+// One test per remaining allowlist entry, so that every entry has something
+// holding it in place. Before these existed, `api`, `requirements.txt` and
+// `.vercelignore` could each be deleted from the allowlist with the suite still
+// green — the negative control found that, which is what it is for.
+test('api/index.py alone builds the api and not the web app', () => {
+  expect('api', prod(C.apiEntrypointOnly), BUILD, 'api: changes found');
+  expect('web', prod(C.apiEntrypointOnly), SKIP, 'web: no changes in');
+});
+
+test('the root requirements.txt alone builds the api and not the web app', () => {
+  expect('api', prod(C.rootRequirementsOnly), BUILD, 'api: changes found');
+  expect('web', prod(C.rootRequirementsOnly), SKIP, 'web: no changes in');
+});
+
+// The only entry in both allowlists, and the only fixture here that must build
+// both projects off a single file.
+test('.vercelignore alone builds BOTH projects', () => {
+  expect('api', prod(C.vercelignoreOnly), BUILD, 'api: changes found');
+  expect('web', prod(C.vercelignoreOnly), BUILD, 'web: changes found');
 });
 
 // ---------------------------------------------------------------------------

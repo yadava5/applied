@@ -37,6 +37,24 @@ const MUTANT = join(REPO, '.ignore-build-mutant.sh');
 const SUITE = join(REPO, 'scripts', 'test_vercel_ignore_build.mjs');
 
 /**
+ * One mutation per entry of a project's allowlist: drop that entry and require
+ * the suite to notice. `entries` is the exact text between the parentheses of
+ * the `paths=(...)` line, so if the line is reformatted the anchor stops
+ * matching and this reports a failure rather than silently mutating nothing.
+ *
+ * @param {string} project
+ * @param {string} entries
+ */
+function allowlistMutations(project, entries) {
+  const list = entries.split(' ');
+  return list.map((entry) => ({
+    name: `${entry} dropped from the ${project} allowlist`,
+    find: `    paths=(${entries})`,
+    replace: `    paths=(${list.filter((e) => e !== entry).join(' ')})`,
+  }));
+}
+
+/**
  * @type {{name: string, find: string, replace: string}[]}
  * `find` must appear EXACTLY ONCE in the source. A mutation that no longer
  * applies is reported as a failure rather than quietly doing nothing — a
@@ -85,16 +103,15 @@ const MUTATIONS = [
     find: 'base_sha="${VERCEL_GIT_PREVIOUS_SHA:-}"',
     replace: 'base_sha="$(git rev-parse --verify -q "${head_sha}^" 2>/dev/null || true)"',
   },
-  {
-    name: 'backend/jobtracker dropped from the api allowlist',
-    find: '    paths=(api requirements.txt backend/jobtracker vercel.json .vercelignore)',
-    replace: '    paths=(api requirements.txt vercel.json .vercelignore)',
-  },
-  {
-    name: 'apps/web dropped from the web allowlist',
-    find: '    paths=(apps/web .vercelignore)',
-    replace: '    paths=(.vercelignore)',
-  },
+  // The allowlist entries are mutated one at a time, generated from the lists
+  // themselves rather than hand-listed. "A NEW BUILD INPUT THAT IS NOT ADDED
+  // HERE WILL NEVER DEPLOY" is the guard's loudest maintenance warning, and the
+  // converse is just as quiet: an entry DELETED from a list stops a real build
+  // input from ever deploying again, with no error. Generating these means
+  // adding an entry to either list automatically demands a fixture that covers
+  // it — the suite cannot go green on an allowlist it does not exercise.
+  ...allowlistMutations('api', 'api requirements.txt backend/jobtracker vercel.json .vercelignore'),
+  ...allowlistMutations('web', 'apps/web .vercelignore'),
   {
     name: 'the head-not-in-clone guard skips instead of building',
     find: '  log "head ${head_sha} is not in this clone; building"\n  exit "$BUILD"',
@@ -118,7 +135,14 @@ const results = [];
 for (const m of MUTATIONS) {
   const hits = source.split(m.find).length - 1;
   if (hits !== 1) {
-    results.push({ name: m.name, ok: false, why: `anchor matched ${hits} times, expected exactly 1` });
+    results.push({
+      name: m.name,
+      ok: false,
+      why:
+        `anchor matched ${hits} times, expected exactly 1. If you changed an ` +
+        'allowlist, add a fixture covering the new entry to ' +
+        'scripts/test_vercel_ignore_build.mjs and update the entry list here',
+    });
     continue;
   }
 

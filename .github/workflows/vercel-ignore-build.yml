@@ -98,10 +98,10 @@ jobs:
 
           total, passed, failed, skipped = n("tests"), n("pass"), n("fail"), n("skipped")
           print(f"guard suite: {total} tests, {passed} pass, {failed} fail, {skipped} skipped")
-          if total < 30 or passed < 30 or failed != 0 or skipped != 0:
+          if total < 36 or passed < 36 or failed != 0 or skipped != 0:
               sys.exit(
                   "The ignore-build guard is UNVERIFIED by this build. Expected at "
-                  "least 30 passing tests and no skips. A shrinking count means "
+                  "least 36 passing tests and no skips. A shrinking count means "
                   "cases were deleted, not that the guard got simpler."
               )
           PY

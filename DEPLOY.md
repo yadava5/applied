@@ -262,10 +262,12 @@ Two things that look like shortcuts and are not:
   `vercel deploy --force` as bypassing the *build cache*; nothing in the docs
   says it bypasses the Ignored Build Step. Do not assume it does — the observed
   behaviour above is a redeploy reaching the guard and being CANCELED by it.
-- **A CLI `vercel --prod` has the same trap by a different route.** A CLI
-  deployment supplies no `VERCEL_GIT_PREVIOUS_SHA`, so on production the guard
-  falls back to `HEAD^` — a one-commit window that will skip just as readily if
-  the tip commit happens to touch nothing the project builds from.
+- **A CLI `vercel --prod` is not a proven way round it either.** Whether a CLI
+  deployment supplies `VERCEL_GIT_PREVIOUS_SHA` has not been checked here. If it
+  does not, the guard takes its documented production fallback and measures
+  `HEAD^` — a one-commit window that skips just as readily when the tip commit
+  touches nothing the project builds from. Treat the CLI as untested for this
+  purpose rather than as the escape hatch.
 
 Do not "fix" this by making a same-SHA diff build. That would mean the guard can
 never skip anything, which is the entire feature. `scripts/test_vercel_ignore_build.mjs`
@@ -308,8 +310,9 @@ Vercel never *triggers* a deployment for a disabled branch, so nothing is
 created and nothing is counted. That is the part that saves quota; the ignore
 step is not.
 
-The api's `"**": false` landed after 2026-08-13, when the api project spent its
-whole daily allowance on previews and then could not deploy production for
+The api's `"**": false` landed in `e4c72f0`, committed 2026-08-13 22:02 EDT
+(2026-08-14 02:02 UTC) — hours after the api project spent its whole daily
+allowance on previews that same day and then could not deploy production for
 eleven hours. Nothing consumes an api preview: `e2e-ci.yml` boots its own
 FastAPI on `localhost:8000`, `production.spec.ts` runs against a local `next
 start`, and there is no UI on an api preview to look at. **The `"main": true`
