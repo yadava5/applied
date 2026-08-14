@@ -76,8 +76,13 @@ import { DemoSignupCta } from "./SessionControls";
  *
  *   - under 860px: `DemoSignupCta compact` alone (~144px total) — sentence,
  *     button, beta line. The fixture identity and connection rows yield;
- *     their one fact ("this account is simulated") is already stated
- *     permanently by the sync row's "simulated account · nothing is read".
+ *     what they said ("this is a stand-in account") stays said by the board
+ *     row's one honesty badge, which is per-width since #212: the
+ *     `demo · fixture data` pill at `lg`+ (every width this tier serves on
+ *     desktop), the "simulated account · nothing is read" phrase below `lg`,
+ *     where the pill's trailing slot is gone. An earlier revision of this
+ *     note credited the phrase at ALL widths — wrong, it is `lg:hidden`
+ *     beside the pill; session-edge.spec asserts both halves.
  *   - 860px and up: the full block — identity row, connection line, then the
  *     pitch (~281px; an 860px window affords 324). Links resolve to the
  *     public twins (`demoNavHrefs`), because /settings and /dashboard are

@@ -133,8 +133,19 @@ test.describe("live demo (/demo)", () => {
     // sr-only "Change stage for {company}" label, which substring matching
     // resolves as a second element and trips strict mode.)
     await expect(page.getByText("Beacon Health", { exact: true })).toBeVisible();
-    // The one honest frame for the simulated sync surface.
-    await expect(page.getByText("simulated account · nothing is read")).toBeVisible();
+    // The signage contract is PER-WIDTH since #212 — one honesty badge per
+    // row. At the suite's 1440 (`lg`+) the trailing pill carries it and the
+    // "simulated account · nothing is read" frame yields (two badges on one
+    // line was the row-middle the notification chip needs); below `lg` the
+    // pill is gone and the frame carries it alone. The old assertion here
+    // expected the frame at 1440, which was the retired FLOW twin's
+    // arrangement — that page passed no `trailing`, so the frame showed at
+    // every width. Both halves of the per-width contract are asserted in
+    // session-edge.spec.ts; here the pill just has to be up. `:visible`
+    // because the TopBar mounts a second pill that CSS hides at `lg`+ on the
+    // board route.
+    await expect(page.locator("a:visible", { hasText: "demo · fixture data" })).toHaveCount(1);
+    await expect(page.getByText("simulated account · nothing is read")).toBeHidden();
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
@@ -183,9 +194,14 @@ test.describe("live demo (/demo)", () => {
     // …while a card's date stamp (the "quiet Nd" ageing tag rides inside it)
     // and the demo's provenance badge remain data-voice mono. The badge is the
     // session-edge pill on the board's header row now (the shell's trailing
-    // slot at lg+), not the retired standalone page header's.
+    // slot at lg+), not the retired standalone page header's — and the shell
+    // mounts a SECOND, CSS-hidden copy in the TopBar at this width, so the
+    // locator scopes to the visible one or strict mode trips on the pair.
     await expect(page.getByText(/quiet \d+d/).first()).toHaveCSS("font-family", /Geist Mono/);
-    await expect(page.getByText("demo · fixture data")).toHaveCSS("font-family", /Geist Mono/);
+    await expect(page.locator("a:visible", { hasText: "demo · fixture data" })).toHaveCSS(
+      "font-family",
+      /Geist Mono/,
+    );
   });
 
   test("Sync files the unsynced fixture mail onto the board — and says so", async ({ page }) => {
@@ -493,6 +509,11 @@ test.describe("live demo (/demo)", () => {
     const opener = page.getByRole("button", {
       name: "Open Cedar Labs — Software Engineer, Platform",
     });
+    // Counted before the pane opens, asserted by EQUALITY after — shell.spec's
+    // pattern, so a fixture edit can never stale a hard-coded literal here.
+    const rowSelects = page.locator("select[id^='status-']:visible");
+    const closedSelects = await rowSelects.count();
+    expect(closedSelects, "no per-row stage selects on the closed board").toBeGreaterThan(0);
     await opener.click();
     const pane = page.getByTestId("application-detail");
     await expect(pane).toBeVisible();
@@ -500,17 +521,21 @@ test.describe("live demo (/demo)", () => {
     // Docked means NOT modal: no dialog role, no backdrop, no scroll lock.
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
-    // The rows fold their stage select + Gmail slot while the pane is open —
-    // the 176px that pay for its width. Since #173 the fold is a container
-    // query on the worklist's own measure (< 32rem folds, display not
-    // unmount — hence :visible, not node counts): /demo's max-w-6xl run
-    // leaves 504px beside the open pane at the suite's 1440 default, under
-    // the floor, so every per-row select is folded here and the pane's own
-    // stage control is the one left standing. The signed-in shell measures
-    // 588px+ at 1280+ and KEEPS its row controls; /demo/shell carries that
-    // geometry. Exactly one row carries the open mark.
+    // The rows KEEP their stage selects beside the open pane here. Since #173
+    // the fold is a container query on the worklist's own measure (< 32rem
+    // folds, display not unmount — hence :visible, not node counts). The old
+    // expectation of ZERO visible selects was the retired FLOW twin's
+    // geometry: its bare max-w-6xl run left 504px beside the pane at 1440,
+    // under the floor. /demo mounts the shell now, and the shell's run
+    // measures 748px beside the pane at the suite's 1440 (CDP, `next start`,
+    // identical on /demo and /demo/shell) — over the floor, so the signed-in
+    // arrangement holds: every row control stays, and the pane's own stage
+    // select joins them rather than standing in for them. The fold itself is
+    // still gated where it genuinely happens on this tree — shell.spec's
+    // docked-pane pair measures 409px/folded at 1024 and 588px/kept at 1280.
+    // Exactly one row carries the open mark.
     await expect(page.locator("select[id^='detail-status-']")).toHaveCount(1);
-    await expect(page.locator("select[id^='status-']:visible")).toHaveCount(0);
+    await expect(rowSelects).toHaveCount(closedSelects);
     await expect(page.locator("[data-detail-open]")).toHaveCount(1);
 
     // "N of M · ↑ ↓": the header reports position over the board's visible
@@ -535,12 +560,12 @@ test.describe("live demo (/demo)", () => {
     await expect(pane.getByRole("heading", { name: "Harbor Analytics" })).toBeVisible();
 
     // Escape closes the pane; focus is NOT yanked from the control the user
-    // chose since — it stays on the opener they clicked last. The folded
-    // controls come back with the width.
+    // chose since — it stays on the opener they clicked last. Nothing folded
+    // at this width, so the row controls simply read as they did closed.
     await page.keyboard.press("Escape");
     await expect(pane).toBeHidden();
     await expect(page.getByRole("button", { name: /^Open Harbor Analytics/ })).toBeFocused();
-    await expect(page.locator("select[id^='status-']:visible")).not.toHaveCount(0);
+    await expect(rowSelects).toHaveCount(closedSelects);
   });
 
   test("the pulse renders all four derived signals in the board's band", async ({ page }) => {
