@@ -251,7 +251,7 @@ export function GmailConnectionCard({
               </h3>
               <p className="mt-1 text-sm text-muted">
                 Drop a Google Takeout export and classify it{" "}
-                <span className="text-strong">on-device</span> — never uploaded.
+                <span className="text-strong">on-device</span>.
               </p>
             </div>
             <Link

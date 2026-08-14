@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { type SignInSummary } from "./accountSecurity";
+import { ChangePasswordForm } from "./ChangePasswordForm";
 import { ReadonlyField, SaveStatus, SettingsSection } from "./SettingsSection";
 import { inputClass, primaryBtnClass, fieldLabelClass } from "@/components/ui/formStyles";
 import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
@@ -12,19 +14,23 @@ type SaveState = "idle" | "saving" | "saved" | "error";
  * Profile: an editable, persisted display name plus honest read-only account
  * facts. The name is written through the settings transport (live: the
  * Supabase user's `user_metadata`, so it survives reloads and is available
- * anywhere the session is read; demo: simulated). Email, sign-in method, and
- * member-since are real values passed from the server — never editable
- * stand-ins.
+ * anywhere the session is read; demo: simulated). Email, member-since, and
+ * the sign-in summary are real values derived server-side — never editable
+ * stand-ins, and never assumed: `signIn` comes from the account's actual
+ * identity list (#199), and it also decides whether a change-password
+ * control exists at all (#202) — no `email` identity, no password to change.
  */
 export function ProfileSection({
   initialName,
   email,
   memberSince,
+  signIn,
   mode = "live",
 }: {
   initialName: string;
   email: string;
   memberSince: string | null;
+  signIn: SignInSummary;
   mode?: SettingsMode;
 }) {
   const [name, setName] = useState(initialName);
@@ -40,7 +46,7 @@ export function ProfileSection({
   }
 
   return (
-    <SettingsSection id="profile" title="Profile" description="How you show up in Applied.">
+    <SettingsSection id="profile" title="Profile">
       <form onSubmit={save} className="space-y-4">
         <label className="grid gap-1">
           <span className={fieldLabelClass}>display name</span>
@@ -58,7 +64,7 @@ export function ProfileSection({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <ReadonlyField label="email" value={email} />
-          <ReadonlyField label="sign-in method" value="Email & password" />
+          <ReadonlyField label={signIn.label} value={signIn.value} />
           {memberSince ? <ReadonlyField label="member since" value={memberSince} /> : null}
         </div>
 
@@ -69,6 +75,12 @@ export function ProfileSection({
           <SaveStatus state={state} />
         </div>
       </form>
+
+      {signIn.hasEmailIdentity ? (
+        <div className="mt-4">
+          <ChangePasswordForm mode={mode} />
+        </div>
+      ) : null}
     </SettingsSection>
   );
 }

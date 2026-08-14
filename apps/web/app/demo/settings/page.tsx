@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { Logo } from "@/components/brand/Logo";
+import { summarizeSignIn } from "@/components/settings/accountSecurity";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { ClassificationSection } from "@/components/settings/ClassificationSection";
@@ -84,11 +85,11 @@ export default function DemoSettingsPage() {
         </header>
 
         <section className="mt-8 space-y-6">
+          {/* The twin keeps a visible h1 — there is no shell TopBar here to
+              carry the location, so this is the page's one title, not the
+              duplicate #199 removed from the signed-in route. */}
           <header>
             <h1 className="text-2xl font-semibold tracking-tight text-strong">Settings</h1>
-            <p className="mt-1 text-[13px] text-muted">
-              Your account, appearance, mail, and data — on a simulated account.
-            </p>
           </header>
 
           <div className="lg:grid lg:grid-cols-[10rem_minmax(0,48rem)] lg:gap-8">
@@ -99,6 +100,10 @@ export default function DemoSettingsPage() {
                 initialName="Sam Fixture"
                 email="demo@applied.example"
                 memberSince="March 3, 2026"
+                // The email-only shape, run through the REAL derivation — the
+                // measured shape of the demo account, and the case that shows
+                // (and e2e-exercises) the change-password control.
+                signIn={summarizeSignIn({ identities: [{ provider: "email" }] })}
               />
               {/* Appearance is device-local by design, so the demo IS the
                   product here — but this page is pinned dark with the rest of

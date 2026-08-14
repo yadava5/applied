@@ -58,12 +58,7 @@ export function AccountSection({ email, mode = "live" }: { email: string; mode?:
   }
 
   return (
-    <SettingsSection
-      id="account"
-      title="Account"
-      description="Sign out, or remove your account entirely."
-      tone="danger"
-    >
+    <SettingsSection id="account" title="Account" tone="danger">
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={signOut} disabled={signingOut} className={secondaryBtnClass}>
           <LogOut className="h-4 w-4" aria-hidden="true" />

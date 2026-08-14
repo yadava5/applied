@@ -26,8 +26,9 @@ const CATEGORIES = [
  * defensible user-facing meaning: below it, a verdict is held for human review
  * instead of auto-filed. The slider shows a LIVE, honest consequence — how many
  * of a fixed sample batch would be held at the chosen gate — and the value
- * persists to the user's metadata. The caption is explicit that the hosted
- * classifier still files at the shipped 0.85 gate today.
+ * persists to the user's metadata. (The hosted classifier still files at the
+ * shipped 0.85 gate today; the caption that said so was roadmap hedging and
+ * was removed with the rest of them in #200.)
  */
 export function ClassificationSection({
   initialGate,
@@ -52,11 +53,7 @@ export function ClassificationSection({
   }
 
   return (
-    <SettingsSection
-      id="classification"
-      title="Classification"
-      description="How Applied decides what to auto-file versus hold for you."
-    >
+    <SettingsSection id="classification" title="Classification">
       <div className="space-y-5">
         <div>
           <div className="flex items-baseline justify-between">
@@ -82,7 +79,6 @@ export function ClassificationSection({
             At <span className="tabular font-mono text-strong">{gate.toFixed(2)}</span>,{" "}
             <span className="tabular font-mono text-review">{held}</span> of{" "}
             {DEMO_REVIEW_QUEUE.length} sample messages would wait for your review; the rest auto-file.
-            Higher = more caution, more manual review.
           </p>
         </div>
 
@@ -111,12 +107,6 @@ export function ClassificationSection({
             ))}
           </ul>
         </div>
-
-        <p className="text-[12px] leading-relaxed text-dim">
-          Stored on your account. The hosted classifier files at the shipped{" "}
-          <span className="font-mono text-muted">0.85</span> gate today; your value applies as
-          per-user tuning rolls out.
-        </p>
       </div>
     </SettingsSection>
   );
