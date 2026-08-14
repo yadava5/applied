@@ -128,6 +128,149 @@ follow-up change can point the smoke suite at a real Vercel Preview
 deployment instead of a locally-booted dev server. That wiring is
 out-of-scope for C17 and tracked separately.
 
+## Scheduled sync (Vercel Cron)
+
+`GET|POST /cron/sync` (`backend/jobtracker/cloud/cron.py`, issue #23 / C7)
+syncs a bounded batch of users' mailboxes on a schedule. It is the only
+route on the cloud app without `require_user()`, because the platform's
+scheduler carries no JWT.
+
+**What it is for.** *Not* "the board never refreshes" — the web shell
+already runs a staleness auto-sync when a tab opens
+(`apps/web/components/dashboard/SyncBar.tsx`). What does not happen
+without a cron is anything **while the user is away**: the change ledger
+can only report changes the open tab itself just fetched, and a
+notification signal has nothing to fire on.
+
+### Schedule
+
+```json
+"crons": [{ "path": "/cron/sync", "schedule": "*/15 * * * *" }]
+```
+
+Declared in the **repo-root** `vercel.json`, which is the config for the
+`jobtracker-api` project (Root Directory = repo root). `apps/web` has its
+own `vercel.json`, so this does not install a cron on the web project.
+
+`*/15 * * * *` needs a paid plan, and this account is on **Pro**, where
+"cron jobs will be invoked within the minute specified".
+
+Issue #23 offers `0 * * * *` as the "Hobby hourly" fallback. That is not
+available: on Hobby, "cron jobs can only run once per day. Expressions
+that run more frequently **will fail deployment**", and Vercel may fire
+the job anywhere inside the specified hour. A Hobby fallback would have
+to be once-daily (e.g. `0 6 * * *`), which is a different product — a
+daily digest, not a background refresh. Noted so nobody "restores" the
+hourly expression believing it is a safe downgrade.
+
+### The secret — set this before the cron can work
+
+| Env var | Who reads it |
+|---|---|
+| `JOBTRACKER_VERCEL_CRON_SECRET` | The app (`settings.vercel_cron_secret`) |
+| `CRON_SECRET` | **Vercel**, to build the `Authorization: Bearer …` header; also read by the app as a fallback |
+
+Setting **`CRON_SECRET` alone is sufficient and is the simplest
+configuration**: Vercel sends it, and the handler falls back to it. Set
+it in the Vercel dashboard (Project → Settings → Environment Variables)
+for Production, then **redeploy** — Vercel injects env at deploy time, so
+a variable added without a following deployment does not reach the
+running function.
+
+A random string of at least 16 characters. The value never appears in
+this repo, in a log line, or in a response body.
+
+**Until it is set, every invocation is refused with 403.** That is the
+deliberate fail-closed behaviour, and it is the failure mode to watch
+for: the Cron Jobs page will show the job firing on schedule and the
+runtime log will show a tidy 403, which looks far more like "configured"
+than it is.
+
+### Verifying it
+
+```bash
+# Refused (no secret) — this is the gate working.
+curl -i -X POST https://<api-host>/cron/sync
+
+# Authorised. Both carriers are accepted; Vercel itself sends the Bearer.
+curl -s -X POST -H "x-vercel-cron-secret: $CRON_SECRET" https://<api-host>/cron/sync
+curl -s -H "Authorization: Bearer $CRON_SECRET" https://<api-host>/cron/sync
+# -> {"users_synced":N,"errors":[],"candidates":N,"stopped_by":"complete"}
+```
+
+`users_synced: 0` with `candidates: 0` means the enumeration found
+nobody. See the **known limitation** below before concluding that nobody
+has connected a mailbox.
+
+### What bounds a run
+
+| Bound | Value | Effect |
+|---|---|---|
+| `settings.sync_batch_size` | 100 | Ceiling on users enumerated per invocation |
+| `_CRON_PER_USER_TIMEOUT_SECONDS` | 10 s | One slow mailbox cannot hold the batch |
+| `_CRON_RUN_BUDGET_SECONDS` | 45 s | Checked *before* each user starts, under the function's `maxDuration: 60` |
+
+The **run budget is what actually binds**: at 10 s per user it stops the
+batch after ~4–5 users, long before a cap of 100. Candidates are ordered
+never-synced-first, then oldest-sync-first, so users a run could not
+reach sort to the front of the next one rather than starving.
+
+**A first sync may need several cron iterations.** A user with no history
+cursor gets a full scan of up to 750 messages against a 30 s scan budget,
+which can exceed the 10 s per-user timeout; that run is cancelled, writes
+no cursor, and reports `"<user_id>: TimeoutError"` in `errors`. The path
+that reliably completes a first backfill is the user's own "Sync now"
+button, which gets the whole 60 s function budget. Once a cursor exists,
+each cron run is an incremental `users.history.list` delta and finishes
+in well under the timeout.
+
+Runs are idempotent — the merge is the additive upsert — which is what
+Vercel's cron delivery contract requires, since it "can also occasionally
+invoke the same scheduled run more than once".
+
+### Worst-case cost of one run
+
+Five users start inside the 45 s budget; each hits the full-scan path and
+reads the 750-message target before its 10 s timeout:
+
+- **Gmail quota** — 750 messages × ~5 units per metadata get ≈ 3,750
+  units per user, plus `messages.list` and `getProfile`; ≈ **19k units
+  per run**, ≈ 1.8M/day at 96 runs. Metadata batches are paced by
+  `gmail_batch_pause_seconds` to stay under the ~250 units/sec per-user
+  quota.
+- **Vercel** — 96 invocations/day of up to ~55 s ≈ ~1.5 GB-hours/day
+  worst case, ~45 GB-hours/month at 1 GB. Cron jobs are "included in all
+  plans" and they "invoke Vercel Functions … the same usage and pricing
+  limits will apply", so this is ordinary function usage rather than a
+  second meter. Whether ~45 GB-hours/month sits inside this account's
+  included allowance has **not** been checked against the plan's own
+  numbers — see [Cron usage and
+  pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing) before
+  budgeting on it. Pro allows 100 cron jobs per project at a
+  once-per-minute minimum interval, so one job at `*/15` is well inside
+  the schedule limits.
+- **Supabase** — one connection for the enumeration plus a handful per
+  user under NullPool. Well inside the free tier's pooler limits at this
+  user count.
+
+Realistically production runs one user on an incremental delta: two Gmail
+calls and a couple of seconds per run.
+
+### Known limitation — the enumeration returns nobody on Postgres
+
+`list_syncable_user_ids` reads `user_credentials`, which has RLS ENABLEd
+and FORCEd with `USING (user_id = auth.uid())` against a NOBYPASSRLS
+runtime role. A cron has no JWT, so `auth.uid()` is NULL and the policy
+matches no row. **Verified against a real Postgres**:
+`tests/test_rls_postgres.py::test_cron_enumeration_sees_no_users_without_identity`
+asserts the empty result, with a positive control proving the same query
+returns the user when an identity *is* bound.
+
+SQLite has no RLS, so the unit tests in `tests/test_cron_sync.py` are
+green regardless — which is why the Postgres test exists. Closing the gap
+is a change to a security boundary (a GUC-gated SELECT policy, or a
+privileged non-pooler read) and is deliberately not made here.
+
 ## Local dry-run
 
 To reproduce each CI workflow locally:

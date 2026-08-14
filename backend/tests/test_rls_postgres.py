@@ -48,6 +48,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+
 def _resolve_admin_url():
     """Find a superuser Postgres, starting one if that is what it takes.
 
@@ -1015,3 +1016,79 @@ async def test_credential_save_read_is_scoped_and_cross_user_blocked(
     # A save with NO GUC bound is blocked by RLS; the helper swallows the DB
     # error and reports failure (False) rather than silently writing.
     assert await save_gmail_credentials(USER_A, creds) is False
+
+
+# =============================================================================
+# The scheduled sync cannot enumerate anybody (issue #23 / C7).
+# =============================================================================
+
+
+async def test_cron_enumeration_sees_no_users_without_identity(
+    pg_app: AsyncEngine,
+) -> None:
+    """``POST /cron/sync`` cannot find a single user to sync on Postgres.
+
+    THIS TEST ASSERTS A DEFECT, DELIBERATELY.
+
+    ``jobtracker.cloud.cron.list_syncable_user_ids`` reads ``user_credentials``
+    to find users with a connected mailbox. That table has RLS ENABLEd and
+    FORCEd (alembic ``c4user_creds_rls`` + ``c5_force_user_credentials_rls``)
+    with ``USING (user_id = auth.uid())``, and the runtime role is
+    NOBYPASSRLS. A cron carries no JWT, so
+    ``connection._apply_transaction_gucs`` leaves ``request.jwt.claims``
+    unset, ``auth.uid()`` is NULL, and the policy matches nothing.
+
+    SQLite has no RLS, so ``tests/test_cron_sync.py`` is green either way —
+    which is exactly the "check that cannot fail" shape this repo keeps
+    finding. Pinning the real behaviour here converts an invisible production
+    outcome (a cron that fires every 15 minutes and syncs nobody, while the
+    Vercel dashboard shows it succeeding with a 200) into a recorded fact with
+    a test name.
+
+    The positive control is the second half: bind an identity and the SAME
+    query returns that user. Without it, "returns nothing" would be
+    indistinguishable from a query that is simply broken.
+
+    WHEN THE GAP IS CLOSED, this test must be inverted rather than deleted —
+    the no-identity call is then expected to return both users, and that
+    assertion is what proves the fix reached production semantics.
+    """
+
+    from jobtracker.cloud.cron import list_syncable_user_ids
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.credentials.types import GmailCredentials
+    from jobtracker.database import user_id_scope
+
+    def _creds(email: str) -> GmailCredentials:
+        return GmailCredentials(
+            access_token="at",
+            refresh_token="rt",
+            token_expiry=datetime(2027, 1, 1),
+            email=email,
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+        )
+
+    with user_id_scope(USER_A):
+        assert await save_gmail_credentials(USER_A, _creds("a@example.com")) is True
+    with user_id_scope(USER_B):
+        assert await save_gmail_credentials(USER_B, _creds("b@example.com")) is True
+
+    # Positive control FIRST, so a failure below can never be "the rows were
+    # never written". With an identity bound, the query finds that user.
+    with user_id_scope(USER_A):
+        visible_to_a = await list_syncable_user_ids(100)
+    assert visible_to_a == [USER_A], (
+        f"The enumeration query itself is broken: with USER_A bound it "
+        f"returned {visible_to_a}, not [USER_A]."
+    )
+
+    # The cron's actual conditions: no identity bound anywhere.
+    candidates = await list_syncable_user_ids(100)
+    assert candidates == [], (
+        "The cron enumeration returned users without an RLS identity bound. "
+        "If this is now green because the gap was closed (a GUC-gated SELECT "
+        "policy, or a privileged read), invert this test rather than deleting "
+        "it — and update the warning on "
+        "jobtracker.cloud.cron.list_syncable_user_ids, which still tells "
+        "readers the cron syncs nobody."
+    )
