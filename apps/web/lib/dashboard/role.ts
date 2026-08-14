@@ -79,8 +79,30 @@ export const ROLE_CLEAR_HINT = "empties the role — nothing else about the row 
 /**
  * Stated where the empty role is, so the absence reads as a known limitation
  * rather than as something still loading or quietly broken.
+ *
+ * The mail-specific wording is a CLAIM, and it is only true of a row that came
+ * from mail. A row filed by hand through `AddApplicationForm` has no mail
+ * behind it at all, so telling its owner that their mail named no role is a
+ * statement about a thing that does not exist — the same defect
+ * `dueSourceLabel` avoids by returning `null` rather than dressing an unknown
+ * origin as a known one. `roleAbsentHint` is therefore the only way this string
+ * should reach the UI.
  */
-export const ROLE_ABSENT_HINT = "your mail never named one";
+export const ROLE_ABSENT_FROM_MAIL_HINT = "your mail never named one";
+/** For a row with no mail behind it, where the absence is simply an absence. */
+export const ROLE_ABSENT_HINT = "not set";
+
+/**
+ * Why this row shows no role, said only as far as the row's own origin
+ * supports. `source` is `gmail` / `gmail_user` for a mail-derived row and
+ * `manual` for one typed in by hand; anything unrecognised gets the neutral
+ * line, because a source this code does not know is not evidence of mail.
+ */
+export function roleAbsentHint(source: string | null | undefined): string {
+  return source === "gmail" || source === "gmail_user"
+    ? ROLE_ABSENT_FROM_MAIL_HINT
+    : ROLE_ABSENT_HINT;
+}
 export const ROLE_SAVE_FAILED = "Couldn't save the role — nothing changed.";
 export const ROLE_CLEAR_FAILED = "Couldn't clear the role — it is unchanged.";
 export const ROLE_TOO_LONG = `That is longer than ${MAX_ROLE_LENGTH} characters — shorten it to save.`;

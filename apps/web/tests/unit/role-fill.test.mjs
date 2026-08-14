@@ -27,11 +27,14 @@ import test from "node:test";
 import { roleChangeRequest } from "../../lib/dashboard/rowActions.ts";
 import {
   MAX_ROLE_LENGTH,
+  ROLE_ABSENT_FROM_MAIL_HINT,
+  ROLE_ABSENT_HINT,
   ROLE_ADD_LABEL,
   ROLE_CLEAR_HINT,
   ROLE_SAVE_FAILED,
   ROLE_TOO_LONG,
   normalizeRoleDraft,
+  roleAbsentHint,
   roleDraftError,
   roleSourceLabel,
 } from "../../lib/dashboard/role.ts";
@@ -100,10 +103,32 @@ test("only a role the user actually typed is labelled as theirs", () => {
   assert.equal(roleSourceLabel("gmail"), null);
 });
 
+// --- the absence is explained only as far as the row supports ---------------
+
+test("a mail-derived row may be told its mail named no role", () => {
+  assert.equal(roleAbsentHint("gmail"), ROLE_ABSENT_FROM_MAIL_HINT);
+  assert.equal(roleAbsentHint("gmail_user"), ROLE_ABSENT_FROM_MAIL_HINT);
+});
+
+test("a row with no mail behind it is told nothing about mail", () => {
+  // `AddApplicationForm` files these by hand. Saying "your mail never named
+  // one" here describes a message that does not exist — the same invention,
+  // one layer over, that #72 exists to prevent.
+  assert.equal(roleAbsentHint("manual"), ROLE_ABSENT_HINT);
+  assert.notEqual(ROLE_ABSENT_HINT, ROLE_ABSENT_FROM_MAIL_HINT);
+  assert.doesNotMatch(ROLE_ABSENT_HINT, /mail/i);
+});
+
+test("an unrecognised source is not evidence of mail", () => {
+  for (const source of [null, undefined, "", "imap", "icloud"]) {
+    assert.equal(roleAbsentHint(source), ROLE_ABSENT_HINT, String(source));
+  }
+});
+
 // --- copy -------------------------------------------------------------------
 
 test("nothing in the copy invents or implies a role", () => {
-  for (const line of [ROLE_ADD_LABEL, ROLE_CLEAR_HINT, ROLE_SAVE_FAILED, ROLE_TOO_LONG]) {
+  for (const line of [ROLE_ADD_LABEL, ROLE_CLEAR_HINT, ROLE_SAVE_FAILED, ROLE_TOO_LONG, ROLE_ABSENT_HINT, ROLE_ABSENT_FROM_MAIL_HINT]) {
     assert.equal(typeof line, "string");
     assert.ok(line.length > 0);
     // The whole point of #72: no example title anywhere near this control can

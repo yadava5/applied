@@ -40,7 +40,6 @@ import {
   type SplitCandidate,
 } from "@/lib/dashboard/detail";
 import {
-  ROLE_ABSENT_HINT,
   ROLE_ADD_LABEL,
   ROLE_CHANGE_LABEL,
   ROLE_CLEAR_FAILED,
@@ -50,6 +49,7 @@ import {
   ROLE_SAVE_LABEL,
   MAX_ROLE_LENGTH,
   normalizeRoleDraft,
+  roleAbsentHint,
   roleDraftError,
   roleSourceLabel,
 } from "@/lib/dashboard/role";
@@ -730,7 +730,9 @@ export function ApplicationDetail({
               >
                 {ROLE_ADD_LABEL}
               </button>
-              <span className="text-[11px] text-dim">{ROLE_ABSENT_HINT}</span>
+              {/* Only as much as the row's own origin supports: a hand-filed
+                  row has no mail to have named anything. */}
+              <span className="text-[11px] text-dim">{roleAbsentHint(active.source)}</span>
             </>
           )}
           {roleBusy !== null ? (

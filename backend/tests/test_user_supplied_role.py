@@ -239,6 +239,140 @@ async def test_a_typed_role_leaves_the_rows_identity_alone(test_session):
     assert row.position == "Backend Engineer"
 
 
+async def test_a_typed_role_survives_a_full_rebuild(test_session):
+    """The other entry point — and the one with a button on it.
+
+    ``purge_and_rebuild_gmail_pipeline`` re-reads the whole history and is what
+    "Rebuild" runs. It reaches the role through the same
+    :func:`upsert_applications_for_user` the delta sync does, so the guard
+    covers it — but that is an implementation fact today, and the destructive
+    -feeling action silently discarding the one field the user had to type in by
+    hand is exactly the regression worth catching if it ever stops being true.
+
+    The rebuild may still DISMISS this row if a later scan stops concluding an
+    application from its mail: the design deliberately leaves ``source`` as
+    ``gmail``, so the row stays purge-able. That is the same exposure a user-set
+    deadline already carries — ``due_source`` does not flip ``source`` either —
+    and the removal is recoverable, so it is precedent rather than a defect.
+    """
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+    await apps.record_role_correction(test_session, USER, row_id, "Backend Engineer")
+
+    corpus = [ACK, ROLED]
+    await apps.purge_and_rebuild_gmail_pipeline(
+        test_session,
+        USER,
+        _rolled(corpus),
+        p.collect_review_items(corpus),
+        apps.ScanCoverage.from_items(corpus),
+    )
+
+    row = await _only(test_session)
+    assert row.id == row_id
+    assert row.position == "Backend Engineer"
+    assert row.position_source == apps.ROLE_FROM_USER
+    assert row.dismissed_at is None
+
+
+# --- the split ------------------------------------------------------------------
+
+# Amazon's confirmations DO name a role in the snippet, which is what makes them
+# splittable at all — and what makes them the right fixture here: the split has
+# a real title to re-derive, so a guard that did nothing would be invisible.
+AMAZON_SENDER = "noreply@mail.amazon.jobs"
+AMAZON_SUBJECT = "Thank you for Applying to Amazon!"
+REQ_LIVE = "3177934"
+REQ_DEAD = "3130865"
+ROLE_LIVE = "Software Development Engineer - 2026 (US)"
+ROLE_DEAD = "Software Development Engineer – Database 2026 (US)"
+
+
+def _amazon_mail(message_id: str, *, role: str, req: str, minutes: int, application_id: int):
+    from jobtracker.database.models import Email, EmailCategory, EmailSource
+
+    return Email(
+        user_id=USER,
+        application_id=application_id,
+        source_account=EmailSource.GMAIL,
+        message_id=message_id,
+        thread_id=None,
+        subject=AMAZON_SUBJECT,
+        sender_email=AMAZON_SENDER,
+        body_snippet=(
+            "Amazon.jobs Hi Ayush, Thanks for applying to Amazon! We've received your "
+            f"application for the {role} (ID: {req}) position. What happens next?"
+        ),
+        received_at=BASE + datetime.timedelta(minutes=minutes),
+        classified_as=EmailCategory.APPLIED,
+        classification_confidence=0.9,
+    )
+
+
+@pytest.fixture
+def split_session(test_session, monkeypatch: pytest.MonkeyPatch):
+    """Run the split handler against the fixture session, not the app engine.
+
+    The same fixture ``test_stage_write_policy.py`` uses for the same reason.
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _session():
+        yield test_session
+
+    monkeypatch.setattr(apps, "get_session", _session)
+
+    async def _no_account(_user_id):
+        return None
+
+    monkeypatch.setattr(apps, "_connected_account_email", _no_account)
+    return test_session
+
+
+async def test_a_split_never_rewrites_a_role_the_user_typed(split_session):
+    """A split re-reads the mail — and the mail is what never had a role in it.
+
+    ``split_application_cloud`` rewrites ``req_id``, ``role_token`` AND
+    ``position`` from the retained cluster. The first two are the mail's own
+    identity and are still re-derived; the title the human typed is not, exactly
+    as a human-set STAGE already survives the same call.
+    """
+
+    row = Application(
+        user_id=USER,
+        company="Amazon",
+        position="",
+        status=ApplicationStatus.APPLIED,
+        source=apps.SOURCE_GMAIL_AUTO,
+    )
+    split_session.add(row)
+    await split_session.commit()
+    await split_session.refresh(row)
+
+    split_session.add(_amazon_mail("s1", role=ROLE_LIVE, req=REQ_LIVE, minutes=0, application_id=row.id))
+    split_session.add(_amazon_mail("s2", role=ROLE_DEAD, req=REQ_DEAD, minutes=5, application_id=row.id))
+    await split_session.commit()
+
+    await apps.record_role_correction(split_session, USER, row.id, "The Job I Actually Applied For")
+
+    result = await apps.split_application_cloud(row.id, user_id=USER)
+
+    assert len(result) == 2
+    retained = result[0]
+    assert retained.id == row.id
+    assert retained.position == "The Job I Actually Applied For"
+    # The identity the split exists to recompute still IS recomputed.
+    persisted = (
+        await split_session.exec(select(Application).where(Application.id == row.id))
+    ).first()
+    assert persisted.req_id == REQ_LIVE
+    assert persisted.role_token is not None
+    # The sibling is the mail's entirely — it gets the title the mail states.
+    assert result[1].position == ROLE_DEAD
+
+
 # --- clearing ------------------------------------------------------------------
 
 
