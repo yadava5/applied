@@ -138,6 +138,21 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * middle, and that is the accepted trade — the band is a summary of the same
  * story the ledger is spelling out, it is one press from returning, and
  * coverage bounded to the middle beats the right 60% of the band disappearing.
+ * Centring moved that coverage rather than growing it — measured on this
+ * build at 1024, the four band cells left to right (`next start`,
+ * 2026-08-14). Demo board: 0/98/98/0 covered, against 0/21/100/76
+ * left-aligned, so the sheet stopped running off the middle into the
+ * auto-filed cell and the middle is all it takes now. The narrower
+ * signed-in row is a trade, not a win: 30/100/100/30 against 0/27/100/100,
+ * which hands back the auto-filed cell (100% covered → 30%) and spends 30%
+ * of the momentum cell that used to be clear (45% on the furnished twin).
+ * Each flank is clipped from its inner edge at those fractions — heading and
+ * value line alike, readable outside the sheet and gone under it, which is
+ * what covering a summary means whichever side it happens on. The covered
+ * pair is the same pair either way, and the sheet no
+ * longer has to SHRINK to stay aligned — it held its full 30rem measure on
+ * every surface here, where the old rule cut it to 418px on the signed-in
+ * row and 445px on the twin.
  *
  * Centred is the owner's call, taken over the left-edge alignment that
  * shipped first (left edge onto left edge, one unbroken accent rule down
@@ -347,7 +362,12 @@ const PANEL_MIN_HEIGHT = 160;
  *  shortened — a stem that reaches 16 of 22px reads as a broken line, which
  *  is what the first pass here shipped and the measurement caught. 32px
  *  clears the 22 with room for a taller line box (text zoom) and rejects the
- *  wrap; no surface measured on this build wraps at `lg`+. */
+ *  wrap. The bound compares the measured GAP, not the drawn height, which
+ *  carries the cap's 2px on top of it (`placePanel`). Defensive, and say so:
+ *  nothing measured on this build wraps at `lg`+ — the overlay is 38px tall
+ *  on all three surfaces at every width from 1024 to 1600 — so this branch
+ *  is unreached, and the 62px it exists for is a reading from #172 that
+ *  could not be reproduced here. */
 const STEM_MAX = 32;
 
 export function SinceLastLook({
@@ -538,7 +558,14 @@ export function SinceLastLook({
     // against the padding box, so the panel's 1px left border would
     // otherwise push the stem 1px right of the centre it is naming.
     const gap = Math.max(0, panel.offsetTop - (plate.offsetTop + plate.offsetHeight));
-    panel.style.setProperty("--stem", `${gap <= STEM_MAX ? gap : 0}px`);
+    // `+ clientTop`: `bottom-full` is resolved against the PADDING box, so the
+    // stem's foot starts 2px down inside the accent cap and the drawn height
+    // has to pay that back or the stroke stops 2px short of the chip. Probed
+    // by hit-test down the chip's centre column (1024, `next start`,
+    // 2026-08-14) — the gap's 22 rows read 0011111111111111111111 before this
+    // term and 1111111111111111111111 after it. Same defect the old build had
+    // at 1px, from the same mechanism, hidden by a 1px border.
+    panel.style.setProperty("--stem", `${gap <= STEM_MAX ? gap + panel.clientTop : 0}px`);
     panel.style.setProperty(
       "--stem-x",
       `${Math.min(Math.max(0, centre - left - panel.clientLeft - 1), width - 2)}px`,
