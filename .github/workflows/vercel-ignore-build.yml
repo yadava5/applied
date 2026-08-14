@@ -79,6 +79,13 @@ jobs:
           node-version: 22
 
       - name: The guard answers correctly
+        # `shell: bash` is load-bearing, not tidiness. The implicit shell for a
+        # `run:` block is `bash -e {0}`, which does NOT set pipefail, so
+        # `node --test ... | tee` would report the exit status of `tee` — always
+        # 0 — and this step could not fail no matter how red the suite went.
+        # Naming `bash` explicitly is what makes Actions add `-o pipefail`.
+        # Verified: `bash -e -c 'false | tee /dev/null; echo $?'` prints 0.
+        shell: bash
         run: |
           node --test --test-reporter=tap \
             scripts/test_vercel_ignore_build.mjs | tee "$RUNNER_TEMP/guard.tap"
@@ -98,25 +105,27 @@ jobs:
 
           total, passed, failed, skipped = n("tests"), n("pass"), n("fail"), n("skipped")
           print(f"guard suite: {total} tests, {passed} pass, {failed} fail, {skipped} skipped")
-          if total < 36 or passed < 36 or failed != 0 or skipped != 0:
+          if total < 38 or passed < 38 or failed != 0 or skipped != 0:
               sys.exit(
                   "The ignore-build guard is UNVERIFIED by this build. Expected at "
-                  "least 36 passing tests and no skips. A shrinking count means "
+                  "least 38 passing tests and no skips. A shrinking count means "
                   "cases were deleted, not that the guard got simpler."
               )
           PY
 
       - name: Prove the suite can fail
-        # Breaks the guard ten specific ways and requires the suite to go red
-        # for each. Without this the suite is exactly the thing it was written
-        # to fix: a check nothing checks.
+        # Breaks the guard and its two call sites 19 specific ways and requires
+        # the suite to go red for each. Without this the suite is exactly the
+        # thing it was written to fix: a check nothing checks.
         run: node scripts/negative_control_ignore_build.mjs
 
-      - name: No mutant left behind
-        # The negative control writes .ignore-build-mutant.sh into the repo root
-        # (it has to — the guard resolves its repo from its own directory) and
-        # removes it. If one survives a crash, say so here rather than letting a
-        # later step or a human find a stray executable in the tree.
+      - name: The negative control cleaned up after itself
+        # It mutates two kinds of target. The guard is mutated as a COPY at
+        # .ignore-build-mutant.sh (gitignored, so `git diff` cannot see it —
+        # hence the explicit -e test). The two vercel.json files have no such
+        # indirection and are mutated IN PLACE, restored in a `finally`; those
+        # are tracked, so `git diff --exit-code` is a real check on the restore
+        # and not a formality.
         run: |
           if [ -e .ignore-build-mutant.sh ]; then
             echo "negative control left .ignore-build-mutant.sh behind" >&2
