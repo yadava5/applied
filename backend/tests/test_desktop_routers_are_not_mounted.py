@@ -5,13 +5,21 @@ WHAT IS BEING GUARDED
 The desktop routers under ``jobtracker/api/`` and the services under
 ``jobtracker/services/`` have **no user scoping at all**. Every row read is of
 the shape ``select(Application).where(Application.id == application_id)`` --
-``jobtracker/api/applications.py`` lines 329, 410, 499, 556, 580 and 654 -- with
-no ``user_id`` predicate anywhere in the module. Measured: zero occurrences of
-the string ``user_id`` in ``jobtracker/api/applications.py``, against 161 in its
-cloud twin ``jobtracker/cloud/applications.py``. The ``applications`` table is
-multi-tenant (``models.py:293`` gives it a ``user_id`` FK to ``auth.users``), so
-mounting any of these handlers on the cloud app turns every one of them into a
-cross-tenant read of any row whose id a caller can enumerate.
+in ``jobtracker/api/applications.py`` that is ``get_application``,
+``update_application``, ``delete_application``, ``transition_status``,
+``mark_application_not_job_posting`` and ``link_email_to_application``, while
+``list_applications`` opens with a bare ``select(Application)``. No ``user_id``
+predicate appears anywhere in the module. Measured: zero occurrences of the
+string ``user_id`` in that file, against 161 in its cloud twin
+``jobtracker/cloud/applications.py``. The ``applications`` table is
+multi-tenant (``database/models.py`` gives it a ``user_id`` FK to
+``auth.users``), so mounting any of these handlers on the cloud app turns every
+one of them into a cross-tenant read of any row whose id a caller can enumerate.
+
+Cited by symbol rather than line number throughout, deliberately. The banner
+comment this change adds to each of those modules shifts every line in them by
+about thirty, so a line citation written here would have been wrong the moment
+it was committed.
 
 That is not hypothetical here: this estate has already shipped a real IDOR.
 
@@ -36,10 +44,10 @@ still green, which pins a proxy instead of the mechanism.
 
 WHY PROVENANCE AND NOT PATHS
 ----------------------------
-A path-based assertion would be wrong, and measurably so. The cloud router
-declares ``APIRouter(prefix="/applications")`` (``cloud/applications.py:243``)
-and so does the desktop one (``api/applications.py:34``). Four path+method pairs
-collide on clean ``main``::
+A path-based assertion would be wrong, and measurably so. Both
+``jobtracker/cloud/applications.py`` and ``jobtracker/api/applications.py``
+declare their router as ``APIRouter(prefix="/applications", ...)``. Four
+path+method pairs collide on clean ``main``::
 
     GET  /applications                    POST   /applications
     GET  /applications/{application_id}   DELETE /applications/{application_id}
@@ -289,7 +297,13 @@ def test_vercel_entrypoint_forces_cloud_mode_over_a_desktop_env():
         "A deployment carrying a stray 'desktop' value would then build the "
         "desktop app, SQLite and Keychain and unscoped routers included."
     )
+    # This is the assertion that discriminates: ``settings.deployment`` is read
+    # from the environment, so it says "cloud" only if step 2 actually ran.
     assert probe["deployment"] == "cloud"
+    # The title is NOT a mode check and is not presented as one -- main_cloud
+    # hardcodes ``f"{settings.app_name} (cloud)"`` whatever the deployment says.
+    # It is here to catch the app object being swapped for a different one
+    # entirely, which the identity assertion below then localises.
     assert "(cloud)" in probe["title"], (
         f"The app served by api/index.py is titled {probe['title']!r}; the cloud "
         "app titles itself '<name> (cloud)'."
