@@ -12,9 +12,13 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  *
  * WHY /demo/scan AND NOT /inbox?view=scan. That page needs a Supabase session
  * AND a linked Gmail account; CI has neither, so a spec pointed at it could
- * only `test.skip` itself. Twenty-one of this suite's tests are already parked
- * behind session guards and a twenty-second would be one more thing that
- * cannot fail. `/demo/scan` is the same pattern `/demo/settings` established
+ * only `test.skip` itself. Thirteen of this suite's tests are already parked
+ * behind session guards and a fourteenth would be one more thing that
+ * cannot fail. (The count read "twenty-one" until it was measured: that
+ * conflated the session guard with `production.spec.ts`'s twelve
+ * `PLAYWRIGHT_PROD_BUILD` skips, which are a build-mode gate and DO run on
+ * the production job. Two different gates, two different numbers — see
+ * `session.ts` and #188.) `/demo/scan` is the same pattern `/demo/settings` established
  * for exactly this reason: the REAL `InboxWorkbench`, the REAL
  * `ReclassifyControl`, the real chip vocabulary and the real session-snapshot
  * cache, over the simulated transport in `lib/gmail/transport.ts`. The only

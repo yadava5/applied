@@ -20,6 +20,14 @@ const eslintConfig = defineConfig([
     // Committed third-party build artifact — the self-contained System Card
     // Vite bundle. It ships minified and is not ours to lint.
     "public/system-card/**",
+    // Playwright's own generated output. Both are gitignored, so CI never
+    // sees them: Frontend CI lints a tree that has never run the suite. Run
+    // Playwright once locally and `pnpm lint` then reports ~3000 problems
+    // from a minified report bundle and exits 1 — a break that exists only
+    // on a developer's machine, which is the same "passes because of where
+    // it runs" shape as the session skips this branch is about (#188).
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 
