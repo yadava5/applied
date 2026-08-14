@@ -58,6 +58,20 @@ test.describe("landing (/)", () => {
     await expect(popup).toHaveURL(/\/demo\/inbox$/);
   });
 
+  test("the decision trace rows expand on click (real effect)", async ({ page }) => {
+    // Moved from demo.spec.ts when /demo consolidated onto the app shell: the
+    // fixture-verdict `DecisionTrace` renders HERE now (the landing's cascade
+    // section), and this is its one executing interaction gate — the
+    // real-verdict traces on /demo/inbox have their own in sample-inbox.spec.
+    await page.goto("/");
+    // The first trace row is open by default; open another and assert its
+    // adjudication copy appears.
+    const offerRow = page.getByRole("button", { name: /offer details inside/i });
+    await offerRow.scrollIntoViewIfNeeded();
+    await offerRow.click();
+    await expect(page.getByText(/clears the 0.85 gate/i).first()).toBeVisible();
+  });
+
   test("the Sign in nav control routes to /login", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("link", { name: /^Sign in$/i }).click();

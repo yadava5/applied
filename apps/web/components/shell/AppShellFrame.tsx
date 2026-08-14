@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { RailData } from "@/lib/shell/rail";
+import { DemoModeProvider } from "./demo-mode";
 import { ShellSlotProvider } from "./shell-slots";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -11,7 +12,9 @@ type AppShellFrameProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
-  /** Fixture mode (/demo/shell): the top bar trades sign-out for a demo pill. */
+  /** Fixture mode (/demo, /demo/shell): the top bar trades sign-out for a demo
+   *  pill, the nav resolves to the public twins, and the rail footer carries
+   *  the anonymous visitor's session edge — a signup invitation. */
   demo?: boolean;
 };
 
@@ -57,23 +60,28 @@ export function AppShellFrame({
     // geometry with one instance: the board portals its stage lens + search
     // into the sidebar's middle run (see shell-slots.tsx for the CLS
     // reasoning), and page headers learn they are inside a shell at all.
+    // The demo provider carries the fixture-mode flag to the chrome's leaves
+    // (nav destinations, rail footer, session edge) without widening their
+    // props — see demo-mode.tsx for why context rather than threading.
     <ShellSlotProvider>
-      <div className="flex h-dvh w-full overflow-hidden">
-        <Sidebar rail={rail} userEmail={userEmail} userName={userName} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar userEmail={userEmail} userName={userName} demo={demo} />
-          {/* ONE page geometry for every authed surface: a shared centred column
-              with a common left edge. The dashboard fills it; narrower pages
-              (settings, inbox) cap their own measure inside it but start at the
-              same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
-              so this pane is the scroll context the whole app shares. */}
-          <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
-            <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
-              {children}
-            </div>
-          </main>
+      <DemoModeProvider demo={demo}>
+        <div className="flex h-dvh w-full overflow-hidden">
+          <Sidebar rail={rail} userEmail={userEmail} userName={userName} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <TopBar userEmail={userEmail} userName={userName} demo={demo} />
+            {/* ONE page geometry for every authed surface: a shared centred column
+                with a common left edge. The dashboard fills it; narrower pages
+                (settings, inbox) cap their own measure inside it but start at the
+                same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
+                so this pane is the scroll context the whole app shares. */}
+            <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
+              <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
+      </DemoModeProvider>
     </ShellSlotProvider>
   );
 }

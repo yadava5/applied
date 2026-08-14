@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import type { RailData } from "@/lib/shell/rail";
+import { useDemoMode } from "./demo-mode";
 import { isNavItemActive, navItems } from "./nav";
 import { NavLink } from "./NavLink";
 import { RailFooter } from "./RailFooter";
@@ -62,12 +63,14 @@ type SidebarProps = {
 export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
   const pathname = usePathname();
   const { setRail } = useShellSlots();
+  // Fixture mode: the lockup's home is the board twin, not the auth bounce.
+  const demo = useDemoMode();
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-line-soft bg-surface md:flex">
       <div className="px-4 py-4">
         <Link
-          href="/dashboard"
+          href={demo ? "/demo" : "/dashboard"}
           aria-label="Applied — go to your applications"
           className="brand-logo-link rounded-md text-strong focus-accent"
         >

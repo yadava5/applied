@@ -12,6 +12,13 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * here is the component's own state machine, not a mock of it — only the
  * transport is simulated.
  *
+ * Since the consolidation, /demo mounts the full app shell (`DemoShell` —
+ * the same tree /demo/shell drives for the geometry specs): rail, top bar,
+ * locked dashboard. The board interactions below are unchanged — same
+ * components, now inside the chrome a signed-in user actually gets — and the
+ * shell-specific additions (demo nav targets, the rail's conversion block)
+ * are asserted at the end of this file. Geometry stays shell.spec.ts's job.
+ *
  * (Static board content — search, filters, expanders, the removed metric
  * surfaces — is driven in dashboard.spec.ts, which uses this twin as its
  * stand-in for the auth-gated dashboard.)
@@ -110,14 +117,17 @@ function ledger(page: Page) {
 }
 
 test.describe("live demo (/demo)", () => {
-  test("renders the dashboard twin and the decision trace cleanly", async ({ page }) => {
+  test("renders the dashboard twin inside the real shell cleanly", async ({ page }) => {
     const watch = startConsoleWatch(page);
     await page.goto("/demo");
 
     // The board twin has no in-page h1 anymore (the signed-in shell's top bar
     // carries the route title); its one line of state is the anchor.
     await expect(page.getByText("17 filed · 14 open · 0 offers")).toBeVisible();
-    await expect(page.getByRole("heading", { name: /decision trace/i })).toBeVisible();
+    // The shell is the demo now: the rail is present and "Applications" is lit,
+    // exactly as it would be for a signed-in user on /dashboard.
+    await expect(page.locator('aside nav[aria-label="Primary"]')).toBeVisible();
+    await expect(page.locator('a[aria-current="page"]')).toContainText("Applications");
     // Pipeline columns render the fixture applications. (`exact` everywhere a
     // company is asserted visible: each interactive card also carries an
     // sr-only "Change stage for {company}" label, which substring matching
@@ -171,12 +181,11 @@ test.describe("live demo (/demo)", () => {
       /atkinson/i,
     );
     // …while a card's date stamp (the "quiet Nd" ageing tag rides inside it)
-    // and the demo's provenance badge remain data-voice mono.
+    // and the demo's provenance badge remain data-voice mono. The badge is the
+    // session-edge pill on the board's header row now (the shell's trailing
+    // slot at lg+), not the retired standalone page header's.
     await expect(page.getByText(/quiet \d+d/).first()).toHaveCSS("font-family", /Geist Mono/);
-    await expect(page.getByText("demo · fixture data · no inbox read")).toHaveCSS(
-      "font-family",
-      /Geist Mono/,
-    );
+    await expect(page.getByText("demo · fixture data")).toHaveCSS("font-family", /Geist Mono/);
   });
 
   test("Sync files the unsynced fixture mail onto the board — and says so", async ({ page }) => {
@@ -1122,32 +1131,37 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByTestId("application-detail")).toBeHidden();
   });
 
-  test("the decision trace rows expand on click (real effect)", async ({ page }) => {
-    await page.goto("/demo");
-    // The first trace row is open by default; open another and assert its
-    // adjudication copy appears.
-    const offerRow = page.getByRole("button", { name: /offer details inside/i });
-    await offerRow.click();
-    await expect(page.getByText(/clears the 0.85 gate/i).first()).toBeVisible();
-  });
+  // The decision-trace tests that closed this file moved with the surface:
+  // /demo mounts the shell now, and the fixture-verdict `DecisionTrace` shows
+  // on the landing (landing.spec.ts) while the REAL-verdict traces live on
+  // /demo/inbox (sample-inbox.spec.ts).
 
-  test("the sample-inbox bridge routes to /demo/inbox", async ({ page }) => {
+  test("the rail's demo nav leads somewhere real: Inbox is the sample inbox", async ({ page }) => {
+    // Every signed-in nav target is an auth bounce for an anonymous visitor,
+    // so in fixture mode the rail resolves to the public twins (`demoNavHrefs`)
+    // — this drives the most-travelled mapping end to end. The old in-page
+    // "run a full sample inbox" bridge retired into this nav item.
     await page.goto("/demo");
     await page
-      .getByRole("link", { name: /Run a full sample inbox through the real classifier/i })
+      .locator('aside nav[aria-label="Primary"]')
+      .getByRole("link", { name: "Inbox" })
       .click();
     await expect(page).toHaveURL(/\/demo\/inbox$/);
     await expect(page.getByRole("heading", { name: "Sample inbox" })).toBeVisible();
   });
 
-  test("the beta note is in flow — the floating pill no longer overlaps the board", async ({
+  test("the demo's session edge converts, honestly: signup CTA with the beta gate named", async ({
     page,
   }) => {
     await page.goto("/demo");
-    // The fixed bottom-centre pill is hidden on the board twin; its beta fact
-    // renders statically at the end of the page instead.
+    // The rail footer carries the demo's one conversion block — under the
+    // fixture identity, never over the board — and its promise is kept honest
+    // in the same breath: Gmail connect is seat-gated while in beta.
+    const rail = page.locator('aside:has(nav[aria-label="Primary"])');
+    await expect(rail.getByRole("link", { name: "Create your account" })).toBeVisible();
+    await expect(rail.getByText(/Gmail connect is invite-only/i)).toBeVisible();
+    // The floating beta pill stays off the board twin, as before.
     await expect(page.getByRole("button", { name: /limited access/i })).toHaveCount(0);
-    await expect(page.getByText(/direct Gmail connection is invite-only/i)).toBeVisible();
   });
 
   test("no horizontal overflow at 375px", async ({ page }) => {

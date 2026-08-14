@@ -9,7 +9,7 @@ import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import { isNavItemActive, navItems } from "./nav";
 import { NavLink } from "./NavLink";
-import { DemoFixturePill, SignOutButton } from "./SessionControls";
+import { DemoFixturePill, DemoSignupCta, SignOutButton } from "./SessionControls";
 
 type TopBarProps = {
   userEmail: string | null;
@@ -29,11 +29,13 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The route's own name, from the nav vocabulary — never hardcoded, because
-  // this one bar serves every authed route (and /demo/shell, whose path
-  // matches no nav item but which IS the board twin). The board route gets an
-  // <h1>: its page surrendered the in-page header row to the worklist, so the
-  // page heading lives here now. Every other route keeps its own <h1> below
-  // and this reads as the location label beside it.
+  // this one bar serves every authed route and the board twins (/demo,
+  // /demo/shell, which `isNavItemActive` counts as /dashboard). The demo
+  // fallback survives as a guard for any future fixture route the matcher
+  // does not know. The board route gets an <h1>: its page surrendered the
+  // in-page header row to the worklist, so the page heading lives here now.
+  // Every other route keeps its own <h1> below and this reads as the location
+  // label beside it.
   const current =
     navItems.find((item) => isNavItemActive(pathname, item.href)) ?? (demo ? navItems[0] : null);
   const isBoardTitle = current?.href === "/dashboard";
@@ -84,8 +86,10 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
             `display` in unlayered CSS (globals), which outranks the layered
             utility on the same element — hiding the parent sidesteps that. */}
         <span className="shrink-0 md:hidden">
+          {/* In fixture mode "your applications" is the board twin — the real
+              /dashboard is an auth bounce for the anonymous visitor. */}
           <Link
-            href="/dashboard"
+            href={demo ? "/demo" : "/dashboard"}
             aria-label="Applied — go to your applications"
             className="brand-logo-link text-strong"
           >
@@ -169,6 +173,16 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
                 );
               })}
             </ul>
+            {/* Fixture mode: the menu is identity + destinations, and for an
+                anonymous visitor the honest identity story ends in an
+                invitation. Same block the rail footer mounts on desktop —
+                DemoSignupCta is the single copy — closing the menu on
+                navigation like every destination link above. */}
+            {demo ? (
+              <div className="mt-2 border-t border-line-soft px-3 pb-1 pt-2.5">
+                <DemoSignupCta onNavigate={() => setMenuOpen(false)} />
+              </div>
+            ) : null}
           </nav>
         </>
       ) : null}

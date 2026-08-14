@@ -1,16 +1,13 @@
 import { cookies } from "next/headers";
-import Link from "next/link";
 import type { Metadata } from "next";
 
-import { Logo } from "@/components/brand/Logo";
-import { DemoDashboard } from "@/components/demo/DemoDashboard";
-import { DecisionTrace } from "@/components/viz/DecisionTrace";
+import { DemoShell } from "@/components/demo/DemoShell";
 import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 
 export const metadata: Metadata = {
   title: "Live demo",
   description:
-    "The Applied dashboard and classifier decision trace, on fixture data. No inbox is read.",
+    "The signed-in Applied shell — rail, board, worklist — on fixture data. No inbox is read.",
 };
 
 /**
@@ -32,30 +29,43 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 /**
- * The product, auth-free: the exact dashboard a signed-in user sees, running
- * its real components — SyncBar, the board, drag, the detail sheet — over an
- * in-memory fixture store (`DemoDashboard`). Only the transport is simulated;
- * every interaction is the genuine state machine, which is both the "demo is
- * the real thing" contract and what gives the session-gated surfaces their
- * executing e2e coverage.
+ * The product, auth-free — and now WHOLE. This used to render the dashboard
+ * twin decapitated: the board on a bare page, no rail, no nav, no identity,
+ * while the full `AppShellFrame` mount lived unlinked on /demo/shell as a
+ * test harness. A visitor never saw the app; they saw a component. The front
+ * door now renders `DemoShell` — the same shell frame the protected layout
+ * mounts, the same locked dashboard geometry, the same components end to end
+ * — so the demo IS the signed-in experience, minus only a session. Only the
+ * transport and the data are simulated, the contract this family has always
+ * held.
  *
- * What the signed-in dashboard dropped, this twin drops too: no stat tiles,
- * no classifier-context strip, no distribution bars, no recent-activity feed.
- * The decision trace stays as the demo's own second act — it is the showcase
- * the landing links to, not a dashboard component.
+ * What an anonymous visitor's shell does differently is confined to the
+ * chrome, and every control still works or says what it is: the nav resolves
+ * to the public twins (`demoNavHrefs` — sample inbox, in-browser import, the
+ * settings twin), the session edge carries the provenance pill instead of a
+ * sign-out, and the rail footer follows the fixture identity with the demo's
+ * one conversion block (`DemoSignupCta`). Nothing covers the board; the board
+ * is the pitch.
+ *
+ * The decision-trace showcase that closed the old page is not lost, it is
+ * outgrown: the landing renders `DecisionTrace` itself, and the nav's Inbox
+ * item leads to /demo/inbox, where the sample inbox traces REAL classifier
+ * verdicts rather than this page's fixture ones.
+ *
+ * `?pipeline=early` renders the same shell over the early-search projection —
+ * every row at `applied`, the measured shape of the real production account.
+ * The healthy seed spread literally cannot show the distribution the worklist
+ * redesign exists for, so the skewed case keeps its own reviewable, testable
+ * URL. The harness knobs (`?review`, `?queue`, `?session`) stay on
+ * /demo/shell, which renders this same tree — see its header for what each
+ * knob measures and why nothing links to it.
  */
 export default async function DemoPage({
   searchParams,
 }: {
   searchParams: Promise<{ pipeline?: string }>;
 }) {
-  // `?pipeline=early` renders the same twin over the early-search projection —
-  // every row at `applied`, the measured shape of the real production account
-  // (29 live rows, one stage). The healthy seed spread literally cannot show
-  // the distribution the worklist redesign exists for, so the skewed case gets
-  // its own reviewable, testable URL.
   const { pipeline } = await searchParams;
-  const early = pipeline === "early";
   // Whatever the visitor set on /demo/settings — read on the SERVER and
   // passed down as props, the same shape the signed-in dashboard reads out of
   // the Supabase user's metadata. Absent cookie → both flags off, the live
@@ -64,76 +74,6 @@ export default async function DemoPage({
     (await cookies()).get(DEMO_NOTIFICATIONS_COOKIE)?.value,
   );
   return (
-    <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
-      <div className="mx-auto w-full max-w-6xl px-6 pb-16">
-        <header className="flex min-h-14 flex-wrap items-center justify-between gap-y-2 border-b border-line-soft py-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href="/"
-              className="brand-logo-link inline-flex min-h-11 items-center text-strong"
-              aria-label="Applied — go to landing"
-            >
-              <Logo className="h-6 w-auto" />
-            </Link>
-            <span className="whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-muted">
-              demo · fixture data · no inbox read
-            </span>
-          </div>
-          <Link
-            href="/"
-            className="inline-flex min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
-          >
-            ← landing
-          </Link>
-        </header>
-
-        {/* --- the dashboard, verbatim ------------------------------------ */}
-        <div className="mt-8">
-          <DemoDashboard pipeline={early ? "early" : "seed"} notifications={notifications} />
-        </div>
-
-        {/* --- the decision trace ----------------------------------------- */}
-        {/* No 01/02 numbering: the page is a dashboard twin plus one showcase,
-            not a sequence. */}
-        <section aria-labelledby="queue-title" className="mt-12">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 id="queue-title" className="label-caps">
-              decision trace — click an email to open its verdict
-            </h2>
-            {/* The qualifier is load-bearing and matches the landing's pill:
-                0.979 is the RULES stage, and this line sits directly above a
-                trace of the three-layer cascade, where an unqualified number
-                reads as the cascade's. It is not — the full cascade scores
-                0.958 on the same 96-email set (README, "Classifier
-                evaluation"). This figure has drifted before. */}
-            <span className="font-mono text-[11px] text-dim">
-              CI-gated at 0.95 macro-F1 · rules stage 0.979
-            </span>
-          </div>
-          <DecisionTrace />
-          <p className="mt-3 text-xs leading-relaxed text-dim">
-            Each verdict is traced through three layers — regex rules strike first, e5 embeddings
-            arbitrate, a SetFit head renders the call. Below the 0.85 gate nothing is auto-filed;
-            the email waits for a human and the correction becomes new training data. To be precise
-            about what the score measures: 0.979 macro-F1 is the <strong>rules stage</strong> on the
-            committed 96-email benchmark, gated in CI at 0.95. The full cascade scores 0.958 on that
-            same set.
-          </p>
-          <Link
-            href="/demo/inbox"
-            className="mt-6 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
-          >
-            Run a full sample inbox through the real classifier
-            <span aria-hidden>→</span>
-          </Link>
-        </section>
-
-        {/* In flow, not floating: the fixed beta pill used to sit on top of
-            board content here, so the demo carries its beta note statically. */}
-        <p className="mt-12 border-t border-line-soft pt-6 text-center text-xs text-dim">
-          beta · direct Gmail connection is invite-only — the sample inbox needs no seat
-        </p>
-      </div>
-    </main>
+    <DemoShell pipeline={pipeline === "early" ? "early" : "seed"} notifications={notifications} />
   );
 }
