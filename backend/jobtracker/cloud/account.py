@@ -13,6 +13,11 @@ removed children-before-parents to respect the (RESTRICT-default) foreign keys:
 ``email_embeddings → emails`` and ``contacts / interviews / emails →
 applications``. ``training_data``, ``sync_state`` and ``user_credentials`` carry
 no cross-entity FK.
+
+Before any of that, the caller's Gmail grant is revoked at Google — the
+``user_credentials`` row is the only place the token exists, so once the purge
+runs there is nothing left to revoke. See ``delete_account`` for why that
+revocation is best-effort and cannot block the deletion.
 """
 
 from __future__ import annotations
@@ -81,9 +86,47 @@ async def delete_account(
     Idempotent — deleting an already-empty account still returns 200. The
     caller's Supabase *auth* user is removed separately by the web layer
     **after** this returns, so a failure here surfaces before the auth user is
-    gone and the web flow can retry. (Google-side token revocation is a
-    follow-up; deleting ``user_credentials`` here removes our stored copy.)
+    gone and the web flow can retry.
+
+    Google-side token revocation is no longer a follow-up (issue #215): the
+    grant is revoked at Google *before* ``user_credentials`` is deleted, since
+    that row is the only place the token still exists.
     """
+
+    # Revoke the Gmail grant first — after the row delete there is no token
+    # left to revoke, so this is the only moment it can happen. Reuses the
+    # disconnect path's revocation rather than a second implementation.
+    #
+    # Function-level import to keep the account router free of the OAuth
+    # module's heavy Google imports at collection time, matching the way
+    # ``gmail_disconnect`` reaches ``clear_gmail_sync_state``.
+    #
+    # Best-effort, deliberately: ``revoke_stored_gmail_grant`` never raises,
+    # and a False answer does NOT abort the deletion. The two failures are not
+    # symmetric — a grant left standing at Google is a real harm the user can
+    # still fix themselves at myaccount.google.com/permissions, whereas
+    # refusing to delete the account because Google was unreachable strands
+    # them with the data they asked us to destroy. The stored token is removed
+    # either way.
+    #
+    # The ``try`` is not distrust of that promise so much as coverage of what
+    # the promise does not span: the import itself, and ``_revoke_at_google``
+    # raising despite its own contract. Both would otherwise 500 the one
+    # endpoint whose job is to let a user leave. It overlaps the helper's own
+    # guard on the credential read, and that redundancy is deliberate — the
+    # helper's guard keeps its contract for every caller, this one keeps this
+    # handler's.
+    try:
+        from jobtracker.cloud.gmail_oauth import revoke_stored_gmail_grant
+
+        revoked = await revoke_stored_gmail_grant(user_id)
+    except Exception as exc:  # noqa: BLE001 — see above
+        logger.warning(
+            "Gmail revocation raised during account deletion for user_id=%s: %s",
+            user_id,
+            type(exc).__name__,
+        )
+        revoked = False
 
     # ``get_session()`` is the async context manager used across the cloud
     # handlers; its transaction ``begin`` sets the RLS ``request.jwt.claims``
@@ -94,8 +137,9 @@ async def delete_account(
         await session.commit()
 
     logger.info(
-        "account.deleted user_id=%s tables_cleared=%d",
+        "account.deleted user_id=%s tables_cleared=%d google_revoked=%s",
         user_id,
         len(_DELETION_ORDER),
+        revoked,
     )
     return AccountDeletionResponse(deleted=True, tables_cleared=len(_DELETION_ORDER))

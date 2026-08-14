@@ -1,22 +1,42 @@
 import { NextResponse } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, deletionEnabled } from "@/lib/supabase/admin";
+import { runAccountDeletion } from "@/lib/account/deletion";
 import { serverEnv } from "@/lib/env.server";
 
 /**
  * Delete the caller's own account. This is the server side of the Settings
  * "danger zone": the browser has already gated it behind a typed confirmation.
  *
- * Flow:
- *   1. Identify the caller from their Supabase session (never trust a client id).
- *   2. Best-effort ask the backend to purge their rows + revoke Gmail.
- *   3. Delete the auth user with the service-role admin client.
+ * The handler's only job is to bind the two privileged effects to the real
+ * world — asking the backend to purge the caller's rows, and destroying the
+ * Supabase auth user. The *ordering* between them, which is where the
+ * data-loss bug lived (#214), is `lib/account/deletion.ts` so it can be
+ * executed by a test without a Next runtime or a service-role key. See that
+ * file for why a failed purge must never be followed by `deleteUser`.
  *
- * If the deployment has no service-role key configured, deletion can't run —
- * we return an honest 501 so the UI can tell the user plainly rather than
- * pretend it worked.
+ * If the deployment has no service-role key, deletion can't run — we return an
+ * honest 501 so the UI can tell the user plainly rather than pretend it
+ * worked. That backstop stays; `GET` below is what stops the user meeting it
+ * only after typing DELETE (#218).
  */
+
+/**
+ * Readiness probe: can this deployment delete an account at all?
+ *
+ * Deliberately unauthenticated. It reveals one boolean about the deployment's
+ * own configuration — no user data, no key, not even whether an account
+ * exists — and being reachable without a session is the point: it lets a
+ * production smoke test assert the capability against the deployed origin
+ * without deleting anything, which is the check whose absence let #218 ship.
+ * The Settings page reads the same flag server-side, so the button and the
+ * probe can never disagree.
+ */
+export async function GET() {
+  return NextResponse.json({ deletionEnabled: deletionEnabled() });
+}
+
 export async function POST() {
   const supabase = await createClient();
   const {
@@ -28,37 +48,25 @@ export async function POST() {
   }
 
   const admin = createAdminClient();
-  if (!admin) {
-    return NextResponse.json(
-      {
-        detail:
-          "Account deletion isn’t enabled on this deployment yet. Email the admin to have your data removed.",
-      },
-      { status: 501 },
-    );
-  }
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token;
 
-  // Best-effort backend cleanup — ignore failures so a missing/again-deployed
-  // endpoint never blocks the user from removing their auth account.
-  try {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const { BACKEND_API_URL } = serverEnv();
-    if (session?.access_token) {
-      await fetch(`${BACKEND_API_URL}/account`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      }).catch(() => undefined);
-    }
-  } catch {
-    /* non-fatal — proceed to auth deletion. */
-  }
+  const { status, body } = await runAccountDeletion({
+    // No token means we cannot ask the backend to remove anything, so there is
+    // no purge to run — `null`, not a call that quietly succeeds at nothing.
+    purge: token
+      ? async () => {
+          const { BACKEND_API_URL } = serverEnv();
+          return fetch(`${BACKEND_API_URL}/account`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        }
+      : null,
+    deleteAuthUser: admin ? () => admin.auth.admin.deleteUser(user.id) : null,
+  });
 
-  const { error } = await admin.auth.admin.deleteUser(user.id);
-  if (error) {
-    return NextResponse.json({ detail: "Couldn’t delete the account. Try again." }, { status: 502 });
-  }
-
-  return NextResponse.json({ deleted: true }, { status: 200 });
+  return NextResponse.json(body, { status });
 }

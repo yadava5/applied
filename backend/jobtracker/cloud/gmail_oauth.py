@@ -780,6 +780,44 @@ async def _revoke_at_google(token: str) -> bool:
     return await loop.run_in_executor(None, _post)
 
 
+async def revoke_stored_gmail_grant(user_id: uuid.UUID) -> bool:
+    """Revoke ``user_id``'s Gmail grant at Google, if one is stored.
+
+    The disconnect handler above already had this shape inline; this is the
+    same revocation as a callable so that account deletion can perform it too
+    (issue #215) rather than growing a second implementation of Google's
+    revocation protocol. ``POST /auth/gmail/disconnect`` keeps its own inline
+    read because it needs the credential object anyway (to delete the row and
+    to distinguish "was not connected"); both paths bottom out in
+    ``_revoke_at_google``, which stays the one place that talks to Google.
+
+    **Never raises**, and that is load-bearing for the caller in
+    ``cloud/account.py``. Reading the stored credential can fail on its own —
+    ``CredentialEncryptionError``/``InvalidToken`` after a Fernet key rotation,
+    or a plain DB error — and an exception escaping here would 500 the account
+    deletion. A grant we could not revoke is bad; a user unable to delete their
+    account because of it is worse, so every failure becomes ``False`` and the
+    caller decides what to do with it.
+
+    Returns True only when Google confirmed the revocation.
+    """
+
+    try:
+        stored = await get_gmail_credentials(user_id)
+    except Exception as exc:  # noqa: BLE001 — see docstring: must not raise
+        logger.warning(
+            "Could not read stored Gmail credentials to revoke for user_id=%s: %s",
+            user_id,
+            type(exc).__name__,
+        )
+        return False
+
+    if stored is None:
+        return False
+
+    return await _revoke_at_google(stored.refresh_token or stored.access_token)
+
+
 # Age filters the UI offers (months). Anything else → "all time" (no bound).
 _ALLOWED_RANGE_MONTHS = frozenset({3, 6, 9, 12})
 
