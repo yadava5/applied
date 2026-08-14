@@ -384,6 +384,36 @@ def ci_min_macro_f1() -> float:
     return float(hits.pop())
 
 
+def workflow_pin(pattern: str, what: str) -> int:
+    """
+    A toolchain version the workflows agree on, read out of the workflows.
+
+    Same shape as `ci_min_macro_f1`: collect every pin, fail on disagreement.
+    Returning the first hit would document half the truth, and two workflows
+    pinning different Node majors is itself a defect worth a red build.
+
+    This exists because of #182. `README.md` and `docs/DEPLOYMENT.md` both said
+    Frontend CI ran Node 20 with `setup-node@v4` and `action-setup@v4` long
+    after the workflow moved to 22 / v7 / v6 — and the Node number is not
+    cosmetic. `pnpm test:unit` imports `.ts` modules from `.mjs` test files and
+    needs the runtime's type stripping (>= 22.6); on Node 20 they raise
+    ERR_UNKNOWN_FILE_EXTENSION, which is how that suite once existed while no
+    job ran it. So the stale docs did not merely lag, they recommended a
+    regression a maintainer could make in good faith. Nothing here could catch
+    that before: this checker's coverage is declared fact by fact, and no fact
+    named the toolchain.
+    """
+    hits: set[str] = set()
+    for p in sorted((REPO / ".github/workflows").iterdir()):
+        if p.suffix in (".yml", ".yaml"):
+            hits.update(re.findall(pattern, p.read_text(encoding="utf-8")))
+    if not hits:
+        raise SystemExit(f"  ✗ .github/workflows: no {what} found")
+    if len(hits) > 1:
+        raise SystemExit(f"  ✗ .github/workflows: workflows disagree on {what}: {sorted(hits)}")
+    return int(hits.pop())
+
+
 def file_bytes(rel: str) -> int:
     return (REPO / rel).stat().st_size
 
@@ -719,6 +749,54 @@ FACTS: dict[str, dict] = {
             [p for p in (REPO / ".github/workflows").iterdir() if p.suffix in (".yml", ".yaml")]
         ),
         "sites": [r"GitHub Actions — (\d+) workflows", r"# (\d+) workflows"],
+    },
+    # ── CI toolchain (#182) ──────────────────────────────────────────────
+    # The only facts here whose sites live in docs/DEPLOYMENT.md as well as the
+    # README, because that file carries the same four numbers in three places
+    # and drifted with the README rather than against it.
+    "ciNodeMajor": {
+        "kind": "static",
+        "describe": "node-version pinned across .github/workflows/",
+        "compute": lambda: workflow_pin(r"node-version:\s*['\"]?(\d+)", "node-version"),
+        # The quoted form matters: booklet.yml writes `node-version: '22'` while
+        # the rest write it bare, and a pattern without `['\"]?` would miss it
+        # and report agreement it never checked.
+        "sites": [
+            r"Node\.js (\d+) and pnpm \d+, for the web app",
+            r"on Node (\d+) / pnpm \d+",
+            {"re": r"ubuntu-latest, Node (\d+) \+ pnpm \d+", "file": "docs/DEPLOYMENT.md"},
+            {"re": r"ubuntu-latest, Node (\d+) \+ Python 3\.11", "file": "docs/DEPLOYMENT.md"},
+            {"re": r"`pnpm/action-setup@v\d+`, Node (\d+) via", "file": "docs/DEPLOYMENT.md"},
+        ],
+    },
+    "ciPnpmMajor": {
+        "kind": "static",
+        "describe": "the `version:` input given to pnpm/action-setup",
+        "compute": lambda: workflow_pin(
+            r"pnpm/action-setup@v\d+\s*\n\s*with:\s*\n\s*version:\s*['\"]?(\d+)", "pnpm version"
+        ),
+        "sites": [
+            r"Node\.js \d+ and pnpm (\d+), for the web app",
+            r"on Node \d+ / pnpm (\d+)",
+            {"re": r"ubuntu-latest, Node \d+ \+ pnpm (\d+)", "file": "docs/DEPLOYMENT.md"},
+            {"re": r"- pnpm (\d+) via `pnpm/action-setup", "file": "docs/DEPLOYMENT.md"},
+        ],
+    },
+    "setupNodeMajor": {
+        "kind": "static",
+        "describe": "actions/setup-node major used across .github/workflows/",
+        "compute": lambda: workflow_pin(r"actions/setup-node@v(\d+)", "actions/setup-node version"),
+        "sites": [
+            {"re": r"Node \d+ via `actions/setup-node@v(\d+)`", "file": "docs/DEPLOYMENT.md"},
+        ],
+    },
+    "pnpmActionSetupMajor": {
+        "kind": "static",
+        "describe": "pnpm/action-setup major used across .github/workflows/",
+        "compute": lambda: workflow_pin(r"pnpm/action-setup@v(\d+)", "pnpm/action-setup version"),
+        "sites": [
+            {"re": r"pnpm \d+ via `pnpm/action-setup@v(\d+)`", "file": "docs/DEPLOYMENT.md"},
+        ],
     },
     "alembicRevisions": {
         "kind": "static",
