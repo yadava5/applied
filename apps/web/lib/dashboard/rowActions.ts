@@ -46,6 +46,20 @@ export function deadlineChangeRequest(id: number, dueAt: string | null): ProxyRe
 }
 
 /**
+ * PUT the role a human typed; `null` clears it (issue #72).
+ *
+ * Its own endpoint, deliberately, rather than a field added to the status
+ * PATCH: `ApplicationStatusUpdate` does not set `extra="forbid"`, so an unknown
+ * key posted there is silently dropped and the UI would report a save the
+ * server never made. A write here marks `position_source: "user"`, which the
+ * sync never overwrites — and it never overwrites it because the sync can never
+ * produce a role for these rows in the first place.
+ */
+export function roleChangeRequest(id: number, role: string | null): ProxyRequest {
+  return { path: `/api/applications/${id}/role`, method: "PUT", body: { role } };
+}
+
+/**
  * "Not an application" — RECOVERABLE. Dismisses the row (off the board, off the
  * summary) and trains the classifier that the mail was misfiled. Nothing is
  * erased: the backend keeps the row under `?dismissed=true` and restores it on

@@ -5,6 +5,7 @@ import {
   ArrowUp,
   CalendarClock,
   ExternalLink,
+  Tag,
   Loader2,
   TriangleAlert,
   X,
@@ -38,6 +39,20 @@ import {
   type ApplicationDetail as DetailData,
   type SplitCandidate,
 } from "@/lib/dashboard/detail";
+import {
+  ROLE_ABSENT_HINT,
+  ROLE_ADD_LABEL,
+  ROLE_CHANGE_LABEL,
+  ROLE_CLEAR_FAILED,
+  ROLE_CLEAR_HINT,
+  ROLE_CLEAR_LABEL,
+  ROLE_SAVE_FAILED,
+  ROLE_SAVE_LABEL,
+  MAX_ROLE_LENGTH,
+  normalizeRoleDraft,
+  roleDraftError,
+  roleSourceLabel,
+} from "@/lib/dashboard/role";
 import { CANCEL_LABEL, statusChangeFailure } from "@/lib/dashboard/rowActions";
 import { statusOptions, statusSelectValue } from "@/lib/dashboard/status";
 import { STAGES, stageOf, type Application } from "@/lib/dashboard/summary";
@@ -294,6 +309,16 @@ export function ApplicationDetail({
   const [dueDraft, setDueDraft] = useState("");
   const [dueBusy, setDueBusy] = useState<null | "save" | "clear">(null);
   const [dueError, setDueError] = useState<string | null>(null);
+  /** The role a write here just committed, shown until the row prop catches
+   *  up — the same override the deadline uses, for the same reason. */
+  const [roleOverride, setRoleOverride] = useState<{
+    position: string;
+    source: string | null;
+  } | null>(null);
+  const [roleEditing, setRoleEditing] = useState(false);
+  const [roleDraft, setRoleDraft] = useState("");
+  const [roleBusy, setRoleBusy] = useState<null | "save" | "clear">(null);
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   /** The day this sheet measures deadlines against — the reader's own once
    *  mounted. Read here, above the early return, because it is a hook. */
@@ -412,7 +437,16 @@ export function ApplicationDetail({
 
   const shownStatus = optimistic ?? active.status;
   const stage = STAGES.find((s) => s.key === stageOf(shownStatus))!;
-  const role = active.position.trim();
+  // The role the sheet asserts: the row's own, unless a write here already
+  // changed it. Never derived from anything else — issue #72 exists because a
+  // role that nobody typed and no message stated is an invention, and the
+  // employer name is right there to be guessed from.
+  const roleState = roleOverride ?? {
+    position: active.position,
+    source: active.position_source ?? null,
+  };
+  const role = roleState.position.trim();
+  const roleSource = roleSourceLabel(roleState.source);
   // The deadline the sheet asserts: the row's own, unless a write here already
   // moved it. Calendar-day math against the reader's own day, the same clock
   // rule as the board — so a date picked as "today" in the control below can
@@ -433,6 +467,52 @@ export function ApplicationDetail({
       setStageError(statusChangeFailure(next, active.status, result.detail));
       return;
     }
+    router.refresh();
+  }
+
+  // Not optimistic, for the deadline's reason: the sheet asserts no title the
+  // backend has not accepted. Filling a role in wrong and having it appear to
+  // stick would be the invented data #72 exists to prevent, produced by the UI
+  // instead of by the classifier.
+  async function onRoleSave() {
+    const problem = roleDraftError(roleDraft);
+    if (problem) {
+      setRoleError(problem);
+      return;
+    }
+    const next = normalizeRoleDraft(roleDraft);
+    if (next === null) {
+      // An emptied box is the clear. Routing it here rather than refusing it
+      // means the obvious gesture works and no whitespace is ever stored.
+      await onRoleClear();
+      return;
+    }
+    setRoleError(null);
+    setRoleBusy("save");
+    const result = await transport.setRole(active.id, next);
+    setRoleBusy(null);
+    if (!result.ok) {
+      setRoleError(result.detail ? `${ROLE_SAVE_FAILED} ${result.detail}` : ROLE_SAVE_FAILED);
+      return;
+    }
+    // Any write through this endpoint is the user's word; the backend marks it
+    // `position_source: "user"` and no sync overwrites it.
+    setRoleOverride({ position: next, source: "user" });
+    setRoleEditing(false);
+    router.refresh();
+  }
+
+  async function onRoleClear() {
+    setRoleError(null);
+    setRoleBusy("clear");
+    const result = await transport.setRole(active.id, null);
+    setRoleBusy(null);
+    if (!result.ok) {
+      setRoleError(result.detail ? `${ROLE_CLEAR_FAILED} ${result.detail}` : ROLE_CLEAR_FAILED);
+      return;
+    }
+    setRoleOverride({ position: "", source: null });
+    setRoleEditing(false);
     router.refresh();
   }
 
@@ -542,6 +622,124 @@ export function ApplicationDetail({
           >
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
             <span>{stageError}</span>
+          </p>
+        ) : null}
+
+        {/* --- The role: the one field the mail can never supply ------------ */}
+        {/* Issue #72. `format=metadata` means no body is read, and the subjects
+            that are read name the employer — so this field is empty on every
+            auto-filed row, permanently. The control states that plainly and
+            then lets the person who applied answer it. Nothing here proposes a
+            title: no placeholder text, no guess from the company. The title is
+            data (mono, strong ink); the words around it are not (Atkinson, dim). */}
+        <div data-testid="detail-role" className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Tag className="h-3.5 w-3.5 shrink-0 text-dim" aria-hidden />
+          {roleEditing ? (
+            <>
+              <label className="sr-only" htmlFor={`role-input-${active.id}`}>
+                Role for {active.company}
+              </label>
+              <input
+                id={`role-input-${active.id}`}
+                type="text"
+                value={roleDraft}
+                maxLength={MAX_ROLE_LENGTH}
+                autoComplete="off"
+                onChange={(e) => setRoleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void onRoleSave();
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setRoleEditing(false);
+                    setRoleError(null);
+                  }
+                }}
+                disabled={roleBusy !== null}
+                className="min-w-0 flex-1 rounded border border-line bg-surface-2 px-2 py-1 text-xs text-strong outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => void onRoleSave()}
+                disabled={roleBusy !== null}
+                className="rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+              >
+                {roleBusy === "save" ? "saving…" : ROLE_SAVE_LABEL}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleEditing(false);
+                  setRoleError(null);
+                }}
+                disabled={roleBusy !== null}
+                className="text-xs text-dim underline-offset-2 hover:text-strong hover:underline disabled:opacity-50"
+              >
+                {CANCEL_LABEL}
+              </button>
+            </>
+          ) : role ? (
+            <>
+              <span className="min-w-0 break-words text-[11px] text-strong">{role}</span>
+              {/* Whose word it is — stated only when it is actually the user's. */}
+              {roleSource ? <span className="text-[11px] text-dim">{roleSource}</span> : null}
+              <button
+                type="button"
+                aria-label={`Change the role for ${active.company}`}
+                onClick={() => {
+                  setRoleDraft(role);
+                  setRoleError(null);
+                  setRoleEditing(true);
+                }}
+                disabled={roleBusy !== null}
+                className="rounded border border-line px-2 py-1 text-xs text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+              >
+                {ROLE_CHANGE_LABEL}
+              </button>
+              <button
+                type="button"
+                aria-label={`Clear the role for ${active.company}`}
+                title={ROLE_CLEAR_HINT}
+                onClick={() => void onRoleClear()}
+                disabled={roleBusy !== null}
+                className="rounded border border-line px-2 py-1 text-xs text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
+              >
+                {roleBusy === "clear" ? "clearing…" : ROLE_CLEAR_LABEL}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleDraft("");
+                  setRoleError(null);
+                  setRoleEditing(true);
+                }}
+                className="rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong"
+              >
+                {ROLE_ADD_LABEL}
+              </button>
+              <span className="text-[11px] text-dim">{ROLE_ABSENT_HINT}</span>
+            </>
+          )}
+          {roleBusy !== null ? (
+            <Loader2
+              className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none"
+              aria-hidden
+            />
+          ) : null}
+        </div>
+
+        {roleError ? (
+          <p
+            role="alert"
+            className="flex items-start gap-1.5 rounded border border-reject/50 bg-reject/10 px-2 py-1.5 text-xs leading-snug text-strong"
+          >
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-reject-ink" aria-hidden />
+            <span>{roleError}</span>
           </p>
         ) : null}
 

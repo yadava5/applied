@@ -295,6 +295,26 @@ class Application(TimestampMixin, table=True):
     # Core fields
     company: str = Field(index=True, description="Company name")
     position: str = Field(description="Job position/title")
+    # Who put the position there — NULL for "the sync owns this field", 'user'
+    # for a title a human typed. Issue #72: the Gmail path fetches
+    # ``format=metadata`` and the ATS acknowledgement subjects it reads name the
+    # employer and never the role, so ``position`` is permanently "" for every
+    # auto-filed row and no amount of extraction work changes that from the
+    # subject alone. Letting the user fill it in needs a way to say the field is
+    # theirs now, or the next sync to learn role extraction silently overwrites
+    # it.
+    #
+    # A separate column rather than the ``source`` flip
+    # ``record_status_correction`` uses, because ``_is_auto_row(source)`` also
+    # gates the status advance, the reopen-after-rejection evidence and the
+    # employer-name restyle: moving the row off ``gmail`` to protect a job title
+    # would stop a later rejection email from ever settling the card. This is
+    # ``due_source``'s shape — per-field provenance — for the same reason
+    # ``due_source`` has it.
+    position_source: Optional[str] = Field(
+        default=None,
+        description="Origin of position: NULL (the sync's) or 'user' (typed)",
+    )
     status: ApplicationStatus = Field(
         default=ApplicationStatus.APPLIED,
         index=True,

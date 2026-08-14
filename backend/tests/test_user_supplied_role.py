@@ -1,0 +1,454 @@
+"""A role the sync can never know, typed by the person who applied.
+
+Issue #72. Every application filed from Gmail lands with ``position = ""`` for
+two independent reasons: the Gmail path fetches ``format=metadata`` so no body
+is ever read, and ``_role_from_subject`` runs four regexes over a subject line
+that names the COMPANY — "Thanks for applying to Supabase" — and never the role.
+Both hold for all three of the owner's real production subjects.
+
+The chosen answer is the cheapest honest one: let the user type it, and remember
+it. What that costs is a way to say "this field is the human's now", because a
+sync that later learns to extract roles must not overwrite one.
+
+The mechanism is ``position_source``, and the tests below are mostly about why
+it is a NEW column rather than the ``source`` flip ``record_status_correction``
+uses. ``_is_auto_row(source)`` gates the status advance, the reopen-after-
+rejection evidence and the employer-name restyle as well as the role, all inside
+one ``if`` at ``upsert_applications_for_user``. Flipping ``source`` to protect a
+typed job title would therefore also stop a later rejection email from moving
+the row to REJECTED — a real regression, caused by filling in a job title.
+``due_source`` is the precedent that fits: per-field provenance, set by the user
+route, honoured by the sync, touching nothing else.
+
+``role_token`` is deliberately NOT written here; see
+:func:`test_a_typed_role_leaves_the_rows_identity_alone` for the reasoning.
+"""
+
+from __future__ import annotations
+
+import datetime
+import importlib
+import time
+import uuid as _uuid
+from collections.abc import AsyncIterator
+from typing import Any
+
+import jwt as pyjwt
+import pytest
+from cryptography.fernet import Fernet
+from httpx import ASGITransport, AsyncClient
+from sqlmodel import select
+
+from jobtracker.cloud import applications as apps
+from jobtracker.cloud import pipeline as p
+from jobtracker.database.models import Application, ApplicationStatus
+
+USER = _uuid.UUID("7c1d9e40-5b2a-4f18-9a63-2e8c4d0b7f51")
+OTHER = _uuid.UUID("11111111-2222-3333-4444-555555555555")
+
+BASE = datetime.datetime(2026, 8, 13, 9, 0)
+SUPABASE = "no-reply@ashbyhq.com"
+
+# The real shape from the issue: the subject names the employer, the snippet
+# says nothing about a role either, so the pipeline extracts none.
+ACK_SUBJECT = "Thanks for applying to Supabase"
+ACK_SNIPPET = (
+    "Hi Ayush, thanks for applying! We&#39;ve received your application and the "
+    "team will review it shortly."
+)
+
+# A LATER message that does name a role. Nothing in the Gmail path produces one
+# today, which is exactly why the guard has to be tested against mail that does
+# — the protection is worth nothing if it is only ever exercised by a sync that
+# had nothing to write in the first place.
+ROLED_SUBJECT = "Your application for the Data Scientist role at Supabase"
+ROLED_SNIPPET = "Hi Ayush, an update on your Data Scientist application."
+
+
+def at(minutes: int) -> datetime.datetime:
+    return BASE + datetime.timedelta(minutes=minutes)
+
+
+def item(
+    message_id: str,
+    *,
+    subject: str = ACK_SUBJECT,
+    snippet: str = ACK_SNIPPET,
+    category: str = "applied",
+    minutes: int = 0,
+) -> p.PipelineItem:
+    return p.PipelineItem(
+        message_id=message_id,
+        thread_id=f"th-{message_id}",
+        subject=subject,
+        sender_email=SUPABASE,
+        sender_name="Supabase",
+        received_at=at(minutes),
+        category=category,
+        confidence=0.95,
+        snippet=snippet,
+    )
+
+
+ACK = item("m1", minutes=0)
+ROLED = item("m2", subject=ROLED_SUBJECT, snippet=ROLED_SNIPPET, minutes=100)
+REJECTION = item(
+    "m3",
+    subject="Update on your application",
+    snippet="We have decided not to move forward at this time.",
+    category="rejection",
+    minutes=200,
+)
+
+
+def _rolled(items: list[p.PipelineItem]):
+    return p.roll_up_applications(items)
+
+
+async def _rows(session, user=USER) -> list[Application]:
+    return list(
+        (await session.exec(select(Application).where(Application.user_id == user))).all()
+    )
+
+
+async def _only(session, user=USER) -> Application:
+    rows = await _rows(session, user)
+    assert len(rows) == 1, [(r.id, r.company, r.position) for r in rows]
+    return rows[0]
+
+
+# --- the premise ---------------------------------------------------------------
+
+
+def test_the_acknowledgement_really_does_name_no_role():
+    """Guard on the fixture, not on the product.
+
+    If a future extraction improvement starts finding a role in this subject,
+    every test below would still pass while testing nothing — the sync would be
+    writing a role the user never had to type. This fails loudly instead.
+    """
+
+    assert p.role_from_message(ACK_SUBJECT, ACK_SNIPPET) is None
+    # And the one that DOES name a role is genuinely extracted, or the guard
+    # tests below are exercising a no-op.
+    assert p.role_from_message(ROLED_SUBJECT, ROLED_SNIPPET) is not None
+
+
+async def test_a_gmail_row_starts_with_no_role_and_no_source(test_session):
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+
+    row = await _only(test_session)
+    assert row.position == ""
+    assert row.position_source is None
+    assert row.source == apps.SOURCE_GMAIL_AUTO
+
+
+# --- the feature ---------------------------------------------------------------
+
+
+async def test_a_typed_role_is_stored_and_marked_as_the_users(test_session):
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+
+    updated = await apps.record_role_correction(
+        test_session, USER, row_id, "Backend Engineer"
+    )
+
+    assert updated is not None
+    assert updated.position == "Backend Engineer"
+    assert updated.position_source == apps.ROLE_FROM_USER
+
+
+async def test_a_typed_role_survives_a_sync_that_extracts_one(test_session):
+    """The whole point. A later sync that DOES find a role must not overrule it.
+
+    Without the ``position_source`` guard the second sync overwrites the typed
+    title, because the row is still an auto row and ``r.role`` now differs from
+    what is stored — the exact branch at ``upsert_applications_for_user``.
+    """
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+    await apps.record_role_correction(test_session, USER, row_id, "Backend Engineer")
+
+    await apps.sync_gmail_pipeline_additive(
+        test_session, USER, _rolled([ACK, ROLED]), []
+    )
+
+    row = await _only(test_session)
+    assert row.id == row_id
+    assert row.position == "Backend Engineer"
+    assert row.position_source == apps.ROLE_FROM_USER
+
+
+async def test_a_typed_role_does_not_freeze_the_rows_status(test_session):
+    """Why this is not the ``source`` flip.
+
+    ``record_status_correction`` makes a status sticky by moving the row off
+    ``gmail`` — and ``_is_auto_row`` gates the status advance and the reopen
+    evidence too, so the same trick applied to a role would mean typing a job
+    title silently stops rejections from ever landing on that card again. The
+    row stays the sync's for everything except the one field the human filled.
+    """
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+    await apps.record_role_correction(test_session, USER, row_id, "Backend Engineer")
+
+    await apps.sync_gmail_pipeline_additive(
+        test_session, USER, _rolled([ACK, REJECTION]), []
+    )
+
+    row = await _only(test_session)
+    assert row.id == row_id
+    assert row.status == ApplicationStatus.REJECTED
+    assert row.source == apps.SOURCE_GMAIL_AUTO  # still the sync's row
+    assert row.position == "Backend Engineer"  # except for this
+
+
+async def test_a_typed_role_leaves_the_rows_identity_alone(test_session):
+    """``role_token`` is the MAIL's identity key, and stays the mail's.
+
+    ``_pick_application`` matches a cluster's ``role_token`` — normalised from
+    what a message says — against the stored one, and treats a row with both
+    ``req_id`` and ``role_token`` NULL as adoptable in place (rule 3). Stamping
+    a user's phrasing into it would therefore change which future clusters
+    resolve onto this row: a cluster that would have adopted it now finds no
+    unidentified row and mints a second card instead. And since the Gmail path
+    extracts no role for these rows, a token in the user's words could never be
+    matched by anything anyway. All risk, no benefit — so it is left NULL and
+    the sync stays free to identify the row from real mail evidence later.
+    """
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row = await _only(test_session)
+    assert row.role_token is None and row.req_id is None
+
+    await apps.record_role_correction(test_session, USER, row.id, "Backend Engineer")
+
+    row = await _only(test_session)
+    assert row.role_token is None
+    assert row.req_id is None
+
+    # And the sync may still stamp the identity it does learn from mail.
+    await apps.sync_gmail_pipeline_additive(
+        test_session, USER, _rolled([ACK, ROLED]), []
+    )
+    row = await _only(test_session)
+    assert row.role_token is not None
+    assert row.position == "Backend Engineer"
+
+
+# --- clearing ------------------------------------------------------------------
+
+
+async def test_clearing_a_role_hands_the_field_back_to_the_sync(test_session):
+    """Set and clear are one decision, as they are for a deadline.
+
+    Clearing drops the provenance with the value: a source without a value is a
+    claim about nothing, and leaving it set would freeze the field as empty
+    forever.
+    """
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+    await apps.record_role_correction(test_session, USER, row_id, "Backend Engineer")
+
+    cleared = await apps.record_role_correction(test_session, USER, row_id, None)
+    assert cleared is not None
+    assert cleared.position == ""
+    assert cleared.position_source is None
+
+    await apps.sync_gmail_pipeline_additive(
+        test_session, USER, _rolled([ACK, ROLED]), []
+    )
+    assert (await _only(test_session)).position == "Data Scientist"
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n "])
+async def test_a_blank_role_clears_rather_than_storing_whitespace(
+    test_session, blank: str
+):
+    """#72 exists to stop invented data; a row that LOOKS filled is the same lie."""
+
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+    await apps.record_role_correction(test_session, USER, row_id, "Backend Engineer")
+
+    cleared = await apps.record_role_correction(test_session, USER, row_id, blank)
+    assert cleared is not None
+    assert cleared.position == ""
+    assert cleared.position_source is None
+
+
+async def test_a_typed_role_is_trimmed(test_session):
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+
+    updated = await apps.record_role_correction(
+        test_session, USER, row_id, "  Backend Engineer  "
+    )
+    assert updated is not None
+    assert updated.position == "Backend Engineer"
+
+
+# --- ownership -----------------------------------------------------------------
+
+
+async def test_a_role_correction_is_scoped_to_its_owner(test_session):
+    await apps.sync_gmail_pipeline_additive(test_session, USER, _rolled([ACK]), [])
+    row_id = (await _only(test_session)).id
+
+    assert (
+        await apps.record_role_correction(test_session, OTHER, row_id, "Anything")
+        is None
+    )
+    assert (await _only(test_session)).position == ""
+
+
+# --- the HTTP surface ----------------------------------------------------------
+
+JWT_SECRET = "role-fill-test-jwt-secret-at-least-32-bytes-long-hs256"
+ENC_KEY = Fernet.generate_key().decode()
+USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+def _token_for(user_id: str) -> str:
+    now = int(time.time())
+    return pyjwt.encode(
+        {"sub": user_id, "aud": "authenticated", "iat": now, "exp": now + 300},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+
+
+@pytest.fixture
+async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
+    """The cloud app on an in-memory DB — the reload sequence used repo-wide."""
+
+    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
+    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
+    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
+
+    import jobtracker.config as config_module
+    import jobtracker.database.connection as connection_module
+
+    importlib.reload(config_module)
+    connection_module._engine = None
+
+    import jobtracker.auth.supabase_jwt as auth_module
+
+    importlib.reload(auth_module)
+
+    import jobtracker.cloud.applications as cloud_apps_module
+
+    importlib.reload(cloud_apps_module)
+
+    import jobtracker.main_cloud as main_cloud_module
+
+    importlib.reload(main_cloud_module)
+
+    from jobtracker.database import init_db
+
+    await init_db()
+
+    yield main_cloud_module.app
+
+    if connection_module._engine is not None:
+        await connection_module._engine.dispose()
+    connection_module._engine = None
+
+    monkeypatch.undo()
+    importlib.reload(config_module)
+
+
+@pytest.fixture
+async def client(cloud_app) -> AsyncIterator[AsyncClient]:
+    transport = ASGITransport(app=cloud_app)
+    async with AsyncClient(
+        transport=transport, base_url="http://cloud-test", follow_redirects=False
+    ) as c:
+        yield c
+
+
+async def _make_row(client: AsyncClient, user: str) -> int:
+    resp = await client.post(
+        "/applications",
+        json={"company": "Supabase", "position": ""},
+        headers={"Authorization": f"Bearer {_token_for(user)}"},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+async def test_put_role_sets_it(client: AsyncClient) -> None:
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    app_id = await _make_row(client, USER_A)
+
+    resp = await client.put(
+        f"/applications/{app_id}/role",
+        json={"role": "Backend Engineer"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["position"] == "Backend Engineer"
+
+    listed = (await client.get("/applications", headers=headers)).json()[
+        "applications"
+    ][0]
+    assert listed["position"] == "Backend Engineer"
+
+
+async def test_put_role_null_clears_it(client: AsyncClient) -> None:
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    app_id = await _make_row(client, USER_A)
+
+    await client.put(
+        f"/applications/{app_id}/role", json={"role": "Backend Engineer"}, headers=headers
+    )
+    resp = await client.put(
+        f"/applications/{app_id}/role", json={"role": None}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["position"] == ""
+
+
+async def test_put_role_requires_a_bearer_token(client: AsyncClient) -> None:
+    app_id = await _make_row(client, USER_A)
+    resp = await client.put(f"/applications/{app_id}/role", json={"role": "X"})
+    assert resp.status_code == 401, resp.text
+
+
+async def test_put_role_cannot_reach_another_users_row(client: AsyncClient) -> None:
+    app_id = await _make_row(client, USER_A)
+
+    resp = await client.put(
+        f"/applications/{app_id}/role",
+        json={"role": "Backend Engineer"},
+        headers={"Authorization": f"Bearer {_token_for(USER_B)}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+    listed = (
+        await client.get(
+            "/applications", headers={"Authorization": f"Bearer {_token_for(USER_A)}"}
+        )
+    ).json()["applications"][0]
+    assert listed["position"] == ""
+
+
+async def test_put_role_rejects_an_over_long_title(client: AsyncClient) -> None:
+    """``position`` is NOT NULL TEXT with no length ceiling in the schema, so the
+    ceiling has to be here or the column is an unbounded write primitive."""
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    app_id = await _make_row(client, USER_A)
+
+    resp = await client.put(
+        f"/applications/{app_id}/role",
+        json={"role": "x" * 201},
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text

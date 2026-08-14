@@ -22,6 +22,7 @@ import {
   deadlineChangeRequest,
   permanentDeleteRequest,
   removeFromBoardRequest,
+  roleChangeRequest,
   statusChangeRequest,
   type ProxyRequest,
 } from "@/lib/dashboard/rowActions";
@@ -42,6 +43,10 @@ export interface BoardTransport {
    *  user write, so the backend marks it `due_source: "user"` and sync
    *  never overwrites it. */
   setDeadline(id: number, dueAt: string | null): Promise<SendResult>;
+  /** Set (a title) or clear (`null`) the row's role — issue #72. Always a user
+   *  write, so the backend marks it `position_source: "user"`; the sync could
+   *  not have supplied one anyway, and now may not overwrite this one either. */
+  setRole(id: number, role: string | null): Promise<SendResult>;
   /** The RECOVERABLE removal ("Not an application") — never the hard delete. */
   dismiss(id: number): Promise<SendResult>;
   /** The hard delete — the one behind a confirmation. */
@@ -103,6 +108,7 @@ export const liveBoardTransport: BoardTransport = {
     return result;
   },
   setDeadline: (id, dueAt) => send(deadlineChangeRequest(id, dueAt)),
+  setRole: (id, role) => send(roleChangeRequest(id, role)),
   dismiss: (id) => send(removeFromBoardRequest(id)),
   deleteRow: (id) => send(permanentDeleteRequest(id)),
   async detail(id) {

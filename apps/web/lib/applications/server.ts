@@ -103,6 +103,23 @@ export function setApplicationDeadline(
 }
 
 /**
+ * PUT /applications/{id}/role — the job title, typed by the person who applied.
+ *
+ * Issue #72: the Gmail path fetches `format=metadata` and the ATS subjects it
+ * reads name the employer, so a role is never extracted and `position` is `""`
+ * on every auto-filed row for good. This is the only way one is ever filled in,
+ * and the backend marks it `position_source: "user"` so no later sync — nor a
+ * future extraction improvement — writes over it.
+ *
+ * `null` clears both the title and that claim, which matters more here than it
+ * does for a deadline: once the field is the user's, the sync may no longer
+ * correct a typo in it, so there has to be a way to hand it back.
+ */
+export function setApplicationRole(id: number, role: string | null): Promise<ApiCallResult> {
+  return call(`/applications/${id}/role`, { method: "PUT", body: { role } });
+}
+
+/**
  * POST /applications/{id}/split — turn a merged row into the applications its
  * own stored mail describes.
  *
