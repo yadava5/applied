@@ -1154,14 +1154,39 @@ test.describe("live demo (/demo)", () => {
     page,
   }) => {
     await page.goto("/demo");
-    // The rail footer carries the demo's one conversion block — under the
-    // fixture identity, never over the board — and its promise is kept honest
-    // in the same breath: Gmail connect is seat-gated while in beta.
+    // The rail footer carries the demo's one conversion block — never over
+    // the board — and its promise is kept honest in the same breath: Gmail
+    // connect is seat-gated while in beta. BOTH height tiers of the footer
+    // are in the DOM (`RailFooter` picks one by min-height media), so every
+    // locator here scopes to the visible tier or it trips strict mode on the
+    // hidden twin.
     const rail = page.locator('aside:has(nav[aria-label="Primary"])');
-    await expect(rail.getByRole("link", { name: "Create your account" })).toBeVisible();
-    await expect(rail.getByText(/Gmail connect is invite-only/i)).toBeVisible();
+    await expect(rail.locator('a[href="/signup"]:visible')).toHaveCount(1);
+    await expect(rail.locator("p:visible", { hasText: /Gmail connect is invite-only/i })).toHaveCount(
+      1,
+    );
     // The floating beta pill stays off the board twin, as before.
     await expect(page.getByRole("button", { name: /limited access/i })).toHaveCount(0);
+  });
+
+  test("the conversion block never costs the stage lens a row (#122's shape)", async ({ page }) => {
+    // The first cut of the rail CTA added 163px to the footer and silently
+    // scrolled the lens's `closed` row below the fold — the exact over-filled
+    // rail that PR #122 died on, at the owner's real 1309×693. The footer is
+    // height-tiered now (compact under 860px), and this holds the budget at
+    // that historic window: the rail's middle run must FIT, not scroll.
+    await page.setViewportSize({ width: 1309, height: 693 });
+    await page.goto("/demo");
+    const rail = page.locator('aside:has(nav[aria-label="Primary"])');
+    // The lens is portaled in by the board — wait for its last row.
+    await expect(rail.getByText("closed", { exact: false }).first()).toBeAttached();
+    const deficit = await rail.evaluate((aside) => {
+      const run = aside.querySelector(".overflow-y-auto");
+      return run ? run.scrollHeight - run.clientHeight : -1;
+    });
+    expect(deficit, `the rail's middle run scrolls by ${deficit}px — a lens row is below the fold`).toBeLessThanOrEqual(0);
+    // And the compact tier still converts: one visible signup link.
+    await expect(rail.locator('a[href="/signup"]:visible')).toHaveCount(1);
   });
 
   test("no horizontal overflow at 375px", async ({ page }) => {

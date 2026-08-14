@@ -59,15 +59,33 @@ import { DemoSignupCta } from "./SessionControls";
  * The directive arrived with `useDemoMode`, which merely made it true on the
  * label too.)
  *
- * Fixture mode (`useDemoMode`, /demo and /demo/shell): the block renders
- * exactly as it does signed in — same avatar, same two rows, the one fixture
- * identity ("Sam Fixture") — but its links resolve to the public twins
- * (`demoNavHrefs`), because /settings and /dashboard are auth bounces for the
- * anonymous visitor this shell serves. Beneath it hangs `DemoSignupCta`: the
- * demo's conversion block lives HERE, in chrome the signed-in shell spends on
+ * Fixture mode (`useDemoMode`, /demo and /demo/shell): the demo's conversion
+ * block (`DemoSignupCta`) lives HERE, in chrome the signed-in shell spends on
  * identity, because the board is the pitch and must not be covered, shifted
  * or shortened by an ad for itself — the rail is a fixed 240px column and the
- * footer anchors to its bottom, so nothing about the board's geometry moves.
+ * footer anchors to its bottom, so nothing about the BOARD's geometry moves.
+ * What CAN move is the rail's own middle run, and that is a hard budget, not
+ * a vibe — measured on the production build: the logo block is 67px, the
+ * nav + stage lens + search content is 469px, so a 693px window (the owner's
+ * real 1309×693, the exact height PR #122 died on) leaves 157px for this
+ * footer. The signed-in footer spends ~115. The first cut of this block
+ * ADDED 163px to that and silently scrolled the lens's `closed` row below
+ * the fold — the #122 failure mode with a new author. So the footer is
+ * tiered on viewport height, and the short tier REPLACES the identity
+ * theater instead of stacking under it:
+ *
+ *   - under 860px: `DemoSignupCta compact` alone (~144px total) — sentence,
+ *     button, beta line. The fixture identity and connection rows yield;
+ *     their one fact ("this account is simulated") is already stated
+ *     permanently by the sync row's "simulated account · nothing is read".
+ *   - 860px and up: the full block — identity row, connection line, then the
+ *     pitch (~281px; an 860px window affords 324). Links resolve to the
+ *     public twins (`demoNavHrefs`), because /settings and /dashboard are
+ *     auth bounces for the anonymous visitor this shell serves.
+ *
+ * Both tiers are in the DOM (CSS `min-height` media picks one), so the SSR
+ * payload and every executing locator see one stable tree; specs that touch
+ * the CTA must scope to the visible tier.
  *
  * "Last synced" survived the collapse because it is the answer to the question
  * that drove the repeated manual re-syncs: *did this thing ever run?* Whether
@@ -188,7 +206,7 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
   const identity = userName ?? userEmail;
   const initial = identity?.charAt(0).toUpperCase() ?? "·";
 
-  return (
+  const identityBlock = (
     <div className="space-y-0.5">
       <Link
         href={demo ? demoHrefFor("/settings") : "/settings"}
@@ -221,13 +239,30 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
         </span>
       </Link>
       {gmail ? <ConnectionLine gmail={gmail} userEmail={userEmail} /> : null}
-      {/* The demo's conversion block — see the header note. Its own top rule
-          marks where the stand-in identity ends and the invitation begins. */}
-      {demo ? (
-        <div className="border-t border-line-soft px-2 pb-1 pt-3">
+    </div>
+  );
+
+  if (!demo) return identityBlock;
+
+  // The height-tiered demo footer — the budget arithmetic is in the header
+  // note. 860px: the full block needs 281px under a 536px fixed run, plus
+  // headroom for font metrics; below it, the compact tier's 144px fits the
+  // 693px floor with 13px to spare.
+  return (
+    <>
+      {/* Tall rails: the identity theater, then the invitation under its own
+          rule — where the stand-in identity ends, the ask begins. */}
+      <div className="hidden [@media(min-height:860px)]:block">
+        {identityBlock}
+        <div className="mt-2 border-t border-line-soft px-2 pb-1 pt-3">
           <DemoSignupCta />
         </div>
-      ) : null}
-    </div>
+      </div>
+      {/* Short rails: the invitation alone, inside the signed-in footer's own
+          height budget, so the stage lens above never loses a row to it. */}
+      <div className="px-2 pb-1 [@media(min-height:860px)]:hidden">
+        <DemoSignupCta compact />
+      </div>
+    </>
   );
 }

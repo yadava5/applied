@@ -103,13 +103,18 @@ function watch(page: Page): PageFault[] {
  */
 const ROUTES: { path: string; label: string; expect: RegExp }[] = [
   { path: "/", label: "landing", expect: /Applied/i },
-  // "Sam Fixture": the shell's rail identity — /demo mounts the full app
-  // shell since the consolidation, and the fixture persona is the phrase that
-  // exists on this route and no signed-in one.
-  { path: "/demo", label: "demo dashboard", expect: /Sam Fixture/i },
+  // The signup CTA: /demo mounts the full app shell since the consolidation,
+  // and the conversion block is the phrase that exists on this route and no
+  // signed-in one — present in whichever height tier of the rail footer is
+  // active, where the fixture identity row is tall-tier only.
+  { path: "/demo", label: "demo dashboard", expect: /Create your account/i },
   // The measured production distribution (every row one stage) — the case the
   // worklist redesign exists for, kept hydration-clean like the seed twin.
-  { path: "/demo?pipeline=early", label: "demo dashboard (early search)", expect: /Sam Fixture/i },
+  {
+    path: "/demo?pipeline=early",
+    label: "demo dashboard (early search)",
+    expect: /Create your account/i,
+  },
   { path: "/demo/settings", label: "settings twin", expect: /nothing is saved/i },
   { path: "/demo/inbox", label: "sample inbox", expect: /inbox/i },
   { path: "/import", label: "import", expect: /import/i },

@@ -80,14 +80,34 @@ export function DemoFixturePill() {
  * The beta line keeps the promise honest — Gmail connect is seat-gated
  * (Google's OAuth test-user cap, disclosed on the landing) — and doubles as
  * the sign-in path for anyone who already holds a seat.
+ *
+ * `compact` is a HEIGHT budget, not a style preference, and the budget is
+ * measured (see `RailFooter`): on short windows the rail cannot afford the
+ * full sentence without pushing the stage lens's last row below the fold —
+ * the #122 failure mode. The compact sentence drops the Sam framing because
+ * its antecedent (the identity row) is exactly what the short tier cannot
+ * show; what survives is the owner's own line. The button and the beta line
+ * are identical in both tiers, so the action never changes name.
  */
-export function DemoSignupCta({ onNavigate }: { onNavigate?: () => void }) {
+export function DemoSignupCta({
+  compact = false,
+  onNavigate,
+}: {
+  compact?: boolean;
+  onNavigate?: () => void;
+}) {
   return (
-    <div className="space-y-2.5">
-      <p className="text-xs leading-relaxed text-muted">
-        <span className="text-strong">Sam isn&apos;t real. Your applications are</span> — already
-        written down in your inbox, waiting to be filed.
-      </p>
+    <div className="space-y-2">
+      {compact ? (
+        <p className="text-xs leading-relaxed text-muted">
+          Your applications are waiting in your inbox.
+        </p>
+      ) : (
+        <p className="text-xs leading-relaxed text-muted">
+          <span className="text-strong">Sam isn&apos;t real. Your applications are</span> — already
+          written down in your inbox, waiting to be filed.
+        </p>
+      )}
       <Link
         href="/signup"
         onClick={onNavigate}
