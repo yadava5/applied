@@ -61,7 +61,7 @@ export const dynamic = "force-dynamic";
  *     rows, off leaves it below — so both are reachable here.
  *
  *   - `?session=1` mounts the SIGNED-IN session edge on the board's header
- *     row in place of that identity block's pill — `withSignOut` on and
+ *     row in place of that identity block's pill — `signedIn` on and
  *     `trailing` unset, the exact pair `app/(app)/dashboard/page.tsx` passes
  *     to `SyncBar`. Third harness knob, same reasoning as `?review=N`, and
  *     the case it was written for is that sentence word for word: sign-out on

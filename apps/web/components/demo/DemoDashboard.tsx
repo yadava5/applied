@@ -135,7 +135,7 @@ export function DemoDashboard({
    *  escaped-`sr-only` document scroll #149 fixed. */
   reviewSlot?: DemoReviewSlot;
   /** Mounts the SIGNED-IN session edge on the header row instead of the demo
-   *  pill — `withSignOut` on, `trailing` unset, exactly what
+   *  pill — `signedIn` on, `trailing` unset, exactly what
    *  `app/(app)/dashboard/page.tsx` passes. Off for every organic visitor;
    *  /demo/shell's `?session=1` harness knob is the one caller that sets it,
    *  and it is the whole reason that knob exists: the pill is what the twin
@@ -144,7 +144,7 @@ export function DemoDashboard({
    *  behaviour is still fixture-mode, and the row's recency slot drops the
    *  simulated frame for the live `LastSynced` over this same fixture state
    *  (69px narrower, and the difference wraps the row) — both in `SyncBar`,
-   *  both keyed off `withSignOut`, neither reachable without the knob. */
+   *  both keyed off `signedIn`, neither reachable without the knob. */
   sessionEdge?: boolean;
 }) {
   const locked = variant === "locked";
@@ -437,7 +437,7 @@ export function DemoDashboard({
         // measured at all. Never both: two session edges in one row would
         // measure a shape no surface renders.
         trailing={locked && !sessionEdge ? <DemoFixturePill /> : undefined}
-        withSignOut={sessionEdge}
+        signedIn={sessionEdge}
         since={
           <SinceLastLook
             rows={ledgerRows}

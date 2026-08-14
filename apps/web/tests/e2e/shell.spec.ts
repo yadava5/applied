@@ -416,11 +416,15 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * green. The floors are measured on /demo/shell (recorded 2026-08-12,
    * `next start`, headless Chrome, after the header row replaced the top bar
    * and the stage lens moved to the rail): worklist-pane clientHeight 652 at
-   * 1280×800, 572 at 1280×720, 592 at 1024×768 (the demo pill wraps the
-   * header to two lines at that width; the signed-in row holds one). A small
-   * tolerance absorbs sub-pixel/font drift; a real regression (a fatter
-   * band, a second header row, a reinstated notice line) costs tens of
-   * pixels and lands far below it.
+   * 1280×800, 572 at 1280×720, 592 at 1024×768 — the twin's header holds two
+   * lines at 1024 because the fixture recency frame ("simulated account ·
+   * nothing is read", 184.5px) lays out ~69px wider than the live row's
+   * phrase and wraps the row regardless of the pill (measured 2026-08-13 with
+   * the pill removed); the signed-in arrangement holds one line, asserted in
+   * session-edge.spec.ts rather than recorded here. A small tolerance absorbs
+   * sub-pixel/font drift; a real regression (a fatter band, a second header
+   * row, a reinstated notice line) costs tens of pixels and lands far below
+   * it.
    */
   for (const { viewport, floor } of [
     { viewport: { width: 1280, height: 800 }, floor: 645 },

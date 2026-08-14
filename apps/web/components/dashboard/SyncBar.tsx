@@ -58,7 +58,7 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * subtitle, the change-ledger chip (`since`), the status/recency slot, the
  * controls, and the session edge. Sign-out therefore stays reachable from
  * the top line of the screen on the board route — inside the `⋯` menu
- * (`withSignOut`), not as a row-level button: the button was the ~97px that
+ * (`signedIn`), not as a row-level button: the button was the ~97px that
  * wrapped this row to 82px at 1024 and cost the worklist the difference
  * (#172), spent on the control the owner uses least. The status
  * line never moves the page at `lg`+ — it rides in the row for exactly as
@@ -216,7 +216,7 @@ export function SyncBar({
   since,
   title,
   trailing,
-  withSignOut = false,
+  signedIn = false,
   children,
   transport = liveSyncTransport,
 }: {
@@ -237,21 +237,20 @@ export function SyncBar({
   /** Row-level chrome at the session edge — the demo pill on the fixture
    *  twin, and nothing else: a row-level button here is what wrapped the row
    *  at 1024 (#172). The signed-in sign-out rides in the `⋯` menu via
-   *  `withSignOut` instead. `lg`+ only. */
+   *  `signedIn` instead. `lg`+ only. */
   trailing?: ReactNode;
-  /** Folds `Sign out` into the row's `⋯` menu — the signed-in page's session
-   *  edge. Menu chrome, not a row-level control (see `trailing`), and it also
-   *  makes the menu render when Gmail is NOT connected: at `lg`+ the shell's
-   *  TopBar yields on the board route, so this menu is the route's only
-   *  sign-out. The fixture twin passes nothing — no session, no item — unless
-   *  it is deliberately standing in for the signed-in row
-   *  (/demo/shell?session=1), which is the one place this prop is true off
-   *  the signed-in page. It therefore means "render the SIGNED-IN
-   *  arrangement of this row", not only "add a menu item": the recency slot
-   *  below reads it for the same reason, because a stand-in that keeps the
-   *  fixture frame's extra 69px is not standing in for this row's geometry
-   *  at all. See that slot for the measurement. */
-  withSignOut?: boolean;
+  /** Render the SIGNED-IN arrangement of this row. Two things ride on it,
+   *  both below: `Sign out` folds into the row's `⋯` menu — menu chrome, not
+   *  a row-level control (see `trailing`) — and the recency slot carries the
+   *  live `LastSynced` instead of the fixture frame, because a stand-in that
+   *  keeps that frame's extra 69px is not standing in for this row's geometry
+   *  at all (see that slot for the measurement). It also makes the menu render
+   *  when Gmail is NOT connected: at `lg`+ the shell's TopBar yields on the
+   *  board route, so this menu is the route's only sign-out. The fixture twin
+   *  passes nothing — no session, no item — unless it is deliberately standing
+   *  in for the signed-in row (/demo/shell?session=1), which is the one place
+   *  this prop is true off the signed-in page. */
+  signedIn?: boolean;
   /** The compact `+` (AddApplicationForm) — stays rightmost in the cluster. */
   children?: ReactNode;
   /** How sync requests reach data — Gmail via the proxy by default; the demo
@@ -757,8 +756,8 @@ export function SyncBar({
           {connected ? (
             <>
               {showRecency ? (
-                simulated && !withSignOut ? (
-                  // The fixture frame, and why `withSignOut` excludes it.
+                simulated && !signedIn ? (
+                  // The fixture frame, and why `signedIn` excludes it.
                   // A row asked for the signed-in session edge is standing in
                   // for the signed-in row — that is the whole contract of
                   // /demo/shell's `?session=1` — and this frame is 69px wider
@@ -777,7 +776,17 @@ export function SyncBar({
                   // `lastSyncAt` is null, so `LastSynced` says "not synced
                   // yet", which is exactly true of a simulated account that
                   // reads no mail — and is a state the signed-in page renders
-                  // too. Only the knob reaches this branch; /demo and the
+                  // too. One reachable state does undercut that, and is worth
+                  // stating rather than defending: press Sync with the knob on
+                  // and the run reports a real receipt ("2 filed, 3 already
+                  // known"), then seconds later this slot reads "not synced
+                  // yet" again, because `DEMO_GMAIL` is a static const and the
+                  // simulated transport writes nothing back to it — true of a
+                  // fixture account, false inside the fiction that receipt just
+                  // told. The fix is a follow-up and not this branch's: hold
+                  // the gmail state in `DemoDashboard`'s store and set
+                  // `lastSyncAt` on a simulated sync.
+                  // Only the knob reaches this branch; /demo and the
                   // twin's own default still carry the frame.
                   <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
                     simulated account · nothing is read
@@ -824,7 +833,7 @@ export function SyncBar({
             </Link>
           ) : null}
           {/* The `⋯` menu — OUTSIDE the connected branch, because with
-              `withSignOut` it is the board route's only sign-out at `lg`+
+              `signedIn` it is the board route's only sign-out at `lg`+
               (TopBar yields there) and a session must stay endable with Gmail
               disconnected. The sync-owned items still require a connection: a
               menu must not offer a rebuild that can only 409. Sign-out is
@@ -832,9 +841,9 @@ export function SyncBar({
               name follows its contents: the session edge makes it more than
               sync options, and the demo (no session) keeps the old name its
               specs assert. */}
-          {connected || withSignOut ? (
+          {connected || signedIn ? (
             <RowActionsMenu
-              label={withSignOut ? "More actions" : "Sync options"}
+              label={signedIn ? "More actions" : "Sync options"}
               disabled={busy}
               triggerClassName="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
               triggerContent={<MoreHorizontal className="h-4 w-4" aria-hidden />}
@@ -855,7 +864,7 @@ export function SyncBar({
                       },
                     ]
                   : []),
-                ...(withSignOut
+                ...(signedIn
                   ? [
                       {
                         key: "sign-out",

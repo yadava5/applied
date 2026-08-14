@@ -14,7 +14,7 @@ import { expect, test, type Page } from "@playwright/test";
  * session edge (`DemoDashboard`'s `trailing`). So the twin did not contain
  * the thing the change changed, and every gate in the repo could stay green
  * across it in both directions. `/demo/shell?session=1` closes that hole: it
- * mounts the real pair the signed-in page passes to `SyncBar` (`withSignOut`
+ * mounts the real pair the signed-in page passes to `SyncBar` (`signedIn`
  * on, `trailing` unset). The knob is declared in that route's own doc comment
  * beside `?review=N` and `?queue=`, and nothing links to it.
  *
@@ -22,7 +22,8 @@ import { expect, test, type Page } from "@playwright/test";
  * height (the wrapped row measured 82px) is a magic number that goes stale
  * the first time a control's padding or the type scale moves, and it cannot
  * say WHICH way it failed. Two structural measures are asserted instead, both
- * derived from the row's own flex behaviour:
+ * derived from the row's own flex behaviour, and a third that is frankly a
+ * backstop rather than a measurement (see 3):
  *
  *   1. Distinct child CENTRES. The row is `flex flex-wrap items-center`, so
  *      every item on one flex line shares that line's centre — regardless of
@@ -34,14 +35,21 @@ import { expect, test, type Page } from "@playwright/test";
  *   2. The row's height against its TALLEST laid-out child. The row carries
  *      no padding of its own, so unwrapped those are equal by construction;
  *      wrapped it is at least the second line plus the 8px `gap-y-2`.
+ *   3. A loose ceiling on the row's height. Both measures above are relative
+ *      to the children, so both would pass if the CONTROLS CLUSTER ever
+ *      wrapped inside itself: it stays one flex child with one centre, and
+ *      the row stays exactly as tall as it. Implausible with today's
+ *      contents; free to guard against. Shown red the same way everything
+ *      else here was — the ceiling temporarily set to 20px reported the
+ *      row's real 38px at both widths, so the assertion executes.
  *
- * Both are reported with every child's box in the failure message, together
- * with each child's flex-basis and what the children sum to AS LAID OUT — a
- * grown flex child (the ledger chip) has already absorbed the row's slack by
- * the time it is measured, so that sum is a description of the arrangement,
- * NOT the row's deficit. The basis column is the one to read when asking
- * whether something fits: line breaking happens on hypothetical sizes, before
- * any growing or shrinking.
+ * All three are reported with every child's box in the failure message,
+ * together with each child's flex-basis and what the children sum to AS LAID
+ * OUT — a grown flex child (the ledger chip) has already absorbed the row's
+ * slack by the time it is measured, so that sum is a description of the
+ * arrangement, NOT the row's deficit. The basis column is the one to read when
+ * asking whether something fits: line breaking happens on hypothetical sizes,
+ * before any growing or shrinking.
  *
  * Children with `position: absolute` are excluded: the row's status region is
  * a persistent live region wearing `sr-only` while silent, i.e. a 1×1 absolute
@@ -81,11 +89,23 @@ import { expect, test, type Page } from "@playwright/test";
  * 220.47px of slack here; with the live phrase swapped into this rig's DOM —
  * a diagnostic, rendered on no surface, so do not expect to reproduce it — it
  * grows into 180.94px, i.e. the owner's row clears one line by roughly 21px
- * where this one clears it by roughly 60. So this file gates the ARRANGEMENT —
- * no row-level session control, sign-out reachable in the menu, one line —
- * and it would still pass a future regression that spent 30px of the row. A
- * budget assertion on the live row needs a session and belongs with the specs
- * that have one.
+ * where this one clears it by roughly 60. So the assertions above gate the
+ * ARRANGEMENT — no row-level session control, sign-out reachable in the menu,
+ * one line — and nothing more: a row that grew 8px taller is still one line
+ * and still under the ceiling (38 + 8 = 46), and those 8px come straight out
+ * of the worklist. That is why the worklist floor at the bottom
+ * of this file exists. It records what the fold actually BOUGHT (the
+ * signed-in twin's worklist share at 1024, against `shell.spec.ts`'s recorded
+ * floors for the default twin) and goes red when the row stops being cheap,
+ * which is a different regression from the row stopping being one line —
+ * neither assertion implies the other. A budget assertion on the LIVE row is
+ * still out of reach: it needs a session, and belongs with the specs that
+ * have one.
+ *
+ * The last test here is the mirror of the knob's absence assertions: the
+ * DEFAULT twin (no `?session=1`) must still wear its fixture signage. Nothing
+ * else asserts that, so a flipped prop default would strip the honesty
+ * affordance off /demo/shell with every gate in the repo green.
  */
 
 /** The knob. `?session=1` = the signed-in session edge on the fixture twin. */
@@ -222,6 +242,21 @@ for (const viewport of [
         geometry.height,
         `the row is ${geometry.height}px against a tallest child of ${tallest}px — that is a second line\n${describeRow(geometry)}`,
       ).toBeLessThanOrEqual(tallest + 1);
+
+      // Backstop, not a measurement. Both assertions above are RELATIVE to the
+      // children, so both would pass if the controls cluster wrapped inside
+      // itself: it would remain one flex child with one centre, and the row
+      // would remain exactly as tall as it. A ceiling is the only thing that
+      // sees that. It is loose (the row measures 38px) because the honest
+      // alternative — asserting the height equals a recorded number — was
+      // rejected: that goes stale the first time a control's padding or the
+      // type scale moves, which is the same reason the two measures above are
+      // structural rather than pixel counts. Anything under 48px is one line
+      // of these controls; two is 84px+.
+      expect(
+        geometry.height,
+        `the row is ${geometry.height}px — one flex line of these controls is under 48px, so something inside a child has wrapped\n${describeRow(geometry)}`,
+      ).toBeLessThanOrEqual(48);
     });
 
     test("`Sign out` is in the row's `⋯` menu, and nowhere in the row itself", async ({ page }) => {
@@ -270,4 +305,82 @@ test("the twin's `Sign out` cannot end a session — it leaves for the demo", as
 
   await expect(page).toHaveURL(/\/demo$/);
   expect(page.url(), "the fixture twin bounced a visitor to /login").not.toMatch(/\/login/);
+});
+
+/**
+ * What the fold actually BOUGHT, recorded the way `shell.spec.ts` records it —
+ * `worklist-pane` clientHeight against a floor, same locator, same slack.
+ * That file's floors are all measured on the DEFAULT twin, which still
+ * renders the fixture frame and the pill and still wraps its header at 1024,
+ * so the signed-in arrangement's worklist share is recorded NOWHERE and a
+ * change that spent the fold's pixels back on the header row would pass every
+ * gate in the repo — this file's assertions included. Work the arithmetic: a
+ * row 8px taller is still ONE line and still under the 48px ceiling
+ * (38 + 8 = 46), and only the floor below sees it (620 − 8 = 612 < 613). The
+ * two fail on different regressions and neither implies the other: the
+ * assertions above say the row is one line, this one says it stays cheap.
+ *
+ * Measured 2026-08-13 on this branch, `next build && next start`, headless
+ * Chromium, against `shell.spec.ts`'s readings for the default twin at the
+ * same widths (592 at 1024×768, 652 at 1280×800):
+ *
+ *     1024×768   620 here vs 592 default — the +28px #172 claims for the
+ *                worklist, independently reproduced. The primary case: it is
+ *                the owner's own width and the only one where the row wrapped.
+ *     1280×800   652 here vs 652 default — unchanged, as expected; the row
+ *                never wrapped at `xl`, so there was nothing to buy back.
+ *
+ * The floors are the measurement less 7px — the same slack `shell.spec.ts`
+ * allows at all three of its widths, enough for sub-pixel and font drift and
+ * nothing like the tens of pixels a real regression costs.
+ */
+for (const { viewport, floor } of [
+  { viewport: { width: 1024, height: 768 }, floor: 613 },
+  { viewport: { width: 1280, height: 800 }, floor: 645 },
+]) {
+  test(`the signed-in row leaves the worklist its share at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(SESSION_TWIN);
+    await expect(page.getByRole("heading", { level: 1, name: "Applications" })).toBeVisible();
+
+    const client = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+    expect(
+      client,
+      `the worklist pane shrank to ${client}px (floor ${floor}px) — the header row is spending back the height the fold freed (#172)`,
+    ).toBeGreaterThanOrEqual(floor);
+  });
+}
+
+test("the DEFAULT twin still wears its fixture signage", async ({ page }) => {
+  // The mirror of the knob's absence assertions, and the only thing asserting
+  // the twin's honesty affordances are there AT ALL: those say the pill and
+  // the frame are GONE under `?session=1`, which a flipped prop default would
+  // satisfy on every surface — stripping the signage off /demo/shell for
+  // every organic visitor with every gate in the repo still green.
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/demo/shell");
+  await expect(page.getByRole("heading", { level: 1, name: "Applications" })).toBeVisible();
+
+  const row = page.locator("[data-sync-header-row]");
+
+  // The provenance pill, in the row's `trailing` slot.
+  await expect(
+    row.getByRole("link", { name: /fixture data/ }),
+    "the demo pill is gone from the default twin's header row",
+  ).toBeVisible();
+  // The fixture recency frame — the phrase the knob swaps the live component
+  // in for, and the one that says plainly that no mail is being read.
+  await expect(
+    row.getByText(/simulated account/),
+    "the default twin's recency slot no longer says the account is simulated",
+  ).toBeVisible();
+  // And the menu keeps its fixture name: no session here, so nothing to end
+  // and no reason for the trigger to promise more than sync options.
+  await expect(row.getByRole("button", { name: "Sync options" })).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: "More actions" }),
+    "the default twin is rendering the signed-in menu",
+  ).toHaveCount(0);
 });

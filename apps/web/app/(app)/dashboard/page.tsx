@@ -236,7 +236,7 @@ export default async function DashboardPage() {
           subtitle="connection issue · your data could not be loaded"
           gmail={null}
           title="Applications"
-          withSignOut
+          signedIn
         >
           <AddApplicationForm compact />
         </SyncBar>
@@ -292,7 +292,7 @@ export default async function DashboardPage() {
             }${reviewNote}`}
             gmail={gmail}
             title="Applications"
-            withSignOut
+            signedIn
           >
             <AddApplicationForm compact />
           </SyncBar>
@@ -334,7 +334,7 @@ export default async function DashboardPage() {
           subtitle="0 filed · nothing tracked yet"
           gmail={gmail}
           title="Applications"
-          withSignOut
+          signedIn
         >
           <AddApplicationForm compact />
         </SyncBar>
@@ -361,7 +361,7 @@ export default async function DashboardPage() {
           yields on this route and this row carries the title, the state, the
           change ledger and the sync controls — one line where a 92%-empty bar
           plus a second header row used to sit. Sign-out rides inside the
-          row's ⋯ menu (`withSignOut`), not as a row-level button: the button
+          row's ⋯ menu (`signedIn`), not as a row-level button: the button
           is what wrapped this row to 82px at 1024 (#172). The /demo twin
           composes the identical row (with the demo pill in the trailing
           slot), so the two cannot drift.
@@ -385,7 +385,7 @@ export default async function DashboardPage() {
         subtitle={subtitle}
         gmail={gmail}
         title="Applications"
-        withSignOut
+        signedIn
         since={
           user?.id ? (
             <SinceLastLook
