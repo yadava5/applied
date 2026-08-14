@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { Logo } from "@/components/brand/Logo";
 import { AppShell } from "@/components/shell/AppShell";
+import { loadRailData } from "@/lib/shell/rail";
 import { getCurrentUser, userDisplayName } from "@/lib/supabase/auth";
 import { cn } from "@/lib/utils";
 
@@ -546,6 +547,12 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
 }
 
 export default async function PrivacyPage() {
+  // Started before the auth read so the two round-trips overlap — the same
+  // ordering `/import` uses a few files over, and the same one the `(app)`
+  // layout uses. The probe resolves its token from the cookie jar (no network)
+  // and never throws, so nothing is gained by queueing it behind `getUser`.
+  // Signed out, it is simply never awaited.
+  const rail = loadRailData();
   // `getCurrentUser()` rather than a bare `supabase.auth.getUser()` (what
   // /import reaches for): it is the same read, React-`cache()`d, so the shell
   // below shares this verified round-trip instead of paying for a second one.
@@ -554,7 +561,7 @@ export default async function PrivacyPage() {
   // --- Signed in: the document inside the app shell -------------------------
   if (user) {
     return (
-      <AppShell userEmail={user.email ?? null} userName={userDisplayName(user)}>
+      <AppShell rail={rail} userEmail={user.email ?? null} userName={userDisplayName(user)}>
         {/* Measure capped, but on the shell's shared left edge (no mx-auto),
             the same as /import. The page brings NO chrome of its own — the
             rail and the top bar are the way back, which is the whole reason

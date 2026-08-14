@@ -5,6 +5,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { ImportMail } from "@/components/import/ImportMail";
 import { Logo } from "@/components/brand/Logo";
 import { getGmailStatus } from "@/lib/gmail/server";
+import { loadRailData } from "@/lib/shell/rail";
 import { userDisplayName } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -64,7 +65,15 @@ export default async function ImportPage() {
       gmail.kind === "ok" && !(gmail.status.configured && gmail.status.connected);
 
     return (
-      <AppShell userEmail={user.email ?? null} userName={userDisplayName(user)}>
+      // `loadRailData()` is free here: it is `getGmailStatus()` under a
+      // different name, and this render already fired that probe above — the
+      // fetch is request-memoized on the identical URL and headers, so the
+      // shell reuses this page's answer rather than making a second call.
+      <AppShell
+        rail={loadRailData()}
+        userEmail={user.email ?? null}
+        userName={userDisplayName(user)}
+      >
         {/* Centred BOTH ways. The signed-out branch below has always centred
             this same measure; this branch sat it on the left edge, so the two
             modes of the one page disagreed — that inconsistency was the #198

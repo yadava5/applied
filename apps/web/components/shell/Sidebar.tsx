@@ -7,6 +7,7 @@ import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import type { RailData } from "@/lib/shell/rail";
 import { isNavItemActive, navItems } from "./nav";
+import { NavLink } from "./NavLink";
 import { RailFooter } from "./RailFooter";
 import { useShellSlots } from "./shell-slots";
 
@@ -82,9 +83,9 @@ export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
               const active = isNavItemActive(pathname, item.href);
               return (
                 <li key={item.href}>
-                  <Link
+                  <NavLink
                     href={item.href}
-                    aria-current={active ? "page" : undefined}
+                    active={active}
                     className={cn(
                       "group relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-accent",
                       active
@@ -106,7 +107,7 @@ export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
                       aria-hidden="true"
                     />
                     {item.label}
-                  </Link>
+                  </NavLink>
                 </li>
               );
             })}
