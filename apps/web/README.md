@@ -31,7 +31,17 @@ Required env vars (see `.env.example` for full descriptions):
 | `NEXT_PUBLIC_SUPABASE_URL` | public | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public | Supabase anon key |
 | `BACKEND_API_URL` | server | FastAPI backend base URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | server, optional | admin-only tasks |
+| `SUPABASE_SERVICE_ROLE_KEY` | server, optional | admin-only tasks — **without it "Delete account" cannot run** |
+
+`SUPABASE_SERVICE_ROLE_KEY` is optional in the schema so a deployment without
+it still boots, but it is not cosmetic: `auth.admin.deleteUser` needs it, so
+Settings → Delete account refuses with a 501 on any deployment that lacks it.
+That state is surfaced rather than hidden — the Settings page reads the
+capability server-side and says so before the typed confirmation, and
+`GET /api/account/delete` answers `{ "deletionEnabled": <bool> }` for anything
+that wants to assert it against a deployed origin. Setting the key requires a
+redeploy: Vercel injects environment variables at build/deploy time, so a value
+added afterwards does not reach a running deployment.
 
 ### Day-to-day scripts
 

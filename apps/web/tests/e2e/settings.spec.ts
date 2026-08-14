@@ -260,12 +260,32 @@ test.describe("settings sections (signed in — needs a session)", () => {
   test("account deletion is gated behind a typed confirmation", async ({ page }) => {
     await requireSession(page, "the real account-deletion confirmation gate");
     await page.goto("/settings");
+
+    // #218: the deployment's own capability is now server-rendered, and it is
+    // a real fork rather than a fallback — a deployment WITH the service-role
+    // key and one WITHOUT it are two states this app genuinely ships in, and
+    // the second is the one production has been in since it was created. Both
+    // branches assert the whole story, so neither can pass by being skipped:
+    // either the arming completes, or the user was told before typing why it
+    // cannot. What is asserted unconditionally is the part that must hold in
+    // both — the confirm is dead until DELETE is typed.
+    const unavailable = page.getByText(/deletion isn’t enabled on this deployment/i).first();
+    const deletionEnabled = (await unavailable.count()) === 0;
+
     await page.getByRole("button", { name: /delete account/i }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     const confirmButton = dialog.getByRole("button", { name: /permanently delete/i });
     await expect(confirmButton).toBeDisabled();
     await dialog.getByRole("textbox").fill("DELETE");
-    await expect(confirmButton).toBeEnabled();
+
+    if (deletionEnabled) {
+      await expect(confirmButton).toBeEnabled();
+    } else {
+      // The honest dead-button case: still disabled, and the reason is visible
+      // text inside the dialog rather than a surprise after pressing it.
+      await expect(confirmButton).toBeDisabled();
+      await expect(dialog.getByText(/deletion isn’t enabled on this deployment/i)).toBeVisible();
+    }
   });
 });
