@@ -44,8 +44,16 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
+  // The JSON reporter is the machine-readable half, and it exists for one
+  // reason: `e2e-ci.yml` counts the tests that skipped for want of a Supabase
+  // session (issue #188) and writes the number to the job summary. Counting
+  // that from `list` output would mean parsing prose meant for humans; the JSON
+  // carries each test's status AND its skip annotation, so the count is derived
+  // rather than pattern-matched out of a log. It lands inside `test-results/`,
+  // which Playwright clears BEFORE the run and this job already uploads as an
+  // artifact, so the file survives the run and needs no new ignore rule.
   reporter: process.env.CI
-    ? [["html", { open: "never" }], ["list"]]
+    ? [["html", { open: "never" }], ["json", { outputFile: "test-results/results.json" }], ["list"]]
     : [["list"]],
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",

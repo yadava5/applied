@@ -1,25 +1,25 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import { startConsoleWatch } from "./helpers";
+import { requireSession } from "./session";
 
 /**
  * E2E for Settings.
  *
  * Settings is auth-gated (the `(app)` layout bounces a signed-out visitor to
- * `/login`), so the full section coverage below is skip-guarded and becomes
- * real the moment the suite runs against a session. What we CAN drive without a
- * session is the Appearance theme mechanism itself — the same pre-paint script
- * the theme switch persists into — proven on a publicly reachable, theme-honoring
- * page.
+ * `/login`), so the full section coverage below is guarded by
+ * `requireSession()` and becomes real the moment the suite runs against a
+ * session. Without one it skips — but under the shared, greppable
+ * `E2E_NO_SESSION_SKIP (#188):` token that CI counts into the job summary, and
+ * `E2E_REQUIRE_SESSION=1` turns those skips into failures. What we CAN drive
+ * without a session is the Appearance theme mechanism itself — the same
+ * pre-paint script the theme switch persists into — proven on a publicly
+ * reachable, theme-honoring page.
+ *
+ * The guard probes `/dashboard`, not `/settings`: both sit behind the same
+ * `(app)` layout, so one probe answers for both, and each test navigates to
+ * `/settings` itself once the session is known to be real.
  */
-
-async function reachSettingsOrSkip(page: Page): Promise<void> {
-  await page.goto("/settings");
-  test.skip(
-    /\/login/.test(page.url()),
-    "no authenticated Supabase session in this environment — /settings is unreachable",
-  );
-}
 
 test.describe("appearance theme (public mechanism)", () => {
   test("a saved light theme is applied before paint, and dark restores it", async ({ page }) => {
@@ -132,7 +132,8 @@ test.describe("settings (via the public /demo/settings twin)", () => {
 
 test.describe("settings sections (signed in — needs a session)", () => {
   test("renders every wired section", async ({ page }) => {
-    await reachSettingsOrSkip(page);
+    await requireSession(page, "every wired Settings section rendering on the real /settings");
+    await page.goto("/settings");
 
     await expect(page.getByRole("heading", { name: /^settings$/i })).toBeVisible();
     for (const name of [
@@ -149,7 +150,8 @@ test.describe("settings sections (signed in — needs a session)", () => {
   });
 
   test("the appearance switch is a working radiogroup", async ({ page }) => {
-    await reachSettingsOrSkip(page);
+    await requireSession(page, "the Appearance theme radiogroup on the real /settings");
+    await page.goto("/settings");
     const group = page.getByRole("radiogroup", { name: /theme/i });
     await expect(group).toBeVisible();
     await group.getByRole("radio", { name: /light/i }).click();
@@ -161,13 +163,15 @@ test.describe("settings sections (signed in — needs a session)", () => {
   });
 
   test("the classification gate shows a live review count", async ({ page }) => {
-    await reachSettingsOrSkip(page);
+    await requireSession(page, "the classification gate's live review count, against real data");
+    await page.goto("/settings");
     await expect(page.getByText(/would wait for your review/i)).toBeVisible();
     await expect(page.getByRole("slider", { name: /gate/i })).toBeVisible();
   });
 
   test("account deletion is gated behind a typed confirmation", async ({ page }) => {
-    await reachSettingsOrSkip(page);
+    await requireSession(page, "the real account-deletion confirmation gate");
+    await page.goto("/settings");
     await page.getByRole("button", { name: /delete account/i }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();

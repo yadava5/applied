@@ -26,8 +26,12 @@ export const dynamic = "force-dynamic";
  *
  * This route exists because the shell's headline geometry claim ("the
  * document never scrolls; the worklist is the one scroll pane") was asserted
- * only behind `reachDashboardOrSkip`, which no CI environment can satisfy —
- * a check that could not fail. The lock lives entirely in components this
+ * only behind a session guard that no CI environment can satisfy — a check
+ * that could not fail. That guard is now `requireSession` in
+ * `tests/e2e/session.ts` and it is loud rather than silent (#188), but loud
+ * is not the same as running: the 13 tests behind it still do not execute
+ * anywhere, which is exactly why the geometry lives on this route instead.
+ * The lock lives entirely in components this
  * page mounts verbatim (`AppShellFrame`'s `h-dvh overflow-hidden` frame and
  * <main>, `LOCKED_PAGE_CLASS` on the twin's root, `PipelineBoard
  * variant="locked"`), so the executing assertions in
