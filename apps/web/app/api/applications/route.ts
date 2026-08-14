@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { createServerApiClient } from "@/lib/api/server";
-import { collectApplications } from "@/lib/applications/export";
+import { buildExportPages, collectMail } from "@/lib/applications/export";
 import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/status";
 
 /**
- * Server-side proxy for listing applications — used by the Settings "export
- * your data" action. Forwards to the backend with the caller's Supabase JWT
- * (from cookies) so the token and `BACKEND_API_URL` never reach the browser,
- * and returns the raw list JSON the client turns into a download.
+ * Server-side proxy behind the Settings "export your data" action. Forwards to
+ * the backend with the caller's Supabase JWT (from cookies) so the token and
+ * `BACKEND_API_URL` never reach the browser, and returns the JSON the client
+ * turns into a download.
  *
  * PAGINATED, because the export claims to be everything. This used to make one
  * unparameterised call, which the backend answers with its DEFAULT_PAGE_SIZE of
@@ -15,18 +15,33 @@ import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/statu
  * data-loss-shaped defect in the one feature whose entire job is handing the
  * user their data back. It never fired here because this account has 25.
  *
- * The loop itself lives in `lib/applications/export.ts` as a pure function over
- * a page-fetcher, so it can be executed by a test. Inline here it needed the
- * Next runtime and a Supabase cookie jar, which is why it shipped covered by
- * types and review only.
+ * TWO application passes and a mail pass (#217). `GET /applications` filters
+ * `dismissed_at` exclusively and defaults to the live board, so the removed —
+ * restorable, and deleted by `DELETE /account` along with everything else —
+ * rows were absent from the export entirely. `GET /applications/mail` is the
+ * parsed content of the user's own mail, metadata only: the cloud sync never
+ * fetches a body, so there is no message text to leak into a downloaded file.
+ *
+ * What is deliberately NOT here: `user_credentials` (the Google OAuth
+ * material — writing that into the browser's Downloads folder would be a worse
+ * defect than the one this fixes), `email_embeddings` and `sync_state` (a
+ * vector table and a Gmail history cursor, not user-legible), and
+ * `training_data` (derived classifier state). `contacts` and `interviews` have
+ * no cloud read endpoint at all — nothing in `main_cloud`'s schema exposes
+ * them, and the cloud pipeline never writes them.
+ *
+ * The loops live in `lib/applications/export.ts` as pure functions over a
+ * page-fetcher, so they can be executed by a test. Inline here they needed the
+ * Next runtime and a Supabase cookie jar, which is why the original shipped
+ * covered by types and review only.
  */
 export async function GET() {
   try {
     const api = await createServerApiClient();
 
-    const result = await collectApplications(async (page, pageSize) => {
+    const rows = await buildExportPages(async (page, pageSize, dismissed) => {
       const res = await api.GET("/applications", {
-        params: { query: { page, page_size: pageSize } },
+        params: { query: { page, page_size: pageSize, dismissed } },
       });
       if (res.error || !res.data) {
         return {
@@ -41,11 +56,45 @@ export async function GET() {
       };
     });
 
-    if (!result.ok) {
-      return NextResponse.json({ detail: result.detail }, { status: result.status });
+    if (!rows.ok) {
+      return NextResponse.json({ detail: rows.detail }, { status: rows.status });
     }
+
+    const mail = await collectMail(async (page, pageSize) => {
+      const res = await api.GET("/applications/mail", {
+        params: { query: { page, page_size: pageSize } },
+      });
+      if (res.error || !res.data) {
+        return {
+          ok: false as const,
+          status: res.response.status || 502,
+          detail: String(res.error ?? `Export failed while reading mail page ${page}`),
+        };
+      }
+      return {
+        ok: true as const,
+        page: { messages: res.data.messages, total: res.data.total },
+      };
+    });
+
+    if (!mail.ok) {
+      return NextResponse.json({ detail: mail.detail }, { status: mail.status });
+    }
+
+    // `total` is now a sum across two disjoint queries, so it is reported WITH
+    // its two halves rather than alone: a bare count that no longer means "the
+    // backend says there are this many" is a field a reader will misread, and
+    // both numbers were already computed. The downloaded file derives its own
+    // counts from the rows (`buildExportFile`) and does not read these.
     return NextResponse.json(
-      { applications: result.applications, total: result.total },
+      {
+        applications: rows.applications,
+        messages: mail.messages,
+        total: rows.total,
+        live: rows.live,
+        removed: rows.removed,
+        mail_total: mail.total,
+      },
       { status: 200 },
     );
   } catch {

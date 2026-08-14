@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { expect, test } from "@playwright/test";
 
 import { startConsoleWatch } from "./helpers";
@@ -135,6 +137,58 @@ test.describe("settings (via the public /demo/settings twin)", () => {
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(page.getByLabel("new password", { exact: true })).toHaveCount(0);
+  });
+
+  test("the export produces a real file, named for today, that parses and describes itself", async ({
+    page,
+  }) => {
+    // #217. Nothing exercised the download itself: the blob, the object URL,
+    // the anchor and the filename in `DataSection.exportData` were covered by
+    // review only, and the file's shape by nothing at all. The twin is where
+    // this can run — `/settings` needs a Supabase session CI cannot mint — and
+    // it is a fair test of the file because the ENVELOPE is built by the same
+    // `buildExportFile` both modes call. Only the rows differ.
+    const watch = startConsoleWatch(page);
+    await page.goto("/demo/settings");
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: /^export applications and mail \(json\)$/i }).click(),
+    ]);
+
+    // The user's own calendar day, not UTC: `toISOString()` here once stamped
+    // tomorrow's date on an evening export west of Greenwich. This asserts the
+    // shape and that it is the browser's local day — under the UTC project the
+    // two agree, so the day half only discriminates in an offset zone; the
+    // name itself is what goes red if the download path breaks.
+    const localDay = await page.evaluate(() => {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    });
+    expect(download.suggestedFilename()).toMatch(/^applied-export-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(download.suggestedFilename()).toBe(`applied-export-${localDay}.json`);
+
+    const path = await download.path();
+    expect(path).toBeTruthy();
+    const file = JSON.parse(await readFile(path!, "utf8"));
+
+    // A file opened six months from now has no context but its own envelope.
+    expect(file.source).toBe("Applied");
+    expect(Number.isNaN(Date.parse(file.exported_at))).toBe(false);
+    expect(String(file.about.excluded)).toMatch(/credentials/i);
+
+    // Real rows, and counts DERIVED from them — the summary and the contents
+    // cannot disagree, which is the whole point of deriving them.
+    expect(Array.isArray(file.applications)).toBe(true);
+    expect(Array.isArray(file.messages)).toBe(true);
+    expect(file.applications.length).toBeGreaterThan(0);
+    expect(file.counts.applications).toBe(file.applications.length);
+    expect(file.counts.messages).toBe(file.messages.length);
+    expect(file.applications[0]).toHaveProperty("company");
+    expect(file.applications[0]).toHaveProperty("status");
+
+    expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
   test("the appearance switch is a working radiogroup — the real theme mechanism", async ({
