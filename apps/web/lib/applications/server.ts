@@ -18,7 +18,7 @@
  * write both updates the row AND records a training example — the correction
  * loop the user drives from the board.
  */
-import type { ClassifyArgs } from "@/lib/applications/classify-request";
+import { classifyBackendBody, type ClassifyArgs } from "@/lib/applications/classify-request";
 import { serverEnv } from "@/lib/env.server";
 import { getAccessToken } from "@/lib/supabase/auth";
 
@@ -180,22 +180,20 @@ export function getMail(search: URLSearchParams): Promise<ApiCallResult> {
  * stored — every row in the live-scan view. Without it those corrections were
  * 404s, because the scan reads Gmail and persists nothing and the file step
  * drops anything below the 0.70 review floor.
+ *
+ * The body itself is built by `classifyBackendBody` rather than inline. This
+ * function is unreachable from `tests/unit/` (it pulls in `env.server` and the
+ * Supabase session), so an inline rebuild here is covered by nothing that runs
+ * — which is how `confirm_new_company` was dropped and the near-miss
+ * confirmation shipped unanswerable. Add a field THERE, where a test executes
+ * it, never here.
  */
 export function classifyReviewItem(
   messageId: string,
-  { category, company, applicationId, message }: ClassifyArgs,
+  args: ClassifyArgs,
 ): Promise<ApiCallResult> {
-  const named = company?.trim();
   return call(`/applications/review/${encodeURIComponent(messageId)}/classify`, {
     method: "POST",
-    body: {
-      category,
-      ...(named ? { company: named } : {}),
-      // The user's own answer to "which application is this about?". Omitted
-      // rather than sent as null when absent, so the backend's "no choice was
-      // made" path stays distinguishable from "the choice was empty".
-      ...(applicationId !== undefined ? { application_id: applicationId } : {}),
-      ...(message ? { message } : {}),
-    },
+    body: classifyBackendBody(args),
   });
 }
