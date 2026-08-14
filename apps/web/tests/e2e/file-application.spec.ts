@@ -66,17 +66,45 @@ test.describe("file an application (via /demo)", () => {
     await expect(dialog).toBeVisible();
   });
 
-  test("a valid filing confirms and closes (demo — not saved)", async ({ page }) => {
-    const dialog = await openForm(page);
+  test("a valid filing confirms, is announced, and moves nothing (demo — not saved)", async ({
+    page,
+  }) => {
+    await page.goto("/demo");
+    // The receipt region exists BEFORE anything is filed, and is empty. This
+    // is the announcement half of #81: a live region mounted on demand drops
+    // its first announcement, so a region that appears WITH the confirmation
+    // is a confirmation no screen-reader user is told about. Reverting to the
+    // conditional mount fails here, on the pre-filing count.
+    const receipt = page.locator("[data-filing-receipt]");
+    await expect(receipt).toHaveCount(1);
+    await expect(receipt).toHaveAttribute("role", "status");
+    await expect(receipt).toHaveText("");
+
+    // The layout-shift half: #81 measured the distribution card and everything
+    // below it moving down ~13px when the in-flow confirmation appeared.
+    const below = page.getByTestId("pipeline-pulse");
+    await expect(below).toBeVisible();
+    const before = await below.boundingBox();
+
+    await page.getByRole("button", { name: /file an application/i }).first().click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
     await dialog.getByLabel(/company/i).fill("Acme Robotics");
     await dialog.getByLabel(/^role/i).fill("Staff Engineer");
     await dialog.getByRole("button", { name: /file it/i }).click();
 
     await expect(page.getByRole("dialog")).toBeHidden();
-    // Scoped by text: /demo now mounts SyncBar's persistent live regions too,
-    // so a bare role=status locator resolves to several elements.
-    const confirmation = page.getByRole("status").filter({ hasText: /Acme Robotics/ });
-    await expect(confirmation).toContainText(/demo only, not saved/i);
+    // The SAME persistent node carries the confirmation — announced, honest
+    // about not persisting.
+    await expect(receipt).toContainText(/Filed “Acme Robotics” — demo only, not saved/);
+
+    // …and the page did not shift: the receipt is an anchored overlay now,
+    // not a flow insert. Reverting to in-flow fails here, on the y delta.
+    const after = await below.boundingBox();
+    expect(
+      Math.abs((after?.y ?? 0) - (before?.y ?? Number.NaN)),
+      "the content below the button moved when the confirmation appeared",
+    ).toBeLessThanOrEqual(1);
   });
 
   test("no overflow with the dialog open on mobile", async ({ page }) => {
