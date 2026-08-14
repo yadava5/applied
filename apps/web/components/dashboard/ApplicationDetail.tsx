@@ -14,9 +14,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Dialog } from "@/components/ui/Dialog";
-import { AUTO_FILE_GATE, GateMeter } from "@/components/viz/GateMeter";
+import { GateMeter } from "@/components/viz/GateMeter";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt, longDate, shortDate } from "@/lib/dashboard/dates";
+import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 import {
   DEADLINE_ADD_LABEL,
   DEADLINE_CHANGE_LABEL,
