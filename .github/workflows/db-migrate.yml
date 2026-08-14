@@ -49,6 +49,10 @@ on:
       - 'backend/alembic/**'
       - 'backend/jobtracker/database/models.py'
       - 'backend/jobtracker/database/schema_version.py'
+      # env.py imports this to pick the driver, and so does the probe above.
+      # Off the list, a change that breaks URL resolution would never reach
+      # either — which is how the bare-`postgresql://` failure survived.
+      - 'backend/jobtracker/database/migration_url.py'
       - '.github/workflows/db-migrate.yml'
   # Shows the exact SQL a merge would run, on the PR, with no credentials.
   pull_request:
@@ -56,6 +60,10 @@ on:
       - 'backend/alembic/**'
       - 'backend/jobtracker/database/models.py'
       - 'backend/jobtracker/database/schema_version.py'
+      # env.py imports this to pick the driver, and so does the probe above.
+      # Off the list, a change that breaks URL resolution would never reach
+      # either — which is how the bare-`postgresql://` failure survived.
+      - 'backend/jobtracker/database/migration_url.py'
       - '.github/workflows/db-migrate.yml'
   # Manual retry. Needed because the push trigger is path-filtered: if a
   # revision merges while the secret is missing or the database is paused, no
@@ -182,28 +190,43 @@ jobs:
       - name: Confirm the database is reachable
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        working-directory: backend
         run: |
           # Distinguishes a PAUSED Supabase project from a broken migration.
           # The free tier pauses a project after seven days idle, and a paused
           # project fails at CONNECT — which, without this step, surfaces as a
           # stack trace from inside alembic and reads like the revision is bad.
+          #
+          # It also proves the DRIVER resolves, not just the host. This step
+          # used to strip the scheme itself and hand the rest to psycopg, so it
+          # passed on a bare `postgresql://` that SQLAlchemy then routed to
+          # psycopg2 — which is not installed. Green probe, dead migration, on
+          # the exact string the error message below tells you to paste. It now
+          # imports the same normaliser env.py uses and builds a real
+          # SQLAlchemy engine, so the two cannot drift apart again.
           python - <<'PY'
           import os, sys
           import psycopg
+          from sqlalchemy import create_engine, text
 
-          url = os.environ["DIRECT_URL"]
-          # env.py accepts SQLAlchemy-style URLs; psycopg wants a plain one.
-          for prefix in ("postgresql+psycopg://", "postgresql+asyncpg://"):
-              if url.startswith(prefix):
-                  url = "postgresql://" + url[len(prefix):]
-                  break
+          from jobtracker.database.migration_url import (
+              normalise_sync_driver,
+              to_libpq_url,
+          )
+
+          raw = os.environ["DIRECT_URL"]
+          sqlalchemy_url = normalise_sync_driver(raw)
+          url = to_libpq_url(raw)
           try:
               with psycopg.connect(url, connect_timeout=15) as conn:
                   ver = conn.execute("SELECT version()").fetchone()[0]
               print(f"connected: {ver.split(',')[0]}")
           except psycopg.OperationalError as exc:
-              text = str(exc).lower()
-              paused = any(s in text for s in (
+              # NOT `text` — that name is sqlalchemy.text here, and shadowing it
+              # would break the driver probe below the moment this branch stops
+              # exiting.
+              message = str(exc).lower()
+              paused = any(s in message for s in (
                   "timeout", "could not translate host name",
                   "connection refused", "no route to host",
               ))
@@ -215,6 +238,23 @@ jobs:
                         "NOT applied and nothing was changed.")
               else:
                   print(f"::error::Database connection failed: {exc}")
+              sys.exit(1)
+
+          # The half the old probe could not see: alembic does not use psycopg
+          # directly, it goes through SQLAlchemy, and SQLAlchemy picks a DBAPI
+          # from the URL scheme. If that DBAPI is not installed the import
+          # blows up inside alembic with a bare ModuleNotFoundError.
+          try:
+              engine = create_engine(sqlalchemy_url, connect_args={"connect_timeout": 15})
+              with engine.connect() as conn:
+                  conn.execute(text("SELECT 1"))
+              print(f"driver ok: {engine.dialect.driver}")
+          except ModuleNotFoundError as exc:
+              print(f"::error::SQLAlchemy resolved {sqlalchemy_url.split('://')[0]} "
+                    f"to a DBAPI that is not installed ({exc.name}). "
+                    "backend/requirements-migrate.txt ships psycopg 3; fix the "
+                    "normaliser in jobtracker/database/migration_url.py rather "
+                    "than the secret. The migration was NOT applied.")
               sys.exit(1)
           PY
 
