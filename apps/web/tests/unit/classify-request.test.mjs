@@ -1,13 +1,15 @@
 /**
- * Unit tests for `lib/applications/classify-request.ts` — how the classify
- * proxy reads its request body.
+ * Unit tests for `lib/applications/classify-request.ts` — BOTH rebuilds of the
+ * classify body the proxy performs.
  *
  * The client side of this is already covered (`review-classify.test.mjs`
  * asserts the body carries `application_id` only when it is a real id). What
- * was NOT covered is the hop after it: the route handler REBUILDS the body
- * rather than forwarding it, so any field it fails to name is silently
- * dropped. That has happened three times in this codebase — `confidence` in
- * the inbox relay, `applied_date` and `url` on create.
+ * was NOT covered is the hops after it: the proxy REBUILDS the body twice —
+ * once reading it, once sending it on — so any field neither names is silently
+ * dropped. That has happened four times in this codebase — `confidence` in the
+ * inbox relay, `applied_date` and `url` on create, and `confirm_new_company`
+ * across both proxy hops, which shipped the near-miss employer confirmation
+ * (#167 / PR #181) as a question with no answerable "no".
  *
  * Dropping `application_id` specifically is not a no-op. It is the user's
  * answer to "which of these is it about?" when an employer holds several
@@ -21,7 +23,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readClassifyBody } from "../../lib/applications/classify-request.ts";
+import {
+  classifyBackendBody,
+  readClassifyBody,
+} from "../../lib/applications/classify-request.ts";
+import { classifyRequestBody } from "../../lib/dashboard/review.ts";
 
 test("the user's choice of application survives the proxy", () => {
   const parsed = readClassifyBody({ category: "interview", application_id: 42 });
@@ -155,5 +161,115 @@ test("unknown keys on the message are dropped — the handler names what it send
   assert.deepEqual(parsed.message, {
     sender_email: "a@b.test",
     received_at: "2026-08-11T09:30:00Z",
+  });
+});
+
+// --- Answering the near-miss employer question (#167 / PR #181) -------------
+//
+// The backend asks before a company one edit from one already on the board
+// opens a second application: it answers `needs_company_confirmation` with a
+// `suggested_company` and files NOTHING. Two answers file it — re-send with
+// the suggested spelling, or re-send with `confirm_new_company: true` to say
+// the two employers are genuinely different.
+//
+// The second answer never arrived. `classifyRequestBody` built the flag and
+// `review-classify.test.mjs` asserted it built it — and then BOTH rebuilds
+// between the browser and FastAPI dropped it, because neither named the field.
+// So "no — a different company" re-asked forever, and an employer one edit from
+// one on the board could not be filed from the review queue at all. That is a
+// worse and less recoverable outcome than the duplicate row the check prevents:
+// the duplicate is a row to merge, this is an application that cannot exist.
+//
+// A test that stops one hop short of where a field is lost certifies the bug.
+// These cross every hop.
+
+test("the answer 'no, a different company' survives the proxy's read", () => {
+  const parsed = readClassifyBody({
+    category: "rejection",
+    company: "Strive",
+    confirm_new_company: true,
+  });
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.confirmNewCompany, true);
+});
+
+test("the answer reaches the body the backend is actually sent", () => {
+  const body = classifyBackendBody({
+    category: "rejection",
+    company: "Strive",
+    confirmNewCompany: true,
+  });
+
+  assert.equal(body.confirm_new_company, true);
+  assert.equal(body.company, "Strive");
+});
+
+test("browser to backend, whole: the confirmation crosses every rebuild", () => {
+  // The real chain, in order, with a JSON round trip standing in for the wire:
+  //   classifyRequestBody  (browser)  →  readClassifyBody  (proxy in)
+  //                                   →  classifyBackendBody (proxy out)
+  // Stripping the flag at ANY of the three makes this fail, which is the only
+  // reason it is written as a chain rather than three isolated assertions.
+  const fromBrowser = classifyRequestBody("rejection", "Strive", null, null, true);
+  const parsed = readClassifyBody(JSON.parse(JSON.stringify(fromBrowser)));
+  assert.equal(parsed.ok, true);
+
+  const toBackend = classifyBackendBody(parsed);
+
+  assert.deepEqual(toBackend, {
+    category: "rejection",
+    company: "Strive",
+    confirm_new_company: true,
+  });
+});
+
+test("the flag is never manufactured — only a literal true is an answer", () => {
+  // The safety half, and the one that decides whether forwarding this is
+  // sound. `confirm_new_company` is the single input that makes the backend
+  // SKIP the typo check, so coercing a truthy value into it would reintroduce
+  // the silent acceptance by the back door — a "Verkeda" row opened because a
+  // client sent the string "false", which is truthy.
+  for (const raw of [undefined, false, null, 0, 1, "true", "false", "yes", {}, []]) {
+    const parsed = readClassifyBody({ category: "rejection", confirm_new_company: raw });
+    assert.equal(parsed.ok, true);
+    assert.equal(
+      parsed.confirmNewCompany,
+      undefined,
+      `confirm_new_company ${JSON.stringify(raw)} must not become an answer`,
+    );
+    assert.equal(
+      "confirm_new_company" in classifyBackendBody(parsed),
+      false,
+      `confirm_new_company ${JSON.stringify(raw)} must not reach the backend`,
+    );
+  }
+});
+
+test("an unanswered classify sends no confirmation key at all", () => {
+  // Omitted, not `false`. The backend's default and a caller who actively said
+  // "no" have to stay distinguishable — the same rule `application_id` follows.
+  const body = classifyBackendBody({ category: "interview" });
+
+  assert.deepEqual(body, { category: "interview" });
+});
+
+test("the other three fields still cross the rebuild they were moved out of", () => {
+  // `classifyBackendBody` was lifted out of `lib/applications/server.ts`, which
+  // no test can load. Pin what it carries so the move itself cannot have
+  // dropped the fields three earlier incidents were about.
+  const message = { sender_email: "a@b.test", received_at: "2026-08-11T09:30:00Z" };
+  const body = classifyBackendBody({
+    category: "assessment",
+    company: "  Globex  ",
+    applicationId: 42,
+    message,
+  });
+
+  assert.deepEqual(body, {
+    category: "assessment",
+    company: "Globex",
+    application_id: 42,
+    message,
   });
 });

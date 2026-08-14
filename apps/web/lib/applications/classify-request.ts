@@ -1,16 +1,31 @@
 /**
- * Reading the classify proxy's request body.
+ * BOTH rebuilds of the classify body, in the one module a test can execute.
  *
- * Extracted from `app/api/applications/review/[messageId]/classify/route.ts`
- * so it can actually be executed by a test. The handler REBUILDS the body
- * rather than forwarding it, which means every field it does not name is
- * silently lost — that is how `confidence` died in the inbox relay and how
- * `applied_date` and `url` died on create. The same shape of loss here is not
- * a no-op: dropping `application_id` makes the backend fall back to the
- * employer's first row, which is precisely the arbitrary-sibling filing the
- * identity work exists to stop. So the parse is worth pinning on its own.
+ * A correction crosses three hops on its way to FastAPI, and each one rebuilds
+ * the body rather than forwarding it, so every field a hop does not name is
+ * silently lost:
  *
- * Dependency-free so `tests/unit/` can load it under Node's type stripping.
+ *   1. `lib/dashboard/review.ts` `classifyRequestBody` — browser → proxy
+ *   2. `readClassifyBody` here                          — proxy reads it
+ *   3. `classifyBackendBody` here                       — proxy → FastAPI
+ *
+ * That loss has now happened four times: `confidence` in the inbox relay,
+ * `applied_date` and `url` on create, and `confirm_new_company` across hops 2
+ * and 3 — which shipped `needs_company_confirmation` (PR #181, issue #167) as a
+ * question the user could be asked but could never answer.
+ *
+ * Hop 3 used to live inside `lib/applications/server.ts`, which reaches for
+ * `env.server` and the Supabase session and so cannot be loaded by
+ * `tests/unit/`. It was covered by types and review only — and `tsc` is green
+ * either way, because a hand-written narrowing that omits a field is
+ * well-typed. Moving it here is the point: the module stays dependency-free so
+ * `tests/unit/` can load it under Node's type stripping, and a dropped field
+ * now means a deleted line where the tests are.
+ *
+ * None of these losses is cosmetic. Dropping `application_id` makes the backend
+ * fall back to the employer's first row, the arbitrary-sibling filing the
+ * identity work exists to stop; dropping `confirm_new_company` makes a
+ * genuinely-distinct employer unfilable.
  */
 
 /**
@@ -36,6 +51,12 @@ export interface ClassifyArgs {
   company?: string;
   applicationId?: number;
   message?: ClassifyMessage;
+  /**
+   * "No — these really are two different employers", the human's answer to the
+   * backend's `needs_company_confirmation`. Absent unless the user clicked it:
+   * a default of `true` is the silent acceptance the round trip exists to stop.
+   */
+  confirmNewCompany?: boolean;
 }
 
 /**
@@ -99,6 +120,7 @@ export function readClassifyBody(raw: unknown): ClassifyRequest {
     company?: unknown;
     application_id?: unknown;
     message?: unknown;
+    confirm_new_company?: unknown;
   };
 
   const category = typeof body.category === "string" ? body.category.trim() : "";
@@ -110,6 +132,11 @@ export function readClassifyBody(raw: unknown): ClassifyRequest {
       ? body.application_id
       : undefined;
   const message = readClassifyMessage(body.message);
+  // Literally `true` and nothing else. A truthy string or a 1 is not a person
+  // clicking "no, a different company", and this flag is the one input that
+  // makes the backend skip the typo check — coercing into it would restore the
+  // silent acceptance by the back door.
+  const confirmNewCompany = body.confirm_new_company === true;
 
   return {
     ok: true,
@@ -117,5 +144,38 @@ export function readClassifyBody(raw: unknown): ClassifyRequest {
     ...(company ? { company } : {}),
     ...(applicationId !== undefined ? { applicationId } : {}),
     ...(message !== undefined ? { message } : {}),
+    ...(confirmNewCompany ? { confirmNewCompany } : {}),
+  };
+}
+
+/**
+ * The body the BACKEND is sent, built from a parsed request.
+ *
+ * Lives here rather than in `lib/applications/server.ts` for the reason this
+ * whole module exists: `server.ts` reaches for `env.server` and the Supabase
+ * session, so `tests/unit/` cannot load it, and the second rebuild of this body
+ * was therefore covered by types and review only. That is exactly how
+ * `confirm_new_company` was lost — the client built it (`classifyRequestBody`),
+ * a test asserted the client built it, and then TWO successive rebuilds on the
+ * way to FastAPI silently dropped it because neither named the field.
+ *
+ * The consequence was not a cosmetic one. `confirm_new_company` is the only
+ * answer to the near-miss question that opens a SEPARATE application; without
+ * it reaching the backend, "no — a different company" re-asks the same question
+ * forever, and an employer one edit from one already on the board can never be
+ * filed from the review queue at all. That is a worse outcome than the
+ * duplicate row the check was written to prevent.
+ *
+ * Every field is omitted rather than sent null/false when absent, so the
+ * backend's defaults stay distinguishable from a caller that answered "no".
+ */
+export function classifyBackendBody(args: ClassifyArgs): Record<string, unknown> {
+  const named = args.company?.trim();
+  return {
+    category: args.category,
+    ...(named ? { company: named } : {}),
+    ...(args.applicationId !== undefined ? { application_id: args.applicationId } : {}),
+    ...(args.message ? { message: args.message } : {}),
+    ...(args.confirmNewCompany === true ? { confirm_new_company: true } : {}),
   };
 }
