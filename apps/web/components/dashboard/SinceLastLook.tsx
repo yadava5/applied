@@ -20,6 +20,7 @@ import {
   groupChanges,
   LEDGER_ROWS,
   momentLabel,
+  momentShortLabel,
   parseLastLook,
   snapshotOf,
   type ChangeEntry,
@@ -52,12 +53,63 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * A CHIP ON THE COMMAND ROW — the shape, and why it is this shape
  * ----------------------------------------------------------------
  * The two levels are literally two levels: the arrival CHIP carries the
- * counts, and opening it names the rows. The chip lives on the dashboard's
- * one command row (SyncBar's `since` slot, between the subtitle and the sync
- * controls), inside a wrapper whose flex-basis is FIXED — so hydration can
- * never re-wrap the row, and every state of this chip occupies the same line
- * box. The dedicated notice line it used to hold is a line the worklist got
- * back.
+ * counts, and opening it names the rows. The chip is the command row's
+ * notification centre (SyncBar's `since` slot, overlaid on the row's centre
+ * at `lg`+ — see the placement story below), and every state of it occupies
+ * the same line box, so no state change can move the board. The dedicated
+ * notice line it once held is a line the worklist got back — twice.
+ *
+ * THE PLATE, CENTRED ON THE BAR (#212) — the chip is a
+ * miniature of its own panel. Every state renders the same small plate:
+ * square left corners, rounded right, hairline frame, a 2px rule down the
+ * left edge — the panel's exact construction at chip scale, so the thing you
+ * press and the thing that opens read as one object in two sizes. The loud
+ * state's rule is the `--stage-applied` accent in full-strength ink; the
+ * quiet and first-run states wear the SAME plate with the rule one register
+ * down (`--line-strong`) and no chevron — the notification centre in its
+ * empty condition, and the chevron's absence is what says there is nothing
+ * to open.
+ *
+ * The overlay is the placement's fourth form, each earlier one measured out
+ * of existence. Flush after the subtitle the quiet line read as the totals'
+ * caption (#196). Hung off the row's far end (`ml-auto`) it read as a
+ * trailing annotation on the sync cluster — the same defect mirrored.
+ * Centred in the row's LEFTOVER middle it held the slot's centre perfectly
+ * while wandering against the bar — 130px right of the bar's centre at
+ * 1024, 137px left of it at 1280, because the flanks (title ~283px, sync
+ * cluster ~556px) are that asymmetric — and the moment the row wrapped
+ * (which the fixture twin does at 1024) the slot itself moved and carried
+ * the plate back to a line-end. A dedicated full-width line under the row
+ * held the bar's centre at last — and spent 26px of the worklist's height
+ * doing it, which session-edge.spec's floor (613px at 1024×768, the #172
+ * refund) rejected on the first CI run: that height is the board's, not
+ * this chip's.
+ *
+ * So at `lg`+ the chip is out of flow entirely: SyncBar overlays it on the
+ * header row (`inset-0`, so the overlay's box is the row's box), where
+ * `mx-auto` centres the plate on the bar — plate centre == <main>'s centre
+ * to the pixel — and the omnibox position costs the worklist nothing by
+ * construction. Over the row, the plate must hold the row's OWN line, so at
+ * `lg`+ it always wears its compact form ("Nothing new" / "4 changes"): the
+ * `max-lg` guards on every wide rung below are that rule, and they are what
+ * keep it clear of both neighbours — measured at 1024 (`next start`,
+ * 2026-08-14), the compact plate stands ~72px clear of the totals and
+ * ~74px clear of the cluster, against the 12px flex-gap that #196 called a
+ * caption. Where a neighbour still reaches past the bar's centre — the
+ * fixture twin's pill-furnished row at 1024 is the one measured case — the
+ * plate yields exactly what the neighbour forces and no more (`placePlate`,
+ * a 23–26px slide there), because a centred plate OVER a control is worse
+ * than one standing 26px off the centre it means. For the LOUD state the
+ * compact rule spends nothing the reader had — measured on ba2a653, the
+ * in-row slot (≤500px at 1440) never reached the kinds rung (26rem) or the
+ * moment rung (34rem), so desktop always showed "N changes" — and the
+ * kinds, moment and scope note ride one press away in the panel, which says
+ * all of it at every width. The QUIET moment is the exception with its own
+ * three-rung ladder (see the render): compact-only shipped once and removed
+ * a sentence main was showing. Below `lg` the shell is unlocked and no
+ * floor applies: the same node is an in-flow line at the stacked header's
+ * end, full ladder active, reserved by the server pass so hydration never
+ * moves the board.
  *
  * Space inside the chip varies with the viewport and its row-mates, so the
  * loud state is container-adaptive rather than truncated: per-kind counts
@@ -95,15 +147,15 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  *     counts the board you already have as news;
  *   · **quiet** — nothing changed, stated against the moment it is comparing
  *     from. "Nothing new since Aug 3" on August 11 is not filler: it says your
- *     pipeline has been silent for eight days. The quiet and first-run lines
- *     anchor to the row's FAR side (`ml-auto`, a hairline rule at their left):
- *     sitting flush after the subtitle they read as a caption on its totals
- *     (#196), and beside the sync cluster they read as what they are —
- *     account-freshness facts next to the control that changes them;
- *   · **changed** — the counts, marked with a rule down the left edge, and the
- *     names one press away. The contrast between one dim sentence and a ruled
- *     line of counts in full-strength ink is the signal; most opens are quiet,
- *     and the loud state has to look different from across the room.
+ *     pipeline has been silent for eight days. Quiet and first-run wear the
+ *     dormant plate — grey rule, dim ink, no chevron (see the plate note
+ *     above for the placement history: caption on the totals in #196,
+ *     trailing annotation on the cluster in #212);
+ *   · **changed** — the counts on the same plate, its rule in the accent, the
+ *     names one press away. The contrast between a dim dormant plate and one
+ *     edged in full-strength accent with counts in full ink is the signal;
+ *     most opens are quiet, and the loud state has to look different from
+ *     across the room.
  *
  * WHEN THE MARKER ADVANCES — the decision this feature lives or dies on:
  *
@@ -242,6 +294,24 @@ function EntryLine({ entry, today }: { entry: ChangeEntry; today: string }) {
 const LINE_CONTROL =
   "-my-1 rounded py-1 underline-offset-4 hover:text-strong hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong";
 
+/** The plate every state of the chip wears — the panel's own construction at
+ *  chip scale (square left corners, rounded right, hairline frame, a 2px rule
+ *  down the left edge), so the chip and the sheet it opens read as one object
+ *  at two sizes. Which inks ride on it is the state's business: accent rule +
+ *  full-strength counts when there is news, `--line-strong` rule + dim ink
+ *  when there is none. The frame is `--line-strong` in BOTH registers — the
+ *  panel's own measurement (see its header) applies unchanged at plate scale:
+ *  `--line` composites to APCA Lc 0.0 on the dark ground (re-computed for
+ *  #212), so a dormant plate framed in it would be a floating sentence, not
+ *  an object. Dormant is said by the rule's ink and the missing chevron, not
+ *  by a fainter frame. `-my-1`/`py-1` is LINE_CONTROL's trick with borders on:
+ *  the box the band measures stays exactly one line while the plate paints
+ *  ~26px, overflowing the ~38px row invisibly (ArrivalLine's contract). Its
+ *  23px of chrome (20px padding + 3px borders) is why every @container rung
+ *  below sits 2rem above its pre-plate measurement — the rungs measure the
+ *  SLOT, and the plate spends 23px of it before the sentence starts. */
+const PLATE = "-my-1 rounded-r-md border border-l-2 border-line-strong bg-surface px-2.5 py-1";
+
 /** Breathing room between the panel's bottom edge and the screen's, and the
  *  measures below which it stops giving way and scrolls instead. */
 const PANEL_GUTTER = 16;
@@ -292,62 +362,125 @@ export function SinceLastLook({
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const sectionRef = useRef<HTMLElement>(null);
+  const plateRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * Centre on the BAR; yield only what a neighbour forces — measured.
+   *
+   * `mx-auto` puts the plate on the bar's centre, which is the invariant.
+   * But the overlay shares the row's line with the totals and the sync
+   * cluster, and their widths are content ("214 filed · 32 open · 1 offer"
+   * is 41px wider than the usual subtitle; the fixture twin's pill spends
+   * 167px of right flank the real board does not have) — so the centred
+   * position is checked against both neighbours here, placePanel-style,
+   * and the plate slides exactly as far as the nearer one forces, never
+   * further. Measured on the default twin at 1024 (`next start`,
+   * 2026-08-14): the centred loud plate ends 3px past the cluster's left
+   * edge, so it yields 26px (23 on the quiet form); every other measured arrangement yields 0 and
+   * keeps the centre to the pixel. When both neighbours bind at once the
+   * totals win — #196 is the defect with a number on it.
+   *
+   * A transform rather than a margin: it never re-enters layout, so the
+   * @container measure and the row's wrap cannot feed back. Below `lg` the
+   * chip is an in-flow line and this is a no-op (the transform is cleared,
+   * then the guard returns). The panel follows the nudged plate because
+   * `placePanel` reads bounding rects, which include transforms.
+   */
+  const placePlate = useCallback((plate: HTMLElement | null) => {
+    plateRef.current = plate;
+    if (!plate) return;
+    // Cleared first so the measurement reads the stylesheet's own centred
+    // position, not the slide a previous pass applied.
+    plate.style.transform = "";
+    const overlay = plate.closest("section")?.parentElement;
+    const row = overlay?.parentElement;
+    if (!overlay || !row || getComputedStyle(overlay).position !== "absolute") return;
+    /** What the plate keeps from a same-line neighbour. Under the gate's
+     *  24px floor for the arrangement that fits (the neighbours there are
+     *  70px+ away and never bind); the crowded fixture twin is gated at 12. */
+    const CLEAR = 16;
+    const p = plate.getBoundingClientRect();
+    const sameLine = (el: Element | null) => {
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return b.width > 0 && p.top < b.bottom && b.top < p.bottom ? b : null;
+    };
+    const cluster = sameLine(row.querySelector("[data-sync-cluster]"));
+    const totals = sameLine(row.querySelector("[data-sync-subtitle]"));
+    let dx = 0;
+    if (cluster) dx = Math.min(dx, cluster.left - CLEAR - p.right);
+    if (totals) dx = Math.max(dx, totals.right + CLEAR - p.left);
+    if (dx !== 0) plate.style.transform = `translateX(${dx}px)`;
+  }, []);
+
+  // Re-place on resize: both neighbours' edges are content-sized readings.
+  // Form/state changes re-run the ref callback on their own.
+  useEffect(() => {
+    const onResize = () => placePlate(plateRef.current);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [placePlate]);
 
   /**
    * Hang the panel on the chip's OWN rule, and bound it to the screen.
    *
-   * The panel is anchored to SyncBar's header row (see the `@container` note
-   * below for why it must not be the chip), and it used to take that row's
-   * `right-0` — so a chip sitting mid-row opened a panel against the far right
-   * edge, 29px clear of the trigger that opened it and detached from anything.
-   * This puts its left edge on `section.offsetLeft` instead: the chip's box,
-   * not the button's (`pl-2` inside the rule would miss by 10px), so the 2px
-   * accent down this panel's left side is collinear with the one down the chip
-   * and the two read as one stroke.
+   * The panel is anchored to the NOTIFICATION OVERLAY — the wrapper SyncBar
+   * mounts this chip in (#212): `inset-0` over the header row at `lg`+, so
+   * `top-full` is the ROW's bottom at every wrap state, and an in-flow line
+   * at the stacked header's end below `lg`. It anchored to the header row
+   * itself while the chip lived inside that row, because hanging it on the
+   * chip's own line put a z-30 sheet over the Sync button whenever the row
+   * wrapped (#172); the overlay's box IS the row's box, so the same
+   * guarantee holds by construction. Before that it took the row's
+   * `right-0` — a panel against the
+   * far right edge, 29px clear of the trigger that opened it and detached
+   * from anything. This puts its left edge on the PLATE's (`triggerRef` —
+   * the whole plate is the trigger and its border box IS the chip's box), so
+   * the 2px accent down this panel's left side is collinear with the one
+   * down the plate and the two read as one stroke.
    *
-   * The chip's own left offset is not a constant — it is whatever the title
-   * and the totals leave — so the fit is MEASURED here rather than assumed.
-   * When the 30rem measure would run past the row, the panel gives up WIDTH
-   * before it gives up alignment: sliding it left instead would break the one
-   * stroke that says which chip opened it, and the alignment is the whole
-   * repair. At 1024 — the tightest desktop, where the chip starts 259px into a
-   * 736px row — that is a 477px panel flush with the board's right edge rather
-   * than a 3px dogleg in a 2px rule. Below `PANEL_MIN_WIDTH` there is no
-   * alignment left worth protecting (at 768 the aligned measure is 221px), so
-   * it slides instead and takes the room. Height is capped the same way,
-   * against what is left of the screen, so a busy morning scrolls inside the
-   * panel instead of running off the bottom of a shell that must never scroll
-   * (#149).
+   * The plate's own left offset is not a constant — it is whatever the
+   * centring and the plate's container-adaptive width leave — so the fit is
+   * MEASURED here rather than assumed. When the 30rem measure would run past
+   * the line, the panel gives up WIDTH before it gives up alignment: sliding
+   * it left instead would break the one stroke that says which chip opened
+   * it, and the alignment is the whole repair. Below `PANEL_MIN_WIDTH` there
+   * is no alignment left worth protecting, so it slides instead and takes
+   * the room. Height is capped the same way, against what is left of the
+   * screen, so a busy morning scrolls inside the panel instead of running
+   * off the bottom of a shell that must never scroll (#149).
    * Everything is read against one `offsetParent`, so there is no viewport
    * arithmetic to disagree with a scroll.
    *
    * A ref callback rather than a layout effect: it runs after insertion and
-   * before paint (so the panel never flashes at the row's left edge first),
+   * before paint (so the panel never flashes at the line's left edge first),
    * and it costs no `useLayoutEffect`, which warns on the server pass.
    */
   const placePanel = useCallback((panel: HTMLDivElement | null) => {
     panelRef.current = panel;
-    const section = sectionRef.current;
+    const plate = triggerRef.current;
+    // `offsetParent` is the notification overlay (SyncBar's wrapper); `row`
+    // kept as the name because at `lg`+ its box IS the header row's.
     const row = panel?.offsetParent;
-    if (!panel || !section || !(row instanceof HTMLElement)) return;
+    if (!panel || !plate || !(row instanceof HTMLElement)) return;
     // Cleared first so this reads the measure the STYLESHEET asks for, not the
     // cap a previous pass left behind — the 30rem lives in one place.
     panel.style.maxWidth = "";
-    const room = row.clientWidth - section.offsetLeft;
-    const left =
-      room >= PANEL_MIN_WIDTH
-        ? section.offsetLeft
-        : Math.max(0, row.clientWidth - panel.offsetWidth);
+    // Bounding rects, not offsetLeft: the plate may be riding a translateX
+    // from placePlate, which offsets ignore — measured on the fixture twin
+    // at 1024, offsetLeft put the panel 26px right of the plate it hangs on.
+    const plateLeft = plate.getBoundingClientRect().left - row.getBoundingClientRect().left;
+    const room = row.clientWidth - plateLeft;
+    const left = room >= PANEL_MIN_WIDTH ? plateLeft : Math.max(0, row.clientWidth - panel.offsetWidth);
     panel.style.left = `${left}px`;
     panel.style.maxWidth = `${row.clientWidth - left}px`;
-    // The gap the accent has to jump to reach the chip. It is 18px on the
+    // The gap the accent has to jump to reach the plate. It is ~14px on the
     // row's one line — and was 62px back when sign-out wrapped the row at
     // 1024 (#172) — so the connector is drawn from the measurement, never a
     // guess.
     panel.style.setProperty(
       "--stem",
-      `${Math.max(0, panel.offsetTop - (section.offsetTop + section.offsetHeight))}px`,
+      `${Math.max(0, panel.offsetTop - (plate.offsetTop + plate.offsetHeight))}px`,
     );
     panel.style.maxHeight = `${Math.max(
       PANEL_MIN_HEIGHT,
@@ -465,26 +598,41 @@ export function SinceLastLook({
               the short rung a prefix of the long, so no width gets a
               differently-worded claim.
 
-              The rung exists because this chip's room is not a function of
-              the viewport: the header row wraps, and where it wraps depends
-              on the row-mates (see the `@container` note on the loud state).
-              Swept at 8px steps from 1024 to 1440 on /demo/shell
-              (`next start`, headless Chrome, 2026-08-13), the slot collapses
-              at each wrap boundary — 168px at 1080 and 161px at 1240 — so a
-              single fixed sentence lost up to 66px to the ellipsis and read
-              "…in this brows". The old @34rem tail ("— from your next one,
+              The rung earned its keep when this chip lived inside the header
+              row, whose wrap boundaries collapsed the slot to 168px at 1080
+              and 161px at 1240 (8px sweep, 2026-08-13) and cost a fixed
+              sentence up to 66px to the ellipsis ("…in this brows"). On its
+              own full-width line (#212) the container is the bar and clears
+              every rung at `lg`+; the ladder now works below `lg`, where the
+              bar is a phone's. The old @34rem tail ("— from your next one,
               this line names what changed") went in the #200 sweep: roadmap
               prose explaining the control.
 
-              `ml-auto` + the hairline: the quiet states used to sit hard
-              against the subtitle's totals and read as their caption (#196
-              — "it is placed near to the applications number"). Anchored to
-              the row's far side, against the sync cluster whose facts these
-              are, with a rule marking where the chip begins — the loud
-              state's accent rule, one register down. */}
-          <p className="ml-auto min-w-0 truncate border-l border-line-strong pl-3 text-dim">
+              The rung is 2rem above its pre-plate measurement (@[16rem] →
+              @[18rem]): the rungs measure the CONTAINER, and the plate
+              spends 23px of it on chrome before the sentence starts —
+              re-swept at 8px steps, 1024→1440 plus 375/768, after the move
+              (`next start`, headless Chrome, 2026-08-14): 0px lost at every
+              step on both rungs.
+
+              The dormant plate, centred on the bar (#212 — see the header):
+              the same object as the loud chip and its panel, rule one
+              register down, no chevron because there is nothing to open. */}
+          <p ref={placePlate} className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-dim`}>
+            {/* `max-lg` on every wide rung here and below: at `lg`+ the chip
+                overlays the row's own line, where only a compact form has
+                measured clearance from the totals and the cluster — the
+                container is the full bar there, so width alone would say yes
+                to sentences the row cannot host. For THIS tail the
+                arithmetic is terminal: the full sentence is ~250px of text
+                (273 with the plate's chrome) against the 244px between the
+                totals and the cluster at 1024 — it cannot fit even at zero
+                clearance, so the overlay keeps the complete shorter claim
+                and the qualifier stays implicit. The quiet state's moment,
+                which unlike this tail has no other desktop home, gets its
+                own short form instead — see below. */}
             No earlier visit
-            <span className="hidden @[16rem]:inline"> recorded in this browser</span>.
+            <span className="hidden @[18rem]:max-lg:inline"> recorded in this browser</span>.
           </p>
         </ArrivalLine>
       </section>
@@ -501,22 +649,65 @@ export function SinceLastLook({
         className="w-full @container"
       >
         <ArrivalLine>
-          {/* `ml-auto` + the hairline: same anchoring as the first-run line
-              above, same reason (#196) — "Nothing new since today 12:53 am"
-              flush against "46 filed · 46 open · 0 offers" read as the
-              numbers' caption. On the far side it stands with the recency
-              phrase and the Sync button: the facts it is actually kin to. */}
-          <p className="ml-auto min-w-0 truncate border-l border-line-strong pl-3 text-muted">
-            {/* Same ladder as the first-run line above, and the moment rides
-                the SAME rung as the clause that introduces it: "Nothing new
-                since" with the moment ellipsised is a sentence whose object
-                has been cut off, which is the defect this pass exists to
-                remove — not a shorter way of saying it. Measured, this line
-                lost 33px at 1240 and 26px at 1080. `16rem` clears the
-                longest moment `momentLabel` can build ("yesterday 12:56 pm")
-                as well as today's, with room to spare. */}
+          {/* The dormant plate, centred — same object as the first-run line
+              above and as the loud chip below (#212, see the header for the
+              placement history: caption on the totals in #196, trailing
+              annotation on the cluster after it). */}
+          <p ref={placePlate} className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-muted`}>
+            {/* Same ladder as the first-run line above (rungs re-based +2rem
+                for the plate's 23px of chrome, re-swept 2026-08-14), and the
+                moment rides the SAME rung as the clause that introduces it:
+                "Nothing new since" with the moment ellipsised is a sentence
+                whose object has been cut off, which is the defect this pass
+                exists to remove — not a shorter way of saying it. Measured
+                pre-plate, this line lost 33px at 1240 and 26px at 1080.
+                `18rem` minus the chrome clears the longest moment
+                `momentLabel` can build ("yesterday 12:56 pm") as well as
+                today's, with room to spare. */}
             Nothing new
-            <span className="hidden @[16rem]:inline">
+            {/* The moment survives the overlay (#212 round 4): the quiet
+                sentence's whole value is its SINCE, and the quiet plate has
+                no press that could recover a dropped one — the first
+                overlay build kept only "Nothing new" at `lg`+ and shipped a
+                claim with its scope removed at exactly the widths where
+                main had been showing the full sentence (measured on
+                ba2a653: the wrapped twin at 1024 and the signed-in row at
+                1280 both rendered it; the signed-in row at 1024 did not —
+                its 220px slot never reached the old 16rem rung).
+                Three renderings of one moment now, so no width says less
+                than main said there:
+                  · below `lg` — the container ladder, `momentLabel` whole;
+                  · `lg`→`xl` — `momentShortLabel` on the loud chip's own
+                    stamp idiom ("Nothing new · 4:32 am"): the day-word is
+                    elided exactly where the rest still implies it (a bare
+                    clock is today's), and the "·" is not a nicety — with
+                    " since " kept, the WORST clock string ("12:58 am";
+                    CI's timezone projects draw these) measured 196.6px
+                    against a 244.5px window at 1024 and left 22.7px where
+                    the #196 guard demands 24. The stamp saves ~24px and
+                    holds the floor with ~9px to spare at the worst
+                    string — a lesson in measuring the worst case, not the
+                    clock you happened to load at;
+                  · `xl`+ — `momentLabel` whole again: the window is 476px+
+                    on every measured arrangement and the full sentence
+                    centres with clearance to spare. */}
+            <span className="hidden @[18rem]:max-lg:inline">
+              {" "}
+              since <span className="font-mono text-[11px] text-dim">{moment}</span>
+            </span>
+            {/* `--chip-tight` (set by SyncBar's overlay on the furnished
+                twin, whose 169px window at 1024 cannot hold ANY moment
+                form — the arithmetic is in that comment): there the bare
+                claim stands in for this span, which is also what main
+                rendered on that twin's unwrapped widths. */}
+            <span className="hidden lg:max-xl:[display:var(--chip-tight,inline)]">
+              {" "}
+              ·{" "}
+              <span className="font-mono text-[11px] text-dim">
+                {momentShortLabel(record.at, now)}
+              </span>
+            </span>
+            <span className="hidden xl:inline">
               {" "}
               since <span className="font-mono text-[11px] text-dim">{moment}</span>
             </span>
@@ -524,7 +715,7 @@ export function SinceLastLook({
                 — the board and the pulse carry the same disclosure, in the
                 same words, at every width. */}
             {scopeNote ? (
-              <span className="hidden text-dim @[34rem]:inline"> · {scopeNote}</span>
+              <span className="hidden text-dim @[36rem]:max-lg:inline"> · {scopeNote}</span>
             ) : null}
           </p>
         </ArrivalLine>
@@ -539,50 +730,59 @@ export function SinceLastLook({
 
   return (
     <section
-      ref={sectionRef}
       data-testid="since-last-look"
       aria-label="Changes since your last visit"
-      /* `@container` because the chip's room depends on its row-mates, not
-         the viewport: the /demo row carries a wider cluster than the signed-in
-         one at the same width, and a viewport breakpoint cannot know that.
-         The rule is the loud state's across-the-room signal — the caps
-         heading it used to carry belongs to the section's aria-label now, and
-         the panel below borrows the same stroke to say where it came from.
+      /* `@container` works below `lg`, where the chip is an in-flow line and
+         the bar is a phone's — at `lg`+ every wide rung carries a `max-lg`
+         guard (the overlay must hold the row's own line; see the header), so
+         the container's width is moot there. Full-width on purpose even
+         though the plate inside is centred: an inline-size container cannot
+         size from its content, so a shrink-wrapped section would collapse to
+         nothing — the section keeps the bar's measure and the plate floats
+         on its centre.
 
          Deliberately NOT `relative`: the names panel positions against the
-         HEADER ROW (SyncBar's row is the nearest positioned ancestor), not
-         this chip. Two reasons, both measured. Anchored to the chip it
-         extended past <main>'s left edge, whose implicit overflow clip cut the
-         first label off; and `top-full` on this chip resolves to the bottom of
-         the ONE LINE it occupies, which — measured at 1024 back when sign-out
-         wrapped the row from 38px to 82px (#172) — drops a z-30 sheet
-         straight over the Sync button and the ⋯ menu the moment the row and
-         the chip's line disagree. The row's bottom clears both at every
-         width, wrapped or not. The chip supplies the horizontal anchor only,
-         and `placePanel` measures it. */
-      className="w-full border-l-2 border-stage-applied pl-2 @container"
+         NOTIFICATION OVERLAY (SyncBar's wrapper is the nearest positioned
+         ancestor), not this chip — anchored to the chip itself it once
+         extended past <main>'s left edge, whose implicit overflow clip cut
+         the first label off (see `placePanel` for the anchor's history). The
+         plate supplies the horizontal anchor only, and `placePanel` measures
+         it. */
+      className="w-full @container"
     >
       <ArrivalLine>
-        {/* The counts ARE the control: pressing them is what names the rows
-            they count, so the affordance and the summary are one thing rather
-            than a label with a "show" beside it. */}
+        {/* The whole plate is the control, and the counts are its face:
+            pressing them is what names the rows they count, so the affordance
+            and the summary are one thing rather than a label with a "show"
+            beside it. "Mark as seen" rides in the panel it opens, not beside
+            the plate: a second control hanging off a centred chip is the
+            trailing-annotation read again (#212), and putting the spend
+            behind the open means the names are on screen when the reader
+            destroys the digest — rule 2's own spirit. */}
         <button
-          ref={triggerRef}
+          ref={(el) => {
+            triggerRef.current = el;
+            placePlate(el);
+          }}
           type="button"
           aria-expanded={named}
           aria-controls={panelId}
           onClick={() => setNamed((showing) => !showing)}
-          className={`${LINE_CONTROL} flex min-w-0 items-baseline gap-1.5 text-muted`}
+          /* `lg:pointer-events-auto`: the overlay wrapper blankets the row
+             with pointer-events off so the row stays clickable through it —
+             the plate (and the panel below) opt back in. */
+          className={`${PLATE} mx-auto flex min-w-0 items-baseline gap-1.5 border-l-stage-applied text-muted transition-colors hover:bg-surface-2 hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong lg:pointer-events-auto`}
         >
           <span className="tabular truncate">
             {/* One rendering at a time, never both: a tight chip gets the
-                total, a roomy one gets the kinds. Opening it names the rows
-                under their kind either way, so a reader on the total form is
-                one press from everything the wide form says. */}
-            <span className="@[26rem]:hidden">
-              {counted} change{counted === 1 ? "" : "s"}
+                total, a roomy one gets the kinds — rung re-based +2rem for
+                the plate's chrome, same as the quiet ladder. Opening it names
+                the rows under their kind either way, so a reader on the total
+                form is one press from everything the wide form says. */}
+            <span className="@[28rem]:max-lg:hidden">
+              <span className="text-strong">{counted}</span> change{counted === 1 ? "" : "s"}
             </span>
-            <span className="hidden @[26rem]:inline">
+            <span className="hidden @[28rem]:max-lg:inline">
               {groups.map((group, i) => (
                 <Fragment key={group.kind}>
                   {i > 0 ? <span className="text-dim"> · </span> : null}
@@ -593,20 +793,11 @@ export function SinceLastLook({
               ))}
             </span>
           </span>
+          <span className="hidden shrink-0 font-mono text-[11px] text-dim @[36rem]:max-lg:inline">
+            · {moment}
+          </span>
           <Chevron className="h-3 w-3 shrink-0 text-dim" aria-hidden />
           <span className="sr-only">{named ? "Hide the rows" : "Name the rows"}</span>
-        </button>
-
-        <span className="hidden shrink-0 font-mono text-[11px] text-dim @[34rem]:inline">
-          · {moment}
-        </span>
-
-        <button
-          type="button"
-          onClick={() => writeLastLook(storageKey, snapshotOf(rows, scope, Date.now(), partial))}
-          className={`${LINE_CONTROL} ml-auto shrink-0 text-muted`}
-        >
-          Mark as seen
         </button>
       </ArrivalLine>
 
@@ -639,17 +830,34 @@ export function SinceLastLook({
           ref={placePanel}
           id={panelId}
           style={{ left: 0 }}
-          className="absolute top-full z-30 mt-2 flex w-[min(30rem,calc(100vw-2rem))] flex-col rounded-r-xl border border-l-2 border-line-strong border-l-stage-applied bg-surface p-4 shadow-[0_16px_36px_-16px_rgba(0,0,0,0.9)] before:absolute before:bottom-full before:-left-0.5 before:w-0.5 before:bg-stage-applied before:content-[''] before:h-[var(--stem,0px)]"
+          className="pointer-events-auto absolute top-full z-30 mt-2 flex w-[min(30rem,calc(100vw-2rem))] flex-col rounded-r-xl border border-l-2 border-line-strong border-l-stage-applied bg-surface p-4 shadow-[0_16px_36px_-16px_rgba(0,0,0,0.9)] before:absolute before:bottom-full before:-left-0.5 before:w-0.5 before:bg-stage-applied before:content-[''] before:h-[var(--stem,0px)]"
         >
-          {/* Since WHEN, which is half of what this panel answers and is said
-              nowhere else on a real board: the chip only prints the moment
-              from `@[34rem]` up, and its slot measures 181 / 341 / 500px at
-              1024 / 1280 / 1440 — it never reaches 544. Set in the text face
-              rather than the chip's mono: there it is a bare stamp, here it is
-              the object of a sentence. */}
-          <p className="shrink-0 text-xs text-dim">
-            since <span className="tabular text-muted">{moment}</span>
-          </p>
+          {/* The panel's header: since WHEN on the left, the one act that
+              spends the state on the right. The moment is said nowhere else
+              on a real board — the chip only prints it from `@[36rem]` up,
+              which the signed-in slot never reaches — and it is set in the
+              text face rather than the chip's mono: there it is a bare stamp,
+              here it is the object of a sentence. "Mark as seen" lives here
+              rather than on the chip (#212): the centred plate has to read as
+              one object, and a reader can only destroy the digest with the
+              named rows in front of them — see the trigger's note. */}
+          <div className="flex shrink-0 items-baseline justify-between gap-3">
+            <p className="text-xs text-dim">
+              since <span className="tabular text-muted">{moment}</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                // Close first: `named` survives the re-render, and a panel
+                // left "open" would pop unasked the next time news arrives.
+                setNamed(false);
+                writeLastLook(storageKey, snapshotOf(rows, scope, Date.now(), partial));
+              }}
+              className={`${LINE_CONTROL} shrink-0 text-xs text-muted`}
+            >
+              Mark as seen
+            </button>
+          </div>
 
           {/* The groups scroll, the frame does not: `max-height` is measured
               against the screen in `placePanel`, so the busiest morning is

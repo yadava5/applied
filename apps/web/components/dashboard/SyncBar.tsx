@@ -63,8 +63,8 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * (#172), spent on the control the owner uses least. The status
  * line never moves the page at `lg`+ — it rides in the row for exactly as
  * long as it speaks (the owner watched the board jump when "checking Gmail…"
- * used to take a line of its own), and while a sync RUNS it takes the change
- * ledger's width rather than the board's own totals: blanking
+ * used to take a line of its own), and while a sync RUNS it takes the row's
+ * flexible middle rather than the board's own totals: blanking
  * `41 filed · 38 open · 0 offers` for the 11 seconds a sync and its note last
  * is what made a working sync read as frozen (#160). Only the two statuses
  * that wait on the user still borrow the subtitle's own slot; see the
@@ -150,9 +150,9 @@ const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 const SLOW_SYNC_AFTER_MS = 8000;
 
 /** How long a finished sync's resting note holds the status slot before the
- *  row goes quiet again. Long enough to read one short sentence, short enough
- *  that the change ledger is never gone for long — the board's own totals now
- *  stay put right through the run (#160), so this dwell no longer costs them. */
+ *  row goes quiet again. Long enough to read one short sentence — the board's
+ *  own totals stay put right through the run (#160), and the change ledger
+ *  rides its own line now (#212), so this dwell costs neither. */
 const SYNCED_NOTE_MS = 6000;
 
 function recentlyAutoSynced(): boolean {
@@ -224,12 +224,21 @@ export function SyncBar({
   subtitle: string;
   gmail: SyncGmailState | null;
   /** The change-ledger chip (`SinceLastLook`) — one line by that component's
-   *  own contract, mounted in the row's flexible middle. It no longer reads
-   *  ON from the subtitle: "Nothing new since…" hard against the totals read
-   *  as their caption (#196), so the chip's quiet states anchor themselves
-   *  against the row's far side instead — see that component. A slot rather
-   *  than an import: the ledger's rows/scope are the caller's business, and
-   *  the error/empty pages pass nothing. */
+   *  own contract, mounted as an overlay on the bar's centre at `lg`+ and as
+   *  the stacked header's own line below: the dashboard's notification
+   *  centre (#212). Every in-FLOW desktop placement failed in sequence —
+   *  flush after the subtitle it read as the totals' caption (#196), hung
+   *  off the far side it read as a trailing annotation on the sync cluster,
+   *  centred in the row's leftover middle it wandered against the bar
+   *  (130px right of the bar's centre at 1024, 137px left at 1280 — the
+   *  flanks are that asymmetric) and got carried to a line-end whenever the
+   *  row wrapped, and a dedicated line under the row held the centre but
+   *  spent 26px the worklist owns (#172's refund; session-edge.spec's floor
+   *  caught it). Out of the row's flow, over its empty middle, is the one
+   *  placement that is centred on the bar AND free. See the notification
+   *  overlay below for the mechanics. A slot rather than an import: the
+   *  ledger's rows/scope are the caller's business, and the error/empty
+   *  pages pass nothing. */
   since?: ReactNode;
   /** The route title. Rendered as the page's ONE <h1>, at every width — the
    *  shell's TopBar renders no title on this route (see TopBar), so the
@@ -428,11 +437,11 @@ export function SyncBar({
   }, [busy]);
 
   // A finished run's note is a RECEIPT, not a state, so it decays. It has to:
-  // at `lg`+ that note takes the subtitle + ledger slot (see the header-row
-  // note below), and `synced` had no exit but the receipt dialog — which a
-  // plain sync never opens. So one press hid the board's totals and the
-  // change ledger for the rest of the session, on the signed-in dashboard as
-  // well as the demo. A partial scan is excluded on purpose: it carries a
+  // at `lg`+ that note takes the row's middle (see the header-row note
+  // below), and `synced` had no exit but the receipt dialog — which a
+  // plain sync never opens. So one press hid the board's totals for the rest
+  // of the session, on the signed-in dashboard as well as the demo. A
+  // partial scan is excluded on purpose: it carries a
   // "continue the scan" control, and a control must not vanish under the
   // cursor.
   useEffect(() => {
@@ -637,7 +646,9 @@ export function SyncBar({
 
   // Who yields to a speaking status at `lg`+.
   //
-  // The change-ledger chip always yields: it is news, and the status is now.
+  // The change ledger no longer competes at all: it rides its own line below
+  // the row (#212), so the row's middle is the status line's alone — hiding
+  // the ledger while a sync spoke was a width contest that no longer exists.
   // The board's own totals yield only to the two statuses that WAIT ON THE
   // USER — the stopped-early scan (it carries "continue the scan") and the
   // resting "last sync failed". Those hold the row indefinitely, they are
@@ -675,14 +686,15 @@ export function SyncBar({
     <div className="relative flex flex-col gap-2" data-sync-surface="">
       {/* --- The header row -------------------------------------------------
           At `lg`+ in the shell this IS the screen's top line: TopBar yields
-          on the board route, so the title, the state, the change ledger, the
-          sync controls and the session edge share one ~40px row instead of a
-          48px bar with an empty middle plus a second row under it.
+          on the board route, so the title, the state, the sync controls and
+          the session edge share one ~40px row instead of a 48px bar with an
+          empty middle plus a second row under it. (The change ledger rides
+          its own line just below — #212, see the notification-line note.)
 
           ZERO LAYOUT SHIFT is a requirement of this row (the owner watched
           the whole page jump when "checking Gmail…" appeared): at `lg`+ the
-          status line does not get a line of its own — it takes the change
-          ledger's width for exactly as long as it has something to say, so
+          status line does not get a line of its own — it takes the row's
+          flexible middle for exactly as long as it has something to say, so
           idle → checking → result → idle never changes the row's height. "As
           long as it has something to say" is enforced by the decay above, not
           merely intended: a note that never expired held this slot for the
@@ -696,9 +708,10 @@ export function SyncBar({
           and the resting "last sync failed". They are unchanged here; task
           #96 owes them a fixture before that can be. Below `lg` the row
           stacks and the status keeps its own line, as before. */}
-      {/* `relative`: the change ledger's names panel anchors to THIS row
-          (its own chip sits mid-row, where an anchored overlay ran past
-          <main>'s left edge and got clipped).
+      {/* `relative` is historical now that the ledger's panel anchors to its
+          own line below (#212) — kept because removing a containing block
+          silently re-parents any future absolute child (see the sr-only
+          lesson on the wrapper above).
 
           `data-sync-header-row` names the row for the one assertion that is
           ABOUT the row itself — "does it still hold one line at 1024"
@@ -712,18 +725,15 @@ export function SyncBar({
           <h1 className="shrink-0 text-sm font-semibold tracking-tight text-strong">{title}</h1>
         ) : null}
         <p
+          data-sync-subtitle=""
           className={`tabular shrink-0 text-[13px] text-muted ${statusOwnsSlot ? "lg:hidden" : ""}`}
         >
           {subtitle}
         </p>
-        {/* The ledger chip takes the slack between state and controls — its
-            own fixed flex-basis, so hydration can never re-wrap the row (the
-            board below must not move when the ledger finds its words). */}
-        {since ? (
-          <div className={`min-w-0 flex-1 basis-40 ${statusTakesSlot ? "lg:hidden" : ""}`}>
-            {since}
-          </div>
-        ) : null}
+        {/* The change ledger used to ride here, in the row's flexible middle.
+            It overlays the row now (#212) — mounted below as the row's last
+            child — which also ends the width contest between it and the
+            status: the row's middle is the status line's alone. */}
         {/* The status live region — persistent (mounting live regions on
             demand drops announcements), sr-only while silent. When it speaks
             it takes the subtitle's slot at `lg`+ (see the row note above) and
@@ -774,7 +784,15 @@ export function SyncBar({
             an application" on its own right-aligned line with a dead gap
             beside it. The recency phrase drops to a quiet line of its own
             down there (`order-last`), so the controls read as one bar. */}
-        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+        {/* `data-sync-subtitle` / `data-sync-cluster` name the chip's two
+            row-neighbours for measurement — the overlaid plate keeps a
+            measured clearance from both (see SinceLastLook's placePlate and
+            shell.spec's gate), and a class-list selector for either would go
+            vacuous the first time the utilities moved. */}
+        <div
+          data-sync-cluster=""
+          className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end"
+        >
           {connected ? (
             <>
               {showRecency ? (
@@ -810,7 +828,23 @@ export function SyncBar({
                   // `lastSyncAt` on a simulated sync.
                   // Only the knob reaches this branch; /demo and the
                   // twin's own default still carry the frame.
-                  <span className="order-last w-full text-xs text-dim sm:order-none sm:w-auto">
+                  // One honesty badge per row (#212): where the trailing
+                  // pill is on the row (`lg`+ — the slot is lg-only), this
+                  // phrase is the SECOND element saying "these are fixtures"
+                  // on one line, and its 184.5px is exactly the middle the
+                  // bar-centred notification chip needs — measured, the
+                  // centred plate overlapped this phrase by 63px at 1280 on
+                  // the default twin. So the phrase yields to the pill at
+                  // `lg`+ and carries the signage alone below it, where the
+                  // pill is gone; session-edge.spec asserts both halves, so
+                  // stripping either stays red. Surfaces without the pill
+                  // (/demo passes no `trailing`) keep the phrase at every
+                  // width.
+                  <span
+                    className={`order-last w-full text-xs text-dim sm:order-none sm:w-auto${
+                      trailing ? " lg:hidden" : ""
+                    }`}
+                  >
                     simulated account · nothing is read
                   </span>
                 ) : (
@@ -931,6 +965,57 @@ export function SyncBar({
           ) : null}
           {children}
         </div>
+        {/* The notification overlay (#212): the change ledger, centred on
+            the BAR. At `lg`+ it is absolutely positioned over this row —
+            `inset-0`, so its box IS the row's box at every wrap state, and
+            the chip's `mx-auto` centre is the bar's centre exactly. Out of
+            flow, it costs the worklist nothing: a dedicated line under the
+            row read best but spent 26px of the fold's #172 refund, and
+            session-edge.spec's floor (613px at 1024×768) caught it at 594 —
+            that height is the worklist's, not this chip's to spend. The
+            chip wears its compact form at `lg`+ (see its ladder), which is
+            what keeps it clear of the totals on its left and the cluster on
+            its right — measured clearances in that component's header.
+
+            `pointer-events-none` because the overlay blankets the row; the
+            plate and the opened panel opt back in individually, so the
+            title, totals and every control stay clickable through it.
+            `pt-2.5` drops the 18px chip line to the vertical centre of the
+            row's one-line band ((38 − 18) / 2); on the fixture twin's
+            wrapped 82px row that same offset pins it to LINE ONE, whose
+            right side is free past the totals.
+
+            Below `lg` the shell unlocks and there is no floor: the same
+            node becomes an in-flow full-width line at the row's end
+            (`order-last`), the stacked header's own notification bar, and
+            the server pass reserves it there so hydration moves nothing.
+
+            `relative` below `lg` / `absolute` at `lg`+ also makes this the
+            names panel's containing block in BOTH schemes: `top-full` is
+            the row's bottom at `lg`+ (below every control, wrapped or not —
+            the #172 sheet-over-the-Sync-button failure cannot recur) and
+            the chip line's bottom in the stack below `lg`. */}
+        {since ? (
+          <div
+            className="relative max-lg:order-last max-lg:w-full lg:pointer-events-none lg:absolute lg:inset-0 lg:pt-2.5"
+            /* `--chip-tight`: the overlay tells the chip when the row is
+               FURNISHED — the trailing pill spends 167px of right flank the
+               live board does not have, and with it on the row the window
+               between the totals and the cluster measures 169px at 1024:
+               smaller than any moment-bearing quiet plate (its short form
+               is 179px before clearances), so no nudge can save it. The
+               chip's `lg`→`xl` moment span reads this var and keeps the
+               bare claim instead (see SinceLastLook). A CSS var rather
+               than a Tailwind group-data variant because the base `hidden`
+               and a stacked-variant `inline` on one span would leave the
+               outcome to stylesheet order; `display: var(...)` inside the
+               one media window is deterministic. Surfaces without the pill
+               — the live dashboard, ?session=1, /demo — never set it. */
+            style={trailing ? ({ "--chip-tight": "none" } as React.CSSProperties) : undefined}
+          >
+            {since}
+          </div>
+        ) : null}
         {trailing ? <div className="hidden shrink-0 items-center lg:flex">{trailing}</div> : null}
       </div>
 

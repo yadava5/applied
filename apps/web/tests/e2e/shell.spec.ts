@@ -496,12 +496,16 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * green. The floors are measured on /demo/shell (recorded 2026-08-12,
    * `next start`, headless Chrome, after the header row replaced the top bar
    * and the stage lens moved to the rail): worklist-pane clientHeight 652 at
-   * 1280×800, 572 at 1280×720, 592 at 1024×768 — the twin's header holds two
-   * lines at 1024 because the fixture recency frame ("simulated account ·
-   * nothing is read", 184.5px) lays out ~69px wider than the live row's
-   * phrase and wraps the row regardless of the pill (measured 2026-08-13 with
-   * the pill removed); the signed-in arrangement holds one line, asserted in
-   * session-edge.spec.ts rather than recorded here. A small tolerance absorbs
+   * 1280×800, 572 at 1280×720, 592 at 1024×768 — recorded when the twin's
+   * header held two lines at 1024: the fixture recency frame ("simulated
+   * account · nothing is read", 184.5px) laid out ~69px wider than the live
+   * row's phrase and wrapped the row regardless of the pill (measured
+   * 2026-08-13 with the pill removed). Since #212 that frame yields to the
+   * pill at `lg`+ (see SyncBar), so the twin's header holds ONE line at 1024
+   * and measures ~620 — comfortably above a floor recorded against the
+   * two-line header, which stays as the minimum. The signed-in arrangement
+   * holds one line, asserted in session-edge.spec.ts rather than recorded
+   * here. A small tolerance absorbs
    * sub-pixel/font drift; a real regression (a fatter band, a second header
    * row, a reinstated notice line) costs tens of pixels and lands far below
    * it.
@@ -620,10 +624,12 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * WHY THREE VIEWPORTS. 1280 is the commonest laptop and the `xl` floor;
    * 1024 is the `lg` boundary and the band's narrowest cells. 1240 is neither
    * — it is where the header row's LAST flex-wrap collapses, measured by an
-   * 8px sweep of 1024→1440: the arrival line's slot drops from 320px to
+   * 8px sweep of 1024→1440: the arrival line's slot dropped from 320px to
    * 161px there against a 194px sentence, and a gate that samples only the
-   * two round numbers sees a clean line on both sides of a 33px clip. Do not
-   * delete it as redundant with 1280.
+   * two round numbers saw a clean line on both sides of a 33px clip. The
+   * arrival line has since moved to its own bar-wide line (#212), so its
+   * container no longer collapses at 1240 — but the row still wraps there
+   * and the band still measures, so do not delete it as redundant with 1280.
    *
    * Mutation-tested at introduction (dev Chromium, 2026-08-12): re-pinning
    * the auto-filed bar to the shipped defect (`w-16 shrink-0`, no xl gate)
@@ -763,6 +769,109 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
               node.lost,
               `${state} @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
             ).toBeLessThanOrEqual(0);
+          }
+
+          // #212: the chip is the dashboard's notification centre — a plate
+          // overlaid on the BAR's centre, not centred in whatever room its
+          // old row-mates left. The first fix asserted slot-centring, and
+          // that gate passed on the layout the owner was complaining about:
+          // the slot's centre wandered 130px right of the bar's at 1024 and
+          // 137px left of it at 1280 (the flanks are that asymmetric), and
+          // at 1024 the wrapped row carried the plate to a line-end. The
+          // second fix centred a dedicated line and was caught by the
+          // worklist floors below (and by session-edge's) spending 26px of
+          // the #172 refund. The worklist floors are the height half of
+          // this gate: the overlay must cost 0px.
+          //
+          // TWO ARRANGEMENTS, TWO HALVES — the split is the honest
+          // instrument, not a soft one. The DEFAULT twin's row is furnished
+          // (pill + fixture chrome, 167px of right flank the live board
+          // does not have), and at 1024 its cluster ends 48px past where a
+          // centred compact plate needs clearance — there is NO bar-centred
+          // room on that surface, by arithmetic, so demanding centring
+          // there would only force overlap. On the furnished row the gate
+          // therefore asserts SAFETY: the plate stands clear of both
+          // neighbours (placePlate yields a measured 19px there; 12 is the
+          // drift floor under its 16px promise). The centring invariant is
+          // asserted on `?session=1` — the signed-in arrangement, the same
+          // surface session-edge.spec measures for row geometry, because
+          // the default twin misrepresents the live row's shape (its
+          // documented purpose for existing).
+          const measureChip = () =>
+            own.evaluate(() => {
+              const section = document.querySelector('[data-testid="since-last-look"]');
+              const chip = section?.querySelector("p, button");
+              const main = document.querySelector("main");
+              const subtitle = document.querySelector("[data-sync-subtitle]");
+              const cluster = document.querySelector("[data-sync-cluster]");
+              if (!chip || !main || !subtitle || !cluster) return null;
+              const c = chip.getBoundingClientRect();
+              const m = main.getBoundingClientRect();
+              const overlaps = (b: DOMRect) => c.top < b.bottom && b.top < c.bottom;
+              const t = subtitle.getBoundingClientRect();
+              const k = cluster.getBoundingClientRect();
+              return {
+                offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
+                fromTotals: overlaps(t) && t.width > 0 ? c.left - t.right : null,
+                fromCluster: overlaps(k) && k.width > 0 ? k.left - c.right : null,
+              };
+            });
+
+          const furnished = await measureChip();
+          expect(furnished, `${state} @ ${at}: chip geometry unreadable on the twin`).not.toBeNull();
+          if (furnished!.fromTotals !== null) {
+            expect(
+              furnished!.fromTotals,
+              `${state} @ ${at}: ${furnished!.fromTotals}px from the totals — the #196 caption read`,
+            ).toBeGreaterThanOrEqual(12);
+          }
+          if (furnished!.fromCluster !== null) {
+            expect(
+              furnished!.fromCluster,
+              `${state} @ ${at}: ${furnished!.fromCluster}px from the sync cluster — the plate is overlapping the controls`,
+            ).toBeGreaterThanOrEqual(12);
+          }
+
+          // The signed-in arrangement: the centring invariant itself. The
+          // marker in this context's storage survives the navigation, so
+          // both loop iterations land on the quiet branch here — the plate
+          // geometry is the same object in every state.
+          await own.goto("/demo/shell?session=1");
+          await expect(own.getByTestId("since-last-look")).toContainText("Nothing new");
+          // The VISIBLE sentence, not textContent: container/media-hidden
+          // spans ride in textContent, which is how a lost string can hide
+          // behind a green text assertion. The moment must survive on the
+          // desktop chip (#212 round 4 — the compact form shipped without
+          // it): "Nothing new" with no *since when* is a claim with its
+          // scope removed, and the quiet plate has no press to recover it.
+          const visible = await own
+            .getByTestId("since-last-look")
+            .evaluate((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim());
+          // "since {moment}" at the widths that fit the sentence, the loud
+          // chip's "· {moment}" stamp at `lg`→`xl` — where " since " plus
+          // the WORST clock string ("12:58 am") measured 196.6px against
+          // the 244.5px window and left 22.7px on the #196 clearance below.
+          // Either way the moment itself must be there.
+          expect(
+            visible,
+            `${state} @ ${at}: the quiet chip renders "${visible}" — the moment is gone from the visible sentence`,
+          ).toMatch(/Nothing new (since|·) \S/);
+          const signedIn = await measureChip();
+          expect(signedIn, `${state} @ ${at}: chip geometry unreadable signed-in`).not.toBeNull();
+          expect(
+            signedIn!.offCentre,
+            `${state} @ ${at}: chip centre sits ${signedIn!.offCentre}px off the bar's on the signed-in row`,
+          ).toBeLessThanOrEqual(1.5);
+          for (const [name, gap] of [
+            ["totals", signedIn!.fromTotals],
+            ["sync cluster", signedIn!.fromCluster],
+          ] as const) {
+            if (gap !== null) {
+              expect(
+                gap,
+                `${state} @ ${at}: ${gap}px from the ${name} on the signed-in row`,
+              ).toBeGreaterThanOrEqual(24);
+            }
           }
         } finally {
           await context.close();

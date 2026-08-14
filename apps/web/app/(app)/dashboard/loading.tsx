@@ -15,6 +15,10 @@ export default function DashboardLoading() {
         <div className="h-9 w-40 animate-pulse rounded-lg bg-surface-2" />
       </div>
 
+      {/* No stand-in for the notification chip (#212): at `lg`+ it overlays
+          the header row and costs no height, so the skeleton's geometry is
+          already the loaded one's. */}
+
       {/* Spine (stages + pulse column) + worklist — the same geometry the
           loaded board renders into, so the swap from skeleton to rows never
           reflows the page. */}

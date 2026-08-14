@@ -29,6 +29,7 @@ import {
   floorOf,
   groupChanges,
   momentLabel,
+  momentShortLabel,
   parseLastLook,
   snapshotOf,
 } from "../../lib/dashboard/lastLook.ts";
@@ -438,4 +439,19 @@ test("momentLabel: today, yesterday, then the calendar day — in local time", (
   // today rather than as a date nobody has lived through.
   assert.equal(momentLabel(new Date(2026, 7, 12, 8, 0).getTime(), now), "today 8:00 am");
   assert.equal(momentLabel(Number.NaN, now), "your last visit");
+});
+
+test("momentShortLabel: the same buckets, each keeping the part that names its day", () => {
+  // The `lg`+ overlay chip's form (#212): a bare clock is today's,
+  // "yesterday" and a bare date carry their day without the clock. Bucketed
+  // identically to momentLabel — a pair that disagreed about which day they
+  // mean would be two claims about one marker.
+  const now = new Date(2026, 7, 11, 9, 30).getTime();
+  assert.equal(momentShortLabel(new Date(2026, 7, 11, 9, 14).getTime(), now), "9:14 am");
+  assert.equal(momentShortLabel(new Date(2026, 7, 10, 18, 41).getTime(), now), "yesterday");
+  assert.equal(momentShortLabel(new Date(2026, 7, 8, 18, 41).getTime(), now), "Aug 8");
+  // The future-marker rule is shared: a corrected-backwards clock reads as
+  // today's clock time, never as a day nobody has lived through.
+  assert.equal(momentShortLabel(new Date(2026, 7, 12, 8, 0).getTime(), now), "8:00 am");
+  assert.equal(momentShortLabel(Number.NaN, now), "your last visit");
 });
