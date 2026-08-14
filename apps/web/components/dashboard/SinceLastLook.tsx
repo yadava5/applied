@@ -59,11 +59,13 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * the same line box, so no state change can move the board. The dedicated
  * notice line it once held is a line the worklist got back — twice.
  *
- * THE PLATE, CENTRED ON THE BAR (#212) — the chip is a
- * miniature of its own panel. Every state renders the same small plate:
- * square left corners, rounded right, hairline frame, a 2px rule down the
- * left edge — the panel's exact construction at chip scale, so the thing you
- * press and the thing that opens read as one object in two sizes. The loud
+ * THE PLATE, CENTRED ON THE BAR (#212) — the chip is built to the same rule
+ * as the panel it opens: a hairline `--line-strong` frame, ONE 2px
+ * `--stage-applied` rule on one edge, corners square along that rule and
+ * rounded away from it. The chip wears it down its left (the plate idiom all
+ * three states share); the panel wears it across its top, the edge that
+ * faces the chip. One construction at two sizes, so the thing you press and
+ * the thing that opens read as one object. The loud
  * state's rule is the `--stage-applied` accent in full-strength ink; the
  * quiet and first-run states wear the SAME plate with the rule one register
  * down (`--line-strong`) and no chevron — the notification centre in its
@@ -129,13 +131,37 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * x=523 in a row ending at 1256) opened a 608px panel starting at x=648 —
  * beginning 29px to the RIGHT of the trigger's own right edge, touching
  * nothing that produced it, and swallowing the pulse band's two right-hand
- * cells whole. It is hung on the chip now: `placePanel` measures the chip's
- * left edge onto the panel's, the accent rule runs unbroken from one into the
- * other, and a 30rem measure both reads better than a 38rem slab and hands the
- * band's last cell back. It still covers the band's middle, and that is the
- * accepted trade — the band is a summary of the same story the ledger is
- * spelling out, it is one press from returning, and coverage bounded to the
- * middle beats the right 60% of the band disappearing.
+ * cells whole. It is hung on the chip now: `placePanel` puts the panel's
+ * CENTRE on the chip's, so the sheet drops straight out of the plate with
+ * equal overhang on both sides, and a 30rem measure both reads better than a
+ * 38rem slab and hands the band's last cell back. It still covers the band's
+ * middle, and that is the accepted trade — the band is a summary of the same
+ * story the ledger is spelling out, it is one press from returning, and
+ * coverage bounded to the middle beats the right 60% of the band disappearing.
+ * Centring moved that coverage rather than growing it — measured on this
+ * build at 1024, the four band cells left to right (`next start`,
+ * 2026-08-14). Demo board: 0/98/98/0 covered, against 0/21/100/76
+ * left-aligned, so the sheet stopped running off the middle into the
+ * auto-filed cell and the middle is all it takes now. The narrower
+ * signed-in row is a trade, not a win: 30/100/100/30 against 0/27/100/100,
+ * which hands back the auto-filed cell (100% covered → 30%) and spends 30%
+ * of the momentum cell that used to be clear (45% on the furnished twin).
+ * Each flank is clipped from its inner edge at those fractions — heading and
+ * value line alike, readable outside the sheet and gone under it, which is
+ * what covering a summary means whichever side it happens on. The covered
+ * pair is the same pair either way, and the sheet no
+ * longer has to SHRINK to stay aligned — it held its full 30rem measure on
+ * every surface here, where the old rule cut it to 418px on the signed-in
+ * row and 445px on the twin.
+ *
+ * Centred is the owner's call, taken over the left-edge alignment that
+ * shipped first (left edge onto left edge, one unbroken accent rule down
+ * both). Both are honest attachments; a notification centred on the bar
+ * reads as the row's own drawer when what it opens is centred under it too,
+ * and a 480px sheet whose left edge alone lines up with a ~120px chip looks
+ * hung off one corner of it. The connector had to move with it — see the
+ * panel's own note: the accent is the panel's TOP rule now, and the stem
+ * drops from the chip's centre onto the middle of it.
  *
  * The expansion is never remembered. Restoring it on the next load would
  * re-create exactly the defect this shape removes — the server cannot know it
@@ -295,11 +321,13 @@ const LINE_CONTROL =
   "-my-1 rounded py-1 underline-offset-4 hover:text-strong hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong";
 
 /** The plate every state of the chip wears — the panel's own construction at
- *  chip scale (square left corners, rounded right, hairline frame, a 2px rule
- *  down the left edge), so the chip and the sheet it opens read as one object
- *  at two sizes. Which inks ride on it is the state's business: accent rule +
- *  full-strength counts when there is news, `--line-strong` rule + dim ink
- *  when there is none. The frame is `--line-strong` in BOTH registers — the
+ *  chip scale (hairline frame, one 2px accent rule, corners square along that
+ *  rule and rounded away from it; the chip's runs down its left, the panel's
+ *  across its top — see the panel), so the chip and the sheet it opens read as
+ *  one object at two sizes. Which inks ride on it is the state's business:
+ *  accent rule + full-strength counts when there is news, `--line-strong`
+ *  rule + dim ink when there is none. The frame is `--line-strong` in BOTH
+ *  registers — the
  *  panel's own measurement (see its header) applies unchanged at plate scale:
  *  `--line` composites to APCA Lc 0.0 on the dark ground (re-computed for
  *  #212), so a dormant plate framed in it would be a floating sentence, not
@@ -313,10 +341,34 @@ const LINE_CONTROL =
 const PLATE = "-my-1 rounded-r-md border border-l-2 border-line-strong bg-surface px-2.5 py-1";
 
 /** Breathing room between the panel's bottom edge and the screen's, and the
- *  measures below which it stops giving way and scrolls instead. */
+ *  measure below which it stops giving way and scrolls instead. (There is no
+ *  width twin of these anymore: the left-aligned panel needed a floor to
+ *  decide when to stop trading width for alignment, and a CENTRED one never
+ *  makes that trade — it slides along the row until it fits and only gives up
+ *  width when the row itself is narrower than the sheet. See `placePanel`.) */
 const PANEL_GUTTER = 16;
 const PANEL_MIN_HEIGHT = 160;
-const PANEL_MIN_WIDTH = 320;
+
+/** The longest jump the connector will make. The gap is MEASURED
+ *  (`placePanel`) rather than drawn to a constant, because it is not one: it
+ *  is 22px on the row's one line — every surface, every width from 1024 to
+ *  1600 (`next start`, 2026-08-14) — and it was 62px the time sign-out
+ *  wrapped the row at 1024 (#172). A wrapped row puts a whole line of
+ *  controls between the chip and the panel, and the stem is CENTRED now, so
+ *  drawing that 62px would rule a 2px accent stroke straight down the middle
+ *  of line two. Past this bound the stem is not drawn at all: a stroke
+ *  through live controls is worse than none, and the panel is still centred
+ *  on the chip, which is the attachment either way. Bounded rather than
+ *  shortened — a stem that reaches 16 of 22px reads as a broken line, which
+ *  is what the first pass here shipped and the measurement caught. 32px
+ *  clears the 22 with room for a taller line box (text zoom) and rejects the
+ *  wrap. The bound compares the measured GAP, not the drawn height, which
+ *  carries the cap's 2px on top of it (`placePanel`). Defensive, and say so:
+ *  nothing measured on this build wraps at `lg`+ — the overlay is 38px tall
+ *  on all three surfaces at every width from 1024 to 1600 — so this branch
+ *  is unreached, and the 62px it exists for is a reading from #172 that
+ *  could not be reproduced here. */
+const STEM_MAX = 32;
 
 export function SinceLastLook({
   rows,
@@ -422,7 +474,7 @@ export function SinceLastLook({
   }, [placePlate]);
 
   /**
-   * Hang the panel on the chip's OWN rule, and bound it to the screen.
+   * Centre the panel on the chip, and bound it to the row and the screen.
    *
    * The panel is anchored to the NOTIFICATION OVERLAY — the wrapper SyncBar
    * mounts this chip in (#212): `inset-0` over the header row at `lg`+, so
@@ -432,25 +484,42 @@ export function SinceLastLook({
    * chip's own line put a z-30 sheet over the Sync button whenever the row
    * wrapped (#172); the overlay's box IS the row's box, so the same
    * guarantee holds by construction. Before that it took the row's
-   * `right-0` — a panel against the
-   * far right edge, 29px clear of the trigger that opened it and detached
-   * from anything. This puts its left edge on the PLATE's (`triggerRef` —
-   * the whole plate is the trigger and its border box IS the chip's box), so
-   * the 2px accent down this panel's left side is collinear with the one
-   * down the plate and the two read as one stroke.
+   * `right-0` — a panel against the far right edge, 29px clear of the
+   * trigger that opened it and detached from anything.
    *
-   * The plate's own left offset is not a constant — it is whatever the
-   * centring and the plate's container-adaptive width leave — so the fit is
-   * MEASURED here rather than assumed. When the 30rem measure would run past
-   * the line, the panel gives up WIDTH before it gives up alignment: sliding
-   * it left instead would break the one stroke that says which chip opened
-   * it, and the alignment is the whole repair. Below `PANEL_MIN_WIDTH` there
-   * is no alignment left worth protecting, so it slides instead and takes
-   * the room. Height is capped the same way, against what is left of the
-   * screen, so a busy morning scrolls inside the panel instead of running
-   * off the bottom of a shell that must never scroll (#149).
-   * Everything is read against one `offsetParent`, so there is no viewport
-   * arithmetic to disagree with a scroll.
+   * This puts the panel's CENTRE on the PLATE's (`triggerRef` — the whole
+   * plate is the trigger and its border box IS the chip's box), so the sheet
+   * carries the same overhang either side of the chip and drops straight out
+   * of it. It aligned LEFT EDGE to left edge until the owner overruled it
+   * (see the header): a 480px sheet lining up with one corner of a ~120px
+   * chip reads as hung off that corner, where the chip is a notification
+   * centred on the bar and what it opens should be centred under it.
+   *
+   * The order is centre, CLAMP, then cap the width — not the left-aligned
+   * build's "give up width before alignment", which a centred panel never
+   * has to do: it slides along the row until it fits. `left` is bounded to
+   * `[0, rowWidth - width]`, so the sheet can never run off either end, and
+   * the width cap only bites where the ROW itself is narrower than the sheet
+   * (below `lg`, where `calc(100vw-2rem)` has usually already done it).
+   * Measured at `lg`+, the clamp is slack in every arrangement: a 480px
+   * sheet centred at ~488 in a 976px row (1024, `next start`, 2026-08-14)
+   * lands at left ≈ 248 with ~248px to spare on the right, so the centre is
+   * exact and any nonzero delta is a defect, not a tolerance. It measured
+   * exact: |panel centre − chip centre| = 0.01px at 1024/1280/1440 on all
+   * three surfaces (the signed-in arrangement `?session=1`, the
+   * pill-furnished twin, and /demo), the 0.01 being the plate's own
+   * fractional width — including at 1024 on the furnished twin, where
+   * `placePlate` slides the chip 26.27px off the bar and the panel follows
+   * it, with 189.55/189.53px of overhang either side. The clamp only
+   * engages below `lg` (a 480px sheet in a 327px row at 375: left 0, and
+   * the two centres still coincide because the stacked chip is centred on
+   * that row too).
+   *
+   * Height is capped against what is left of the screen, so a busy morning
+   * scrolls inside the panel instead of running off the bottom of a shell
+   * that must never scroll (#149). Everything is read against one
+   * `offsetParent`, so there is no viewport arithmetic to disagree with a
+   * scroll.
    *
    * A ref callback rather than a layout effect: it runs after insertion and
    * before paint (so the panel never flashes at the line's left edge first),
@@ -468,19 +537,38 @@ export function SinceLastLook({
     panel.style.maxWidth = "";
     // Bounding rects, not offsetLeft: the plate may be riding a translateX
     // from placePlate, which offsets ignore — measured on the fixture twin
-    // at 1024, offsetLeft put the panel 26px right of the plate it hangs on.
-    const plateLeft = plate.getBoundingClientRect().left - row.getBoundingClientRect().left;
-    const room = row.clientWidth - plateLeft;
-    const left = room >= PANEL_MIN_WIDTH ? plateLeft : Math.max(0, row.clientWidth - panel.offsetWidth);
+    // at 1024, offsetLeft put the panel 26px right of the plate it centres on.
+    const plateBox = plate.getBoundingClientRect();
+    const centre = plateBox.left + plateBox.width / 2 - row.getBoundingClientRect().left;
+    const rowWidth = row.clientWidth;
+    // Read before the cap is re-applied, so this is the stylesheet's measure.
+    const width = Math.min(panel.offsetWidth, rowWidth);
+    const left = Math.max(0, Math.min(centre - width / 2, rowWidth - width));
     panel.style.left = `${left}px`;
-    panel.style.maxWidth = `${row.clientWidth - left}px`;
-    // The gap the accent has to jump to reach the plate. It is ~14px on the
-    // row's one line — and was 62px back when sign-out wrapped the row at
-    // 1024 (#172) — so the connector is drawn from the measurement, never a
-    // guess.
+    panel.style.maxWidth = `${rowWidth - left}px`;
+    // The stem, drawn from TWO measurements because neither end is a
+    // constant. Its height is the whole gap it has to jump to reach the
+    // plate — 22px on the row's one line — or nothing at all past
+    // `STEM_MAX`, where the row has wrapped and the stroke would cross it
+    // (see the constant). Its x is the chip's centre expressed inside the
+    // panel:
+    // normally the panel's own midpoint, but the two diverge the moment the
+    // clamp above engages, and it is the CHIP the stem has to point at.
+    // `clientLeft` because an absolutely positioned pseudo-element is placed
+    // against the padding box, so the panel's 1px left border would
+    // otherwise push the stem 1px right of the centre it is naming.
+    const gap = Math.max(0, panel.offsetTop - (plate.offsetTop + plate.offsetHeight));
+    // `+ clientTop`: `bottom-full` is resolved against the PADDING box, so the
+    // stem's foot starts 2px down inside the accent cap and the drawn height
+    // has to pay that back or the stroke stops 2px short of the chip. Probed
+    // by hit-test down the chip's centre column (1024, `next start`,
+    // 2026-08-14) — the gap's 22 rows read 0011111111111111111111 before this
+    // term and 1111111111111111111111 after it. Same defect the old build had
+    // at 1px, from the same mechanism, hidden by a 1px border.
+    panel.style.setProperty("--stem", `${gap <= STEM_MAX ? gap + panel.clientTop : 0}px`);
     panel.style.setProperty(
-      "--stem",
-      `${Math.max(0, panel.offsetTop - (plate.offsetTop + plate.offsetHeight))}px`,
+      "--stem-x",
+      `${Math.min(Math.max(0, centre - left - panel.clientLeft - 1), width - 2)}px`,
     );
     panel.style.maxHeight = `${Math.max(
       PANEL_MIN_HEIGHT,
@@ -807,12 +895,23 @@ export function SinceLastLook({
 
           WHAT MAKES IT LOOK ATTACHED, and why a shadow could not
           -------------------------------------------------------
-          `left` is measured onto the chip (see `placePanel`), so this panel
-          and the chip that opened it stand on one vertical line — the 2px
-          `--stage-applied` rule runs down the chip, jumps the row's own gap
-          through `--stem`, and continues down the panel's full left edge. The
-          left corners stay square so that stroke reads as a straight line
-          rather than bending away at the top.
+          The panel is CENTRED on the chip (see `placePanel`), so the two
+          share a vertical axis rather than an edge, and the connector is
+          built on that axis: the 2px `--stage-applied` accent caps this
+          panel across its TOP, and a stem of the same rule stands on the
+          middle of that cap and rises through the row's own gap to the
+          chip — a T, whose upright is under the chip's centre even in the
+          clamped case, because `--stem-x` is measured from the chip and not
+          from this panel's midpoint. The top corners stay square so the cap
+          reads as a straight rule the panel's full measure, and the bottom
+          pair round away from it — the plate's own construction, one edge
+          over (see PLATE).
+
+          The accent moved with the alignment rather than being deleted: on
+          the left it was collinear with the chip's rule and that is what
+          said "this one opened it"; centred, a left rule would point at
+          nothing while the sheet's real attachment is overhead. One accent
+          edge, on the edge that faces the chip.
           That rule is also the only edge on this thing that can be SEEN.
           Measured on the dark theme: the panel's ground (`--surface` #0f1011)
           is 1.04:1 against both the page behind it (#0a0a0b) and the worklist
@@ -824,13 +923,17 @@ export function SinceLastLook({
           (#3f4041, 1.90:1 / 1.76:1) is the best border the system has and is
           what Dialog uses for the same job; the accent rule measures 10.02:1,
           APCA Lc -64.1, and does the rest. On a near-black UI the edge has to
-          do the work the shadow physically cannot. */}
+          do the work the shadow physically cannot. Moving the accent from
+          the left edge to the top spends none of that: three sides keep the
+          same `--line-strong` hairline they had, and the fourth is the same
+          2px accent — now the panel's WIDEST edge rather than its tallest,
+          which at 30rem is more visible boundary than before, not less. */}
       {named ? (
         <div
           ref={placePanel}
           id={panelId}
           style={{ left: 0 }}
-          className="pointer-events-auto absolute top-full z-30 mt-2 flex w-[min(30rem,calc(100vw-2rem))] flex-col rounded-r-xl border border-l-2 border-line-strong border-l-stage-applied bg-surface p-4 shadow-[0_16px_36px_-16px_rgba(0,0,0,0.9)] before:absolute before:bottom-full before:-left-0.5 before:w-0.5 before:bg-stage-applied before:content-[''] before:h-[var(--stem,0px)]"
+          className="pointer-events-auto absolute top-full z-30 mt-2 flex w-[min(30rem,calc(100vw-2rem))] flex-col rounded-b-xl border border-t-2 border-line-strong border-t-stage-applied bg-surface p-4 shadow-[0_16px_36px_-16px_rgba(0,0,0,0.9)] before:absolute before:bottom-full before:left-[var(--stem-x,0px)] before:w-0.5 before:bg-stage-applied before:content-[''] before:h-[var(--stem,0px)]"
         >
           {/* The panel's header: since WHEN on the left, the one act that
               spends the state on the right. The moment is said nowhere else
