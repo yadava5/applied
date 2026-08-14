@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { AppShell } from "@/components/shell/AppShell";
 import { ImportMail } from "@/components/import/ImportMail";
 import { Logo } from "@/components/brand/Logo";
+import { getGmailStatus } from "@/lib/gmail/server";
 import { userDisplayName } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,6 +28,12 @@ export const metadata: Metadata = {
  *     settings CTA is never stranded on a shell-less page with no way back.
  *   - Signed out → the standalone public page, which carries its own header
  *     and links so it, too, is never a dead end.
+ *
+ * Naming: signed in, the page prints NO title of its own — the rail and the
+ * top bar both already say "Import mail", and a third copy in the window was
+ * pure repetition (#198). An sr-only h1 keeps the document outline; the
+ * visible title is the chrome's. Signed out there is no chrome, so that mode
+ * keeps its visible h1 (pinned by import.spec.ts).
  */
 export default async function ImportPage() {
   const supabase = await createClient();
@@ -34,36 +41,47 @@ export default async function ImportPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Header voice shared by every tab: h1 + one quiet line of state. The
-  // privacy claim is NOT here — it is stated once, in ImportMail's note above
-  // the drop zone (see the comment there; the page used to say it four times
-  // before the first button). This line carries what the mode costs you:
-  // nothing to connect, nothing to sign in to.
-  const intro = (
-    <header>
-      <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
-      <p className="mt-1 text-[13px] text-muted">no Gmail connection · no sign-in</p>
-    </header>
-  );
-
   // --- Signed in: keep the whole app shell around the import tool ----------
   if (user) {
+    // The same GET the rail footer's probe makes in this render pass
+    // (request-memoized fetch — same URL, same headers — so no second backend
+    // call). The page must not claim a connection state the rail contradicts:
+    // the old static subtitle said "no Gmail connection" beside a rail saying
+    // "Gmail connected" (#198). Anything stateful here now derives from the
+    // same probe the rail reads.
+    const gmail = await getGmailStatus();
+    const gmailKnownDisconnected =
+      gmail.kind === "ok" && !(gmail.status.configured && gmail.status.connected);
+
     return (
       <AppShell userEmail={user.email ?? null} userName={userDisplayName(user)}>
-        {/* Measure capped, but on the shell's shared left edge (no mx-auto). */}
-        <div className="max-w-3xl space-y-8">
-          {intro}
+        {/* Centred BOTH ways. The signed-out branch below has always centred
+            this same measure; this branch sat it on the left edge, so the two
+            modes of the one page disagreed — that inconsistency was the #198
+            layout defect, and its acceptance bar is "the drop zone is the
+            visual centre of the page". `my-auto` centres the short pre-drop
+            state in the scroll pane and degrades to normal top flow once
+            results outgrow it.
+            `relative` parents the sr-only h1 (a containing block, so the
+            absolutely-positioned helper can never stretch the document). */}
+        <div className="relative mx-auto my-auto w-full max-w-3xl space-y-8">
+          <h1 className="sr-only">Import mail</h1>
           <ImportMail />
-          <p className="border-t border-line-soft pt-6 text-center text-xs leading-relaxed text-dim">
-            Prefer to connect the source directly?{" "}
-            <Link
-              href="/settings"
-              className="text-muted underline-offset-4 hover:text-strong hover:underline"
-            >
-              Connect Gmail read-only in Settings
-            </Link>{" "}
-            — invite-only while we&apos;re in beta.
-          </p>
+          {/* Rendered only on a POSITIVELY known disconnected state — shown to
+              a connected user this is a second state contradiction, and on an
+              unknown probe the rail's never-guess rule applies here too. */}
+          {gmailKnownDisconnected ? (
+            <p className="border-t border-line-soft pt-6 text-center text-xs leading-relaxed text-dim">
+              Prefer to connect the source directly?{" "}
+              <Link
+                href="/settings"
+                className="text-muted underline-offset-4 hover:text-strong hover:underline"
+              >
+                Connect Gmail read-only in Settings
+              </Link>{" "}
+              — invite-only while we&apos;re in beta.
+            </p>
+          ) : null}
         </div>
       </AppShell>
     );
@@ -91,7 +109,19 @@ export default async function ImportPage() {
         </Link>
       </header>
 
-      <section className="mt-8">{intro}</section>
+      {/* h1 + one quiet line. The subtitle is verb-led — what the page DOES —
+          because its old fragment form ("no Gmail connection · no sign-in")
+          read as a status readout, and signed in it sat beside a rail footer
+          asserting the opposite (#198). Signed out nothing contradicts it,
+          but the same words should not mean "feature" here and "state" there. */}
+      <section className="mt-8">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-strong">Import your mail</h1>
+          <p className="mt-1 text-[13px] text-muted">
+            Classify your own job-search mail without connecting Google or signing in.
+          </p>
+        </header>
+      </section>
 
       <div className="mt-8">
         <ImportMail />
