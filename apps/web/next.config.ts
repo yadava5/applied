@@ -72,10 +72,12 @@ const nextConfig: NextConfig = {
    * That was checked call-by-call, not assumed — sync, rebuild, stage change,
    * file, reclassify, add, dismiss, restore, split and delete all refresh.
    *
-   * The one place they do not is `components/settings/**`, which saves to
-   * Supabase user metadata and never refreshes; `app/(app)/settings/page.tsx`
-   * therefore opts itself out with `unstable_dynamicStaleTime = 0`. See the
-   * note there.
+   * `components/settings/**` saves to Supabase user metadata, and its writers
+   * refresh too (#216/#231) — `/settings` used to pin itself out with
+   * `unstable_dynamicStaleTime = 0` when they did not. The pin is gone
+   * (perf/nav-latency): every route participates now, and the writer contract
+   * is held by `tests/unit/settings-publish-contract.test.mjs` instead of a
+   * per-navigation origin tax. See the note in `app/(app)/settings/page.tsx`.
    *
    * WHY `static` IS PINNED AT ITS DEFAULT. 300 is already Next 16's default
    * (`config-shared.js`), so this line changes nothing — it is here because
