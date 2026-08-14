@@ -4,8 +4,8 @@
   "ignoreCommand": "bash vercel-ignore-build.sh api",
   "git": {
     "deploymentEnabled": {
-      "dependabot/**": false,
-      "dependabot/*": false
+      "**": false,
+      "main": true
     }
   },
   "functions": {

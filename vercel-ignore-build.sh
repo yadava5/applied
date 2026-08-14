@@ -31,6 +31,55 @@
 # vercel.json files and stops one being created at all.
 #
 # ---------------------------------------------------------------------------
+# THE API NO LONGER TAKES PREVIEW DEPLOYMENTS, AND THAT IS WHY.
+# ---------------------------------------------------------------------------
+#
+# On 2026-08-13 the api project spent its whole allowance on previews and then
+# could not deploy production for eleven hours. The live API served a commit
+# from 16:48 UTC while main was twenty-one commits ahead; every main commit
+# after it carried
+#
+#   Vercel - jobtracker-web: success
+#   Vercel - jobtracker-api: failure - Deployment rate limited, retry in 24h
+#
+# Four of those commits touch this script's own api allowlist, so the filter
+# was not the cause and no amount of tuning it would have helped: the
+# deployments were never created. The whole night's backend work — the
+# migration runner, the Gmail cursor fixes, the employer-identity work — was
+# merged, green, and not running.
+#
+# Nothing consumes an api PREVIEW. `e2e-ci.yml` boots its own FastAPI on
+# localhost:8000 and its own Next server on localhost:3000
+# (BACKEND_API_URL/PLAYWRIGHT_BASE_URL), and `production.spec.ts` runs against
+# a local `next start`. There is also no UI on a preview of this project to
+# look at by hand. So ./vercel.json now says
+#
+#   "deploymentEnabled": { "**": false, "main": true }
+#
+# which stops the deployment being CREATED for every branch but main. The
+# precedence is documented and is not most-specific-wins: "If a branch matches
+# multiple rules and at least one rule is `true`, a deployment will occur."
+# (https://vercel.com/docs/project-configuration/git-configuration). `"**"`
+# alone would take production with it — main matches it — so the `"main": true`
+# key is load-bearing, not decorative. Do not simplify it away.
+#
+# The two `dependabot/` keys it replaced are gone, and one of them never
+# worked: minimatch `*` does not cross `/`, so `dependabot/*` matched none of
+# the real three-segment branch names (`dependabot/npm_and_yarn/apps/web/...`).
+# `dependabot/**` was carrying it alone, and `**` subsumes both.
+#
+# UNVERIFIED, and the reason this shipped behind a watch rather than a
+# assumption: which commit's vercel.json Vercel reads when deciding whether to
+# create a deployment is not documented anywhere, and vercel/vercel#11176
+# ("deploymentEnabled is ignored") is open. If a branch cut before this change
+# still deploys, that is the answer. Confirm on the next push to main that a
+# PRODUCTION deployment is still created — if it is not, this key is the first
+# suspect and reverting it restores the previous behaviour exactly.
+#
+# The web project is deliberately NOT changed. Its previews are looked at by a
+# human before merge, which is a real use; the api's were not.
+#
+# ---------------------------------------------------------------------------
 # EXIT CODES ARE INVERTED. READ THIS BEFORE EDITING.
 # ---------------------------------------------------------------------------
 #
