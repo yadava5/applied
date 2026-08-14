@@ -4,8 +4,9 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import { AUTO_FILE_GATE, GateMeter } from "@/components/viz/GateMeter";
+import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
+import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 import {
   CLASSIFY_FAILED,
   canNameCompany,

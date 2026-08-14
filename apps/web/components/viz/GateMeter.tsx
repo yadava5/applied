@@ -1,7 +1,8 @@
+import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 import { cn } from "@/lib/utils";
 
 /**
- * The classifier's confidence drawn against the 0.85 auto-file gate — the
+ * The classifier's confidence drawn against the auto-file gate — the
  * landing DecisionTrace's meter, miniaturised for dense rows (inbox verdicts,
  * the detail sheet's mail trail, the review queue). One component so every
  * surface renders the gate identically: green fill when the verdict cleared
@@ -11,8 +12,12 @@ import { cn } from "@/lib/utils";
  * percentage, which is the accessible rendering of the same fact.
  */
 
-/** The auto-file threshold — mirrors the backend's gate (see DecisionTrace). */
-export const AUTO_FILE_GATE = 0.85;
+// The auto-file threshold used to be hand-written here as a second
+// `AUTO_FILE_GATE`, beside the one in lib/dashboard/model.ts (#229). It is
+// imported now, and NOT re-exported: two import paths for one constant is how
+// the two copies drifted apart in the first place. Consumers that need the
+// number take it from `@/lib/dashboard/model`, which is the one web definition
+// and the one `scripts/readme_facts.py` checks against the backend.
 
 export function GateMeter({
   confidence,

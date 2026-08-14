@@ -497,8 +497,26 @@ def flag_follow_ups(
 # the review floor is dropped. Net effect: a handful of real rows, not 21 fake
 # ones parsed out of job-alert/newsletter/onboarding noise.
 
-# Confidence gates — kept in lock-step with classifier/hybrid.py (CONFIDENCE_AUTO
-# / CONFIDENCE_MIN_CLASSIFICATION) and the web's lib/dashboard/model.ts.
+# Confidence gates — lock-stepped with classifier/hybrid.py (CONFIDENCE_AUTO /
+# CONFIDENCE_MIN_CLASSIFICATION) and with every copy on the web side. Both
+# halves of that are now held by something that can fail, which is why this
+# comment names the checks rather than asking you to remember:
+#
+#   backend  tests/test_confidence_gate_lockstep.py — the four Python copies
+#            (here, hybrid.py, and classification.py's constant AND its
+#            seed_training_data default).
+#   web      scripts/readme_facts.py — an invariant that reads CONFIDENCE_AUTO
+#            out of hybrid.py and each TypeScript gate constant out of apps/web
+#            and fails when they disagree, plus a census so a new hand-written
+#            copy has to be registered. It runs in readme-facts.yml, the one
+#            workflow with no path filter, because backend-ci and frontend-ci
+#            are each filtered to a single side and neither can see this drift.
+#
+# This comment used to name only `lib/dashboard/model.ts`, which the dashboard
+# largely did not read — ReviewQueue and ApplicationDetail imported a second
+# copy from components/viz/GateMeter.tsx, so the invariant claimed here could
+# hold while the number a user actually sees drifted (#229). The second copy is
+# gone; the pointer is a check now, not a promise.
 AUTO_FILE_GATE = 0.85  # >= → may assert a hard status
 REVIEW_FLOOR = 0.70  # [floor, gate) → needs human review; below → dropped
 
