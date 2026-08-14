@@ -49,11 +49,22 @@ import { cn } from "@/lib/utils";
  *   · no pooled training                    — backend/jobtracker/classifier/setfit_model.py:38-66,
  *     620-633; hybrid.py:549-560
  *   · encrypted token row                   — backend/jobtracker/database/models.py:674-740
- *   · disconnect revokes at Google          — backend/jobtracker/cloud/gmail_oauth.py:700-733
- *   · account deletion does NOT revoke      — backend/jobtracker/cloud/account.py:84-85
- *   · the eight purged tables               — backend/jobtracker/cloud/account.py:51-60
- *   · purge is best-effort, 501 when the
- *     service-role key is missing           — app/api/account/delete/route.ts:31-56
+ *   · disconnect revokes at Google          — backend/jobtracker/cloud/gmail_oauth.py, the
+ *     `gmail_disconnect` handler
+ *   · account deletion ALSO revokes, best-
+ *     effort, before the token row is
+ *     purged (#215)                         — backend/jobtracker/cloud/account.py,
+ *     `delete_account`; backend/tests/test_account_deletion_revokes_gmail.py asserts the
+ *     call, not just that the row is gone
+ *   · the eight purged tables               — backend/jobtracker/cloud/account.py,
+ *     `_DELETION_ORDER`
+ *   · a failed purge aborts the deletion
+ *     and nothing is removed (#214)         — lib/account/deletion.ts,
+ *     `runAccountDeletion`; tests/unit/account-delete-route.test.mjs
+ *   · 501 when the service-role key is
+ *     missing, and the UI says so before
+ *     the typed confirmation (#218)         — app/api/account/delete/route.ts,
+ *     lib/supabase/admin.ts `deletionEnabled`
  *   · nothing expires                       — no `crons` in either vercel.json
  *   · on-device import never uploads        — components/import/ImportMail.tsx ("use client":
  *     the file is read with File.text() and classified by lib/import/parseMail.ts +
@@ -443,21 +454,29 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
             </P>
             <P>
               <strong className="font-medium text-strong">Delete your account</strong> (Settings →
-              Account) asks the API to purge every row you own — from <M>email_embeddings</M>,{" "}
-              <M>contacts</M>, <M>interviews</M>, <M>emails</M>, <M>applications</M>,{" "}
-              <M>training_data</M>, <M>sync_state</M> and <M>user_credentials</M> — and then
-              deletes the sign-in account itself.
+              Account) revokes the Google grant if one is connected, then asks the API to purge
+              every row you own — from <M>email_embeddings</M>, <M>contacts</M>, <M>interviews</M>,{" "}
+              <M>emails</M>, <M>applications</M>, <M>training_data</M>, <M>sync_state</M> and{" "}
+              <M>user_credentials</M> — and only then deletes the sign-in account itself. The
+              revocation comes first because the stored token is the only thing that can revoke
+              it, and it is gone a moment later.
             </P>
             <P>
-              Two limits, stated because they are true. First, deleting your account does{" "}
-              <em>not</em> revoke the Google grant; that is a separate step you take on{" "}
+              Two limits, stated because they are true. First, the revocation is best-effort: if
+              Google cannot be reached it is not retried, and the deletion goes ahead regardless
+              rather than trapping you in an account you asked to leave. You can always confirm or
+              remove the grant yourself on{" "}
               <a href={GOOGLE_PERMISSIONS} className={LINK} target="_blank" rel="noopener noreferrer">
                 Google’s permissions page
               </a>
-              . Second, the purge is attempted first but is not allowed to block the deletion: if
-              the API cannot be reached, your sign-in account is removed anyway and rows could
-              survive it. If you want that confirmed — or if the deployment tells you deletion is
-              not enabled — email{" "}
+              . Second, the purge is not best-effort and deliberately so: if the API cannot be
+              reached, <em>nothing</em> is deleted — your sign-in account is left intact, your data
+              is untouched, and you are told to try again. It used to work the other way, and the
+              rows could outlive the account that owned them.
+            </P>
+            <P>
+              If a deployment tells you deletion is not enabled — Settings says so before it asks
+              you to confirm, not after — email{" "}
               <a href={`mailto:${CONTACT}`} className={LINK}>
                 {CONTACT}
               </a>{" "}
