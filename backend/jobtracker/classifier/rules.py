@@ -529,7 +529,15 @@ def is_ats_sender(sender_email: Optional[str]) -> bool:
     read as ATS relays. Since #252 that answer decides ROUTING and not just a
     score, so a domain anyone can register was enough to reach the owner's
     review queue — and on the 0.80 rung the +0.05 bonus lands exactly on
-    ``AUTO_FILE_GATE`` (0.85), which auto-files a status.
+    ``AUTO_FILE_GATE`` (0.85), the threshold at which the pipeline MAY assert a
+    hard status. (Filing also needs a named employer, so the gate is necessary
+    and not sufficient; the queue entry needed nothing else.)
+
+    The argument is a bare address, never a raw ``From`` header: every ingestion
+    path parses one first (``cloud/gmail_client.py``, ``email_clients/gmail.py``
+    and ``email_clients/icloud.py`` all go through ``email.utils.parseaddr``).
+    That matters here because containment tolerated the trailing ``>`` of
+    ``… <no-reply@us.greenhouse-mail.io>`` and anchoring does not.
 
     Anchoring makes two list entries load-bearing that containment had made
     redundant: ``myworkday.com`` does not end with ``.workday.com`` and

@@ -591,6 +591,40 @@ def test_bare_rippling_com_is_still_not_an_ats_sender() -> None:
     assert is_ats_sender("no-reply@ats.rippling.com")
 
 
+def test_the_argument_is_a_parsed_address_and_never_a_raw_from_header() -> None:
+    """The one input where anchoring could have been a REGRESSION, pinned.
+
+    Containment tolerated the trailing ``>`` of a display-name header —
+    ``"greenhouse-mail.io" in "us.greenhouse-mail.io>"`` is True — and anchoring
+    does not. If a raw ``From`` value could reach ``is_ats_sender``, #260 would
+    have dropped real Greenhouse and Rippling mail out of the floor.
+
+    It cannot: every path that produces a ``sender_email`` parses the header
+    first with ``email.utils.parseaddr`` — ``cloud/gmail_client.py`` (the cloud
+    scan that feeds ``collect_review_items``), ``email_clients/gmail.py`` and
+    ``email_clients/icloud.py``. This asserts the contract at the boundary
+    rather than trusting the three call sites to keep it, using the two relay
+    headers production actually receives.
+
+    Half of this — that the unparsed form does not match — behaves differently
+    on the old code. That is a shape which cannot reach the function, so it is
+    recorded here as the contract, not counted as evidence of the defect.
+    """
+    from email.utils import parseaddr
+
+    from jobtracker.classifier.rules import is_ats_sender
+
+    for header in (
+        "Verkada Recruiting <no-reply@us.greenhouse-mail.io>",
+        '"Supernova Technology, Inc." <no-reply@ats.rippling.com>',
+    ):
+        _name, address = parseaddr(header)
+        assert "<" not in address and ">" not in address, address
+        assert is_ats_sender(address), address
+        # And the unparsed header is not an address, so it is not a sender.
+        assert not is_ats_sender(header), header
+
+
 def test_a_lookalike_sender_cannot_reach_the_review_queue() -> None:
     """FAILS before #260. The consequence, at the call site that routes.
 
