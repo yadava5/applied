@@ -736,8 +736,11 @@ export interface paths {
          *     Idempotent — deleting an already-empty account still returns 200. The
          *     caller's Supabase *auth* user is removed separately by the web layer
          *     **after** this returns, so a failure here surfaces before the auth user is
-         *     gone and the web flow can retry. (Google-side token revocation is a
-         *     follow-up; deleting ``user_credentials`` here removes our stored copy.)
+         *     gone and the web flow can retry.
+         *
+         *     Google-side token revocation is no longer a follow-up (issue #215): the
+         *     grant is revoked at Google *before* ``user_credentials`` is deleted, since
+         *     that row is the only place the token still exists.
          */
         delete: operations["delete_account_account_delete"];
         options?: never;
