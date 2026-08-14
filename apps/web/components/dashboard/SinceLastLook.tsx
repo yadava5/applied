@@ -20,6 +20,7 @@ import {
   groupChanges,
   LEDGER_ROWS,
   momentLabel,
+  momentShortLabel,
   parseLastLook,
   snapshotOf,
   type ChangeEntry,
@@ -98,14 +99,17 @@ import { useLocalToday } from "@/lib/dashboard/useLocalToday";
  * fixture twin's pill-furnished row at 1024 is the one measured case — the
  * plate yields exactly what the neighbour forces and no more (`placePlate`,
  * a 23–26px slide there), because a centred plate OVER a control is worse
- * than one standing 26px off the centre it means. This spends nothing the
- * reader had: before #212 the real board's
- * slot never reached the wide rungs at these widths either, so desktop
- * showed exactly these compact forms — the moment, the kinds and the scope
- * note live one press away in the panel, which now says all of it at every
- * width. Below `lg` the shell is unlocked and no floor applies: the same
- * node is an in-flow line at the stacked header's end, full ladder active,
- * reserved by the server pass so hydration never moves the board.
+ * than one standing 26px off the centre it means. For the LOUD state the
+ * compact rule spends nothing the reader had — measured on ba2a653, the
+ * in-row slot (≤500px at 1440) never reached the kinds rung (26rem) or the
+ * moment rung (34rem), so desktop always showed "N changes" — and the
+ * kinds, moment and scope note ride one press away in the panel, which says
+ * all of it at every width. The QUIET moment is the exception with its own
+ * three-rung ladder (see the render): compact-only shipped once and removed
+ * a sentence main was showing. Below `lg` the shell is unlocked and no
+ * floor applies: the same node is an in-flow line at the stacked header's
+ * end, full ladder active, reserved by the server pass so hydration never
+ * moves the board.
  *
  * Space inside the chip varies with the viewport and its row-mates, so the
  * loud state is container-adaptive rather than truncated: per-kind counts
@@ -616,10 +620,17 @@ export function SinceLastLook({
               register down, no chevron because there is nothing to open. */}
           <p ref={placePlate} className={`${PLATE} mx-auto min-w-0 truncate border-l-line-strong text-dim`}>
             {/* `max-lg` on every wide rung here and below: at `lg`+ the chip
-                overlays the row's own line, where only the compact form has
+                overlays the row's own line, where only a compact form has
                 measured clearance from the totals and the cluster — the
                 container is the full bar there, so width alone would say yes
-                to sentences the row cannot host. See the header. */}
+                to sentences the row cannot host. For THIS tail the
+                arithmetic is terminal: the full sentence is ~250px of text
+                (273 with the plate's chrome) against the 244px between the
+                totals and the cluster at 1024 — it cannot fit even at zero
+                clearance, so the overlay keeps the complete shorter claim
+                and the qualifier stays implicit. The quiet state's moment,
+                which unlike this tail has no other desktop home, gets its
+                own short form instead — see below. */}
             No earlier visit
             <span className="hidden @[18rem]:max-lg:inline"> recorded in this browser</span>.
           </p>
@@ -654,7 +665,44 @@ export function SinceLastLook({
                 `momentLabel` can build ("yesterday 12:56 pm") as well as
                 today's, with room to spare. */}
             Nothing new
+            {/* The moment survives the overlay (#212 round 4): the quiet
+                sentence's whole value is its SINCE, and the quiet plate has
+                no press that could recover a dropped one — the first
+                overlay build kept only "Nothing new" at `lg`+ and shipped a
+                claim with its scope removed at exactly the widths where
+                main had been showing the full sentence (measured on
+                ba2a653: the wrapped twin at 1024 and the signed-in row at
+                1280 both rendered it; the signed-in row at 1024 did not —
+                its 220px slot never reached the old 16rem rung).
+                Three renderings of one moment now, so no width says less
+                than main said there:
+                  · below `lg` — the container ladder, `momentLabel` whole;
+                  · `lg`→`xl` — `momentShortLabel`, the day-word elided
+                    exactly where the rest still implies it (a bare clock is
+                    today's), because the full form's ~194px of text cannot
+                    hold the bar's centre beside the totals at 1024 (the
+                    half-window is 121px less 24px clearance a side) and
+                    the short form's worst case measures inside it;
+                  · `xl`+ — `momentLabel` whole again: the window is 476px+
+                    on every measured arrangement and the full sentence
+                    centres with clearance to spare. */}
             <span className="hidden @[18rem]:max-lg:inline">
+              {" "}
+              since <span className="font-mono text-[11px] text-dim">{moment}</span>
+            </span>
+            {/* `--chip-tight` (set by SyncBar's overlay on the furnished
+                twin, whose 169px window at 1024 cannot hold ANY moment
+                form — the arithmetic is in that comment): there the bare
+                claim stands in for this span, which is also what main
+                rendered on that twin's unwrapped widths. */}
+            <span className="hidden lg:max-xl:[display:var(--chip-tight,inline)]">
+              {" "}
+              since{" "}
+              <span className="font-mono text-[11px] text-dim">
+                {momentShortLabel(record.at, now)}
+              </span>
+            </span>
+            <span className="hidden xl:inline">
               {" "}
               since <span className="font-mono text-[11px] text-dim">{moment}</span>
             </span>

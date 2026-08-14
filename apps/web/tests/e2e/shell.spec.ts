@@ -838,6 +838,19 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           // geometry is the same object in every state.
           await own.goto("/demo/shell?session=1");
           await expect(own.getByTestId("since-last-look")).toContainText("Nothing new");
+          // The VISIBLE sentence, not textContent: container/media-hidden
+          // spans ride in textContent, which is how a lost string can hide
+          // behind a green text assertion. The moment must survive on the
+          // desktop chip (#212 round 4 — the compact form shipped without
+          // it): "Nothing new" with no *since when* is a claim with its
+          // scope removed, and the quiet plate has no press to recover it.
+          const visible = await own
+            .getByTestId("since-last-look")
+            .evaluate((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim());
+          expect(
+            visible,
+            `${state} @ ${at}: the quiet chip renders "${visible}" — the moment is gone from the visible sentence`,
+          ).toMatch(/Nothing new since /);
           const signedIn = await measureChip();
           expect(signedIn, `${state} @ ${at}: chip geometry unreadable signed-in`).not.toBeNull();
           expect(

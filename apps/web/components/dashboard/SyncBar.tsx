@@ -996,7 +996,23 @@ export function SyncBar({
             the #172 sheet-over-the-Sync-button failure cannot recur) and
             the chip line's bottom in the stack below `lg`. */}
         {since ? (
-          <div className="relative max-lg:order-last max-lg:w-full lg:pointer-events-none lg:absolute lg:inset-0 lg:pt-2.5">
+          <div
+            className="relative max-lg:order-last max-lg:w-full lg:pointer-events-none lg:absolute lg:inset-0 lg:pt-2.5"
+            /* `--chip-tight`: the overlay tells the chip when the row is
+               FURNISHED — the trailing pill spends 167px of right flank the
+               live board does not have, and with it on the row the window
+               between the totals and the cluster measures 169px at 1024:
+               smaller than any moment-bearing quiet plate (its short form
+               is 179px before clearances), so no nudge can save it. The
+               chip's `lg`→`xl` moment span reads this var and keeps the
+               bare claim instead (see SinceLastLook). A CSS var rather
+               than a Tailwind group-data variant because the base `hidden`
+               and a stacked-variant `inline` on one span would leave the
+               outcome to stylesheet order; `display: var(...)` inside the
+               one media window is deterministic. Surfaces without the pill
+               — the live dashboard, ?session=1, /demo — never set it. */
+            style={trailing ? ({ "--chip-tight": "none" } as React.CSSProperties) : undefined}
+          >
             {since}
           </div>
         ) : null}

@@ -459,3 +459,23 @@ export function momentLabel(at: number, now: number): string {
   if (days === 1) return `yesterday ${clockTime(then)}`;
   return `${MONTHS[then.getMonth()]} ${then.getDate()}, ${clockTime(then)}`;
 }
+
+/**
+ * The same moment on the width budget of the `lg`+ overlay chip (#212): each
+ * bucket keeps only the part that still names its day — a bare clock is
+ * today's, "yesterday" and a bare date carry their day without the clock —
+ * because the full form measures ~194px of text against the ~171px a
+ * bar-centred plate can hold at 1024 beside the totals with its clearances.
+ * The panel always prints the FULL `momentLabel`, so the dropped half is one
+ * press away in the loud state and only ever elided in the quiet one. Same
+ * buckets as `momentLabel` (see the sweep above it), so the two forms can
+ * never disagree about which day they mean.
+ */
+export function momentShortLabel(at: number, now: number): string {
+  const then = new Date(at);
+  if (!Number.isFinite(at) || Number.isNaN(then.getTime())) return "your last visit";
+  const days = localDayIndex(new Date(now)) - localDayIndex(then);
+  if (days <= 0) return clockTime(then);
+  if (days === 1) return "yesterday";
+  return `${MONTHS[then.getMonth()]} ${then.getDate()}`;
+}
