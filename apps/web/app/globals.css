@@ -1094,9 +1094,12 @@ body {
     transform: scale(1);
   }
 }
-/* The pulse's detail panel (components/dashboard/PulseDetail.tsx): a short
- * settle from 4px above, opacity + transform only — the panel's content is
- * never hidden behind it, and it collapses with its sibling draws below. */
+/* The dropdown family's one entrance (PulseDetail, and the change ledger's
+ * names panel — SinceLastLook): a short settle from 4px above, opacity +
+ * transform only — the panel's content is never hidden behind it, and it
+ * collapses with its sibling draws below. The 4px lift does shift the box the
+ * ledger's placePanel measures its height cap from, by at most 4px of the
+ * 16px PANEL_GUTTER — inside the budget, and gone by the first resize. */
 .pulse-panel {
   animation: pulse-panel-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -1110,11 +1113,50 @@ body {
     transform: translateY(0);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Change ledger panel (components/dashboard/SinceLastLook.tsx) — the two
+ * draws the round-three reading surface asked for ("a small kind of
+ * animation or graph as well within it"), both run ONCE on open and then
+ * hold still: this sheet floats over a work surface, so nothing in it may
+ * keep moving.
+ *
+ * `ledger-unit` is the strip drawing itself in, one changed row at a time,
+ * left to right — rail-seg-in's scaleX at 20ms steps, capped at index 20 in
+ * the component so a 40-change morning sweeps in the same ~400ms as the
+ * pulse bars. `ledger-entry` is the named rows arriving in reading order —
+ * pulse-dot's own opacity+transform shape, 25ms steps capped at CASCADE_CAP
+ * (12), so the last named row has settled ~550ms after the press and rows
+ * past the cap (below the scroller's fold regardless) land with the twelfth.
+ * Both collapse below: the strip's claim is restated by its caption and the
+ * entries are the content, so no information ever waits on a keyframe.
+ * ------------------------------------------------------------------------- */
+.ledger-unit {
+  transform-origin: left;
+  animation: rail-seg-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 20ms);
+}
+.ledger-entry {
+  animation: ledger-entry-in 0.25s ease-out both;
+  animation-delay: calc(var(--i, 0) * 25ms);
+}
+@keyframes ledger-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .pulse-seg,
   .pulse-seg-x,
   .pulse-dot,
-  .pulse-panel {
+  .pulse-panel,
+  .ledger-unit,
+  .ledger-entry {
     animation: none !important;
   }
 }
