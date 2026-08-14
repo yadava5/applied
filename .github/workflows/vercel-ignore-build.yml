@@ -1,0 +1,125 @@
+name: Vercel ignore-build guard
+
+# vercel-ignore-build.sh decides whether EITHER Vercel project deploys at all,
+# and until #235 nothing tested it. Its failure mode is silence: a wrong exit
+# code does not fail a build, does not post a commit status and does not turn
+# anything red — the merge simply produces no deployment while the repo goes on
+# looking green.
+#
+# The path filter is deliberately narrow, and every entry is here for a reason.
+# Both blocks must be edited together; this repo has shipped jobs that could
+# never fire, and a job that cannot trigger is indistinguishable from a job that
+# does not exist.
+#
+#   vercel-ignore-build.sh        the guard itself
+#   scripts/test_vercel_ignore_build.mjs        the suite
+#   scripts/negative_control_ignore_build.mjs   the proof the suite can fail
+#   vercel.json, apps/web/vercel.json           the two ignoreCommand call sites;
+#                                               a rename there breaks deploys
+#                                               without touching the guard
+#   .vercelignore                 an entry in BOTH allowlists, so renaming it
+#                                 would leave both pointing at a dead path
+on:
+  pull_request:
+    paths:
+      - "vercel-ignore-build.sh"
+      - "vercel.json"
+      - "apps/web/vercel.json"
+      - ".vercelignore"
+      - "scripts/test_vercel_ignore_build.mjs"
+      - "scripts/negative_control_ignore_build.mjs"
+      - ".github/workflows/vercel-ignore-build.yml"
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "vercel-ignore-build.sh"
+      - "vercel.json"
+      - "apps/web/vercel.json"
+      - ".vercelignore"
+      - "scripts/test_vercel_ignore_build.mjs"
+      - "scripts/negative_control_ignore_build.mjs"
+      - ".github/workflows/vercel-ignore-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-ignore-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: The deploy guard answers correctly, and the suite can fail
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v7
+        with:
+          # NOT optional. The fixtures are real commits from this repository —
+          # that is what makes them worth more than synthetic diffs, and the
+          # guard reads VERCEL_GIT_COMMIT_SHA through a variable specifically so
+          # it can be aimed at history. The default fetch-depth of 1 leaves none
+          # of them in the clone, and the suite fails loudly rather than
+          # skipping when that happens.
+          fetch-depth: 0
+
+      # Node 22+ for node:test. No pnpm, no install, no lockfile: the suite
+      # imports nothing outside node: builtins, on purpose. A step with
+      # dependencies is a step somebody eventually makes optional, and an
+      # optional deploy guard is how this file's subject went untested for its
+      # whole life.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: The guard answers correctly
+        run: |
+          node --test --test-reporter=tap \
+            scripts/test_vercel_ignore_build.mjs | tee "$RUNNER_TEMP/guard.tap"
+
+      - name: Assert the suite actually ran
+        # `node --test` on a file that registers no tests exits 0. So does a
+        # path filter that quietly stopped matching. Neither is a pass, and
+        # both look exactly like one in the checks list.
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+
+          tap = open(os.path.join(os.environ["RUNNER_TEMP"], "guard.tap")).read()
+          def n(field):
+              m = re.search(rf"^# {field} (\d+)$", tap, re.M)
+              return int(m.group(1)) if m else -1
+
+          total, passed, failed, skipped = n("tests"), n("pass"), n("fail"), n("skipped")
+          print(f"guard suite: {total} tests, {passed} pass, {failed} fail, {skipped} skipped")
+          if total < 36 or passed < 36 or failed != 0 or skipped != 0:
+              sys.exit(
+                  "The ignore-build guard is UNVERIFIED by this build. Expected at "
+                  "least 36 passing tests and no skips. A shrinking count means "
+                  "cases were deleted, not that the guard got simpler."
+              )
+          PY
+
+      - name: Prove the suite can fail
+        # Breaks the guard ten specific ways and requires the suite to go red
+        # for each. Without this the suite is exactly the thing it was written
+        # to fix: a check nothing checks.
+        run: node scripts/negative_control_ignore_build.mjs
+
+      - name: No mutant left behind
+        # The negative control writes .ignore-build-mutant.sh into the repo root
+        # (it has to — the guard resolves its repo from its own directory) and
+        # removes it. If one survives a crash, say so here rather than letting a
+        # later step or a human find a stray executable in the tree.
+        run: |
+          if [ -e .ignore-build-mutant.sh ]; then
+            echo "negative control left .ignore-build-mutant.sh behind" >&2
+            exit 1
+          fi
+          git diff --exit-code
