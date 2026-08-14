@@ -465,9 +465,35 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
     ),
 }
 
-# Known ATS (Applicant Tracking System) sender domains
+# Known ATS (Applicant Tracking System) sender domains.
+#
+# BEFORE ADDING AN ENTRY, know what it now costs. Since #166 this list does not
+# only grant the +0.05 confidence bonus below — ``cloud.pipeline`` reads it to
+# decide which mail is FLOATED INTO THE REVIEW QUEUE instead of dropped. A loose
+# entry used to buy a harmless nudge; it now puts messages in front of the user.
+# And the match is an unanchored substring, so it is easy to be loose by
+# accident: ``"hire.com" in "newhire.company.com"`` is True. Keep entries
+# specific enough that only the relay can match them.
+#
+# Matched as a SUBSTRING of the sender's domain, so an entry has to be the part
+# the relay actually shares. That is what made ``greenhouse.io`` useless for two
+# years: Greenhouse's transactional relay sends from ``us.greenhouse-mail.io``,
+# which does not contain the string ``greenhouse.io`` at all. Greenhouse is the
+# most common ATS in this corpus (15 of the 51 stored messages) and had never
+# once received the +0.05 ATS bonus. ``greenhouse.io`` stays — it is the job
+# board's own sender — and ``greenhouse-mail.io`` covers every regional relay
+# (``us.``, ``eu.``, …).
+#
+# ``ats.rippling.com`` is deliberately narrow. Rippling is a payroll/HR product
+# as well as an ATS, and a bare ``rippling.com`` would sweep in payroll mail
+# that has nothing to do with an application.
+#
+# Two other modules already knew both of these — ``tracking/extractor.py`` maps
+# ``greenhouse-mail.io`` and ``rippling.com`` to employers — which is how the
+# gap survived: nothing compared the two lists.
 ATS_DOMAINS = [
     "greenhouse.io",
+    "greenhouse-mail.io",
     "lever.co",
     "myworkday.com",
     "workday.com",
@@ -481,7 +507,25 @@ ATS_DOMAINS = [
     "applytojob.com",
     "hire.com",
     "recruitee.com",
+    "ats.rippling.com",
 ]
+
+
+def is_ats_sender(sender_email: Optional[str]) -> bool:
+    """Is this address a known Applicant Tracking System relay?
+
+    The single definition of "ATS sender". :meth:`RulesClassifier.classify` uses
+    it for the +0.05 confidence bonus and ``cloud.pipeline.collect_review_items``
+    uses it for the review-queue floor (#166), and those two must never disagree
+    about which senders are ATS relays — a floor that fires on a sender the
+    classifier does not recognise, or the reverse, is a bug nobody could read off
+    either call site.
+    """
+
+    if not sender_email or "@" not in sender_email:
+        return False
+    domain = sender_email.lower().rsplit("@", 1)[-1]
+    return any(ats in domain for ats in ATS_DOMAINS)
 
 
 # =============================================================================
@@ -563,10 +607,7 @@ class RulesClassifier:
         matched_patterns: list[str] = []
 
         # Check if sender is from a known ATS domain
-        is_ats_email = False
-        if sender_email:
-            sender_domain = sender_email.lower().split("@")[-1] if "@" in sender_email else ""
-            is_ats_email = any(ats in sender_domain for ats in ATS_DOMAINS)
+        is_ats_email = is_ats_sender(sender_email)
 
         # Score each category
         for category, compiled in self._compiled_patterns.items():

@@ -55,12 +55,36 @@ scores one notch lower and the message produces nothing at all.
 The hole is that knife-edge: an ATS rejection reaches the owner's queue only if
 its subject line happens to contain a *confirmation* phrase.
 
+The fix: the ATS floor
+----------------------
+**Mail from a known ATS sender is never silently dropped. If it scores below
+the floor, it goes to the review queue.** ``pipeline.collect_review_items``
+implements it; the boundary is what makes it safe:
+
+- it only ever routes to the HUMAN QUEUE. It never files a row, never asserts a
+  status, never writes a verdict — ``AUTO_FILE_GATE`` is untouched — so it
+  cannot make the board confidently WRONG, which is the failure mode that ruled
+  out the obvious alternative (adding Greenhouse's rejection subject template as
+  a pattern scores this same message ``applied`` at +6 and would auto-file a
+  rejection as APPLIED);
+- it is bounded to LIFECYCLE categories from a CLOSED list of relay domains, so
+  ``other``, ``follow_up``, non-canonical categories and every non-ATS sender
+  behave exactly as before. Sections 3 and 4 assert both halves.
+
+The classifier is deliberately NOT fixed. Recognising a rejection from 200
+characters that contain no rejection is a hard problem, and
+``test_the_classifier_still_scores_the_together_ai_rejection_under_the_floor``
+pins that it remains unsolved — which is what stops this file passing for the
+wrong reason.
+
 Status of this file
 -------------------
-Characterisation, plus one ``xfail(strict=True)`` that encodes the behaviour
-the product needs. Nothing here is fixed — closing the hole means changing what
-mail the board reads, which is a product decision, not a patch. Drop the
-``xfail`` marker to get the red test.
+Characterisation plus the fix. This was #238's diagnosis, whose two
+``xfail(strict=True)`` markers encoded the behaviour the product needed; both
+are gone and the tests under them pass. The two assertions that read
+``not _leaves_a_trace`` were rewritten rather than deleted: they now assert
+which ROUTE a message takes into the queue, because after the fix "did it leave
+a trace" is true for both halves of the pair and can no longer tell them apart.
 """
 from __future__ import annotations
 
@@ -160,6 +184,21 @@ def _leaves_a_trace(item) -> bool:
     )
 
 
+def _qualifies_only_by_the_ats_floor(item) -> bool:
+    """Did the ATS floor — and nothing else — put this in the queue?
+
+    Reads the route, not the outcome. An item is floor-only when it reaches the
+    queue while sitting UNDER ``REVIEW_FLOOR``: every other road into
+    ``collect_review_items`` requires either an explicit ``needs_review`` verdict
+    or a lifecycle verdict at/above the floor.
+    """
+    return (
+        item.confidence < pipeline.REVIEW_FLOOR
+        and item.category != "needs_review"
+        and bool(pipeline.collect_review_items([item]))
+    )
+
+
 # ===========================================================================
 # 1. The Gmail snippet structurally cannot carry the decision sentence.
 # ===========================================================================
@@ -226,39 +265,58 @@ def test_the_together_ai_subject_scores_nothing_anywhere() -> None:
     assert not any(score > 0 for score in result.scores.values()), result.scores
 
 
-def test_the_together_ai_rejection_vanishes_without_trace() -> None:
-    """THE BUG, reproduced: no application row, no queue entry, no log line.
+def test_the_classifier_still_scores_the_together_ai_rejection_under_the_floor() -> None:
+    """The CLASSIFIER is not fixed, and this pins that it is not.
 
-    Same preamble shape as Verkada's, which DID reach the queue. The only
-    difference is the subject line, and it is worth the 0.10 that separates
-    ``REVIEW_FLOOR`` from silence.
+    The diagnosis is unchanged: on the same preamble shape that Verkada's
+    rejection carried, Together AI's subject leaves the message under
+    ``REVIEW_FLOOR``. Recognising a rejection from 200 characters that contain
+    no rejection is a hard problem and this change does not pretend to solve it.
+
+    Keeping this assertion is what stops the file going green for the wrong
+    reason. If a later edit lifts this message over the floor by accident — the
+    +0.05 ATS bonus is exactly the kind of thing that could — the fix below
+    would still pass while no longer testing the floor at all.
     """
     result, item = _item(
         TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, GREENHOUSE, "19ff7393d56eccfb"
     )
 
     assert result.confidence < pipeline.REVIEW_FLOOR, result.scores
-    assert not _leaves_a_trace(item), "expected the terminal drop; it left a row"
-    # And the drop is silent: collect_review_items only logs at/above the
-    # auto-file gate, precisely to keep ordinary inbox noise out of the log.
+    # Below the gate too, so the drop it used to take was also silent: the
+    # pipeline logs a dropped verdict only at/above AUTO_FILE_GATE.
     assert result.confidence < pipeline.AUTO_FILE_GATE
+    # It no longer vanishes — but by the ATS floor, not by classification.
+    assert _qualifies_only_by_the_ats_floor(item)
 
 
 def test_the_subject_is_the_whole_difference() -> None:
-    """Swap in Verkada's subject over Together AI's body and it survives.
+    """The positive control, and it still discriminates after the fix.
 
-    The pair is the proof that neither the fetch, the cursor, nor the body is
-    what decided this message's fate.
+    Before: the same body under Verkada's subject left a row and under Together
+    AI's did not. After: BOTH leave a row, so "did it leave a trace" no longer
+    tells the two apart — and a control that cannot tell them apart is the
+    "identical for the wrong reason" failure this pair exists to catch.
+
+    So it now asserts the ROUTE rather than the outcome. Verkada's subject earns
+    its place in the queue on the classifier's own confidence; Together AI's
+    reaches the same queue only because the floor caught it. If a later change
+    ever makes the two arrive by the same route, this goes red.
     """
     _lost, lost_item = _item(
         TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, GREENHOUSE, "lost"
     )
-    _kept, kept_item = _item(
+    kept_result, kept_item = _item(
         VERKADA_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, GREENHOUSE, "kept"
     )
 
-    assert not _leaves_a_trace(lost_item)
-    assert _leaves_a_trace(kept_item)
+    assert _leaves_a_trace(lost_item) and _leaves_a_trace(kept_item)
+    # Together AI's subject: below the floor, saved by the floor alone.
+    assert _qualifies_only_by_the_ats_floor(lost_item)
+    # Verkada's subject: at/above the floor, so it needs no help.
+    assert kept_result.category is EmailCategory.APPLIED, kept_result.scores
+    assert kept_result.confidence >= pipeline.REVIEW_FLOOR
+    assert not _qualifies_only_by_the_ats_floor(kept_item)
 
 
 def test_even_the_visible_decision_sentence_cannot_reach_the_board() -> None:
@@ -280,53 +338,151 @@ def test_even_the_visible_decision_sentence_cannot_reach_the_board() -> None:
     assert not pipeline.roll_up_applications([item]), "never the board"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "unfixed: ATS_DOMAINS lists 'greenhouse.io', which does not substring-"
-        "match Greenhouse's actual sending domain 'us.greenhouse-mail.io', and "
-        "Rippling's ATS is absent outright. Not fixed here because the +0.05 ATS "
-        "bonus can lift a 0.80 verdict to exactly AUTO_FILE_GATE, which changes "
-        "which mail auto-files — not a drive-by edit. Delete this marker with "
-        "the fix."
-    ),
-)
 @pytest.mark.parametrize("sender", [GREENHOUSE, RIPPLING], ids=["greenhouse", "rippling"])
-def test_greenhouse_and_rippling_should_be_recognised_as_ats_senders(
-    sender: str,
-) -> None:
-    """Greenhouse is the most common ATS in the production corpus and has never
-    once received the +0.05 ATS confidence bonus."""
-    from jobtracker.classifier.rules import ATS_DOMAINS
+def test_greenhouse_and_rippling_are_recognised_as_ats_senders(sender: str) -> None:
+    """Greenhouse is the most common ATS in the production corpus and, until
+    this change, had never once received the +0.05 ATS confidence bonus.
 
-    domain = sender.split("@", 1)[1]
-    assert any(ats in domain for ats in ATS_DOMAINS), domain
+    Asserted through ``is_ats_sender`` rather than by re-implementing the
+    substring walk, because that function is now what BOTH call sites read — the
+    classifier's bonus and ``collect_review_items``' floor.
+    """
+    from jobtracker.classifier.rules import is_ats_sender
+
+    assert is_ats_sender(sender), sender
+
+
+def test_the_ats_bonus_moves_no_message_across_the_auto_file_gate() -> None:
+    """The reason the domain fix was not a drive-by: +0.05 can cross the gate.
+
+    The bonus is applied to the confidence LADDER's output, and the ladder's
+    rungs are 0.60 / 0.70 / 0.80 / 0.90 / 0.95. Only the 0.80 rung is dangerous:
+    0.80 + 0.05 is exactly ``AUTO_FILE_GATE``, so a Greenhouse or Rippling
+    message that scores 0.80 would begin auto-filing a hard status where it used
+    to go to the review queue.
+
+    Production says no stored Greenhouse/Rippling message sits on that rung —
+    they are at 0.70 (1 + 1), 0.90 (11 + 1) and 0.95 (3) — so nothing on the
+    real board changes filing behaviour. This pins the shapes that matter here:
+    the three real messages this file models all stay under the gate.
+    """
+    for subject, snippet, sender in (
+        (VERKADA_SUBJECT, VERKADA_SNIPPET, GREENHOUSE),
+        (SUPERNOVA_SUBJECT, SUPERNOVA_SNIPPET, RIPPLING),
+        (TOGETHER_SUBJECT, TOGETHER_SNIPPET_WITH_DECISION, GREENHOUSE),
+    ):
+        result = CLASSIFIER.classify(subject, snippet, sender)
+        assert result.confidence == pytest.approx(0.75), (subject, result.scores)
+        assert result.confidence < pipeline.AUTO_FILE_GATE
 
 
 # ===========================================================================
-# 3. What the product needs. RED — drop the marker to see it fail.
+# 3. The fix: the ATS floor. This was #238's strict xfail; the marker is gone.
 # ===========================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #166, unfixed: an ATS lifecycle message whose subject matches no "
-        "pattern falls under REVIEW_FLOOR and is dropped with no row, no queue "
-        "entry and no log. Closing this changes what mail the board reads, so it "
-        "is a product decision rather than a patch."
-    ),
-)
-def test_an_ats_application_message_must_never_vanish_silently() -> None:
-    """Mail from a known ATS, about an application, must leave *something*.
+def test_an_ats_application_message_never_vanishes_silently() -> None:
+    """Mail from a known ATS, about an application, leaves *something*.
 
-    Not "must be classified correctly" — that is a hard problem on 200
-    characters of preamble. Only that it must not disappear. The review queue
-    is the product's designed home for "we cannot tell", and it is what made
-    every other rejection on this board recoverable.
+    Not "is classified correctly" — that is a hard problem on 200 characters of
+    preamble, and ``test_the_classifier_still_scores_...`` above pins that it is
+    still unsolved. Only that it does not disappear. The review queue is the
+    product's designed home for "we cannot tell", and it is what made every
+    other rejection on this board recoverable.
+
+    This is #238's ``xfail(strict=True)`` with the marker removed.
     """
     _result, item = _item(
         TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, GREENHOUSE, "19ff7393d56eccfb"
     )
 
     assert _leaves_a_trace(item)
+
+
+def test_the_floor_only_ever_routes_to_the_queue_never_to_the_board() -> None:
+    """The boundary that makes the floor safe, asserted rather than assumed.
+
+    A floored message must produce a review-queue entry and NOTHING else: no
+    application row, no status, no verdict. ``AUTO_FILE_GATE`` is what enforces
+    that and the floor does not touch it — but "does not touch it" is a claim
+    about code, and this is the claim about behaviour.
+
+    The queue entry's committed state is ``needs_review`` at persist time
+    (``applications._persist_review_items*`` hardcode it); the classifier's guess
+    rides along as a PROPOSAL in ``suggested_category``. So the floor never
+    forges a human decision, which is what ``classified_as`` is for.
+    """
+    _result, item = _item(
+        TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, GREENHOUSE, "19ff7393d56eccfb"
+    )
+
+    assert pipeline.roll_up_applications([item]) == [], "the floor must not file"
+    assert pipeline._qualifies_for_hard_row(item) is None
+
+    review = pipeline.collect_review_items([item])
+    assert [r.message_id for r in review] == ["19ff7393d56eccfb"]
+    # The proposal is carried, not committed — and it is the classifier's own
+    # (wrong) guess, exactly as it is for the two rejections Ayush corrected.
+    assert review[0].category == "applied"
+    assert review[0].confidence < pipeline.REVIEW_FLOOR
+
+
+# ===========================================================================
+# 4. The negative controls. A floor that catches everything is not a fix.
+# ===========================================================================
+
+
+def test_ordinary_non_ats_mail_below_the_floor_is_still_dropped() -> None:
+    """The queue must not fill with mail from senders that are not ATS relays.
+
+    Same category, same confidence, same subject and body as the message the
+    floor rescues — only the sender differs. That is the whole point: the floor
+    is keyed on the sender being a known transactional relay, and on nothing
+    else. If this ever goes green-by-flooding, the fix has replaced a silent
+    failure with an unusable queue.
+    """
+    for sender in (
+        "recruiting@acme.com",  # a company's own careers address
+        "hiring-manager@northstar.dev",  # a person at the employer
+        "newsletter@digest.example",  # ordinary inbox noise
+        "no-reply@notifications.linkedin.com",  # a job board, not an ATS
+    ):
+        result, item = _item(
+            TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE, sender, f"neg-{sender}"
+        )
+        assert result.confidence < pipeline.REVIEW_FLOOR, (sender, result.scores)
+        assert not _leaves_a_trace(item), f"{sender} should still be dropped"
+
+
+def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() -> None:
+    """Three ATS-sender shapes the floor deliberately does NOT rescue.
+
+    Each is dropped for its own reason, and each is the reason the floor is
+    scoped to lifecycle categories rather than to the sender alone:
+
+    - ``other`` — what a classifier miss and ATS job-alert noise both produce.
+      Queueing it would put every promotional mail an ATS relays in front of the
+      user, which is the flood this fix must not cause.
+    - ``follow_up`` — excluded from filing AND from the queue by design, above
+      the floor as well as below it. The floor must not quietly reverse that.
+    - a category outside the canonical vocabulary — a BUG, and the pipeline's
+      contract is that it is logged rather than turned into a queue entry.
+    """
+    for category, confidence in (
+        ("other", 0.0),
+        ("other", 0.5),
+        ("follow_up", 0.90),
+        ("rejected", 0.95),  # note: not "rejection" — non-canonical
+    ):
+        item = pipeline.PipelineItem(
+            message_id=f"drop-{category}-{confidence}",
+            category=category,
+            sender_email=GREENHOUSE,
+            subject=TOGETHER_SUBJECT,
+            sender_name=None,
+            received_at=None,
+            confidence=confidence,
+            thread_id=None,
+            snippet=TOGETHER_SNIPPET_PREAMBLE,
+        )
+        assert pipeline.collect_review_items([item]) == [], (category, confidence)

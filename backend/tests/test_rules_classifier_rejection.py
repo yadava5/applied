@@ -233,13 +233,26 @@ def test_the_real_confirmation_still_classifies_applied_at_090() -> None:
     that scored anything at all here would shrink `applied`'s runner-up margin
     and drop it from 0.90 to 0.80 with the category still reading right — a
     silent regression that a category-only assertion would wave through.
+
+    Asserted in two halves since #166 fixed ``ATS_DOMAINS``. The LADDER rung is
+    what the paragraph above is about, and it is only visible with the sender
+    withheld; delivered from Greenhouse it carries the +0.05 ATS bonus on top.
+    Splitting them keeps the margin regression detectable at 0.90 and stops a
+    future change to the ATS domain list from being read as a scoring change.
     """
+    ladder_only = CLASSIFIER.classify(CONFIRMATION_SUBJECT, CONFIRMATION_SNIPPET, None)
+    assert ladder_only.confidence == pytest.approx(0.90), ladder_only.scores
+
     result = CLASSIFIER.classify(
         CONFIRMATION_SUBJECT, CONFIRMATION_SNIPPET, ANTHROPIC_SENDER
     )
 
     assert result.category is EmailCategory.APPLIED, result.scores
-    assert result.confidence == pytest.approx(0.90), result.scores
+    # 0.90 + the ATS bonus. Greenhouse's relay only started earning that bonus
+    # with #166: ``ATS_DOMAINS`` listed ``greenhouse.io``, which does not
+    # substring-match ``us.greenhouse-mail.io``. Both values are above
+    # AUTO_FILE_GATE, so what this message DOES is unchanged.
+    assert result.confidence == pytest.approx(0.95), result.scores
     assert result.scores["rejection"] <= 0, result.matched_patterns
 
 
