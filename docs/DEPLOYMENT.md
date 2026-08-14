@@ -238,9 +238,17 @@ reads the 750-message target before its 10 s timeout:
   per run**, ≈ 1.8M/day at 96 runs. Metadata batches are paced by
   `gmail_batch_pause_seconds` to stay under the ~250 units/sec per-user
   quota.
-- **Vercel** — 96 invocations/day of up to ~55 s. At 1 GB that is ~1.5
-  GB-hours/day worst case, ~45 GB-hours/month, inside Pro's allowance.
-  Cron invocations themselves are not separately metered.
+- **Vercel** — 96 invocations/day of up to ~55 s ≈ ~1.5 GB-hours/day
+  worst case, ~45 GB-hours/month at 1 GB. Cron jobs are "included in all
+  plans" and they "invoke Vercel Functions … the same usage and pricing
+  limits will apply", so this is ordinary function usage rather than a
+  second meter. Whether ~45 GB-hours/month sits inside this account's
+  included allowance has **not** been checked against the plan's own
+  numbers — see [Cron usage and
+  pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing) before
+  budgeting on it. Pro allows 100 cron jobs per project at a
+  once-per-minute minimum interval, so one job at `*/15` is well inside
+  the schedule limits.
 - **Supabase** — one connection for the enumeration plus a handful per
   user under NullPool. Well inside the free tier's pooler limits at this
   user count.

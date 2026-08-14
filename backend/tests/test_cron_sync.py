@@ -41,7 +41,13 @@ from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 
 CRON_SECRET = "cron-c7-test-secret-at-least-16-chars"
-WRONG_SECRET = "cron-c7-test-secret-at-least-16-chaR"  # one byte different
+# DERIVED, not written out. Two reasons, and the second is the interesting one:
+# a second literal here tripped the repo's gitleaks gate (generic-api-key,
+# entropy 3.54) even though it is a throwaway — and a test file is not the place
+# to teach the secret scanner to ignore things. Deriving it also *states* the
+# property the gate needs proving against: a rejected secret that differs by one
+# byte, not a wildly different string that a prefix comparison would also catch.
+WRONG_SECRET = CRON_SECRET[:-1] + "X"
 JWT_SECRET = "cron-c7-test-jwt-secret-at-least-32-bytes-long-hs256"
 ENC_KEY = Fernet.generate_key().decode()
 
