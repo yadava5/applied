@@ -86,22 +86,30 @@ test.describe("settings (via the public /demo/settings twin)", () => {
 
     const newPassword = page.getByLabel("new password", { exact: true });
     const confirm = page.getByLabel("confirm new password", { exact: true });
+    const submit = page.getByRole("button", { name: /^update password$/i });
+
+    // Scoped to this form, and it has to be: /demo/settings renders other
+    // `role="alert"` nodes — DataSection's export failure and AccountSection's
+    // delete error — so an unscoped getByRole("alert") is a strict-mode
+    // violation rather than an assertion, and dies before it can mean anything.
+    // Caught by CI, deterministically, on all three retries.
+    const form = page.locator("form").filter({ has: submit });
 
     // Below the signup floor → refused before any network, on the app's copy.
     await newPassword.fill("short");
     await confirm.fill("short");
-    await page.getByRole("button", { name: /^update password$/i }).click();
-    await expect(page.getByRole("alert")).toContainText(/at least 8 characters/i);
+    await submit.click();
+    await expect(form.getByRole("alert")).toContainText(/at least 8 characters/i);
 
     // Long enough but unconfirmed → the confirm field is the problem.
     await newPassword.fill("long enough password");
     await confirm.fill("long enough passw0rd");
-    await page.getByRole("button", { name: /^update password$/i }).click();
-    await expect(page.getByRole("alert")).toContainText(/don’t match/i);
+    await submit.click();
+    await expect(form.getByRole("alert")).toContainText(/don’t match/i);
 
     // A matching pair runs the whole machine to the success status.
     await confirm.fill("long enough password");
-    await page.getByRole("button", { name: /^update password$/i }).click();
+    await submit.click();
     await expect(page.getByRole("status").filter({ hasText: "Password updated" })).toBeVisible();
   });
 
