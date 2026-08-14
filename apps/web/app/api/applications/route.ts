@@ -81,11 +81,18 @@ export async function GET() {
       return NextResponse.json({ detail: mail.detail }, { status: mail.status });
     }
 
+    // `total` is now a sum across two disjoint queries, so it is reported WITH
+    // its two halves rather than alone: a bare count that no longer means "the
+    // backend says there are this many" is a field a reader will misread, and
+    // both numbers were already computed. The downloaded file derives its own
+    // counts from the rows (`buildExportFile`) and does not read these.
     return NextResponse.json(
       {
         applications: rows.applications,
         messages: mail.messages,
         total: rows.total,
+        live: rows.live,
+        removed: rows.removed,
         mail_total: mail.total,
       },
       { status: 200 },
