@@ -280,21 +280,27 @@ def test_even_the_visible_decision_sentence_cannot_reach_the_board() -> None:
     assert not pipeline.roll_up_applications([item]), "never the board"
 
 
-def test_greenhouse_and_rippling_are_not_recognised_as_ats_senders() -> None:
-    """``ATS_DOMAINS`` lists ``greenhouse.io``; Greenhouse sends from
-    ``us.greenhouse-mail.io``, which that substring does not match.
-
-    Greenhouse is the most common ATS in the production corpus and has never
-    once received the +0.05 ATS confidence bonus. Rippling's ATS is absent
-    outright. Recorded, not fixed: the bonus can push a 0.80 verdict to exactly
-    ``AUTO_FILE_GATE``, so adding these domains changes which mail auto-files
-    and is not a drive-by edit.
-    """
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "unfixed: ATS_DOMAINS lists 'greenhouse.io', which does not substring-"
+        "match Greenhouse's actual sending domain 'us.greenhouse-mail.io', and "
+        "Rippling's ATS is absent outright. Not fixed here because the +0.05 ATS "
+        "bonus can lift a 0.80 verdict to exactly AUTO_FILE_GATE, which changes "
+        "which mail auto-files — not a drive-by edit. Delete this marker with "
+        "the fix."
+    ),
+)
+@pytest.mark.parametrize("sender", [GREENHOUSE, RIPPLING], ids=["greenhouse", "rippling"])
+def test_greenhouse_and_rippling_should_be_recognised_as_ats_senders(
+    sender: str,
+) -> None:
+    """Greenhouse is the most common ATS in the production corpus and has never
+    once received the +0.05 ATS confidence bonus."""
     from jobtracker.classifier.rules import ATS_DOMAINS
 
-    for sender in (GREENHOUSE, RIPPLING):
-        domain = sender.split("@", 1)[1]
-        assert not any(ats in domain for ats in ATS_DOMAINS), domain
+    domain = sender.split("@", 1)[1]
+    assert any(ats in domain for ats in ATS_DOMAINS), domain
 
 
 # ===========================================================================
