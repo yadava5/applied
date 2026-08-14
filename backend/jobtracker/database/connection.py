@@ -37,6 +37,7 @@ Usage:
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -136,6 +137,43 @@ def user_id_scope(user_id: uuid.UUID | None) -> Iterator[None]:
         _current_user_id.reset(token)
 
 
+def _apply_transaction_gucs(conn: Any) -> None:
+    """Set this transaction's GUCs — search_path pin + RLS identity.
+
+    ONE statement, deliberately. Every statement here is a full network round
+    trip on the request's critical path (~13 ms function→pooler in production,
+    paid on every transaction), and issue #203's handler-level timing showed the
+    two separate ``set_config`` calls this used to make. Both GUCs travel in a
+    single ``SELECT set_config(...), set_config(...)``; the semantics
+    (``is_local => true`` on both, so nothing survives COMMIT/ROLLBACK into the
+    PgBouncer transaction pool) are unchanged.
+
+    Extracted from the ``begin`` listener so the statement shape is unit-testable
+    without a Postgres engine (tests/test_request_cost_phases.py); the
+    Postgres-backed behaviour tests live in tests/test_rls_postgres.py.
+    """
+
+    # Always pin the schema search path for this transaction.
+    search_path_guc = "set_config('search_path', 'public', true)"
+
+    user_id = _current_user_id.get()
+    # ``user_id`` is always a uuid.UUID coming from a verified JWT / signed
+    # state, so its string form is strictly ``[0-9a-fA-F-]`` — safe to embed
+    # in the JSON literal. Guard defensively anyway. When it is None
+    # (unauthenticated/health paths) request.jwt.claims stays unset so
+    # auth.uid() returns NULL and RLS fails closed (denies) rather than
+    # exposing rows. No user-scoped query should run without identity.
+    if not isinstance(user_id, uuid.UUID):
+        conn.exec_driver_sql(f"SELECT {search_path_guc}")
+        return
+
+    claims = json.dumps({"sub": str(user_id)}, separators=(",", ":"))
+    conn.exec_driver_sql(
+        f"SELECT {search_path_guc}, "
+        f"set_config('request.jwt.claims', '{claims}', true)"
+    )
+
+
 def _install_rls_guc_listener(engine: AsyncEngine) -> None:
     """Attach a per-transaction GUC setter to a Postgres engine.
 
@@ -152,25 +190,100 @@ def _install_rls_guc_listener(engine: AsyncEngine) -> None:
 
     @event.listens_for(engine.sync_engine, "begin")
     def _set_transaction_gucs(conn: Any) -> None:  # pragma: no cover - see PG tests
-        # Always pin the schema search path for this transaction.
-        conn.exec_driver_sql("SELECT set_config('search_path', 'public', true)")
+        _apply_transaction_gucs(conn)
 
-        user_id = _current_user_id.get()
-        if user_id is None:
-            # Unauthenticated/health paths: leave request.jwt.claims unset so
-            # auth.uid() returns NULL and RLS fails closed (denies) rather than
-            # exposing rows. No user-scoped query should run without identity.
-            return
 
-        # ``user_id`` is always a uuid.UUID coming from a verified JWT / signed
-        # state, so its string form is strictly ``[0-9a-fA-F-]`` — safe to embed
-        # in the JSON literal. Guard defensively anyway.
-        if not isinstance(user_id, uuid.UUID):
+# =============================================================================
+# Per-request DB phase timing (issue #203)
+# =============================================================================
+#
+# The instrument #203 named as missing: production showed ~500 ms per
+# DB-touching request that neither the DB (+216 ms/connect) nor the network hop
+# could explain, and nothing in the process could say where it went. These
+# counters split a request's database cost into its two real phases —
+# connection establishment (the NullPool tax) and statement round trips — so
+# the cloud app's Server-Timing middleware can report them per response.
+#
+# A ContextVar (not a global) so concurrent requests in one event loop never
+# mix their numbers; the engine event hooks run in the request's own task via
+# SQLAlchemy's greenlet bridge, which preserves the context. When no capture is
+# active (desktop app, scripts, tests that don't ask) the hooks are a dict
+# lookup and an early return — there is nothing to configure and nothing to pay.
+
+_db_phases: ContextVar[dict[str, float] | None] = ContextVar(
+    "jobtracker_db_phases", default=None
+)
+
+
+def begin_db_phase_capture() -> Token:
+    """Start collecting DB phase timings for the current context.
+
+    Returns the token for :func:`end_db_phase_capture`. Metrics: connect count
+    and total ms, statement count and total ms.
+    """
+
+    return _db_phases.set(
+        {"connects": 0, "connect_ms": 0.0, "queries": 0, "query_ms": 0.0}
+    )
+
+
+def read_db_phases() -> dict[str, float] | None:
+    """The phase accumulator for the current context, or None."""
+
+    return _db_phases.get()
+
+
+def end_db_phase_capture(token: Token) -> None:
+    """Stop collecting and restore the previous capture state."""
+
+    _db_phases.reset(token)
+
+
+def _install_db_timing_listeners(engine: AsyncEngine) -> None:
+    """Time connection establishment and statement execution on ``engine``.
+
+    ``do_connect`` stamps the start instant on the connection record; the pool
+    ``connect`` event (which fires once the DBAPI connection exists) computes
+    the elapsed time. Cursor events time every statement, including the
+    transaction-GUC ``SELECT set_config`` — that round trip is real request
+    cost and hiding it is how #203's ~500 ms stayed unattributed.
+    """
+
+    clock = time.perf_counter
+
+    @event.listens_for(engine.sync_engine, "do_connect")
+    def _stamp_connect_start(_dialect, conn_rec, _cargs, _cparams):  # noqa: ANN001
+        conn_rec.info["jobtracker_connect_start"] = clock()
+        return None  # proceed with the default connect path
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _record_connect(_dbapi_conn, conn_rec) -> None:  # noqa: ANN001
+        phases = _db_phases.get()
+        if phases is None:
             return
-        claims = json.dumps({"sub": str(user_id)}, separators=(",", ":"))
-        conn.exec_driver_sql(
-            f"SELECT set_config('request.jwt.claims', '{claims}', true)"
-        )
+        started = conn_rec.info.pop("jobtracker_connect_start", None)
+        phases["connects"] += 1
+        if started is not None:
+            phases["connect_ms"] += (clock() - started) * 1000.0
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _stamp_statement_start(
+        _conn, _cursor, _statement, _parameters, context, _executemany
+    ) -> None:  # noqa: ANN001
+        if _db_phases.get() is not None and context is not None:
+            context._jobtracker_statement_start = clock()
+
+    @event.listens_for(engine.sync_engine, "after_cursor_execute")
+    def _record_statement(
+        _conn, _cursor, _statement, _parameters, context, _executemany
+    ) -> None:  # noqa: ANN001
+        phases = _db_phases.get()
+        if phases is None:
+            return
+        phases["queries"] += 1
+        started = getattr(context, "_jobtracker_statement_start", None)
+        if started is not None:
+            phases["query_ms"] += (clock() - started) * 1000.0
 
 
 def _is_sqlite_url(url: str) -> bool:
@@ -232,14 +345,38 @@ def get_engine() -> AsyncEngine:
         else:
             # Assume Postgres via asyncpg (Supabase). Configure for pgbouncer
             # transaction-mode pooler compatibility: no server-side prepared
-            # statement cache, no client-side cache. NullPool lets the pooler
-            # own connection lifecycle (every checkout is a fresh connection).
+            # statement cache, no client-side cache.
             logger.info("Creating Postgres database engine (Supabase/pgbouncer-safe)")
             engine_kwargs["connect_args"] = {
                 "statement_cache_size": 0,
                 "prepared_statement_cache_size": 0,
             }
-            engine_kwargs["poolclass"] = NullPool
+            if settings.database_pool_size > 0:
+                # OPT-IN connection reuse (issue #203). NullPool's fresh
+                # TCP+TLS+auth per request measured ~216 ms from iad1 — the
+                # single largest per-request cost — plus asyncpg's per-new-
+                # connection enum introspection on first use. Reuse is safe
+                # against the two incidents this estate has actually had:
+                # identity GUCs are transaction-local by construction
+                # (_apply_transaction_gucs, is_local => true) so a reused
+                # connection carries no previous user's claims, and
+                # search_path is re-pinned on every transaction begin.
+                #
+                # pre_ping turns a pooler-killed idle connection into one
+                # cheap round trip instead of a user-visible 500; recycle
+                # keeps held connections younger than Supavisor's idle
+                # timeout. Bounded small: each warm serverless instance holds
+                # at most pool_size + max_overflow client connections against
+                # the shared free-tier pooler.
+                engine_kwargs["pool_size"] = settings.database_pool_size
+                engine_kwargs["max_overflow"] = 2
+                engine_kwargs["pool_pre_ping"] = True
+                engine_kwargs["pool_recycle"] = 240
+                engine_kwargs["pool_timeout"] = 10
+            else:
+                # Default: NullPool lets the pooler own connection lifecycle
+                # (every checkout is a fresh connection).
+                engine_kwargs["poolclass"] = NullPool
 
         _engine = create_async_engine(url, **engine_kwargs)
 
@@ -248,6 +385,10 @@ def get_engine() -> AsyncEngine:
         # RLS/GUC concept, so the listener is only attached for Postgres.
         if not _is_sqlite_url(url):
             _install_rls_guc_listener(_engine)
+
+        # Phase timing is dialect-agnostic and inert until a request-scoped
+        # capture is active (see the cloud app's Server-Timing middleware).
+        _install_db_timing_listeners(_engine)
 
     return _engine
 

@@ -580,13 +580,20 @@ async def gmail_status(
     if not settings.gmail_oauth_configured:
         return GmailStatusResponse(configured=False, connected=False)
 
-    stored = await get_gmail_credentials(user_id)
-    if stored is None:
-        return GmailStatusResponse(configured=True, connected=False)
+    # ONE session for both reads. Each of these helpers opened its own session,
+    # and under the cloud engine's NullPool a session is a fresh TCP+TLS+auth
+    # connection (~216 ms from iad1) plus its own transaction-GUC round trip —
+    # so this endpoint, fetched on the settings AND inbox screens, paid two
+    # serial connections per render (issue #203).
+    from jobtracker.cloud.sync_state import load_gmail_sync_state
+    from jobtracker.database import get_session
 
-    from jobtracker.cloud.sync_state import read_gmail_sync_state
+    async with get_session() as session:
+        stored = await get_gmail_credentials(user_id, session)
+        if stored is None:
+            return GmailStatusResponse(configured=True, connected=False)
 
-    state = await read_gmail_sync_state(user_id, stored.email)
+        state = await load_gmail_sync_state(session, user_id, stored.email)
     return GmailStatusResponse(
         configured=True,
         connected=True,
