@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Mail, MoonStar, PenLine } from "lucide-react";
+import { CalendarClock, CalendarDays, Mail, MoonStar, PenLine } from "lucide-react";
 import { X } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 
@@ -32,9 +32,13 @@ export function PulseFilterBand({
       ? CalendarDays
       : filter.kind === "quiet"
         ? MoonStar
-        : filter.source === "mail"
-          ? Mail
-          : PenLine;
+        : // The two deadline filters share one glyph: both narrow to what is
+          // DUE, and the label beside it is what says which slice.
+          filter.kind === "due" || filter.kind === "dueIn"
+          ? CalendarClock
+          : filter.source === "mail"
+            ? Mail
+            : PenLine;
 
   return (
     <motion.section

@@ -15,7 +15,12 @@ import {
 } from "@/lib/dashboard/age";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
 import { filedAt } from "@/lib/dashboard/dates";
-import { DUE_SOON_DAYS, deadlinePulse, duePhrase } from "@/lib/dashboard/deadline";
+import {
+  deadlineCaption,
+  deadlinePulse,
+  deadlineRunway,
+  duePhrase,
+} from "@/lib/dashboard/deadline";
 import type { PulseFilter } from "@/lib/dashboard/pulseFilter";
 import { isOpenStage, type PulseRow } from "@/lib/dashboard/summary";
 import { cn } from "@/lib/utils";
@@ -39,13 +44,13 @@ import { PulseDetail, type PulseDetailKind } from "./PulseDetail";
  *     that tags individual cards. The caption names only the non-zero
  *     buckets — `0 1–2 wk · 0 quiet` was most of a line spent saying nothing
  *     is there (#159);
- *   - **deadlines** — the rows carrying a `due_at`, bucketed
- *     overdue / due ≤{@link DUE_SOON_DAYS}d / later by the same derivation
- *     that inks the card tags (`lib/dashboard/deadline.ts`), plus the single
- *     most urgent row BY NAME — the one thing on this surface a user should
- *     act on today. When nothing carries a deadline the cell says so and says
- *     where a deadline comes from, instead of inventing urgency: most boards,
- *     most of the time, honestly have nothing due;
+ *   - **deadlines** — the rows carrying a `due_at`, bucketed overdue / inside
+ *     the soon window / after it by the same derivation that inks the card
+ *     tags (`lib/dashboard/deadline.ts`), plus the single most urgent row BY
+ *     NAME — the one thing on this surface a user should act on today. When
+ *     nothing carries a deadline the cell says so and says where a deadline
+ *     comes from, instead of inventing urgency: most boards, most of the
+ *     time, honestly have nothing due;
  *   - **auto-filed** — how much of this board arrived from the user's own
  *     mail (source = "gmail" rows) and what is being held for their review,
  *     deep-linked to the review queue. The visible caption now names the
@@ -55,18 +60,25 @@ import { PulseDetail, type PulseDetailKind } from "./PulseDetail";
  *     classifier, the 0.85 gate) live in Settings, which is the page that
  *     controls them — here the user has a mailbox, not a classifier.
  *
- * THE CELLS OPEN. Momentum, ageing and auto-filed are buttons; pressing one
- * docks a detail panel (`PulseDetail`) under the band — inside the dashboard,
- * anchored to its cell, with the board still live around it. One panel, one
- * interaction, three contents; every drawn unit inside it (a day bar, an age
- * bin, a provenance group) narrows the WORKLIST to the rows it counts, which
- * is what makes the band a work surface instead of a poster. Not a modal, on
- * the record: the row-detail decision already rejected an exclusive overlay
- * ("an overlay's exclusivity contract IS the complaint"), so this panel dims
+ * THE CELLS OPEN — all four of them. Pressing one docks a detail panel
+ * (`PulseDetail`) under the band — inside the dashboard, anchored to its
+ * cell, with the board still live around it. One panel, one interaction, four
+ * contents; every drawn unit inside it (a day bar, an age bin, a runway bin, a
+ * provenance group) narrows the WORKLIST to the rows it counts, which is what
+ * makes the band a work surface instead of a poster. Not a modal, on the
+ * record: the row-detail decision already rejected an exclusive overlay ("an
+ * overlay's exclusivity contract IS the complaint"), so this panel dims
  * nothing, traps nothing, and closes on Escape, outside click, its own ✕ or
- * the act of filtering. The deadline cell does not open — on most boards it
- * would open onto nothing, and a panel of invented urgency is the exact
- * failure its caption already refuses.
+ * the act of filtering.
+ *
+ * The deadline cell was the exception until 2026-08-13, and the reason it was
+ * is worth keeping: it opened onto nothing on a board with no deadlines, and
+ * "a panel of invented urgency is the exact failure its caption already
+ * refuses". The board that argument was measured on carried zero deadlines;
+ * the live one now carries a real one, and the owner overruled the exception
+ * regardless. The worry survives as the gate rather than as a refusal — no
+ * deadlines, no trigger — which is the same condition the other three cells
+ * have always been under (see each cell's `expand`).
  *
  * ONE home, one layout: a full-width band across the top of the board's body
  * (`PipelineBoard` mounts it above the spine + worklist row). This is the
@@ -273,10 +285,27 @@ function DayStrip({
  * is one layer in from the cell's box only in that arm — same padding
  * outside, same gaps inside, so the geometry the worklist floors gate is
  * identical in both. The chevron is the resting affordance — dim until
- * hover, focus or open, `aria-expanded` carrying the state for everyone
- * else — and it holds the label line's far column: the slot the aside would
- * take, and no cell has both, because the one cell WITH an aside (deadlines)
- * deliberately does not open.
+ * hover, focus or open, `aria-expanded` carrying the state for everyone else.
+ *
+ * WHICH LINE THE CHEVRON RIDES, since 2026-08-13 the deadline cell has both an
+ * aside and an `expand` and the two want the same far column. The chevron
+ * takes whichever line has room, one node, two placements — the same trick
+ * this grid already plays with the aside:
+ *
+ *   · a cell with no aside keeps it on the label line, where it always was;
+ *   · a cell with BOTH keeps it there below `xl` — the aside has dropped to
+ *     line two, so the label line's far column is empty — and moves it to the
+ *     content line at `xl`, where the aside has come back up. Measured at
+ *     1280×800 the label line is full to ~2px: label + name + due phrase need
+ *     every pixel of the cell's 224px, so a 12px glyph there is bought by
+ *     clipping the company name, which the caption-integrity gate rightly
+ *     fails. The content line at that width spends ~183px of 224 on its
+ *     caption, so it can seat the glyph and still say the whole sentence.
+ *
+ * The content line reserves that space with `pr-5` rather than a third grid
+ * column: column one is `auto`, so a caption placed in it would size the
+ * track and steal the width back off the aside above — the exact defect the
+ * move exists to avoid.
  */
 function PulseCell({
   label,
@@ -329,17 +358,26 @@ function PulseCell({
         <ChevronDown
           aria-hidden="true"
           className={cn(
-            "col-start-2 row-start-1 h-3 w-3 self-center justify-self-end text-dim transition-transform motion-reduce:transition-none",
+            "col-start-2 h-3 w-3 self-center justify-self-end text-dim transition-transform motion-reduce:transition-none",
+            aside ? "row-start-1 xl:row-start-2" : "row-start-1",
             expand.open
               ? "rotate-180 opacity-100"
               : "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
           )}
         />
       ) : null}
+      {/* `col-start-1` is not decoration: with the chevron holding column two
+          of THIS row (a cell with both an aside and a trigger, at `xl`), an
+          auto-placed two-column span finds no room in the explicit grid and
+          opens an implicit third column — measured, that put the caption
+          outside the cell and squeezed the aside back over the label. Stating
+          the start lets the two share the row, and `pr-5` keeps them apart. */}
       <div
-        className={`col-span-2 flex min-w-0 items-center gap-2 ${
-          aside ? "row-start-2 max-xl:hidden" : "row-start-2"
-        }`}
+        className={cn(
+          "col-span-2 col-start-1 row-start-2 flex min-w-0 items-center gap-2",
+          aside && "max-xl:hidden",
+          aside && expand && "xl:pr-5",
+        )}
       >
         {children}
       </div>
@@ -396,9 +434,16 @@ export function PipelinePulse({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const momentumTrigger = useRef<HTMLButtonElement | null>(null);
   const ageTrigger = useRef<HTMLButtonElement | null>(null);
+  const deadlineTrigger = useRef<HTMLButtonElement | null>(null);
   const provenanceTrigger = useRef<HTMLButtonElement | null>(null);
   const triggerFor = (kind: PulseDetailKind) =>
-    kind === "momentum" ? momentumTrigger : kind === "age" ? ageTrigger : provenanceTrigger;
+    kind === "momentum"
+      ? momentumTrigger
+      : kind === "age"
+        ? ageTrigger
+        : kind === "deadline"
+          ? deadlineTrigger
+          : provenanceTrigger;
 
   // The panel is non-modal, so its lifecycle is: Escape closes and returns
   // focus to the trigger; any press outside the band closes it and lets the
@@ -641,11 +686,24 @@ export function PipelinePulse({
       {/* deadlines — the label tail is cut here (unlike its siblings) to make
           room for the one thing on this surface to act on today: the row with
           the smallest days-left, so an overdue row outranks everything until
-          it is dealt with. NOT a panel trigger: the measured board has zero
-          deadlines set, and a detail pane over nothing would be exactly the
-          invented urgency this cell refuses.
+          it is dealt with.
 
-          WHERE that row is named moves with the width, because at the lg
+          IT OPENS, since 2026-08-13, and the comment that stood here said it
+          never would: "the measured board has zero deadlines set, and a detail
+          pane over nothing would be exactly the invented urgency this cell
+          refuses". That was true of the board it was written against and is
+          not true of the board now — the live account carries a real deadline
+          — and the owner overruled the call outright ("i meant the deadline!
+          it's not by design, do that too for god sake!"). The worry it was
+          protecting was still the right worry, so it is answered in the shape
+          rather than dropped: the cell is a trigger only while
+          `due.total > 0`, exactly the gate its three siblings already use
+          (`filedInWindow > 0`, `openTotal > 0`, `applications.length > 0`).
+          On a board with nothing due there is no chevron, no button and no
+          panel — the caption's "nothing due · set one in a card" is the whole
+          honest answer, and a panel could only have restated it at length.
+
+          WHERE the urgent row is named moves with the width, because at the lg
           boundary it cannot be named on the label's own line at all. Measured
           on /demo/shell (`next start`, headless Chrome, 2026-08-13), the cell
           is (viewport − 288) / 4 wide and the aside gets (cell − 24) − 76:
@@ -669,6 +727,16 @@ export function PipelinePulse({
           renders; `shell.spec.ts`'s caption-integrity gate measures it. */}
       <PulseCell
         label="deadlines"
+        expand={
+          due.total > 0
+            ? {
+                name: "Deadlines detail",
+                open: open === "deadline",
+                onToggle: () => toggle("deadline"),
+              }
+            : undefined
+        }
+        triggerRef={deadlineTrigger}
         aside={
           due.urgent ? (
             // The phrase is the urgent part, so it never truncates; a long
@@ -701,71 +769,49 @@ export function PipelinePulse({
           ) : undefined
         }
       >
-        {due.total === 0 ? (
-          // The state most users see most of the time — never a nag, never
-          // counts drawn at zero, and it says where a deadline comes from.
-          // "in a card", not "in a card's detail": the longer tail measured
-          // 201px against this cell's 159px at 1024×768 — the one caption no
-          // type size could save.
-          <p
-            data-testid="pulse-caption"
-            className="min-w-0 truncate text-[11px]/4 text-dim xl:text-xs"
-          >
-            nothing due · set one in a card
-          </p>
-        ) : (
-          // Counts, no bar: deadline counts are units, not proportions — two
-          // overdue beside ten "later" is not a 1:5 wash of red. "N overdue"
-          // turns red as a unit — a red word beside a white digit would put
-          // the emphasis on the wrong half. Zero buckets are omitted on the
-          // ageing caption's grounds (#159 — and this cell already refuses
-          // to draw counts at zero), and "due" stands between count and unit
-          // because `1 ≤2d` parses as arithmetic; `1 due ≤2d` parses as the
-          // claim it is (the band's caption grammar, see above).
-          //
-          // Below `xl` this line belongs to the named row instead, and
-          // PulseCell is what hands it over — it does so only when an aside
-          // exists to take it, so the counts can never stand down for an
-          // empty line. Nothing here has to know the width.
-          <p
-            data-testid="pulse-caption"
-            className="tabular min-w-0 truncate text-[11px]/4 text-muted xl:text-xs"
-          >
-            {[
-              due.overdue > 0 ? (
-                <span key="overdue" className="font-medium text-reject-ink">
-                  <span className="tabular">{due.overdue}</span> overdue
-                </span>
-              ) : null,
-              // "soon" takes the review amber while it counts something —
-              // the same ink its card tags already wear.
-              due.soon > 0 ? (
-                <span key="soon" className="text-review">
-                  <span className="tabular">{due.soon}</span> due ≤{DUE_SOON_DAYS}d
-                </span>
-              ) : null,
-              due.later > 0 ? (
-                <span key="later">
-                  <span
-                    className={
-                      due.overdue === 0 && due.soon === 0 ? "tabular text-strong" : "tabular"
-                    }
-                  >
-                    {due.later}
-                  </span>{" "}
-                  later
-                </span>
-              ) : null,
-            ]
-              .filter((part) => part !== null)
-              .map((part, i) => (
-                <Fragment key={i}>
-                  {i > 0 ? " · " : null}
-                  {part}
-                </Fragment>
-              ))}
-          </p>
-        )}
+        {/* The claims, from the one derivation the panel and the card tags
+            share (`deadlineCaption`) — so the cell, the panel behind it and
+            the tag on the row can never say three different things. Words and
+            ordering live there; this is only how they are inked.
+
+            No bar, ever: deadline counts are units, not proportions — two
+            overdue beside ten "later" is not a 1:5 wash of red — and the
+            runway that DOES draw them is a click away, where it has the room
+            to be read. A claim turns colour as a unit ("1 overdue", not a red
+            word beside a white digit), and the calm claim's lead figure sits
+            a step brighter than its words, the band's own idiom.
+
+            Below `xl` this line belongs to the named row instead, and
+            PulseCell is what hands it over — it does so only when an aside
+            exists to take it, so the claims can never stand down for an empty
+            line. Nothing here has to know the width. */}
+        <p
+          data-testid="pulse-caption"
+          className={cn(
+            "min-w-0 truncate text-[11px]/4 xl:text-xs",
+            due.total === 0 ? "text-dim" : "tabular text-muted",
+          )}
+        >
+          {deadlineCaption(due).map((claim, i) => (
+            <Fragment key={i}>
+              {i > 0 ? " · " : null}
+              <span
+                className={cn(
+                  claim.tone === "overdue" && "font-medium text-reject-ink",
+                  claim.tone === "soon" && "text-review",
+                )}
+              >
+                {claim.lead ? `${claim.lead} ` : null}
+                {claim.count === null ? null : (
+                  <span className={cn("tabular", claim.tone === "calm" && "text-strong")}>
+                    {claim.count}
+                  </span>
+                )}
+                {claim.count === null ? claim.words : ` ${claim.words}`}
+              </span>
+            </Fragment>
+          ))}
+        </p>
       </PulseCell>
 
       {/* auto-filed */}
@@ -871,6 +917,9 @@ export function PipelinePulse({
           today={today}
           momentum={{ days, thisWeek, lastWeek }}
           age={{ bins: ageBins, openTotal, quiet: ages.quiet, oldest: oldestOpen }}
+          // The panel's numbers are the cell's own: one derivation, bucketed
+          // once, drawn twice — the runway bins the rows the caption counted.
+          deadline={{ pulse: due, runway: deadlineRunway(due.rows) }}
           provenance={{
             mail: autoFiled,
             hand: byHand,
