@@ -199,8 +199,9 @@ curl -s -H "Authorization: Bearer $CRON_SECRET" https://<api-host>/cron/sync
 ```
 
 `users_synced: 0` with `candidates: 0` means the enumeration found
-nobody. See the **known limitation** below before concluding that nobody
-has connected a mailbox.
+nobody. Check `JOBTRACKER_CRON_SYNC_USER_IDS` (below) before concluding
+that nobody has connected a mailbox — an unset allowlist is the
+fail-closed default and reports exactly this.
 
 ### What bounds a run
 
@@ -256,20 +257,55 @@ reads the 750-message target before its 10 s timeout:
 Realistically production runs one user on an incremental delta: two Gmail
 calls and a couple of seconds per run.
 
-### Known limitation — the enumeration returns nobody on Postgres
+### Who gets synced — set this too, or the cron syncs nobody
 
-`list_syncable_user_ids` reads `user_credentials`, which has RLS ENABLEd
-and FORCEd with `USING (user_id = auth.uid())` against a NOBYPASSRLS
-runtime role. A cron has no JWT, so `auth.uid()` is NULL and the policy
-matches no row. **Verified against a real Postgres**:
-`tests/test_rls_postgres.py::test_cron_enumeration_sees_no_users_without_identity`
-asserts the empty result, with a positive control proving the same query
-returns the user when an identity *is* bound.
+| Env var | Value |
+|---|---|
+| `JOBTRACKER_CRON_SYNC_USER_IDS` | Comma-separated user UUIDs, e.g. `<uuid>,<uuid>` |
 
-SQLite has no RLS, so the unit tests in `tests/test_cron_sync.py` are
-green regardless — which is why the Postgres test exists. Closing the gap
-is a change to a security boundary (a GUC-gated SELECT policy, or a
-privileged non-pooler read) and is deliberately not made here.
+**The cron cannot discover its own users.** `user_credentials` has RLS
+ENABLEd and FORCEd with `USING (user_id = auth.uid())` against a
+NOBYPASSRLS runtime role; a cron carries no JWT, so `auth.uid()` is NULL
+and an identity-less `SELECT` matches no row. The first implementation
+did exactly that and enumerated zero users in production while returning
+a tidy `200`.
+
+So the cron is given an **identity** rather than an exemption. The env
+var names the users the schedule may act for, and each one's sync runs
+inside `user_id_scope(uid)` — the same mechanism the Gmail OAuth callback
+already uses to write `user_credentials` without a request JWT, applied
+per transaction with `set_config(..., is_local => true)` so the shared
+PgBouncer can never hand a stale identity to the next tenant. Every read
+and write then passes RLS exactly as a signed-in request's would. **No
+policy was changed, no DDL was applied, and no new database credential
+exists.**
+
+Set it in the Vercel dashboard for Production and **redeploy** — env is
+injected at deploy time. Unset or empty means the cron syncs nobody,
+which is the deliberate fail-closed default: the alternative reading
+("no allowlist, so no restriction") would walk every mailbox in the
+database on a schedule. A malformed entry fails at config load rather
+than degrading into a silent zero-user run, because a non-UUID string
+would reach the GUC listener, bind no identity at all, and read nothing
+without raising.
+
+**The honest cost is list rot.** A second user who connects Gmail is not
+background-synced until an operator adds their id here and redeploys, and
+the cron cannot detect that by construction — an identity it was never
+given is invisible to it. The detection lives where the fact *is* known:
+the OAuth callback logs a warning at credential-save time when the user
+it just connected is absent from the allowlist. Their interactive sync is
+unaffected; what they lack is refresh while they are away.
+
+**Verified against a real Postgres**, in `tests/test_rls_postgres.py`:
+`test_cron_enumeration_uses_the_configured_allowlist` (the enumeration
+returns the configured users with no ambient identity, controlled against
+a raw unscoped read that returns nothing) and
+`test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity` (a run
+for one user sees only that user's rows, leaves the other user's rows
+byte-identical, and leaves no identity bound afterwards). SQLite has no
+RLS, so the unit tests in `tests/test_cron_sync.py` cannot prove any of
+that — which is why the Postgres tests exist.
 
 ## Local dry-run
 

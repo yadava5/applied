@@ -22,12 +22,39 @@ Usage:
     print(settings.database_path)  # ~/Library/Application Support/JobTracker/jobtracker.db
 """
 
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+class CronSyncUserIdsError(RuntimeError):
+    """``JOBTRACKER_CRON_SYNC_USER_IDS`` holds something that is not a UUID.
+
+    DELIBERATELY NOT A ``ValueError``, AND THAT IS THE WHOLE POINT.
+
+    Pydantic v2 catches ``ValueError``/``AssertionError`` out of a validator
+    and re-raises them as a ``ValidationError`` whose rendering appends
+    ``input_value=<the raw value>`` — for a ``NoDecode`` field that is the
+    **entire env var string**, verbatim. So a validator that says "the value
+    is not echoed" while raising ``ValueError`` is simply wrong: pydantic
+    echoes it a line later. That is not hypothetical; it was measured on
+    pydantic 2.12, and the test that was supposed to catch it passed only
+    because the string happened to be long enough for pydantic to truncate.
+
+    Any other exception type propagates out of the validator untouched, so the
+    message below is all the operator (and all the log) ever sees. The
+    realistic mishap this protects against is not an attacker — it is pasting
+    the wrong variable's contents into this box, e.g. the cron secret, and
+    then finding it verbatim in a build log.
+
+    It still fails at config load, which is the required behaviour: a non-UUID
+    entry would reach the RLS GUC listener as a ``str``, bind no identity at
+    all, and read zero rows without raising.
+    """
 
 
 class Settings(BaseSettings):
@@ -345,6 +372,20 @@ class Settings(BaseSettings):
             "used by `POST /cron/sync` (C7) to reject unauthenticated cron calls."
         ),
     )
+    cron_sync_user_ids: Annotated[list[uuid.UUID], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Users the scheduled sync may act for, comma-separated in the env "
+            "var: JOBTRACKER_CRON_SYNC_USER_IDS='<uuid>,<uuid>'. The cron "
+            "carries no JWT, so it cannot READ this list out of the database — "
+            "`user_credentials` has FORCE'd RLS keyed on auth.uid() against a "
+            "NOBYPASSRLS role, so an identity-less enumeration matches no row. "
+            "Configuring the identities instead lets each user's sync run "
+            "inside `user_id_scope(uid)`, where every read and write passes RLS "
+            "exactly as a signed-in request would. Unset or empty means the "
+            "cron syncs nobody, which is the fail-closed default."
+        ),
+    )
 
     # -------------------------------------------------------------------------
     # Gmail Web OAuth (cloud, C5). Only consumed when deployment == "cloud".
@@ -531,6 +572,62 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("cron_sync_user_ids", mode="before")
+    @classmethod
+    def _parse_cron_sync_user_ids(cls, value: Any) -> Any:
+        """Split the comma-separated env var into real ``uuid.UUID`` objects.
+
+        THE PARSE IS THE POINT, AND IT MUST BE LOUD.
+        ``database.connection._apply_transaction_gucs`` binds the RLS identity
+        only when the ContextVar holds a ``uuid.UUID``; for a ``str`` it takes
+        the ``isinstance`` early return and sets **no** ``request.jwt.claims``
+        at all. A string that slipped through here would therefore not raise —
+        it would make every query in that user's sync run with ``auth.uid()``
+        NULL, which RLS answers with zero rows and no error. "Syncs nobody,
+        silently" is precisely the failure this setting exists to end, so a
+        malformed entry has to stop the process rather than degrade into it.
+        (That ``isinstance`` guard is also what makes the listener's f-string
+        interpolation of the claims JSON safe: a UUID's string form is
+        strictly ``[0-9a-fA-F-]``. Feeding it raw strings would remove both
+        properties at once.)
+
+        The failing **index** is named, never the offending value: an operator
+        can paste anything into a Vercel env box and this message reaches logs.
+        That property is why the error is a :class:`CronSyncUserIdsError` and
+        not a ``ValueError`` — see that class for the measurement. Do not
+        "simplify" it back to ``ValueError``; doing so silently reintroduces
+        pydantic's ``input_value=<whole env string>`` echo.
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            items = list(value)
+
+        parsed: list[uuid.UUID] = []
+        for index, item in enumerate(items):
+            if isinstance(item, uuid.UUID):
+                parsed.append(item)
+                continue
+            try:
+                parsed.append(uuid.UUID(str(item)))
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise CronSyncUserIdsError(
+                    f"JOBTRACKER_CRON_SYNC_USER_IDS entry #{index + 1} of "
+                    f"{len(items)} is not a valid UUID ({type(exc).__name__}). "
+                    "The value is withheld from this message because it "
+                    "reaches the logs. Expected a comma-separated list of "
+                    "user UUIDs."
+                # ``from None``, not ``from exc``: ``uuid.UUID`` does not
+                # always keep quiet about its input. A near-miss UUID raises
+                # ``invalid literal for int() with base 16: '<the entry, minus
+                # its dashes>'``, so the chained traceback would quote most of
+                # the value straight back out. Measured, not assumed.
+                ) from None
+        return parsed
 
     def ensure_directories(self) -> None:
         """Create required directories if they don't exist."""

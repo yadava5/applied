@@ -52,6 +52,46 @@ Missing configuration **fails closed** (403), deliberately. The alternative —
 "no secret set, so let everyone in" — turns an unconfigured deployment into an
 open endpoint that iterates every user's mailbox on demand.
 
+WHO GETS SYNCED — AND WHY IT COMES FROM CONFIGURATION
+-----------------------------------------------------
+The obvious implementation reads ``user_credentials`` to find everyone with a
+connected mailbox. That was the first implementation, and on Postgres it
+returned **nobody**: the table has Row-Level Security ENABLEd and FORCEd with
+``USING (user_id = auth.uid())`` against a NOBYPASSRLS role, and a cron carries
+no JWT, so ``auth.uid()`` is NULL and the policy matches no row. SQLite has no
+RLS, so every unit test was green while production synced zero users.
+
+The fix is to give the cron an **identity**, not an exemption.
+``settings.cron_sync_user_ids`` (env ``JOBTRACKER_CRON_SYNC_USER_IDS``) names
+the users the schedule may act for, and each one's sync runs inside
+``user_id_scope(uid)`` — the same mechanism the Gmail OAuth **callback** uses
+to write ``user_credentials`` without a request JWT, applied per transaction
+with ``set_config(..., is_local => true)`` so PgBouncer can never hand a stale
+identity to the next tenant. Every read and write then passes RLS exactly as a
+signed-in request's would.
+
+The two alternatives were considered and rejected. A GUC-gated SELECT policy
+puts a non-secret switch in front of whole rows of the Google-OAuth token
+table, which converts "leak one tenant" into "leak everyone's refresh tokens"
+(and alembic does not run on deploy here). A privileged non-pooler read needs
+the direct database host, which is IPv6-only and unreachable from the
+platform, and adds a standing read-everything credential. Configuration adds
+no policy, no DDL and no credential.
+
+THE HONEST COST: LIST ROT
+-------------------------
+Enumerating from configuration means a user who connects Gmail is **not**
+background-synced until an operator adds their id to the env var and
+redeploys. Nothing here can detect that omission — by construction, an
+identity the cron was never given is invisible to it. So the detection lives
+where the fact is known: the OAuth callback logs a warning at credential-save
+time when the user it just connected is not in the allowlist
+(``jobtracker.cloud.gmail_oauth._exchange_and_store``). That is a real cost of
+this design and it is stated rather than hidden. It is also bounded by the
+product's actual shape — this is a single-operator deployment — and by the
+fact that the interactive "Sync now" path is unaffected: an unlisted user's
+board still refreshes the moment they open it.
+
 WHAT BOUNDS THE WORK
 --------------------
 Three bounds, and it is worth being precise about which one actually binds:
@@ -77,10 +117,11 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import case
 from sqlalchemy import func as sa_func
 from sqlmodel import select
 
@@ -125,9 +166,9 @@ class CronSyncResponse(BaseModel):
 
     ``users_synced`` and ``errors`` are the shape issue #23 specifies. The rest
     exists because the two numbers alone cannot tell an operator apart the two
-    ways this returns ``{"users_synced": 0, "errors": []}``: nobody has
-    connected a mailbox, or the enumeration query found nothing it was allowed
-    to see (see :func:`list_syncable_user_ids`).
+    ways this returns ``{"users_synced": 0, "errors": []}``: nobody the cron is
+    configured for has a mailbox connected, or the allowlist itself is empty
+    (see :func:`list_syncable_user_ids`).
     """
 
     users_synced: int = Field(description="Users whose sync completed without raising.")
@@ -143,9 +184,10 @@ class CronSyncResponse(BaseModel):
     candidates: int = Field(
         default=0,
         description=(
-            "Users this run enumerated as having a connected mailbox, before "
-            "any sync was attempted. Zero here means the enumeration found "
-            "nobody — a different fault from every sync failing."
+            "Users this run enumerated as configured AND having a connected "
+            "mailbox, before any sync was attempted. Zero here means the "
+            "enumeration found nobody — a different fault from every sync "
+            "failing."
         ),
     )
     stopped_by: str = Field(
@@ -241,72 +283,130 @@ def _authorize(request: Request) -> None:
         )
 
 
-async def list_syncable_user_ids(limit: int) -> list[uuid.UUID]:
-    """Users with a connected Gmail mailbox, least-recently-synced first.
+async def _gmail_sync_position(
+    user_id: uuid.UUID,
+) -> tuple[bool, datetime | None]:
+    """Ask, **as ``user_id``**, whether they have Gmail linked and when it last synced.
 
-    Ordering is what makes a bounded batch fair: a run that stops on its
-    deadline leaves the users it skipped at the front of the next run's queue,
-    so nobody is starved by the batch cap. Never-synced users sort first — they
-    are the ones with an empty board.
+    Both reads happen inside a single ``user_id_scope(user_id)`` and a single
+    session, so they cost one connection and run under one bound identity.
+    Scoping is not optional here even though the statements carry an explicit
+    ``WHERE user_id = ...``: ``user_credentials`` is FORCE-RLS, so an
+    identity-less read of it returns nothing at all on Postgres regardless of
+    the filter. The filter and the policy agree, which is the point — this
+    reads exactly what a signed-in request for that user would read, and
+    nothing else is reachable from inside the block.
 
-    ``last_sync_at`` is read as a correlated scalar sub-select taking the
-    ``min`` over the user's Gmail ``sync_state`` rows rather than a join, so a
-    user with more than one linked address yields exactly one row.
+    The binding lives HERE rather than around the caller's loop. Hoisting it
+    would leave one tenant's identity bound while another tenant's work runs,
+    which is the shape of the ``search_path`` poisoning incident with the
+    payload swapped for tenant identity. Same reason there is no
+    ``asyncio.gather`` over this: a ContextVar set outside a task set is
+    inherited by every task in it.
 
-    .. warning::
-
-       **This query returns nothing in production.** ``user_credentials`` has
-       Row-Level Security ENABLEd and FORCEd (alembic ``c4user_creds_rls`` /
-       ``c5_force_user_credentials_rls``) with
-       ``USING (user_id = auth.uid())``, and the runtime role is NOBYPASSRLS.
-       A cron has no authenticated user, so
-       ``database.connection._apply_transaction_gucs`` leaves
-       ``request.jwt.claims`` unset, ``auth.uid()`` is NULL, and the policy
-       matches no row. On SQLite — which has no RLS — the same query returns
-       every user, so the unit tests below are green while production syncs
-       nobody.
-
-       That is not hypothetical and it is not fixed here: fixing it is a
-       change to a security boundary (either a new GUC-gated SELECT policy, or
-       a privileged non-pooler read) and belongs in its own decision. The
-       Postgres-backed test
-       ``tests/test_rls_postgres.py::test_cron_enumeration_sees_no_users_without_identity``
-       pins the fact so it cannot be re-discovered by accident.
+    Returns ``(has_gmail, last_sync_at)``. ``last_sync_at`` is the ``min``
+    over the user's Gmail ``sync_state`` rows, so a user with more than one
+    linked address still yields one value — the oldest, which is the one that
+    decides how urgently they need a run.
     """
 
     from jobtracker.cloud.sync_state import GMAIL_ACCOUNT_TYPE
     from jobtracker.credentials.cloud import KIND_GMAIL
     from jobtracker.database import get_session
+    from jobtracker.database.connection import user_id_scope
     from jobtracker.database.models import SyncState, UserCredential
 
-    last_sync = (
-        select(sa_func.min(SyncState.last_sync_at))
-        .where(
-            SyncState.user_id == UserCredential.user_id,
-            SyncState.account_type == GMAIL_ACCOUNT_TYPE,
+    with user_id_scope(user_id):
+        async with get_session() as session:
+            connected = (
+                await session.exec(
+                    select(UserCredential.user_id)
+                    .where(
+                        UserCredential.user_id == user_id,
+                        UserCredential.kind == KIND_GMAIL,
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if connected is None:
+                return False, None
+
+            # ``Any`` because the row shape is dialect/version dependent (see
+            # the normalisation below); typing it as ``datetime | None`` would
+            # make that normalisation itself a type error.
+            row: Any = (
+                await session.exec(
+                    select(sa_func.min(SyncState.last_sync_at)).where(
+                        SyncState.user_id == user_id,
+                        SyncState.account_type == GMAIL_ACCOUNT_TYPE,
+                    )
+                )
+            ).first()
+
+    # ``session.exec`` yields a bare scalar for a single-column select on some
+    # SQLModel/SQLAlchemy combinations and a Row on others; normalise. A
+    # ``datetime`` is not subscriptable, so this cannot mangle a real value.
+    last_sync = row[0] if hasattr(row, "__getitem__") else row
+    return True, last_sync
+
+
+async def list_syncable_user_ids(limit: int) -> list[uuid.UUID]:
+    """Configured users with a connected Gmail mailbox, least-recently-synced first.
+
+    Two halves, and the split is the whole design:
+
+    1. **Who may be synced comes from configuration.**
+       ``settings.cron_sync_user_ids`` is the allowlist. It is read here rather
+       than queried because the query cannot work: ``user_credentials`` is
+       FORCE-RLS on ``auth.uid()`` and a cron has no JWT, so an identity-less
+       ``SELECT`` over it matches no row on Postgres — see the module
+       docstring. Unset or empty returns ``[]``, which is today's behaviour
+       and the fail-closed default: a deployment that configures nothing syncs
+       nobody rather than syncing everybody.
+    2. **Whether they are syncable is still asked of the database**, once per
+       user and under that user's own identity (:func:`_gmail_sync_position`).
+       The allowlist is a set of identities, not a claim that those users have
+       Gmail linked; a configured user who never connected, or who
+       disconnected, is skipped rather than handed to ``gmail_sync`` to fail.
+       Without this the response's ``candidates`` would stop meaning "users
+       with a connected mailbox" and ``errors[]`` would carry an entry for the
+       same disconnected user every fifteen minutes forever.
+
+    Ordering is what makes a bounded batch fair: a run that stops on its
+    deadline leaves the users it skipped at the front of the next run's queue,
+    so nobody is starved by the batch cap. Never-synced users sort first — they
+    are the ones with an empty board. The sort happens in Python because the
+    candidates no longer come from one query, and the key mirrors the SQL it
+    replaces exactly: never-synced first, then oldest sync first, then user id.
+
+    COST. This is one connection per configured user instead of one per run,
+    and under the cloud engine's NullPool a connection is ~216 ms (issue
+    #203). That is affordable because the allowlist is small by construction —
+    it is a hand-maintained env var, not a table — and because the run's own
+    45 s budget is taken before this call, so a long enumeration eats into the
+    syncing time rather than overrunning the function's 60 s ceiling.
+    """
+
+    configured = list(settings.cron_sync_user_ids)
+    if not configured:
+        return []
+
+    # (never_synced_rank, last_sync_at, user_id) — the SQL ORDER BY, in Python.
+    ranked: list[tuple[int, datetime, uuid.UUID]] = []
+    for user_id in configured:
+        has_gmail, last_sync = await _gmail_sync_position(user_id)
+        if not has_gmail:
+            continue
+        ranked.append(
+            (
+                0 if last_sync is None else 1,
+                last_sync if last_sync is not None else datetime.min,
+                user_id,
+            )
         )
-        .scalar_subquery()
-    )
 
-    statement = (
-        select(UserCredential.user_id)
-        .where(UserCredential.kind == KIND_GMAIL)
-        # Two sort keys instead of ``NULLS FIRST``: the latter needs SQLite
-        # >= 3.30 and this query has to mean the same thing on both backends.
-        .order_by(
-            case((last_sync.is_(None), 0), else_=1).asc(),
-            last_sync.asc(),
-            UserCredential.user_id.asc(),
-        )
-        .limit(limit)
-    )
-
-    async with get_session() as session:
-        rows = (await session.exec(statement)).all()
-
-    # ``session.exec`` yields scalars for a single-column select on some
-    # SQLModel/SQLAlchemy combinations and Row objects on others; normalise.
-    return [row[0] if hasattr(row, "__getitem__") else row for row in rows]
+    ranked.sort()
+    return [user_id for _, _, user_id in ranked[:limit]]
 
 
 async def _sync_one_user(user_id: uuid.UUID) -> None:
@@ -323,6 +423,15 @@ async def _sync_one_user(user_id: uuid.UUID) -> None:
        every read inside — the stored credential, the applications merge, the
        cursor write — runs with ``auth.uid()`` NULL and fails closed. The
        Gmail OAuth callback does the same thing for the same reason.
+
+    The ``with`` stays INSIDE this function — one binding per user, per unit of
+    work. It must never be hoisted around the caller's loop and this must never
+    become an ``asyncio.gather`` with the binding outside the tasks: a
+    ContextVar set outside a task set is inherited by every task in it, and one
+    tenant's identity bound while another tenant's sync runs is a cross-tenant
+    write. That is the ``search_path`` poisoning incident's shape carrying
+    tenant identity instead of a schema name. Pinned by
+    ``tests/test_rls_postgres.py::test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity``.
 
     ``SyncRequest()`` with every field defaulted is deliberate: no ``count``
     and no ``range``, because ``_history_cursor_for`` skips the incremental
@@ -356,6 +465,18 @@ async def _sync_one_user(user_id: uuid.UUID) -> None:
 async def cron_sync(request: Request) -> CronSyncResponse:
     """Sync a bounded batch of users' mailboxes on a schedule.
 
+    INVARIANT — THIS HANDLER TAKES NO USER-SELECTING INPUT, EVER.
+    The only parameter is the raw ``Request``, and nothing below reads a query
+    parameter, a path parameter, a body field or a header to decide *whose*
+    mailbox to touch: the set of users comes from
+    ``settings.cron_sync_user_ids`` and from nowhere else. That is not a
+    stylistic preference. This route authenticates a *caller* (a shared cron
+    secret) and then acts with *other people's* authority — the textbook
+    confused-deputy setup — so anyone holding the secret would be able to name
+    a victim the moment a ``user_id`` parameter appears here. Adding one turns
+    a scheduled job into an arbitrary-tenant sync trigger. Pinned by
+    ``tests/test_cron_sync.py::test_the_handler_ignores_any_user_selecting_input``.
+
     Authenticated by the shared cron secret only — there is no JWT here and no
     ``Depends(current_user)``. Each user's sync then runs under that user's own
     RLS identity (see :func:`_sync_one_user`), so the absence of a caller
@@ -381,16 +502,25 @@ async def cron_sync(request: Request) -> CronSyncResponse:
 
     candidates = await list_syncable_user_ids(batch_size)
     if not candidates:
-        # Said out loud rather than returned as a bland zero. On Postgres this
-        # is the expected result of the RLS gap documented on
-        # ``list_syncable_user_ids`` — an operator staring at
-        # ``{"users_synced": 0}`` has no way to tell that from "nobody has
-        # connected Gmail yet".
-        logger.warning(
-            "Scheduled sync found no users with a connected mailbox. On "
-            "Postgres this is also what RLS returns to a caller with no "
-            "identity — see jobtracker.cloud.cron.list_syncable_user_ids."
-        )
+        # Said out loud rather than returned as a bland zero, and the two
+        # reasons are separated because they have different remedies: an empty
+        # allowlist is a configuration omission (the fail-closed default),
+        # while a populated allowlist finding nobody means those users have no
+        # Gmail credential row. An operator staring at ``{"users_synced": 0}``
+        # cannot tell those apart from the response.
+        if not settings.cron_sync_user_ids:
+            logger.warning(
+                "Scheduled sync has no users configured. Set "
+                "JOBTRACKER_CRON_SYNC_USER_IDS to a comma-separated list of "
+                "user UUIDs in the Vercel project environment and redeploy, "
+                "or the schedule will keep succeeding while syncing nobody."
+            )
+        else:
+            logger.warning(
+                "Scheduled sync: none of the %s configured user(s) has a "
+                "connected Gmail mailbox.",
+                len(settings.cron_sync_user_ids),
+            )
         return CronSyncResponse(users_synced=0, errors=[], candidates=0)
 
     synced = 0

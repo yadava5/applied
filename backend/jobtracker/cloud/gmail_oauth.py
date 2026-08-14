@@ -711,6 +711,18 @@ async def _exchange_and_store(
     exchanged but never stored is NOT a connection, and pretending
     otherwise would bounce the user to ``?gmail=connected`` while
     ``/auth/gmail/status`` honestly reports disconnected.
+
+    Also the one place that can notice **background-sync list rot**. The
+    scheduled sync enumerates its users from configuration
+    (``settings.cron_sync_user_ids``) rather than from ``user_credentials``,
+    because a cron carries no JWT and that table is FORCE-RLS on
+    ``auth.uid()`` — see ``jobtracker.cloud.cron``. The honest cost of
+    enumerating from config is that a second user who connects Gmail is
+    silently never background-synced, and the cron cannot detect that by
+    construction: an identity it was never given is invisible to it. This
+    function *is* the moment the fact becomes known, so it says so here. Their
+    board still refreshes when they open it; what they do not get is anything
+    while they are away.
     """
 
     loop = asyncio.get_running_loop()
@@ -723,6 +735,18 @@ async def _exchange_and_store(
     with user_id_scope(user_id):
         if not await save_gmail_credentials(user_id, stored):
             raise RuntimeError("credential store rejected the Gmail token save")
+
+    # Checked AFTER the save succeeded, so this only ever fires for a mailbox
+    # that really is connected. Warning, not error: the connection worked and
+    # the user is not broken — an operator has an env var to update.
+    if user_id not in settings.cron_sync_user_ids:
+        logger.warning(
+            "Gmail connected for user_id=%s, who is NOT in "
+            "JOBTRACKER_CRON_SYNC_USER_IDS — this mailbox will not be "
+            "background-synced on the schedule until that env var includes "
+            "them and the API is redeployed. Interactive sync is unaffected.",
+            user_id,
+        )
     return stored
 
 
