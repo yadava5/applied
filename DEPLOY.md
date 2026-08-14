@@ -357,6 +357,32 @@ behind it, and `gh pr checks` shows green because there is nothing red to show.
 The absence of a signal is not success here. Checking that production actually
 moved is a separate act from checking that CI went green.
 
+### Something now performs that separate act
+
+`.github/workflows/production-drift.yml` runs `scripts/check_production_drift.py`
+twice an hour and fails when what production is **running** disagrees with
+`main`'s tip for longer than 30 minutes — the grace window, and the deploy
+timings it comes from, are the `DEPLOY_GRACE` constant in that script. It is
+blind to the cause on purpose: a rate limit, a lost webhook and a CANCELED
+redeploy all look the same from here, and all three have happened.
+
+Three things keep it from crying wolf, and all three are pinned as fixtures in
+`scripts/test_production_drift.py`: a window the Ignored Build Step legitimately
+skips is green (`975d72e` was skipped on both projects and left production
+behind main forever, by design), a deployment that is QUEUED or BUILDING is
+green, and a tip younger than the window is green. The same suite aims the
+detector at `12b8aee` and `60fcec2` — the two merges from #174 that genuinely
+never deployed — and requires it to go red for both.
+
+What it reads is deliberately **not** `GET /repos/:owner/:repo/deployments?sha=`,
+which is empty for a healthy skip and for a silent miss alike. For the api it
+reads `GET /health`, which reports the running commit from Vercel's own
+`VERCEL_GIT_COMMIT_SHA` and needs no credential; for the web app it reads the
+newest READY production deployment's `meta.githubCommitSha` from the Vercel REST
+API, which needs a read-scoped token in the `VERCEL_TOKEN` repository secret.
+**That secret does not exist yet**, so until an owner creates it the live job is
+red with `UNKNOWN`, which is the honest answer for a check that cannot see.
+
 ### The dashboard "Skip deployments when there are no changes…" toggle is inert here
 
 Do not bother enabling it. Vercel's built-in
