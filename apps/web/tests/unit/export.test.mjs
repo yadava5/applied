@@ -1,6 +1,6 @@
 /**
  * Unit tests for `lib/applications/export.ts` — the paging loop behind
- * Settings → "Export applications (JSON)".
+ * Settings → "Export applications and mail (JSON)".
  *
  * These exist because the fix shipped without one. The loop was inline in
  * `app/api/applications/route.ts`, which needs the Next runtime and a Supabase
