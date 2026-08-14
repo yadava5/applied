@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { LogOut } from "lucide-react";
 
-import { SettingsSection } from "./SettingsSection";
+import { SettingsSection, TransientStatus, useLinger } from "./SettingsSection";
 import { Dialog } from "@/components/ui/Dialog";
 import { dangerBtnClass, inputClass, secondaryBtnClass } from "@/components/ui/formStyles";
 import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
@@ -30,8 +30,13 @@ export function AccountSection({ email, mode = "live" }: { email: string; mode?:
   const [error, setError] = useState<string | null>(null);
   const transport = settingsTransport(mode);
 
+  // The note is an answer to a click, not a standing fact — it rides the same
+  // self-clearing status the rest of the page uses (#213).
+  const showSignOutNote = useLinger(signOutNote !== null);
+
   async function signOut() {
     setSigningOut(true);
+    setSignOutNote(null);
     await transport.signOut();
     if (transport.mode === "demo") {
       // No session exists here to end — the twin says so instead of bouncing
@@ -67,13 +72,12 @@ export function AccountSection({ email, mode = "live" }: { email: string; mode?:
         <button type="button" onClick={() => setOpen(true)} className={dangerBtnClass}>
           Delete account
         </button>
-      </div>
-
-      {signOutNote ? (
-        <p role="status" className="mt-3 text-xs text-dim">
+        {/* Inline in the button row: the row's height is set by the buttons,
+            so the note appearing and clearing never re-flows the card. */}
+        <TransientStatus show={showSignOutNote} className="text-dim">
           {signOutNote}
-        </p>
-      ) : null}
+        </TransientStatus>
+      </div>
 
       <p className="mt-3 text-[12px] leading-relaxed text-dim">
         Deleting removes your applications and revokes any connected Gmail. This can’t be undone.

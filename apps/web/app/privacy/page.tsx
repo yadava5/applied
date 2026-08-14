@@ -31,6 +31,12 @@ import { cn } from "@/lib/utils";
  *     backend/jobtracker/email_clients/gmail.py:53
  *   · no incremental scope merging          — backend/jobtracker/cloud/gmail_oauth.py:586-599
  *   · sign-in passes no scopes of its own   — components/auth/GoogleSignInButton.tsx:92-99
+ *   · Google password never reaches Applied — both flows are redirects to
+ *     accounts.google.com (same two sources as the consent-screen and sign-in
+ *     claims above; there is no password field for a Google credential
+ *     anywhere in this repo). Claim moved here from the Settings Gmail card's
+ *     safeguards fold when #201 retired it — the policy is the one place the
+ *     product argues its own safety.
  *   · metadata-only fetch, never a body     — backend/jobtracker/cloud/gmail_client.py:17-19,
  *     292-293, 413
  *   · the stored row                        — backend/jobtracker/database/models.py:348-429
@@ -242,8 +248,9 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
               rights.
             </P>
             <P>
-              You approve it on Google’s own consent screen, and Google hands Applied a token
-              afterwards. Applied does not ask Google to merge in permissions you granted
+              You approve it on Google’s own consent screen — your Google password is typed
+              there, on Google’s page, and never reaches Applied — and Google hands Applied a
+              token afterwards. Applied does not ask Google to merge in permissions you granted
               elsewhere (<M>include_granted_scopes</M> is deliberately off), so this grant contains
               that one scope and nothing else.
             </P>

@@ -78,39 +78,63 @@ test.describe("settings (via the public /demo/settings twin)", () => {
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
-  test("change password: offered on the email-identity account, signup floor enforced, success reported", async ({
+  test("change password: a centred dialog, signup floor enforced, success reported transiently", async ({
     page,
   }) => {
     await page.goto("/demo/settings");
+
+    // #213: the page itself never grows a field — until the dialog opens
+    // there is no password input anywhere in the document.
+    await expect(page.getByLabel("new password", { exact: true })).toHaveCount(0);
+
     await page.getByRole("button", { name: /^change password$/i }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
 
-    const newPassword = page.getByLabel("new password", { exact: true });
-    const confirm = page.getByLabel("confirm new password", { exact: true });
-    const submit = page.getByRole("button", { name: /^update password$/i });
-
-    // Scoped to this form, and it has to be: /demo/settings renders other
-    // `role="alert"` nodes — DataSection's export failure and AccountSection's
-    // delete error — so an unscoped getByRole("alert") is a strict-mode
-    // violation rather than an assertion, and dies before it can mean anything.
-    // Caught by CI, deterministically, on all three retries.
-    const form = page.locator("form").filter({ has: submit });
+    // Everything is scoped to the dialog, and the alert queries have to be:
+    // /demo/settings renders other `role="alert"` nodes — DataSection's export
+    // failure and AccountSection's delete error — so an unscoped
+    // getByRole("alert") is a strict-mode violation rather than an assertion,
+    // and dies before it can mean anything. Caught by CI, deterministically,
+    // on all three retries.
+    const newPassword = dialog.getByLabel("new password", { exact: true });
+    const confirm = dialog.getByLabel("confirm new password", { exact: true });
+    const submit = dialog.getByRole("button", { name: /^update password$/i });
 
     // Below the signup floor → refused before any network, on the app's copy.
     await newPassword.fill("short");
     await confirm.fill("short");
     await submit.click();
-    await expect(form.getByRole("alert")).toContainText(/at least 8 characters/i);
+    await expect(dialog.getByRole("alert")).toContainText(/at least 8 characters/i);
 
     // Long enough but unconfirmed → the confirm field is the problem.
     await newPassword.fill("long enough password");
     await confirm.fill("long enough passw0rd");
     await submit.click();
-    await expect(form.getByRole("alert")).toContainText(/don’t match/i);
+    await expect(dialog.getByRole("alert")).toContainText(/don’t match/i);
 
-    // A matching pair runs the whole machine to the success status.
+    // A matching pair runs the whole machine: the dialog closes and success
+    // is reported next to the trigger.
     await confirm.fill("long enough password");
     await submit.click();
-    await expect(page.getByRole("status").filter({ hasText: "Password updated" })).toBeVisible();
+    await expect(dialog).toBeHidden();
+    const status = page.getByRole("status").filter({ hasText: "Password updated" });
+    await expect(status).toBeVisible();
+
+    // …and does NOT persist (#213: it used to sit there for the life of the
+    // mount). The line clears itself after STATUS_LINGER_MS (4s); the timeout
+    // covers the linger plus the exit fade.
+    await expect(status).toBeHidden({ timeout: 8000 });
+  });
+
+  test("change password: cancelling the dialog leaves no field behind", async ({ page }) => {
+    await page.goto("/demo/settings");
+    await page.getByRole("button", { name: /^change password$/i }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(page.getByLabel("new password", { exact: true })).toHaveCount(0);
   });
 
   test("the appearance switch is a working radiogroup — the real theme mechanism", async ({
@@ -136,12 +160,18 @@ test.describe("settings (via the public /demo/settings twin)", () => {
     await expect(page.getByRole("slider", { name: /gate/i })).toBeVisible();
   });
 
-  test("a profile save runs the whole machine and reports Saved", async ({ page }) => {
+  test("a profile save runs the whole machine, reports Saved, and the report clears itself", async ({
+    page,
+  }) => {
     await page.goto("/demo/settings");
     const name = page.getByPlaceholder("e.g. Ayush Yadav");
     await name.fill("Sam Fixture II");
     await page.getByRole("button", { name: "Save profile" }).click();
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+    const saved = page.getByText("Saved", { exact: true });
+    await expect(saved).toBeVisible();
+    // #213: "Saved" is a report of an event, not a standing fact — it removes
+    // itself after STATUS_LINGER_MS rather than asserting the save forever.
+    await expect(saved).toBeHidden({ timeout: 8000 });
   });
 
   test("account deletion is gated behind a typed confirmation — and the demo refuses honestly", async ({
@@ -162,13 +192,25 @@ test.describe("settings (via the public /demo/settings twin)", () => {
     await expect(dialog.getByRole("alert")).toContainText(/simulated account/i);
   });
 
-  test("the disconnect control is disabled with a reason, never a dead button that lies", async ({
+  test("disconnect opens a confirming dialog; the demo confirm is disabled with a reason, never a dead button that lies", async ({
     page,
   }) => {
     await page.goto("/demo/settings");
-    const disconnect = page.getByRole("button", { name: /^disconnect$/i });
-    await expect(disconnect).toBeDisabled();
-    await expect(disconnect).toHaveAttribute("title", /simulated account/i);
+    // #213: revocation is no longer one bare click — the trigger opens the
+    // same centred dialog family as delete and change-password.
+    await page.getByRole("button", { name: /^disconnect$/i }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // The dialog says what confirming does, in the privacy policy's words.
+    await expect(dialog.getByText(/revokes applied’s access at google/i)).toBeVisible();
+    // On the twin the POST would 401, so the destructive confirm — not the
+    // reviewable flow — is the dead control, with the reason as visible text.
+    const confirm = dialog.getByRole("button", { name: /disconnect and revoke/i });
+    await expect(confirm).toBeDisabled();
+    await expect(dialog.getByText(/simulated account/i)).toBeVisible();
+    // Escape backs out without touching anything.
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
   });
 });
 
