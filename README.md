@@ -440,7 +440,7 @@ Being precise about this is the point.
 ### Prerequisites
 
 - Python 3.11+ (the desktop stack pins 3.11; `backend/.venv311` is the correct venv, not `backend/.venv`)
-- Node.js 20+ and pnpm 10, for the web app
+- Node.js 22 and pnpm 10, for the web app — the major is load-bearing, not incidental. `pnpm test:unit` imports `.ts` modules straight from `.mjs` test files and runs them on the runtime's built-in type stripping, which needs **22.6 or newer** (and the built-in glob, 21 or newer). On Node 20 those tests do not fail, they refuse to load with `ERR_UNKNOWN_FILE_EXTENSION` — which is how they once existed while no job ran them
 - macOS with Xcode, for the desktop app only
 - Internet on first run, to download `intfloat/e5-small-v2`
 
@@ -573,7 +573,7 @@ Every number above terminates in something you can open.
 | Workflow | What it proves |
 | --- | --- |
 | `backend-ci.yml` | `pytest tests -q --cov=jobtracker` (the coverage number lands in the public run log); the rules gate at `--min-macro-f1 0.95`; the deterministic hybrid gate; the `rls-postgres` job with its assert-it-ran step; the `expand-only` job, which walks the Alembic chain one revision at a time against a `postgres:16` service and fails a revision that drops or narrows anything without a module-level `CONTRACT_STEP` saying why; the `cloud-smoke` job that imports the cloud app under `JOBTRACKER_DEPLOYMENT=cloud` and probes `/health` |
-| `frontend-ci.yml` | `pnpm typecheck`, `pnpm lint`, `pnpm build` on Node 20 / pnpm 10 |
+| `frontend-ci.yml` | `pnpm typecheck`, `pnpm lint` (`--max-warnings 0`, so every warn-level rule next ships — the six `jsx-a11y/*` among them — is a red build rather than a printed suggestion), `pnpm test:unit`, `pnpm build` on Node 22 / pnpm 10. The Node major is a constraint, not a default: `test:unit` needs the runtime's type stripping (22.6+), so pinning back to 20 does not fail the job — it stops running the unit suite, which is exactly what happened before |
 | `e2e-ci.yml` | Playwright against a real backend + frontend pair, uploading traces and server logs |
 | `macos-ci.yml` | `xcodebuild` resolves packages and builds the `JobTracker` scheme |
 | `codeql.yml`, `gitleaks.yml` | SAST and full-history secret scanning |
