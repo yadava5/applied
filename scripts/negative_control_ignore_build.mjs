@@ -127,40 +127,98 @@ const MUTATIONS = [
     find: "if [ -z \"$base_sha\" ] && [ \"${VERCEL_ENV:-}\" = 'production' ]; then",
     replace: 'if [ -z "$base_sha" ]; then',
   },
+
+  // The two call sites. These mutate a TRACKED file in place rather than a
+  // copy, because there is no indirection to point the suite at a different
+  // vercel.json — Vercel reads the one at a fixed path and so does the suite.
+  // The original content is restored in a `finally`, and the CI job runs
+  // `git diff --exit-code` afterwards so a failed restore cannot pass silently.
+  {
+    name: 'the guard is renamed out from under vercel.json',
+    file: 'vercel.json',
+    find: '"ignoreCommand": "bash vercel-ignore-build.sh api"',
+    replace: '"ignoreCommand": "bash scripts/vercel-ignore-build.sh api"',
+  },
+  {
+    name: "apps/web/vercel.json passes the wrong project name",
+    file: 'apps/web/vercel.json',
+    find: '"ignoreCommand": "bash ../../vercel-ignore-build.sh web"',
+    replace: '"ignoreCommand": "bash ../../vercel-ignore-build.sh apps/web"',
+  },
+  // The key the guard's own header calls load-bearing. Dropping it means the
+  // api project stops creating PRODUCTION deployments — no record, no status,
+  // nothing to notice. This is the #174 signature, and until now nothing
+  // checked it at all.
+  {
+    name: 'the load-bearing "main": true is simplified away from vercel.json',
+    file: 'vercel.json',
+    find: '      "**": false,\n      "main": true\n',
+    replace: '      "**": false\n',
+  },
+  {
+    name: 'the web project stops filtering Dependabot',
+    file: 'apps/web/vercel.json',
+    find: '      "dependabot/**": false,\n      "dependabot/*": false\n',
+    replace: '      "dependabot/**": false\n',
+  },
 ];
 
-const source = readFileSync(SOURCE, 'utf8');
+/**
+ * Run the suite once. `--test-reporter=tap` is pinned so the summary line is
+ * parseable regardless of Node version and of whether stdout is a TTY: node
+ * --test picks `spec` or `tap` on its own otherwise, and the two differ.
+ */
+function runSuite(env = {}) {
+  return spawnSync(process.execPath, ['--test', '--test-reporter=tap', SUITE], {
+    cwd: REPO,
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
 const results = [];
 
 for (const m of MUTATIONS) {
-  const hits = source.split(m.find).length - 1;
+  // A mutation with no `file` targets the guard, which is mutated as a COPY.
+  // One naming a file mutates that tracked file IN PLACE and restores it.
+  const target = m.file ? join(REPO, m.file) : SOURCE;
+  const original = readFileSync(target, 'utf8');
+
+  const hits = original.split(m.find).length - 1;
   if (hits !== 1) {
     results.push({
       name: m.name,
       ok: false,
       why:
-        `anchor matched ${hits} times, expected exactly 1. If you changed an ` +
-        'allowlist, add a fixture covering the new entry to ' +
-        'scripts/test_vercel_ignore_build.mjs and update the entry list here',
+        `anchor matched ${hits} times in ${m.file ?? 'vercel-ignore-build.sh'}, ` +
+        'expected exactly 1. If you changed an allowlist or a vercel.json, add ' +
+        'a case covering it to scripts/test_vercel_ignore_build.mjs and update ' +
+        'the anchor here',
     });
     continue;
   }
 
-  writeFileSync(MUTANT, source.replace(m.find, m.replace));
-  // --test-reporter=tap is pinned so the summary line is parseable regardless of
-  // Node version and of whether stdout is a TTY: node --test picks `spec` or
-  // `tap` on its own otherwise, and the two print different summaries.
-  const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', SUITE], {
-    cwd: REPO,
-    encoding: 'utf8',
-    env: { ...process.env, IGNORE_BUILD_SCRIPT: MUTANT },
-  });
-  rmSync(MUTANT, { force: true });
+  const mutated = original.replace(m.find, m.replace);
+  let run;
+  try {
+    if (m.file) {
+      writeFileSync(target, mutated);
+      run = runSuite();
+    } else {
+      writeFileSync(MUTANT, mutated);
+      run = runSuite({ IGNORE_BUILD_SCRIPT: MUTANT });
+    }
+  } finally {
+    // Unconditional. An in-place mutation that escaped this block would leave a
+    // tracked config file broken, which is a worse defect than the one this
+    // script exists to catch.
+    if (m.file) writeFileSync(target, original);
+    else rmSync(MUTANT, { force: true });
+  }
 
-  // node --test's summary line is `ℹ fail N` in the default (spec) reporter and
-  // `# fail N` under TAP. Match both, and require the count rather than
-  // trusting the exit code alone: a mutant that made the SUITE crash would also
-  // exit non-zero, and that is not the same as the suite detecting it.
+  // Require the failure COUNT, not merely a non-zero exit: a mutant that made
+  // the suite crash would also exit non-zero, and that is not the same as the
+  // suite detecting it.
   const failed = /^(?:ℹ|#)\s*fail (\d+)\s*$/m.exec(run.stdout ?? '');
   const count = failed ? Number(failed[1]) : null;
   const detected = run.status !== 0 && count !== null && count > 0;

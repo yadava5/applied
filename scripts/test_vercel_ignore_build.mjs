@@ -609,12 +609,26 @@ const WIRING = [
     // Vercel runs the ignore command from the project's Root Directory.
     rootDirectory: '.',
     expected: 'bash vercel-ignore-build.sh api',
+    deploymentEnabled: { '**': false, main: true },
+    deploymentEnabledWhy:
+      'The api takes no previews: nothing consumes one, and on 2026-08-13 they ' +
+      'ate the whole daily allowance and blocked production for eleven hours. ' +
+      'The "main": true key is LOAD-BEARING — precedence is not ' +
+      'most-specific-wins ("if a branch matches multiple rules and at least one ' +
+      'rule is true, a deployment will occur"), so "**": false alone would take ' +
+      'production down with it and nothing would report an error.',
   },
   {
     project: 'web',
     config: 'apps/web/vercel.json',
     rootDirectory: 'apps/web',
     expected: 'bash ../../vercel-ignore-build.sh web',
+    deploymentEnabled: { 'dependabot/**': false, 'dependabot/*': false },
+    deploymentEnabledWhy:
+      'The web project deliberately keeps its previews — a human looks at them ' +
+      'before merge — so only Dependabot is filtered. Both keys are kept: `*` ' +
+      'does not cross `/` in minimatch, so `dependabot/*` matches none of the ' +
+      'real three-segment branch names and `dependabot/**` carries it alone.',
   },
 ];
 
@@ -636,6 +650,17 @@ for (const w of WIRING) {
     assert.ok(existsSync(resolved), `${w.config} points at ${resolved}, which does not exist`);
     assert.equal(resolved, join(REPO, 'vercel-ignore-build.sh'));
     assert.equal(arg, w.project);
+  });
+
+  // `git.deploymentEnabled` is the more dangerous of the two keys and nothing
+  // checked it. A wrong `ignoreCommand` wastes or skips a build but still
+  // leaves a deployment record; a wrong `deploymentEnabled` stops the
+  // deployment being CREATED, which leaves no record and no commit status at
+  // all — the exact signature of the two commits in #174, and the hardest
+  // possible thing to notice.
+  test(`${w.config}'s git.deploymentEnabled is unchanged`, () => {
+    const cfg = JSON.parse(readFileSync(join(REPO, w.config), 'utf8'));
+    assert.deepEqual(cfg.git?.deploymentEnabled, w.deploymentEnabled, w.deploymentEnabledWhy);
   });
 
   test(`the guard recognises the project argument ${w.config} passes it`, () => {
