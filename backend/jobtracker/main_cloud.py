@@ -485,6 +485,7 @@ async def root() -> dict[str, Any]:
 from jobtracker.auth import current_user  # noqa: E402
 from jobtracker.cloud.account import router as account_cloud_router  # noqa: E402
 from jobtracker.cloud.applications import router as applications_cloud_router  # noqa: E402
+from jobtracker.cloud.cron import router as cron_cloud_router  # noqa: E402
 from jobtracker.cloud.gmail_oauth import router as gmail_cloud_router  # noqa: E402
 
 
@@ -530,3 +531,10 @@ app.include_router(gmail_cloud_router)
 # "danger zone" no longer orphans data when it removes the Supabase auth user.
 # Router declares its own ``require_user()``. See jobtracker.cloud.account.
 app.include_router(account_cloud_router)
+
+# Scheduled sync (GET/POST /cron/sync) — issue #23 (C7). The ONE router here
+# with no ``require_user()``, deliberately: Vercel Cron carries no JWT. It is
+# gated instead on a shared secret compared in constant time, and every unit of
+# work inside runs under an explicit per-user RLS identity, so "no caller
+# identity" never becomes "no scoping". See jobtracker.cloud.cron.
+app.include_router(cron_cloud_router)
