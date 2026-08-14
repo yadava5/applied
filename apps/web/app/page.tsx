@@ -468,7 +468,7 @@ export default function Landing() {
                 href: "/demo",
                 title: "Live demo",
                 arrow: "→",
-                body: "The application board and decision trace, on fixture data. One click, no sign-in.",
+                body: "The signed-in app itself — rail, board, worklist — on fixture data. One click, no sign-in.",
               },
               {
                 href: "/demo/inbox",

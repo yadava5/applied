@@ -856,9 +856,10 @@ export function SyncBar({
                   // the default twin. So the phrase yields to the pill at
                   // `lg`+ and carries the signage alone below it, where the
                   // pill is gone; session-edge.spec asserts both halves, so
-                  // stripping either stays red. Surfaces without the pill
-                  // (/demo passes no `trailing`) keep the phrase at every
-                  // width.
+                  // stripping either stays red. A surface that passed no
+                  // `trailing` would keep the phrase at every width — none
+                  // ships today: /demo mounts the shell twin (pill in the
+                  // slot) since the consolidation.
                   <span
                     className={`order-last w-full text-xs text-dim sm:order-none sm:w-auto${
                       trailing ? " lg:hidden" : ""
