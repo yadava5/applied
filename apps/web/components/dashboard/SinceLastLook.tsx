@@ -338,9 +338,10 @@ export function SinceLastLook({
         : Math.max(0, row.clientWidth - panel.offsetWidth);
     panel.style.left = `${left}px`;
     panel.style.maxWidth = `${row.clientWidth - left}px`;
-    // The gap the accent has to jump to reach the chip. It is 18px on one line
-    // and 62px at 1024, where the sync controls wrap and take the row with
-    // them — so the connector is drawn from the measurement, never a guess.
+    // The gap the accent has to jump to reach the chip. It is 18px on the
+    // row's one line — and was 62px back when sign-out wrapped the row at
+    // 1024 (#172) — so the connector is drawn from the measurement, never a
+    // guess.
     panel.style.setProperty(
       "--stem",
       `${Math.max(0, panel.offsetTop - (section.offsetTop + section.offsetHeight))}px`,
@@ -543,11 +544,12 @@ export function SinceLastLook({
          this chip. Two reasons, both measured. Anchored to the chip it
          extended past <main>'s left edge, whose implicit overflow clip cut the
          first label off; and `top-full` on this chip resolves to the bottom of
-         the ONE LINE it occupies, which at 1024 — where the sync controls wrap
-         onto a second line and the row grows from 38px to 82px — drops a z-30
-         sheet straight over the Sync button and the ⋯ menu. The row's bottom
-         clears both at every width. The chip supplies the horizontal anchor
-         only, and `placePanel` measures it. */
+         the ONE LINE it occupies, which — measured at 1024 back when sign-out
+         wrapped the row from 38px to 82px (#172) — drops a z-30 sheet
+         straight over the Sync button and the ⋯ menu the moment the row and
+         the chip's line disagree. The row's bottom clears both at every
+         width, wrapped or not. The chip supplies the horizontal anchor only,
+         and `placePanel` measures it. */
       className="w-full border-l-2 border-stage-applied pl-2 @container"
     >
       <ArrivalLine>
