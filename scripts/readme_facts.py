@@ -702,7 +702,13 @@ FACTS: dict[str, dict] = {
         "compute": lambda: len(list((REPO / "apps/web/tests/e2e").glob("*.spec.ts"))),
         "sites": [
             r"\((\d+) spec files under",
-            r"\| (\d+) spec files — landing",
+            # Anchored on the em dash, not on whichever spec happened to be
+            # named first. It used to read `— landing`, and the enumeration
+            # after it is unchecked prose that had already drifted — 14 names
+            # under a claim of 15. Sorting the list to match the directory
+            # broke this pattern, which is the gate working: a site matching
+            # NOTHING is a failure here, not a silent pass.
+            r"\| (\d+) spec files —",
             r"# (\d+) Playwright specs",
         ],
     },
