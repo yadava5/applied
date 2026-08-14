@@ -127,11 +127,13 @@ export function DemoDashboard({
   sessionEdge = false,
 }: {
   pipeline?: DemoPipeline;
-  /** `flow` — the /demo page twin: natural height, the page scrolls.
-   *  `locked` — the /demo/shell twin: the signed-in dashboard's exact
-   *  geometry (`LOCKED_PAGE_CLASS` root, `variant="locked"` board), which is
-   *  what makes the viewport-lock e2e assertions executable without a
-   *  session. Both mount the pulse where the real page does: the board's
+  /** `locked` — what /demo and /demo/shell both mount (via `DemoShell`): the
+   *  signed-in dashboard's exact geometry (`LOCKED_PAGE_CLASS` root,
+   *  `variant="locked"` board), which is what makes the viewport-lock e2e
+   *  assertions executable without a session. `flow` — natural height, the
+   *  page scrolls; no route mounts it since /demo consolidated onto the
+   *  shell, but it remains the honest default for a bare mount with no shell
+   *  around it. Both mount the pulse where the real page does: the board's
    *  full-width band. */
   variant?: "flow" | "locked";
   /** Held verdicts: the pulse band's count AND the length of the fixture
@@ -470,7 +472,7 @@ export function DemoDashboard({
           are counting (`lib/demo/reviewQueue.ts`), which is the subtree this
           twin was missing. The classifier's whole output, held and auto-filed
           alike, is a different fixture (DEMO_REVIEW_QUEUE) shown by the
-          DecisionTrace lower down /demo. Below `lg` the band yields to
+          DecisionTrace on the landing. Below `lg` the band yields to
           the cards' own tags — the phone answer the old full-width strip
           needed a `max-sm:order-last` workaround to approximate. */}
       <SyncBar

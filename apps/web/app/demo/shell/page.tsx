@@ -1,17 +1,17 @@
 import { cookies } from "next/headers";
 import type { Metadata } from "next";
 
-import { DemoDashboard, type DemoReviewSlot } from "@/components/demo/DemoDashboard";
-import { AppShellFrame } from "@/components/shell/AppShellFrame";
+import { type DemoReviewSlot } from "@/components/demo/DemoDashboard";
+import { DemoShell } from "@/components/demo/DemoShell";
 import { DEMO_AMBIENT_COOKIE, parseDemoAmbientPref } from "@/lib/demo/ambientPref";
 import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
-import type { RailData } from "@/lib/shell/rail";
 
 export const metadata: Metadata = {
   title: "Live demo — the app shell",
   description:
     "The signed-in Applied shell — sidebar rail, viewport lock, worklist — on fixture data. No inbox is read.",
-  // A harness first, a showcase second: /demo is the front door.
+  // A harness first, a showcase second: /demo is the front door — and since
+  // the consolidation it renders this same tree (`DemoShell`), knobs aside.
   robots: { index: false },
 };
 
@@ -25,7 +25,12 @@ export const dynamic = "force-dynamic";
 /**
  * The signed-in shell, auth-free: the REAL `AppShellFrame` — the same
  * component the protected layout renders — around the demo dashboard in its
- * LOCKED variant, over the same in-memory fixture store as /demo.
+ * LOCKED variant, over the same in-memory fixture store as /demo. Since the
+ * consolidation the mount itself lives in `DemoShell`, which /demo renders
+ * too: one tree for the front door and this harness, so what the specs below
+ * measure here cannot drift from what a visitor is actually shown there.
+ * This route keeps the KNOBS — reviewable states nothing links to — and the
+ * `robots: noindex` that goes with being an instrument.
  *
  * This route exists because the shell's headline geometry claim ("the
  * document never scrolls; the worklist is the one scroll pane") was asserted
@@ -141,38 +146,17 @@ export default async function DemoShellPage({
   // the twin in its honest default, so a stray `?session=` in a shared link
   // cannot quietly put a sign-out in front of an anonymous visitor.
   const sessionEdge = session === "1";
-  const rail: RailData = {
-    gmail: {
-      connected: true,
-      email: null,
-      lastSyncAt: null,
-      hasCursor: true,
-      syncStatus: null,
-      syncError: null,
-    },
-  };
 
+  // The rail fixture and the "Sam Fixture" identity live in `DemoShell` now,
+  // beside the one mount both routes share.
   return (
-    // The fixture gets a NAME as well as an email — the real rail shows the
-    // display name now, and a twin that still printed the address would drift
-    // from the surface it stands in for (the bug class this route exists to
-    // prevent). Same persona as /demo/settings' profile: one fixture identity.
-    <AppShellFrame
-      rail={rail}
-      userEmail="demo@applied.example"
-      userName="Sam Fixture"
+    <DemoShell
+      pipeline={pipeline === "early" ? "early" : "seed"}
+      needsReview={needsReview}
+      notifications={notifications}
+      reviewSlot={reviewSlot}
+      sessionEdge={sessionEdge}
       ambient={ambient}
-      demo
-    >
-      <DemoDashboard
-        variant="locked"
-        pipeline={pipeline === "early" ? "early" : "seed"}
-        needsReview={needsReview}
-        notifications={notifications}
-        reviewSlot={reviewSlot}
-        sessionEdge={sessionEdge}
-      />
-
-    </AppShellFrame>
+    />
   );
 }

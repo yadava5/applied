@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useLinkStatus } from "next/link";
 import type { ReactNode } from "react";
 
+import { useDemoMode } from "./demo-mode";
+import { demoHrefFor } from "./nav";
+
 /**
  * The rail's destination link: a `<Link>` that answers the press before the
  * payload arrives. Shared by the desktop `Sidebar` and the mobile menu in
@@ -84,8 +87,20 @@ export function NavLink({
   onClick?: () => void;
   children: ReactNode;
 }) {
+  // In fixture mode every signed-in destination is an auth bounce, so the item
+  // resolves to its public twin (`demoNavHrefs`). Rewritten HERE, at the one
+  // anchor both the desktop rail and the mobile menu render, so the two can no
+  // more disagree about where a demo item goes than about what it is called.
+  // `active` still keys off the canonical href — the caller's `isNavItemActive`
+  // already treats the twins as their originals.
+  const demo = useDemoMode();
   return (
-    <Link href={href} aria-current={active ? "page" : undefined} onClick={onClick} className={className}>
+    <Link
+      href={demo ? demoHrefFor(href) : href}
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+      className={className}
+    >
       {/* The active bar wins when both could show — arriving where you already
           are should not repaint the bar you are looking at. */}
       {active ? null : <PendingAccent />}

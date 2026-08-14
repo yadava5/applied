@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
 
 import { LastSynced } from "@/components/gmail/LastSynced";
 import type { RailGmailData } from "@/lib/shell/rail";
+import { useDemoMode } from "./demo-mode";
+import { demoHrefFor } from "./nav";
+import { DemoSignupCta } from "./SessionControls";
 
 /**
  * The sidebar's anchored footer: ONE identity block — who is signed in, and,
@@ -47,8 +52,22 @@ import type { RailGmailData } from "@/lib/shell/rail";
  * The re-sync icon button is still GONE — it was the fourth sync trigger, an
  * unlabelled icon that did something different from the identically-iconed
  * header button. The rail keeps what a rail is for: glanceable truth. Sync is
- * one click away (line → dashboard → `Sync`), and this component remains a
- * server component — no fetch, no state, just what it was handed.
+ * one click away (line → dashboard → `Sync`), and this component still holds
+ * no fetch and no state — just what it was handed, plus one context read.
+ * (It is a client component now, and honestly was before: `Sidebar`, its one
+ * importer, is `"use client"`, so this always compiled into the client graph.
+ * The directive arrived with `useDemoMode`, which merely made it true on the
+ * label too.)
+ *
+ * Fixture mode (`useDemoMode`, /demo and /demo/shell): the block renders
+ * exactly as it does signed in — same avatar, same two rows, the one fixture
+ * identity ("Sam Fixture") — but its links resolve to the public twins
+ * (`demoNavHrefs`), because /settings and /dashboard are auth bounces for the
+ * anonymous visitor this shell serves. Beneath it hangs `DemoSignupCta`: the
+ * demo's conversion block lives HERE, in chrome the signed-in shell spends on
+ * identity, because the board is the pitch and must not be covered, shifted
+ * or shortened by an ad for itself — the rail is a fixed 240px column and the
+ * footer anchors to its bottom, so nothing about the board's geometry moves.
  *
  * "Last synced" survived the collapse because it is the answer to the question
  * that drove the repeated manual re-syncs: *did this thing ever run?* Whether
@@ -90,10 +109,12 @@ const ROW =
   "group flex rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2 focus-accent";
 
 function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail: string | null }) {
+  // In fixture mode both destinations are auth bounces; resolve to the twins.
+  const demo = useDemoMode();
   if (!gmail.connected) {
     return (
       <Link
-        href="/settings"
+        href={demo ? demoHrefFor("/settings") : "/settings"}
         aria-label="Gmail is not connected — connect it in settings"
         className={`${ROW} items-start gap-2`}
       >
@@ -119,7 +140,7 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
 
   return (
     <Link
-      href="/dashboard"
+      href={demo ? demoHrefFor("/dashboard") : "/dashboard"}
       aria-label={
         otherMailbox
           ? `Gmail connected as ${otherMailbox} — open dashboard`
@@ -162,6 +183,7 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
 }
 
 export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
+  const demo = useDemoMode();
   // The avatar initial follows whatever the row prints, so the two agree.
   const identity = userName ?? userEmail;
   const initial = identity?.charAt(0).toUpperCase() ?? "·";
@@ -169,7 +191,7 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
   return (
     <div className="space-y-0.5">
       <Link
-        href="/settings"
+        href={demo ? demoHrefFor("/settings") : "/settings"}
         // Named, not just "Account": this link and the not-connected Gmail line
         // both point at /settings, and two adjacent links with near-identical
         // accessible names is how a screen reader loses the plot. The email
@@ -199,6 +221,13 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
         </span>
       </Link>
       {gmail ? <ConnectionLine gmail={gmail} userEmail={userEmail} /> : null}
+      {/* The demo's conversion block — see the header note. Its own top rule
+          marks where the stand-in identity ends and the invitation begins. */}
+      {demo ? (
+        <div className="border-t border-line-soft px-2 pb-1 pt-3">
+          <DemoSignupCta />
+        </div>
+      ) : null}
     </div>
   );
 }
