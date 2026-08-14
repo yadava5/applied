@@ -225,6 +225,53 @@ deploy.
 A branch's first preview always builds, so the e2e browser pass always has a
 preview URL.
 
+`scripts/test_vercel_ignore_build.mjs` pins every one of these answers against
+real commits from this repository's history, and
+`scripts/negative_control_ignore_build.mjs` breaks the guard ten ways to prove
+that suite can go red. Both run in CI (`.github/workflows/vercel-ignore-build.yml`)
+on any change to the guard, to either `vercel.json`, or to `.vercelignore`. If
+you change the allowlist, change the suite in the same commit.
+
+### An environment-variable change cannot trigger a build
+
+**Adding, changing or enabling an environment variable will not deploy itself,
+and the attempt fails silently.** Vercel injects environment variables at deploy
+time, so a new variable is inert until a build picks it up — but `vercel
+redeploy` of the current production deployment sets `VERCEL_GIT_PREVIOUS_SHA`
+to the very commit being redeployed. The guard then diffs a commit against
+itself, finds nothing, and skips.
+
+Observed exactly that on 2026-08-14 while activating
+`SUPABASE_SERVICE_ROLE_KEY`: deployment `jobtracker-2g3prxucv` went straight to
+**CANCELED**, production kept serving the old build, and the variable stayed
+inert with nothing anywhere reporting a problem.
+
+The guard is right by its own contract — it answers "did this commit touch
+anything this project builds from", and for a redeploy of an unchanged commit
+the honest answer is no. The gap is that **the question it asks is not the only
+reason a build is needed.** Config lives outside the tree and a path diff cannot
+see it.
+
+**So after changing an environment variable, push a commit that touches that
+project's allowlist.** It is the only route verified to work here, and it has
+the side benefit of leaving a record of when the variable took effect.
+
+Two things that look like shortcuts and are not:
+
+- **`--force` is about the build cache, not this guard.** Vercel documents
+  `vercel deploy --force` as bypassing the *build cache*; nothing in the docs
+  says it bypasses the Ignored Build Step. Do not assume it does — the observed
+  behaviour above is a redeploy reaching the guard and being CANCELED by it.
+- **A CLI `vercel --prod` has the same trap by a different route.** A CLI
+  deployment supplies no `VERCEL_GIT_PREVIOUS_SHA`, so on production the guard
+  falls back to `HEAD^` — a one-commit window that will skip just as readily if
+  the tip commit happens to touch nothing the project builds from.
+
+Do not "fix" this by making a same-SHA diff build. That would mean the guard can
+never skip anything, which is the entire feature. `scripts/test_vercel_ignore_build.mjs`
+pins the current behaviour so a change to it is a decision rather than an
+accident.
+
 ### The ignore step does not save quota — read this before "optimising" it
 
 An Ignored Build Step skip still costs a deployment. This is the opposite of
@@ -243,19 +290,41 @@ that no-op commits stop replacing. Worth having — but it is not the cap.
 
 ### `git.deploymentEnabled` is the part that saves quota
 
-Both `vercel.json` files also carry:
+Both `vercel.json` files carry a `git.deploymentEnabled` block, and **the two
+are no longer the same** — `apps/web/vercel.json` still filters only Dependabot,
+while the root (api) config now refuses every branch except `main`:
 
 ```json
+// apps/web/vercel.json — web previews are looked at by a human before merge
 "git": { "deploymentEnabled": { "dependabot/**": false, "dependabot/*": false } }
 ```
 
-Vercel never *triggers* a deployment for these branches, so nothing is created
-and nothing is counted. Dependabot previews were already being thrown away by
-the ignore step; this stops paying a deployment for the privilege. Dependabot
+```json
+// vercel.json — the api takes no previews at all
+"git": { "deploymentEnabled": { "**": false, "main": true } }
+```
+
+Vercel never *triggers* a deployment for a disabled branch, so nothing is
+created and nothing is counted. That is the part that saves quota; the ignore
+step is not.
+
+The api's `"**": false` landed after 2026-08-13, when the api project spent its
+whole daily allowance on previews and then could not deploy production for
+eleven hours. Nothing consumes an api preview: `e2e-ci.yml` boots its own
+FastAPI on `localhost:8000`, `production.spec.ts` runs against a local `next
+start`, and there is no UI on an api preview to look at. **The `"main": true`
+key is load-bearing, not decorative.** Precedence here is not
+most-specific-wins — "If a branch matches multiple rules and at least one rule
+is `true`, a deployment will occur"
+([docs](https://vercel.com/docs/project-configuration/git-configuration)) — so
+`"**": false` alone would take production down with it.
+
+The web project is deliberately left on the Dependabot-only filter: its
+previews are looked at by a human before merge, which is a real use. Dependabot
 branches never need a preview URL — the Claude-in-Chrome e2e pass only ever
 runs against real feature work.
 
-**The `**` is load-bearing.** These patterns are
+**In the web config, the `**` is what does the work.** These patterns are
 [minimatch](https://github.com/isaacs/minimatch), where `*` does not cross a
 `/`. Real branch names here look like
 `dependabot/pip/backend/beautifulsoup4-gte-4.15.0` — three slashes — so a
@@ -265,10 +334,25 @@ matcher that treats `*` as crossing `/`; where rules conflict Vercel takes the
 permissive one, and both of these are `false`, so they cannot fight.
 
 `main` has no branch protection and no rulesets, so no Vercel status is a
-required check and a missing or skipped one cannot block a merge. Vercel's
-documented commit statuses are terminal in any case — a commit status reports
-that it "successfully deployed or failed, or skipped its Vercel deployment" —
-so there is no pending-forever state to get stuck on.
+required check and a missing or skipped one cannot block a merge.
+
+**Do not rely on a Vercel commit status arriving at all.** The documentation
+describes them as terminal — a status reports that a commit "successfully
+deployed or failed, or skipped its Vercel deployment" — but that describes
+statuses that get posted, not a guarantee that one will be. Measured on
+2026-08-13 while the daily cap was exhausted (#174):
+
+| commit    | what Vercel posted                                             |
+| --------- | -------------------------------------------------------------- |
+| `d3765b2` | `success` on both; api reads "Canceled by Ignored Build Step"   |
+| `12b8aee` | `failure` on both: "Deployment rate limited — retry in 24 hours" |
+| `9394485` | web `success`, api `failure` (rate limited)                     |
+| `60fcec2` | **nothing at all** — no status, no deployment, `pending` forever |
+
+So a merge to `main` really can sit at `pending` indefinitely with no deployment
+behind it, and `gh pr checks` shows green because there is nothing red to show.
+The absence of a signal is not success here. Checking that production actually
+moved is a separate act from checking that CI went green.
 
 ### The dashboard "Skip deployments when there are no changes…" toggle is inert here
 

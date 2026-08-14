@@ -111,3 +111,11 @@ build/
 # with a leading `/` so the tracked `booklet/package-lock.json` is untouched.
 /node_modules/
 /package-lock.json
+
+## Negative control for the Vercel ignore-build guard.
+# scripts/negative_control_ignore_build.mjs writes a deliberately broken copy
+# of vercel-ignore-build.sh here and removes it again. It has to live inside
+# the repo: the guard resolves its repo root from its own directory, so a copy
+# in /tmp would take the "no git checkout here" arm and pass for the wrong
+# reason. Ignored so a crashed run cannot leave a committable artifact.
+.ignore-build-mutant.sh
