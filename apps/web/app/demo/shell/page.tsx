@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 
 import { DemoDashboard, type DemoReviewSlot } from "@/components/demo/DemoDashboard";
 import { AppShellFrame } from "@/components/shell/AppShellFrame";
+import { DEMO_AMBIENT_COOKIE, parseDemoAmbientPref } from "@/lib/demo/ambientPref";
 import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 import type { RailData } from "@/lib/shell/rail";
 
@@ -130,9 +131,12 @@ export default async function DemoShellPage({
   // shadowed the preference would make the pref→slot e2e untestable here.
   const reviewSlot: DemoReviewSlot | undefined =
     queue === "before" ? "before" : queue === "after" ? "after" : undefined;
-  const notifications = parseDemoNotificationPrefs(
-    (await cookies()).get(DEMO_NOTIFICATIONS_COOKIE)?.value,
-  );
+  const jar = await cookies();
+  const notifications = parseDemoNotificationPrefs(jar.get(DEMO_NOTIFICATIONS_COOKIE)?.value);
+  // The rail's ambient-mail pref, from the cookie the demo Settings toggle
+  // writes — read server-side exactly as the (app) layout reads the real
+  // metadata, so the twin's rail is the signed-in rail's honest stand-in.
+  const ambient = parseDemoAmbientPref(jar.get(DEMO_AMBIENT_COOKIE)?.value);
   // Literal "1" only, the same shape as the knobs above: anything else leaves
   // the twin in its honest default, so a stray `?session=` in a shared link
   // cannot quietly put a sign-out in front of an anonymous visitor.
@@ -153,7 +157,13 @@ export default async function DemoShellPage({
     // display name now, and a twin that still printed the address would drift
     // from the surface it stands in for (the bug class this route exists to
     // prevent). Same persona as /demo/settings' profile: one fixture identity.
-    <AppShellFrame rail={rail} userEmail="demo@applied.example" userName="Sam Fixture" demo>
+    <AppShellFrame
+      rail={rail}
+      userEmail="demo@applied.example"
+      userName="Sam Fixture"
+      ambient={ambient}
+      demo
+    >
       <DemoDashboard
         variant="locked"
         pipeline={pipeline === "early" ? "early" : "seed"}

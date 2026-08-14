@@ -32,6 +32,7 @@ import {
   statusChangeRequest,
   type ProxyRequest,
 } from "@/lib/dashboard/rowActions";
+import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
 
 /** What a row mutation came back with. */
 export interface SendResult {
@@ -112,6 +113,11 @@ export const liveBoardTransport: BoardTransport = {
     // changes nothing, so it folds nothing.
     if (result.ok) noteUserStageChange(LAST_LOOK_KEY, id, result.status ?? status);
     if (result.ok) invalidateDetail(id);
+    // A stage that moved is the rail's business too: the ambient field
+    // (ambient-bus) surges on real changes, and every stage write funnels
+    // through here — so this one publish covers drag, the card's select and
+    // the detail sheet alike.
+    if (result.ok) publishAmbientPulse(1);
     return result;
   },
   // Every row-scoped write drops that row's cached detail on success, so the

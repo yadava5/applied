@@ -10,6 +10,7 @@ import { NotificationsSection } from "@/components/settings/NotificationsSection
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { getGmailStatus } from "@/lib/gmail/server";
+import { readAmbientPref } from "@/lib/settings/ambient";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { deletionEnabled } from "@/lib/supabase/admin";
 import { getCurrentUser } from "@/lib/supabase/auth";
@@ -198,7 +199,7 @@ export default async function SettingsPage({
             memberSince={memberSince}
             signIn={summarizeSignIn(user)}
           />
-          <AppearanceSection />
+          <AppearanceSection initialAmbient={readAmbientPref(meta)} />
           <Suspense fallback={<GmailCardFallback />}>
             <LiveGmailCard />
           </Suspense>

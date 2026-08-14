@@ -14,6 +14,8 @@ type AppShellProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
+  /** The ambient-mail pref, read from user metadata by the layout. */
+  ambient?: boolean;
 };
 
 /**
@@ -33,9 +35,15 @@ type AppShellProps = {
  * shell shares them with the page it wraps. `TopBar` is a Client Component
  * because sign-out calls into supabase-js in the browser.
  */
-export async function AppShell({ children, rail, userEmail, userName = null }: AppShellProps) {
+export async function AppShell({
+  children,
+  rail,
+  userEmail,
+  userName = null,
+  ambient = true,
+}: AppShellProps) {
   return (
-    <AppShellFrame rail={await rail} userEmail={userEmail} userName={userName}>
+    <AppShellFrame rail={await rail} userEmail={userEmail} userName={userName} ambient={ambient}>
       {children}
     </AppShellFrame>
   );

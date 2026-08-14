@@ -428,11 +428,13 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
               remember which rows you had already looked at.
             </P>
             <P>
-              The public demo sets one cookie of its own, <M>applied-demo-notifications</M>, scoped
-              to <M>/demo</M>. It holds the two notification toggles you flip on the demo settings
-              page, so the demo board can show what they do. Unlike the two above it <em>is</em>{" "}
-              sent to the server — that is how the demo pages read it — but it never reaches the
-              signed-in app, it carries no identity, and it is gone when you close the browser.
+              The public demo sets two cookies of its own, <M>applied-demo-notifications</M> and{" "}
+              <M>applied-demo-ambient</M>, both scoped to <M>/demo</M>. They hold the toggles you
+              flip on the demo settings page — the two notification switches and the sidebar&apos;s
+              ambient-mail switch — so the demo pages can show what they do. Unlike the two above
+              they <em>are</em> sent to the server — that is how the demo pages read them — but they
+              never reach the signed-in app, they carry no identity, and they are gone when you
+              close the browser.
             </P>
             <P>
               Applied’s own log lines record identifiers and outcomes — a user id, a count,

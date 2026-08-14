@@ -18,6 +18,7 @@ import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
+import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
 import {
   demoApplicationsAsApi,
   demoEarlySearchAsApi,
@@ -250,6 +251,9 @@ export function DemoDashboard({
         // ledger's baseline so it is never reported back to them as news.
         // Same call, same reason, as the live transport.
         noteUserStageChange(LAST_LOOK_DEMO_KEY, id, status);
+        // And, same as the live transport: a stage that moved surges the
+        // rail's ambient field (only /demo/shell mounts a rail to hear it).
+        publishAmbientPulse(1);
         commit({
           ...s,
           apps: s.apps.map((app) => (app.id === id ? { ...app, status } : app)),
