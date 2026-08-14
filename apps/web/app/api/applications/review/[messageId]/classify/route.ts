@@ -19,6 +19,11 @@ import { classifyReviewItem } from "@/lib/applications/server";
  * rather than forwarding it, so every field it does not name is silently lost;
  * that is how `confidence` died in the inbox relay and how `applied_date` and
  * `url` died on create.
+ * `confirm_new_company` is forwarded because it is the ONLY way to answer the
+ * backend's near-miss question with "no, a different company" — dropped, that
+ * button re-asks forever and an employer one edit from one already on the board
+ * can never be filed. It was in fact dropped, on this hop and the next, from
+ * the day the question shipped (#181/#167).
  * The backend's body is passed through UNRESHAPED — `needs_employer`,
  * `message_id` and `detail` are what tell the caller whether anything was
  * actually filed, and narrowing them away here would recreate the bug the flag
