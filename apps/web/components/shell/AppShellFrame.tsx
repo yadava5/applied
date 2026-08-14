@@ -1,14 +1,13 @@
 import type { ReactNode } from "react";
 
-
+import type { RailData } from "@/lib/shell/rail";
 import { ShellSlotProvider } from "./shell-slots";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
 type AppShellFrameProps = {
   children: ReactNode;
-  /** The footer's Gmail connection line, already rendered. See `Sidebar`. */
-  connection: ReactNode;
+  rail: RailData;
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
@@ -48,7 +47,7 @@ type AppShellFrameProps = {
  */
 export function AppShellFrame({
   children,
-  connection,
+  rail,
   userEmail,
   userName = null,
   demo = false,
@@ -60,7 +59,7 @@ export function AppShellFrame({
     // reasoning), and page headers learn they are inside a shell at all.
     <ShellSlotProvider>
       <div className="flex h-dvh w-full overflow-hidden">
-        <Sidebar connection={connection} userEmail={userEmail} userName={userName} />
+        <Sidebar rail={rail} userEmail={userEmail} userName={userName} />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar userEmail={userEmail} userName={userName} demo={demo} />
           {/* ONE page geometry for every authed surface: a shared centred column

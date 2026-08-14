@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 
 import { DemoDashboard, type DemoReviewSlot } from "@/components/demo/DemoDashboard";
 import { AppShellFrame } from "@/components/shell/AppShellFrame";
-import { ConnectionLine } from "@/components/shell/RailFooter";
 import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 import type { RailData } from "@/lib/shell/rail";
 
@@ -154,16 +153,7 @@ export default async function DemoShellPage({
     // display name now, and a twin that still printed the address would drift
     // from the surface it stands in for (the bug class this route exists to
     // prevent). Same persona as /demo/settings' profile: one fixture identity.
-    <AppShellFrame
-      /* Fully resolved, no boundary: the fixture's data is a literal, so the
-         twin renders the identical markup the signed-in shell settles to —
-         which is the whole point of this route. It exercises the SETTLED
-         state; the streaming fallback is not a fixture surface. */
-      connection={<ConnectionLine gmail={rail.gmail} userEmail="demo@applied.example" />}
-      userEmail="demo@applied.example"
-      userName="Sam Fixture"
-      demo
-    >
+    <AppShellFrame rail={rail} userEmail="demo@applied.example" userName="Sam Fixture" demo>
       <DemoDashboard
         variant="locked"
         pipeline={pipeline === "early" ? "early" : "seed"}

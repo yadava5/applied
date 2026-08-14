@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
-import type { ReactNode } from "react";
+import type { RailData } from "@/lib/shell/rail";
 import { isNavItemActive, navItems } from "./nav";
 import { NavLink } from "./NavLink";
 import { RailFooter } from "./RailFooter";
@@ -48,27 +48,18 @@ import { useShellSlots } from "./shell-slots";
  * Micro-interactions: icons nudge right on hover (motion-safe only) and every
  * interactive element carries a visible cyan focus ring for keyboard users.
  *
- * The footer's connection line arrives already rendered (`connection`), not as
- * data: it is the one thing here that needs a backend answer, so it streams in
- * behind its own Suspense boundary — which has to live on the SERVER side of
- * this client component. This component just renders what it is handed.
+ * `rail` is assembled server-side by `lib/shell/rail` (type-only import here,
+ * erased at compile time) — this component just renders what it is handed.
  */
 
 type SidebarProps = {
-  /**
-   * The footer's Gmail connection line, already rendered. A SLOT, not data:
-   * this is a Client Component, and the line's Suspense boundary lives on the
-   * server side of that line so the probe can stream in without the page's own
-   * render waiting for it (see `AppShell`). A resolved element passes through
-   * here untouched.
-   */
-  connection: ReactNode;
+  rail: RailData;
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
 };
 
-export function Sidebar({ connection, userEmail, userName = null }: SidebarProps) {
+export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
   const pathname = usePathname();
   const { setRail } = useShellSlots();
 
@@ -133,7 +124,7 @@ export function Sidebar({ connection, userEmail, userName = null }: SidebarProps
       </div>
 
       <div className="shrink-0 border-t border-line-soft px-3 py-3">
-        <RailFooter connection={connection} userName={userName} userEmail={userEmail} />
+        <RailFooter gmail={rail.gmail} userName={userName} userEmail={userEmail} />
       </div>
     </aside>
   );
