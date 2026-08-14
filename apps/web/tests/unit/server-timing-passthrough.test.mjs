@@ -212,11 +212,21 @@ test("every read-path proxy carries the backend's Server-Timing", () => {
       `the scan is not seeing ${known} — found: ${readPath.join(", ") || "none"}`,
     );
   }
-  // And the exemption must still name a handler the scan reaches, or it is a
-  // hole rather than an exception.
+  // And the exemption must still name a handler the scan reaches, AND that
+  // handler must still be the thing the exemption claims it is. A name-match
+  // escape hatch that nobody re-checks is how an allowlist rots into a hole:
+  // if the export is ever rewritten into a single backend read, the reason for
+  // exempting it is gone and the gate should say so rather than keep letting
+  // it through.
   assert.ok(
     readPath.includes(FANS_OUT),
     `${FANS_OUT} is exempted but the scan no longer sees it — re-derive the exemption`,
+  );
+  const fanOutGet = getHandler(sources.get(FANS_OUT));
+  assert.ok(
+    fanOutGet.includes("buildExportPages(") && fanOutGet.includes("collectMail("),
+    `${FANS_OUT} is exempted because its GET fans out into a backend call per page, and it ` +
+      `no longer does — either it copies the timing now, or the exemption needs a new reason`,
   );
 
   const offenders = readPath.filter(
