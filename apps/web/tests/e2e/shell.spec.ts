@@ -383,9 +383,23 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(trigger).toBeFocused();
     await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
 
+    // The claim, where the reader actually reads it. Below `xl` this line is
+    // display:none — the named row has taken it — so the assertion above is
+    // about textContent, and the owner quoted the caption AND the named row in
+    // one breath, which only happens from 1280 up. The panel's own trigger
+    // moves to this line at that width (see PulseCell), so a caption that
+    // collides with the chevron shows up here as a clipped sentence.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(caption).toBeVisible();
+    await expect(caption).toHaveText("1 overdue · 1 due within 2 days");
+    await expect(page.getByText("Tidewater Labs")).toBeVisible();
+    const captionClip = await caption.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(captionClip, "the claim loses characters to the chevron at 1280").toBeLessThanOrEqual(0);
+
     // A board with nothing due has nothing to open, on the same terms as the
     // three cells that gate on having data at all — and its caption is still
     // the honest empty state, not a panel of invented urgency.
+    await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/demo/shell?pipeline=early");
     await expect(pageHeading(page)).toBeVisible();
     await expect(page.getByRole("button", { name: "Deadlines detail" })).toHaveCount(0);

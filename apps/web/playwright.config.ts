@@ -27,13 +27,16 @@ const desktopChrome = {
 
 /**
  * The specs whose assertions depend on WHICH CALENDAR DAY IT IS — the only
- * ones the offset projects below re-run. `demo.spec.ts` is the whole list:
- * it is the only file in `tests/e2e` that mentions a deadline state at all
- * (`overdue`, `due ≤2d`, `due in Nd`), because /demo is the only surface CI
- * can reach without a Supabase session. If a day-dependent assertion is ever
- * added to another spec, add that file here too.
+ * ones the offset projects below re-run. `demo.spec.ts` was the whole list
+ * while it was the only file naming a deadline state (`overdue`, `due in Nd`,
+ * the pulse cell's window claim), because /demo is the only surface CI can
+ * reach without a Supabase session. `shell.spec.ts` joined it on 2026-08-13:
+ * the deadline cell's caption and its detail panel are asserted there against
+ * the same date-derived fixtures, so both are re-run at the two extreme
+ * offsets. If a day-dependent assertion is ever added to another spec, add
+ * that file here too.
  */
-const DAY_DEPENDENT_SPECS = /demo\.spec\.ts/;
+const DAY_DEPENDENT_SPECS = /(demo|shell)\.spec\.ts/;
 
 export default defineConfig({
   testDir: "./tests/e2e",
