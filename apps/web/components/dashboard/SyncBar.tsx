@@ -38,8 +38,9 @@ import {
   stopReasonPhrase,
   syncMemoryLine,
   syncReceiptNote,
-  syncScopeLine,
+  syncRunningSentence,
   type RebuildDepth,
+  type RebuildMemory,
   type RebuildOutcome,
   type RebuildRange,
   type ScanEnd,
@@ -94,8 +95,10 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * There is deliberately NO progress percentage anywhere here: the server sync
  * is one request that returns once, so any fraction would be fabricated. What
  * runs instead is honest — the scope stated up front, a count-up clock
- * (elapsed time is the one number the browser truly knows), and the measured
- * duration of the last rebuild remembered for the next dialog.
+ * (elapsed time is the one number the browser truly knows), the LAST run's
+ * measured duration joining the line once this run outlasts it (the mid-run
+ * answer to "how long will this take", #160 — see `syncRunningSentence`), and
+ * the measured duration of the last rebuild remembered for the next dialog.
  *
  * That rule was re-tested against the real board rather than assumed (#160).
  * Timed on the signed-in dashboard at 1024: `POST /api/gmail/sync` takes
@@ -141,13 +144,6 @@ type SyncPhase =
 /** Cooldown so the staleness auto-sync runs at most once per window per tab. */
 const AUTOSYNC_KEY = "applied:dashboard:autosync:lastAt";
 const AUTOSYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
-
-/** When a running sync stops feeling instant and starts saying so. The clock
- *  beside the sentence runs from the first tick, not from here: a line that
- *  did not move for the whole 3.2s a sync takes is the other half of what was
- *  reported as frozen (#160), and elapsed is the one number the browser truly
- *  knows. This constant only changes the WORDING. */
-const SLOW_SYNC_AFTER_MS = 8000;
 
 /** How long a finished sync's resting note holds the status slot before the
  *  row goes quiet again. Long enough to read one short sentence — the board's
@@ -276,10 +272,12 @@ export function SyncBar({
   const [range, setRange] = useState<RebuildRange>(REBUILD_DEFAULT_RANGE);
   const [depth, setDepth] = useState<RebuildDepth>(REBUILD_DEFAULT_DEPTH);
   const [memoryLine, setMemoryLine] = useState<string | null>(null);
-  /** `Your last sync took 3 s.` — the Sync button's tooltip tail once a run
-   *  has been timed. Held in state rather than read during render because
-   *  localStorage does not exist on the server pass. */
-  const [syncMemory, setSyncMemory] = useState<string | null>(null);
+  /** The last measured sync — duration, coverage, when. Feeds the Sync
+   *  button's tooltip tail (`Your last sync took 3 s.`) and the running
+   *  line's outlasted swap (see `syncRunningSentence`, #160). Held in state
+   *  rather than read during render because localStorage does not exist on
+   *  the server pass. */
+  const [lastSync, setLastSync] = useState<RebuildMemory | null>(null);
   /** Ticks while a sync/rebuild runs so the elapsed clock stays honest. */
   const [nowMs, setNowMs] = useState(() => Date.now());
   const autoRan = useRef(false);
@@ -321,7 +319,7 @@ export function SyncBar({
     // report an older run as if it were the last one.
     const elapsedMs = Date.now() - startedAt;
     writeRebuildMemory(syncMemoryKey, elapsedMs, end.scanned);
-    setSyncMemory(syncMemoryLine({ ms: elapsedMs, scanned: end.scanned, at: Date.now() }));
+    setLastSync({ ms: elapsedMs, scanned: end.scanned, at: Date.now() });
     // Disconnected / unexpected mid-scan is not "press again" — it is
     // "something is wrong", and it gets the alert, not a resting note.
     if (stopKind(end.stoppedBy) === "broken") {
@@ -419,8 +417,7 @@ export function SyncBar({
     // Deferred off the effect body (house rule — no synchronous setState in
     // an effect), which also keeps the read off the server pass entirely.
     const id = window.setTimeout(() => {
-      const memory = readRebuildMemoryFromStorage(syncMemoryKey);
-      setSyncMemory(memory ? syncMemoryLine(memory) : null);
+      setLastSync(readRebuildMemoryFromStorage(syncMemoryKey));
     }, 0);
     return () => window.clearTimeout(id);
   }, [syncMemoryKey]);
@@ -503,9 +500,12 @@ export function SyncBar({
             honest thing about the scan that is knowable before it returns —
             measured: a cursored sync comes back `scanned: 0` with no
             estimate, so there is nothing to count while it runs and any
-            advancing number would be invented. See `syncScopeLine`. */}
+            advancing number would be invented. Once the run outlasts the
+            LAST measured one, the sentence answers "how long" with that
+            measurement — past tense, never a forecast. See
+            `syncRunningSentence` for both halves and the width budget. */}
         <span className="lg:min-w-0 lg:truncate">
-          {elapsed >= SLOW_SYNC_AFTER_MS ? "still checking" : syncScopeLine(hasCursor)}
+          {syncRunningSentence(hasCursor, elapsed, lastSync)}
         </span>
         {/* The clock from the first tick, not only once the run is slow: a
             typical sync is ~3s, so under the old gate nothing in this line
@@ -743,6 +743,11 @@ export function SyncBar({
         <p
           role="status"
           aria-live="polite"
+          // Named for the specs: the surface holds a SECOND role="status"
+          // now — the filing receipt inside the `+` (AddApplicationForm,
+          // #81) — so "the sync status line" must be addressable without
+          // resolving to both.
+          data-sync-status=""
           className={
             statusContent === null
               ? "sr-only"
@@ -870,7 +875,7 @@ export function SyncBar({
                 // has none to give — spending ~97px of it is how sign-out
                 // wrapped the row (#172). Absent until a run has been timed.
                 title={`Checks Gmail for new mail and adds what it finds. Never removes anything.${
-                  syncMemory ? ` ${syncMemory}` : ""
+                  lastSync ? ` ${syncMemoryLine(lastSync)}` : ""
                 }`}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -994,10 +999,29 @@ export function SyncBar({
             names panel's containing block in BOTH schemes: `top-full` is
             the row's bottom at `lg`+ (below every control, wrapped or not —
             the #172 sheet-over-the-Sync-button failure cannot recur) and
-            the chip line's bottom in the stack below `lg`. */}
+            the chip line's bottom in the stack below `lg`.
+
+            While the status line SPEAKS, the overlay yields the row
+            (`lg:hidden`, #160): the plate is centred over the same middle a
+            speaking status uses, and it sits ABOVE it — measured on this
+            build (headless Chromium, `next start`, 2026-08-14), the centred
+            plate covered 34px of the head of `checking since last sync ·
+            0:00` at 1024 in the signed-in arrangement, and 109px/73px at
+            1024/1280 on the pill-furnished twin, so the sync's one line of
+            life read "…ng since last sync". placePlate cannot absorb that:
+            it re-measures on resize only (a status appearing mid-run is
+            invisible to it), and its slide is bounded by the totals-win
+            rule (#196) long before 34px of clearance exists at 1024. One
+            transient statement at a time is already this row's law — the
+            recency phrase yields to the same statuses — and the ledger's
+            news is durable: the chip returns the moment the note decays
+            (~9s for a routine run). Below `lg` chip and status hold
+            separate stacked lines, so both stay. */}
         {since ? (
           <div
-            className="relative max-lg:order-last max-lg:w-full lg:pointer-events-none lg:absolute lg:inset-0 lg:pt-2.5"
+            className={`relative max-lg:order-last max-lg:w-full lg:pointer-events-none lg:absolute lg:inset-0 lg:pt-2.5${
+              statusTakesSlot ? " lg:hidden" : ""
+            }`}
             /* `--chip-tight`: the overlay tells the chip when the row is
                FURNISHED — the trailing pill spends 167px of right flank the
                live board does not have, and with it on the row the window

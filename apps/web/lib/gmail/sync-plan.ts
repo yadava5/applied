@@ -303,6 +303,54 @@ export function durationLabel(ms: number): string {
   return `${Math.max(1, Math.round(Math.max(0, ms) / 1000))} s`;
 }
 
+/** When a running sync with NO measured history stops feeling instant and
+ *  starts saying so. The clock beside the sentence runs from the first tick,
+ *  not from here — this threshold only changes the WORDING (#160). */
+export const SLOW_SYNC_AFTER_MS = 8000;
+
+/**
+ * Grace past the last measured duration before the running line says this run
+ * has outlasted it. Real runs on the same account drift a few hundred ms
+ * between presses; without slack, every run marginally slower than the last
+ * would flip the sentence for its final fraction of a second.
+ */
+export const SLOW_SYNC_GRACE_MS = 2000;
+
+/**
+ * The running line's sentence, and the mid-run answer to "how long will this
+ * take" (#160 — the owner's words: "no timer how long the sync will take").
+ *
+ * Until the run is slow it states scope ({@link syncScopeLine}). Once it IS
+ * slow, the one honest forward-looking fact this client holds — the measured
+ * duration of the LAST run — joins the sentence, in the past tense like every
+ * duration in this module: `still checking · last run 3 s`. "Slow" is
+ * relative to that same measurement (`last.ms` + {@link SLOW_SYNC_GRACE_MS}),
+ * because outlasting the previous run is the moment the question changes from
+ * "what is it doing" to "should it be done by now" — but never LATER than the
+ * fixed {@link SLOW_SYNC_AFTER_MS}: a 41 s full-scan memory must not hold the
+ * bare scope line for 40 s. No memory means no number, not an invented one.
+ *
+ * Width-budgeted like the scope line above: `still checking · last run 3 s`
+ * lays out 138px at text-xs (measured on the production build, headless
+ * Chromium, 2026-08-14) against the 304px the signed-in row's status slot
+ * holds at 1024 once the chip overlay yields to a speaking status (#160) —
+ * "took" was cut to keep it near the scope line's own footprint, since the
+ * pill-furnished fixture twin's 137px slot truncates even that today. No e2e
+ * fixture reaches this branch — the demo's simulated 1.2 s sync ends before
+ * its own swap point — so it is exercised by `tests/unit/sync-plan.test.mjs`,
+ * the same debt the two waiting states carry (task #96).
+ */
+export function syncRunningSentence(
+  hasCursor: boolean,
+  elapsedMs: number,
+  last: RebuildMemory | null,
+): string {
+  const slowAfterMs =
+    last === null ? SLOW_SYNC_AFTER_MS : Math.min(SLOW_SYNC_AFTER_MS, last.ms + SLOW_SYNC_GRACE_MS);
+  if (elapsedMs < slowAfterMs) return syncScopeLine(hasCursor);
+  return last === null ? "still checking" : `still checking · last run ${durationLabel(last.ms)}`;
+}
+
 /**
  * Gmail's `resultSizeEstimate` drifts between pages of the same query, so a
  * client using it as a denominator must never let it sit BELOW what has

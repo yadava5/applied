@@ -17,7 +17,10 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * stand-in for the auth-gated dashboard.)
  */
 
-/** The sync surface's own live regions, scoped off its `data-sync-surface`. */
+/** The sync surface's own live regions, scoped off its `data-sync-surface`.
+ *  The sync STATUS line specifically is `[data-sync-status]` within it: the
+ *  surface holds a second `role="status"` since #81 (the `+`'s filing
+ *  receipt), so a bare-role locator resolves to two elements. */
 function syncSurface(page: Page) {
   return page.locator("[data-sync-surface]");
 }
@@ -182,7 +185,7 @@ test.describe("live demo (/demo)", () => {
 
     await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
     // The additive path reports through the one status line…
-    await expect(syncSurface(page).getByRole("status")).toContainText("2 filed, 3 already known");
+    await expect(syncSurface(page).locator("[data-sync-status]")).toContainText("2 filed, 3 already known");
     // …and the board actually gained the two filed fixture rows.
     await expect(page.getByRole("region", { name: /applied — 12/i })).toBeVisible();
     await expect(page.getByText("Twitch", { exact: true })).toBeVisible();
@@ -204,7 +207,7 @@ test.describe("live demo (/demo)", () => {
     // row's 208px status slot at 1024 and was clipped mid-word. `toContainText`
     // so the measured duration the receipt now appends ("· 1 s") does not
     // make this assertion race the fixture's own timing.
-    await expect(syncSurface(page).getByRole("status")).toContainText(
+    await expect(syncSurface(page).locator("[data-sync-status]")).toContainText(
       "no new mail since last sync",
     );
   });
@@ -326,7 +329,7 @@ test.describe("live demo (/demo)", () => {
     await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
     // The running line restates the chosen window; the only number ticking is
     // the elapsed clock — never a percentage, here or on the receipt.
-    await expect(syncSurface(page).getByRole("status")).toContainText(
+    await expect(syncSurface(page).locator("[data-sync-status]")).toContainText(
       "rebuilding · up to 750 messages · last 12 months · all mail",
     );
     await expect(syncSurface(page)).not.toContainText("%");
