@@ -2,6 +2,15 @@
 
 # dependencies
 /node_modules
+
+# pnpm is this app's package manager and pnpm-lock.yaml is the tracked lockfile.
+# An `npm install` run here — by a person or an agent reaching for the habitual
+# command — writes a package-lock.json that was neither tracked nor ignored, so
+# it sat in `git status` as a permanent stray and made `npm ci` impossible
+# (it needs a lockfile it can trust, and this one describes a different
+# resolution than pnpm's). Two separate agents tripped over it in one evening.
+# Scoped to this app on purpose: booklet/package-lock.json is tracked and real.
+/package-lock.json
 /.pnp
 .pnp.*
 .yarn/*
