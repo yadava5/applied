@@ -119,11 +119,18 @@ function ExpandedTrace({ email }: { email: SampleEmail }) {
               <span className="w-16 shrink-0 text-dim">
                 {meta.n} · {meta.label}
               </span>
-              {/* A skipped layer drops a rank on the text ramp, not below it: the
-                  old `text-dim/70` composited to Lc 19.6 on this surface, which is
-                  not "quiet", it is unreadable. The dot's 0.3 opacity above is
-                  decoration and can carry the skipped state on its own. */}
-              <span className={dim ? "text-dim" : "text-muted"}>
+              {/* The note is the payload of the trace — `never ran` is what says
+                  layers 2 and 3 were skipped because layer 1 already cleared the
+                  gate — so it does NOT drop a rank when the layer is skipped.
+                  Measured on a production build at 1024, composited over the real
+                  painted backdrop: `muted` is 10.7:1 / APCA Lc 70.2 at 11px here,
+                  where `dim` was 8.98:1 / Lc 60.9 — passing AA but a hair over the
+                  Lc 60 floor for secondary text, and the quietest thing in its own
+                  row. (Older still was `text-dim/70`, 2.88:1 on the pre-raise
+                  palette; that alpha is gone. See applied#79.) The skipped state
+                  is carried by the dot's 0.3 opacity above and by the dim layer
+                  name beside it, so the sentence itself never has to whisper. */}
+              <span className="text-muted">
                 {step.state === "answered" ? "answered — " : step.state === "passed" ? "passed — " : ""}
                 {step.note}
               </span>
