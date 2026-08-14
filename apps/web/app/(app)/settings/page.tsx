@@ -28,22 +28,26 @@ export const metadata: Metadata = {
  *
  * Every section below seeds its own `useState` from a prop this server
  * component read out of the Supabase user's metadata (`initialName`,
- * `initial`, `initialGate`), saves through `settingsTransport.saveMetadata`,
- * and — unlike every mutating surface on the dashboard and the inbox — does
- * NOT call `router.refresh()`. Today that is harmless, because leaving and
- * returning re-renders this page against fresh metadata. Under a 30-second
- * cache it would not be: toggle the weekly digest on, click Dashboard, click
- * Settings, and the toggle would sit there visibly switched back off until the
- * window expired. A just-saved setting reverting in front of you is a bug, not
- * a stale number.
+ * `initial`, `initialGate`). Under a 30-second cache, a stale entry for THIS
+ * route is a just-saved setting reverting in front of you: toggle the weekly
+ * digest on, click Dashboard, click Settings, and the toggle sits there
+ * visibly switched back off until the window expires. That is a bug, not a
+ * stale number.
  *
  * `0` means "never reuse", and it is a distinct value rather than a fallback —
  * Next's sentinel for "the page said nothing" is `-1`
  * (`UnknownDynamicStaleTime`), so this genuinely pins the route.
  *
- * The other half of the fix is to make those sections refresh after a save,
- * at which point this line can go. That is a change to
- * `components/settings/**`, which is not this branch's to make.
+ * The other half of the fix — the sections calling `router.refresh()` after a
+ * successful save, so the DASHBOARD stops serving a cached payload with the
+ * old placement — landed with #216: `NotificationsSection`, `ProfileSection`
+ * and `ClassificationSection` all publish now. This pin stays anyway, and
+ * deliberately. It costs one cheap render of a route nobody navigates in a
+ * loop, and it is the backstop for the case the refreshes cannot cover: a
+ * section that writes metadata WITHOUT refreshing (the next one added, or the
+ * OAuth round-trip that returns to `/settings?gmail=connected` from outside
+ * the router entirely). The failure it prevents is a control lying about its
+ * own state, which is the worst kind here.
  */
 export const unstable_dynamicStaleTime = 0;
 

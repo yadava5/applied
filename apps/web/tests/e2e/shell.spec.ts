@@ -1,6 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+// `queuePlacement` moved to the shared helpers with #216: `settings.spec.ts`
+// now drives the same two slots from a real notification preference, and both
+// specs must read the placement identically.
+import {
+  expectNoHorizontalOverflow,
+  MOBILE_375,
+  queuePlacement,
+  startConsoleWatch,
+} from "./helpers";
 import { requireSession } from "./session";
 
 /**
@@ -60,26 +68,6 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    */
   const pageHeading = (page: Page) =>
     page.getByRole("heading", { level: 1, name: "Applications", exact: true });
-
-  /**
-   * WHERE the needs-review queue sits inside the worklist, read off the DOM
-   * rather than off the URL. Presence alone would be a check that cannot fail:
-   * if `?queue=before` silently rendered in the `after` slot, every assertion
-   * below would still pass and the `before` state would be the `after` state
-   * measured twice. The queue and the stage groups are all direct <section>
-   * children of the pane, so their order settles it.
-   */
-  const queuePlacement = (page: Page) =>
-    page.evaluate(() => {
-      const pane = document.querySelector('[data-testid="worklist-pane"]');
-      if (!pane) return "no pane";
-      const kids = Array.from(pane.children);
-      const queue = kids.find((el) => el.id === "needs-classification");
-      if (!queue) return "absent";
-      const firstGroup = kids.find((el) => el.tagName === "SECTION" && el !== queue);
-      if (!firstGroup) return "no stage groups";
-      return kids.indexOf(queue) < kids.indexOf(firstGroup) ? "before" : "after";
-    });
 
   /**
    * The fixture states the document lock is measured in.
