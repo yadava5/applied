@@ -1,0 +1,118 @@
+name: Production matches main
+
+# THE THING THIS WATCHES DOES NOT REPORT ITSELF.
+#
+# Merges to main have produced no production deployment, silently: #174's
+# `12b8aee` (rate-limited on both projects) and `60fcec2` (no status, no
+# deployment record, `pending` to this day). Nothing went red. `gh pr checks`
+# showed green. The same silence recurred on 2026-08-14 in a different shape,
+# when a redeploy carrying a rotated database password was CANCELED and
+# production went on running a dead credential.
+#
+# In every case the state that MATTERS -- what is running -- diverged from the
+# state that was CHANGED, and nothing compared the two. This job compares them,
+# on a clock, and is the only thing in this repository that will go red for it.
+#
+# WHY A SCHEDULE AND NOT A PUSH TRIGGER
+#
+# A push-triggered check fires seconds after the merge, when the deployment has
+# legitimately not happened yet, so it can only ever be green. The failure this
+# watches for is the ABSENCE of an event; absence has no trigger. It has to be
+# sampled.
+#
+#   cron :07 and :37   twice an hour, off the top of the hour because GitHub's
+#                      scheduler is most congested there and delays runs.
+#   grace 30 minutes   DEPLOY_GRACE in scripts/check_production_drift.py, with
+#                      the measurements it comes from.
+#
+# so main's tip cannot sit undeployed for more than about an hour without this
+# going red. Note that GitHub disables scheduled workflows in repositories with
+# 60 days of no activity; if this stops running, that is the first suspect.
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/check_production_drift.py"
+      - "scripts/test_production_drift.py"
+      - "vercel-ignore-build.sh"
+      - ".github/workflows/production-drift.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/check_production_drift.py"
+      - "scripts/test_production_drift.py"
+      - "vercel-ignore-build.sh"
+      - ".github/workflows/production-drift.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed on the event as well as the ref: on `main` a push and a scheduled
+  # sample share a ref, and cancelling the sample would silently skip the one
+  # check nobody else performs. Cancelling a superseded PR run is fine.
+  group: production-drift-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  fixtures:
+    name: The detector goes red for commits that really did not deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v7
+        with:
+          # NOT optional. The fixtures are real commits from this repository --
+          # 12b8aee and 60fcec2 among them -- and the detector reads git for
+          # both the ancestry and the timestamps. At the default depth of 1 the
+          # suite fails loudly rather than skipping, which is the behaviour we
+          # want but not the one we want to see every run.
+          fetch-depth: 0
+
+      # No pip install, no venv. Stdlib only, like scripts/readme_facts.py: a
+      # check with dependencies is a check somebody eventually makes optional.
+      - name: Aim the detector at history and require it to go red
+        # The suite enforces its own case count, so deleting a case fails here
+        # instead of quietly shrinking the evidence.
+        run: python3 scripts/test_production_drift.py
+
+  live:
+    name: Production is running what main says it is running
+    needs: fixtures
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The comparison is ancestry and commit times, both of which need the
+          # history between what production runs and main's tip.
+          fetch-depth: 0
+
+      - name: Compare both Vercel projects against main's tip
+        env:
+          # THIS SECRET DOES NOT EXIST YET. Checked on 2026-08-14: the only
+          # secrets on this repository are DIRECT_URL (production environment)
+          # and the automatic GITHUB_TOKEN, so nothing here could be reused and
+          # nothing was invented in its place beyond the obvious name.
+          #
+          # Until an owner adds a read-scoped Vercel token as VERCEL_TOKEN, this
+          # step exits 2 (UNKNOWN) and this job is RED, on purpose. A check that
+          # cannot authenticate must not look like a check that passed -- that
+          # is precisely the defect it was written to stop.
+          #
+          # The api half needs no token at all: it reads the running commit from
+          # the deployment's own /health, so it keeps answering either way.
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # Optional, and only needed if the token cannot list teams: the
+          # script tries the personal account and then every team the token
+          # can see, which is why no team slug is hardcoded here. Uncomment
+          # and set a repository variable if auto-discovery ever comes up
+          # empty -- the run says which scopes it tried and what each answered.
+          # VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+        run: python3 scripts/check_production_drift.py
