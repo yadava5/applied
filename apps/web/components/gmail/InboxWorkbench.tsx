@@ -119,7 +119,10 @@ function VerdictRow({
   onCorrected: (messageId: string, category: string) => void;
   classify: ClassifyFn;
 }) {
-  const meta = CATEGORY_META[v.category] ?? { label: v.category, dot: "bg-dim" };
+  const meta = CATEGORY_META[v.category] ?? {
+    label: v.category,
+    dot: "bg-dim",
+  };
   const payload = scanMessagePayload(v);
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line-soft px-1 py-3 last:border-b-0">
@@ -306,7 +309,10 @@ export function InboxWorkbench({
     fetched: 0,
     target: DEFAULT_FILTERS.count,
   });
-  const [filing, setFiling] = useState<FileState>({ phase: "idle", note: null });
+  const [filing, setFiling] = useState<FileState>({
+    phase: "idle",
+    note: null,
+  });
 
   // View filters (client-side, no refetch).
   const [search, setSearch] = useState("");
@@ -319,98 +325,115 @@ export function InboxWorkbench({
   // filters change (always a real, user-initiated re-mine).
   const didInitRef = useRef(false);
 
-  const run = useCallback(async (f: InboxFilters) => {
-    const runId = ++runIdRef.current;
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-    const target = f.count;
+  const run = useCallback(
+    async (f: InboxFilters) => {
+      const runId = ++runIdRef.current;
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+      const target = f.count;
 
-    setVerdicts([]);
-    setAnalysis(null);
-    setAnalysisFailed(false);
-    setState({ phase: "loading", fetched: 0, target });
-    // A new mine invalidates the last filing report — it described a different set.
-    setFiling({ phase: "idle", note: null });
+      setVerdicts([]);
+      setAnalysis(null);
+      setAnalysisFailed(false);
+      setState({ phase: "loading", fetched: 0, target });
+      // A new mine invalidates the last filing report — it described a different set.
+      setFiling({ phase: "idle", note: null });
 
-    const acc: InboxVerdict[] = [];
-    let token: string | null | undefined;
+      const acc: InboxVerdict[] = [];
+      let token: string | null | undefined;
 
-    try {
-      while (acc.length < target) {
-        const pageSize = Math.min(PAGE_SIZE, target - acc.length);
-        const qs = buildInboxParams({ filters: f, pageSize, pageToken: token });
-        const { status, page } = await transport.fetchPage(qs, ac.signal);
-        if (runId !== runIdRef.current) return;
-        if (status === 409) {
-          setState({ phase: "not_connected", fetched: acc.length, target });
-          return;
-        }
-        if (status === 401) {
-          setState({ phase: "auth", fetched: acc.length, target, errorStatus: 401 });
-          return;
-        }
-        if (!page) {
-          setState({ phase: "error", fetched: acc.length, target, errorStatus: status });
-          return;
-        }
-        acc.push(...page.verdicts);
-        if (runId !== runIdRef.current) return;
-        setVerdicts([...acc]);
-        setState({ phase: "loading", fetched: acc.length, target });
-        token = page.next_page_token;
-        if (!token || page.verdicts.length === 0) break;
-      }
-
-      const pipelineItems = toPipelineItems(acc);
-
-      // Whole-set analysis (category summary + follow-up flags) — in its OWN
-      // try/catch. The mine has already succeeded by this point, so a thrown
-      // analysis fetch must not fall into the outer catch and mark the whole
-      // mine failed: that would put a "we couldn't read your mail" banner over
-      // a complete, correct verdict list (and skip the snapshot, re-mining
-      // Gmail on the next visit). A failure here degrades to the per-verdict
-      // category tally, with the follow-up panel saying it is unavailable.
-      let analysisData: PipelineAnalysis | null = null;
-      let analysisBroke = false;
       try {
-        analysisData = await transport.analyze(pipelineItems, ac.signal);
-        if (runId !== runIdRef.current) return;
-        if (analysisData) {
-          setAnalysis(analysisData);
-        } else {
+        while (acc.length < target) {
+          const pageSize = Math.min(PAGE_SIZE, target - acc.length);
+          const qs = buildInboxParams({
+            filters: f,
+            pageSize,
+            pageToken: token,
+          });
+          const { status, page } = await transport.fetchPage(qs, ac.signal);
+          if (runId !== runIdRef.current) return;
+          if (status === 409) {
+            setState({ phase: "not_connected", fetched: acc.length, target });
+            return;
+          }
+          if (status === 401) {
+            setState({
+              phase: "auth",
+              fetched: acc.length,
+              target,
+              errorStatus: 401,
+            });
+            return;
+          }
+          if (!page) {
+            setState({
+              phase: "error",
+              fetched: acc.length,
+              target,
+              errorStatus: status,
+            });
+            return;
+          }
+          acc.push(...page.verdicts);
+          if (runId !== runIdRef.current) return;
+          setVerdicts([...acc]);
+          setState({ phase: "loading", fetched: acc.length, target });
+          token = page.next_page_token;
+          if (!token || page.verdicts.length === 0) break;
+        }
+
+        const pipelineItems = toPipelineItems(acc);
+
+        // Whole-set analysis (category summary + follow-up flags) — in its OWN
+        // try/catch. The mine has already succeeded by this point, so a thrown
+        // analysis fetch must not fall into the outer catch and mark the whole
+        // mine failed: that would put a "we couldn't read your mail" banner over
+        // a complete, correct verdict list (and skip the snapshot, re-mining
+        // Gmail on the next visit). A failure here degrades to the per-verdict
+        // category tally, with the follow-up panel saying it is unavailable.
+        let analysisData: PipelineAnalysis | null = null;
+        let analysisBroke = false;
+        try {
+          analysisData = await transport.analyze(pipelineItems, ac.signal);
+          if (runId !== runIdRef.current) return;
+          if (analysisData) {
+            setAnalysis(analysisData);
+          } else {
+            analysisBroke = true;
+          }
+        } catch {
+          // An abort is a newer mine taking over, not a failure.
+          if (ac.signal.aborted || runId !== runIdRef.current) return;
           analysisBroke = true;
         }
+        setAnalysisFailed(analysisBroke);
+        setState({ phase: "ready", fetched: acc.length, target });
+
+        // Persist this mine so a remount with the same filters (e.g. navigating
+        // Inbox → Dashboard → Inbox) hydrates instantly instead of re-hitting Gmail.
+        writeSnapshot({
+          sig: filtersSig(f),
+          savedAt: Date.now(),
+          verdicts: acc,
+          analysis: analysisData,
+          analysisFailed: analysisBroke,
+          fetched: acc.length,
+          target,
+        });
+
+        // NOTE: the mine deliberately does NOT persist anything by itself. It
+        // used to fire a `/api/gmail/sync` relay here and never report the
+        // result, so a user could watch it scan 200 messages, read "applied 4",
+        // and have no idea whether any of it reached their pipeline. Filing is
+        // now the explicit action below, which says what actually happened.
       } catch {
-        // An abort is a newer mine taking over, not a failure.
         if (ac.signal.aborted || runId !== runIdRef.current) return;
-        analysisBroke = true;
+        setState({ phase: "error", fetched: acc.length, target });
       }
-      setAnalysisFailed(analysisBroke);
-      setState({ phase: "ready", fetched: acc.length, target });
-
-      // Persist this mine so a remount with the same filters (e.g. navigating
-      // Inbox → Dashboard → Inbox) hydrates instantly instead of re-hitting Gmail.
-      writeSnapshot({
-        sig: filtersSig(f),
-        savedAt: Date.now(),
-        verdicts: acc,
-        analysis: analysisData,
-        analysisFailed: analysisBroke,
-        fetched: acc.length,
-        target,
-      });
-
-      // NOTE: the mine deliberately does NOT persist anything by itself. It
-      // used to fire a `/api/gmail/sync` relay here and never report the
-      // result, so a user could watch it scan 200 messages, read "applied 4",
-      // and have no idea whether any of it reached their pipeline. Filing is
-      // now the explicit action below, which says what actually happened.
-    } catch {
-      if (ac.signal.aborted || runId !== runIdRef.current) return;
-      setState({ phase: "error", fetched: acc.length, target });
-    }
-  }, [transport]);
+    },
+    [transport],
+  );
 
   // On first mount, serve a fresh cached snapshot for these filters if we have
   // one — this is what stops the re-scan on every visit. Only mine Gmail when
@@ -449,7 +472,11 @@ export function InboxWorkbench({
             setVerdicts(snap.verdicts);
             setAnalysis(snap.analysis);
             setAnalysisFailed(snap.analysisFailed === true);
-            setState({ phase: "ready", fetched: snap.fetched, target: snap.target });
+            setState({
+              phase: "ready",
+              fetched: snap.fetched,
+              target: snap.target,
+            });
             return;
           }
         }
@@ -508,7 +535,10 @@ export function InboxWorkbench({
       // Only when there IS an analysis: without one `summary` is derived from
       // the verdicts above, so it has already moved.
       if (analysis) setAnalysis({ ...analysis, category_summary: next.summary });
-      patchSnapshot(filtersSig(filters), { verdicts: next.verdicts, summary: next.summary });
+      patchSnapshot(filtersSig(filters), {
+        verdicts: next.verdicts,
+        summary: next.summary,
+      });
     },
     [analysis, filters, summary, verdicts],
   );
@@ -550,7 +580,10 @@ export function InboxWorkbench({
       setFiling({ phase: "done", note: filedSummary(res.counts) });
       router.refresh();
     } catch {
-      setFiling({ phase: "error", note: "Couldn't reach the server — nothing was filed." });
+      setFiling({
+        phase: "error",
+        note: "Couldn't reach the server — nothing was filed.",
+      });
     }
   }, [router, transport, verdicts]);
 
@@ -565,11 +598,10 @@ export function InboxWorkbench({
   if (state.phase === "not_connected") {
     return (
       <div className="rounded-xl border border-line-soft bg-surface p-5">
+        {/* No scopes paragraph (#200): Google's consent screen states them at
+            the moment of consent, and the page's standing /privacy link is
+            the durable copy. */}
         <h2 className="text-base font-medium text-strong">Connect Gmail to fill this inbox</h2>
-        <p className="mt-1.5 text-sm text-muted">
-          Read-only, on Google&apos;s own consent screen. The classifier labels your job-search mail —
-          it <span className="text-strong">cannot</span> send, delete, or modify anything.
-        </p>
         <ConnectGmailButton className="mt-4" />
       </div>
     );
@@ -596,9 +628,16 @@ export function InboxWorkbench({
   }
 
   return (
-    <div className="space-y-6">
+    // GEOMETRY (#197): the locked-page arrangement, same terms as the filed
+    // ledger. The two control plates — scan parameters, then category chips +
+    // search — hold still at `lg`+, and everything the mine PRODUCES (failed
+    // mine, file bar, follow-ups, verdicts) scrolls in one pane beneath them.
+    // `lg:min-h-0` on this root and on the pane are both load-bearing: one
+    // missing link re-inflates the flex column's content minimum and hands
+    // the scroll back to <main> with nothing going red (geometry.ts).
+    <div className="flex flex-col gap-6 lg:min-h-0 lg:flex-1">
       {/* --- Filter bar --------------------------------------------------- */}
-      <div className="rounded-xl border border-line-soft bg-surface p-4">
+      <div className="rounded-xl border border-line-soft bg-surface p-4 lg:shrink-0">
         <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
           <label className="flex flex-col gap-1.5">
             <span className="label-caps">age</span>
@@ -630,7 +669,10 @@ export function InboxWorkbench({
               className={cn(selectClass, "w-28 py-1.5 text-xs")}
               value={filters.count}
               onChange={(e) =>
-                setFilters((f) => ({ ...f, count: Number(e.target.value) as FetchCount }))
+                setFilters((f) => ({
+                  ...f,
+                  count: Number(e.target.value) as FetchCount,
+                }))
               }
             >
               {COUNT_OPTIONS.map((n) => (
@@ -675,141 +717,17 @@ export function InboxWorkbench({
         ) : (
           <p className="tabular mt-3 text-xs text-dim">
             {email ? `${email} · ` : ""}
-            {state.fetched.toLocaleString()} scanned · {jobRelatedTotal.toLocaleString()} job-related
+            {state.fetched.toLocaleString()} scanned · {jobRelatedTotal.toLocaleString()}{" "}
+            job-related
           </p>
         )}
       </div>
 
-      {/* --- A failed mine, led with --------------------------------------
-          The failure used to be a small dim line at the very BOTTOM of the
-          page, under a success-shaped empty box reading "No messages matched
-          this range" — a completed-scan verdict about a mailbox we never
-          finished reading. It now sits first, directly under the scan
-          controls, and the empty box does not render at all when nothing was
-          read. */}
-      {mineFailed ? (
-        <div role="alert" className="rounded-xl border border-reject/40 bg-surface p-6">
-          <p className="label-caps text-reject-ink">scan failed</p>
-          <h2 className="mt-2 text-base font-medium text-strong">
-            We couldn&apos;t finish reading your mail.
-          </h2>
-          <p className="mt-1.5 text-sm text-muted">
-            {state.fetched > 0
-              ? `The scan stopped after ${state.fetched.toLocaleString()} of ${state.target.toLocaleString()} messages, so what's below is partial — not a picture of your whole mailbox.`
-              : "Nothing was read, so nothing here says anything about what your mailbox holds."}{" "}
-            Press Refresh to try again.
-          </p>
-          {state.errorStatus ? (
-            <p className="tabular mt-1 font-mono text-[11px] text-dim">
-              mail backend responded {state.errorStatus}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* --- File the mine into the pipeline ------------------------------ */}
-      {state.phase === "ready" && jobRelatedTotal > 0 ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-soft bg-surface px-4 py-3">
-          <div className="min-w-0">
-            <p className="tabular text-xs text-muted">
-              <span className="text-strong">{jobRelatedTotal.toLocaleString()}</span> job-related of{" "}
-              {verdicts.length.toLocaleString()} scanned
-            </p>
-            {filing.note ? (
-              <p
-                role="status"
-                className={cn(
-                  "mt-1 text-xs",
-                  filing.phase === "error" ? "text-reject-ink" : "text-dim",
-                )}
-              >
-                {filing.note}
-                {filing.phase === "done" ? (
-                  <>
-                    {" · "}
-                    <Link
-                      href="/dashboard"
-                      className="underline-offset-4 hover:text-strong hover:underline"
-                    >
-                      view applications →
-                    </Link>
-                  </>
-                ) : null}
-              </p>
-            ) : (
-              <p className="mt-1 text-xs text-dim">
-                filing adds these to your applications — nothing is removed, and filing twice is harmless
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => void fileThese()}
-            disabled={filing.phase === "filing"}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-strong px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 focus-accent disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {filing.phase === "filing" ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                Filing…
-              </>
-            ) : filing.phase === "done" ? (
-              "File again"
-            ) : (
-              `File ${jobRelatedTotal.toLocaleString()} into Applications`
-            )}
-          </button>
-        </div>
-      ) : null}
-
-      {/* --- Needs follow-up (ghosting) -----------------------------------
-          A missing answer is not an empty one. When the analysis call fails
-          this panel used to simply not render, and "no ghosting panel" reads
-          as "nobody has ghosted you" — a claim only the analysis can make. */}
-      {analysisFailed ? (
-        <div role="status" className="rounded-xl border border-line-soft bg-surface p-5">
-          <h2 className="flex items-center gap-2 text-base font-medium text-strong">
-            <Bell className="h-4 w-4 text-dim" aria-hidden />
-            Needs follow-up — unavailable
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            The follow-up analysis didn&apos;t answer for this mine, so we can&apos;t say who has
-            gone silent on you. This is a missing answer, not an empty one — the messages below
-            are unaffected, and Refresh runs it again.
-          </p>
-        </div>
-      ) : followUps.length > 0 ? (
-        <div className="rounded-xl border border-review/40 bg-surface p-5">
-          <h2 className="flex items-center gap-2 text-base font-medium text-strong">
-            <Bell className="h-4 w-4 text-review" aria-hidden />
-            Needs follow-up ({followUps.length})
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            You applied but never heard back — no interview, assessment, offer, or rejection since.
-          </p>
-          <ul className="mt-3 space-y-2">
-            {followUps.map((f) => (
-              <li
-                key={f.message_id}
-                className="flex items-center justify-between gap-4 rounded-lg border border-line-soft px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm text-strong">
-                    <span className="font-medium capitalize">{f.company}</span>
-                    <span className="text-dim"> · {f.subject}</span>
-                  </p>
-                </div>
-                <span className="shrink-0 font-mono text-[11px] text-review">
-                  {f.days_since}d silent
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {/* --- Category summary + view filters ------------------------------ */}
-      <div className="rounded-xl border border-line-soft bg-surface p-4">
+      {/* --- Category summary + view filters ------------------------------
+          Above the results pane, not inside it (#197): these narrow the list
+          they sit over, so they hold still with the scan controls while the
+          verdicts scroll. */}
+      <div className="rounded-xl border border-line-soft bg-surface p-4 lg:shrink-0">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -876,31 +794,164 @@ export function InboxWorkbench({
         </div>
       </div>
 
-      {/* --- Verdict list ------------------------------------------------- */}
-      {loading && verdicts.length === 0 ? (
-        <ul className="rounded-xl border border-line-soft bg-surface px-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <SkeletonRow key={i} />
-          ))}
-        </ul>
-      ) : filtered.length > 0 ? (
-        <ul className="rounded-xl border border-line-soft bg-surface px-3">
-          {filtered.map((v) => (
-            <VerdictRow
-              key={v.message_id}
-              v={v}
-              classify={transport.classify}
-              onCorrected={applyCorrection}
-            />
-          ))}
-        </ul>
-      ) : mineFailed && verdicts.length === 0 ? null : (
-        <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center text-sm text-muted">
-          {verdicts.length === 0
-            ? "No messages matched this range. Widen the age window or switch to All mail."
-            : "No messages match these view filters."}
-        </div>
-      )}
+      {/* --- The results pane: the ONE scroller at `lg`+ ------------------ */}
+      <div data-testid="scan-results-pane" className="space-y-6 lg:min-h-0 lg:overflow-y-auto">
+        {/* --- A failed mine, led with --------------------------------------
+          The failure used to be a small dim line at the very BOTTOM of the
+          page, under a success-shaped empty box reading "No messages matched
+          this range" — a completed-scan verdict about a mailbox we never
+          finished reading. It now leads the results pane, directly under the
+          fixed control plates, and the empty box does not render at all when
+          nothing was read. */}
+        {mineFailed ? (
+          <div role="alert" className="rounded-xl border border-reject/40 bg-surface p-6">
+            <p className="label-caps text-reject-ink">scan failed</p>
+            <h2 className="mt-2 text-base font-medium text-strong">
+              We couldn&apos;t finish reading your mail.
+            </h2>
+            <p className="mt-1.5 text-sm text-muted">
+              {state.fetched > 0
+                ? `The scan stopped after ${state.fetched.toLocaleString()} of ${state.target.toLocaleString()} messages, so what's below is partial — not a picture of your whole mailbox.`
+                : "Nothing was read, so nothing here says anything about what your mailbox holds."}{" "}
+              Press Refresh to try again.
+            </p>
+            {state.errorStatus ? (
+              <p className="tabular mt-1 font-mono text-[11px] text-dim">
+                mail backend responded {state.errorStatus}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* --- File the mine into the pipeline ------------------------------ */}
+        {state.phase === "ready" && jobRelatedTotal > 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-soft bg-surface px-4 py-3">
+            <div className="min-w-0">
+              <p className="tabular text-xs text-muted">
+                <span className="text-strong">{jobRelatedTotal.toLocaleString()}</span> job-related
+                of {verdicts.length.toLocaleString()} scanned
+              </p>
+              {filing.note ? (
+                <p
+                  role="status"
+                  className={cn(
+                    "mt-1 text-xs",
+                    filing.phase === "error" ? "text-reject-ink" : "text-dim",
+                  )}
+                >
+                  {filing.note}
+                  {filing.phase === "done" ? (
+                    <>
+                      {" · "}
+                      <Link
+                        href="/dashboard"
+                        className="underline-offset-4 hover:text-strong hover:underline"
+                      >
+                        view applications →
+                      </Link>
+                    </>
+                  ) : null}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-dim">
+                  filing adds these to your applications — nothing is removed, and filing twice is
+                  harmless
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void fileThese()}
+              disabled={filing.phase === "filing"}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-strong px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90 focus-accent disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {filing.phase === "filing" ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Filing…
+                </>
+              ) : filing.phase === "done" ? (
+                "File again"
+              ) : (
+                `File ${jobRelatedTotal.toLocaleString()} into Applications`
+              )}
+            </button>
+          </div>
+        ) : null}
+
+        {/* --- Needs follow-up (ghosting) -----------------------------------
+          A missing answer is not an empty one. When the analysis call fails
+          this panel used to simply not render, and "no ghosting panel" reads
+          as "nobody has ghosted you" — a claim only the analysis can make. */}
+        {analysisFailed ? (
+          <div role="status" className="rounded-xl border border-line-soft bg-surface p-5">
+            <h2 className="flex items-center gap-2 text-base font-medium text-strong">
+              <Bell className="h-4 w-4 text-dim" aria-hidden />
+              Needs follow-up — unavailable
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              The follow-up analysis didn&apos;t answer for this mine, so we can&apos;t say who has
+              gone silent on you. This is a missing answer, not an empty one — the messages below
+              are unaffected, and Refresh runs it again.
+            </p>
+          </div>
+        ) : followUps.length > 0 ? (
+          <div className="rounded-xl border border-review/40 bg-surface p-5">
+            <h2 className="flex items-center gap-2 text-base font-medium text-strong">
+              <Bell className="h-4 w-4 text-review" aria-hidden />
+              Needs follow-up ({followUps.length})
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              You applied but never heard back — no interview, assessment, offer, or rejection
+              since.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {followUps.map((f) => (
+                <li
+                  key={f.message_id}
+                  className="flex items-center justify-between gap-4 rounded-lg border border-line-soft px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-strong">
+                      <span className="font-medium capitalize">{f.company}</span>
+                      <span className="text-dim"> · {f.subject}</span>
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-mono text-[11px] text-review">
+                    {f.days_since}d silent
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {/* --- Verdict list ------------------------------------------------- */}
+        {loading && verdicts.length === 0 ? (
+          <ul className="rounded-xl border border-line-soft bg-surface px-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <SkeletonRow key={i} />
+            ))}
+          </ul>
+        ) : filtered.length > 0 ? (
+          <ul className="rounded-xl border border-line-soft bg-surface px-3">
+            {filtered.map((v) => (
+              <VerdictRow
+                key={v.message_id}
+                v={v}
+                classify={transport.classify}
+                onCorrected={applyCorrection}
+              />
+            ))}
+          </ul>
+        ) : mineFailed && verdicts.length === 0 ? null : (
+          <div className="rounded-xl border border-dashed border-line-soft bg-surface p-8 text-center text-sm text-muted">
+            {verdicts.length === 0
+              ? "No messages matched this range. Widen the age window or switch to All mail."
+              : "No messages match these view filters."}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

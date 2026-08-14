@@ -6,11 +6,7 @@ import { ReclassifyControl } from "@/components/mail/ReclassifyControl";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
 import { categoryChips, CATEGORY_META, chipTotal } from "@/lib/gmail/types";
-import {
-  filedMailHref,
-  filedPageCount,
-  type FiledMailPage,
-} from "@/lib/mail/filed";
+import { filedMailHref, filedPageCount, type FiledMailPage } from "@/lib/mail/filed";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,6 +23,16 @@ import { cn } from "@/lib/utils";
  * Here every row carries `ReclassifyControl`, and the backend accepts a
  * correction for any owned message, so a verdict stays correctable for as
  * long as it exists.
+ *
+ * GEOMETRY (#197). The page root declares `LOCKED_PAGE_CLASS`, so at `lg`+
+ * this component is a flex column inside a fixed-height pane: the filter
+ * plate and the pager hold still (`lg:shrink-0`) and the <ul> is the ONE
+ * scroll region. The chain is deliberate — `lg:min-h-0` on this root AND on
+ * the <ul>, because a flex column's content-based automatic minimum defeats
+ * the lock silently (the 993px-in-a-744px-pane war story in
+ * `components/shell/geometry.ts`); every class here is load-bearing. Below
+ * `lg` none of it applies and the list flows in <main>, by the contract's
+ * own design. `tests/e2e/inbox-geometry.spec.ts` holds all of this.
  */
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -96,11 +102,15 @@ export function FiledMailList({
   const pages = filedPageCount(page.total, page.pageSize);
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1">
       {/* --- Filters: category chips + search ------------------------------ */}
-      <div className="space-y-3 rounded-xl border border-line-soft bg-surface p-4">
+      <div className="space-y-3 rounded-xl border border-line-soft bg-surface p-4 lg:shrink-0">
         <CategoryChips page={page} activeCategory={activeCategory} q={q} />
-        <form method="get" action="/inbox" className="flex flex-wrap items-center gap-3 border-t border-line-soft pt-3">
+        <form
+          method="get"
+          action="/inbox"
+          className="flex flex-wrap items-center gap-3 border-t border-line-soft pt-3"
+        >
           {activeCategory ? <input type="hidden" name="category" value={activeCategory} /> : null}
           <div className="relative min-w-0 flex-1 basis-48">
             <Search
@@ -160,10 +170,21 @@ export function FiledMailList({
           </p>
         </div>
       ) : (
-        <ul className="rounded-xl border border-line-soft bg-surface px-3">
+        // `lg:min-h-0` WITHOUT `flex-1`: a short page keeps its border hugging
+        // the last row; a long one shrinks to the pane's remaining measure and
+        // scrolls itself. The testid is the sanctioned-scroller name the
+        // geometry spec's rogue-scroller sweep excludes, same arrangement as
+        // the dashboard's `worklist-pane`.
+        <ul
+          data-testid="filed-mail-pane"
+          className="rounded-xl border border-line-soft bg-surface px-3 lg:min-h-0 lg:overflow-y-auto"
+        >
           {page.messages.map((m) => {
             const meta = m.category
-              ? (CATEGORY_META[m.category] ?? { label: m.category.replaceAll("_", " "), dot: "bg-dim" })
+              ? (CATEGORY_META[m.category] ?? {
+                  label: m.category.replaceAll("_", " "),
+                  dot: "bg-dim",
+                })
               : { label: "unclassified", dot: "bg-dim" };
             const sender = m.sender_name || m.sender_email || "unknown sender";
             const subject = m.subject || "(no subject)";
@@ -224,10 +245,16 @@ export function FiledMailList({
 
       {/* --- Pager ----------------------------------------------------------- */}
       {pages > 1 ? (
-        <nav aria-label="Mail pages" className="flex items-center justify-between">
+        // Below the scrollport, not inside it: page controls belong with the
+        // filters, always reachable without scrolling back.
+        <nav aria-label="Mail pages" className="flex items-center justify-between lg:shrink-0">
           {page.page > 1 ? (
             <Link
-              href={filedMailHref({ category: activeCategory, q, page: page.page - 1 })}
+              href={filedMailHref({
+                category: activeCategory,
+                q,
+                page: page.page - 1,
+              })}
               className="text-xs text-muted underline-offset-2 hover:text-strong hover:underline"
             >
               ← newer
@@ -240,7 +267,11 @@ export function FiledMailList({
           </span>
           {page.page < pages ? (
             <Link
-              href={filedMailHref({ category: activeCategory, q, page: page.page + 1 })}
+              href={filedMailHref({
+                category: activeCategory,
+                q,
+                page: page.page + 1,
+              })}
               className="text-xs text-muted underline-offset-2 hover:text-strong hover:underline"
             >
               older →
