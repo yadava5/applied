@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { publicEnv, serverEnv } from "@/lib/env";
+import { publicEnv } from "@/lib/env";
+import { serverEnv } from "@/lib/env.server";
 
 /**
  * A privileged Supabase client bound to the service-role key. Server-only, and

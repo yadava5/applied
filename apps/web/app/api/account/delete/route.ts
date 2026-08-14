@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { serverEnv } from "@/lib/env";
+import { serverEnv } from "@/lib/env.server";
 
 /**
  * Delete the caller's own account. This is the server side of the Settings

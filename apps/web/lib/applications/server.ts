@@ -19,7 +19,7 @@
  * loop the user drives from the board.
  */
 import type { ClassifyArgs } from "@/lib/applications/classify-request";
-import { serverEnv } from "@/lib/env";
+import { serverEnv } from "@/lib/env.server";
 import { getAccessToken } from "@/lib/supabase/auth";
 
 export interface ApiCallResult {

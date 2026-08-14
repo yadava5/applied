@@ -1,116 +1,98 @@
 /**
- * Runtime-validated environment variables for the web app.
+ * Client-safe environment variables — keys prefixed with `NEXT_PUBLIC_` only.
  *
- * Centralising access through a zod schema means missing or malformed values
- * fail fast at module import time with a clear message, rather than leaking
- * `undefined` into Supabase clients, fetchers, or middleware where the
- * resulting errors are opaque.
+ * Validating these still means missing or malformed values fail fast at module
+ * import time with a clear message, rather than leaking `undefined` into
+ * Supabase clients, fetchers, or the proxy where the resulting errors are
+ * opaque. That guarantee is unchanged; what changed is the cost of it.
  *
- * IMPORTANT: this file is imported from both server (`lib/supabase/server`,
- * `proxy.ts`) and client bundles (`lib/supabase/client`). It MUST only
- * reference `NEXT_PUBLIC_*` keys in the browser path; the server-only keys
- * below are read via a lazy getter so that Next.js's tree-shaking keeps
- * them out of the client bundle.
+ * WHY THIS FILE NO LONGER IMPORTS ZOD, and why the server half moved out
+ * ---------------------------------------------------------------------
+ * `lib/supabase/client.ts` is a `"use client"` module and imports `publicEnv`,
+ * so every module in this file's import graph is compiled into the browser
+ * bundle. The server schema lived here too, which meant the whole zod runtime
+ * shipped to every visitor — measured on `origin/main` at 508.6 KB gzip across
+ * the client chunks, of which zod was 63 KB, inside a single 126.9 KB chunk.
+ * Nothing in a tab can use it: Next inlines `NEXT_PUBLIC_*` at build time, so
+ * by the time this code runs in a browser the two values below are string
+ * literals that were already checked when the build ran.
+ *
+ * A comment here used to claim tree-shaking kept the server keys out of the
+ * client bundle. It did not, and could not: `serverSchema` was built by a
+ * top-level `z.object(...)` call and reached from an exported function, so the
+ * bundler had to keep it. The fix is a module boundary, not a hope about
+ * elimination — `serverEnv()` and its zod schema now live in
+ * `lib/env.server.ts`, which no client module imports.
+ *
+ * The checks here are hand-written rather than schema-driven because there are
+ * two of them and the whole point (below) is the wording of two messages. A
+ * validator library earns its keep on shapes this is not.
  */
-import { z } from "zod";
 
 /**
- * zod 4 removed `required_error`/`invalid_type_error` in favour of a single
- * `error` callback, so the "you forgot to set this" case is no longer a
- * separate option — the schema has to discriminate for itself. A key that is
- * absent from `process.env` reaches the callback as an `invalid_type` issue
- * whose `input` is `undefined`; anything else is a value that was set but is
- * the wrong shape.
- *
- * Keeping the two messages apart is the entire point of this file: "is
- * required" tells you to add the variable to `.env.local` or the Vercel
+ * Keeping "missing" and "invalid" apart is the entire point of this file:
+ * "is required" tells you to add the variable to `.env.local` or the Vercel
  * project, while "must be a valid URL" tells you the value you already set is
  * wrong. Collapsing them into one string would still fail the build, but
  * would fail it uninformatively.
  */
-const missingOrInvalid =
-  (missing: string, invalid: string) =>
-  (issue: { input: unknown }): string =>
-    issue.input === undefined ? missing : invalid;
+type Issue = { key: string; message: string };
 
-const publicSchema = z.object({
-  // `z.url()` rather than the now-deprecated `z.string().url()`: zod 4 models
-  // string formats as ZodString subclasses on the top-level namespace.
-  NEXT_PUBLIC_SUPABASE_URL: z.url({
-    error: missingOrInvalid(
-      "NEXT_PUBLIC_SUPABASE_URL is required",
-      "NEXT_PUBLIC_SUPABASE_URL must be a valid URL",
-    ),
-  }),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z
-    .string({
-      error: missingOrInvalid(
-        "NEXT_PUBLIC_SUPABASE_ANON_KEY is required",
-        "NEXT_PUBLIC_SUPABASE_ANON_KEY must be a string",
-      ),
-    })
-    // A check-level message still outranks the schema-level `error` above, so
-    // an empty-but-present key keeps its own wording.
-    .min(1, "NEXT_PUBLIC_SUPABASE_ANON_KEY must not be empty"),
-});
+/** `new URL()` rather than `URL.canParse()`: same answer, no baseline cliff. */
+function isUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-const serverSchema = z.object({
-  BACKEND_API_URL: z.url({
-    error: missingOrInvalid(
-      "BACKEND_API_URL is required",
-      "BACKEND_API_URL must be a valid URL",
-    ),
-  }),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
-});
+function requireUrl(key: string, value: string | undefined, issues: Issue[]): string {
+  if (value === undefined) issues.push({ key, message: `${key} is required` });
+  else if (!isUrl(value)) issues.push({ key, message: `${key} must be a valid URL` });
+  return value ?? "";
+}
 
-type PublicEnv = z.infer<typeof publicSchema>;
-type ServerEnv = z.infer<typeof serverSchema>;
+function requireString(key: string, value: string | undefined, issues: Issue[]): string {
+  if (value === undefined) issues.push({ key, message: `${key} is required` });
+  // An empty-but-present key keeps its own wording — it is neither absent nor
+  // malformed, and "must not be empty" is the sentence that says what to do.
+  else if (value.length === 0) issues.push({ key, message: `${key} must not be empty` });
+  return value ?? "";
+}
 
-// zod 4 removed `ZodError.errors`; `.issues` was always the real property and
-// is now the only one.
-function formatZodError(err: z.ZodError): string {
-  return err.issues
-    .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
-    .join("\n");
+export interface PublicEnv {
+  NEXT_PUBLIC_SUPABASE_URL: string;
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
 }
 
 /**
- * Client-safe env — keys prefixed with `NEXT_PUBLIC_` only. Safe to import
- * from React Client Components.
+ * Client-safe env. Safe to import from React Client Components.
+ *
+ * Both keys are collected before throwing, not checked one at a time: a
+ * `.env.local` missing both should say so once rather than over two failed
+ * builds. `process.env.NEXT_PUBLIC_*` is also spelled out in full rather than
+ * looked up dynamically — Next's inlining is a literal text substitution, so
+ * an indexed read would compile to `undefined` in the browser.
  */
 export const publicEnv: PublicEnv = (() => {
-  const result = publicSchema.safeParse({
-    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  });
-  if (!result.success) {
-    throw new Error(
-      `[env] invalid public environment variables:\n${formatZodError(result.error)}`,
-    );
+  const issues: Issue[] = [];
+  const env: PublicEnv = {
+    NEXT_PUBLIC_SUPABASE_URL: requireUrl(
+      "NEXT_PUBLIC_SUPABASE_URL",
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      issues,
+    ),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: requireString(
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      issues,
+    ),
+  };
+  if (issues.length > 0) {
+    const detail = issues.map((issue) => `  - ${issue.key}: ${issue.message}`).join("\n");
+    throw new Error(`[env] invalid public environment variables:\n${detail}`);
   }
-  return result.data;
+  return env;
 })();
-
-/**
- * Server-only env. Access via `serverEnv()` so the validation only runs when
- * this module is loaded from a Server Component, Route Handler, or the
- * proxy runtime. Lazy evaluation means static-asset requests that never hit
- * server code will not crash if, say, `BACKEND_API_URL` is missing during
- * a local preview of client-side errors.
- */
-let cachedServerEnv: ServerEnv | null = null;
-export function serverEnv(): ServerEnv {
-  if (cachedServerEnv) return cachedServerEnv;
-  const result = serverSchema.safeParse({
-    BACKEND_API_URL: process.env.BACKEND_API_URL,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  });
-  if (!result.success) {
-    throw new Error(
-      `[env] invalid server environment variables:\n${formatZodError(result.error)}`,
-    );
-  }
-  cachedServerEnv = result.data;
-  return cachedServerEnv;
-}

@@ -52,6 +52,42 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  /**
+   * The router cache. This is the fix for the reported symptom in issue #203:
+   * 12 of 12 in-app navigations issued a fresh `_rsc` request, so returning to
+   * a tab you were on ten seconds ago re-paid the whole 700–1150 ms of server
+   * time (dashboard→inbox measured 1090 / 989 / 1019 ms on visits 1, 2, 3 —
+   * visit 3 costs exactly what visit 1 did). Every one of these routes is
+   * `ƒ Dynamic`, and Next's default `staleTimes.dynamic` is 0, which means no
+   * client cache at all, by construction.
+   *
+   * WHAT `dynamic: 30` TRADES. Rail navigation within a 30-second window
+   * serves the payload the tab already has instead of asking the origin. In
+   * exchange, data that changed on the server in those 30 seconds — changed by
+   * something OTHER than this tab — is not seen until the window closes.
+   * Nothing in this app changes server-side on its own: every mutation is a
+   * user action in this tab, and `router.refresh()` bumps Next's global
+   * segment-cache version (`invalidateSegmentCacheEntries`), so a refresh
+   * invalidates EVERY route's entry, not just the one you are standing on.
+   * That was checked call-by-call, not assumed — sync, rebuild, stage change,
+   * file, reclassify, add, dismiss, restore, split and delete all refresh.
+   *
+   * The one place they do not is `components/settings/**`, which saves to
+   * Supabase user metadata and never refreshes; `app/(app)/settings/page.tsx`
+   * therefore opts itself out with `unstable_dynamicStaleTime = 0`. See the
+   * note there.
+   *
+   * WHY `static` IS PINNED AT ITS DEFAULT. 300 is already Next 16's default
+   * (`config-shared.js`), so this line changes nothing — it is here because
+   * supplying a `staleTimes` object replaces the default object wholesale, and
+   * `createSelectStaleTime` gates the server-side static override on
+   * `typeof staleTimes.static === 'number'`. Omitting the key would quietly
+   * drop that path. Lowering it to 180, as first proposed, would have been a
+   * REGRESSION dressed as a tuning knob.
+   */
+  experimental: {
+    staleTimes: { dynamic: 30, static: 300 },
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

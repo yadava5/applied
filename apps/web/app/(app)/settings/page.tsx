@@ -19,6 +19,33 @@ export const metadata: Metadata = {
 };
 
 /**
+ * This route opts OUT of the router cache `next.config.ts` turns on for every
+ * other page (`experimental.staleTimes.dynamic = 30`). Nothing about the
+ * caching is wrong in general — it is wrong HERE, and for a reason specific
+ * to this page.
+ *
+ * Every section below seeds its own `useState` from a prop this server
+ * component read out of the Supabase user's metadata (`initialName`,
+ * `initial`, `initialGate`), saves through `settingsTransport.saveMetadata`,
+ * and — unlike every mutating surface on the dashboard and the inbox — does
+ * NOT call `router.refresh()`. Today that is harmless, because leaving and
+ * returning re-renders this page against fresh metadata. Under a 30-second
+ * cache it would not be: toggle the weekly digest on, click Dashboard, click
+ * Settings, and the toggle would sit there visibly switched back off until the
+ * window expired. A just-saved setting reverting in front of you is a bug, not
+ * a stale number.
+ *
+ * `0` means "never reuse", and it is a distinct value rather than a fallback —
+ * Next's sentinel for "the page said nothing" is `-1`
+ * (`UnknownDynamicStaleTime`), so this genuinely pins the route.
+ *
+ * The other half of the fix is to make those sections refresh after a save,
+ * at which point this line can go. That is a change to
+ * `components/settings/**`, which is not this branch's to make.
+ */
+export const unstable_dynamicStaleTime = 0;
+
+/**
  * The real product Settings surface: Profile, Appearance, the Gmail
  * connection, Notifications, Classification, Data, and Account — each actually
  * wired. Profile/Notifications/Classification persist to the Supabase user's
