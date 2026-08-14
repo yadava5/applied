@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { SaveStatus, SettingsSection } from "./SettingsSection";
@@ -40,6 +41,7 @@ export function ClassificationSection({
   const [gate, setGate] = useState(initialGate);
   const [state, setState] = useState<SaveState>("idle");
   const transport = settingsTransport(mode);
+  const router = useRouter();
 
   const held = useMemo(
     () => DEMO_REVIEW_QUEUE.filter((v) => v.confidence < gate).length,
@@ -50,6 +52,10 @@ export function ClassificationSection({
     setState("saving");
     const { ok } = await transport.saveMetadata({ gate_threshold: gate });
     setState(ok ? "saved" : "error");
+    // #216, same reason as `NotificationsSection.persist` — see the note
+    // there. The gate is read server-side when mail is classified, so a stale
+    // cached surface can show verdicts sorted by the OLD threshold.
+    if (ok) router.refresh();
   }
 
   return (

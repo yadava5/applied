@@ -1,9 +1,11 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 import type { Metadata } from "next";
 
 import { Logo } from "@/components/brand/Logo";
 import { DemoDashboard } from "@/components/demo/DemoDashboard";
 import { DecisionTrace } from "@/components/viz/DecisionTrace";
+import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 
 export const metadata: Metadata = {
   title: "Live demo",
@@ -54,6 +56,13 @@ export default async function DemoPage({
   // its own reviewable, testable URL.
   const { pipeline } = await searchParams;
   const early = pipeline === "early";
+  // Whatever the visitor set on /demo/settings — read on the SERVER and
+  // passed down as props, the same shape the signed-in dashboard reads out of
+  // the Supabase user's metadata. Absent cookie → both flags off, the live
+  // default (#216).
+  const notifications = parseDemoNotificationPrefs(
+    (await cookies()).get(DEMO_NOTIFICATIONS_COOKIE)?.value,
+  );
   return (
     <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
@@ -80,7 +89,7 @@ export default async function DemoPage({
 
         {/* --- the dashboard, verbatim ------------------------------------ */}
         <div className="mt-8">
-          <DemoDashboard pipeline={early ? "early" : "seed"} />
+          <DemoDashboard pipeline={early ? "early" : "seed"} notifications={notifications} />
         </div>
 
         {/* --- the decision trace ----------------------------------------- */}

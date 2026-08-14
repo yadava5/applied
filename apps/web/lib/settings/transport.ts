@@ -11,10 +11,15 @@
  * over simulated outcomes, which is what makes the real controls reviewable
  * and testable without a session. Nothing in the demo transport touches the
  * network, and its one refusal (account deletion) says plainly that it is a
- * refusal.
+ * refusal. It keeps exactly one thing — the notification prefs, in a session
+ * cookie scoped to `/demo` — because those toggles promise a change to the
+ * board and the twin can actually show it (#216); see
+ * `lib/demo/notificationPrefs.ts`.
  */
+import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 import { createClient } from "@/lib/supabase/client";
 import { demoApplicationsAsApi } from "@/lib/demo/asApplications";
+import { writeDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 
 export type SettingsMode = "live" | "demo";
 
@@ -96,11 +101,28 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** `saveMetadata` takes an open patch (`Record<string, unknown>`), so the one
+ *  key the demo keeps has to be narrowed rather than asserted. */
+function isNotificationPrefs(value: unknown): value is NotificationPrefs {
+  if (typeof value !== "object" || value === null) return false;
+  const prefs = value as Partial<NotificationPrefs>;
+  return typeof prefs.weekly === "boolean" && typeof prefs.reviewAlerts === "boolean";
+}
+
 const demo: SettingsTransport = {
   mode: "demo",
-  async saveMetadata() {
-    // Long enough that "Saving…" renders and can be asserted; nothing persists.
+  async saveMetadata(data) {
+    // Long enough that "Saving…" renders and can be asserted.
     await delay(300);
+    // The ONE thing the twin keeps: the notification prefs, in a session
+    // cookie scoped to /demo (`lib/demo/notificationPrefs.ts`). Not a
+    // concession to testing — it is what makes the toggles honest here. Their
+    // own copy promises a change to the board, and until #216 the twin's
+    // toggles could not deliver one on any surface, which is the same
+    // "control looks dead" complaint the signed-in page had for a different
+    // reason. Everything else a section writes (display name, gate) is still
+    // dropped: nothing on this twin has anywhere to show it.
+    if (isNotificationPrefs(data.notifications)) writeDemoNotificationPrefs(data.notifications);
     return { ok: true };
   },
   async updatePassword() {

@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 import type { Metadata } from "next";
 
@@ -12,6 +13,7 @@ import { NotificationsSection } from "@/components/settings/NotificationsSection
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { DEFAULT_GATE_PREFERENCE } from "@/lib/dashboard/model";
+import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
 export const metadata: Metadata = {
@@ -59,7 +61,15 @@ function fixtureGmail(): GmailStatusResult {
   };
 }
 
-export default function DemoSettingsPage() {
+export default async function DemoSettingsPage() {
+  // The toggles seed from the SAME cookie the demo board reads, so the two
+  // pages can never disagree about what is switched on. They used to be
+  // seeded from a `{weekly: true, reviewAlerts: true}` literal while the twin's
+  // board behaved as though both were off — the twin lying about its own
+  // state, in the exact place #216 is about.
+  const notifications = parseDemoNotificationPrefs(
+    (await cookies()).get(DEMO_NOTIFICATIONS_COOKIE)?.value,
+  );
   return (
     <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
@@ -111,7 +121,7 @@ export default function DemoSettingsPage() {
                   instead of leaving it looking inert. */}
               <AppearanceSection mode="demo" />
               <GmailConnectionCard result={fixtureGmail()} demo />
-              <NotificationsSection mode="demo" initial={{ weekly: true, reviewAlerts: true }} />
+              <NotificationsSection mode="demo" initial={notifications} />
               <ClassificationSection mode="demo" initialGate={DEFAULT_GATE_PREFERENCE} />
               <DataSection mode="demo" />
               <AccountSection mode="demo" email="demo@applied.example" />
