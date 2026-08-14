@@ -330,7 +330,7 @@ export const HOW = {
     eyebrow: "§02 · THE GATE",
     headline: "Below 0.85, a human decides.",
     lede:
-      "The cascade never auto-files a guess. A single confidence gate at 0.85 separates “file it” from “ask a person”.",
+      "The cascade never auto-files a guess. A confidence gate at 0.85 is the first thing standing between “file it” and “ask a person” — and not the only one.",
     body:
       "Clearing the gate is necessary to file, not sufficient. Applied must also name the employer and place the mail against a single application; a verdict at 1.0 with no nameable employer is not filed — it joins the review queue alongside everything below 0.85. A human’s answer there is recorded on the email, and no later sync overwrites it.",
     bands: [

@@ -158,9 +158,9 @@ export const InsideArchPage: React.FC<{
             margin: 0,
           }}
         >
-          Corrections write to training_data and flag the email user_corrected,
-          so a later sync leaves the human&rsquo;s answer alone. Nothing
-          retrains on them automatically.
+          A correction is not a hint. It sets user_corrected, and every later
+          sync refuses to overwrite a row the human settled &mdash; the answer
+          holds until the human changes it.
         </p>
       </div>
     </div>
@@ -178,7 +178,7 @@ export const InsideArchPage: React.FC<{
           marginBottom: 10,
         }}
       >
-        What a correction writes to
+        Where it persists
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <PersistBox table="training_data" desc="every human correction, kept as a labeled example. No retrain consumes it automatically." />
