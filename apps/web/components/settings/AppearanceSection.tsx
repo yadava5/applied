@@ -64,11 +64,15 @@ export function AppearanceSection({ mode = "live" }: { mode?: SettingsMode }) {
           );
         })}
       </div>
-      <p className="mt-3 text-[12px] leading-relaxed text-dim">
-        {mode === "demo"
-          ? "Saved on this device, and applied the moment you pick it — but the demo is shown in the product's dark theme throughout, so this page will not change colour. Sign in to see it applied."
-          : "Saved on this device. Dark is the default."}
-      </p>
+      {/* Demo-only: a switch you flip and nothing moves reads as broken, so
+          the pinned-dark page says why. Live gets no caption — the theme
+          changing under your cursor is its own explanation (#200). */}
+      {mode === "demo" ? (
+        <p className="mt-3 text-[12px] leading-relaxed text-dim">
+          The demo is pinned to the product&apos;s dark theme, so this page won&apos;t change
+          colour — sign in to see your choice applied.
+        </p>
+      ) : null}
     </SettingsSection>
   );
 }

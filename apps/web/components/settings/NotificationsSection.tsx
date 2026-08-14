@@ -78,11 +78,7 @@ export function NotificationsSection({
   }
 
   return (
-    <SettingsSection
-      id="notifications"
-      title="Notifications"
-      description="What Applied should keep you posted about."
-    >
+    <SettingsSection id="notifications" title="Notifications">
       <div className="divide-y divide-line-soft">
         <Toggle
           checked={prefs.weekly}
@@ -97,11 +93,9 @@ export function NotificationsSection({
           description="On, held mail interrupts the board above your rows. Off, it waits below them."
         />
       </div>
-      <div className="mt-4 flex items-center justify-between gap-3 border-t border-line-soft pt-4">
-        <p className="text-[12px] leading-relaxed text-dim">
-          Takes effect on your dashboard right away. Email delivery isn&apos;t live yet — these
-          drive the in-app cues only.
-        </p>
+      {/* The toggles' own lines say exactly what each does; the only feedback
+          left to carry is the save state (#200 cut the footer caption). */}
+      <div className="mt-2 flex justify-end">
         <SaveStatus state={state} />
       </div>
     </SettingsSection>

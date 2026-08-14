@@ -22,6 +22,12 @@ export interface SettingsTransport {
   mode: SettingsMode;
   /** Persist a patch of the user's metadata (display name, prefs, gate). */
   saveMetadata(data: Record<string, unknown>): Promise<{ ok: boolean }>;
+  /** Change the account password. Only offered when an `email` identity
+   *  exists (the section gates on that), so `live` can always ask Supabase.
+   *  `message` carries Supabase's own refusal — "same as the old password",
+   *  a reauthentication demand — because that sentence is the actionable
+   *  part. */
+  updatePassword(password: string): Promise<{ ok: boolean; message?: string }>;
   /** Fetch everything the export downloads. The section owns the blob/anchor
    *  dance — that part is the browser's either way. */
   exportApplications(): Promise<{ ok: boolean; data?: unknown }>;
@@ -36,6 +42,24 @@ const live: SettingsTransport = {
     const supabase = createClient();
     const { error } = await supabase.auth.updateUser({ data });
     return { ok: !error };
+  },
+  async updatePassword(password) {
+    const supabase = createClient();
+    const { error } = await supabase.auth.updateUser({ password });
+    if (!error) return { ok: true };
+    // If the Supabase project has "secure password change" enabled, this call
+    // demands a recent sign-in and refuses with a reauthentication error. The
+    // project's setting is unverified, so the refusal is translated into the
+    // action that resolves it rather than surfaced as a raw 400 the first
+    // time it happens in production.
+    const needsReauth =
+      error.code === "reauthentication_needed" || /reauthenticat/i.test(error.message);
+    return {
+      ok: false,
+      message: needsReauth
+        ? "For security, changing your password needs a fresh sign-in. Sign out, sign back in, then try again."
+        : error.message,
+    };
   },
   async exportApplications() {
     try {
@@ -76,6 +100,12 @@ const demo: SettingsTransport = {
   mode: "demo",
   async saveMetadata() {
     // Long enough that "Saving…" renders and can be asserted; nothing persists.
+    await delay(300);
+    return { ok: true };
+  },
+  async updatePassword() {
+    // The fixture account is email-identity-shaped, so the control renders
+    // and the whole machine runs; nothing persists, like every demo write.
     await delay(300);
     return { ok: true };
   },

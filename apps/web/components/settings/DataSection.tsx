@@ -45,7 +45,7 @@ export function DataSection({ mode = "live" }: { mode?: SettingsMode }) {
   }
 
   return (
-    <SettingsSection id="data" title="Your data" description="Take it with you, or bring more in.">
+    <SettingsSection id="data" title="Your data">
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={exportData} disabled={state === "working"} className={secondaryBtnClass}>
           <Download className="h-4 w-4" aria-hidden="true" />
@@ -60,12 +60,7 @@ export function DataSection({ mode = "live" }: { mode?: SettingsMode }) {
         <p role="alert" className="mt-3 text-xs text-reject-ink">
           Couldn’t prepare the export — the backend may be unreachable. Try again shortly.
         </p>
-      ) : (
-        <p className="mt-3 text-[12px] leading-relaxed text-dim">
-          Export downloads your rows as JSON, in your browser. Import classifies your own mail
-          on-device — nothing is uploaded.
-        </p>
-      )}
+      ) : null}
     </SettingsSection>
   );
 }

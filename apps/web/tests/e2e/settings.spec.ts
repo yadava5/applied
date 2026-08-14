@@ -68,7 +68,41 @@ test.describe("settings (via the public /demo/settings twin)", () => {
     await expect(page.getByRole("navigation", { name: /settings sections/i })).toBeVisible();
     // The provenance badge — this page must never read as a real account.
     await expect(page.getByText("demo · fixture account · nothing is saved")).toBeVisible();
+    // #199: the sign-in method is DERIVED from the identity list (the fixture
+    // is the measured email-only shape), no longer a hardcoded literal.
+    await expect(page.getByText("Email & password", { exact: true })).toBeVisible();
+    // #200: two of the named captions used to render on this twin — their
+    // absence is asserted so a reintroduction fails here.
+    await expect(page.getByText(/stored on your account/i)).toHaveCount(0);
+    await expect(page.getByText(/export downloads your rows/i)).toHaveCount(0);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
+  });
+
+  test("change password: offered on the email-identity account, signup floor enforced, success reported", async ({
+    page,
+  }) => {
+    await page.goto("/demo/settings");
+    await page.getByRole("button", { name: /^change password$/i }).click();
+
+    const newPassword = page.getByLabel("new password", { exact: true });
+    const confirm = page.getByLabel("confirm new password", { exact: true });
+
+    // Below the signup floor → refused before any network, on the app's copy.
+    await newPassword.fill("short");
+    await confirm.fill("short");
+    await page.getByRole("button", { name: /^update password$/i }).click();
+    await expect(page.getByRole("alert")).toContainText(/at least 8 characters/i);
+
+    // Long enough but unconfirmed → the confirm field is the problem.
+    await newPassword.fill("long enough password");
+    await confirm.fill("long enough passw0rd");
+    await page.getByRole("button", { name: /^update password$/i }).click();
+    await expect(page.getByRole("alert")).toContainText(/don’t match/i);
+
+    // A matching pair runs the whole machine to the success status.
+    await confirm.fill("long enough password");
+    await page.getByRole("button", { name: /^update password$/i }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Password updated" })).toBeVisible();
   });
 
   test("the appearance switch is a working radiogroup — the real theme mechanism", async ({
@@ -135,7 +169,11 @@ test.describe("settings sections (signed in — needs a session)", () => {
     await requireSession(page, "every wired Settings section rendering on the real /settings");
     await page.goto("/settings");
 
-    await expect(page.getByRole("heading", { name: /^settings$/i })).toBeVisible();
+    // Re-pointed for #199: the visible page name now lives in the shell
+    // TopBar's location label; the page keeps exactly one sr-only h1 for the
+    // document outline, so this asserts presence-and-uniqueness, not
+    // visibility.
+    await expect(page.getByRole("heading", { level: 1, name: /^settings$/i })).toHaveCount(1);
     for (const name of [
       /^profile$/i,
       /^appearance$/i,

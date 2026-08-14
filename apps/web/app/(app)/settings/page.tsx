@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { summarizeSignIn } from "@/components/settings/accountSecurity";
 import { AccountSection } from "@/components/settings/AccountSection";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { ClassificationSection } from "@/components/settings/ClassificationSection";
@@ -32,6 +33,12 @@ export const metadata: Metadata = {
  * across the sections is cut to one working line per control; the long-form
  * reference material (Gmail safeguards, the restricted-scope scale story)
  * survives in disclosures on the Gmail card.
+ *
+ * No visible in-page title (#199): the rail and the TopBar's location label
+ * already both say "Settings", so a third copy plus a subtitle restating the
+ * section list was noise. Same resolution as the board route — one place owns
+ * the visible name — but here TopBar is that place, so the page keeps only an
+ * sr-only h1 for the document outline.
  *
  * These same sections render publicly on `/demo/settings` over the simulated
  * settings transport — that twin is where their e2e coverage executes,
@@ -90,11 +97,10 @@ export default async function SettingsPage({
   // Measure capped for form readability, but aligned to the shell's shared
   // left edge (no `mx-auto`): every authed page starts at the same x.
   return (
-    <section className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-strong">Settings</h1>
-        <p className="mt-1 text-[13px] text-muted">Your account, appearance, mail, and data.</p>
-      </header>
+    // `relative` parents the sr-only h1's absolute positioning so it can
+    // never extend the document's scroll area (the standing sr-only trap).
+    <section className="relative space-y-6">
+      <h1 className="sr-only">Settings</h1>
 
       {banner ? (
         <div
@@ -108,7 +114,12 @@ export default async function SettingsPage({
       <div className="lg:grid lg:grid-cols-[10rem_minmax(0,48rem)] lg:gap-8">
         <SettingsNav />
         <div className="max-w-3xl space-y-6 lg:max-w-none">
-          <ProfileSection initialName={displayName} email={email} memberSince={memberSince} />
+          <ProfileSection
+            initialName={displayName}
+            email={email}
+            memberSince={memberSince}
+            signIn={summarizeSignIn(user)}
+          />
           <AppearanceSection />
           <GmailConnectionCard result={gmailResult} />
           <NotificationsSection initial={readNotificationPrefs(meta)} />
