@@ -175,7 +175,9 @@ export function MarketingBoard({ beat }: {
       {/* One header line: what the board says about itself, and whose it is. */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <p className="text-sm text-muted">{buildSubtitle(summarize(apps), false)}</p>
-        <p className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted">
+        {/* Prose, so it is set in the product's voice — mono is reserved for
+            machine values (a path, a hash, a figure read out of source). */}
+        <p className="label-caps inline-flex items-center gap-2 text-muted">
           <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
           simulated account · nothing is read
         </p>

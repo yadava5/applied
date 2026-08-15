@@ -10,9 +10,11 @@ import { ACCESS, DECISION, PRIVACY } from "./copy";
  * The copy itself lives in `copy.ts` — nothing here writes a claim.
  */
 
-function SectionShell({ children }: { children: React.ReactNode }) {
+function SectionShell({ id, children }: { id?: string; children: React.ReactNode }) {
   return (
-    <section className="border-t border-line-soft">
+    // `scroll-mt` clears the sticky nav (h-14) plus a breath, so an anchored
+    // arrival lands on the eyebrow rather than under the header.
+    <section id={id} className="scroll-mt-20 border-t border-line-soft">
       <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-24">{children}</div>
     </section>
   );
@@ -78,10 +80,14 @@ export function PrivacySection() {
  * The seat cap, stated plainly — and then an action, because a cap alone is
  * a dead end. /import is public, uncapped, and the full rules pass on the
  * visitor's own exported mail: the cap becomes a privacy flex.
+ *
+ * This is the page's ONE conversion surface, which is why it carries the id
+ * the nav's "Get access" anchors to (`ACCESS_ANCHOR`). Every variant renders
+ * it exactly once, so the anchor cannot become ambiguous.
  */
 export function AccessSection() {
   return (
-    <SectionShell>
+    <SectionShell id="access">
       <Reveal className="max-w-2xl">
         <p className="label-caps mb-4">{ACCESS.eyebrow}</p>
         <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">

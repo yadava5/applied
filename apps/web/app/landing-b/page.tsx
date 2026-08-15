@@ -13,21 +13,25 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  * The sequence is the argument, one idea per screen:
  *
  *   1  the promise (display headline);
- *   2  the board, live in the window — the product before any explanation;
+ *   2  the board, live in the window — the product before any explanation,
+ *      and captioned, because the scene the page bets on cannot be the one
+ *      with nothing to read on it;
  *   3  the verdict lands — the window's row travels to closed, on its own;
  *   4  the mail behind it — the detail pane docks open (the approved
  *      composition), its trail ending in the receipt card's "the email that
  *      did it ↓";
- *   5–6 the descent takes that exact email: read whole, then the SPLIT
- *      VERDICT — the same body classified live twice, preview vs whole —
- *      the one artifact on the page nothing else can fake, placed after the
- *      act it explains;
- *   7  the benchmark that chose what ships;
- *   8  what is kept (retention), the email stripped to its record;
- *   9  the seats, and the one CTA.
+ *   5  the descent takes that exact email and makes ONE claim in two beats:
+ *      first the mail as Gmail hands it over, the preview visibly ending
+ *      before the sentence that matters; then the SPLIT VERDICT — the same
+ *      body classified live twice — the one artifact on the page nothing
+ *      else can fake, placed after the act it explains;
+ *   6  the benchmark that chose what ships;
+ *   7  what is kept (retention), the email stripped to its record;
+ *   8  the seats, and the one CTA — the page's single conversion surface,
+ *      reachable from the nav at any depth ("Get access").
  *
  * Screens 2–4 are `WindowAct` (the window pins, scroll advances the scene);
- * 5–8 are C's `ClaimsDescent`, untouched — same copy, same staging, so the
+ * 5–7 are `ClaimsDescent` — same copy, same staging as /landing-c, so the
  * hand-off from the window's open trail to the descent's email is one
  * continuous case: the same Larkspur application end to end.
  */

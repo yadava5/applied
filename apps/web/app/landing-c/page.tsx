@@ -10,12 +10,16 @@ import { AccessSection } from "@/components/marketing/sections";
 /**
  * Landing candidate C — IN MOTION. The hero is the outcome at its smallest:
  * the single row the classifier just moved (Larkspur — the same application
- * the descent's email decides). Then the page descends, one claim per screen,
+ * the descent's email decides). Then the page descends, one claim at a time,
  * the email riding alongside — read whole, cut at Gmail's preview, classified
  * live, stripped to what the database keeps. The FULL board appears after the
  * argument, and Access closes. The most editorial of the three; the
- * discipline is one claim per screen, never a return to the chaptered case
+ * discipline is one claim at a time, never a return to the chaptered case
  * study this family replaces.
+ *
+ * The descent is THREE claims over four screens: the first owns two of them,
+ * because the preview ending and the two verdicts disagreeing have to happen
+ * in that order to be a demonstration rather than a diagram.
  *
  * Same copy as A and B (`copy.ts`); the staging is the difference.
  */

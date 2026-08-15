@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Reveal } from "@/components/landing/Reveal";
+import { cn } from "@/lib/utils";
 import { ChangedRow } from "./ChangedRow";
 import { LandingBoard } from "./LandingBoard";
 import { NEW_TAB } from "./chrome";
-import { BOARD } from "./copy";
+import { ACT, BOARD } from "./copy";
 
 /**
  * The merged landing's first act: B's specimen window, driven by C's scroll.
@@ -34,14 +35,60 @@ import { BOARD } from "./copy";
  * reduced motion every scene still composes fully; only the travel between
  * them is cut rather than played.
  *
+ * NARRATION. Every scene carries one pinned caption above the frame (`ACT`),
+ * swapped as the beat changes. Scene 0 is the load-bearing one: it used to be
+ * two thirds of a viewport of a resting board with nothing to read, and a
+ * visitor who does not yet know the product's grammar cannot see what the
+ * fixture is foreshadowing (Larkspur, nineteen days quiet, the amber age tag).
+ * The caption is what makes that scene a scene — and scene 0 has a second
+ * line for the way back up, because the camera returns and the verdict does
+ * not (`ACT.settled`).
+ *
  * GEOMETRY. The runway's height and the sticky window are `lg`-only: below
  * `lg` the board is `BoardStill` (LandingBoard's rule), so the act collapses
  * to B's static frame with the receipt card in flow beneath it. Everything
  * at `lg`+ is height-reserved — sticky + transform inside the stage's clip —
  * so the choreography cannot shift the page: CLS zero by construction.
+ *
+ * The runway and the sentinel shares below are DERIVED, not chosen. Writing
+ * the runway as H (in viewport heights), the shares as h0/h1/h2, and the pin
+ * offset as p = 4.5rem/vh, the observer's centre band puts the events at:
+ *
+ *   window pins        T = p                    (T = section top, in vh)
+ *   beat 1 fires       T = 0.55 − h0·H
+ *   beat 2 fires       T = 0.55 − (h0+h1)·H
+ *   window unpins      T ≈ 0.96 − H             (the frame fills the viewport)
+ *
+ * so each scene's PINNED dwell is D0 = h0·H − (0.55 − p), D1 = h1·H, and
+ * D2 = h2·H − 0.41. Two consequences drove the split:
+ *
+ *   · h0·H > 0.55 − p is a hard constraint, not a preference. Below it beat 1
+ *     fires while the window is still travelling: the verdict lands on an
+ *     unpinned board. p is smallest on the tallest viewport (72/900 ≈ 0.08),
+ *     so the floor is h0·H > 0.47vh — 47% of a viewport of runway that buys
+ *     no dwell at all. That is why beat 0 cannot be 18–20% of a runway short
+ *     enough to be worth shortening; the gate holds the inequality directly.
+ *   · D0 does not need to be long once the scene has words. The board is
+ *     already on screen and captioned through ~0.9vh of approach before it
+ *     pins, so 0.19vh of pinned stillness is a beat, not dead air.
+ *
+ * Solving for D0 ≈ 0.19vh, D1 ≈ 0.97vh (the beat-1 choreography is ~1.5s: a
+ * 700ms pan, then the 750ms breath before the row travels) and D2 ≈ 0.67vh
+ * gives H = 2.7 and 24/36/40 — 30vh shorter than the 300vh/30-35-35 it
+ * replaces, with beat 0's zone down from 90vh to 65vh and its dead air from
+ * 45vh to 19vh.
  */
+
+/** The narration's lines, in the order the strip stacks them: the three scenes,
+ *  then scene 0's revisited line. */
+const LINES = [...ACT.captions, ACT.settled];
+
 export function WindowAct() {
   const [beat, setBeat] = useState(0);
+  // Whether the verdict has already landed. The scene index goes back down
+  // when the reader scrolls up; the board's state does not, so scene 0's
+  // opening line stops being true the moment beat 1 has fired once.
+  const [settled, setSettled] = useState(false);
   const sentinelsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,7 +99,9 @@ export function WindowAct() {
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
           const index = Number((entry.target as HTMLElement).dataset.beat);
-          if (Number.isInteger(index)) setBeat(index);
+          if (!Number.isInteger(index)) continue;
+          setBeat(index);
+          if (index >= 1) setSettled(true);
         }
       },
       // The centre band: a scene owns the window while its zone crosses the
@@ -64,9 +113,32 @@ export function WindowAct() {
   }, []);
 
   return (
-    <section aria-label="The board, live" className="relative lg:h-[300vh]">
+    <section aria-label="The board, live" className="relative lg:h-[270vh]">
       {/* ---- the window, pinned through the act -------------------------- */}
       <div className="lg:sticky lg:top-[4.5rem]">
+        {/* The act's narration. One line per scene, crossfaded in place: every
+            line shares one grid cell, so the strip's height is fixed and the
+            frame below it never moves. Below `lg` there are no scenes, so the
+            strip rests on the first line and captions the still. */}
+        <div className="mx-auto w-full max-w-6xl px-4 pb-2 sm:px-6">
+          <div className="grid min-h-6 items-start">
+            {LINES.map((line, index) => {
+              const active = index === (beat === 0 && settled ? LINES.length - 1 : beat);
+              return (
+                <p
+                  key={line}
+                  aria-hidden={!active}
+                  className={cn(
+                    "col-start-1 row-start-1 text-[0.9375rem] leading-6 text-muted transition-opacity duration-500 motion-reduce:transition-none",
+                    active ? "opacity-100" : "opacity-0",
+                  )}
+                >
+                  {line}
+                </p>
+              );
+            })}
+          </div>
+        </div>
         <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
           <div className="overflow-clip rounded-2xl border border-line bg-surface shadow-[0_24px_60px_-30px_rgb(0_0_0/0.55)]">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2.5 sm:px-5">
@@ -84,7 +156,11 @@ export function WindowAct() {
             </div>
             <div className="bg-background p-4 lg:p-5">
               <LandingBoard
-                height="calc(100dvh - 11.5rem)"
+                // 13.5rem, not 11.5: nav + pin offset + frame chrome, plus the
+                // 2rem the caption strip above now takes. The frame still
+                // clears the shortest viewport this act is verified at (600px)
+                // by the same ~29px it always did.
+                height="calc(100dvh - 13.5rem)"
                 caption={false}
                 beat={beat}
                 // Beat 1 only: that scene pans past the board's foot and
@@ -113,9 +189,9 @@ export function WindowAct() {
         aria-hidden
         className="pointer-events-none absolute inset-0 hidden lg:block"
       >
-        <div data-beat={0} className="h-[30%]" />
-        <div data-beat={1} className="h-[35%]" />
-        <div data-beat={2} className="h-[35%]" />
+        <div data-beat={0} className="h-[24%]" />
+        <div data-beat={1} className="h-[36%]" />
+        <div data-beat={2} className="h-[40%]" />
       </div>
 
       {/* ---- below `lg`: the receipt in flow under the still -------------- */}

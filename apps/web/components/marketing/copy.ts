@@ -35,6 +35,35 @@ export const BOARD = {
   open: "Open the full demo",
 } as const;
 
+/**
+ * The window act's narration — one line per scene, pinned above the frame and
+ * swapped as the visitor's scroll advances the board beneath it (`WindowAct`).
+ *
+ * These exist because the act's first scene was WORDLESS: two thirds of a
+ * viewport of a resting board, whose whole point (Larkspur, nineteen days
+ * quiet, the amber age tag) is invisible to a visitor who does not yet know
+ * the product's grammar. The scene the page bets on cannot be the one screen
+ * with nothing to read on it, so `landing-variants.test.mjs` holds the count
+ * at three non-empty lines against the act's three sentinels.
+ *
+ * State, event, consequence — the act's whole argument in three lines.
+ */
+export const ACT = {
+  captions: [
+    "The board, nineteen days after you stopped updating it.",
+    "The reply lands, and the row moves without you.",
+    "The row opens on the mail that moved it.",
+  ],
+  /**
+   * Scene 0, revisited. The camera returns when the reader scrolls back up but
+   * the verdict does not un-happen (see MarketingBoard), so the opening line
+   * would be sitting over a board whose detail pane is showing Larkspur
+   * already rejected — the one place the narration could contradict the thing
+   * it narrates. This is what scene 0 says the second time.
+   */
+  settled: "The same board, with the verdict already filed.",
+} as const;
+
 export const DECISION = {
   eyebrow: "How it decides",
   headline: "We benchmarked the neural cascade against the regexes. We shipped the regexes.",
@@ -72,29 +101,56 @@ export const ACCESS = {
   headline: "One hundred seats.",
   cap:
     "Google caps an app awaiting verification at 100 Gmail accounts. Those are Applied's seats while the review runs, and they are invited one at a time.",
+  /** Takeout is prepared asynchronously — Google mails the archive back, and
+   *  that can take hours. The old line promised "today", which is the one
+   *  sentence on the page a visitor could catch out at the moment of highest
+   *  intent, so it states the wait instead of hiding it. */
   noSeat:
-    "No seat? Run it on your own exported mail today — drop a Google Takeout .mbox and it is parsed and classified in your browser. Nothing uploads.",
+    "No seat? Run it on your own exported mail instead — ask Google for a Takeout .mbox, and when the archive lands in your inbox, drop it in: it is parsed and classified in your browser. Nothing uploads.",
   cta: "Classify your exported mail",
   aside: "or ask for a seat:",
   contact: "aesh.03.23@gmail.com",
 } as const;
 
 /**
- * Variant C's claim screens — the descent. One claim per screen; the email
- * artifact beside them is `VerdictEmail`, whose classifications are computed
- * live in the tab by the shipped rules layer (`lib/demo/rulesLayer.ts`).
+ * The descent's claim screens. One claim per screen; the email artifact beside
+ * them is `VerdictEmail`, whose classifications are computed live in the tab by
+ * the shipped rules layer (`lib/demo/rulesLayer.ts`).
+ *
+ * `verdict` was two claims — "the verdict arrives buried" and "the whole body
+ * gets read" — cause and effect, split across two screens. A reader who left
+ * after the first took away the problem and none of the answer, so they are one
+ * claim now. What they must NOT become is one static diagram: the exhibit's
+ * power is sequential, and the reader has to feel the preview end before the
+ * sentence that matters before the two verdicts disagree. So the merged claim
+ * keeps TWO artifact micro-beats — `raw`, then `split` — under one headline,
+ * the shape `WindowAct` already uses (see `ClaimsDescent`'s STAGES).
  */
 export const CLAIMS = {
-  arrives: {
-    eyebrow: "What arrives",
-    headline: "The verdict arrives buried.",
-    body:
+  verdict: {
+    eyebrow: "What it reads",
+    headline: "The preview ends before the verdict. Applied reads past it.",
+    /** Micro-beat one: the mail as Gmail hands it over. */
+    raw:
       "A rejection spends its first two hundred characters being polite. Gmail's preview — all most tools ever see — ends before the sentence that matters.",
+    /** Micro-beat two: the same body, run twice. "So" carries the cause across
+     *  the screen break, because this paragraph has no headline of its own. */
+    split:
+      "So the shipped rules layer runs on it twice, live in your tab: once on the preview alone, once on the whole body. The preview reads as a confirmation. The body tells the truth.",
   },
-  reads: {
-    eyebrow: "What reads it",
-    headline: "The whole body gets read.",
-    body:
-      "The shipped rules layer classifies this email twice, live in your tab: once on the preview alone, once on the whole body. The preview reads as a confirmation. The body tells the truth.",
-  },
+} as const;
+
+/**
+ * Wall labels for the descent's travelling exhibit — sentinel index → what the
+ * artifact is showing right now. Parallel to `ClaimsDescent`'s STAGES, and the
+ * same device as the window act's captions: an exhibit that changes state
+ * under the reader deserves to say what state it is in.
+ */
+export const ARTIFACT = {
+  labels: [
+    "The email, as Gmail hands it over",
+    "The same body, classified twice",
+    "Both verdicts, from the rules layer that ships",
+    "The same email, as the database keeps it",
+  ],
 } as const;

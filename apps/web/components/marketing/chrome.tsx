@@ -10,8 +10,21 @@ import { Logo } from "@/components/brand/Logo";
  * the page for the live app or a document open in a NEW TAB so the pitch
  * survives behind them; signing in is the one deliberate same-tab move —
  * a second tab after auth strands the visitor on a stale marketing page.
+ * "Get access" is the third same-tab case and for the same reason: it never
+ * leaves the page at all.
  */
 export const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const;
+
+/**
+ * The one persistent path for a visitor who is sold early. Access lives at
+ * roughly 85% depth, and the rest of the nav is no use to a new reader —
+ * "Sign in" belongs to the hundred seat-holders and "Live demo" leaves the
+ * page — so somebody convinced at the first beat had no way to act for the
+ * next several viewports. This is a quiet in-page anchor rather than a second
+ * loud CTA: one path, always reachable, never competing with the real one.
+ * `AccessSection` owns the target id and its scroll offset.
+ */
+export const ACCESS_ANCHOR = "#access";
 
 const SYSTEM_CARD = "/system-card";
 const CONTACT = "aesh.03.23@gmail.com";
@@ -34,6 +47,12 @@ export function MarketingNav() {
             className="hidden min-h-11 items-center text-sm text-muted transition-colors hover:text-strong sm:inline-flex"
           >
             Live demo
+          </a>
+          <a
+            href={ACCESS_ANCHOR}
+            className="inline-flex min-h-11 items-center text-sm text-muted transition-colors hover:text-strong"
+          >
+            Get access
           </a>
           <Link
             href="/login"

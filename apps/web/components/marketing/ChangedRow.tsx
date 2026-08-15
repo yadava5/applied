@@ -51,9 +51,13 @@ export function ChangedRow() {
         </p>
       </div>
       <figcaption className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-line-soft px-5 py-2.5">
+        {/* The stage chip above IS computed live; the MOVE on this page is the
+            window act writing the verdict through its own fixture transport
+            (MarketingBoard). So the caption claims the classifier's work, not
+            the classifier's hand on this particular row. */}
         <span className="inline-flex items-center gap-2 text-xs text-dim">
           <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
-          moved by the classifier — no hand touched it
+          what the classifier does — replayed on fixture data
         </span>
         <span aria-hidden className="text-xs text-dim">
           the email that did it ↓
