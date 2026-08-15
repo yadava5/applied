@@ -377,15 +377,16 @@ class Settings(BaseSettings):
     cron_sync_user_ids: Annotated[list[uuid.UUID], NoDecode] = Field(
         default_factory=list,
         description=(
-            "Users the scheduled sync may act for, comma-separated in the env "
-            "var: JOBTRACKER_CRON_SYNC_USER_IDS='<uuid>,<uuid>'. The cron "
-            "carries no JWT, so it cannot READ this list out of the database — "
-            "`user_credentials` has FORCE'd RLS keyed on auth.uid() against a "
-            "NOBYPASSRLS role, so an identity-less enumeration matches no row. "
-            "Configuring the identities instead lets each user's sync run "
-            "inside `user_id_scope(uid)`, where every read and write passes RLS "
-            "exactly as a signed-in request would. Unset or empty means the "
-            "cron syncs nobody, which is the fail-closed default."
+            "NO LONGER CONSULTED. This was the scheduled sync's allowlist "
+            "(JOBTRACKER_CRON_SYNC_USER_IDS='<uuid>,<uuid>') back when the cron "
+            "could not read who had Gmail linked — `user_credentials` is "
+            "FORCE-RLS on auth.uid() and a cron carries no JWT. Since #291 the "
+            "membership fact lives in `gmail_sync_enrollment`, which an "
+            "identity-less connection CAN read, and `jobtracker.cloud.cron` "
+            "enumerates that instead. Nothing reads this field; a deployment "
+            "that still sets the env var is simply ignored. Kept so an existing "
+            "environment cannot fail validation on a variable it was told to "
+            "set, and so this note has somewhere to live."
         ),
     )
 
