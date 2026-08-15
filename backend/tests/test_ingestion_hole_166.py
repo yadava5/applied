@@ -355,30 +355,32 @@ def test_the_visible_decision_sentence_now_reaches_the_board() -> None:
     gate that is a regression worth a red test rather than a silent return to
     the old behaviour.
 
-    AND IT FILES UNDER THE WRONG COMPANY. Read the last assertion: the row this
-    now creates is ``Research Engineer``, not ``Together AI``. That is a
-    PRE-EXISTING false positive in ``pipeline._employer_from_subject``, which
-    predates this change and is not touched by it — ``_EMPLOYER_ANCHORED``
-    reads "…your application **to** Systems Research Engineer, GPU Programming
-    @ Together AI" as naming an employer and cleans the capture down to
-    "Research Engineer". The real employer is in the ``@`` tail the pattern
-    never reaches, and supplying the correct ``sender_name`` does not help:
-    subject extraction is step 2 of :func:`resolve_employer`'s order and wins
-    before the display name is consulted at step 3.
+    AND IT NOW FILES UNDER THE RIGHT COMPANY — #325, which is what the last
+    assertion is really for. Until then this line read ``Research Engineer``
+    and was pinned as characterisation of a defect: ``_EMPLOYER_ANCHORED`` read
+    "…your application **to** Systems Research Engineer, GPU Programming @
+    Together AI" as naming an employer, and ``_CORP_TAIL`` ate "Systems" on the
+    way out, leaving a job title where the company belongs.
 
-    What #316 changed is only that the defect is now REACHABLE for this
-    message. Below the gate it never got as far as naming an employer.
-    ``_qualifies_for_hard_row`` does guard the "unnameable employer" case —
-    ``resolve_employer`` returns None and no row is created — so this is a
-    wrong name rather than a missing guard, and the guard is working.
+    The fix is an ORDERING one. ``pipeline._EMPLOYER_AT_SIGN`` matches the
+    trailing "@ <Company>" and is tried BEFORE the anchored pattern, for ATS
+    mail only. Two patterns both fire on this subject and they disagree; the
+    at-sign wins because "<title> @ <company>" means one thing, while
+    "application to X" names a company only when the subject did not already
+    name a role. Measured over all 52 stored production emails first: not one
+    of them contains an at-sign, so no filed row moved and nothing merged or
+    split. This message was never among them — it is the one #166 is named for
+    precisely because it never reached the board.
 
-    Deliberately NOT fixed here. Rewriting subject extraction moves the
-    employer on every filed row in the estate, which is a change that needs its
-    own before/after over the real board. Asserted as CHARACTERISATION, the
-    same way ``test_follow_up_verdicts_reach_no_persist_path`` at the bottom of
-    ``test_rules_classifier_rejection.py`` pins its defect: this line goes RED
-    when ``_employer_from_subject`` is fixed, which is the correct time for
-    somebody to read this paragraph.
+    What #316 changed is only that the defect was REACHABLE for this message at
+    all. Below the gate it never got as far as naming an employer.
+    ``_qualifies_for_hard_row`` guards the "unnameable employer" case —
+    ``resolve_employer`` returns None and no row is created — so this was a
+    wrong name rather than a missing guard, and the guard was working.
+
+    The assertion is kept, not deleted, and is now a REGRESSION test in both
+    directions: the message must still file (that is #316) and it must file
+    against Together AI (that is #325). Either one going back costs a red here.
     """
     result, item = _item(
         TOGETHER_SUBJECT, TOGETHER_SNIPPET_WITH_DECISION, GREENHOUSE, "best-case"
@@ -395,11 +397,10 @@ def test_the_visible_decision_sentence_now_reaches_the_board() -> None:
         >= pipeline.AUTO_FILE_GATE
     )
     assert pipeline._qualifies_for_hard_row(item) is not None
-    # "Research Engineer" is WRONG and is asserted anyway — see the paragraph
-    # above. The employer should read "Together AI".
+    # The employer, not the job title it is advertised under (#325).
     assert [
         (r.company_display, r.status) for r in pipeline.roll_up_applications([item])
-    ] == [("Research Engineer", "rejected")]
+    ] == [("Together AI", "rejected")]
 
 
 @pytest.mark.parametrize("sender", [GREENHOUSE, RIPPLING], ids=["greenhouse", "rippling"])

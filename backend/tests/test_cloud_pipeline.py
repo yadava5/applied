@@ -283,6 +283,86 @@ def test_resolve_employer_sees_through_relay_to_subject() -> None:
     ) == ("acme", "Acme")
 
 
+# --- #325: "<Role> @ <Company>" — the at-sign outranks the preposition -------
+#
+# The real subject from issue #166, quoted verbatim in the public issue. Both
+# "application **to** …" and "… @ Together AI" claim to name the employer, and
+# only one of them is right.
+AT_SIGN_SUBJECT = (
+    "Important information about your application to "
+    "Systems Research Engineer, GPU Programming @ Together AI"
+)
+
+
+def test_at_sign_beats_the_preposition_for_the_same_subject() -> None:
+    # Was "Research Engineer" — "Systems" eaten by _CORP_TAIL, the rest a job
+    # title filed where a company belongs.
+    assert p._employer_from_subject(AT_SIGN_SUBJECT, ats_relay=True) == "Together AI"
+    assert p.resolve_employer("no-reply@us.greenhouse-mail.io", AT_SIGN_SUBJECT, None) == (
+        "together",
+        "Together AI",
+    )
+    # The at-sign must be the SUBJECT'S OWN tail, not a stray one mid-line.
+    assert p._employer_from_subject("Role @ Acme — next steps", ats_relay=True) is None
+
+
+def test_at_sign_is_read_only_for_ats_relays() -> None:
+    # Off a relay the same shape is a time or a place, not an employer, and a
+    # person's mail is where those occur. Both of these resolve to nothing.
+    assert p.resolve_employer("friend@gmail.com", "Coffee @ Home", None) is None
+    assert p.resolve_employer("friend@gmail.com", "Interview @ Noon", None) is None
+    # Same function, same subject, relay flag off: the at-sign is not consulted,
+    # so a subject whose ONLY employer signal is the at-sign names nobody. The
+    # default is off, which is what keeps every non-relay caller unchanged.
+    assert p._employer_from_subject("Backend Engineer @ Globex", ats_relay=True) == "Globex"
+    assert p._employer_from_subject("Backend Engineer @ Globex", ats_relay=False) is None
+    assert p._employer_from_subject("Backend Engineer @ Globex") is None
+
+
+def test_at_sign_refuses_an_email_address() -> None:
+    # A dot followed by letters is a hostname, not a company.
+    assert p._employer_from_subject("Update @ Careers.Acme.com", ats_relay=True) is None
+    assert p.resolve_employer("no-reply@ashbyhq.com", "Reply to ayush@together.ai", None) is None
+    # ...and refusing FALLS THROUGH rather than returning None outright, so the
+    # anchored pattern still gets its turn.
+    assert (
+        p._employer_from_subject(
+            "Your application to Acme, reply to jobs@Careers.Acme.com", ats_relay=True
+        )
+        == "Acme"
+    )
+
+
+def test_subjects_without_an_at_sign_are_untouched() -> None:
+    # The whole corpus is this shape — 52 of 52 stored production subjects hold
+    # no at-sign — so the anchored pattern still decides all of them.
+    assert p._employer_from_subject("Your application to Stripe", ats_relay=True) == "Stripe"
+    assert (
+        p._employer_from_subject("Thank you for applying to Together AI", ats_relay=True)
+        == "Together AI"
+    )
+
+
+def test_the_two_cases_this_rule_still_gets_wrong() -> None:
+    """Characterisation, deliberately — both are argued in ``_employer_from_subject``.
+
+    Pinned so the next person to widen this reads the reasoning instead of
+    discovering the trade-off by accident. Either line going green is a real
+    improvement and wants this test rewritten, not deleted.
+    """
+    # 1. No at-sign, so nothing separates the role from a company: the
+    #    preposition's object wins and it is a job title.
+    assert (
+        p._employer_from_subject("Your application to Systems Research Engineer", ats_relay=True)
+        == "Research Engineer"
+    )
+    # 2. The at-sign path does not ask whether it just named the COURIER.
+    assert (
+        p._employer_from_subject("Your application to Acme @ Greenhouse", ats_relay=True)
+        == "Greenhouse"
+    )
+
+
 def test_resolve_employer_returns_none_for_ats_job_alert() -> None:
     # Handshake / Greenhouse / Workday / PageUp relays with no named employer:
     # skipping is better than a garbage "Joinhandshake" / "Pageuppeople" row.
