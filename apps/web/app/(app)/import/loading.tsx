@@ -26,6 +26,13 @@ import { QuietLine } from "@/components/boot/QuietLine";
  * header is 56px rather than this 36 and there is nothing on screen for it to
  * disagree with.
  *
+ * The width follows for free, and that is why the old `px-6` is gone: the page
+ * and this surface are now both `w-full max-w-3xl` inside the same container,
+ * so they measure the same at every viewport rather than at one. They did not
+ * before — the skeleton's own `px-6` sat INSIDE the cap the signed-in page
+ * applies bare, and put a 48px step in the plate's edges on the one branch
+ * that can show one.
+ *
  * Deliberately keeps `border-dashed`: it is the one thing that says "drop
  * target" rather than "plate", and at hairline weight it says it quietly.
  */

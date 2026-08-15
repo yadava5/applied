@@ -92,6 +92,13 @@ export default function SettingsLoading() {
       // "Loading…" is half of BootOverlay's PENDING_SELECTOR, not just a label.
       aria-label="Loading settings"
       className="boot-quiet relative space-y-6"
+      // 4.8 s period ÷ 6 cards. The stagger is a delay, not a sequence, so a
+      // step that does not divide the period folds cards onto each other: at
+      // the 1.2 s default, six cards put `--i` 4 at 4.8 s (phase 0, with card
+      // one) and `--i` 5 at 6.0 s (phase 1.2, with card two), and the lift
+      // reads as pairs firing twice a cycle instead of one wave. It was four
+      // cards when the default was chosen; the count is what changed.
+      style={{ "--boot-quiet-step": "0.8s" } as CSSProperties}
     >
       {/* The PageHeader band (#297): childless here, so it is `lg`-only — just
           the ⋯ session menu's square on the right, at the loaded row's 36px. */}

@@ -10,6 +10,12 @@ import { cn } from "@/lib/utils";
  *  on the account, not on this file. */
 const GROUPS = [4, 3, 2];
 
+/** The classify wave's step, sized so nine rows fit inside the 4.8 s period
+ *  the `boot-quiet-*` keyframes run on: the delay is modular, so a step whose
+ *  total overruns the period puts the last rows back in phase with the first
+ *  and the wave reads as two fronts instead of one. */
+const ROW_STEP = "0.5s";
+
 /**
  * Instant pending state for /dashboard — the Triage boot's quiet form
  * (boot-demos variant 01): hairline outlines at the loaded board's geometry,
@@ -51,7 +57,7 @@ export default function DashboardLoading() {
       // BootOverlay's PENDING_SELECTOR, the signal that holds the boot loop on
       // screen until no route-level pending surface is left.
       aria-label="Loading dashboard"
-      style={{ "--boot-quiet-step": "0.6s" } as CSSProperties}
+      style={{ "--boot-quiet-step": ROW_STEP } as CSSProperties}
     >
       {/* `SyncBar`'s header row: title + inline subtitle on one baseline, the
           sync cluster right. The loaded row's siblings inside SyncBar are
@@ -103,6 +109,9 @@ export default function DashboardLoading() {
                 clipped here so the quiet form can never grow the pane. */}
             <div className="space-y-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden lg:pr-1">
               {GROUPS.map((count, group) => (
+                // The wave runs across the WHOLE list, not per group: the row
+                // index has to keep counting over the group boundary or the
+                // stagger leaves a hole where a group ends.
                 <section key={group} className="rounded-xl">
                   {/* The sticky stage heading. */}
                   <div className="mb-2 flex items-baseline gap-2 px-1 lg:py-1">
@@ -122,7 +131,7 @@ export default function DashboardLoading() {
                       >
                         <div className="flex min-w-0 items-center gap-3 sm:flex-1 sm:basis-56">
                           <QuietEnvelope
-                            index={group * 4 + row}
+                            index={GROUPS.slice(0, group).reduce((n, c) => n + c, 0) + row}
                             lit={group === 0 && row === 0}
                             className="h-[13px] w-[18px]"
                           />
