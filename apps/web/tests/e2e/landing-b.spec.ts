@@ -84,12 +84,12 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * `stage.contains(control)`, the stage-really-crops-the-board guard, the
  * `below` edge and the two horizontal ones.
  *
- * ONE TEST HERE HAS NOT BEEN THROUGH ANY OF THAT, and the header would be
- * lying if it did not say so: the re-open pair (SEED 4, added 2026-08-15) was
- * written in a session that could not run Playwright at all. No run of it has
- * been watched go red, or green. Its docblock names the mutation to run first
- * and what the other tests should do under it; until that run exists a green
- * from it proves nothing.
+ * THREE TESTS HERE HAVE NOT BEEN THROUGH ANY OF THAT, and the header would be
+ * lying if it did not say so: the re-open pair (SEED 4) and the takeover
+ * suppression (SEED 5), all added 2026-08-15 in sessions that could not run
+ * Playwright at all. No run of any of them has been watched go red, or green.
+ * Each docblock names the mutation to run first and what the other tests
+ * should do under it; until those runs exist a green from them proves nothing.
  *
  * A THIRD ASSERTION THAT COULD NOT HOLD, caught the same way. That test first
  * gated on the act still being at beat 1 after the click, and it went red on
@@ -587,11 +587,20 @@ test.describe("landing B (/landing-b)", () => {
    * the only way out. It is the most likely click in the scene: the pane is
    * open on that row, and the row is the thing the caption points at.
    *
-   * The fix is in `MarketingBoard`: once the page's own open has been consumed,
-   * the seeded row is handed a fresh object carrying the same values, so the
-   * visitor's re-open is a real state change and reaches the release through
-   * the product's existing path. This test asserts the PROPERTY that fix exists
-   * for — the × inside the stage's clip — and never mentions the mechanism.
+   * The fix is in `MarketingBoard` (`50d8d4d`): once the page's own open has
+   * been consumed, the seeded row is handed a fresh object carrying the same
+   * values, so the visitor's re-open is a real state change and reaches the
+   * release through the product's existing path. This test asserts the
+   * PROPERTY that fix exists for — the × inside the stage's clip — and never
+   * mentions the mechanism.
+   *
+   * THE ATTRIBUTION ABOVE WAS WRITTEN BEFORE THE FIX EXISTED. When this test
+   * was introduced, the paragraph before it described the identity-refresh in
+   * the past tense — "used to do nothing at all" — while the tree still did
+   * nothing at all, so a green here would have been a green on a defect the
+   * comment claimed was already gone. The mechanism landed one commit later;
+   * the tense is honest now, and the sentence is left as a record of how
+   * easily it was not.
    *
    * IT MEASURES A RELEASE, not a frame that was already right: the pre-click
    * read asserts the × is cropped while the page is still driving, so a page
@@ -669,6 +678,164 @@ test.describe("landing B (/landing-b)", () => {
       expect(frame.control.right).toBeLessThanOrEqual(frame.stage.right + 1);
     });
   }
+
+  /**
+   * SEED 5. The page stops driving once the visitor takes the wheel — and
+   * "stops" has to include the beat it has not played yet.
+   *
+   * SEED 3 and SEED 4 both measure the CAMERA giving the frame back. This
+   * measures the other half, which nothing else here can see: after a visitor
+   * has opened a card, scrolling on to zone 2 must not push a pane on them.
+   * The gesture is the plainest one in the scene — open a card, close it with
+   * Escape, keep reading — and it is exactly the state the walls that predate
+   * this test do NOT cover. `PipelineBoard` stands its seed down over a
+   * pane the visitor already has open (`detailApp !== null`), and Escape has
+   * just made that null; `LandingBoard`'s camera latch stays released, so the
+   * pane would arrive in frame and be closeable. It would simply be a pane
+   * nobody asked for, appearing under a caption that says the page opened it.
+   *
+   * So this asserts a COUNT, not a rectangle: the beat-2 caption is on screen
+   * (the arrival gate — without it a mis-scroll gives a green about a scene
+   * that never composed) and no detail pane exists. It samples for 1.5s rather
+   * than reading once, because the seed the takeover suppresses is itself a
+   * deferred timer: a single read taken too early passes on a page that is
+   * about to open one.
+   *
+   * THE TAKEOVER HAPPENS AT BEAT 0, AND THAT IS THE WHOLE DESIGN OF THIS TEST.
+   * The obvious staging — take over at beat 1, the way SEED 3 does — cannot
+   * fail. A visitor open at beat 1 moves focus into a pane the crop has pushed
+   * off-screen, so `focus()` scrolls and can carry the act into zone 2 with
+   * that pane still up (this file's header records exactly that happening on
+   * an unmutated build). A broken build then seeds at that arrival,
+   * `PipelineBoard` marks the seed CONSUMED and only then bails on the
+   * visitor's open (`consumedDetailSeed.current = openDetailId` is assigned
+   * before the `detailApp !== null` return) — and `MarketingBoard`'s own effect
+   * has latched `openDetailId`. The one seed is spent. Escape, scroll back to
+   * zone 2, and a broken build opens nothing either, for a reason that has
+   * nothing to do with the fix. Beat 0 is before the act can have visited zone
+   * 2 at all, so the arrival this measures is the FIRST one.
+   *
+   * Hence the premise gate after the click: the act must not already have
+   * reached zone 2. It is the one assertion here that could go red on a clean
+   * build — if it does, `focus()` at beat 0 is scrolling further than the model
+   * behind this test predicts, and that is a finding to report rather than a
+   * number to relax.
+   *
+   * The row clicked is MEASURED, not named: the stage is `overflow-clip`, a row
+   * the camera has not brought into frame cannot be clicked (Playwright cannot
+   * scroll a clipped box into view), and which rows are in frame at beat 0 is a
+   * fact about the fixture and the camera, not a constant worth hard-coding. It
+   * takes the first row whose opener lies inside the clip and is not Larkspur.
+   * This does NOT retarget `visitorRow` — read that locator's docblock; this is
+   * a different gesture at a different beat, and Larkspur is excluded precisely
+   * because clicking it would ask SEED 4's question with these words.
+   *
+   * One viewport, deliberately, and it is not the geometric argument the other
+   * seeds make — a count does not change at 768 vs 600.
+   *
+   * NOT MUTATION-VERIFIED AT INTRODUCTION — written in a session that could
+   * not run Playwright, and no run of it has been watched go red or green.
+   * The mutation to run first: delete BOTH takeover reads from
+   * `MarketingBoard`'s beat-2 effect (the `tookOverRef.current` term in the
+   * early return AND the guard on the timer's first line). The page then seeds
+   * its open over a visitor who has already used the board, and this test
+   * should go red on the pane count while everything else here stays green —
+   * a red anywhere else means it is measuring the act in general rather than
+   * this hole. Deleting only ONE of the two should leave it green, and that is
+   * not slack: they mutually mask on this path (the effect-body read stops the
+   * timer being scheduled, the timer read is the one that holds when the
+   * effect body runs before the visitor's load has been classified), the same
+   * relationship the belt and the arm-site have in `MarketingBoard`.
+   */
+  test("the page does not seed a pane at beat 2 once the visitor has taken over", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP_1024);
+    await page.goto("/landing-b");
+
+    // Beat 0: the board is mounted, the camera is at rest, and the act has
+    // never been to zone 2.
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+    await expect(activeCaption(page)).toHaveText(
+      "The board, nineteen days after you stopped updating it.",
+    );
+
+    // Which row is reachable here is a measurement — see the docblock.
+    const opener = await page.evaluate(() => {
+      const board = document.querySelector<HTMLElement>("[data-testid='pipeline-board']");
+      if (!board) return null;
+      let stage: HTMLElement | null = board.parentElement;
+      while (stage && !/clip|hidden|auto|scroll/.test(getComputedStyle(stage).overflowY)) {
+        stage = stage.parentElement;
+      }
+      if (!stage) return null;
+      const clip = stage.getBoundingClientRect();
+      for (const row of Array.from(document.querySelectorAll<HTMLElement>(".board-row"))) {
+        if (row.textContent?.includes("Larkspur Systems")) continue;
+        const button = row.querySelector<HTMLElement>("button[aria-label^='Open ']");
+        if (!button) continue;
+        const box = button.getBoundingClientRect();
+        if (box.top >= clip.top && box.bottom <= clip.bottom) return button.getAttribute("aria-label");
+      }
+      return null;
+    });
+    expect(
+      opener,
+      "no row's opener is inside the stage clip at beat 0 — the visitor cannot take the wheel in the scene this test is about",
+    ).not.toBeNull();
+
+    // The visitor takes the wheel: a card of their own, opened by the row's own
+    // identity button — the same control SEED 3 uses.
+    const clicked = page.locator(`button[aria-label="${opener}"]`);
+    const clickedRow = page.locator(".board-row").filter({ has: clicked });
+    await clicked.click();
+    await expect(page.getByTestId("application-detail")).toBeVisible();
+    await expect(clickedRow).toHaveAttribute("data-detail-open", "true");
+
+    // …and closes it. Escape is the docked pane's own closer, and once the act
+    // reaches beat 1 it is the only one the crop leaves reachable — which is
+    // why "opened a card, then closed it" is the state worth testing.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("application-detail")).toHaveCount(0);
+
+    // The premise: that gesture has not carried the act into zone 2 behind our
+    // backs. If it had, a broken build would already have spent its one seed
+    // here and the reading below would be green for the wrong reason.
+    await expect(
+      activeCaption(page),
+      "the visitor's open at beat 0 scrolled the act all the way into zone 2 — this test's arrival at zone 2 is no longer the first one, so its green would prove nothing",
+    ).not.toHaveText("The row opens on the mail that moved it.");
+
+    // Then they keep reading. Beat 1 is passed through the way a real reader
+    // passes it, and it is load-bearing here rather than scenery: the seed is
+    // gated on the verdict having landed, so without this a broken build has
+    // nothing to seed and goes green on an empty premise.
+    await driveToBeatOne(page);
+
+    // On into the zone whose whole job is to open a pane.
+    await centreOn(page, "[data-beat='2']");
+    await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
+
+    // The scene is composing and the page has opened nothing — held over a
+    // window wide enough that a deferred seed cannot land after the reading.
+    const panesSeen = await page.evaluate(async () => {
+      let most = 0;
+      const deadline = performance.now() + 1_500;
+      while (performance.now() < deadline) {
+        most = Math.max(most, document.querySelectorAll("[data-testid='application-detail']").length);
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      return most;
+    });
+
+    expect(
+      panesSeen,
+      "the page opened a detail pane at beat 2 on a visitor who had already opened a card themselves — the act kept driving after the wheel changed hands",
+    ).toBe(0);
+    // And the row the page would have seeded is not carrying one either, which
+    // is the same fact read off the board rather than off the pane.
+    await expect(movedRow(page)).not.toHaveAttribute("data-detail-open", "true");
+  });
 
   /**
    * The closing act plays once on scroll-into-view and HOLDS. "Holds" is the

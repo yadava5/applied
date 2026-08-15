@@ -21,6 +21,10 @@ import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./
  * page can seed (beat 1's 750ms breath has to elapse before the row reads
  * `rejected`), so a gesture that opened nothing — a drag, the stage lens —
  * has expired long before the seed's load arrives.
+ *
+ * The margin in the first paragraph is REASONED FROM THE SCHEDULING, not
+ * measured: no run has timed a click to its load on this page, at either
+ * viewport or under any load. Treat 400 as a bound nobody has instrumented.
  */
 const OPEN_GESTURE_MS = 400;
 
@@ -100,7 +104,7 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
     setApps(appsRef.current);
   }, []);
 
-  // All three of these are read INSIDE `transport.detail` and must never appear
+  // All four of these are read INSIDE `transport.detail` and must never appear
   // in the transport's dep list: a fresh transport re-triggers the detail
   // sheet's load effect on every board change (see `appsRef` above, same
   // reason).
@@ -109,7 +113,10 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
   // is handed to the board (beat 2 below), consumed by the load it causes.
   // `gestureAtRef` is when the visitor last touched the board in a way that can
   // open a card, recorded at the input event itself.
+  // `tookOverRef` is the one-way latch: the visitor has opened a card, so the
+  // page has stopped driving and never starts again this visit.
   const pendingSeedRef = useRef<number | undefined>(undefined);
+  const tookOverRef = useRef(false);
   // −∞, not 0: `performance.now()` counts from navigation start, so a zero
   // here would read as "a gesture 300ms ago" on a page that has just loaded
   // and hand the camera back before the visitor has touched anything.
@@ -178,10 +185,34 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
         //    the visitor's, where the old id comparison called it the page's
         //    for the rest of the visit;
         //  · a load that follows the visitor's own gesture is theirs whatever
-        //    row it lands on. That is the belt to the ordering's braces, and it
-        //    covers the one case ordering cannot: PipelineBoard stands its seed
-        //    down over a pane the visitor already has open, which leaves a
-        //    claim armed that no load will ever come for.
+        //    row it lands on. That is the belt to the ordering's braces.
+        //
+        // The belt and the arm's position MUTUALLY MASK: with the belt in place
+        // the arm could sit anywhere and a beat-1 click would still be read as
+        // the visitor's; with the arm inside the seed's own timer the belt
+        // never has to catch anything. So neither is observable on its own, and
+        // deleting either ALONE changes no measurement — which is exactly what
+        // makes them look like dead code and exactly why they are not. Only the
+        // COMPOUND mutant shows it: the arm moved back into the effect body AND
+        // `OPEN_GESTURE_MS` at 0, which put a beat-1 click red at roughly four
+        // runs in ten. Restore the arm into the timer with the belt still at 0
+        // and it is green again.
+        //
+        // The else branch is also where the visitor TAKES OVER, and the latch
+        // it sets is one-way: AFTER TAKEOVER THERE IS NO CLAIM AND NO SEED.
+        // Beat 2 stands down for the rest of the visit (below), so nothing
+        // arms, nothing is handed to the board, and a visitor who opens a card
+        // and then presses Escape never has a pane pushed on them at zone 2.
+        // It also retires the one case the belt used to have to cover on its
+        // own: PipelineBoard standing its seed down over a pane the visitor
+        // already has open, which left a claim armed that no load ever came
+        // for. There is no seed to stand down from now.
+        //
+        // That stand-down (PipelineBoard.tsx, the `detailApp !== null` bail)
+        // and LandingBoard's camera latch, which never re-engages once
+        // released, remain the second and third walls. They are also why this
+        // latch is invisible to every assertion that predates it — it ships
+        // with its own gate in landing-b.spec.ts, which is what can see it.
         const byGesture = performance.now() - gestureAtRef.current < OPEN_GESTURE_MS;
         gestureAtRef.current = Number.NEGATIVE_INFINITY; // one open per gesture
         if (!byGesture && pendingSeedRef.current === id) {
@@ -214,6 +245,10 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
           // (the card is already on screen) and the camera has already let go.
           commit((rows) => rows.map((row) => (row.id === id ? { ...row } : row)));
         } else {
+          // Set BEFORE the camera is told, so the two walls fall in the order
+          // they are reasoned about: the page stops driving, then the frame
+          // goes back.
+          tookOverRef.current = true;
           visitorOpenRef.current?.();
         }
         const app = appsRef.current.find((row) => row.id === id);
@@ -263,15 +298,32 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
 
   /** Beat 2: the mail behind the row. Waits for the verdict to have actually
    *  landed (the pane must never open on the pre-move snapshot), then hands
-   *  the id to the board's seeded open — docked-only, focus untouched. */
+   *  the id to the board's seeded open — docked-only, focus untouched. Skipped
+   *  entirely once the visitor has taken over, the same rule beat 1 follows for
+   *  a row they moved themselves. */
   const [openDetailId, setOpenDetailId] = useState<number | undefined>(undefined);
   useEffect(() => {
-    if (!choreographed || (beat ?? 0) < 2 || openDetailId !== undefined) return;
+    // `tookOverRef` is read, never a dep: it is a latch, not a signal, and a
+    // re-render is not what should notice it. This read is the cheap one — a
+    // visitor who took over in an earlier zone never even schedules a timer.
+    // The authoritative read is inside the timer.
+    if (!choreographed || (beat ?? 0) < 2 || openDetailId !== undefined || tookOverRef.current) {
+      return;
+    }
     const row = apps.find((a) => a.company === VERDICT_EMAIL.company);
     if (!row || row.status !== "rejected") return;
     // Deferred off the effect body — the house rule every board effect follows.
     const rowId = row.id;
     const id = window.setTimeout(() => {
+      // The authoritative takeover read, and it has to be here rather than
+      // only in the effect body: the visitor's own click at beat 1 is what
+      // scrolls the act into this zone (their pane's focus() moves the
+      // viewport), so the effect body can run BEFORE their load has been
+      // classified. By the time this timer fires it has — the same ordering
+      // that lets the claim be armed here at all guarantees the visitor's load
+      // was scheduled first, so the latch is already set. Both reads are
+      // wanted; neither replaces the other.
+      if (tookOverRef.current) return;
       // The claim is armed HERE, in the same task that hands the seed to the
       // board — not in the effect body, which is where it raced and lost.
       //
