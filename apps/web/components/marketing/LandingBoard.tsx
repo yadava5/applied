@@ -89,6 +89,12 @@ export function LandingBoard({
   // or its neighbours' controls at every corner. Beat 2 drops that strip,
   // because the card stands down and the docked pane wants the room.
   //
+  // The trade at beat 2 is deliberate: holding the foot crops the pane's own
+  // head — the `9 of 10` nav row, the title, and the pane's × — in exchange
+  // for the row and the whole trail. The row beside it carries the identity
+  // the title was carrying, and Escape still closes the docked pane (verified
+  // at 768 and 600); the × is the one control that goes off-stage.
+  //
   // Beat 2 used to return to the head, and measurement caught what that cost:
   // the moved row lands in the CLOSED group at the board's foot (679–735 of a
   // 783px board), while the head-anchored stage shows only 0–552 at a 768-tall
@@ -116,7 +122,11 @@ export function LandingBoard({
       return () => window.clearTimeout(id);
     }
     const ro = new ResizeObserver(measure);
+    // Both sides of the subtraction: the board's own height changes when the
+    // pane docks, and the stage's is `calc(100dvh - 13.5rem)`, so resizing the
+    // window mid-act moves the divisor without touching the dividend.
     ro.observe(pan);
+    ro.observe(stage);
     return () => ro.disconnect();
   }, [beat]);
 
