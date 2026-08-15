@@ -821,9 +821,12 @@ export function PipelineBoard({
             honest reading, whatever the comment above it says, and the previous
             comment said the quiet part out loud while keeping the behaviour.
 
-            Share-of-total has one reading and the "all" row teaches its scale:
-            `allStagesRow` draws a full-width track, so full means "all of
-            them" and 34/40 lands at 85%. The label beside each bar still prints
+            Share-of-total has one reading, and the track states its own scale:
+            the track is full width and means the total, the fill is this
+            stage's share of it, and the unfilled remainder is the rest of the
+            applications. So full means "all of them" and 34/40 lands at 85%.
+            (The "all" row deliberately carries no bar — see `allStagesRow`
+            for the 3px that cost.) The label beside each bar still prints
             a raw count and never a percentage — applied#78 was a percentage
             label disagreeing with the geometry beside it, and one number stated
             once is what keeps them from drifting again.
@@ -894,21 +897,19 @@ export function PipelineBoard({
         </span>
         <span className="tabular ml-auto font-mono text-[11px] text-strong">{spineTotal}</span>
       </span>
-      {/* The reference track — a FULL bar, because this row genuinely is all of
-          them. Without it the stage meters below are shares of a denominator
-          nothing on screen shows, which is how the old max-relative bar got
-          read as a share of the total in the first place. Same height, same
-          radius, same track colour as a stage meter; neutral fill, because
-          "all" is every stage at once and no single stage's hue may stand for
-          it. Drawn only when there is something to be a share OF. */}
-      {spineTotal > 0 ? (
-        <span
-          className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
-          aria-hidden="true"
-        >
-          <span className="block h-full w-full rounded-full bg-line-strong" />
-        </span>
-      ) : null}
+      {/* Deliberately NO meter on this row, and the reason is worth keeping.
+          A first pass gave it a full-width reference track so "full" would
+          have something to mean. That was 8px (mt-1 + h-1) added to a column
+          whose slack was 5px, and demo.spec.ts's "#122's shape" assertion went
+          red: the rail's middle run scrolled by 3px and a lens row fell below
+          the fold — the exact defect that test exists for.
+
+          It was also redundant. Once the meters below are shares of the TOTAL,
+          every stage's own empty track already IS the reference: the track is
+          full width, the fill is that stage's share, and the unfilled
+          remainder is the rest of the applications. The scale is stated on
+          every row that has a bar; a fourth copy of it here bought nothing and
+          cost the row that gets pushed off screen. */}
     </button>
   );
 
