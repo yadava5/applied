@@ -190,10 +190,17 @@ async def test_a_revoked_user_drops_out_of_the_cron_candidate_list():
 
     Non-vacuity: the SAME user is asserted syncable first, so this cannot pass
     because the fixture failed to seed anything.
+
+    This is also the half ``gmail_sync_enrollment`` deliberately cannot answer.
+    Revocation marks ``user_credentials.revoked_at`` and leaves the enrollment
+    row standing — enrollment is "a credential was stored", not "it still
+    works" — so the cron's per-user probe is what has to notice. Asserted
+    against the probe rather than the enrollment table for exactly that reason.
     """
 
-    from jobtracker.cloud.cron import _gmail_sync_position
+    from jobtracker.cloud.cron import _probe_sync_position
     from jobtracker.cloud.sync_state import GMAIL_ACCOUNT_TYPE
+    from jobtracker.database.connection import get_engine
     from jobtracker.database.models import SyncState
 
     await _seed_credential()
@@ -208,13 +215,19 @@ async def test_a_revoked_user_drops_out_of_the_cron_candidate_list():
         )
         await session.commit()
 
-    has_gmail, _ = await _gmail_sync_position(USER)
-    assert has_gmail is True, "fixture problem: this user was never syncable"
+    async def _probe() -> bool:
+        # The probe runs on the caller's connection now — the cron holds one
+        # open across the whole enumeration (issue #294).
+        async with get_engine().connect() as conn:
+            has_gmail, _ = await _probe_sync_position(conn, USER)
+            await conn.rollback()
+        return has_gmail
+
+    assert await _probe() is True, "fixture problem: this user was never syncable"
 
     await gmail_client.mark_gmail_credential_revoked(USER)
 
-    has_gmail, _ = await _gmail_sync_position(USER)
-    assert has_gmail is False, (
+    assert await _probe() is False, (
         "a revoked user still counts as having a connected mailbox, so the "
         "schedule keeps spending a candidate slot on them every run"
     )
