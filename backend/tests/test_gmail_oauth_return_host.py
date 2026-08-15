@@ -38,17 +38,37 @@ difference is only which one the browser's cookies are on. That is the
 "checks that cannot fail" shape: a fact stated twice, verified once.
 
 WHAT THIS FILE ASSERTS. Properties of the return-destination POLICY, not of any
-string: the destination still comes only from operator configuration (the
-open-redirect guarantee in the router's header is untouched), and it must name
-a host this deployment already trusts as its front end. Both halves are needed
-— the first alone is what shipped, and it is what failed.
+string: the destination is never a value this deployment has not checked against
+the list of hosts it serves the app on, and the check happens before the
+destination can be used. Both halves are needed — a check alone is what shipped,
+and it is what failed.
+
+WHERE THE DESTINATION COMES FROM CHANGED (#333), AND THE POLICY DID NOT.
+It used to come only from operator configuration (``JOBTRACKER_WEB_APP_URL``),
+which is how a stale alias could sit in it for 26 days. It now comes from the
+caller's own origin — the host the user is actually browsing, whose cookie they
+actually hold — passed to ``/auth/gmail/authorize``, **validated there against
+``config.trusted_web_hosts`` before any consent URL exists**, and carried to the
+callback inside the signed ``state``. The configured value survives as a
+fallback for states minted before that shipped.
+
+The ordering is the design, and the tests below are written to catch it being
+got backwards. An origin that round-tripped through ``state`` WITHOUT being
+checked at mint would be an open redirect signed by us — strictly worse than
+the bug being fixed, and indistinguishable from the fix by any happy-path test.
+So the refusals are asserted at ``_validated_return_origin`` (the mint leg),
+and the callback is asserted to have grown no destination parameter of its own.
 
 PROVED ABLE TO FAIL. Against the pre-fix ``_web_redirect`` — which was
 ``base = (settings.web_app_url or "").rstrip("/")`` with no check — the four
 tests below marked ``RED BEFORE`` all fail, because that code returns a 302 to
 whatever host is configured (and, with nothing configured, a RELATIVE
 ``/settings?...`` that the browser resolves against the API's own host). The
-run is in the PR body.
+run is in the PR body. The #333 tests were proved the same way, by two separate
+mutations of ``_validated_return_origin`` — one neutering the trusted-list
+check, one neutering the API's-own-origin check — because a single mutation
+that disables the whole validator proves only that the suite notices *a*
+change, not that each branch is load-bearing. Those runs are in that PR body.
 """
 
 from __future__ import annotations
@@ -78,6 +98,7 @@ def _module(
     web_app_url: str | None,
     production_url: str = API_HOST,
     allowed_hosts: str = APP_HOST,
+    redirect_uri: str = f"https://{API_HOST}/auth/gmail/callback",
 ):
     """Load the Gmail OAuth router under a given deployment environment.
 
@@ -88,6 +109,12 @@ def _module(
     proved by the CORS probe quoted in ``config.trusted_web_hosts`` — passes
     ``allowed_hosts=""``.
 
+    ``redirect_uri`` is the API's own callback URL, and it is set here because
+    it is the second thing that says "this host is the backend"
+    (``config.api_own_origins``). It defaults to the API host for the same
+    reason ``production_url`` does: a fixture that left it unset would leave
+    that branch of the self-check untested while every test still passed.
+
     Reloads ``config`` first so ``settings`` (an ``lru_cache``d singleton)
     picks the environment up, then the router so it binds to the fresh module.
     """
@@ -96,11 +123,21 @@ def _module(
     monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", production_url)
     monkeypatch.setenv("VERCEL_URL", "")
     monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", allowed_hosts)
+    monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", redirect_uri)
     monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", web_app_url if web_app_url is not None else "")
 
     import jobtracker.config as config_module
 
     importlib.reload(config_module)
+    # ``credentials.cloud`` does ``from jobtracker.config import settings``, so
+    # it holds the PREVIOUS settings object until it is reloaded too. That
+    # matters here rather than being tidiness: ``_sign_state`` signs with the
+    # reloaded config's key and encrypts the PKCE verifier through this
+    # module's Fernet, and two different keys make a state this deployment
+    # cannot read back.
+    import jobtracker.credentials.cloud as cred_cloud_module
+
+    importlib.reload(cred_cloud_module)
     import jobtracker.cloud.gmail_oauth as gmail_oauth
 
     importlib.reload(gmail_oauth)
@@ -120,6 +157,9 @@ def _restore_settings(monkeypatch: pytest.MonkeyPatch):
     import jobtracker.config as config_module
 
     importlib.reload(config_module)
+    import jobtracker.credentials.cloud as cred_cloud_module
+
+    importlib.reload(cred_cloud_module)
     import jobtracker.cloud.gmail_oauth as gmail_oauth
 
     importlib.reload(gmail_oauth)
@@ -303,27 +343,349 @@ def test_localhost_still_works_for_local_development(
 # ── the property the router's header promises ─────────────────────────
 
 
-def test_the_destination_never_comes_from_the_request(
+def test_the_callback_cannot_be_told_where_to_go(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No open redirect: ``_web_redirect`` takes only an outcome token.
+    """No open redirect, asserted at the leg an attacker can actually reach.
 
-    Asserted on the SIGNATURE rather than by driving a hostile request, so it
-    stays true for a caller that does not exist yet. The moment someone adds a
-    ``next``/``return_to`` parameter here, this goes red and they have to argue
-    for it in review — which is the whole point of the module header's
-    "never a value taken from the request".
+    This test used to read ``_web_redirect``'s signature and require it to take
+    nothing but an outcome token. That guard was right for a destination which
+    came only from operator configuration, and it is the wrong place now: since
+    #333 ``_web_redirect`` IS told where to go — by ``_verify_state``, out of a
+    token this backend signed, carrying an origin validated one leg earlier.
+    Keeping the old assertion would have made the fix look like a regression
+    and, worse, would have said nothing about the surface that matters.
+
+    So the guard moves to ``gmail_callback`` itself, which is the endpoint an
+    attacker can send a request to. Its query parameters must remain exactly
+    the three Google sends. The moment someone adds ``next``/``return_to``/
+    ``redirect_uri`` here, this goes red and they have to argue for it in
+    review.
     """
 
     import inspect
 
     gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
-    parameters = list(inspect.signature(gmail_oauth._web_redirect).parameters)
+    parameters = list(inspect.signature(gmail_oauth.gmail_callback).parameters)
 
-    assert parameters == ["outcome"], (
-        "_web_redirect grew a parameter. If it can be told where to go, the "
-        f"open-redirect guarantee in the router's header is gone. Got: {parameters}"
+    assert parameters == ["state", "code", "error"], (
+        "the Gmail callback grew a parameter. Everything it accepts comes "
+        "straight off a URL Google was told to send the browser to, so a "
+        "destination parameter here is an open redirect by definition. "
+        f"Got: {parameters}"
     )
+
+
+# ── #333: the caller's own origin, validated when the state is minted ──
+
+
+def test_a_trusted_origin_is_accepted_with_web_app_url_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The point of the change: ONE variable has to be right, not two.
+
+    ``JOBTRACKER_WEB_APP_URL`` is unset entirely — the state production was in
+    on the night of the incident, and the state a fresh deployment is in — and
+    the flow still has a destination, because the caller said where it came
+    from and this deployment recognised the host.
+    """
+
+    gmail_oauth = _module(monkeypatch, web_app_url=None)
+
+    assert gmail_oauth._validated_return_origin(f"https://{APP_HOST}") == (
+        f"https://{APP_HOST}"
+    )
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        f"https://{STALE_ALIAS}",  # the incident's own host, now caller-supplied
+        "https://evil.example.com",
+        "https://getapplied.vercel.app.evil.com",  # suffix smuggling
+        "https://notgetapplied.vercel.app",
+        "https://GETAPPLIED.vercel.app.evil.com",  # case must not smuggle it
+        "https://evil.example.com/getapplied.vercel.app",  # path smuggling
+        "https://getapplied.vercel.app@evil.com",  # userinfo: trusted host FIRST
+        "https://getapplied.vercel.app:pass@evil.com",  # ... with a password too
+        "http://evil.example.com",  # scheme downgrade, remote host
+        "javascript:alert(1)",  # not a web origin at all
+        "//getapplied.vercel.app",  # scheme-relative, no scheme to check
+        "",
+    ],
+)
+def test_an_untrusted_origin_is_refused_at_mint(
+    monkeypatch: pytest.MonkeyPatch, hostile: str
+) -> None:
+    """RED WITHOUT THE GUARD. Nothing outside the trusted list may be a target.
+
+    Refused at ``/auth/gmail/authorize``, i.e. before a consent URL exists and
+    before Google is ever reached, which is the ordering the whole design rests
+    on. The userinfo cases are the reason
+    ``config.canonical_return_origin`` rebuilds its answer from parsed parts
+    instead of returning the caller's bytes: ``https://<trusted>@evil.com``
+    reads as the trusted host to a human and resolves to ``evil.com``.
+
+    ``400``, not ``503`` — a bad origin is the caller's problem, and the web
+    app maps 503 onto "Gmail isn't enabled on this deployment yet", which would
+    be a wrong and actionless message.
+    """
+
+    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+
+    with pytest.raises(HTTPException) as excinfo:
+        gmail_oauth._validated_return_origin(hostile)
+
+    assert excinfo.value.status_code == 400, (
+        "an untrusted origin is a bad request, not a broken deployment; 503 "
+        "renders as 'Gmail isn't enabled here yet' in the web app"
+    )
+
+
+def test_the_refusal_names_the_origin_and_the_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal an operator cannot act on is a dead end.
+
+    The same standard the configured-host refusal is already held to: name the
+    offending value, and name the one variable that would make it work.
+    """
+
+    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+
+    with pytest.raises(HTTPException) as excinfo:
+        gmail_oauth._validated_return_origin(f"https://{STALE_ALIAS}")
+
+    detail = str(excinfo.value.detail)
+    assert STALE_ALIAS in detail, f"the refusal must NAME the origin. Got: {detail}"
+    assert "JOBTRACKER_CORS_ALLOWED_HOSTS" in detail, (
+        f"the refusal must name the variable that would admit it. Got: {detail}"
+    )
+
+
+def test_the_apis_own_host_is_refused_even_though_it_is_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED WITHOUT THE SELF-CHECK. The stranded-on-the-backend case.
+
+    ``config.trusted_web_hosts`` contains this API's own hostnames — it is
+    built from ``VERCEL_URL``/``VERCEL_PROJECT_PRODUCTION_URL`` and CORS needs
+    them there — so "is this origin ours?" answers YES for the one destination
+    that is guaranteed to be wrong. The API serves no ``/settings``; returning
+    the browser here is the same broken outcome as an unset return host, in a
+    different costume. ``config.trusted_web_hosts`` stated this and declined to
+    fix it; this is the fix, and this is the test that says the trusted-list
+    check alone does not cover it.
+
+    Asserted through the FULL default environment, not a hand-built list: the
+    only reason this origin is dangerous is that the real deployment really
+    does trust it.
+    """
+
+    import jobtracker.config as config_module
+
+    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+
+    assert config_module.return_origin_is_trusted(f"https://{API_HOST}") is True, (
+        "the premise of this test is gone: the API's own host is no longer in "
+        "the trusted list, so the refusal below could be passing for the wrong "
+        "reason"
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        gmail_oauth._validated_return_origin(f"https://{API_HOST}")
+
+    detail = str(excinfo.value.detail)
+    assert excinfo.value.status_code == 400
+    assert API_HOST in detail
+    assert "JOBTRACKER_CORS_ALLOWED_HOSTS" not in detail, (
+        "this refusal must NOT suggest the allowlist as a remedy — the host is "
+        f"already on it, and adding it again fixes nothing. Got: {detail}"
+    )
+
+
+def test_the_apis_own_host_is_refused_from_the_redirect_uri_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off Vercel there are no injected hostnames, and the case is the same.
+
+    ``gmail_oauth_redirect_uri`` names the API's own callback URL by
+    definition, so it is the self-identifying fact that survives when
+    ``VERCEL_*`` is absent. Without this branch the guard above would be
+    Vercel-shaped, and a self-hosted deployment could strand its users while
+    every test stayed green.
+    """
+
+    gmail_oauth = _module(
+        monkeypatch,
+        web_app_url=f"https://{APP_HOST}",
+        production_url="",
+        allowed_hosts=f"{APP_HOST},{API_HOST}",
+        redirect_uri=f"https://{API_HOST}/auth/gmail/callback",
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        gmail_oauth._validated_return_origin(f"https://{API_HOST}")
+
+    assert API_HOST in str(excinfo.value.detail)
+
+
+def test_local_development_splits_the_two_by_PORT(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Localhost is one hostname running two different servers.
+
+    ``localhost`` is in the trusted list for ``vercel dev``, and locally the
+    web app is on :3000 while this API is on :8000 — the same host. Subtracting
+    the API by HOSTNAME would refuse the web app too and make local development
+    impossible, which is one of the outcomes #333 exists to deliver; comparing
+    at ORIGIN granularity keeps them apart. Both halves are asserted, because
+    the accept alone would pass with the self-check deleted and the refuse
+    alone would pass with the whole host banned.
+    """
+
+    gmail_oauth = _module(
+        monkeypatch,
+        web_app_url=None,
+        production_url="",
+        allowed_hosts="",
+        redirect_uri="http://localhost:8000/auth/gmail/callback",
+    )
+
+    assert (
+        gmail_oauth._validated_return_origin("http://localhost:3000")
+        == "http://localhost:3000"
+    ), "local development must work with no allowlist entry and no web_app_url"
+
+    with pytest.raises(HTTPException):
+        gmail_oauth._validated_return_origin("http://localhost:8000")
+
+
+def test_the_approved_origin_is_rebuilt_not_echoed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What goes into the signed state is a string this code constructed.
+
+    The distinction that makes the smuggling cases above a closed class rather
+    than a list: an approved-then-echoed input leaves a parser differential
+    between Python and the browser, and only one of them decides where the user
+    lands. Trailing slash, port and case are normalised away, so the value the
+    callback puts in a ``Location`` header can only be
+    ``scheme://host[:port]``.
+    """
+
+    gmail_oauth = _module(monkeypatch, web_app_url=None)
+
+    for submitted in (
+        f"https://{APP_HOST}/",
+        f"https://{APP_HOST.upper()}",
+        f"  https://{APP_HOST}  ",
+        f"https://{APP_HOST}:443",
+    ):
+        assert gmail_oauth._validated_return_origin(submitted) == f"https://{APP_HOST}"
+
+
+def test_the_origin_survives_the_state_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mint → verify → redirect, with the fallback unset so it cannot help.
+
+    The seam this change adds, end to end at unit level: the origin approved at
+    mint is the origin the callback redirects to, and nothing on that path
+    consults ``JOBTRACKER_WEB_APP_URL`` — asserted by leaving it unset, which
+    makes ``_web_app_base`` raise if it is ever reached.
+    """
+
+    import uuid
+
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    gmail_oauth = _module(monkeypatch, web_app_url=None)
+
+    user_id = uuid.uuid4()
+    state = gmail_oauth._sign_state(
+        user_id,
+        gmail_oauth._generate_code_verifier(),
+        gmail_oauth._validated_return_origin(f"https://{APP_HOST}"),
+    )
+
+    verified = gmail_oauth._verify_state(state)
+    assert verified is not None
+    assert verified[0] == user_id
+    assert verified[2] == f"https://{APP_HOST}"
+
+    assert (
+        gmail_oauth._web_redirect("connected", verified[2]).headers["location"]
+        == f"https://{APP_HOST}/settings?gmail=connected"
+    )
+
+
+def test_a_state_with_no_origin_still_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The independent-deploy window, which is a real ten minutes.
+
+    The web app and this API are separate Vercel projects. States minted by the
+    older web deploy arrive carrying no ``ro`` claim, and must fall back rather
+    than be rejected — rejecting them would break every connect started
+    seconds before a deploy, for no security gain: the fallback is held to the
+    same trusted-host rule.
+    """
+
+    import uuid
+
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+
+    state = gmail_oauth._sign_state(uuid.uuid4(), gmail_oauth._generate_code_verifier())
+    verified = gmail_oauth._verify_state(state)
+
+    assert verified is not None, "a state without an origin is valid, not forged"
+    assert verified[2] is None
+    assert (
+        gmail_oauth._web_redirect("connected", verified[2]).headers["location"]
+        == f"https://{APP_HOST}/settings?gmail=connected"
+    )
+
+
+def test_a_state_signed_with_another_key_cannot_supply_an_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The signature is what makes the carried origin trustworthy.
+
+    An attacker who could mint states could redirect anywhere, so the property
+    worth pinning is that they cannot: a state carrying a hostile ``ro`` and a
+    valid-looking everything-else is rejected outright when it was signed with
+    a key this deployment does not hold.
+    """
+
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    import jwt
+    from cryptography.fernet import Fernet
+
+    ours = Fernet.generate_key().decode()
+    theirs = Fernet.generate_key().decode()
+    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ours)
+    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+
+    now = datetime.now(UTC)
+    forged = jwt.encode(
+        {
+            "sub": str(uuid.uuid4()),
+            "aud": "jobtracker:gmail-oauth-state",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+            "cv": Fernet(theirs.encode()).encrypt(b"verifier").decode("ascii"),
+            "ro": "https://evil.example.com",
+        },
+        theirs,
+        algorithm="HS256",
+    )
+
+    assert gmail_oauth._verify_state(forged) is None
 
 
 def test_health_reports_the_return_host_and_whether_it_is_trusted(
