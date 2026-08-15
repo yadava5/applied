@@ -1,8 +1,15 @@
 """One auto-file gate, and every copy of it checked against that one.
 
-``0.85`` is hand-written in four separate backend modules, and until this file
+``0.85`` is hand-written in two separate backend modules, and until this file
 existed the only thing holding them together was a comment in
 ``cloud/pipeline.py`` saying they were kept in lock-step.
+
+It was four until the desktop routers were deleted (issue #73). Two of the four
+lived in ``api/classification.py`` -- ``REVIEW_QUEUE_CONFIDENCE_THRESHOLD`` and
+``seed_training_data``'s ``min_confidence`` default -- and went with it. The
+count below moved from 4 to 2 for that reason and no other; it is NOT a licence
+to let a copy drop off the register. If a copy of this gate is added anywhere
+under ``backend/``, it belongs here, and the count moves with it.
 
 A comment cannot fail. These tests can, which is the whole point: the day
 someone tunes one copy — the pipeline's gate, the classifier's, the review
@@ -10,21 +17,17 @@ queue's, or the training pre-seed default — the suite goes red and names the
 copy that drifted, instead of the product quietly filing at one threshold and
 queueing at another.
 
-That is not a hypothetical drift. The four copies do different jobs and are
+That is not a hypothetical drift. The two copies do different jobs and are
 edited for different reasons:
 
 - ``pipeline.AUTO_FILE_GATE`` decides whether a message may assert a hard
   application status (with an employer that can be named — the gate is
   necessary, not sufficient);
 - ``hybrid.CONFIDENCE_AUTO`` decides whether the cascade's own verdict is
-  flagged ``needs_review``;
-- ``classification.REVIEW_QUEUE_CONFIDENCE_THRESHOLD`` decides what the review
-  queue endpoint hands back to the user;
-- ``classification.seed_training_data``'s ``min_confidence`` decides which
-  already-classified mail is trusted enough to become training data.
+  flagged ``needs_review``.
 
-Split them and the product tells the user one story on the dashboard, a second
-in the queue, and trains on a third — the classic shape where every gate is
+Split them and the product tells the user one story on the dashboard and trains
+on a second — the classic shape where every gate is
 green and the behaviour is still wrong. Filed with #208, which removed a
 Settings slider that pretended this number was per-user: it is one number, for
 every account, and this file is what keeps it one number *in Python*.
@@ -37,18 +40,18 @@ went unpinned while these four were covered (#229). That half lives in
 TypeScript gate constant and fails when they disagree. Neither check subsumes
 the other; changing this number means editing both languages deliberately.
 
-The fourth copy is a FUNCTION SIGNATURE DEFAULT, not a module constant, so it
-is read with :mod:`inspect` rather than an attribute lookup. Asserting on the
-three constants alone would look like coverage and check three of four.
+Note that the same four-copy shape still exists in the VENDORED classifier under
+``ml/demo/space/``, whose ``api/classification.py`` is a separate tree this
+deletion did not touch. Those three copies are pinned by
+``DEMO_SPACE_AUTO_FILE_GATE_COPIES`` in ``scripts/readme_facts.py``, including
+the function-signature default, which is read with :mod:`ast` there because that
+tree is not importable from the checker.
 """
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
-from jobtracker.api import classification as classification_api
 from jobtracker.classifier import hybrid
 from jobtracker.cloud import pipeline
 
@@ -59,31 +62,10 @@ AUTO_FILE_GATE = 0.85
 REVIEW_FLOOR = 0.70
 
 
-def _seed_training_data_min_confidence() -> float:
-    """Return ``seed_training_data``'s ``min_confidence`` default.
-
-    ``@router.post`` returns the undecorated function, so the signature is the
-    real one. If FastAPI ever stops doing that, ``default`` becomes
-    ``inspect.Parameter.empty`` and the assertion below fails loudly rather
-    than passing on a value nobody read.
-    """
-
-    parameter = inspect.signature(classification_api.seed_training_data).parameters[
-        "min_confidence"
-    ]
-    return parameter.default
-
-
 # name → the live value, one entry per hand-written copy in the tree.
 AUTO_FILE_GATE_COPIES: dict[str, object] = {
     "cloud/pipeline.py::AUTO_FILE_GATE": pipeline.AUTO_FILE_GATE,
     "classifier/hybrid.py::CONFIDENCE_AUTO": hybrid.CONFIDENCE_AUTO,
-    "api/classification.py::REVIEW_QUEUE_CONFIDENCE_THRESHOLD": (
-        classification_api.REVIEW_QUEUE_CONFIDENCE_THRESHOLD
-    ),
-    "api/classification.py::seed_training_data(min_confidence=…)": (
-        _seed_training_data_min_confidence()
-    ),
 }
 
 REVIEW_FLOOR_COPIES: dict[str, object] = {
@@ -105,22 +87,27 @@ def test_every_auto_file_gate_copy_is_the_canonical_gate(name: str) -> None:
 
     assert AUTO_FILE_GATE_COPIES[name] == AUTO_FILE_GATE, (
         f"{name} is {AUTO_FILE_GATE_COPIES[name]!r}, not the canonical auto-file "
-        f"gate {AUTO_FILE_GATE!r}. These four are lock-stepped by THIS FILE — change "
+        f"gate {AUTO_FILE_GATE!r}. These two are lock-stepped by THIS FILE — change "
         f"all of them or none. The web side draws the same gate and is held against "
         f"hybrid.CONFIDENCE_AUTO by an invariant in scripts/readme_facts.py, so a "
         f"real change to this number is an edit in two languages."
     )
 
 
-def test_the_four_auto_file_gate_copies_are_one_value() -> None:
-    """…and there are exactly four of them, all agreeing.
+def test_the_two_auto_file_gate_copies_are_one_value() -> None:
+    """…and there are exactly two of them, all agreeing.
 
-    The per-copy test above would still pass if a fifth copy appeared and was
+    The per-copy test above would still pass if a third copy appeared and was
     never added here. This one pins the count, so adding a gate without
     registering it is a deliberate edit to this file.
+
+    Two, not four, since the desktop routers were deleted. A count that only
+    ever falls is the failure mode to watch for: if this number goes down again,
+    the question to answer is whether a copy was DELETED or merely dropped off
+    the register.
     """
 
-    assert len(AUTO_FILE_GATE_COPIES) == 4
+    assert len(AUTO_FILE_GATE_COPIES) == 2
     assert set(AUTO_FILE_GATE_COPIES.values()) == {AUTO_FILE_GATE}
 
 

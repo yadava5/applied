@@ -9,10 +9,10 @@ provides:
 - ``supabase_jwt.require_user`` — convenience re-export of
   ``Depends(current_user)`` for cloud-only routers.
 
-Desktop code paths do not import this module; the ``jobtracker.main``
-app builder has no auth middleware and keeps its single-user
-contract. The cloud app builder (``jobtracker.main_cloud``) wires
-``require_user`` onto every cloud-mounted router.
+The cloud app builder (``jobtracker.main_cloud``) wires ``require_user``
+onto every cloud-mounted router. There is no longer a second app builder:
+``jobtracker.main`` and the unscoped desktop routers it mounted were
+deleted with ``apps/macos`` (issue #73).
 """
 
 from jobtracker.auth.supabase_jwt import (

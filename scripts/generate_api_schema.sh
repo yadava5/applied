@@ -3,9 +3,10 @@
 # Regenerate the web app's typed API bindings from the CLOUD FastAPI app
 # =============================================================================
 # Writes apps/web/lib/api/schema.d.ts from `jobtracker.main_cloud`'s OpenAPI
-# document. That app — not `jobtracker.main` — is what Vercel serves
-# (`api/index.py` forces JOBTRACKER_DEPLOYMENT=cloud), so it is the only
-# contract the browser ever talks to.
+# document. That is what Vercel serves (`api/index.py` forces
+# JOBTRACKER_DEPLOYMENT=cloud), and since the desktop app was deleted (#73) it
+# is the only FastAPI app in the tree as well as the only contract the browser
+# ever talks to.
 #
 # ONE implementation, run from two places, so the gate can never disagree with
 # the developer command:
@@ -16,10 +17,12 @@
 # WHY IT IMPORTS THE APP INSTEAD OF CURLING /openapi.json
 # ------------------------------------------------------
 # The old scripts fetched `$BACKEND_API_URL/openapi.json` or
-# `localhost:8000/openapi.json`. Under this repo's e2e setup :8000 is the
-# DESKTOP app (`jobtracker.main`), which serves a different contract, and a
-# deployed URL serves whatever was last deployed rather than what is in this
-# checkout. Importing the app needs no server and describes THIS working tree.
+# `localhost:8000/openapi.json`. Under this repo's e2e setup :8000 was the
+# DESKTOP app (`jobtracker.main`), which served a different contract — that is
+# how the committed bindings drifted to cover 4 of 20 paths. Nothing listens on
+# :8000 in CI any more, and a deployed URL serves whatever was last deployed
+# rather than what is in this checkout. Importing the app needs no server at all
+# and describes THIS working tree.
 #
 # WHY THE SPEC IS WRITTEN FROM PYTHON RATHER THAN PIPED FROM STDOUT
 # -----------------------------------------------------------------
