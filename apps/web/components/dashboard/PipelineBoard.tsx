@@ -3,7 +3,7 @@
 import { Search } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { ApplicationRow, NO_ROLE_LABEL } from "@/components/dashboard/ApplicationRow";
@@ -365,6 +365,7 @@ export function PipelineBoard({
   beforeList,
   afterList,
   search = true,
+  openDetailId,
 }: {
   applications: Application[];
   interactive?: boolean;
@@ -390,6 +391,17 @@ export function PipelineBoard({
   beforeList?: ReactNode;
   /** Rendered inside the list pane, below the rows (the quiet placement). */
   afterList?: ReactNode;
+  /**
+   * A card to open PROGRAMMATICALLY — the marketing embeds' composition seed
+   * (the merged landing opens the moved row's detail as the visitor arrives
+   * at that beat). Each id is honoured once, only while the pane geometry is
+   * docked (the modal sheet must never appear unbidden), and never over a
+   * card the visitor opened themselves. Unlike a user's own open it does NOT
+   * move focus into the pane — no gesture happened, so stealing focus (and
+   * the scroll `focus()` drags with it) would be the page acting on its own.
+   * Product surfaces never pass this; their detail opens by click alone.
+   */
+  openDetailId?: number;
 } & BoardScope) {
   const router = useRouter();
   /**
@@ -416,6 +428,14 @@ export function PipelineBoard({
   const [pulseFilter, setPulseFilter] = useState<PulseFilter | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [detailApp, setDetailApp] = useState<Application | null>(null);
+  /** Whether the open detail was the USER's act — the pane only takes focus
+   *  for a real gesture (see `openDetailId` above and ApplicationDetail's
+   *  `focusOnOpen`). */
+  const [detailUserOpened, setDetailUserOpened] = useState(true);
+  const openDetail = (app: Application) => {
+    setDetailUserOpened(true);
+    setDetailApp(app);
+  };
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dropStage, setDropStage] = useState<StageKey | null>(null);
   /** Optimistic overlay: id → the status a drop just chose, until the server confirms. */
@@ -429,6 +449,28 @@ export function PipelineBoard({
     const id = window.setTimeout(() => setHydrated(true), 0);
     return () => window.clearTimeout(id);
   }, []);
+
+  /** The programmatic open, honoured once per id and only while docked — so
+   *  the sub-`lg` modal sheet (scroll lock, focus trap) can never fire from
+   *  it — and never over a card the visitor chose themselves. */
+  const consumedDetailSeed = useRef<number | null>(null);
+  useEffect(() => {
+    if (openDetailId === undefined || !detailDocked) return;
+    if (consumedDetailSeed.current === openDetailId) return;
+    consumedDetailSeed.current = openDetailId;
+    if (detailApp !== null) return; // the visitor's own open wins
+    const app = applications.find((a) => a.id === openDetailId);
+    if (!app) return;
+    // Deferred off the effect body (house rule — no synchronous setState in
+    // an effect), same as the board's own `hydrated`.
+    const id = window.setTimeout(() => {
+      setDetailUserOpened(false);
+      setDetailApp(app);
+    }, 0);
+    return () => window.clearTimeout(id);
+    // `detailApp` is read, not reacted to: the consumed ref means a later
+    // detail change can never replay the seed, so the extra dep is inert.
+  }, [openDetailId, detailDocked, applications, detailApp]);
 
   /** One clock read per render — every row's age tag and deadline state
    *  derives from it. UTC for the server pass, the reader's own day once
@@ -676,7 +718,7 @@ export function PipelineBoard({
     if (setKey !== undefined && openSets[setKey] !== true) {
       setOpenSets((s) => ({ ...s, [setKey]: true }));
     }
-    setDetailApp(next);
+    openDetail(next);
   };
 
   /** The docked pane is open: rows fold their stage select + Gmail slot to
@@ -704,7 +746,7 @@ export function PipelineBoard({
             columnLabel={column.label}
             today={today}
             transport={transport}
-            onOpenDetail={setDetailApp}
+            onOpenDetail={openDetail}
             folded={detailPaneOpen}
             detailOpen={detailApp !== null && detailApp.id === app.id}
             inSet={inSet}
@@ -1199,6 +1241,7 @@ export function PipelineBoard({
             }
             onTraverse={traverseDetail}
             transport={transport}
+            focusOnOpen={detailUserOpened}
           />
         ) : null}
       </div>

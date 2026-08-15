@@ -255,6 +255,86 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * The stage select's face — ApplicationRow + ApplicationDetail.
+ *
+ * The control STAYS a native <select>: the memo/controlled-value contract
+ * (ApplicationRow's StageSelect header), the sr-only label, `aria-busy` and
+ * the OS's own keyboard/AT semantics are all load-bearing, and a custom
+ * listbox would re-own every one of them for styling's sake. What was wrong
+ * was only the dress: the OS widget's chevron and platform chrome were the
+ * one element on the board (and on the landing page that embeds it) not
+ * drawn in the app's own hand. So:
+ *
+ *   - `appearance: none` strips the widget; the caller draws the chevron
+ *     (lucide, matching every other glyph) and pads the text clear of it.
+ *   - Where the engine can style the OPEN picker (`appearance: base-select`,
+ *     Chromium 135+), the popup adopts the app's surface, line and text
+ *     tokens instead of the OS sheet — token pairs already measured
+ *     elsewhere (options are `--foreground` on `--surface`, the app's body
+ *     pairing; the checked row uses `--text-strong`, disabled `--text-dim`).
+ *     Firefox/Safari ignore the block and keep their native picker, which
+ *     remains the accessible baseline, not a degraded one.
+ *   - The picker's entrance is a 120ms settle under `prefers-reduced-motion:
+ *     no-preference`; reduced motion opens it in place, fully drawn.
+ * ------------------------------------------------------------------------- */
+.select-control {
+  appearance: none;
+  text-overflow: ellipsis;
+}
+@supports (appearance: base-select) {
+  select.select-control,
+  select.select-control::picker(select) {
+    appearance: base-select;
+  }
+  /* The closed control draws its own lucide chevron — the UA's would double. */
+  select.select-control::picker-icon {
+    display: none;
+  }
+  select.select-control::picker(select) {
+    margin-top: 4px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.45);
+  }
+  select.select-control option {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: var(--foreground);
+  }
+  select.select-control option:hover,
+  select.select-control option:focus {
+    background: var(--surface-2);
+  }
+  select.select-control option:checked {
+    color: var(--text-strong);
+  }
+  /* The legacy-value entry (status.ts): shown so the control can state the
+   * row's real stage, disabled so it can never be submitted — dim, as it is
+   * in the classic picker. */
+  select.select-control option:disabled {
+    color: var(--text-dim);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    select.select-control::picker(select) {
+      transition:
+        opacity 0.12s ease,
+        transform 0.12s ease,
+        overlay 0.12s allow-discrete,
+        display 0.12s allow-discrete;
+    }
+    @starting-style {
+      select.select-control::picker(select) {
+        opacity: 0;
+        transform: translateY(-3px);
+      }
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Keyboard focus indicator — one definition for the whole app.
  *
  * It used to be a per-component decision: `focus-visible:outline-none` plus a

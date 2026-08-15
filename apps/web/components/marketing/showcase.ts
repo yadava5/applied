@@ -24,6 +24,10 @@ import type { Application } from "@/lib/dashboard/summary";
 import { daysBefore } from "@/lib/demo/demoData";
 import { VERDICT_EMAIL } from "./verdictEmailData";
 
+/** The one signal line Larkspur's rejection files under — stated once, so the
+ *  resting seed and the window act's live move can never phrase it apart. */
+export const VERDICT_SIGNAL = "Moving forward with other candidates";
+
 interface ShowcaseSeed {
   company: string;
   position: string;
@@ -43,26 +47,38 @@ interface ShowcaseSeed {
  * applied run is kept SHORT: three rows, so the fold of a ~700px stage
  * reaches the interviews and the offer instead of stacking identical
  * dropdowns — the exact defect this fixture replaces.
+ *
+ * The FILED DAYS are clustered on purpose. The first cut dribbled the ten
+ * rows across ten distinct days — one filing per day, so the momentum
+ * strip's `count / peak` saturated at 100% for every non-empty bin and drew
+ * a full-height picket fence (the owner's verdict was "terrible"; the
+ * diagnosis was the input, not the chart). The measured production account
+ * files in BURSTS — 65 rows on ~7 distinct days of 28 — which is what gives
+ * `peak` something to divide by and lets empty days read as baseline. This
+ * projection keeps that shape at fixture scale: a heavy evening (3), a pair
+ * of two-filing days, singles, and empty runs between — peak 3, so the
+ * strip carries three real heights without inflating the approved row list.
  */
 const SEEDS: ShowcaseSeed[] = [
   // applied — recent, still warm; the top row landed today.
   { company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", filedDaysAgo: 0, lastSignal: "Thanks for applying" },
   { company: "Copperline", position: "Backend Engineer, Payments", status: "applied", filedDaysAgo: 2, lastSignal: "We received your application" },
-  { company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 5, lastSignal: "Application under review" },
+  { company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 2, lastSignal: "Application under review" },
   // assessment — one, with the deadline its mail stated (fills the pulse's
-  // deadlines cell honestly).
-  { company: "Kestrel Dynamics", position: "Software Engineer, Simulation", status: "assessment", filedDaysAgo: 3, dueInDays: 2, lastSignal: "Next step: online assessment (90 min)" },
-  // interviewing — the middle of a healthy funnel.
-  { company: "Harbor Analytics", position: "Backend Engineer", status: "interviewing", filedDaysAgo: 9, lastSignal: "Recruiter screen scheduled" },
-  { company: "Northstar Systems", position: "ML Engineer", status: "interviewing", filedDaysAgo: 12, lastSignal: "Interview availability — technical round" },
-  { company: "Cedar Labs", position: "Software Engineer, Platform", status: "interviewing", filedDaysAgo: 16, lastSignal: "Onsite loop confirmed for Thursday" },
+  // deadlines cell honestly). Filed in the same two-days-ago burst.
+  { company: "Kestrel Dynamics", position: "Software Engineer, Simulation", status: "assessment", filedDaysAgo: 2, dueInDays: 2, lastSignal: "Next step: online assessment (90 min)" },
+  // interviewing — the middle of a healthy funnel; one heavy evening's burst.
+  { company: "Harbor Analytics", position: "Backend Engineer", status: "interviewing", filedDaysAgo: 11, lastSignal: "Recruiter screen scheduled" },
+  { company: "Northstar Systems", position: "ML Engineer", status: "interviewing", filedDaysAgo: 11, lastSignal: "Interview availability — technical round" },
+  { company: "Cedar Labs", position: "Software Engineer, Platform", status: "interviewing", filedDaysAgo: 12, lastSignal: "Onsite loop confirmed for Thursday" },
   // offered — the row the headline promises.
-  { company: "Meridian Grid", position: "Software Engineer, Energy", status: "offered", filedDaysAgo: 24, lastSignal: "Congratulations — offer details inside" },
+  { company: "Meridian Grid", position: "Software Engineer, Energy", status: "offered", filedDaysAgo: 12, lastSignal: "Congratulations — offer details inside" },
   // closed — verdicts are verdicts; a board with no rejections is a brochure.
-  // Larkspur is the row variant C's hero shows and its travelling email
-  // decides — same company, same role, same outcome.
-  { company: VERDICT_EMAIL.company, position: VERDICT_EMAIL.role, status: "rejected", filedDaysAgo: 19, lastSignal: "Moving forward with other candidates" },
-  { company: "Atlas Freight", position: "Software Engineer II", status: "rejected", filedDaysAgo: 31, lastSignal: "Moving forward with other candidates" },
+  // Larkspur is the row the merged landing's window act moves live and the
+  // descent's travelling email decides — same company, same role, same
+  // outcome (see showcasePendingVerdict below).
+  { company: VERDICT_EMAIL.company, position: VERDICT_EMAIL.role, status: "rejected", filedDaysAgo: 19, lastSignal: VERDICT_SIGNAL },
+  { company: "Atlas Freight", position: "Software Engineer II", status: "rejected", filedDaysAgo: 26, lastSignal: "Moving forward with other candidates" },
 ];
 
 /** The showcase rows, projected onto the API shape (`asApplications.ts` idiom). */
@@ -79,4 +95,23 @@ export function showcaseApplications(today: string = todayISO()): Application[] 
     due_at: seed.dueInDays !== undefined ? (dueDayISO(daysBefore(today, -seed.dueInDays)) ?? null) : null,
     due_source: seed.dueInDays !== undefined ? "mail" : null,
   }));
+}
+
+/**
+ * The same board ONE VERDICT EARLIER — the merged landing's opening state.
+ *
+ * Larkspur starts where the classifier found it: still in `applied`, nineteen
+ * days quiet (the age tag and the pulse's amber "1 of N quiet" foreshadow the
+ * outcome), its note the receipt every application starts with. The window
+ * act then performs the move the resting seed merely states — `rejected`,
+ * {@link VERDICT_SIGNAL} — so the board is seen DOING the thing the headline
+ * promises rather than having already done it. Every other row is identical
+ * to {@link showcaseApplications}, which the other candidates still mount.
+ */
+export function showcasePendingVerdict(today: string = todayISO()): Application[] {
+  return showcaseApplications(today).map((app) =>
+    app.company === VERDICT_EMAIL.company
+      ? { ...app, status: "applied" as const, notes: "We received your application" }
+      : app,
+  );
 }

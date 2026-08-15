@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { todayISO } from "@/lib/dashboard/age";
@@ -9,7 +9,8 @@ import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport } from "@/lib/dashboard/transport";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
-import { showcaseApplications } from "./showcase";
+import { VERDICT_EMAIL } from "./verdictEmailData";
+import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./showcase";
 
 /**
  * The board as a marketing hero: the OUTCOME surface, not the toolbar.
@@ -29,11 +30,33 @@ import { showcaseApplications } from "./showcase";
  * mount no longer shows. It never touches the network — the unit gate
  * (`landing-variants.test.mjs`) walks the import graph and holds that line.
  */
-export function MarketingBoard() {
+export function MarketingBoard({ beat }: {
+  /**
+   * The merged landing's window act (see WindowAct): which scene of the
+   * choreography the visitor's scroll has reached. `undefined` — every other
+   * caller — is the resting board, exactly as before. With a beat:
+   *
+   *   0  the board one verdict early: Larkspur still in `applied`, 19 days
+   *      quiet (the pulse's amber share and the age tag foreshadow it);
+   *   1+ the verdict lands — the row is committed to `rejected` and the
+   *      board's own layout animation carries it to the closed group;
+   *   2+ the detail opens on that row (the board's `openDetailId` seed —
+   *      docked only, no focus theft), which is the composition the owner
+   *      approved: worklist beside the open pane, trail and gate meter shown.
+   *
+   * Beats only ever ADVANCE state (a verdict does not un-happen when the
+   * visitor scrolls back up), each fires once, and none of them touches a
+   * row the visitor has meanwhile moved themselves.
+   */
+  beat?: number;
+}) {
+  const choreographed = beat !== undefined;
   // One clock read per mount, resolved in render (never module load) — the
   // same hydration rule every fixture family follows. This component only
   // ever mounts client-side (see LandingBoard), so the day is the visitor's.
-  const [apps, setApps] = useState<Application[]>(() => showcaseApplications(todayISO()));
+  const [apps, setApps] = useState<Application[]>(() =>
+    choreographed ? showcasePendingVerdict(todayISO()) : showcaseApplications(todayISO()),
+  );
   // Rows in a ref, mirrored into state — DemoDashboard's pattern, for the
   // same reason: the transport must stay referentially stable, because a
   // fresh transport each render re-triggers the detail sheet's load effect
@@ -95,6 +118,58 @@ export function MarketingBoard() {
     [commit],
   );
 
+  // --- The window act's beats (choreographed mounts only) -------------------
+
+  /** Beat 1: the verdict lands. Committed through the same `commit` a drag
+   *  uses, so the layout animation that carries the row to the closed group
+   *  is the product's own — nothing marketing-specific moves it. Fired once;
+   *  skipped entirely if the visitor already moved the row themselves. The
+   *  750ms breath exists so the camera's pan (LandingBoard) settles before
+   *  the row travels — one event, read in sequence; reduced motion takes the
+   *  state change immediately. */
+  const moved = useRef(false);
+  const moveTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (moveTimer.current !== null) window.clearTimeout(moveTimer.current);
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!choreographed || (beat ?? 0) < 1 || moved.current) return;
+    moved.current = true;
+    const row = appsRef.current.find((a) => a.company === VERDICT_EMAIL.company);
+    if (!row || row.status !== "applied") return; // the visitor got there first
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const rowId = row.id;
+    moveTimer.current = window.setTimeout(
+      () => {
+        commit((rows) =>
+          rows.map((a) =>
+            a.id === rowId && a.status === "applied"
+              ? { ...a, status: "rejected", notes: VERDICT_SIGNAL }
+              : a,
+          ),
+        );
+      },
+      reduce ? 0 : 750,
+    );
+  }, [beat, choreographed, commit]);
+
+  /** Beat 2: the mail behind the row. Waits for the verdict to have actually
+   *  landed (the pane must never open on the pre-move snapshot), then hands
+   *  the id to the board's seeded open — docked-only, focus untouched. */
+  const [openDetailId, setOpenDetailId] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (!choreographed || (beat ?? 0) < 2 || openDetailId !== undefined) return;
+    const row = apps.find((a) => a.company === VERDICT_EMAIL.company);
+    if (!row || row.status !== "rejected") return;
+    // Deferred off the effect body — the house rule every board effect follows.
+    const rowId = row.id;
+    const id = window.setTimeout(() => setOpenDetailId(rowId), 0);
+    return () => window.clearTimeout(id);
+  }, [beat, choreographed, apps, openDetailId]);
+
   return (
     <div className="flex h-full flex-col gap-4">
       {/* One header line: what the board says about itself, and whose it is. */}
@@ -111,6 +186,7 @@ export function MarketingBoard() {
         transport={transport}
         pulse={{ needsReview: 0 }}
         search={false}
+        openDetailId={openDetailId}
       />
     </div>
   );

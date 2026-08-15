@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { BoardStill } from "./BoardStill";
@@ -45,20 +45,60 @@ const MarketingBoard = dynamic(
 
 const LG = "(min-width: 1024px)";
 
+/** The strip beat 1 clears below the board's foot for the receipt card. */
+const OVERLAY_ROOM = 152;
+
 export function LandingBoard({
   height = "min(72vh, 680px)",
   className,
   caption = true,
+  beat,
+  overlay,
 }: {
   /** The stage's fixed height — the reservation that keeps CLS at zero. */
   height?: string;
   className?: string;
   /** Off when the caller's frame carries the provenance line itself (B). */
   caption?: boolean;
+  /**
+   * The window act's scene index (WindowAct → MarketingBoard). Here it also
+   * drives the CAMERA: the board is taller than the stage, and beat 1 pans
+   * the crop to the board's foot so the closed group is on screen when the
+   * verdict row arrives there; every other beat rests at the head, where the
+   * pulse band and — from beat 2 — the opened detail pane sit. A transform
+   * inside the clip, so the page's own scroll geometry never moves: CLS
+   * stays zero by construction. Reduced motion pans by cut, not by glide.
+   */
+  beat?: number;
+  /** A figure floated over the stage's foot (the act's receipt card). */
+  overlay?: ReactNode;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef<HTMLDivElement>(null);
+  const [panY, setPanY] = useState(0);
   const [near, setNear] = useState(false);
   const [wide, setWide] = useState(false);
+
+  // The camera. Measured at beat time (not cached): the board's height
+  // changes when the pane docks open and rows fold, and a stale measure
+  // would pan past the foot. Nothing here runs for beat-less callers.
+  //
+  // Beat 1 pans PAST the foot by `OVERLAY_ROOM`: the board's last rows clear
+  // the stage's lower band entirely, and the receipt card (`overlay`) lands
+  // in the emptied strip instead of on top of the very rows it documents —
+  // measured, a bottom-corner float covered either the moved row's identity
+  // or its neighbours' controls at every corner.
+  useEffect(() => {
+    if (beat === undefined) return;
+    if (beat === 1) {
+      const stage = stageRef.current;
+      const pan = panRef.current;
+      if (!stage || !pan) return;
+      setPanY(-Math.max(0, pan.scrollHeight - stage.clientHeight + OVERLAY_ROOM));
+    } else {
+      setPanY(0);
+    }
+  }, [beat]);
 
   // `lg`+ is a mount condition, not just a display one: a phone should never
   // download the dashboard bundle for a board it will not show. Tracked live
@@ -100,14 +140,32 @@ export function LandingBoard({
       {/* ---- the stage (`lg`+) ------------------------------------------- */}
       <div ref={stageRef} className="relative hidden lg:block" style={{ height }}>
         <div className="absolute inset-0 overflow-clip">
-          {live ? <MarketingBoard /> : <StageSkeleton />}
+          {/* The camera's dolly — static (translate 0) for beat-less callers. */}
+          <div
+            ref={panRef}
+            className="transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+            style={{ transform: `translateY(${panY}px)` }}
+          >
+            {live ? <MarketingBoard beat={beat} /> : <StageSkeleton />}
+          </div>
         </div>
         {/* The crop edge: the board continues below this line, and the fade
-            says so. Decoration only — it must never intercept the board. */}
+            says so. Decoration only — it must never intercept the board —
+            and it stands down while the camera is AT the foot (beat 1),
+            where "this continues" would be false and the closed rows are
+            the scene's whole point. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background transition-opacity duration-500 motion-reduce:transition-none",
+            beat === 1 && "opacity-0",
+          )}
         />
+        {/* The act's receipt card, in the strip beat 1 cleared below the
+            board's foot — beside nothing, covering nothing. */}
+        {overlay ? (
+          <div className="absolute bottom-2 left-1 z-10 w-full max-w-[26rem]">{overlay}</div>
+        ) : null}
       </div>
       <div
         className={cn(

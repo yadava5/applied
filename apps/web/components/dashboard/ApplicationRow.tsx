@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ChevronDown, ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
@@ -92,28 +92,44 @@ const StageSelect = memo(function StageSelect({
       <label className="sr-only" htmlFor={`status-${id}`}>
         Change stage for {company}
       </label>
-      <select
-        id={`status-${id}`}
-        value={statusSelectValue(value)}
-        disabled={disabled}
-        aria-busy={busy}
-        onChange={(e) => onChange(e.target.value)}
-        // `w-[8.5rem]`, not max-w: an intrinsic-width select is as wide as its
-        // current value, so 17 rows put the board's main control on four
-        // different x positions (a 78px spread, measured). Fixed width + a
-        // fixed-width tail after it (see the meta cluster) is what makes the
-        // selects a column. `h-6` matches the cluster's other controls (the
-        // Gmail slot, the menu trigger), so a card with a select and a card
-        // without one — the employer set header — compute the same height;
-        // the select's intrinsic height was a measured 1px taller.
-        className="h-6 w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
-      >
-        {statusOptions(value).map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      {/* Still a NATIVE controlled <select> — the memo contract above, the
+          keyboard/AT semantics and the enum options are all unchanged. Only
+          the FACE moved off the OS widget: `.select-control` (globals.css)
+          strips `appearance`, the chevron is drawn here (ours, so it matches
+          the board's other glyphs and dims with `disabled` via `peer`), and
+          engines that support stylable pickers dress the open list too. The
+          wrapper now carries the geometry the old comment measured, and the
+          reasons hold verbatim: `w-[8.5rem]`, not max-w, because an
+          intrinsic-width select is as wide as its current value, and 17 rows
+          put the board's main control on four different x positions (a 78px
+          spread, measured) — fixed width + the fixed-width tail after it
+          (see the meta cluster) is what makes the selects a column; `h-6`
+          matches the cluster's other controls (the Gmail slot, the menu
+          trigger), so a card with a select and a card without one — the
+          employer set header — compute the same height (the OS-drawn
+          select's intrinsic height was a measured 1px taller). The select
+          itself fills the wrapper, so the box the cluster lays out is
+          byte-identical to before. */}
+      <span className="relative inline-flex h-6 w-[8.5rem]">
+        <select
+          id={`status-${id}`}
+          value={statusSelectValue(value)}
+          disabled={disabled}
+          aria-busy={busy}
+          onChange={(e) => onChange(e.target.value)}
+          className="select-control peer h-full w-full rounded border border-line-soft bg-surface pl-1.5 pr-5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+        >
+          {statusOptions(value).map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          aria-hidden
+          className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-disabled:opacity-50"
+        />
+      </span>
     </>
   );
 });
