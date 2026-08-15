@@ -32,7 +32,7 @@ mypy>=1.8.0                   # Static type checker
 # -----------------------------------------------------------------------------
 # Distribution
 # -----------------------------------------------------------------------------
-pyinstaller>=6.3.0            # Bundle Python as standalone executable
+pyinstaller>=6.22.0            # Bundle Python as standalone executable
 
 # Lets tests/test_rls_postgres.py provision its own postgres:16 instead of
 # skipping. The RLS suite is the only proof of database-level tenant
