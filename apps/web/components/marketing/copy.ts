@@ -113,6 +113,21 @@ export const ACCESS = {
 } as const;
 
 /**
+ * Landing B's closing act (`ClosingAct.tsx`). The thesis is the brand
+ * sentence the logo already encodes (components/brand/Logo.tsx); the CTAs
+ * restate ACCESS with the seat ask made primary — the close is where the ask
+ * carries weight — and "nothing uploads" is ACCESS.noSeat's own promise.
+ * The rail label composes DECISION.rulesF1 in the component, so the number
+ * stays single-sourced. No new claim.
+ */
+export const CLOSING = {
+  thesis: "Your inbox already holds the verdict.",
+  seatCta: "Ask for a seat",
+  importAside: "or classify your exported mail — nothing uploads",
+  replay: "Replay ↺",
+} as const;
+
+/**
  * The descent's claim screens. One claim per screen; the email artifact beside
  * them is `VerdictEmail`, whose classifications are computed live in the tab by
  * the shipped rules layer (`lib/demo/rulesLayer.ts`).
