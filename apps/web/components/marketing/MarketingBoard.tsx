@@ -30,7 +30,7 @@ import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./
  * mount no longer shows. It never touches the network — the unit gate
  * (`landing-variants.test.mjs`) walks the import graph and holds that line.
  */
-export function MarketingBoard({ beat }: {
+export function MarketingBoard({ beat, onVisitorOpen }: {
   /**
    * The merged landing's window act (see WindowAct): which scene of the
    * choreography the visitor's scroll has reached. `undefined` — every other
@@ -49,6 +49,18 @@ export function MarketingBoard({ beat }: {
    * row the visitor has meanwhile moved themselves.
    */
   beat?: number;
+  /**
+   * The visitor opened a card themselves (a click, Enter on a row, or ↑/↓
+   * traversal once a pane is up) — as opposed to the beat-2 open the page
+   * seeds. Fired on every such open, and it is how the camera learns to let
+   * go (see LandingBoard): the framed window crops the board, so a pane the
+   * page did not open would otherwise show none of its own chrome.
+   *
+   * The signal is `transport.detail(id)`, which ApplicationDetail calls for
+   * every card it loads — a prop this component already owns. Nothing here
+   * reads the board's DOM, and nothing under components/dashboard changes.
+   */
+  onVisitorOpen?: () => void;
 }) {
   const choreographed = beat !== undefined;
   // One clock read per mount, resolved in render (never module load) — the
@@ -66,6 +78,15 @@ export function MarketingBoard({ beat }: {
     appsRef.current = next(appsRef.current);
     setApps(appsRef.current);
   }, []);
+
+  // Both of these are read INSIDE `transport.detail` and must never appear in
+  // the transport's dep list: a fresh transport re-triggers the detail sheet's
+  // load effect on every board change (see `appsRef` above, same reason).
+  const seededRef = useRef<number | undefined>(undefined);
+  const visitorOpenRef = useRef(onVisitorOpen);
+  useEffect(() => {
+    visitorOpenRef.current = onVisitorOpen;
+  }, [onVisitorOpen]);
 
   const transport = useMemo<BoardTransport>(
     () => ({
@@ -111,6 +132,9 @@ export function MarketingBoard({ beat }: {
         return { ok: true };
       },
       async detail(id) {
+        // Every card the pane loads passes through here, and the one id the
+        // PAGE ever opens is the seed. Anything else is the visitor's hand.
+        if (id !== seededRef.current) visitorOpenRef.current?.();
         const app = appsRef.current.find((row) => row.id === id);
         return app ? { ok: true, body: demoDetailBody(app) } : { ok: false, body: {} };
       },
@@ -166,6 +190,9 @@ export function MarketingBoard({ beat }: {
     if (!row || row.status !== "rejected") return;
     // Deferred off the effect body — the house rule every board effect follows.
     const rowId = row.id;
+    // Recorded BEFORE the seed reaches the board, so the pane's own load call
+    // for this card is never mistaken for a visitor's open.
+    seededRef.current = rowId;
     const id = window.setTimeout(() => setOpenDetailId(rowId), 0);
     return () => window.clearTimeout(id);
   }, [beat, choreographed, apps, openDetailId]);

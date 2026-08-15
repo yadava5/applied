@@ -117,14 +117,23 @@ export const ACCESS = {
  * sentence the logo already encodes (components/brand/Logo.tsx); the CTAs
  * restate ACCESS with the seat ask made primary — the close is where the ask
  * carries weight — and "nothing uploads" is ACCESS.noSeat's own promise.
- * The rail label composes DECISION.rulesF1 in the component, so the number
- * stays single-sourced. No new claim.
+ * The rail labels compose DECISION.rulesF1 / DECISION.cascadeF1 in the
+ * component, so the numbers stay single-sourced. No new claim.
+ *
+ * `rail*` are the scene's key: the one cyan rail the envelope crosses and the
+ * two dashed ghosts it passes through. They were literals inside the svg
+ * until they were measured at 3.1–3.3px there (uniform viewBox scaling makes
+ * every in-scene size a function of the viewport), and the words moved out to
+ * real DOM text — so they are copy now, and copy lives here. Sentence case:
+ * the caps are a CSS treatment, which DOM text can carry reliably.
  */
 export const CLOSING = {
   thesis: "Your inbox already holds the verdict.",
   seatCta: "Ask for a seat",
   importAside: "or classify your exported mail — nothing uploads",
   replay: "Replay ↺",
+  railShips: "what ships",
+  railGhost: "benchmarked, not shipped",
 } as const;
 
 /**

@@ -10,8 +10,11 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  *
  * The page spends nine screens making a sentence; this band draws the
  * sentence and punctuates it. One envelope enters at the left and crosses
- * the full width — but it meets ONE cyan rail, the rules, `0.979 · what
- * ships` — and then collapses into the emerald verdict, which falls and
+ * the full width — but it meets ONE cyan rail, the rules stage, the figure
+ * that ships (`DECISION.rulesF1` — the digits live in copy.ts, and naming
+ * the key rather than spelling them out keeps this comment true when the
+ * attribution is the thing under discussion) — and then collapses into the
+ * emerald verdict, which falls and
  * seats itself as the full stop after the drawn `applied` wordmark. The
  * email literally finishes the sentence: the thesis line beneath says the
  * inbox already holds the verdict, and the closing image is the mail
@@ -50,8 +53,30 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * The F1 figures are mono (read out of the benchmark JSONs); the words
  * beside them — `what ships`, `benchmarked, not shipped` — are captions,
  * set in the product's caps-label voice (`.act__words`, the `.label-caps`
- * device restated in scene units; the class itself cannot apply here
- * because its color would override the rail's fill).
+ * device restated for the key).
+ *
+ * THE KEY IS DOM TEXT, NOT SVG TEXT (2026-08-15). The rail tags used to live
+ * inside the scene as `<text>` nodes, and a viewBox scales its contents
+ * uniformly: at 375 the 1200-unit scene renders at 0.3125×, so a 10.5-unit
+ * figure landed at 3.28px and a 9.75-unit caption at 3.05px. Measured, not
+ * eyeballed — `getScreenCTM().a` × the user-unit size, because computed
+ * fontSize on an svg node reports user units and reads as if nothing were
+ * wrong. It is not a small-screen problem either: at 1024 the same tags
+ * measure 8.96px and 8.32px, so the page's central comparison was under any
+ * legible floor at every width a visitor actually uses.
+ *
+ * A font-size bump inside the svg only moves the problem, because the size
+ * is a function of the viewport either way. So the words left the drawing:
+ * `Key` is real DOM text, absolutely positioned at `lg`+ over the rails it
+ * names (the same x the tags used, sitting on the rails' own top edge, in
+ * the same colours) and restacked below `lg` into a legend above the scene,
+ * where each row carries a mark cut like the rail it stands for. One set of
+ * nodes, two arrangements — never a visible copy and a hidden twin.
+ *
+ * That also settles the accessibility of the claim. The svg is decorative
+ * and says so, which was a lie while it held the only statement of the
+ * comparison; now the geometry is genuinely all it holds, and the key is a
+ * list a screen reader reaches like any other text.
  */
 
 /* ---- scene geometry (viewBox 0 0 1200 370) ------------------------------ */
@@ -73,6 +98,16 @@ const DOT_X = 1147;
 const DOT_R = 19.4;
 /** Lane (y=64) → baseline seat (y=335.2). Mirrored in the CSS keyframes. */
 const DOT_SEAT_Y = 335.2;
+
+/**
+ * Where the key sits over the scene at `lg`+, as shares of the viewBox — the
+ * x each tag used (369 and 569 of 1200) and the rails' own top edge (y=24 of
+ * 370) as the row's bottom, so the words rest on the rails rather than
+ * floating above them. Shares, not pixels: the svg is fluid, and these have
+ * to track it.
+ */
+const KEY_LEFT = { rules: "30.75%", ghost: "47.417%" } as const;
+const KEY_BOTTOM = "93.514%";
 
 const at = (d: string): CSSProperties => ({ ["--d" as string]: d });
 
@@ -104,19 +139,13 @@ function Scene() {
 
       {/* the neural layers, as ghosts: present, benchmarked, not shipped.
           Dashed, achromatic, and the envelope crosses them without an event —
-          the page's central comparison restaged as furniture. The DASHES stay
+          the page's central comparison restaged as furniture. The dashes stay
           quiet (opacity in globals.css, per theme, measured to the 3:1
-          non-text floor); the label rides the full dim rank, because a caption
-          the visitor cannot read makes the comparison it exists for silent. */}
+          non-text floor); what they MEAN is carried by the key, in text a
+          visitor can read. */}
       <g className="act__ghosts" stroke="currentColor">
         <line x1="560" y1="24" x2="560" y2="104" strokeWidth="1.5" strokeDasharray="3 5" />
         <line x1="800" y1="24" x2="800" y2="104" strokeWidth="1.5" strokeDasharray="3 5" />
-        <text x="569" y="21" fontSize="10.5" fill="currentColor" stroke="none">
-          <tspan className="font-mono">{DECISION.cascadeF1}</tspan>
-          {/* literal caps: text-transform on SVG text is uneven across
-              engines, and the svg is aria-hidden, so casing is free */}
-          <tspan className="act__words">{" · BENCHMARKED, NOT SHIPPED"}</tspan>
-        </text>
       </g>
 
       {/* the one rail — the rules, the layer that ships */}
@@ -132,10 +161,6 @@ function Scene() {
           stroke="currentColor"
           strokeWidth="1.5"
         />
-        <text x="369" y="21" fontSize="10.5" fill="currentColor" className="act__tag">
-          <tspan className="font-mono">{DECISION.rulesF1}</tspan>
-          <tspan className="act__words">{" · WHAT SHIPS"}</tspan>
-        </text>
       </g>
 
       {/* the wordmark, drawn in the brand's own stroke paths (Logo.tsx) */}
@@ -221,6 +246,43 @@ function Scene() {
   );
 }
 
+/**
+ * The scene's key — the whole comparison, in two rows.
+ *
+ * At `lg`+ each row is absolutely placed on the rail it names, which is the
+ * composition the scene was drawn for. Below that the rows have no room to
+ * sit side by side (they collide under ~1024), so they stack into a legend
+ * above the scene — above, because nothing may sit below it: the wordmark's
+ * descenders bleed off the band's bottom edge and that crop is the ending.
+ * The stacked rows earn a mark cut like the rail they stand for, solid or
+ * dashed, since at that width the rails themselves are 25px ticks.
+ */
+function Key() {
+  return (
+    <ul
+      className="act__key mx-auto mt-6 flex w-full max-w-6xl flex-col gap-2 px-6 text-[0.8125rem] lg:pointer-events-none lg:absolute lg:inset-0 lg:z-10 lg:mt-0 lg:block lg:max-w-none lg:px-0 lg:text-xs xl:text-[0.8125rem]">
+      <li
+        className="act__tag act__tag--rules flex items-center gap-2 lg:absolute lg:gap-1.5"
+        style={{ left: KEY_LEFT.rules, bottom: KEY_BOTTOM }}
+      >
+        <span aria-hidden className="act__key-mark inline-block lg:hidden" />
+        <span className="tabular font-mono">{DECISION.rulesF1}</span>
+        <span aria-hidden>·</span>
+        <span className="act__words">{CLOSING.railShips}</span>
+      </li>
+      <li
+        className="act__tag act__tag--ghost flex items-center gap-2 lg:absolute lg:gap-1.5"
+        style={{ left: KEY_LEFT.ghost, bottom: KEY_BOTTOM }}
+      >
+        <span aria-hidden className="act__key-mark act__key-mark--ghost inline-block lg:hidden" />
+        <span className="tabular font-mono">{DECISION.cascadeF1}</span>
+        <span aria-hidden>·</span>
+        <span className="act__words">{CLOSING.railGhost}</span>
+      </li>
+    </ul>
+  );
+}
+
 export function ClosingAct() {
   const ref = useRef<HTMLElement>(null);
   const [run, setRun] = useState(0);
@@ -292,18 +354,25 @@ export function ClosingAct() {
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setRun((r) => r + 1)}
-        className="act__scene relative block w-full cursor-pointer border-0 bg-transparent p-0"
-        aria-label="Replay the closing sequence: one email crosses the rules layer — the one that ships — and lands as the emerald full stop after the applied wordmark."
-      >
-        <span aria-hidden className="act__hint absolute right-6 top-1 text-[0.8125rem] text-dim sm:right-10">
-          {CLOSING.replay}
-        </span>
-        {/* keyed so a replay cleanly restarts every CSS animation in the scene */}
-        <Scene key={run} />
-      </button>
+      {/* The key rides over this box at `lg`+, so it is the box the scene's
+          own geometry defines: the button is the svg and nothing else, and
+          the key's percentage placement lands on the rails it names. Below
+          `lg` the key is in flow above the button and the box is both. */}
+      <div className="relative">
+        <Key />
+        <button
+          type="button"
+          onClick={() => setRun((r) => r + 1)}
+          className="act__scene relative block w-full cursor-pointer border-0 bg-transparent p-0"
+          aria-label="Replay the closing sequence: one email crosses the rules layer — the one that ships — and lands as the emerald full stop after the applied wordmark."
+        >
+          <span aria-hidden className="act__hint absolute right-6 top-1 text-[0.8125rem] text-dim sm:right-10">
+            {CLOSING.replay}
+          </span>
+          {/* keyed so a replay cleanly restarts every CSS animation in the scene */}
+          <Scene key={run} />
+        </button>
+      </div>
     </section>
   );
 }

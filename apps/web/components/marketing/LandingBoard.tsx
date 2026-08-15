@@ -78,6 +78,33 @@ export function LandingBoard({
   const [panY, setPanY] = useState(0);
   const [near, setNear] = useState(false);
   const [wide, setWide] = useState(false);
+  /**
+   * The camera has handed the frame back to the visitor.
+   *
+   * The window CROPS a live product, so every control the crop pushes
+   * off-stage becomes unreachable — and the detail pane's own close × is one
+   * of them at beats 1 and 2 (measured at a 768-tall viewport: the × sits
+   * 304px above the stage at beat 1, 97px above it at beat 2, with only
+   * Escape left to close a pane the visitor opened themselves). Rather than
+   * layer a marketing-owned close over another component's chrome, the frame
+   * gives the board back: an open card returns the camera to the head, which
+   * is beat 0's frame — known good, and where the pane renders its whole
+   * header, title and ×.
+   *
+   * Traversal counts as taking the wheel, deliberately: ↑/↓ loads another
+   * card through the same call, and the position row it renumbers (`3 of
+   * 10`) lives in the head the crop removes — so a reader who starts
+   * browsing the trail at beat 2 gets the frame back too, without having
+   * clicked anything.
+   *
+   * It does not re-engage. The camera is narration, and a visitor who has
+   * opened a card has stopped watching and started using; the same rule the
+   * beats already follow for state (MarketingBoard skips the verdict move on
+   * a row the visitor moved, and the board's seeded open stands down for a
+   * card the visitor chose). The authored beat-2 composition still plays in
+   * full for every reader who lets it.
+   */
+  const [released, setReleased] = useState(false);
 
   // The camera. Nothing here runs for beat-less callers.
   //
@@ -92,8 +119,11 @@ export function LandingBoard({
   // The trade at beat 2 is deliberate: holding the foot crops the pane's own
   // head — the `9 of 10` nav row, the title, and the pane's × — in exchange
   // for the row and the whole trail. The row beside it carries the identity
-  // the title was carrying, and Escape still closes the docked pane (verified
-  // at 768 and 600); the × is the one control that goes off-stage.
+  // the title was carrying. That trade covers the pane the PAGE opens, and
+  // only for as long as the page is the one driving: the moment the visitor
+  // opens a card themselves the camera releases (see `released`) and the
+  // pane's own × comes back into frame, because a cropped control the
+  // visitor reached for is a broken control, not a composition.
   //
   // Beat 2 used to return to the head, and measurement caught what that cost:
   // the moved row lands in the CLOSED group at the board's foot (679–735 of a
@@ -113,8 +143,14 @@ export function LandingBoard({
     const pan = panRef.current;
     if (!stage || !pan) return;
     const room = beat === 1 ? OVERLAY_ROOM : 0;
+    // `released` resolves to 0 INSIDE the measure rather than skipping the
+    // effect: the pane docking open grows the board (743 → 783), the observer
+    // fires on that growth, and a skipped effect would leave the last panned
+    // value behind exactly when the visitor needs the frame back.
     const measure = () =>
-      setPanY(beat < 1 ? 0 : -Math.max(0, pan.scrollHeight - stage.clientHeight + room));
+      setPanY(
+        released || beat < 1 ? 0 : -Math.max(0, pan.scrollHeight - stage.clientHeight + room),
+      );
     // The observer's own first callback is the initial measurement, so the
     // effect body never sets state synchronously (react-hooks/set-state-in-effect).
     if (typeof ResizeObserver === "undefined") {
@@ -128,7 +164,7 @@ export function LandingBoard({
     ro.observe(pan);
     ro.observe(stage);
     return () => ro.disconnect();
-  }, [beat]);
+  }, [beat, released]);
 
   // `lg`+ is a mount condition, not just a display one: a phone should never
   // download the dashboard bundle for a board it will not show. Tracked live
@@ -176,24 +212,32 @@ export function LandingBoard({
             className="transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
             style={{ transform: `translateY(${panY}px)` }}
           >
-            {live ? <MarketingBoard beat={beat} /> : <StageSkeleton />}
+            {live ? (
+              <MarketingBoard beat={beat} onVisitorOpen={() => setReleased(true)} />
+            ) : (
+              <StageSkeleton />
+            )}
           </div>
         </div>
         {/* The crop edge: the board continues below this line, and the fade
             says so. Decoration only — it must never intercept the board —
             and it stands down while the camera is AT the foot (beats 1 and
             2), where "this continues" would be false and the closed rows are
-            the scene's whole point. */}
+            the scene's whole point. A released camera is back at the head, so
+            the board continues below the line again and the fade says so. */}
         <div
           aria-hidden
           className={cn(
             "pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background transition-opacity duration-500 motion-reduce:transition-none",
-            (beat ?? 0) >= 1 && "opacity-0",
+            (beat ?? 0) >= 1 && !released && "opacity-0",
           )}
         />
         {/* The act's receipt card, in the strip beat 1 cleared below the
-            board's foot — beside nothing, covering nothing. */}
-        {overlay ? (
+            board's foot — beside nothing, covering nothing. It stands down
+            with the camera: the strip only exists while the camera is panned
+            past the foot, so a released frame would drop the card straight
+            onto the rows it was moved off in the first place. */}
+        {overlay && !released ? (
           <div className="absolute bottom-2 left-1 z-10 w-full max-w-[26rem]">{overlay}</div>
         ) : null}
       </div>

@@ -1313,28 +1313,58 @@ body {
 .act__rules {
   color: var(--viz-rules);
 }
-/* The rail tags are the scene's only text, and each is a MIXED run: the F1
- * figure is mono (a machine value, read out of the benchmark JSONs) and the
- * words beside it are captions in the product's voice — `.act__words` below,
- * the `.label-caps` device restated in scene units. Mono stops at the edge
- * of the machine value.
+/* The KEY (`.act__key`) is the scene's only text, and it is DOM text beside
+ * the svg rather than `<text>` inside it — a viewBox scales its contents, so
+ * the tags it used to hold measured 3.28px/3.05px at 375 and 8.96px/8.32px at
+ * 1024 (see ClosingAct for the measurement and why a size bump could not fix
+ * it). Each row is a MIXED run: the F1 figure is mono (a machine value, read
+ * out of the benchmark JSONs) and the words beside it are a caption in the
+ * product's voice — `.act__words` below, the `.label-caps` device restated
+ * for the key. Mono stops at the edge of the machine value.
  *
- * Light's --viz-rules (#0284c7) measures 3.92:1 on #fafafa — fine for the
- * rail (non-text, 3:1 floor) but under AA for the tag, so the tag alone
- * steps down a shade: #0369a1 measures 5.68:1 / APCA Lc 76.1. Dark needs no
- * override (#38bdf8 → 9.24:1 / Lc 60.5). */
-[data-theme="light"] .act__tag {
-  fill: #0369a1;
+ * `.act__tag` still carries the choreography (the fade below), so the key
+ * enters with the scene it belongs to.
+ *
+ * Colour is unchanged from the drawn tags — only the size is. Measured on
+ * --background: dark rules #38bdf8 on #0a0a0b = 9.24:1 / APCA Lc 60.5, dark
+ * ghost #aeb4be = 9.49:1 / Lc 61.4. Light's --viz-rules (#0284c7) measures
+ * 3.92:1 on #fafafa — fine for the rail (non-text, 3:1 floor) but under AA
+ * for text, so the key alone steps down a shade to #0369a1 = 5.68:1 /
+ * Lc 76.1; light ghost #676b73 = 5.12:1 / Lc 73.7. */
+.act__tag--rules {
+  color: var(--viz-rules);
 }
-/* Caps are authored literally in the tspans — text-transform on SVG text is
- * uneven across engines, and the scene is aria-hidden so casing costs
- * nothing. Size steps down from the 10.5 mono figure so the caps run's
- * optical height sits just under the digits: the figure stays the loud half. */
+[data-theme="light"] .act__tag--rules {
+  color: #0369a1;
+}
+.act__tag--ghost {
+  color: var(--text-dim);
+}
+/* The stacked key's rail mark (below `lg`, where the rails themselves are
+ * 25px ticks): the same cut as the line it stands for, solid for the rules
+ * rail and dashed for the ghosts, inheriting the row's own colour. */
+/* Display is left to the utility (`inline-block lg:hidden` on the element):
+ * this file loads after Tailwind's utilities, so a `display` here would win
+ * the cascade and the mark would survive into the `lg` layout, where the
+ * real rail is right there behind it. */
+.act__key-mark {
+  width: 0;
+  height: 0.95em;
+  border-left: 1.5px solid currentColor;
+}
+.act__key-mark--ghost {
+  border-left-style: dashed;
+}
+/* Caps as a treatment, not as typed literals — the reason the old tags spelled
+ * them out (text-transform is uneven on SVG text) went away with the svg.
+ * Size steps down from the mono figure so the caps run's optical height sits
+ * just under the digits: the figure stays the loud half. */
 .act__words {
   font-family: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
-  font-size: 9.75px;
+  font-size: 0.93em;
   font-weight: 600;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .act__rail {
   opacity: 0.8;
@@ -1342,14 +1372,14 @@ body {
 .act__ghosts {
   color: var(--text-dim);
 }
-/* The ghost DASHES hold quiet while the ghost LABEL rides the full dim rank
- * — quiet is a rank, not an opacity. The old build faded the whole group to
- * 0.45, which composited the label to Lc 16.4 on dark (#54565c — a hair
- * above invisible) and Lc 34.4 / 1.86:1 on light (#b8babd): the page's
- * central comparison, unreadable in both themes. At full --text-dim the
- * label measures Lc 61.4 / 9.49:1 (dark) and Lc 73.7 / 5.12:1 (light) —
- * legible, and still the quietest text rank there is. The dashes are
- * furniture but MEANINGFUL furniture (they are the cascade), so they get
+/* The ghost DASHES hold quiet while the ghost row of the key rides the full
+ * dim rank — quiet is a rank, not an opacity. An earlier build faded the
+ * whole group to 0.45, which composited the label to Lc 16.4 on dark
+ * (#54565c — a hair above invisible) and Lc 34.4 / 1.86:1 on light
+ * (#b8babd): the page's central comparison, unreadable in both themes. The
+ * key is outside this group now and cannot be dimmed by it at all. The
+ * dashes are furniture but MEANINGFUL furniture (they are the cascade), so
+ * they get
  * WCAG 1.4.11's 3:1 floor, measured composited: dark 0.5 → #5c5f64, 3.09:1;
  * light needs more ink on paper, 0.75 → #8c8f95, 3.11:1. A matched pair,
  * deliberately at the quiet end of legal. */
