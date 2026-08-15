@@ -6,18 +6,29 @@
 
 ## Deployment modes
 
-Applied runs in one of two modes, selected by
-`JOBTRACKER_DEPLOYMENT`:
+Applied ships in **one** mode. `JOBTRACKER_DEPLOYMENT` still selects
+between two values, and `desktop` is still the default the settings
+object falls back to — but there is no longer a desktop application to
+build, so `cloud` is the only mode with a UI, an app builder or a
+deployment:
 
 | Mode | Host | UI | DB | Auth | Secrets | Classifier |
 |---|---|---|---|---|---|---|
-| `desktop` (default) | local process, bundled .app | SwiftUI (`apps/macos/`) | SQLite (`~/Library/Application Support/JobTracker/`) | single-user, trust-local | macOS Keychain via `keyring` | rules + embeddings + SetFit |
-| `cloud` | Vercel serverless | Next.js on Vercel (`apps/web/`) | Supabase Postgres | Supabase Auth (JWT) | Fernet-encrypted Postgres rows | rules only (v1) |
+| `cloud` | Vercel serverless | Next.js on Vercel (`apps/web/`) | Supabase Postgres | Supabase Auth (JWT) | Fernet-encrypted Postgres rows | rules only |
+| `desktop` (default value, **no app**) | — | deleted 2026-08-12 | SQLite paths still in `database/connection.py` | — | `keyring` still importable | rules + embeddings + SetFit |
 
-Both modes share the same `backend/jobtracker/` package. The divergence
-is kept in:
-- `backend/jobtracker/main.py` (desktop app builder) vs.
-  `backend/jobtracker/main_cloud.py` (cloud app builder).
+The setting is not vestigial: `api/index.py` forces it to `cloud`
+before importing the app precisely because a stray `desktop` value
+would still select SQLite over Postgres and the Keychain over the
+encrypted-row store. That forcing line is pinned by
+`backend/tests/test_the_deployed_app_is_the_cloud_app.py`.
+
+What used to be the divergence:
+- `backend/jobtracker/main.py` (desktop app builder) — **deleted**,
+  along with the unmounted, unscoped routers under
+  `backend/jobtracker/api/` and `backend/jobtracker/services/`
+  (issue #73). `backend/jobtracker/main_cloud.py` is the only app
+  builder.
 - `backend/jobtracker/credentials.py` (to be split in C4).
 - `backend/jobtracker/database/connection.py` (to be dialect-gated in C2).
 - `backend/jobtracker/classifier/hybrid.py` — C6 now short-circuits to
@@ -78,10 +89,13 @@ is kept in:
   does hold at any size is the invocation count: one per query instead
   of one per row. The comparison is unchanged either way, so the
   isolation guarantee is identical.
-- **Desktop.** Unchanged. `jobtracker.main` never imports the auth
-  module; desktop rows are owned by a fixed sentinel UUID
-  (`00000000-0000-0000-0000-000000000000`) declared in
-  `jobtracker.database.models.LOCAL_USER_ID`.
+- **Desktop.** No longer applicable. The desktop app builder never
+  imported the auth module and its rows were owned by a fixed sentinel
+  UUID (`00000000-0000-0000-0000-000000000000`). That constant,
+  `jobtracker.database.models.LOCAL_USER_ID`, still exists and is still
+  the default for a row written without a user — which is why the RLS
+  policies, not the application code, are the thing that actually
+  enforces isolation.
 
 ## Classifier (cloud)
 

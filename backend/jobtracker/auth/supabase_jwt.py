@@ -8,8 +8,10 @@ per-request identity — anything beyond that (RBAC, per-table ACLs) is
 delegated to Row-Level Security policies defined in
 ``backend/alembic/versions/a8d4ec5fba26_enable_rls_policies_postgres_only.py``.
 
-This module is **cloud-only**. The desktop app never imports it; see
-``jobtracker.main`` for the single-user trust-local code path.
+This module is **cloud-only** — which, since the desktop app and its
+unmounted routers were deleted (issue #73), is the only path there is.
+The wording is kept because ``jobtracker.config`` still carries a
+``deployment`` setting and a ``desktop`` value is still constructible.
 
 Usage
 -----

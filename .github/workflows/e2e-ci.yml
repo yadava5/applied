@@ -110,8 +110,9 @@ jobs:
       # stale contract fails fast.
       #
       # Generated from `jobtracker.main_cloud` — the app `api/index.py` serves
-      # on Vercel — NOT the desktop `jobtracker.main` this job boots on :8000
-      # for the browser tests. Those are different contracts.
+      # on Vercel, and now the only FastAPI app in the tree. This job used to
+      # boot the desktop `jobtracker.main` on :8000 alongside it, which served a
+      # different contract; that app was deleted with the desktop routers (#73).
       #
       # If a fastapi / pydantic upgrade changes the emitted document this goes
       # red. Regenerate and commit the result; do not suppress it.
@@ -130,26 +131,34 @@ jobs:
         working-directory: apps/web
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Boot backend (uvicorn)
-        working-directory: backend
-        run: |
-          nohup python -m uvicorn jobtracker.main:app \
-            --host 127.0.0.1 --port 8000 \
-            > ../backend.log 2>&1 &
-          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
-
-      - name: Wait for backend /health
-        run: |
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
-              echo "backend up after $i attempts"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "backend failed to boot; tailing log:"
-          tail -n 200 backend.log || true
-          exit 1
+      # -----------------------------------------------------------------------
+      # NO BACKEND IS BOOTED HERE ANY MORE.
+      #
+      # This job used to run `uvicorn jobtracker.main:app` on :8000. That was
+      # the DESKTOP app, which was deleted along with the unmounted, unscoped
+      # desktop routers (issue #73) when `apps/macos` was de-scoped. It is not
+      # being replaced by `main_cloud` on :8000, and that is deliberate.
+      #
+      # The desktop app never served the contract the web app calls. The schema
+      # generator says so in its own header: ":8000 is the DESKTOP app, which
+      # serves a different contract". So any request that had reached it would
+      # have got the wrong shape, not the right one.
+      #
+      # The evidence that nothing here needed it is the sibling job below.
+      # `playwright-production` runs the SAME suite — `pnpm exec playwright
+      # test`, no `--project` filter — with the same `BACKEND_API_URL` pointing
+      # at a :8000 that has nothing on it, and it is green. Every route these
+      # specs visit is either public or redirects at the protected layout before
+      # any API call, and the 13 session-gated tests skip for want of a Supabase
+      # session (see the census step below) rather than for want of a server.
+      #
+      # The Python setup and backend install above stay: the API schema drift
+      # gate imports `jobtracker.main_cloud` and needs them.
+      #
+      # If a spec is ever written that DOES need a live backend, boot
+      # `jobtracker.main_cloud` here with a real JOBTRACKER_SUPABASE_JWT_SECRET
+      # — and expect it to need the seeded test account that #188 is about.
+      # -----------------------------------------------------------------------
 
       - name: Boot Next.js (dev)
         working-directory: apps/web
@@ -228,22 +237,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Upload server logs
+      - name: Upload server log
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: server-logs
-          path: |
-            backend.log
-            frontend.log
+          # `backend.log` is gone with the backend boot; nothing writes it now,
+          # and `if-no-files-found: ignore` would have hidden that rather than
+          # reporting it. One server, one log.
+          path: frontend.log
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Stop servers
+      - name: Stop server
         if: always()
         run: |
           if [ -n "${FRONTEND_PID:-}" ]; then kill "$FRONTEND_PID" 2>/dev/null || true; fi
-          if [ -n "${BACKEND_PID:-}" ]; then kill "$BACKEND_PID" 2>/dev/null || true; fi
 
   # ---------------------------------------------------------------------------
   # The job above proves the app works under `next dev`. Users never load that.

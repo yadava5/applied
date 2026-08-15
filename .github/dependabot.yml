@@ -12,9 +12,10 @@ version: 2
 #     Space; a PR against it would be reverted by the next package run.
 #   - ml/wandb/**/requirements.txt — a W&B run manifest recording what WAS
 #     installed for a past experiment. Bumping it would falsify the record.
-#   - apps/macos — Dependabot's `swift` ecosystem needs a Package.swift. This
-#     project's only SwiftPM state is a Package.resolved inside the .xcodeproj,
-#     which Dependabot cannot update.
+#   (`apps/macos` used to be listed here — Dependabot's `swift` ecosystem needs
+#    a Package.swift and this project's only SwiftPM state was a
+#    Package.resolved inside the .xcodeproj. The whole tree was deleted when the
+#    desktop app was de-scoped, so there is no ecosystem left to decline.)
 #
 # No `labels:` here on purpose. Dependabot cannot create labels, and naming one
 # that does not exist fails the whole update as a config error on the Dependabot

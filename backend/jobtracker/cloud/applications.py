@@ -1,25 +1,23 @@
-"""Cloud-only ``/applications`` router — demonstrates user_id scoping.
+"""The ``/applications`` router — every query scoped by ``user_id``.
 
-This is the minimum-viable scoped endpoint wired in C3 to prove the
-``current_user`` + ``user_id`` pipeline works end-to-end. Full CRUD,
-linking, and insights endpoints remain in ``jobtracker.api.applications``
-for the desktop build; downstream cloud issues (C11 onwards) will port
-each one over with the same pattern applied here.
+This began as the minimum-viable scoped endpoint wired in C3 to prove the
+``current_user`` + ``user_id`` pipeline works end-to-end, alongside an
+unscoped desktop twin in ``jobtracker.api.applications``. That twin was
+deleted (issue #73) along with ``apps/macos``, so this is now the only
+``/applications`` router in the tree and there is nothing left to port.
 
-Why a separate package instead of extending ``api/applications.py``?
-------------------------------------------------------------------
+Why this package rather than a shared router with a deployment branch?
+----------------------------------------------------------------------
 
-- The desktop router has no auth and passes ``user_id`` implicitly via
-  the local sentinel. Adding a per-endpoint ``Depends(current_user)``
-  branch inside the shared router would bifurcate every handler and
-  regress the 157 desktop tests.
-- The cloud import graph must stay thin. ``api/__init__.py`` eagerly
-  imports every desktop router, which drags in ``jobtracker.credentials``
-  → ``keyring`` and other Keychain-only deps. Cloud routers must sit
-  outside the ``api`` package so they do not trigger that import.
-- Keeping cloud handlers in their own package lets the cloud app
-  mount them with a router-level ``require_user()`` dependency so no
-  individual handler can accidentally skip auth.
+- A per-endpoint ``Depends(current_user)`` branch inside one shared
+  router would bifurcate every handler, and a handler that forgets the
+  branch is a cross-tenant read. Mounting this package with a
+  router-level ``require_user()`` dependency means no individual handler
+  can accidentally skip auth.
+- The cloud import graph must stay thin. The desktop package eagerly
+  imported every router in it, dragging in ``jobtracker.credentials`` →
+  ``keyring`` and other Keychain-only deps that have no place in a
+  serverless bundle with a 250 MB ceiling.
 """
 
 from __future__ import annotations

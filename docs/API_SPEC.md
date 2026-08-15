@@ -1,12 +1,26 @@
 # API Specification
 
-Base URL (desktop): `http://127.0.0.1:8000`
-
-Base URL (cloud): `https://<your-vercel-host>` (set in `apps/web/.env.local` as `NEXT_PUBLIC_API_BASE`).
+Base URL: `https://<your-vercel-host>` (the web app reads it server-side as
+`BACKEND_API_URL`; it never reaches the browser).
 
 All endpoints return JSON.
 
-## Cloud authentication (required on every cloud endpoint except `/health` and `/`)
+> **This file used to document two contracts.** Everything under
+> `## Auth (desktop)`, `## Sync`, `## Emails`, `## Classification and Review`,
+> the desktop `## Applications` router, `## WebSocket` (`WS /ws/sync-status`)
+> and `## Optional Analytics` described `backend/jobtracker/api/`, which was
+> deleted with the macOS client (issue #73). Those routes now 404. They are
+> removed rather than marked deprecated, because a spec for endpoints that do
+> not exist is worse than no spec.
+>
+> **The authority is the generated document, not this page.**
+> `scripts/generate_api_schema.sh` builds the OpenAPI spec by importing
+> `jobtracker.main_cloud` and writes `apps/web/lib/api/schema.d.ts`;
+> `e2e-ci.yml` fails on any diff. This file is prose for the parts that are
+> easier to state than to read out of a schema, and it can go stale where the
+> generated bindings cannot.
+
+## Authentication (required on every endpoint except `/health` and `/`)
 
 Cloud requests must include a Supabase-issued JWT:
 
@@ -25,9 +39,11 @@ Authorization: Bearer <supabase-jwt>
   `{"detail": "<short reason>"}` and header `WWW-Authenticate:
   Bearer`.
 
-Desktop endpoints ignore the header and remain single-user.
+There is no unauthenticated read path. Every router under
+`jobtracker/cloud/` is mounted with a router-level `require_user()`
+dependency, so a handler cannot skip auth by forgetting a decorator.
 
-### `GET /auth/me` (cloud)
+### `GET /auth/me`
 
 Echoes the authenticated user UUID. Use as a smoke check after deploy
 to prove the JWT is decoding correctly.
@@ -38,7 +54,7 @@ Response:
 { "user_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "authenticated": true }
 ```
 
-### `GET /applications` (cloud)
+### `GET /applications`
 
 Returns applications owned by the authenticated user. Rows created
 by other users are never visible (enforced by both the
@@ -55,7 +71,7 @@ Response:
 }
 ```
 
-### `POST /applications` (cloud)
+### `POST /applications`
 
 Creates an application scoped to the authenticated user. The
 `user_id` column is set from the JWT `sub` claim; any `user_id`
@@ -71,349 +87,54 @@ Request:
 
 ### `GET /health`
 
-Returns backend, DB, account, and classifier status. On the cloud
-deployment this is unauthenticated (no `Authorization` header
-required) so uptime monitors can probe it.
+Returns backend, DB, account, and classifier status. Unauthenticated (no
+`Authorization` header required) so uptime monitors can probe it.
+
+### `GET /health/schema`
+
+Reports whether the database schema is at the revision the running code
+expects.
+
+## The full route table
+
+Enumerated from the app `api/index.py` serves, by walking `app.routes` and
+resolving each handler to its defining module. **28 routes, four modules.**
+Regenerate rather than hand-edit this list if it looks wrong — the walk is in
+`backend/tests/test_the_deployed_app_is_the_cloud_app.py`, which also fails the
+build if any route arrives from a module outside `jobtracker.cloud`.
+
+| Method | Path | Defined in |
+| --- | --- | --- |
+| `GET` | `/` | `main_cloud` |
+| `GET` | `/auth/me` | `main_cloud` |
+| `GET` | `/health` | `main_cloud` |
+| `GET` | `/health/schema` | `main_cloud` |
+| `GET` `POST` | `/applications` | `cloud.applications` |
+| `GET` | `/applications/mail` | `cloud.applications` |
+| `GET` | `/applications/review` | `cloud.applications` |
+| `POST` | `/applications/review/{message_id}/classify` | `cloud.applications` |
+| `GET` | `/applications/statuses` | `cloud.applications` |
+| `GET` | `/applications/summary` | `cloud.applications` |
+| `GET` `PATCH` `DELETE` | `/applications/{application_id}` | `cloud.applications` |
+| `PUT` | `/applications/{application_id}/deadline` | `cloud.applications` |
+| `POST` | `/applications/{application_id}/dismiss` | `cloud.applications` |
+| `POST` | `/applications/{application_id}/restore` | `cloud.applications` |
+| `PUT` | `/applications/{application_id}/role` | `cloud.applications` |
+| `POST` | `/applications/{application_id}/split` | `cloud.applications` |
+| `GET` `POST` | `/cron/sync` | `cloud.cron` |
+| `GET` | `/auth/gmail/authorize` | `cloud.gmail_oauth` |
+| `GET` | `/auth/gmail/callback` | `cloud.gmail_oauth` |
+| `POST` | `/auth/gmail/disconnect` | `cloud.gmail_oauth` |
+| `GET` | `/auth/gmail/status` | `cloud.gmail_oauth` |
+| `GET` | `/gmail/inbox` | `cloud.gmail_oauth` |
+| `POST` | `/gmail/pipeline` | `cloud.gmail_oauth` |
+| `POST` | `/gmail/sync` | `cloud.gmail_oauth` |
+| `DELETE` | `/account` | `cloud.account` |
+
+`/applications/statuses` is declared above `GET /{application_id}` on purpose,
+so it is not parsed as an application whose id is the string `statuses`.
+
+`GET /openapi.json`, `/docs` and `/redoc` are **opt-in** and absent unless
+`JOBTRACKER_ENABLE_DOCS` is set — see
+`backend/tests/test_api_docs_are_opt_in.py`.
 
-## Auth (desktop)
-
-### `GET /auth/status`
-
-Returns Gmail/iCloud connected flags and account email values.
-
-### `POST /auth/gmail/client-secret`
-
-Store Google OAuth desktop client secret.
-
-Request body:
-
-```json
-{
-  "client_secret": {
-    "installed": {
-      "client_id": "...",
-      "client_secret": "...",
-      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-      "token_uri": "https://oauth2.googleapis.com/token"
-    }
-  }
-}
-```
-
-### `POST /auth/gmail/authenticate`
-
-Starts Gmail OAuth flow.
-
-### `DELETE /auth/gmail?delete_emails=false`
-
-Disconnect Gmail credentials. Optional email cleanup with `delete_emails=true`.
-
-### `POST /auth/icloud`
-
-Connect iCloud using app-specific password.
-
-Request body:
-
-```json
-{
-  "email": "user@icloud.com",
-  "app_password": "xxxx-xxxx-xxxx-xxxx"
-}
-```
-
-### `DELETE /auth/icloud?delete_emails=false`
-
-Disconnect iCloud credentials. Optional email cleanup with `delete_emails=true`.
-
-## Sync
-
-### `POST /sync`
-
-Trigger sync.
-
-Request body:
-
-```json
-{
-  "accounts": ["gmail", "icloud"],
-  "since_date": "2026-02-01T00:00:00Z",
-  "full_sync": false
-}
-```
-
-Notes:
-
-- `accounts` can be omitted to sync all connected accounts.
-- `since_date` can be omitted.
-- `full_sync=true` ignores last incremental position.
-
-### `GET /sync/status`
-
-Returns latest Gmail/iCloud sync state and `last_sync`.
-
-## Emails
-
-### `GET /emails`
-
-Query params:
-
-- `page` (default `1`)
-- `page_size` (default `50`, max `100`)
-- `source` (`gmail` | `icloud`)
-- `classification` (category string)
-- `unreviewed_only` (`true` | `false`)
-- `unlinked_only` (`true` | `false`)
-- `search` (full-text + fallback search)
-
-Compatibility aliases accepted (hidden from schema):
-
-- `unreviewed`
-- `unlinked`
-
-Response includes pagination metadata and each email includes `application_id` for linkage-aware UI filtering.
-
-### `GET /emails/stats`
-
-Returns totals by source/category and unreviewed count.
-
-### `GET /emails/{email_id}`
-
-Returns full email body and metadata.
-
-### `PUT /emails/{email_id}/review`
-
-Marks an email as reviewed.
-
-### `DELETE /emails/{email_id}`
-
-Deletes one email from local Applied DB.
-
-### `DELETE /emails`
-
-Bulk delete with filters.
-
-Query params:
-
-- `source`
-- `sender_email`
-- `before_date`
-- `after_date`
-- `confirm`
-
-Safety behavior:
-
-- If `confirm=false` (default), endpoint returns preview count only.
-
-## Classification and Review
-
-### `POST /classify`
-
-Classifies arbitrary text payload (testing/debug endpoint).
-
-### `POST /classify/email/{email_id}`
-
-Classifies and updates one stored email.
-
-### `PUT /classify/email/{email_id}/correct`
-
-Applies user correction, marks reviewed, and appends training data.
-
-Request body:
-
-```json
-{
-  "category": "pending_application"
-}
-```
-
-### `POST /classify/batch`
-
-Batch-classifies emails.
-
-Query params:
-
-- `limit` (default `100`)
-- `unclassified_only` (default `true`)
-- `force_reclassify` (default `false`)
-
-### `GET /classify/status`
-
-Classifier layer status (rules, embeddings, setfit).
-
-### `GET /classify/lite-mode`
-
-Current lite-mode state.
-
-### `PUT /classify/lite-mode`
-
-Enable/disable lite mode (`setfit` disabled when enabled).
-
-### `POST /classify/retrain`
-
-Triggers SetFit retraining in background.
-
-### `POST /classify/seed-training-data`
-
-Seeds training data from high-confidence rule classifications.
-
-### `GET /classify/needs-review`
-
-Returns low-confidence job-related emails and explicit `needs_review` items.
-
-Query params:
-
-- `limit`
-- `offset`
-
-### `GET /classify/needs-review/count`
-
-Returns review queue count.
-
-### `POST /classify/needs-review/{email_id}/approve`
-
-Approves current category and feeds confirmed example into training data.
-
-## Applications
-
-### `GET /applications`
-
-List applications.
-
-Query params:
-
-- `page` (default `1`)
-- `page_size` (default `20`, max `100`)
-- `status`
-- `company`
-- `search`
-
-### `GET /applications/{application_id}`
-
-Get single application with linked email list.
-
-### `POST /applications`
-
-Create application.
-
-### `PUT /applications/{application_id}`
-
-Update fields (`company`, `position`, `status`, `applied_date`, `source`, `url`, `notes`).
-
-### `DELETE /applications/{application_id}`
-
-Delete application. **Destructive for child rows**, and the three kinds are not
-treated alike:
-
-- **Emails** are unlinked (`application_id` set to `NULL`), never deleted — the
-  local database is the user's own mail archive.
-- **Contacts and interviews are deleted with the application.** Their
-  `application_id` is a NOT NULL foreign key, so "unlink and keep" is not
-  representable; the only alternative would be to refuse the delete, and this
-  endpoint is the deliberately-final action. (Before this was fixed the endpoint
-  answered **500** — `NOT NULL constraint failed: contacts.application_id` — and
-  the application stayed.)
-- **Training examples** are kept but unlinked, so a user's correction survives
-  without naming a row that no longer exists.
-
-The cloud endpoint of the same name (`jobtracker/cloud/applications.py`) differs
-on one point only: it **deletes** the linked emails (they are Gmail-derived and
-re-derivable) and their `email_embeddings`, rather than unlinking them. Order in
-both cases is `email_embeddings → contacts → interviews → emails →
-applications`, the same order `DELETE /account` uses.
-
-### `POST /applications/{application_id}/status`
-
-Transition status with payload:
-
-```json
-{
-  "new_status": "interviewing"
-}
-```
-
-### `POST /applications/{application_id}/mark-not-job`
-
-Reclassifies linked emails to `other`, unlinks them, deletes the application —
-and deletes its contacts and interviews, for the same NOT NULL reason as
-`DELETE /applications/{application_id}` above. A UI offering this should confirm
-it as destructive.
-
-### `GET /applications/link/preview/{email_id}`
-
-Preview extraction/matching for email linking.
-
-### `POST /applications/link/email/{email_id}`
-
-Link a single email. Optional query param `application_id`.
-
-### `POST /applications/link/batch`
-
-Auto-link unlinked job-related emails. Optional query param `limit`.
-
-### `GET /applications/stats/overview`
-
-Pipeline totals and linked/unlinked job-email counts.
-
-### `GET /applications/insights/follow-up-reminders`
-
-Follow-up reminder suggestions.
-
-Query params:
-
-- `stale_days`
-- `ghosted_days`
-- `limit`
-
-## WebSocket
-
-### `WS /ws/sync-status`
-
-Server emits sync lifecycle messages:
-
-- `connected`
-- `started`
-- `progress`
-- `completed`
-- `error`
-- `heartbeat`
-- `pong` (reply to client `ping`)
-
-## Classification
-
-### `POST /classify/import-training-data`
-
-Bulk-import labeled training data. Validates labels, deduplicates, inserts into `training_data` table, and optionally triggers SetFit retraining.
-
-Request body:
-
-```json
-{
-  "items": [
-    {"subject": "Interview at Acme", "body_text": "We'd like to schedule...", "label": "interview"},
-    {"subject": "", "body_text": "Unfortunately we have decided...", "label": "rejection"}
-  ],
-  "source": "bulk_import",
-  "trigger_retrain": true
-}
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "inserted": 42,
-  "skipped_duplicate": 3,
-  "skipped_invalid": 0,
-  "label_distribution": {"interview": 12, "rejection": 10, "other": 20},
-  "retrain_triggered": true,
-  "message": "Imported 42 training examples, retraining triggered"
-}
-```
-
-## Optional Analytics (Feature Flag)
-
-When `JOBTRACKER_ANALYTICS_ENABLED=true`:
-
-- `GET /analytics/overview`
-- `GET /analytics/trends`

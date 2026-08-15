@@ -1,37 +1,41 @@
-"""The deployed cloud app must never serve a desktop router (issue #73).
+"""Everything Vercel serves is defined in the cloud namespace (issue #73).
 
-WHAT IS BEING GUARDED
----------------------
-The desktop routers under ``jobtracker/api/`` and the services under
-``jobtracker/services/`` have **no user scoping at all**. Every row read is of
-the shape ``select(Application).where(Application.id == application_id)`` --
-in ``jobtracker/api/applications.py`` that is ``get_application``,
-``update_application``, ``delete_application``, ``transition_status``,
-``mark_application_not_job_posting`` and ``link_email_to_application``, while
-``list_applications`` opens with a bare ``select(Application)``. No ``user_id``
-predicate appears anywhere in the module. Measured: zero occurrences of the
-string ``user_id`` in that file, against 161 in its cloud twin
-``jobtracker/cloud/applications.py``. The ``applications`` table is
-multi-tenant (``database/models.py`` gives it a ``user_id`` FK to
-``auth.users``), so mounting any of these handlers on the cloud app turns every
-one of them into a cross-tenant read of any row whose id a caller can enumerate.
+WHAT THIS FILE USED TO BE
+-------------------------
+``test_desktop_routers_are_not_mounted.py``. The desktop routers under
+``jobtracker/api/`` and the services under ``jobtracker/services/`` had **no
+user scoping at all**: every row read was of the shape
+``select(Application).where(Application.id == application_id)``, with zero
+occurrences of the string ``user_id`` in ``jobtracker/api/applications.py``
+against 161 in its cloud twin. The ``applications`` table is multi-tenant, so
+mounting any of those handlers on the cloud app would have turned each into a
+cross-tenant read of any row whose id a caller could enumerate. Nothing in that
+package was defensive; the separation was a property of the deployment, and this
+file existed to make the day someone mounted them a red build rather than an
+incident.
 
-Cited by symbol rather than line number throughout, deliberately. The banner
-comment this change adds to each of those modules shifts every line in them by
-about thirty, so a line citation written here would have been wrong the moment
-it was committed.
+THOSE ROUTERS NO LONGER EXIST. They were deleted, along with
+``jobtracker/main.py`` and ``apps/macos`` (de-scoped 2026-08-12), because the
+surface they served had no consumer. That is a strictly stronger guarantee than
+"not mounted" -- but it is a DIFFERENT guarantee, so the assertions changed
+shape rather than being deleted.
 
-That is not hypothetical here: this estate has already shipped a real IDOR.
+The old file's own instruction, "if they moved, update ``_DESKTOP_PACKAGE_DIRS``
+-- do not delete this assertion", was written against the routers being MOVED.
+Deleted is not moved, and the replacement below is not weaker: the mount check
+is now an ALLOWLIST rather than a denylist, so it covers a namespace nobody has
+thought of yet, including one added tomorrow.
 
-THE MECHANISM THIS PINS
------------------------
-Nothing in ``jobtracker/api/`` is defensive. The separation is a property of the
-deployment, and it has exactly three parts:
+WHAT IS STILL BEING GUARDED
+---------------------------
+Three mechanisms, all of which survive the deletion untouched:
 
 1. Vercel serves ``api/index.py`` (``vercel.json`` -> ``functions."api/index.py"``).
 2. ``api/index.py`` puts ``backend/`` on ``sys.path`` and sets
    ``os.environ["JOBTRACKER_DEPLOYMENT"] = "cloud"`` **before** importing the
    app, deliberately overriding any stray ``desktop`` value already in the env.
+   That variable still gates SQLite-vs-Postgres and Keychain-vs-cloud
+   credentials, so it is load-bearing whether or not a desktop app exists.
 3. It imports ``jobtracker.main_cloud``, whose ``include_router`` calls name
    only ``jobtracker.cloud.{applications,gmail_oauth,account}`` -- each of which
    carries ``require_user()`` and filters on ``user_id``.
@@ -44,30 +48,13 @@ still green, which pins a proxy instead of the mechanism.
 
 WHY PROVENANCE AND NOT PATHS
 ----------------------------
-A path-based assertion would be wrong, and measurably so. Both
-``jobtracker/cloud/applications.py`` and ``jobtracker/api/applications.py``
-declare their router as ``APIRouter(prefix="/applications", ...)``. Four
-path+method pairs collide on clean ``main``::
-
-    GET  /applications                    POST   /applications
-    GET  /applications/{application_id}   DELETE /applications/{application_id}
-
-Asserting on paths would therefore be red on a tree with nothing wrong with it.
-What distinguishes the two is where the handler is *defined*, so every route in
-the built app is resolved to ``route.endpoint.__module__`` and checked against
-the desktop namespace. That is also robust to a mount arriving on a prefix
-nobody predicted -- including ``app.mount("/desktop", other_app)``, which puts
-no routes in ``app.routes`` at all, which is why the walk below recurses. On
-FastAPI 0.141 ``app.include_router()`` hides its routes the same way; see the
-long note above ``_PROBE``.
-
-WHAT THIS TEST IS **NOT**
--------------------------
-It is not a fix for the scoping. Adding ``user_id`` filters to the desktop
-routers is deliberately not being done: ``apps/macos`` was de-scoped on
-2026-08-12, so that is work for a surface with no consumer. This test is the
-containment instead -- it makes the day someone mounts them a red build rather
-than an incident.
+Unchanged, and still the right call. A route's path says nothing about who
+wrote its handler: ``app.mount("/desktop", other_app)`` puts no routes in
+``app.routes`` at all, and on FastAPI 0.141 ``app.include_router()`` hides its
+routes the same way (see the long note above ``_PROBE``). What distinguishes a
+handler is where it is *defined*, so every route in the built app is resolved to
+``route.endpoint.__module__`` and checked against an allowlist of cloud
+namespaces. No amount of prefixing changes that answer.
 """
 
 from __future__ import annotations
@@ -85,47 +72,66 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BACKEND = _REPO_ROOT / "backend"
 _VERCEL_ENTRYPOINT = _REPO_ROOT / "api" / "index.py"
 
-# The desktop namespaces. Derived by globbing rather than hardcoded so a desktop
-# router added tomorrow is covered without anyone remembering this file exists.
-_DESKTOP_PACKAGE_DIRS = {
-    "jobtracker.api": _BACKEND / "jobtracker" / "api",
-    "jobtracker.services": _BACKEND / "jobtracker" / "services",
-}
-
-# Modules that must be in the watched set for the guard to mean anything. If one
-# of these stops resolving -- the files were moved to ``jobtracker/desktop/``,
-# say -- the guard's subject has moved out from under it and it would start
-# passing vacuously. Failing loudly instead is the point: this repo's recurring
-# defect is checks that cannot fail.
-_MUST_BE_WATCHED = frozenset(
-    {
-        "jobtracker.api.applications",
-        "jobtracker.api.analytics",
-        "jobtracker.api.emails",
-        "jobtracker.services.application_insights",
-        "jobtracker.services.sync",
-    }
+# The namespaces a deployed handler is ALLOWED to come from. An allowlist, not a
+# denylist, and that is the whole change of shape: the old denylist named
+# ``jobtracker.api`` and ``jobtracker.services`` by hand, so a router added in a
+# third package would have sailed past it. This form fails on anything it has
+# not been told about, which is the correct default for a multi-tenant app whose
+# scoping lives in the handler rather than the framework.
+_ALLOWED_ROUTE_NAMESPACES = (
+    "jobtracker.cloud",
+    "jobtracker.main_cloud",
+    # FastAPI's own machinery: /openapi.json, /docs, /redoc when enabled.
+    "fastapi",
+    "starlette",
 )
 
+# Packages that must NOT come back. Deleting one is only permanent if something
+# notices it returning; without this, ``jobtracker/api/`` could be restored by a
+# stray merge or a revert and the allowlist above would only catch it once a
+# route were actually mounted, which is one step too late.
+_DELETED_DESKTOP_PACKAGES = (
+    _BACKEND / "jobtracker" / "api",
+    _BACKEND / "jobtracker" / "services",
+)
 
-def _watched_modules() -> frozenset[str]:
-    """Every module in the desktop namespaces, by dotted name."""
+# ...and the single module, checked as a file.
+_DELETED_DESKTOP_MODULES = (_BACKEND / "jobtracker" / "main.py",)
 
-    found: set[str] = set()
-    for package, directory in _DESKTOP_PACKAGE_DIRS.items():
-        for path in sorted(directory.glob("*.py")):
-            if path.name == "__init__.py":
-                found.add(package)
-            else:
-                found.add(f"{package}.{path.stem}")
-    return frozenset(found)
+
+def _resurrected() -> list[Path]:
+    """Deleted desktop source that is back on disk.
+
+    Deliberately keyed on ``*.py`` files rather than on the directory existing.
+    ``git rm -r`` leaves the directory behind whenever anything untracked was
+    inside it (a ``__pycache__``, typically), and switching branches does the
+    same, so a check on ``Path.is_dir()`` goes red on a tree with nothing wrong
+    with it. That is how an assertion gets deleted rather than fixed.
+
+    Not weaker: a resurrected package has modules in it. An empty directory
+    serves no routes and imports nothing.
+    """
+
+    found = [path for path in _DELETED_DESKTOP_MODULES if path.is_file()]
+    for package in _DELETED_DESKTOP_PACKAGES:
+        found.extend(sorted(package.rglob("*.py")))
+    return found
+
+# Positive control for the check above. If the repo layout moves under this file
+# -- a rename of ``backend/``, say -- every "does not exist" assertion would pass
+# vacuously while pointing at nothing. These must exist for that check to mean
+# anything, and this repo's recurring defect is checks that cannot fail.
+_MUST_STILL_EXIST = (
+    _BACKEND / "jobtracker" / "cloud" / "applications.py",
+    _BACKEND / "jobtracker" / "main_cloud.py",
+    _VERCEL_ENTRYPOINT,
+)
 
 
 # The script runs in a subprocess for two reasons. ``api/index.py`` mutates
 # ``os.environ`` and ``sys.path`` at import time and would poison the settings
 # ``lru_cache`` for the rest of the pytest session; and a fresh ``sys.modules``
-# is the only way the import-provenance answer is trustworthy, since an earlier
-# desktop test in the same session will already have imported these modules.
+# is the only way the import-provenance answer is trustworthy.
 #
 # WALKING THE ROUTE TABLE IS NOT ``for route in app.routes``
 # ----------------------------------------------------------
@@ -138,11 +144,11 @@ def _watched_modules() -> frozenset[str]:
 # routers. A flat scan, or a scan that recurses only through ``.routes``, sees
 # none of them.
 #
-# That matters a great deal for a guard: a desktop router included with
-# ``app.include_router(...)`` would arrive as exactly such a wrapper, and a walk
-# that cannot see through it would report a clean route table forever. The
-# second positive control below (``..._still_serves_its_own_routes``) is what
-# caught this, which is the reason it exists.
+# That matters a great deal for a guard: a router included with
+# ``app.include_router(...)`` arrives as exactly such a wrapper, and a walk that
+# cannot see through it would report a clean route table forever. The positive
+# control below (``..._still_serves_its_own_routes``) is what caught this, which
+# is the reason it exists.
 #
 # So the walk follows every child-bearing attribute it knows -- ``.routes``
 # (Mount, Host, APIRouter) and ``.original_router`` (``_IncludedRouter``) -- and
@@ -211,7 +217,8 @@ print(json.dumps({
     "is_main_cloud_app": app is main_cloud.app,
     "imported": sorted(m for m in sys.modules
                        if m == "jobtracker.api" or m.startswith("jobtracker.api.")
-                       or m == "jobtracker.services" or m.startswith("jobtracker.services.")),
+                       or m == "jobtracker.services" or m.startswith("jobtracker.services.")
+                       or m == "jobtracker.main"),
 }))
 """
 
@@ -222,8 +229,9 @@ def deployed_app_probe() -> dict:
 
     ``JOBTRACKER_DEPLOYMENT=desktop`` is set in the child's environment on
     purpose. ``api/index.py`` is supposed to overwrite it; if that line is ever
-    removed, this fixture's app is the desktop one and the assertions below say
-    so. Inheriting the parent's value would make that deletion invisible.
+    removed, this fixture's app is built under a desktop settings object and the
+    assertions below say so. Inheriting the parent's value would make that
+    deletion invisible.
     """
 
     env = dict(os.environ)
@@ -246,34 +254,53 @@ def deployed_app_probe() -> dict:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def test_the_guard_watches_the_modules_it_claims_to():
-    """Positive control: the watched set is non-empty and names the real files.
+def test_the_unscoped_desktop_surface_is_gone_and_stays_gone():
+    """The routers with no ``user_id`` predicate must not exist at all.
 
-    Without this, moving or renaming the desktop routers would leave every
-    assertion below trivially true and the guard would go on reporting green
-    while watching nothing.
+    The strongest form of issue #73's containment, and the one that replaced the
+    old ``_MUST_BE_WATCHED`` census. Deleting a package only stays deleted if
+    something notices it coming back -- a revert, a bad merge, or somebody
+    reviving the desktop app without reviving its scoping.
+
+    If this goes red because the desktop app is being brought back deliberately:
+    do NOT delete the assertion. Add ``user_id`` filters and a ``require_user()``
+    dependency to every handler first, then decide what this file should assert
+    about the new surface.
     """
 
-    watched = _watched_modules()
-
-    assert watched, (
-        f"No desktop modules found under {sorted(_DESKTOP_PACKAGE_DIRS)}. The "
-        "guard is watching an empty set and cannot fail."
+    # Positive control first: without it, a repo-layout change would make every
+    # assertion below true about a directory that is not there.
+    missing_anchors = [p for p in _MUST_STILL_EXIST if not p.exists()]
+    assert not missing_anchors, (
+        "The paths this guard navigates from are not where it looks: "
+        f"{[str(p) for p in missing_anchors]}. The 'does not exist' assertions "
+        "below would pass vacuously. Fix the paths -- the surface they describe "
+        "has moved, it has not been proven absent."
     )
-    missing = _MUST_BE_WATCHED - watched
-    assert not missing, (
-        f"Expected desktop modules are no longer where the guard looks: {sorted(missing)}. "
-        "If they moved, update _DESKTOP_PACKAGE_DIRS -- do not delete this "
-        "assertion. The routers are still unscoped wherever they now live."
+
+    resurrected = _resurrected()
+    assert not resurrected, (
+        "The unmounted, unscoped desktop surface is back on disk:\n"
+        + "\n".join(f"  {p.relative_to(_REPO_ROOT)}" for p in resurrected)
+        + "\n\nEvery handler in jobtracker/api/ read rows as "
+        "`select(Application).where(Application.id == id)` with no user_id "
+        "predicate, against a multi-tenant table. It was deleted rather than "
+        "fixed because `apps/macos` was de-scoped and it had no consumer. If it "
+        "is genuinely coming back, it needs scoping BEFORE it needs a home."
     )
 
 
 def test_vercel_entrypoint_forces_cloud_mode_over_a_desktop_env():
-    """Step 2 of the mechanism: the entrypoint overrides the environment.
+    """The entrypoint overrides the environment.
 
     Deliberately separate from the route-table tests. If this one is the only
     red, the forcing line in ``api/index.py`` went missing; if the route tests
-    are also red, a desktop router was mounted. Different faults, different fix.
+    are also red, something else is being served. Different faults, different fix.
+
+    Still load-bearing with no desktop app in the tree: ``settings.deployment``
+    is what selects Postgres over SQLite and the encrypted-row credential store
+    over the macOS Keychain. A deployment carrying a stray ``desktop`` value and
+    no forcing line would fail at runtime, in production, on the first request.
     """
 
     env = dict(os.environ)
@@ -293,9 +320,7 @@ def test_vercel_entrypoint_forces_cloud_mode_over_a_desktop_env():
 
     assert probe["env_deployment"] == "cloud", (
         "api/index.py no longer forces JOBTRACKER_DEPLOYMENT=cloud before "
-        f"importing the app (env is {probe['env_deployment']!r} after import). "
-        "A deployment carrying a stray 'desktop' value would then build the "
-        "desktop app, SQLite and Keychain and unscoped routers included."
+        f"importing the app (env is {probe['env_deployment']!r} after import)."
     )
     # This is the assertion that discriminates: ``settings.deployment`` is read
     # from the environment, so it says "cloud" only if step 2 actually ran.
@@ -315,48 +340,57 @@ def test_vercel_entrypoint_forces_cloud_mode_over_a_desktop_env():
     )
 
 
-def test_no_deployed_route_is_served_by_an_unscoped_desktop_handler(
+def test_every_deployed_route_is_defined_in_the_cloud_namespace(
     deployed_app_probe: dict,
 ):
-    """The guard proper. Nothing in the deployed route table may come from
-    ``jobtracker.api.*`` or ``jobtracker.services.*``.
+    """The mount guard, as an ALLOWLIST.
 
-    Keyed on the defining module, not the path: the cloud and desktop
-    applications routers share the ``/applications`` prefix, so four
-    path+method pairs collide on a perfectly healthy tree.
+    The predecessor named ``jobtracker.api`` and ``jobtracker.services`` and
+    failed if a route came from either. That could only ever catch the two
+    packages someone remembered to list -- and both are now deleted, which would
+    have left it green forever against an empty set.
+
+    This form inverts it: a deployed handler must be defined in a namespace on
+    :data:`_ALLOWED_ROUTE_NAMESPACES`, every one of which carries
+    ``require_user()`` and filters on ``user_id``. A router mounted from any
+    other package -- restored, vendored, or newly written -- is red here on the
+    commit that mounts it, without anybody having to predict its name.
+
+    Keyed on the defining module, not the path, for the reason in the module
+    docstring.
     """
-
-    watched = _watched_modules()
 
     offenders = [
         route
         for route in deployed_app_probe["routes"]
-        if route["module"] in watched
+        if route["module"] is not None
+        and not route["module"].startswith(_ALLOWED_ROUTE_NAMESPACES)
     ]
 
     assert not offenders, (
-        "The deployed cloud app is serving handlers defined in the desktop "
-        "routers, which have NO user scoping -- every one of these is a "
-        "cross-tenant read or write:\n"
+        "The deployed cloud app is serving handlers defined outside the cloud "
+        "namespace. Nothing outside jobtracker.cloud is known to scope its "
+        "queries by user_id, and the applications table is multi-tenant:\n"
         + "\n".join(
             f"  {'/'.join(r['methods']) or r['kind']:<22} {r['path']:<40} "
             f"<- {r['module']}.{r['qualname']}"
             for r in offenders
         )
-        + "\n\nThis is issue #73's dormant risk going live. Do not fix it by "
-        "adding user_id filters to jobtracker/api/ -- that surface is de-scoped "
-        "and untested. Add a scoped twin under jobtracker/cloud/ (see "
-        "jobtracker/cloud/applications.py) and mount that instead."
+        + "\n\nThis is issue #73's dormant risk going live. Do not silence it by "
+        "widening _ALLOWED_ROUTE_NAMESPACES. Give the handler a require_user() "
+        "dependency and a user_id predicate, put it under jobtracker/cloud/ "
+        "(see jobtracker/cloud/applications.py), and mount that instead."
     )
 
 
 def test_the_deployed_app_still_serves_its_own_routes(deployed_app_probe: dict):
-    """Second positive control: the probe really did enumerate a route table.
+    """Positive control: the probe really did enumerate a route table.
 
     An entrypoint that built an empty app, or a walk that returned nothing,
-    would satisfy the assertion above for the wrong reason. Pin the routes the
-    cloud app is supposed to have, by provenance, so "no desktop routes" is a
-    statement about a populated table.
+    would satisfy the assertion above for the wrong reason -- and now more
+    easily than before, because an allowlist is satisfied by zero routes. Pin
+    the routes the cloud app is supposed to have, by provenance, so "everything
+    is allowed" is a statement about a populated table.
     """
 
     modules = {route["module"] for route in deployed_app_probe["routes"]}
@@ -404,14 +438,13 @@ def test_the_desktop_modules_are_not_even_imported(deployed_app_probe: dict):
     Weaker than the route check on its own -- an import can be present and
     nothing mounted -- but it fails one step *earlier* than a mount does, and it
     keeps ``keyring``/``aiosqlite`` out of a serverless bundle that has a 250 MB
-    ceiling. The route table is the contract; this is the smoke alarm.
+    ceiling. Kept after the deletion because the import is what a resurrection
+    would produce FIRST, before any route is registered.
     """
 
     assert deployed_app_probe["imported"] == [], (
         "Building the deployed app pulled desktop modules into sys.modules: "
-        f"{deployed_app_probe['imported']}. If the route check above is green, "
-        "nothing is mounted and this is only an import -- still wrong, because "
-        "the cloud graph is meant to be free of jobtracker.api / "
-        "jobtracker.services entirely, and an import is the step before a "
-        "mount. If it is red too, read that one first: it is the leak."
+        f"{deployed_app_probe['imported']}. Those packages were deleted; if they "
+        "are importable again, read "
+        "test_the_unscoped_desktop_surface_is_gone_and_stays_gone first."
     )
