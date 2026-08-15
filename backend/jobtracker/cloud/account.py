@@ -11,7 +11,8 @@ from ``set_current_user_id``), so each delete is doubly scoped to the caller:
 an explicit ``WHERE user_id = <caller>`` filter AND row-level security. Rows are
 removed children-before-parents — ``email_embeddings → emails`` and
 ``contacts / interviews / emails → applications``. ``training_data``,
-``sync_state`` and ``user_credentials`` carry no cross-entity FK.
+``sync_state``, ``user_credentials`` and ``gmail_sync_enrollment`` carry no
+cross-entity FK.
 
 Those four keys are ``ON DELETE CASCADE`` since ``a9d3e5f2c841``; before it they
 were NO ACTION and this ordering was mandatory rather than merely correct. It is
@@ -44,6 +45,7 @@ from jobtracker.database.models import (
     Contact,
     Email,
     EmailEmbedding,
+    GmailSyncEnrollment,
     Interview,
     SyncState,
     TrainingData,
@@ -70,6 +72,12 @@ _DELETION_ORDER: tuple[type, ...] = (
     TrainingData,
     SyncState,
     UserCredential,
+    # The membership fact published for the scheduled sync (issue #291). It
+    # holds no secret, but it holds the user's id — leaving it behind would
+    # mean a deleted account still appears in the cron's candidate set, and
+    # ``test_account_deletion_covers_every_table`` derives this list from every
+    # table carrying a ``user_id`` precisely so that cannot be forgotten.
+    GmailSyncEnrollment,
 )
 
 

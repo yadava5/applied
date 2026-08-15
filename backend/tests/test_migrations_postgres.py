@@ -67,6 +67,11 @@ ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 ASSESSMENT_REVISION = "b9e42f7c10ad"
 PARENT_REVISION = "b7c31e0d94aa"
 
+# The enrollment revision and its parent, named for the same reason: the
+# backfill test below must keep testing THIS revision after later ones land.
+ENROLLMENT_REVISION = "e2b6f0a4d517"
+ENROLLMENT_PARENT = "a9d3e5f2c841"
+
 OWNER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
@@ -413,3 +418,140 @@ def test_the_downgrade_remaps_rows_and_leaves_the_label(migrated: Engine) -> Non
     assert rows[applied_id] == "APPLIED"  # nothing else is touched
     # The label is inert, not gone.
     assert "ASSESSMENT" in _enum_labels(migrated)
+
+
+# =============================================================================
+# e2b6f0a4d517: the enrollment backfill has to actually move rows
+# =============================================================================
+
+
+def test_the_enrollment_backfill_carries_the_existing_gmail_users_across(
+    engine: Engine,
+) -> None:
+    """Users who linked Gmail BEFORE this revision must be enrolled by it.
+
+    This is the assertion the revision turns on. ``upgrade head`` exits 0
+    whether or not the backfill found anything, and a green migration over an
+    empty ``gmail_sync_enrollment`` leaves the scheduled sync with nobody to
+    sync — the original bug (issue #291) wearing a new mask. Nothing else in
+    the repo can catch that: SQLite has no ``user_credentials`` rows to carry
+    across, and the RLS suite builds its schema from ``SQLModel.metadata``
+    rather than by running the chain.
+
+    So this stops at the revision's PARENT, writes credentials the way the
+    world already looks, and then applies exactly one revision.
+
+    The iCloud row is the non-vacuity half. Without it, "everyone in
+    ``user_credentials`` ends up enrolled" and "everyone with a *Gmail*
+    credential ends up enrolled" are the same sentence, and the
+    ``WHERE kind = 'gmail_oauth'`` predicate would be untested.
+    """
+
+    gmail_user = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    icloud_user = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+
+    _alembic("upgrade", ENROLLMENT_PARENT)
+
+    with engine.begin() as c:
+        assert (
+            c.execute(text("SELECT to_regclass('public.gmail_sync_enrollment')")).scalar()
+            is None
+        ), "the table exists before its own revision ran — this is measuring nothing"
+        c.execute(
+            text("INSERT INTO auth.users(id) VALUES (:g),(:i) ON CONFLICT DO NOTHING"),
+            {"g": str(gmail_user), "i": str(icloud_user)},
+        )
+        # Raw SQL deliberately: the point is to reproduce the rows that are in
+        # production TODAY, under the parent revision's schema — not to exercise
+        # the writer, which ``test_rls_postgres.py`` drives instead.
+        c.execute(
+            text(
+                "INSERT INTO user_credentials "
+                "(user_id, kind, ciphertext, nonce, key_id, created_at, updated_at) "
+                "VALUES (:g, 'gmail_oauth', '\\x00'::bytea, ''::bytea, 'v1', now(), now()), "
+                "       (:i, 'icloud_mail', '\\x00'::bytea, ''::bytea, 'v1', now(), now())"
+            ),
+            {"g": str(gmail_user), "i": str(icloud_user)},
+        )
+
+    _alembic("upgrade", ENROLLMENT_REVISION)
+
+    with engine.connect() as c:
+        enrolled = [
+            row[0]
+            for row in c.execute(
+                text("SELECT user_id FROM gmail_sync_enrollment ORDER BY user_id")
+            )
+        ]
+        enrolled_at_is_set = c.execute(
+            text("SELECT bool_and(enrolled_at IS NOT NULL) FROM gmail_sync_enrollment")
+        ).scalar()
+
+    assert enrolled == [gmail_user], (
+        f"the backfill enrolled {enrolled}. It must carry across exactly the "
+        "users holding a 'gmail_oauth' credential — an empty result means the "
+        "cron syncs nobody, and including the iCloud user means the kind "
+        "predicate is not doing its job."
+    )
+    assert enrolled_at_is_set is True
+
+
+def test_the_enumeration_policy_is_role_scoped_and_the_grant_is_narrow(
+    migrated: Engine,
+) -> None:
+    """The shape of the deliberate exposure, read back out of the catalog.
+
+    ``e2b6f0a4d517`` states plainly what it exposes: a ``jobtracker_app``
+    connection can enumerate which user_ids have linked Gmail. This asserts the
+    exposure is exactly that and no wider — the permissive predicate applies to
+    SELECT only, to one named role only, and the role holds no UPDATE privilege
+    on the table.
+
+    ``tests/test_rls_postgres.py`` proves the policy BEHAVES; this proves the
+    migration WROTE it, which are different failures. That suite's harness
+    writes its own policies, so a migration that quietly stopped naming the
+    role would leave it green while production shipped a policy for every role.
+    """
+
+    with migrated.connect() as c:
+        policies = {
+            row[0]: (row[1], row[2], row[3])
+            for row in c.execute(
+                text(
+                    "SELECT policyname, cmd, roles::text, qual "
+                    "FROM pg_policies WHERE tablename = 'gmail_sync_enrollment'"
+                )
+            )
+        }
+        privileges = {
+            row[0]
+            for row in c.execute(
+                text(
+                    "SELECT privilege_type FROM information_schema.table_privileges "
+                    "WHERE table_name = 'gmail_sync_enrollment' "
+                    "AND grantee = 'jobtracker_app'"
+                )
+            )
+        }
+
+    assert set(policies) == {
+        "gmail_sync_enrollment_enumerate",
+        "gmail_sync_enrollment_owner_insert",
+        "gmail_sync_enrollment_owner_delete",
+    }, f"unexpected policy set: {sorted(policies)}"
+
+    cmd, roles, qual = policies["gmail_sync_enrollment_enumerate"]
+    assert cmd == "SELECT", f"the permissive policy covers {cmd}, not just SELECT"
+    assert roles == "{jobtracker_app}", (
+        f"the enumeration policy is granted to {roles}. Scoping it to one role "
+        "is what makes a future GRANT SELECT to another role still default-deny."
+    )
+    assert qual == "true", f"the enumeration predicate is {qual!r}, expected 'true'"
+
+    # Owner-scoped writes, and no UPDATE anywhere: enrollment is join-or-leave.
+    assert policies["gmail_sync_enrollment_owner_insert"][0] == "INSERT"
+    assert policies["gmail_sync_enrollment_owner_delete"][0] == "DELETE"
+    assert privileges == {"SELECT", "INSERT", "DELETE"}, (
+        f"jobtracker_app holds {sorted(privileges)} on gmail_sync_enrollment. "
+        "Nothing updates this table; UPDATE must not be granted."
+    )
