@@ -66,6 +66,14 @@ Security properties
   ``tests/test_gmail_oauth_return_host.py``.
 - **Revocable**: disconnect calls Google's revocation endpoint and then
   deletes the local ciphertext.
+- **Capped, at mint, on a resource that cannot be refilled**: the Google
+  project this app publishes under admits a fixed number of users for the
+  restricted ``gmail.readonly`` scope *over its whole lifetime*, and a slot is
+  spent when a person reaches the consent screen — not when they finish. So
+  ``authorize`` refuses once ``settings.gmail_connection_cap`` distinct users
+  hold a connection, before a consent URL exists. Same ordering as the origin
+  check above and for a harder reason: a bad origin can be retried, a spent
+  Google slot cannot be recovered. See ``_enforce_connection_cap``.
 """
 
 from __future__ import annotations
@@ -841,6 +849,176 @@ def _require_configured() -> None:
 
 
 # =============================================================================
+# The connection cap — rationing a resource Google will not sell back
+# =============================================================================
+
+# Where a refused visitor goes next. A cap with no contact route is a dead end,
+# and a dead end is how you lose the one person who actually wanted the product.
+BETA_CONTACT_EMAIL = "aesh.03.23@gmail.com"
+
+
+async def gmail_connection_census(
+    user_id: uuid.UUID | None = None,
+) -> tuple[int, bool]:
+    """``(distinct users with a connected mailbox, is ``user_id`` one of them)``.
+
+    WHY ``gmail_sync_enrollment`` AND NOT ``user_credentials``
+    ---------------------------------------------------------
+    ``user_credentials`` is FORCE-RLS and holds the refresh tokens. Counting it
+    from inside an authenticated request would answer 0 or 1 — every policy on
+    that table is keyed to ``auth.uid()``, so the caller can only ever see their
+    own row — and counting it with no identity bound answers nothing at all.
+    Either way the number would be *wrong in the safe-looking direction*: a
+    cap that always reads 1 admits everybody forever. Widening a policy, or
+    reaching for a ``SECURITY DEFINER`` wrapper, to make that count work would
+    put a new path in front of the tokens for the sake of a number that is not
+    a secret — exactly what ``GmailSyncEnrollment``'s docstring exists to
+    refuse.
+
+    ``gmail_sync_enrollment`` is the membership fact with none of the secret,
+    published for precisely this shape of question (the cron asks the same one),
+    and its ``SELECT`` policy is permissive for the runtime role so an
+    identity-less read genuinely returns every row. It is written and deleted in
+    the SAME transaction as the credential, so it cannot drift from it.
+
+    ``user_id_scope(None)`` is stated rather than assumed: this runs inside a
+    request that HAS an identity bound, and the count must be the deployment's,
+    not the caller's. Note that the count is deliberately identity-less while
+    the membership probe below is answered from the same identity-less read —
+    enrollment carries no secret, so there is nothing to scope down to.
+
+    A ROW SURVIVING ``revoked_at`` IS CORRECT HERE, and is the opposite of what
+    the cron wants from this table (``cron._probe_sync_position`` subtracts
+    revoked grants so it does not waste sync slots). A user who revoked at
+    Google still spent a Google slot; forgetting them would let the cap admit
+    someone in a seat Google still considers occupied. Do not "fix" this to
+    match the cron.
+
+    WHAT THIS COUNT CANNOT SEE, stated because the ceiling's headroom is the
+    only thing covering it: a visitor who reaches Google's consent screen and
+    abandons it spends a slot and writes no row anywhere; and a user who
+    disconnects deletes their row here while Google keeps the slot. So the true
+    Google number is ``>=`` this one, never below it, and the conservative
+    default ceiling (25 of 100) is what absorbs the difference. The honest fix
+    is a ceiling well under the real cap, not a ledger table this deployment
+    would have to keep truthful across a flow it does not control.
+
+    RLS IS AN ARGUMENT FROM SOURCE HERE, NOT A TESTED FACT. The suite that
+    exercises this runs on SQLite, which has no row-level security; the
+    Postgres-backed proofs for this table live in ``tests/test_rls_postgres.py``.
+    """
+
+    from sqlalchemy import func as sa_func
+    from sqlmodel import select
+
+    from jobtracker.database import get_session
+    from jobtracker.database.models import GmailSyncEnrollment
+
+    with user_id_scope(None):
+        async with get_session() as session:
+            # ONE session for both reads: under the cloud engine's NullPool a
+            # session is a fresh TCP+TLS+auth connection (~216 ms from iad1),
+            # so the second statement is nearly free and a second session is
+            # not (#203).
+            total_row = (
+                await session.exec(
+                    select(sa_func.count()).select_from(GmailSyncEnrollment)
+                )
+            ).one()
+            connected = int(
+                total_row[0] if hasattr(total_row, "__getitem__") else total_row
+            )
+
+            already = False
+            if user_id is not None:
+                already = (
+                    await session.exec(
+                        select(GmailSyncEnrollment.user_id)
+                        .where(GmailSyncEnrollment.user_id == user_id)
+                        .limit(1)
+                    )
+                ).first() is not None
+
+    return connected, already
+
+
+async def _enforce_connection_cap(user_id: uuid.UUID) -> None:
+    """Refuse to mint a consent URL once the beta is full. Fails CLOSED.
+
+    THE PLACEMENT IS THE WHOLE GUARD. Google's cap on this project is spent
+    when a person *reaches* the consent screen — the account is counted whether
+    or not they finish, and Google's wording is that the number "cannot be reset
+    or changed". A check in the callback would therefore run one leg too late,
+    after the irreversible thing already happened, and would look identical in
+    every test that only asserts "a stranger cannot connect". This runs before
+    ``flow.authorization_url`` exists, so a refusal costs nothing.
+
+    AN ALREADY-CONNECTED USER IS NEVER REFUSED, even over the ceiling.
+    Reconnecting re-consents an account Google has already counted, so it spends
+    no new slot; blocking it would break exactly the users the cap was protecting
+    — including the operator, who would be locked out of their own product the
+    first time a token needed re-granting. The membership probe is what makes
+    this branch real, and it has its own mutation test.
+
+    409, NOT 403 AND NOT 503. This deviates from the usual "refusal = 403" and
+    the deviation is the point: ``apps/web/lib/gmail/server.ts`` maps 401/403
+    onto "your session couldn't be verified — sign in again" and 503 onto "Gmail
+    isn't enabled on this deployment yet". Both are false here and neither is
+    actionable, which is the dead end ``_validated_return_origin`` chose 400
+    over 503 to avoid. 409 is distinguishable **by status alone**, so the web
+    can label it without sniffing a response body that will rot.
+
+    A CENSUS THAT CANNOT BE TAKEN IS A REFUSAL. If the database is unreachable
+    (Supabase pauses a free-tier project after seven days idle) the count is
+    unknown, and "unknown" must not mean "go ahead" — that is how a guard on a
+    non-renewable resource quietly stops guarding. 503 with an operator-legible
+    reason, and no consent URL.
+    """
+
+    ceiling = settings.gmail_connection_cap
+
+    try:
+        connected, already_connected = await gmail_connection_census(user_id)
+    except Exception as exc:  # noqa: BLE001 — refuse rather than guess
+        logger.error(
+            "Gmail connection cap could not be evaluated (%s); refusing to mint "
+            "a consent URL.",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Gmail connect is temporarily unavailable: this deployment "
+                "could not read how many mailbox connections are already in "
+                "use, and it will not start a Google consent flow it cannot "
+                "count. Try again shortly."
+            ),
+        ) from exc
+
+    if already_connected or connected < ceiling:
+        return
+
+    logger.warning(
+        "Gmail connect refused: %d/%d connections used (user_id=%s is new).",
+        connected,
+        ceiling,
+        user_id,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "The Applied beta is at capacity for Gmail connections "
+            f"({connected} of {ceiling} in use), so this account cannot connect "
+            "a mailbox right now. Google caps how many people this app may ever "
+            "connect, and that number cannot be raised on request. Email "
+            f"{BETA_CONTACT_EMAIL} to ask for a place and you will be told "
+            "either way. Nothing else in Applied is affected: importing a "
+            "mailbox export at /import needs no Google account and stays open."
+        ),
+    )
+
+
+# =============================================================================
 # Endpoints
 # =============================================================================
 
@@ -927,6 +1105,19 @@ async def gmail_authorize(
     against the same list, before Google is reached. Refusing here rather than
     in the callback is the point: the user is told at the click, not after
     consenting.
+
+    THE SAME ORDERING, FOR A HARDER REASON: the beta's connection cap
+    (:func:`_enforce_connection_cap`) is enforced here too. Google spends one of
+    this project's lifetime user slots when a person reaches the consent
+    screen, so a check at the callback would be a check after the loss. 409
+    when the beta is full, with the contact route in the message; an
+    already-connected user is never refused, because reconnecting spends no new
+    slot.
+
+    The cap is evaluated AFTER the origin check purely on cost — it is the only
+    database read on this path (~216 ms on a cold NullPool connection) and a
+    malformed origin should not pay for it. Both refusals precede the consent
+    URL, which is the property that matters.
     """
 
     _require_configured()
@@ -934,6 +1125,8 @@ async def gmail_authorize(
     validated_origin = (
         _validated_return_origin(return_origin) if return_origin else None
     )
+
+    await _enforce_connection_cap(user_id)
 
     code_verifier = _generate_code_verifier()
     flow = _build_flow(code_verifier=code_verifier)

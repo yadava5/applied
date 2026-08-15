@@ -64,6 +64,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/health/gmail-capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Gmail Connection Capacity (cloud)
+         * @description Report how many of the beta's Gmail connections are spent.
+         *
+         *     **Why this is not a field on ``/health``.** That probe is deliberately
+         *     credential-free and does NO database work, so a Supabase project paused by
+         *     the free tier's seven-day idle rule cannot turn a liveness check red. This
+         *     question needs a row count, so it lives on its own path — the same split,
+         *     for the same reason, as ``/health/schema``.
+         *
+         *     **Always 200,** and for the same reason as that endpoint: the status code
+         *     says whether the check ran, not what it found. A full beta is a normal
+         *     operating state, not an outage.
+         *
+         *     **The read differs from ``/health/schema``'s in one way worth stating.**
+         *     ``alembic_version`` carries no RLS; ``gmail_sync_enrollment`` does, and this
+         *     count works only because that table publishes a permissive ``SELECT`` policy
+         *     for the runtime role and the read binds no identity
+         *     (``gmail_oauth.gmail_connection_census``). It is the same query the cron
+         *     already makes.
+         *
+         *     **No identities, by construction.** Aggregates and a configured number,
+         *     never a user id or an address — the enrollment table holds no email anyway,
+         *     and the count is the whole answer to "how many slots are left?". It is
+         *     unauthenticated because it is an aggregate and because this codebase has no
+         *     admin role to scope it to; inventing one to guard a single integer would add
+         *     auth surface, which is a worse trade than publishing the integer.
+         */
+        get: operations["gmail_capacity_check_health_gmail_capacity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -617,6 +661,19 @@ export interface paths {
          *     against the same list, before Google is reached. Refusing here rather than
          *     in the callback is the point: the user is told at the click, not after
          *     consenting.
+         *
+         *     THE SAME ORDERING, FOR A HARDER REASON: the beta's connection cap
+         *     (:func:`_enforce_connection_cap`) is enforced here too. Google spends one of
+         *     this project's lifetime user slots when a person reaches the consent
+         *     screen, so a check at the callback would be a check after the loss. 409
+         *     when the beta is full, with the contact route in the message; an
+         *     already-connected user is never refused, because reconnecting spends no new
+         *     slot.
+         *
+         *     The cap is evaluated AFTER the origin check purely on cost — it is the only
+         *     database read on this path (~216 ms on a cold NullPool connection) and a
+         *     malformed origin should not pay for it. Both refusals precede the consent
+         *     URL, which is the property that matters.
          */
         get: operations["gmail_authorize_auth_gmail_authorize_get"];
         put?: never;
@@ -1054,6 +1111,32 @@ export interface components {
         GmailAuthorizeResponse: {
             /** Authorization Url */
             authorization_url: string;
+        };
+        /**
+         * GmailCapacityResponse
+         * @description How much of the beta's Gmail-connection allowance is spent. Counts only.
+         */
+        GmailCapacityResponse: {
+            /**
+             * Connected
+             * @description Distinct users who currently hold a connected Gmail mailbox, read from `gmail_sync_enrollment`. Null means the question could not be answered — never 'zero'. A null here is the same state that makes `/auth/gmail/authorize` refuse: an uncountable cap is treated as a full one.
+             */
+            connected?: number | null;
+            /**
+             * Ceiling
+             * @description The configured maximum (`JOBTRACKER_GMAIL_CONNECTION_CAP`). Always known — it is configuration, not a measurement.
+             */
+            ceiling: number;
+            /**
+             * Remaining
+             * @description `ceiling - connected`, floored at 0, or null when `connected` is. This is what the operator actually watches; it is NOT the number of Google slots left, which is smaller — see `at_capacity`.
+             */
+            remaining?: number | null;
+            /**
+             * At Capacity
+             * @description True when no new user may connect a mailbox. Null when the count could not be read, in which case connect refuses anyway. Remember what the underlying number is and is not: Google spends one of this project's LIFETIME user slots the moment somebody reaches the consent screen, and an abandoned consent leaves no row here, so the count below is a floor on what Google has charged, never a ceiling.
+             */
+            at_capacity?: boolean | null;
         };
         /** GmailDisconnectResponse */
         GmailDisconnectResponse: {
@@ -1736,6 +1819,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SchemaVersionResponse"];
+                };
+            };
+        };
+    };
+    gmail_capacity_check_health_gmail_capacity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GmailCapacityResponse"];
                 };
             };
         };

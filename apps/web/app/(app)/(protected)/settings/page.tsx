@@ -104,6 +104,16 @@ const FLAG_BANNERS: Record<string, { tone: "ok" | "warn" | "error"; text: string
     tone: "warn",
     text: "Gmail connection isn't enabled on this deployment yet — see the note below.",
   },
+  // The beta cap (backend 409). This is the only banner that asks the reader to
+  // do something outside the product, and it has to: Google caps how many
+  // people this app may ever connect and that number cannot be raised on
+  // request, so "try again later" would be false. The address is the whole
+  // point of the message — a refusal with no way to appeal it is a dead end,
+  // and importing an export needs no Google account at all.
+  capacity: {
+    tone: "warn",
+    text: "The Gmail beta is full, so this account can't connect a mailbox yet. Email aesh.03.23@gmail.com to ask for a place. Importing a mailbox export still works.",
+  },
 };
 
 const TONE_CLASS: Record<"ok" | "warn" | "error", string> = {
