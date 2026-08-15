@@ -69,6 +69,12 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", CLIENT_SECRET)
     monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", REDIRECT_URI)
     monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", WEB_APP_URL)
+    # The callback now refuses to bounce the browser to a host this deployment
+    # does not already trust as its front end (see
+    # `config.trusted_web_hosts` and `test_gmail_oauth_return_host.py`), so the
+    # fixture has to DECLARE that host rather than merely name it in one place.
+    # That is the point of the change: the two facts must be stated together.
+    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test")
 
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module

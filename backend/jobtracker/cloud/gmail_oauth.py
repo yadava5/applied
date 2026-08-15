@@ -45,6 +45,13 @@ Security properties
   state's TTL.
 - **No open redirect**: the post-callback destination is the operator-
   configured ``web_app_url``, never a value taken from the request.
+- **And it must be OUR host**: that configured value is additionally checked
+  against ``config.trusted_web_hosts`` — the same list CORS is built from —
+  because "not attacker-controlled" turned out not to imply "correct". A
+  stale alias of our own project satisfied the open-redirect property
+  perfectly and still landed every user signed out, since cookies are scoped
+  to a hostname. See ``_web_app_base`` and
+  ``tests/test_gmail_oauth_return_host.py``.
 - **Revocable**: disconnect calls Google's revocation endpoint and then
   deletes the local ciphertext.
 """
@@ -69,10 +76,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, 
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jobtracker.auth import current_user
-from jobtracker.config import settings
+from jobtracker.config import (
+    configured_web_app_host,
+    settings,
+    web_app_host_is_trusted,
+)
 from jobtracker.credentials.cloud import (
     CredentialEncryptionError,
     _require_fernet,
@@ -211,17 +222,26 @@ class PipelineItemIn(BaseModel):
     sync now gates on: without it, a low-confidence guess used to manufacture a
     fake ``interviewing``/``offered`` row. ``thread_id``/``snippet`` let a
     persisted row deep-link + show the underlying mail in the detail view.
+
+    EVERY STRING IS BOUNDED. Not for storage — the persist layer truncates to
+    its own column widths anyway (``body_snippet`` to 500) — but because
+    truncation happens far too late to matter. Pydantic parses the WHOLE body
+    into Python objects before a single field is read, so an unbounded string
+    is memory the process allocates on an attacker's say-so, inside a function
+    with a fixed memory ceiling. The limits are generous multiples of what
+    Gmail actually emits (a snippet is ~200 characters, an RFC-5321 address is
+    at most 320) so nothing a real client sends is refused.
     """
 
-    message_id: str
-    category: str
-    sender_email: str = ""
-    subject: str = ""
-    sender_name: str | None = None
-    received_at: str | None = None  # ISO-8601
+    message_id: str = Field(max_length=256)
+    category: str = Field(max_length=64)
+    sender_email: str = Field(default="", max_length=512)
+    subject: str = Field(default="", max_length=2000)
+    sender_name: str | None = Field(default=None, max_length=512)
+    received_at: str | None = Field(default=None, max_length=64)  # ISO-8601
     confidence: float = 0.0
-    thread_id: str | None = None
-    snippet: str = ""
+    thread_id: str | None = Field(default=None, max_length=256)
+    snippet: str = Field(default="", max_length=2000)
 
 
 class PipelineAnalyzeRequest(BaseModel):
@@ -242,6 +262,44 @@ class PipelineAnalyzeResponse(BaseModel):
     job_related: int
     category_summary: dict[str, int]
     follow_ups: list[FollowUpOut]
+
+
+class SyncAlreadyRunning(HTTPException):
+    """429: this mailbox already has a sync in flight.
+
+    429 RATHER THAN 409, WHICH IS WHAT "CONFLICT" WOULD OTHERWISE ARGUE FOR.
+    409 is already spoken for on this endpoint: it means "Gmail is not
+    connected", and the web app reads it that way in four places —
+    ``SyncBar.tsx`` sets ``notConnected: res.status === 409`` and
+    ``lib/gmail/server.ts`` maps 409 to ``{kind: "not_connected"}``. Reusing it
+    would tell a user whose mailbox is working perfectly, and is being synced
+    right now, to go and reconnect their account. Overlapping syncs are routine
+    — ``SyncBar`` runs a staleness auto-sync on arrival, so landing on the
+    dashboard and pressing "Sync now", or simply having two tabs open, collides
+    — which makes the wrong message the COMMON case rather than an edge one.
+
+    429 is also the honest reading. This lease is the rate limit: the section
+    of work it comes from is "nothing stops a user hammering sync", and "you
+    are already doing this, try again shortly" is exactly what 429 means. It
+    carries ``Retry-After`` so a client can wait the right amount of time
+    instead of guessing, and nothing in the web app currently reads 429 on any
+    path, so the new code cannot be mistaken for an existing meaning.
+
+    ITS OWN TYPE, not a bare ``HTTPException(429, ...)``, so the scheduled run
+    can tell a lease conflict (``skipped`` — a sync is happening) from a real
+    fault (``errors`` — a stale candidate list) by catching the class rather
+    than comparing a number.
+    """
+
+    def __init__(self, retry_after_seconds: int = 15) -> None:
+        super().__init__(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "A sync is already running for this mailbox. Wait for it to "
+                "finish before starting another."
+            ),
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
 
 
 class SyncRequest(BaseModel):
@@ -268,7 +326,15 @@ class SyncRequest(BaseModel):
       additive-only.
     """
 
-    items: list[PipelineItemIn] | None = None
+    # BOUNDED, for the same reason every string on ``PipelineItemIn`` is.
+    # Processing already discards everything past ``gmail_fetch_hard_cap``
+    # (2000) — but that slice happens after Pydantic has already materialised
+    # the entire list, so it caps the WORK and not the ALLOCATION.
+    #
+    # Set above the hard cap rather than at it, so this rejects abuse without
+    # ever turning a client that merely relayed a few too many items into a
+    # 422; that client's surplus is still silently dropped exactly as before.
+    items: list[PipelineItemIn] | None = Field(default=None, max_length=2500)
     count: int | None = None
     range: str | None = None
     scope: str | None = None
@@ -528,6 +594,71 @@ def _build_flow(code_verifier: str | None = None) -> Flow:
     return flow
 
 
+def _web_app_base() -> str:
+    """The base URL to bounce the browser back to, or raise.
+
+    WHY THIS IS NOT JUST ``settings.web_app_url.rstrip("/")`` ANY MORE
+    -----------------------------------------------------------------
+    It was, and it sent every Gmail connect/disconnect to the wrong hostname
+    for weeks. ``JOBTRACKER_WEB_APP_URL`` still named
+    ``jobtracker-web-five.vercel.app`` — a pre-rename alias of the web project
+    — long after the app became ``getapplied.vercel.app``. Both aliases serve
+    the same deployment, so every page rendered correctly and nothing looked
+    broken. But **cookies are scoped to a host**: the user's Supabase session
+    exists on the name they signed in on and nowhere else. Arriving on the
+    other alias is arriving signed out, so the proxy did its job and sent them
+    to ``/login`` — after a successful Gmail connect, with a live session, from
+    a click that never touched sign-in. Reproduced against production with no
+    credentials; the two curls are quoted in ``config.trusted_web_hosts``.
+
+    THE PROPERTY THIS PRESERVES. The destination still comes from operator
+    configuration and NEVER from the request — that is the open-redirect
+    guarantee in this module's header and it is untouched. What is added is the
+    other half: the configured value must name a host this deployment already
+    trusts as its front end (the same list CORS is built from). A hostname that
+    is merely *reachable* is not the same as the hostname the session is on,
+    and that distinction is the whole bug.
+
+    WHY IT RAISES RATHER THAN GUESSING. Falling back to a host we picked would
+    make a misconfiguration invisible again, one layer down. Worse, the old
+    code's own fallback was silent and actively harmful: with ``web_app_url``
+    unset, ``(None or "").rstrip("/")`` yields ``""`` and the target becomes
+    the RELATIVE ``/settings?gmail=connected``, which the browser resolves
+    against the API's host — stranding the user on the backend, which has no
+    such page. 503 with a message naming the offending host is a deploy problem
+    an operator can read and fix in one edit.
+    """
+
+    configured = (settings.web_app_url or "").strip().rstrip("/")
+    if not configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL is not set, "
+                "so there is no web app to return the browser to."
+            ),
+        )
+
+    if not web_app_host_is_trusted():
+        host = configured_web_app_host() or ""
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL points at "
+                f"'{host}', which this deployment does not recognise as a host "
+                "it serves the web app on. Returning the browser there would "
+                "land it on a hostname that does not carry the user's session, "
+                "i.e. signed out. TWO variables have to agree, and this API "
+                "runs on a different Vercel project from the web app so it "
+                "cannot infer the second: set JOBTRACKER_WEB_APP_URL to the "
+                f"origin the app is served from, AND add '{host}' to "
+                "JOBTRACKER_CORS_ALLOWED_HOSTS so this deployment knows it is "
+                "ours. See config.trusted_web_hosts."
+            ),
+        )
+    return configured
+
+
 def _web_redirect(outcome: str) -> RedirectResponse:
     """Redirect the browser back to the web app's settings page.
 
@@ -535,7 +666,7 @@ def _web_redirect(outcome: str) -> RedirectResponse:
     ``error``); no token or email ever rides in the URL.
     """
 
-    base = (settings.web_app_url or "").rstrip("/")
+    base = _web_app_base()
     target = f"{base}/settings?gmail={urllib.parse.quote(outcome)}"
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
 
@@ -1002,7 +1133,15 @@ async def gmail_inbox(
     verdicts: list[InboxVerdict] = []
     summary = dict.fromkeys(pipeline.CANONICAL_CATEGORIES, 0)
     for msg in page.messages:
-        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        # The body if the fetch produced one, else the snippet. Read here and
+        # discarded: the ``InboxVerdict`` built below carries the SNIPPET, so
+        # the body never reaches the response. See
+        # ``tests/test_body_is_never_persisted.py``.
+        result = await classifier.classify(
+            msg.subject,
+            page.bodies.get(msg.message_id) or msg.snippet,
+            msg.sender_email,
+        )
         category = result.category.value
         summary[category] = summary.get(category, 0) + 1
         verdicts.append(
@@ -1045,9 +1184,10 @@ async def gmail_inbox(
         unreadable=page.unreadable,
         result_size_estimate=page.result_size_estimate,
         note=(
-            "Classified from subject + Gmail snippet using the rules-only cloud "
-            "classifier (gmail.readonly). Full-body + SetFit classification runs "
-            "in the desktop app."
+            "Classified from the subject and the message body using the "
+            "rules-only cloud classifier (gmail.readonly). The body is read to "
+            "classify and discarded — only Gmail's own short snippet is ever "
+            "stored. SetFit classification runs in the desktop app."
         ),
     )
 
@@ -1175,12 +1315,30 @@ class _ScanOutcome:
     result_size_estimate: int | None = None
 
 
-async def _classify_messages(messages: list[Any], classifier: Any, pipeline: Any) -> list[Any]:
-    """Run each fetched message through the classifier into a PipelineItem."""
+async def _classify_messages(
+    messages: list[Any],
+    classifier: Any,
+    pipeline: Any,
+    bodies: dict[str, str] | None = None,
+) -> list[Any]:
+    """Run each fetched message through the classifier into a PipelineItem.
 
+    ``bodies`` is the in-flight body text from the fetch (see
+    ``gmail_client.MessagePage.bodies``). It is READ HERE AND NOWHERE ELSE:
+    the ``PipelineItem`` built below carries ``snippet``, never ``body``, so
+    nothing downstream — persistence, the API response, ``training_data`` — can
+    see it. ``tests/test_body_is_never_persisted.py`` is the enforcement.
+
+    Falls back to the snippet when a message produced no body text, so a
+    message Gmail answered with headers only classifies exactly as it did
+    before rather than as an empty string.
+    """
+
+    bodies = bodies or {}
     items: list[Any] = []
     for msg in messages:
-        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        text = bodies.get(msg.message_id) or msg.snippet
+        result = await classifier.classify(msg.subject, text, msg.sender_email)
         items.append(
             pipeline.PipelineItem(
                 message_id=msg.message_id,
@@ -1284,7 +1442,9 @@ async def _full_scan(
             # a partial read of the window and must not be called complete.
             stopped_by = STOPPED_DISCONNECTED
             break
-        items.extend(await _classify_messages(page.messages, classifier, pipeline))
+        items.extend(
+            await _classify_messages(page.messages, classifier, pipeline, page.bodies)
+        )
         scanned += len(page.messages)
         unreadable += page.unreadable
         if page.result_size_estimate is not None:
@@ -1354,7 +1514,7 @@ async def _incremental_scan(
     )
     if page is None or not page.usable:
         return None
-    items = await _classify_messages(page.messages, classifier, pipeline)
+    items = await _classify_messages(page.messages, classifier, pipeline, page.bodies)
     return _ScanRead(
         items=items,
         scanned=len(page.messages),
@@ -1533,8 +1693,10 @@ async def gmail_sync(
         sync_gmail_pipeline_additive,
     )
     from jobtracker.cloud.sync_state import (
+        acquire_gmail_sync_lease,
         note_gmail_sync_failure,
         record_gmail_sync_success,
+        release_gmail_sync_lease,
     )
 
     # Default to the durable additive merge; only an explicit "rebuild" (the
@@ -1581,6 +1743,24 @@ async def gmail_sync(
     # key a cursor on.
     stored = await get_gmail_credentials(user_id)
     account_email = stored.email if stored else None
+
+    # ONE sync per mailbox at a time. Nothing used to stop an authenticated
+    # account firing unlimited parallel calls, each a 750-message scan, burning
+    # function-seconds and the user's own Gmail quota while racing N copies of
+    # the additive merge over the same rows.
+    #
+    # Keyed on the linked address because that is what the lease row is keyed
+    # on. An items-only relay from a user with no Gmail connected has no
+    # address to key on and takes no lease: it makes no Gmail calls, so the
+    # cost it could multiply is not the one this guards.
+    #
+    # The lease EXPIRES (see ``_SYNC_LEASE_TTL_SECONDS``), so a sync killed by
+    # the function ceiling cannot lock its owner out of their own mailbox.
+    lease_held = False
+    if account_email is not None:
+        lease_held = await acquire_gmail_sync_lease(user_id, account_email)
+        if not lease_held:
+            raise SyncAlreadyRunning()
 
     try:
         if payload.items is not None:
@@ -1764,8 +1944,9 @@ async def gmail_sync(
                 )
             ).one()
     except HTTPException:
-        # 409 not-connected / 503 not-configured are the caller's problem to
-        # fix, not a sync failure worth recording against the mailbox.
+        # 409 not-connected / 429 already-running / 503 not-configured are the
+        # caller's problem to fix, not a sync failure worth recording against
+        # the mailbox.
         raise
     except Exception as exc:
         if account_email is not None:
@@ -1773,6 +1954,12 @@ async def gmail_sync(
             # a log or a stored field.
             await note_gmail_sync_failure(user_id, account_email, type(exc).__name__)
         raise
+    finally:
+        # EVERY exit, including the ``HTTPException`` re-raise above — which
+        # records no failure and would otherwise hold the lease for a full TTL
+        # after a 400 the user could fix and retry in seconds.
+        if lease_held:
+            await release_gmail_sync_lease(user_id, account_email)
 
     logger.info(
         "Gmail sync for user_id=%s: mode=%s incremental=%s created=%s updated=%s "

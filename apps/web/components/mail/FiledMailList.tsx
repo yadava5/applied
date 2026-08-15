@@ -37,6 +37,39 @@ import { cn } from "@/lib/utils";
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
+/**
+ * What a row says about the human who touched it — and it stops short of what
+ * it cannot know.
+ *
+ * This label used to read "corrected by you" for every row with
+ * `user_corrected`, which the backend set whether the reader agreed with the
+ * classifier or overruled it. Half of the owner's flagged rows are agreements
+ * (two `Crusoe | Application Received` at 0.95 among them), so the ledger was
+ * telling him he had overruled verdicts he had in fact confirmed.
+ *
+ * `"unknown"` falls back to the weaker claim that is still true — a human did
+ * settle this row, and which act it was is not recoverable. It does NOT fall
+ * back to nothing: a row with no marker reads as untouched, which is a
+ * different and equally wrong statement. The same fallback covers a
+ * `user_corrected` row with no disposition at all, which is what a decision
+ * recorded between the deploy and the migration looks like.
+ */
+function dispositionLabel(m: {
+  user_corrected: boolean;
+  review_disposition: string | null;
+}): string | null {
+  switch (m.review_disposition) {
+    case "confirmed":
+      return "confirmed by you";
+    case "overridden":
+      return "corrected by you";
+    case "unattributed":
+      return "classified by you";
+    default:
+      return m.user_corrected ? "reviewed by you" : null;
+  }
+}
+
 function CategoryChips({
   page,
   activeCategory,
@@ -234,8 +267,8 @@ export function FiledMailList({
                 {/* The row's standing facts: whose verdict it is, and whether it
                     built a board row. Quiet — they qualify, they don't shout. */}
                 <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-1">
-                  {m.user_corrected ? (
-                    <span className="text-[11px] text-dim">corrected by you</span>
+                  {dispositionLabel(m) ? (
+                    <span className="text-[11px] text-dim">{dispositionLabel(m)}</span>
                   ) : null}
                   {m.application_id !== null ? (
                     <span className="text-[11px] text-dim">on your board</span>

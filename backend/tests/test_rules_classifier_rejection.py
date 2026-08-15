@@ -32,6 +32,11 @@ rest of the system keys off (0.90 = ``hybrid.py`` accepts the rules layer
 outright and ``pipeline.AUTO_FILE_GATE`` files a row; 0.70 =
 ``pipeline.REVIEW_FLOOR``, the review queue) — not on which regex fired, so the
 patterns stay free to be rewritten.
+
+Since #316 the parametrized sweep over ``STANDARD_REJECTION_SENTENCES`` asserts
+``AUTO_FILE_GATE`` rather than ``REVIEW_FLOOR``, body-only and with no ATS
+sender. It asserted the floor until then and was green on eight sentences the
+product can recognise and never file; see that test's own docstring.
 """
 from __future__ import annotations
 
@@ -175,13 +180,43 @@ STANDARD_REJECTION_SENTENCES = [
 
 
 @pytest.mark.parametrize("body", STANDARD_REJECTION_SENTENCES)
-def test_standard_rejection_sentences_classify_as_rejection(body: str) -> None:
-    result = CLASSIFIER.classify("", body, ANTHROPIC_SENDER)
+def test_standard_rejection_sentences_reach_the_gate_production_acts_at(
+    body: str,
+) -> None:
+    """The bar is what the PRODUCT does, not what the classifier can recognise.
+
+    This asserted ``REVIEW_FLOOR`` (0.70) until #316. Production acts at
+    ``AUTO_FILE_GATE`` (0.85): below it a verdict is held for a human and no
+    application is ever filed from it. So the assertion sat under the level at
+    which the product does anything, and was green the whole time on 8 of these
+    16 sentences — recognised, and unfileable. A check that passes at a
+    threshold the product does not use is a check that cannot fail.
+
+    Two deliberate choices in how it is now measured, and both are the
+    difference between a gate and a formality:
+
+    * **No sender.** ``ANTHROPIC_SENDER`` is an ATS domain and carries a +0.05
+      bonus, so with it a 0.80 rung clears 0.85 and a regression from the 0.90
+      rung would pass unnoticed. Body only, no bonus — the same way #316
+      measured. ``test_the_palantir_rejection_clears_the_auto_file_gate`` above
+      still covers the delivered-from-an-ATS case.
+    * **Body, not subject.** Every one of these clears the gate from a SUBJECT
+      already (a strong subject match is +6 on its own). Rejections do not put
+      their decision in the subject — they title themselves "Thank you from
+      <Company>" — so the subject reading is the one that never mattered.
+
+    Mutation: dropping the ``\\byou (have|were)…not (been )?selected`` twin →
+    2 of the 16 fail at 0.70 ("You have not been selected." and "You were not
+    selected for this position."), which is the review queue.
+    """
+
+    result = CLASSIFIER.classify("", body, None)
 
     assert result.category is EmailCategory.REJECTION, result.matched_patterns
-    # REVIEW_FLOOR. Below this a lifecycle verdict is dropped entirely: it
-    # neither files a row nor reaches the review queue.
-    assert result.confidence >= pipeline.REVIEW_FLOOR, result.scores
+    # AUTO_FILE_GATE. Below this the verdict reaches a human and nothing else:
+    # no row is filed, no application is settled, and the classifier's correct
+    # answer costs the user a click it should never have had to make.
+    assert result.confidence >= pipeline.AUTO_FILE_GATE, result.scores
 
 
 # ---------------------------------------------------------------------------

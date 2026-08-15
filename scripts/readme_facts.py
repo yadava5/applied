@@ -213,6 +213,7 @@ BACKEND_RULES = "backend/jobtracker/classifier/rules.py"
 DEMO_SPACE_RULES = "ml/demo/space/jobtracker/classifier/rules.py"
 RLS_MIGRATION = "backend/alembic/versions/a8d4ec5fba26_enable_rls_policies_postgres_only.py"
 USER_CREDS_RLS = "backend/alembic/versions/c4_user_credentials_rls.py"
+ENROLLMENT_RLS = "backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py"
 HYBRID = "backend/jobtracker/classifier/hybrid.py"
 
 
@@ -267,10 +268,46 @@ def policies_per_table() -> int:
     raise SystemExit(f"  ✗ {RLS_MIGRATION}: no `for table in RLS_TABLES:` loop found")
 
 
-def rls_policies() -> int:
-    """Not hard-coded as tables×4: the loop is counted, the one-off revision added."""
+def rls_owner_policies() -> int:
+    """The owner-scoped policies: `user_id = auth.uid()` on the tenant tables.
+
+    Not hard-coded as tables×4: the loop is counted, the one-off revision added.
+    """
     loop = (rls_tables() - 1) * policies_per_table()
     return loop + count_in(USER_CREDS_RLS, r"CREATE POLICY")
+
+
+def rls_enrollment_policies() -> int:
+    """The policies on `gmail_sync_enrollment` (rev e2b6f0a4d517).
+
+    Counted separately because they are NOT the owner-scoped shape: one of the
+    three is a permissive SELECT for the runtime role, which is what lets the
+    identity-less cron enumerate who has Gmail linked. Folding them into
+    `rls_owner_policies` would make the README's "all N predicates are
+    `user_id = (SELECT auth.uid())`" claim false while every gate stayed green.
+
+    Read out of the `_POSTGRES_UPGRADE_SQL` assignment specifically, not out of
+    the file: that revision's docstring quotes its own enumeration policy, and
+    a whole-file `count_in` therefore returned 5 for a table that has 3 — a
+    number nobody would have questioned because it was still "derived".
+
+    `ast.dump` rather than `.value`, because the assignment is an f-string
+    (a `JoinedStr`, whose literal halves are separate nodes) — the same shape
+    `policies_per_table` reads for the same reason.
+    """
+    node = _assigned(ENROLLMENT_RLS, "_POSTGRES_UPGRADE_SQL")
+    count = ast.dump(node).count("CREATE POLICY")
+    if count == 0:
+        raise SystemExit(
+            f"  ✗ {ENROLLMENT_RLS}: _POSTGRES_UPGRADE_SQL issues no CREATE POLICY. "
+            f"A table with no policy fails scripts/verify_rls.py on the deploy."
+        )
+    return count
+
+
+def rls_policies() -> int:
+    """Every CREATE POLICY the RLS migrations issue, of either shape."""
+    return rls_owner_policies() + rls_enrollment_policies()
 
 
 def float_const(rel: str, name: str) -> float:
@@ -303,8 +340,13 @@ def embeddings_accept_threshold() -> float:
 #                           duplicate `AUTO_FILE_GATE` in components/viz/
 #                           GateMeter.tsx, was deleted; booklet's is the third
 #                           TypeScript tree and was never counted at all)
-#   ml/demo/space/      3   the vendored second copy of the classifier, also
-#                           pinned by nothing
+#   ml/demo/space/      1   the vendored second copy of the classifier, also
+#                           pinned by nothing. It was 3 until #295: the other
+#                           two lived in `api/classification.py`, a vendored
+#                           copy of a desktop router #298 had already deleted
+#                           from `backend/`. A copy that no longer exists
+#                           cannot drift, so this is not a loss of coverage —
+#                           it is two fewer places for the number to be wrong.
 #
 # and the comment that claimed to keep them in step named `lib/dashboard/
 # model.ts`, which the dashboard barely read: `ReviewQueue` and
@@ -342,7 +384,6 @@ BROWSER_DEMO_JS = "ml/browser/site/app.js"
 BOOKLET_CONTENT = "booklet/src/content.ts"
 
 DEMO_SPACE_HYBRID = "ml/demo/space/jobtracker/classifier/hybrid.py"
-DEMO_SPACE_CLASSIFICATION = "ml/demo/space/jobtracker/api/classification.py"
 
 # A `const NAME = <float>;` whose name is SCREAMING_CASE. Anchored at the start
 # of a line so prose in a `//` or ` *` comment can never match — comments
@@ -381,19 +422,14 @@ TS_AUTO_FILE_GATE_COPIES: dict[str, tuple[str, str]] = {
 # it is held the same way: by invariant, from here.
 DEMO_SPACE_AUTO_FILE_GATE_COPIES: dict[str, tuple[str, str, str]] = {
     "ml/demo/space::hybrid.py::CONFIDENCE_AUTO": (DEMO_SPACE_HYBRID, "CONFIDENCE_AUTO", ""),
-    "ml/demo/space::classification.py::REVIEW_QUEUE_CONFIDENCE_THRESHOLD": (
-        DEMO_SPACE_CLASSIFICATION,
-        "REVIEW_QUEUE_CONFIDENCE_THRESHOLD",
-        "",
-    ),
-    # A FUNCTION SIGNATURE DEFAULT, not a module constant — the same fourth copy
-    # the backend test reads with `inspect`, read here with `ast` because this
-    # tree is not importable from the checker.
-    "ml/demo/space::classification.py::seed_training_data(min_confidence=…)": (
-        DEMO_SPACE_CLASSIFICATION,
-        "min_confidence",
-        "seed_training_data",
-    ),
+    # Two more entries stood here until #295, both reading
+    # `ml/demo/space/jobtracker/api/classification.py` — a module constant and a
+    # function-signature default. That file was a vendored copy of a desktop
+    # router `backend/` had not contained since #298, and it went with the rest
+    # of the vendored `api/` + `services/` trees. The registry shrinks with the
+    # copies it registers; the shape (name → file, constant, enclosing function)
+    # is kept, since a `""` function still selects the module-constant reader
+    # and the next vendored default has somewhere to go.
 }
 
 # Gate-shaped TypeScript constants that are NOT the auto-file gate. Listed by
@@ -454,6 +490,61 @@ def demo_space_gate(rel: str, name: str, func: str) -> float:
     """One registry entry from DEMO_SPACE_AUTO_FILE_GATE_COPIES, resolved."""
 
     return py_arg_default(rel, func, name) if func else float_const(rel, name)
+
+
+# ── the vendored Space is a COPY, and must stay a copy (#295) ────────────
+#
+# `ml/demo/space/jobtracker/` is not hand-maintained. `ml/demo/package_space.py`
+# builds it with one `shutil.copytree(backend/jobtracker → space/jobtracker,
+# ignore=("__pycache__", "*.pyc"))`, so the two module sets are equal BY
+# CONSTRUCTION at the moment the Space is assembled.
+#
+# They had stopped being equal. #298 deleted `backend/jobtracker/api/`,
+# `services/` and `main.py` — the unmounted desktop routers, ~55 queries with no
+# `user_id` predicate anywhere in them — and did not touch the vendored copy,
+# which kept all three. So the tree that ships to a PUBLIC Hugging Face Space
+# still carried every full-table read, and `package_space.py` could no longer
+# reproduce the thing checked in beside it. That is the state this invariant
+# exists to make loud, in either direction: a module added to `backend/` and not
+# re-vendored is drift too, and it is the direction that makes the Space stale.
+#
+# WHY THIS LIVES HERE AND NOT IN `backend/tests/`. `backend-ci.yml` is
+# path-filtered to `backend/**` plus three named files, so a PR touching only
+# `ml/demo/space/` would never run it — the exact change this guards. This
+# script's workflow (`readme-facts.yml`) has no path filter at all. A gate that
+# cannot fire on its own subject reads as coverage and is not; see the note on
+# the desktop-router deletion in `backend/tests/test_the_deployed_app_is_the_
+# cloud_app.py` for the same reasoning applied the other way.
+#
+# Top-level entries only. This is the `copytree` invariant, not a file-by-file
+# diff: the Space legitimately lags `backend/` between re-packagings, and a
+# deep comparison would go red on every ordinary classifier edit and get
+# switched off. A whole module appearing or vanishing is the drift that matters.
+VENDORED_SPACE_PKG = "ml/demo/space/jobtracker"
+BACKEND_PKG = "backend/jobtracker"
+
+
+def _package_modules(rel: str) -> set[str]:
+    """Top-level module/package names under a package directory.
+
+    `__pycache__` and `*.pyc` are excluded because `package_space.py` excludes
+    them; anything else present on one side and not the other is real drift.
+    Raises rather than returning an empty set when the directory is missing —
+    a reader that quietly yields nothing when its subject moved is the
+    check-that-cannot-fail shape this file is full of warnings about.
+    """
+
+    root = REPO / rel
+    if not root.is_dir():
+        raise SystemExit(
+            f"  ✗ {rel}: not a directory. The package moved or was deleted — "
+            f"update VENDORED_SPACE_PKG / BACKEND_PKG in scripts/readme_facts.py."
+        )
+    return {
+        entry.name
+        for entry in root.iterdir()
+        if entry.name != "__pycache__" and entry.suffix != ".pyc"
+    }
 
 
 def ts_gate_definitions() -> dict[str, float]:
@@ -704,6 +795,21 @@ FACTS: dict[str, dict] = {
             {"re": r"and (\w+) policies \(`SELECT`", "word": True},
         ],
     },
+    "rlsOwnerPolicies": {
+        "kind": "static",
+        "describe": "owner-scoped CREATE POLICY statements (the tenant tables)",
+        "compute": rls_owner_policies,
+        "sites": [
+            r"That is \*\*(\d+)\*\* owner policies",
+            r"\*\*All (\d+) owner predicates are",
+        ],
+    },
+    "rlsEnrollmentPolicies": {
+        "kind": "static",
+        "describe": "CREATE POLICY statements on gmail_sync_enrollment",
+        "compute": rls_enrollment_policies,
+        "sites": [r"\+ `FORCE` with \*\*(\d+)\*\* policies"],
+    },
     "rlsPolicies": {
         "kind": "static",
         "describe": "CREATE POLICY statements across the RLS migrations",
@@ -711,8 +817,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"— \*\*(\d+) policies\*\* —",
             r"RLS: (\d+) policies, FORCE",
-            r"That is \*\*(\d+) policies\*\*",
-            r"\*\*All (\d+) predicates are",
+            r"That is \*\*(\d+) policies\*\* across the nine",
             r"the (\d+) RLS policies",
         ],
     },
@@ -1279,11 +1384,27 @@ INVARIANTS = [
     },
     {
         "name": "every tenant table gets the same four policies",
-        "holds": lambda f: f["rlsPolicies"] == f["rlsTenantTables"] * f["rlsPoliciesPerTable"],
+        "holds": lambda f: f["rlsOwnerPolicies"] == f["rlsTenantTables"] * f["rlsPoliciesPerTable"],
         "explain": lambda f: (
             f"{f['rlsTenantTables']} tables x {f['rlsPoliciesPerTable']} policies = "
             f"{f['rlsTenantTables'] * f['rlsPoliciesPerTable']}, but the migrations issue "
-            f"{f['rlsPolicies']} CREATE POLICY statements. One table is short a policy."
+            f"{f['rlsOwnerPolicies']} owner-scoped CREATE POLICY statements. "
+            f"One table is short a policy."
+        ),
+    },
+    {
+        # The total is the sum of the two SHAPES, and they are counted apart on
+        # purpose: gmail_sync_enrollment's SELECT policy is permissive, so
+        # letting it be absorbed into the owner-policy count is exactly how
+        # "all N predicates are user_id = auth.uid()" would become false with
+        # every gate still green.
+        "name": "the policy total is the owner policies plus the enrollment policies",
+        "holds": lambda f: (
+            f["rlsPolicies"] == f["rlsOwnerPolicies"] + f["rlsEnrollmentPolicies"]
+        ),
+        "explain": lambda f: (
+            f"{f['rlsOwnerPolicies']} owner + {f['rlsEnrollmentPolicies']} enrollment = "
+            f"{f['rlsOwnerPolicies'] + f['rlsEnrollmentPolicies']}, not {f['rlsPolicies']}."
         ),
     },
     {
@@ -1471,6 +1592,26 @@ INVARIANTS = [
             + ". There are two copies of the classifier on purpose; their gates have "
             "diverged, so the Hugging Face Space would auto-file at a threshold the "
             "product does not use."
+        ),
+    },
+    {
+        # See the block comment above `_package_modules`. The vendored Space is
+        # produced by one `copytree`; this asserts it still looks like one.
+        "name": "the vendored Space package holds exactly the backend's modules",
+        "holds": lambda f: (
+            _package_modules(VENDORED_SPACE_PKG) == _package_modules(BACKEND_PKG)
+        ),
+        "explain": lambda f: (
+            f"only in {VENDORED_SPACE_PKG}: "
+            f"{sorted(_package_modules(VENDORED_SPACE_PKG) - _package_modules(BACKEND_PKG))}; "
+            f"only in {BACKEND_PKG}: "
+            f"{sorted(_package_modules(BACKEND_PKG) - _package_modules(VENDORED_SPACE_PKG))}. "
+            f"ml/demo/package_space.py builds the Space with a single copytree, so these "
+            f"two sets are equal the moment it runs. Extra modules on the Space side are "
+            f"code the backend has DELETED still shipping to a public Space — that is how "
+            f"the unscoped desktop routers (#295) outlived #298 by a release. Missing "
+            f"modules mean the Space is stale. Re-run ml/demo/package_space.py, or delete "
+            f"the leftovers deliberately."
         ),
     },
     {

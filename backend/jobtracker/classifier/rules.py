@@ -110,31 +110,98 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # you from Palantir Technologies". One body match can never reach
             # 0.90. Two can — which is the only way this category clears a gate
             # that acknowledgements clear from their subject line alone.
-            r"not (be )?(proceeding|continuing) with",
-            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
+            #
+            # The contraction arm is not decoration either. Supernova's real
+            # rejection says "it is unfortunate that we won't be proceeding
+            # with your application" — and with only the literal "not" spelling
+            # here, reading the whole body still classified it `applied`. That
+            # is the same defect `(won't|will not) be advancing` below already
+            # records, in the mirror direction: whichever spelling gets written
+            # first, the other one scores zero. Both inflections, always.
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
+            # SIX PAIRS FOLLOW, and the twins are not decoration.
+            #
+            # Eight of the sixteen sentences in
+            # ``tests/test_rules_classifier_rejection.py`` matched exactly ONE
+            # pattern here. One strong BODY match is +3, which is the 0.70 rung
+            # — the review queue. ``pipeline.AUTO_FILE_GATE`` is 0.85, so the
+            # classifier could recognise those eight and never act on one of
+            # them, and the gate over them asserted 0.70 and was green about it.
+            # An acknowledgement states its verdict in the SUBJECT, where a
+            # strong match is +6 and clears the gate alone; a rejection states
+            # its verdict in the body under "Thank you from <Company>". That is
+            # a structural bias against this one category, not a gap in any
+            # single pattern.
+            #
+            # The fix is the same mechanical one the infinitive and
+            # ``(proceeding|continuing) with`` already carry above: pair a
+            # general form with a narrower anchored one, so a body with no
+            # subject support reaches +6 and clears the gate. It is deliberately
+            # NOT a reweighting of body matches — that would move every verdict
+            # in the corpus at once and risk misfiling the acknowledgements,
+            # which is the failure mode #10 is about. Each twin below is
+            # strictly narrower than its partner and can only fire where the
+            # partner already did.
+            #
+            # Measured, not assumed. Replayed over all 200 rows of the committed
+            # evaluation corpora (``data/evaluation/classifier_eval_v{1,2,3}
+            # .jsonl``) before and after: NO row changed category, and exactly
+            # four moved confidence — every one of them gold-labelled
+            # ``rejection``, and every one upward.
+            #
+            #   v2:027  "You were not selected at this time…"          0.70 → 0.90
+            #   v2:029  "We will not be advancing your candidacy."     0.90 → 0.95
+            #   v3:039  "We will not be advancing your candidacy…"     0.90 → 0.95
+            #   v3:045  "…unable to proceed with your candidacy."      0.70 → 0.90
+            #
+            # Two of those four crossed ``AUTO_FILE_GATE``, which is the whole
+            # point. Not one acknowledgement moved in any direction.
+            #
             # Replaces `move(d)? forward with other candidates` and
             # `chosen to move forward with another candidate`: neither had the
             # participle, so "we will be moving forward with other candidates
             # whose qualifications more closely match" scored 0.
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            # Anchored on the decision verb, which is what makes "we have decided
+            # to move forward with other candidates" and "we will be moving
+            # forward with other candidates" reach the gate rather than the queue.
+            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (other|another) (candidate|applicant)",
             # Replaces `decided to pursue other candidates`, which required both
             # the lead-in and the noun "candidates"; "pursue other applicants"
             # scored 0.
             r"pursu(e|ing) other (candidates|applicants)",
+            # The lead-in the general form dropped, restored as the twin.
+            r"(decided|chosen|elected|opted) to pursue other (candidates|applicants)",
             r"not (been )?selected.{0,30}(position|role|interview)",
             # "You have not been selected." — a complete rejection with no
             # trailing noun for the pattern above to anchor on.
             r"\bnot been selected\b",
+            # Subject-anchored rather than object-anchored, which is what lets it
+            # be the SECOND match for both spellings: "You have not been
+            # selected" (the bare form) and "You were not selected for this
+            # position" (the trailing-noun form). Neither reached +6 alone.
+            r"\byou (have|were)\b.{0,10}not (been )?selected\b",
             r"not (be )?able to offer.{0,20}(position|role|interview)",
             # "unable" is not "not able", and it is the form ATS templates use:
             # "we are unable to offer you a position at this time".
             r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            # The pronoun rather than the noun. It cannot reach an actual offer:
+            # `(pleased|delighted|…) to offer` and `offer (letter|of employment)`
+            # are rejection NEGATIVES below, and an offer letter does not open
+            # with "unable to".
+            r"unable to (offer|extend) you\b",
             r"unable to (proceed|continue|move forward) with",
+            r"unable to (proceed|continue|move forward) with.{0,25}(application|candidacy|process)",
             # Was `won't be advancing…` — contraction only, so "we will not be
             # advancing your candidacy" missed.
             r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            # Drops the modal entirely, so it is the second match for the
+            # "will not" spelling AND covers "we are not advancing your
+            # application", which neither form above reaches.
+            r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
             # --- end of the block FOLLOW_UP.veto repeats -------------------
@@ -469,18 +536,24 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
-            r"not (be )?(proceeding|continuing) with",
-            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (other|another) (candidate|applicant)",
             r"pursu(e|ing) other (candidates|applicants)",
+            r"(decided|chosen|elected|opted) to pursue other (candidates|applicants)",
             r"not (been )?selected.{0,30}(position|role|interview)",
             r"\bnot been selected\b",
+            r"\byou (have|were)\b.{0,10}not (been )?selected\b",
             r"not (be )?able to offer.{0,20}(position|role|interview)",
             r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (offer|extend) you\b",
             r"unable to (proceed|continue|move forward) with",
+            r"unable to (proceed|continue|move forward) with.{0,25}(application|candidacy|process)",
             r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
         ],

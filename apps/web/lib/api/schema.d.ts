@@ -1090,6 +1090,17 @@ export interface components {
              * @description The git commit SHA this deployment was built from, taken verbatim from VERCEL_GIT_COMMIT_SHA, or null when the platform does not supply one. Answers 'what code is actually running?', which `version` cannot: that is a constant in the source.
              */
             commit?: string | null;
+            /**
+             * Web App Host
+             * @description The hostname the Gmail OAuth callback returns the browser to, read from JOBTRACKER_WEB_APP_URL, or null when it is unset. Reported so a stale value is VISIBLE without anyone completing a connect flow to find out -- which is how the real one survived: it named a pre-rename alias for 26 days, the alias served the app perfectly, and the only symptom was that every returning user arrived on a hostname their session cookie was not issued for. Compare it against `web_app_host_trusted` below, never by eye.
+             */
+            web_app_host?: string | null;
+            /**
+             * Web App Host Trusted
+             * @description Whether `web_app_host` is one of the hostnames this deployment serves the app on (`config.trusted_web_hosts`). FALSE means the Gmail connect flow is broken for every user right now: the callback will 503 rather than strand them signed out. WHY THIS IS NOT A 503 ON /health. The API also serves the board, search, export and the scheduled sync, none of which touch this value; failing the whole health check -- or refusing to boot -- would turn one wrong redirect target into a total outage, and into a deploy that cannot roll forward. So the endpoint stays 200 and states the fact, and the failure is loud at the one place it actually matters.
+             * @default false
+             */
+            web_app_host_trusted: boolean;
         };
         /** InboxResponse */
         InboxResponse: {
@@ -1238,6 +1249,8 @@ export interface components {
              * @default false
              */
             user_corrected: boolean;
+            /** Review Disposition */
+            review_disposition?: string | null;
             /**
              * Is Reviewed
              * @default false
@@ -1304,6 +1317,15 @@ export interface components {
          *     sync now gates on: without it, a low-confidence guess used to manufacture a
          *     fake ``interviewing``/``offered`` row. ``thread_id``/``snippet`` let a
          *     persisted row deep-link + show the underlying mail in the detail view.
+         *
+         *     EVERY STRING IS BOUNDED. Not for storage — the persist layer truncates to
+         *     its own column widths anyway (``body_snippet`` to 500) — but because
+         *     truncation happens far too late to matter. Pydantic parses the WHOLE body
+         *     into Python objects before a single field is read, so an unbounded string
+         *     is memory the process allocates on an attacker's say-so, inside a function
+         *     with a fixed memory ceiling. The limits are generous multiples of what
+         *     Gmail actually emits (a snippet is ~200 characters, an RFC-5321 address is
+         *     at most 320) so nothing a real client sends is refused.
          */
         PipelineItemIn: {
             /** Message Id */

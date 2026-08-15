@@ -47,7 +47,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from jobtracker.config import settings
 from jobtracker.credentials.types import GmailCredentials, ICloudCredentials
 from jobtracker.database import get_session
-from jobtracker.database.models import UserCredential
+from jobtracker.database.models import GmailSyncEnrollment, UserCredential
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,12 @@ async def _upsert_credential(
                 "nonce": stmt.excluded.nonce,
                 "key_id": stmt.excluded.key_id,
                 "updated_at": stmt.excluded.updated_at,
+                # RECONNECTING UN-REVOKES. Writing a fresh credential is the
+                # only evidence that could exist that the grant is good again,
+                # and without clearing this a user who reconnected would stay
+                # invisible to the scheduled sync permanently — a wedge with no
+                # self-service way out.
+                "revoked_at": None,
             },
         )
         await session.exec(stmt)
@@ -140,6 +146,7 @@ async def _upsert_credential(
         row.nonce = b""
         row.key_id = ACTIVE_KEY_ID
         row.updated_at = now
+        row.revoked_at = None  # see the ON CONFLICT branch above
         session.add(row)
         return
 
@@ -153,6 +160,49 @@ async def _upsert_credential(
             created_at=now,
             updated_at=now,
         )
+    )
+
+
+async def _enroll_gmail(session: AsyncSession, *, user_id: uuid.UUID) -> None:
+    """Publish "this user has a Gmail credential" to ``gmail_sync_enrollment``.
+
+    Called from ``save_gmail_credentials`` on the caller's OWN session, so the
+    row lands in the same transaction as the ciphertext (issue #291). Two
+    statements, one commit: the tables cannot disagree about who is enrolled,
+    because there is no moment at which one is written and the other is not.
+
+    Idempotent, and deliberately does NOT refresh ``enrolled_at``. Every access
+    token refresh goes through ``update_gmail_access_token`` -> this function,
+    and a column that moved on each refresh would record "last refreshed"
+    while being named "enrolled_at".
+    """
+
+    dialect = session.bind.dialect.name if session.bind else ""
+    if dialect == "postgresql":
+        stmt = pg_insert(GmailSyncEnrollment).values(user_id=user_id)
+        await session.exec(stmt.on_conflict_do_nothing(index_elements=["user_id"]))
+        return
+
+    # SQLite / tests: emulate the upsert.
+    existing = (
+        await session.exec(
+            select(GmailSyncEnrollment).where(GmailSyncEnrollment.user_id == user_id)
+        )
+    ).first()
+    if existing is not None:
+        return
+    session.add(GmailSyncEnrollment(user_id=user_id))
+
+
+async def _unenroll_gmail(session: AsyncSession, *, user_id: uuid.UUID) -> None:
+    """Withdraw the enrollment fact, in the caller's transaction.
+
+    The mirror of :func:`_enroll_gmail`: a user whose Gmail credential row is
+    gone is not enrolled, and both facts are removed together or neither is.
+    """
+
+    await session.exec(
+        delete(GmailSyncEnrollment).where(GmailSyncEnrollment.user_id == user_id)
     )
 
 
@@ -182,7 +232,13 @@ async def _fetch_credential(
 async def save_gmail_credentials(
     user_id: uuid.UUID, credentials: GmailCredentials
 ) -> bool:
-    """Encrypt + persist Gmail OAuth credentials for ``user_id``."""
+    """Encrypt + persist Gmail OAuth credentials for ``user_id``.
+
+    Also publishes the enrollment fact to ``gmail_sync_enrollment`` **in the
+    same transaction** (issue #291), so the scheduled sync can enumerate who
+    has Gmail linked without any path to the tokens themselves. One commit
+    covers both writes; a failure rolls both back.
+    """
 
     fernet = _require_fernet()
     ciphertext = fernet.encrypt(credentials.to_json().encode("utf-8"))
@@ -191,6 +247,7 @@ async def save_gmail_credentials(
             await _upsert_credential(
                 session, user_id=user_id, kind=KIND_GMAIL, ciphertext=ciphertext
             )
+            await _enroll_gmail(session, user_id=user_id)
             await session.commit()
         logger.info("Gmail credentials saved for user_id=%s", user_id)
         return True
@@ -237,7 +294,12 @@ async def get_gmail_credentials(
 
 
 async def delete_gmail_credentials(user_id: uuid.UUID) -> bool:
-    """Remove the stored Gmail credential row for ``user_id``."""
+    """Remove the stored Gmail credential row for ``user_id``.
+
+    Withdraws the ``gmail_sync_enrollment`` row in the same transaction — see
+    :func:`_unenroll_gmail`. A disconnected user must stop being a scheduled
+    sync candidate at the same instant their token stops existing.
+    """
 
     async with get_session() as session:
         await session.exec(
@@ -246,6 +308,7 @@ async def delete_gmail_credentials(user_id: uuid.UUID) -> bool:
                 UserCredential.kind == KIND_GMAIL,
             )
         )
+        await _unenroll_gmail(session, user_id=user_id)
         await session.commit()
     logger.info("Gmail credentials deleted for user_id=%s", user_id)
     return True
@@ -339,12 +402,18 @@ async def has_icloud_credentials(user_id: uuid.UUID) -> bool:
 
 
 async def clear_all_credentials(user_id: uuid.UUID) -> bool:
-    """Remove every credential row owned by ``user_id``."""
+    """Remove every credential row owned by ``user_id``.
+
+    Includes the ``gmail_sync_enrollment`` row: this clears the Gmail
+    credential too, and an enrollment that outlived its credential is exactly
+    the drift the same-transaction writes exist to prevent.
+    """
 
     async with get_session() as session:
         await session.exec(
             delete(UserCredential).where(UserCredential.user_id == user_id)
         )
+        await _unenroll_gmail(session, user_id=user_id)
         await session.commit()
     logger.info("All cloud credentials cleared for user_id=%s", user_id)
     return True

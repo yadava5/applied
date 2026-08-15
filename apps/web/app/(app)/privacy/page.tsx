@@ -42,8 +42,16 @@ import { cn } from "@/lib/utils";
  *     anywhere in this repo). Claim moved here from the Settings Gmail card's
  *     safeguards fold when #201 retired it — the policy is the one place the
  *     product argues its own safety.
- *   · metadata-only fetch, never a body     — backend/jobtracker/cloud/gmail_client.py:17-19,
- *     292-293, 413
+ *   · full fetch, body read then DISCARDED  — backend/jobtracker/cloud/gmail_client.py (module
+ *     docstring "Reading the body, and why it is not stored"; the `format="full"` get in
+ *     `_batch_fetch_metadata`; `MessagePage.bodies`), consumed only at the two
+ *     `classifier.classify(...)` calls in cloud/gmail_oauth.py.
+ *     THE CLAIM IS RETENTION, NOT REQUEST, and unlike the old one it is enforced rather
+ *     than asserted: backend/tests/test_body_is_never_persisted.py drives a scan whose
+ *     bodies carry a sentinel and fails if it reaches any column, the training table, or
+ *     any response. Line numbers are deliberately omitted here — the previous version of
+ *     this citation pinned :292-293 and :413, and both moved with the change that made
+ *     the claim false. Name the thing, not its address.
  *   · the stored row                        — backend/jobtracker/database/models.py:348-429
  *     (`body_snippet` caps at 500 chars, models.py:398-402); the cloud path
  *     writes no `body_text`/`body_html`/`raw_headers`
@@ -93,7 +101,7 @@ import { cn } from "@/lib/utils";
 export const metadata: Metadata = {
   title: "Privacy",
   description:
-    "What Applied reads from your Gmail, what it stores, where it runs, and how to delete it. One scope — gmail.readonly — metadata only, no message bodies, and no third-party model ever sees your mail.",
+    "What Applied reads from your Gmail, what it stores, where it runs, and how to delete it. One scope — gmail.readonly. Message bodies are read to classify and discarded; only Gmail's own short snippet is stored, and no third-party model ever sees your mail.",
 };
 
 const UPDATED = "14 August 2026";
@@ -102,7 +110,14 @@ const UPDATED = "14 August 2026";
  * it — bumping `UPDATED` must never silently re-date a measurement that was
  * not re-run.
  */
-const MEASURED = "12 August 2026";
+const MEASURED = "14 August 2026";
+/**
+ * The date the app started reading message bodies. Section 3 previously
+ * promised it never would, so the change is announced rather than edited in:
+ * a privacy page that quietly narrows a past promise is worth less than one
+ * that says which promise moved and when.
+ */
+const BODY_CHANGE = "14 August 2026";
 const CONTACT = "aesh.03.23@gmail.com";
 const GOOGLE_PERMISSIONS = "https://myaccount.google.com/permissions";
 const GOOGLE_USER_DATA_POLICY = "https://developers.google.com/terms/api-services-user-data-policy";
@@ -132,6 +147,23 @@ function M({ children }: { children: React.ReactNode }) {
 
 function P({ children }: { children: React.ReactNode }) {
   return <p className="mt-4 text-[1.0625rem] leading-[1.75] text-foreground">{children}</p>;
+}
+
+/**
+ * A retraction: this page said something, and it no longer holds.
+ *
+ * Set apart rather than folded into the prose, because the failure mode of a
+ * privacy page is not being wrong once — it is being quietly corrected so a
+ * reader who trusted the old wording never learns it moved. The rule is a
+ * left border, not a colour fill: this is a change of fact, not a warning,
+ * and dressing it as an alert would overstate it.
+ */
+function Correction({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-4 border-l-2 border-line-strong pl-4">
+      <p className="text-[1.0625rem] leading-[1.75] text-dim">{children}</p>
+    </div>
+  );
 }
 
 function Section({
@@ -286,11 +318,39 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
           </Section>
 
           <Section id="fetches" n={3} title="What it fetches from Gmail">
+            <Correction>
+              <strong className="text-strong">This section used to say something else.</strong>{" "}
+              Until {BODY_CHANGE}, it said the app asked Gmail for metadata only and never
+              requested a message body, and that was true. It is no longer true: the app now
+              reads the body. What changed, and what did not, is written out below rather than
+              quietly edited away.
+            </Correction>
             <P>
-              The hosted app asks Gmail for message <M>metadata</M> in bounded batches: the
-              Subject, From and Date headers, plus Gmail’s own <M>snippet</M> — the short
-              preview Gmail itself generates. It never requests a message body. There is no code
-              path in the hosted app that downloads one.
+              The hosted app asks Gmail for the <M>full</M> message in bounded batches: the
+              Subject, From and Date headers, Gmail’s own <M>snippet</M>, and the body text.
+            </P>
+            <P>
+              The body is read to classify the message and then discarded. It is never written to
+              the database, never returned by any endpoint, and never logged. Only Gmail’s short
+              snippet is stored — the same snippet that was stored before this change, unchanged
+              in length or origin.
+            </P>
+            <P>
+              The reason is accuracy, and it is specific. Gmail’s snippet stops at roughly 200
+              characters, and a rejection email spends those characters being polite — “Thank you
+              for your interest in…”, “It means a lot to us that you would consider…”. The
+              sentence carrying the decision falls off the end. Measured against the four real
+              rejections in the author’s own mailbox: one was recognisable from the snippet and
+              three were not, and one of those three had no snippet at all. Reading the body
+              recognises all four.
+            </P>
+            <P>
+              “Read and discarded” is a claim about code, so it is enforced by code.{" "}
+              <M>backend/tests/test_body_is_never_persisted.py</M> runs a scan whose message
+              bodies contain a marker string, then searches every column of every stored row,
+              every row of the training table, and every API response for it. The test fails if
+              the marker appears anywhere. It was checked by deliberately storing a body and
+              confirming it goes red.
             </P>
             <P>
               A scan covers a date range you choose. A full rebuild also searches archived mail,
@@ -324,9 +384,10 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
                 <Field name="sender_name · sender_email">who it came from</Field>
                 <Field name="received_at">when it arrived</Field>
                 <Field name="body_snippet">
-                  Gmail’s own preview of the message. The column stops at 500 characters;
-                  measured in the production database on {MEASURED}, the snippets held there
-                  averaged 193 characters and the longest was 201.
+                  Gmail’s own preview of the message — still Gmail’s, never re-derived from the
+                  body the classifier reads. The column stops at 500 characters; measured in the
+                  production database on {MEASURED}, the snippets held there averaged 197
+                  characters and the longest was 201.
                 </Field>
                 <Field name="classified_as">
                   the verdict — applied, interview, assessment, offer, rejection, follow-up, other,
@@ -366,9 +427,13 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
             </div>
 
             <p className="mt-3 text-[0.8125rem] leading-relaxed text-dim">
-              Those three stay empty because section 3 is true: the hosted app asks for metadata
-              and never fetches a body. Checked against the production database on {MEASURED} —{" "}
-              <M>body_text</M> was empty on every row in it.
+              Those three stay empty, and that is now the load-bearing promise rather than a
+              consequence of one. The app <em>does</em> fetch a body (section 3); it does not keep
+              it. Checked against the production database on {MEASURED}: across all 52 rows,{" "}
+              <M>body_text</M>, <M>body_html</M> and <M>raw_headers</M> were empty on every one.
+              Enforced on every commit by{" "}
+              <M>backend/tests/test_body_is_never_persisted.py</M>, which fails if a body reaches
+              any column here — or the training table, which this list does not cover.
             </p>
 
             <P>

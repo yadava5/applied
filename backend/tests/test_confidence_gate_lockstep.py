@@ -40,12 +40,12 @@ went unpinned while these four were covered (#229). That half lives in
 TypeScript gate constant and fails when they disagree. Neither check subsumes
 the other; changing this number means editing both languages deliberately.
 
-Note that the same four-copy shape still exists in the VENDORED classifier under
-``ml/demo/space/``, whose ``api/classification.py`` is a separate tree this
-deletion did not touch. Those three copies are pinned by
-``DEMO_SPACE_AUTO_FILE_GATE_COPIES`` in ``scripts/readme_facts.py``, including
-the function-signature default, which is read with :mod:`ast` there because that
-tree is not importable from the checker.
+The VENDORED classifier under ``ml/demo/space/`` carries ONE copy of the gate,
+in its ``classifier/hybrid.py``, pinned by ``DEMO_SPACE_AUTO_FILE_GATE_COPIES``
+in ``scripts/readme_facts.py``. It carried three until #295: the other two lived
+in ``api/classification.py``, a vendored copy of a desktop router ``backend/``
+had not contained since #298, and they went with the file. Two fewer copies to
+keep in step, not two fewer checks — a copy that does not exist cannot drift.
 """
 
 from __future__ import annotations

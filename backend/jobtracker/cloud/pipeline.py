@@ -611,6 +611,38 @@ _EMPLOYER_ON_BEHALF = re.compile(
 )
 _EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
 
+# "<Role> @ <Company>" — the at-sign an ATS puts between the job title and the
+# employer, at the very END of the subject, which is where the employer sits in
+# that grammar. Issue #325 is entirely about this pattern being tried FIRST,
+# ahead of :data:`_EMPLOYER_ANCHORED`. Both fire on the real subject
+#
+#     "Important information about your application to
+#      Systems Research Engineer, GPU Programming @ Together AI"
+#
+# and they cannot both be right: here "to" introduces the ROLE and the at-sign
+# introduces the employer. One has to outrank the other, and the at-sign is the
+# better claim — "<title> @ <company>" is a fixed convention with one meaning,
+# while "application to X" is a preposition whose object is a company only when
+# the subject happens not to name a role first. Anchored to the end so an
+# at-sign anywhere else in a line cannot invent a company, and a trailing "!"
+# or "." is tolerated because subjects carry them.
+#
+# Read only for mail from an ATS relay, and that restriction is load-bearing
+# rather than cautious: "<title> @ <company>" is a convention of ATS subject
+# lines, and off a relay the same shape is a time or a place. "Interview @ Noon"
+# and "Coffee @ Home" both satisfy this pattern and neither names an employer —
+# a person's mail is where they occur, and a person's mail is exactly what the
+# relay test excludes. Steps 3 and 4 of :func:`resolve_employer` are fenced off
+# the same way, for the same reason.
+_EMPLOYER_AT_SIGN = re.compile(r"@\s*(" + _COMPANY_CAPTURE + r")\s*[!?.]*\s*$")
+
+# ...but an at-sign is also what an EMAIL ADDRESS is made of, so a capture whose
+# dot is followed by more letters is a hostname ("… @ Careers.Acme.com") and is
+# refused. The "@" branch of :func:`_employer_from_sender_name` refuses a
+# hostname for the same reason, though with the blunter "any dot at all" — this
+# one leaves a TRAILING dot alone, because "Acme Inc." is a company, not a host.
+_CAPTURE_IS_HOSTNAME = re.compile(r"\.[A-Za-z]")
+
 # The employer named by the LEADING segment of an ATS subject, before a "|" or a
 # spaced dash: "Crusoe | Application Received", "Acme — Interview scheduled".
 # Anchored to the start so a separator later in the line cannot invent a company,
@@ -1160,20 +1192,56 @@ def _clean_company_display(raw: str) -> str:
     return text
 
 
-def _employer_from_subject(subject: str) -> str | None:
+def _employer_from_subject(subject: str, ats_relay: bool = False) -> str | None:
     """Return the employer explicitly named in a subject, or None.
 
-    Only trusts language that unambiguously names an employer (application/
+    Only trusts language that unambiguously names an employer: application/
     interview/offer "... at/with/to <Company>", "on behalf of <Company>", or a
-    trailing "at <Company>"). The capture is cleaned and validated so a
-    fragment like "The" or "Software" can never survive.
+    bare "at <Company>" — plus, for ATS mail only, a trailing "@ <Company>".
+    The capture is cleaned and validated so a fragment like "The" or "Software"
+    can never survive.
+
+    ORDER IS THE MEANING, not a performance detail — see :data:`_EMPLOYER_AT_SIGN`.
+    A subject that names both a role and a company ("... application **to**
+    <Role> @ <Company>") satisfies two patterns at once, and whichever runs
+    first decides whether the row files under the employer or under a job title.
+    Until #325 the anchored pattern ran first and "your application to Systems
+    Research Engineer, GPU Programming @ Together AI" filed as "Research
+    Engineer" — "Systems" being eaten by :data:`_CORP_TAIL` on the way out.
+
+    Two rules this leaves wrong, stated rather than papered over:
+
+    - A subject naming a role with NO at-sign still yields the role. "Your
+      application to Systems Research Engineer" alone returns "Research
+      Engineer", because nothing in that line distinguishes it from "Your
+      application to Stripe". Deciding it would need a role-vocabulary test, and
+      the only place to put one is :func:`_valid_company_token` — which is also
+      what the USER-typed company path goes through, so a company whose name
+      reads like a title would stop being enterable by hand.
+    - The at-sign path does not check whether it just named the RELAY. "Your
+      application to Acme @ Greenhouse" resolves to Greenhouse, not Acme.
+      Adding :func:`_names_the_relay` here would cost more than it saves: the
+      live corpus holds a real Handshake application, and Handshake is in
+      ``RELAY_DOMAINS``, so the check would refuse a genuine employer to guard
+      against a subject shape nothing has yet sent.
     """
 
-    for pattern in (_EMPLOYER_ANCHORED, _EMPLOYER_ON_BEHALF, _EMPLOYER_BARE_AT):
+    patterns = (_EMPLOYER_ANCHORED, _EMPLOYER_ON_BEHALF, _EMPLOYER_BARE_AT)
+    if ats_relay:
+        patterns = (_EMPLOYER_AT_SIGN, *patterns)
+
+    for pattern in patterns:
         match = pattern.search(subject or "")
         if not match:
             continue
-        display = _clean_company_display(match.group(1))
+        raw = match.group(1)
+        if pattern is _EMPLOYER_AT_SIGN and _CAPTURE_IS_HOSTNAME.search(raw):
+            # An address, not a company. Fall through to the other patterns
+            # rather than returning None, so this branch can only ever ADD a
+            # resolution — never take one away from the subjects that already
+            # resolve without it.
+            continue
+        display = _clean_company_display(raw)
         token = _normalize_token(display.split(" ")[0]) if display else ""
         if _valid_company_token(token):
             return display
@@ -1476,7 +1544,8 @@ def resolve_employer(
          but NOT a shared ATS/job-board relay, consumer webmail, generic ESP,
          or a ``.edu`` host (a student's university is not an employer here).
       2. An employer named explicitly in the subject ("... at <Company>",
-         "on behalf of <Company>"). This is the relay case (Lever/Greenhouse).
+         "on behalf of <Company>", and — for ATS relays only — a trailing
+         "@ <Company>"). This is the relay case (Lever/Greenhouse).
       3. (ATS relays only) the sender DISPLAY NAME — "Crusoe Hiring Team" →
          Crusoe, "Team Talent @ MotherDuck" → MotherDuck.
       4. (ATS relays only) the subject's leading segment before a ``|`` or a
@@ -1509,7 +1578,7 @@ def resolve_employer(
     if corporate:
         return _corporate_identity(brand, subject, sender_name)
 
-    from_subject = _employer_from_subject(subject)
+    from_subject = _employer_from_subject(subject, ats_relay=brand in ATS_RELAY_DOMAINS)
     if from_subject:
         token = _normalize_token(from_subject.split(" ")[0])
         if _valid_company_token(token):

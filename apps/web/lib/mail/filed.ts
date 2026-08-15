@@ -25,6 +25,16 @@ export interface FiledMessage {
   confidence: number | null;
   method: string | null;
   user_corrected: boolean;
+  /**
+   * WHICH act the human performed: `"confirmed"`, `"overridden"`,
+   * `"unattributed"`, or `"unknown"` for a decision recorded before the
+   * backend could tell the two apart. `null` means no human decision at all.
+   *
+   * `user_corrected` alone cannot answer this — it is set whichever the human
+   * chose — so a row rendered as "corrected by you" off that flag tells every
+   * reader who AGREED with the classifier that they overruled it.
+   */
+  review_disposition: string | null;
   is_reviewed: boolean;
   application_id: number | null;
   company: string | null;
@@ -88,6 +98,7 @@ export function readFiledMailPage(body: unknown): FiledMailPage | null {
       confidence: num(m.confidence),
       method: str(m.method),
       user_corrected: m.user_corrected === true,
+      review_disposition: str(m.review_disposition),
       is_reviewed: m.is_reviewed === true,
       application_id: num(m.application_id),
       company: str(m.company),

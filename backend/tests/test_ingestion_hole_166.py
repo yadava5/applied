@@ -28,20 +28,35 @@ between the two runs. And the ``unreadable``-then-advance hole that hypotheses
 
 What the classifier actually sees
 ---------------------------------
-A cloud scan fetches ``format="metadata"``: Subject/From/Date plus Gmail's own
-``snippet``, which is ~200 characters. An ATS rejection spends that budget on a
-polite preamble, so whether the decision sentence is visible at all is decided
-by how long the preamble happens to be. Both rejection snippets production
-actually stored stop short of it — see ``VERKADA_SNIPPET`` and
+A cloud scan USED to fetch ``format="metadata"``: Subject/From/Date plus
+Gmail's own ``snippet``, which is ~200 characters. An ATS rejection spends that
+budget on a polite preamble, so whether the decision sentence was visible at all
+was decided by how long the preamble happened to be. Both rejection snippets
+production actually stored stop short of it — see ``VERKADA_SNIPPET`` and
 ``SUPERNOVA_SNIPPET`` below, 196 and 201 characters, both ending mid-preamble.
+
+That is why the fetch is now ``format="full"``: the body is read to classify
+and discarded, never stored (``test_body_is_never_persisted.py``). The snippets
+below are kept as fixtures ON PURPOSE — they are what the classifier sees when
+a message yields no body text, so the behaviour they pin is still reachable and
+still worth pinning.
 
 So the classifier reads the preamble and scores it as a *confirmation*. That is
 survivable, barely: ``applied`` at 0.70 is under ``AUTO_FILE_GATE`` and at
 exactly ``REVIEW_FLOOR``, so the message reaches the review queue and a human
-can correct it. Every one of the three ``REJECTION`` rows on the real board got
-there that way — all three carry ``user_corrected = true``, and rows 112/113
-still carry ``suggested_category = 'APPLIED'``. **Applied has never once
-auto-detected a rejection.**
+can correct it. All three ``REJECTION`` rows on the real board carry
+``user_corrected = true``, and rows 112/113 still carry
+``suggested_category = 'APPLIED'``.
+
+This paragraph used to end "**Applied has never once auto-detected a
+rejection.**" That inference does not follow from the flag it was read off, and
+#311 is why: ``user_corrected`` was written ``True`` whether the human AGREED
+with the machine or overruled it, so a flagged row says only that somebody
+looked. The Palantir row (114) is flagged and is an agreement — the classifier
+returned ``rejection`` at 0.75, the right category, held under the gate. Rows
+112/113 keep their ``suggested_category = 'APPLIED'`` and remain real
+misreads; that half stands. What the flag could never support is the "never
+once" clause, and it has been removed rather than softened.
 
 Together AI fell through because of its SUBJECT
 -----------------------------------------------
@@ -319,23 +334,73 @@ def test_the_subject_is_the_whole_difference() -> None:
     assert not _qualifies_only_by_the_ats_floor(kept_item)
 
 
-def test_even_the_visible_decision_sentence_cannot_reach_the_board() -> None:
-    """Best case — the sentence #166 quotes IS in the snippet — is still 0.70.
+def test_the_visible_decision_sentence_now_reaches_the_board() -> None:
+    """Best case — the sentence #166 quotes IS in the snippet — and it FILES.
 
-    One strong body match scores 3, and the confidence ladder needs 6 for 0.90.
-    So a rejection whose body states the decision once, unambiguously, can only
-    ever reach the review queue. Ayush's board cannot be corrected by ingestion
-    alone, however well the fetch works.
+    This test used to be characterisation of a defect, named
+    ``..._cannot_reach_the_board`` and asserting 0.70: one strong body match is
+    +3, the ladder needs +6 for the 0.90 rung, so a rejection stating its
+    decision once could only ever reach the review queue. "Ayush's board cannot
+    be corrected by ingestion alone, however well the fetch works" is what it
+    said, and it was true.
+
+    #316 removed the cause. "we decided to move forward with other candidates"
+    now matches a general pattern AND its noun-anchored twin, which is +6 from
+    the body alone — 0.90 on the ladder, before any ATS bonus. So the real
+    Together AI message this file is about files a ``rejected`` row instead of
+    queueing for a human, which is the whole point of the change.
+
+    The assertion is INVERTED rather than deleted, and deliberately so: this is
+    the message #166 is named for, and if a later change puts it back under the
+    gate that is a regression worth a red test rather than a silent return to
+    the old behaviour.
+
+    AND IT NOW FILES UNDER THE RIGHT COMPANY — #325, which is what the last
+    assertion is really for. Until then this line read ``Research Engineer``
+    and was pinned as characterisation of a defect: ``_EMPLOYER_ANCHORED`` read
+    "…your application **to** Systems Research Engineer, GPU Programming @
+    Together AI" as naming an employer, and ``_CORP_TAIL`` ate "Systems" on the
+    way out, leaving a job title where the company belongs.
+
+    The fix is an ORDERING one. ``pipeline._EMPLOYER_AT_SIGN`` matches the
+    trailing "@ <Company>" and is tried BEFORE the anchored pattern, for ATS
+    mail only. Two patterns both fire on this subject and they disagree; the
+    at-sign wins because "<title> @ <company>" means one thing, while
+    "application to X" names a company only when the subject did not already
+    name a role. Measured over all 52 stored production emails first: not one
+    of them contains an at-sign, so no filed row moved and nothing merged or
+    split. This message was never among them — it is the one #166 is named for
+    precisely because it never reached the board.
+
+    What #316 changed is only that the defect was REACHABLE for this message at
+    all. Below the gate it never got as far as naming an employer.
+    ``_qualifies_for_hard_row`` guards the "unnameable employer" case —
+    ``resolve_employer`` returns None and no row is created — so this was a
+    wrong name rather than a missing guard, and the guard was working.
+
+    The assertion is kept, not deleted, and is now a REGRESSION test in both
+    directions: the message must still file (that is #316) and it must file
+    against Together AI (that is #325). Either one going back costs a red here.
     """
     result, item = _item(
         TOGETHER_SUBJECT, TOGETHER_SNIPPET_WITH_DECISION, GREENHOUSE, "best-case"
     )
 
     assert result.category is EmailCategory.REJECTION, result.scores
-    assert result.confidence < pipeline.AUTO_FILE_GATE, result.scores
-    assert pipeline._qualifies_for_hard_row(item) is None
-    assert pipeline.collect_review_items([item]), "review queue at best"
-    assert not pipeline.roll_up_applications([item]), "never the board"
+    assert result.confidence >= pipeline.AUTO_FILE_GATE, result.scores
+    # And it is the LADDER that clears the gate, not the +0.05 ATS bonus riding
+    # on top of a 0.80 — see the next test, whose invariant this must not break.
+    assert (
+        CLASSIFIER.classify(
+            TOGETHER_SUBJECT, TOGETHER_SNIPPET_WITH_DECISION, None
+        ).confidence
+        >= pipeline.AUTO_FILE_GATE
+    )
+    assert pipeline._qualifies_for_hard_row(item) is not None
+    # The employer, not the job title it is advertised under (#325).
+    assert [
+        (r.company_display, r.status) for r in pipeline.roll_up_applications([item])
+    ] == [("Together AI", "rejected")]
 
 
 @pytest.mark.parametrize("sender", [GREENHOUSE, RIPPLING], ids=["greenhouse", "rippling"])
@@ -364,13 +429,35 @@ def test_the_ats_bonus_moves_no_message_across_the_auto_file_gate() -> None:
 
     Production says no stored Greenhouse/Rippling message sits on that rung —
     they are at 0.70 (1 + 1), 0.90 (11 + 1) and 0.95 (3) — so nothing on the
-    real board changes filing behaviour. This pins the shapes that matter here:
-    the three real messages this file models all stay under the gate.
+    real board changes filing behaviour.
+
+    Stated as the LADDER value, not the delivered one, since #316. Together AI's
+    decision snippet now scores 0.90 on the ladder and 0.95 delivered, so
+    asserting "delivered is 0.75" would have made this test red for a reason
+    that has nothing to do with what it is about. What it is about is the rung
+    the bonus is added TO: no message here sits on 0.80, so +0.05 never carries
+    anything over 0.85 that was not already there. That is the invariant, and it
+    now holds for a message on either side of the gate.
     """
     for subject, snippet, sender in (
         (VERKADA_SUBJECT, VERKADA_SNIPPET, GREENHOUSE),
         (SUPERNOVA_SUBJECT, SUPERNOVA_SNIPPET, RIPPLING),
         (TOGETHER_SUBJECT, TOGETHER_SNIPPET_WITH_DECISION, GREENHOUSE),
+    ):
+        ladder = CLASSIFIER.classify(subject, snippet, None)
+        delivered = CLASSIFIER.classify(subject, snippet, sender)
+        # The dangerous rung, and nothing is on it.
+        assert ladder.confidence != pytest.approx(0.80), (subject, ladder.scores)
+        # So the bonus never decides the gate: both readings agree about it.
+        assert (ladder.confidence >= pipeline.AUTO_FILE_GATE) == (
+            delivered.confidence >= pipeline.AUTO_FILE_GATE
+        ), (subject, ladder.confidence, delivered.confidence)
+
+    # And the two messages that DO stay under the gate still do, at the value
+    # this file was written about.
+    for subject, snippet, sender in (
+        (VERKADA_SUBJECT, VERKADA_SNIPPET, GREENHOUSE),
+        (SUPERNOVA_SUBJECT, SUPERNOVA_SNIPPET, RIPPLING),
     ):
         result = CLASSIFIER.classify(subject, snippet, sender)
         assert result.confidence == pytest.approx(0.75), (subject, result.scores)
