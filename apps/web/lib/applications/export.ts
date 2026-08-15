@@ -141,10 +141,17 @@ export async function buildExportPages(
 /**
  * Every stored message, paged by the same loop and its same three refusals.
  *
- * `GET /applications/mail` is metadata only by construction — the cloud sync
- * never fetches a body and `MailMessageResponse` has no field for one — so
- * this adds the parsed mail the product is about without putting message
- * content into a file in the user's Downloads folder.
+ * `GET /applications/mail` is metadata only by construction — `MailMessageResponse`
+ * has no field for a body, and none is stored for it to carry — so this adds
+ * the parsed mail the product is about without putting message content into a
+ * file in the user's Downloads folder.
+ *
+ * The reason changed even though the guarantee did not. The sync now DOES
+ * fetch bodies, to classify on; it discards them rather than storing them
+ * (`backend/jobtracker/cloud/gmail_client.py`, and
+ * `backend/tests/test_body_is_never_persisted.py` which fails if one is kept).
+ * So an export still cannot leak a body — but because nothing retains one,
+ * not because nothing reads one.
  */
 export async function collectMail(
   fetchPage: (page: number, pageSize: number) => Promise<MailPageResult>,

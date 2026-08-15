@@ -28,12 +28,18 @@ between the two runs. And the ``unreadable``-then-advance hole that hypotheses
 
 What the classifier actually sees
 ---------------------------------
-A cloud scan fetches ``format="metadata"``: Subject/From/Date plus Gmail's own
-``snippet``, which is ~200 characters. An ATS rejection spends that budget on a
-polite preamble, so whether the decision sentence is visible at all is decided
-by how long the preamble happens to be. Both rejection snippets production
-actually stored stop short of it — see ``VERKADA_SNIPPET`` and
+A cloud scan USED to fetch ``format="metadata"``: Subject/From/Date plus
+Gmail's own ``snippet``, which is ~200 characters. An ATS rejection spends that
+budget on a polite preamble, so whether the decision sentence was visible at all
+was decided by how long the preamble happened to be. Both rejection snippets
+production actually stored stop short of it — see ``VERKADA_SNIPPET`` and
 ``SUPERNOVA_SNIPPET`` below, 196 and 201 characters, both ending mid-preamble.
+
+That is why the fetch is now ``format="full"``: the body is read to classify
+and discarded, never stored (``test_body_is_never_persisted.py``). The snippets
+below are kept as fixtures ON PURPOSE — they are what the classifier sees when
+a message yields no body text, so the behaviour they pin is still reachable and
+still worth pinning.
 
 So the classifier reads the preamble and scores it as a *confirmation*. That is
 survivable, barely: ``applied`` at 0.70 is under ``AUTO_FILE_GATE`` and at
