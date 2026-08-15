@@ -76,7 +76,9 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    * The signal is `transport.detail(id)`, which ApplicationDetail calls for
    * every card it loads — a prop this component already owns. Which of the
    * two hands that call belongs to is decided by CAUSE, not by identity (see
-   * `detail` below). Nothing here reads the board's DOM, and nothing under
+   * `detail` below). Clicking the row the PAGE opened is one of these opens
+   * like any other — `detail` says how a re-open of that one row is made
+   * visible at all. Nothing here reads the board's DOM, and nothing under
    * components/dashboard changes.
    */
   onVisitorOpen?: () => void;
@@ -184,6 +186,33 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
         gestureAtRef.current = Number.NEGATIVE_INFINITY; // one open per gesture
         if (!byGesture && pendingSeedRef.current === id) {
           pendingSeedRef.current = undefined;
+          // The page's open is the last hand to hold this row's OBJECT, and
+          // that is what made re-opening it invisible: the board keeps the very
+          // object it was handed (`setDetailApp(app)`), the row hands back the
+          // same one on a click, and `useState` bails on an identical
+          // reference — no commit, no pane load, no `detail` call, so the one
+          // gesture that most obviously deserves the frame back was the one
+          // gesture nothing could see. Escape was again the only way out of a
+          // pane whose × the crop holds ~97px above the stage at beat 2.
+          //
+          // So the row gets a fresh object, values copied, handed over AFTER
+          // the board has captured the old one. Nothing else changes: the copy
+          // renders identically, the board's height is untouched (so beat 2
+          // still holds the foot at −217px), and the next open is a real state
+          // change that loads the card and arrives back here inside the
+          // visitor's gesture window — classified theirs by the same rule as
+          // every other open, with no new signal invented for it.
+          //
+          // The pane keeps rendering from the pre-copy snapshot until then.
+          // That is the product's own behaviour, not something this introduces:
+          // `detailApp` is only ever written on open and close, so it never
+          // re-syncs with the row list here or in the app. The copy carries the
+          // same values, so there is nothing to be stale about.
+          //
+          // Once per seeded open, and only for the seeded row: a visitor's
+          // repeat click on a card they opened themselves is correctly a no-op
+          // (the card is already on screen) and the camera has already let go.
+          commit((rows) => rows.map((row) => (row.id === id ? { ...row } : row)));
         } else {
           visitorOpenRef.current?.();
         }

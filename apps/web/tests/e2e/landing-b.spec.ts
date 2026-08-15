@@ -84,6 +84,13 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * `stage.contains(control)`, the stage-really-crops-the-board guard, the
  * `below` edge and the two horizontal ones.
  *
+ * ONE TEST HERE HAS NOT BEEN THROUGH ANY OF THAT, and the header would be
+ * lying if it did not say so: the re-open pair (SEED 4, added 2026-08-15) was
+ * written in a session that could not run Playwright at all. No run of it has
+ * been watched go red, or green. Its docblock names the mutation to run first
+ * and what the other tests should do under it; until that run exists a green
+ * from it proves nothing.
+ *
  * A THIRD ASSERTION THAT COULD NOT HOLD, caught the same way. That test first
  * gated on the act still being at beat 1 after the click, and it went red on
  * the UNMUTATED build: a visitor open moves focus into the pane
@@ -311,6 +318,38 @@ const movedRow = (page: Page) =>
 const visitorRow = (page: Page) =>
   page.locator(".board-row").filter({ hasText: "Atlas Freight" });
 
+/**
+ * The docked pane's × measured against the box that actually CROPS the board.
+ *
+ * A control panned out of an `overflow-clip` ancestor still reports real
+ * coordinates and still passes every visibility check Playwright has, so the
+ * only honest reading is containment in the clip's own rect. The clipping
+ * ancestor is walked up from the BOARD, not from the ×: the pane is itself
+ * `overflow-hidden`, so a walk from the button would stop at the pane and
+ * "inside the clip" would be trivially true.
+ *
+ * Shared by the two tests that ask the same question of two different
+ * gestures — a first open and a re-open — so both read one box one way.
+ */
+async function closeControlFrame(page: Page) {
+  return page.evaluate((sel) => {
+    const control = document.querySelector<HTMLElement>(sel);
+    const board = document.querySelector<HTMLElement>("[data-testid='pipeline-board']");
+    if (!control || !board) return { error: "no close control on the docked pane" } as const;
+    let stage: HTMLElement | null = board.parentElement;
+    while (stage && !/clip|hidden|auto|scroll/.test(getComputedStyle(stage).overflowY)) {
+      stage = stage.parentElement;
+    }
+    if (!stage) return { error: "the board has no clipping ancestor" } as const;
+    return {
+      control: control.getBoundingClientRect().toJSON(),
+      stage: stage.getBoundingClientRect().toJSON(),
+      stageHoldsControl: stage.contains(control),
+      boardHeight: board.getBoundingClientRect().height,
+    };
+  }, CLOSE_CONTROL);
+}
+
 test.describe("landing B (/landing-b)", () => {
   test.skip(
     !PROD_BUILD,
@@ -506,25 +545,7 @@ test.describe("landing B (/landing-b)", () => {
       // The release is a 700ms eased pan. Measure after it stops.
       await settledTop(page, CLOSE_CONTROL);
 
-      const frame = await page.evaluate((sel) => {
-        const control = document.querySelector<HTMLElement>(sel);
-        const board = document.querySelector<HTMLElement>("[data-testid='pipeline-board']");
-        if (!control || !board) return { error: "no close control on the docked pane" } as const;
-        // Walk up from the BOARD, not from the ×: the pane is itself
-        // `overflow-hidden`, so a walk from the button would stop at the pane
-        // and "inside the clip" would be trivially true.
-        let stage: HTMLElement | null = board.parentElement;
-        while (stage && !/clip|hidden|auto|scroll/.test(getComputedStyle(stage).overflowY)) {
-          stage = stage.parentElement;
-        }
-        if (!stage) return { error: "the board has no clipping ancestor" } as const;
-        return {
-          control: control.getBoundingClientRect().toJSON(),
-          stage: stage.getBoundingClientRect().toJSON(),
-          stageHoldsControl: stage.contains(control),
-          boardHeight: board.getBoundingClientRect().height,
-        };
-      }, CLOSE_CONTROL);
+      const frame = await closeControlFrame(page);
 
       expect("error" in frame ? frame.error : "", "the scene did not compose").toBe("");
       if ("error" in frame) return;
@@ -542,6 +563,103 @@ test.describe("landing B (/landing-b)", () => {
       expect(
         above,
         `the pane's close control is ${-above}px ABOVE the framed window at ${size} — the camera never handed the frame back, so a visitor who opened this card can only close it with Escape`,
+      ).toBeGreaterThanOrEqual(-1);
+      expect(
+        below,
+        `the pane's close control is ${-below}px below the framed window at ${size}`,
+      ).toBeGreaterThanOrEqual(-1);
+      expect(frame.control.left).toBeGreaterThanOrEqual(frame.stage.left - 1);
+      expect(frame.control.right).toBeLessThanOrEqual(frame.stage.right + 1);
+    });
+  }
+
+  /**
+   * SEED 4, and the last hole in SEED 3's promise: the row the PAGE opened.
+   *
+   * SEED 3 covers every card a visitor opens that the page did not — a real
+   * change of card, so the pane loads, `transport.detail` fires, and the camera
+   * lets go. Clicking the row that is ALREADY open used to do nothing at all:
+   * `PipelineBoard` keeps the row OBJECT it was handed, the row hands the same
+   * one back, `useState` bails on the identical reference, and with no commit
+   * there is no load and no call for `MarketingBoard` to read. The frame stayed
+   * at the board's foot with the pane's × cropped above it (`LandingBoard`
+   * measured ~97px at beat 2), and Escape — which nothing announces — was again
+   * the only way out. It is the most likely click in the scene: the pane is
+   * open on that row, and the row is the thing the caption points at.
+   *
+   * The fix is in `MarketingBoard`: once the page's own open has been consumed,
+   * the seeded row is handed a fresh object carrying the same values, so the
+   * visitor's re-open is a real state change and reaches the release through
+   * the product's existing path. This test asserts the PROPERTY that fix exists
+   * for — the × inside the stage's clip — and never mentions the mechanism.
+   *
+   * IT MEASURES A RELEASE, not a frame that was already right: the pre-click
+   * read asserts the × is cropped while the page is still driving, so a page
+   * that never moved fails here instead of passing everything below.
+   *
+   * This one should be steadier than SEED 3, and the reason is a falsifiable
+   * prediction rather than a hope: the pane is already open, so there is no
+   * `dockedOpen` transition, so `ApplicationDetail` performs no `focus()` and
+   * nothing scrolls the viewport — the act should still be at beat 2 when the
+   * camera releases. It is left unasserted (SEED 3's docblock records what
+   * gating on the beat cost there); a run that finds the act elsewhere means
+   * the model behind this test is wrong and is worth reporting.
+   *
+   * NOT MUTATION-VERIFIED AT INTRODUCTION — the author could not run Playwright
+   * in that session, and no run of this test has been watched go red. The
+   * mutation to run first, before trusting a green: delete the identity-refresh
+   * `commit(...)` from the seed-consuming branch of `MarketingBoard`'s
+   * `transport.detail`. The click then bails on the identical reference exactly
+   * as before, and this test should go red on the `above` reading at both
+   * heights while SEED 3 stays GREEN — it clicks a different row, which is a
+   * real reference change. A red on both would mean this is measuring the
+   * camera in general rather than this specific hole.
+   *
+   * It does NOT retarget `visitorRow` — read that locator's docblock. This is a
+   * different gesture at a different beat, not the retarget it describes.
+   */
+  for (const viewport of [DESKTOP_1024_768, DESKTOP_1024]) {
+    const size = `${viewport.width}x${viewport.height}`;
+    test(`re-opening the page's own pane returns the frame at ${size}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/landing-b");
+
+      await driveToBeatTwo(page);
+      await expect(page.getByRole("button", { name: "Close detail" })).toHaveCount(1);
+
+      // Beat 2's own pan is a 700ms ease; read the premise after it stops.
+      await settledTop(page, CLOSE_CONTROL);
+      const before = await closeControlFrame(page);
+      expect("error" in before ? before.error : "", "the scene did not compose").toBe("");
+      if ("error" in before) return;
+      expect(
+        before.control.top - before.stage.top,
+        `the pane's × is already inside the framed window at ${size} before the visitor has touched anything — beat 2 is no longer cropping the pane it opened, so there is nothing here to release and this test can no longer fail`,
+      ).toBeLessThan(0);
+
+      // The gesture: the row that is already open, clicked by its own identity
+      // button — the same control SEED 3 uses, pointed at the one card whose
+      // re-open the board cannot tell from no gesture at all.
+      await page.getByRole("button", { name: /^Open Larkspur Systems/ }).click();
+      await expect(page.getByTestId("application-detail")).toBeVisible();
+      await expect(movedRow(page)).toHaveAttribute("data-detail-open", "true");
+
+      await settledTop(page, CLOSE_CONTROL);
+      const frame = await closeControlFrame(page);
+      expect("error" in frame ? frame.error : "", "the pane left with the gesture").toBe("");
+      if ("error" in frame) return;
+
+      expect(frame.stageHoldsControl, "the pane is not inside the board's stage").toBe(true);
+      expect(
+        frame.stage.height,
+        `the stage is ${frame.stage.height}px for a ${frame.boardHeight}px board — it is not cropping anything, so this test is measuring the wrong box`,
+      ).toBeLessThan(frame.boardHeight);
+
+      const above = frame.control.top - frame.stage.top;
+      const below = frame.stage.bottom - frame.control.bottom;
+      expect(
+        above,
+        `the pane's close control is ${-above}px ABOVE the framed window at ${size} after the visitor clicked the open row — clicking the card the page opened is the one open the camera never sees, so it can only be closed with Escape`,
       ).toBeGreaterThanOrEqual(-1);
       expect(
         below,
