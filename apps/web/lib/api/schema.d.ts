@@ -371,6 +371,15 @@ export interface paths {
          *     Powers the detail view: subject / sender / date / snippet per message and a
          *     Gmail deep link to open the real conversation. Scoped to the owner (404 for
          *     anyone else's row).
+         *
+         *     The mail read is CAPPED (``_APPLICATION_MAIL_CAP``). It was unbounded, and
+         *     an unbounded read is a latent outage rather than a slow page — one
+         *     application's mail is small today and nothing in the product bounds it. When
+         *     the cap binds, ``split_candidates`` comes back EMPTY rather than computed:
+         *     the read is newest-first and the split is decided by the OLDEST message in
+         *     each cluster, so a proposal built from a truncated set would name the wrong
+         *     row to retain. Refusing to guess is the same discipline ``NEEDS_REVIEW``
+         *     encodes for a classifier verdict; the messages themselves are still shown.
          */
         get: operations["application_detail_cloud_applications__application_id__get"];
         put?: never;
