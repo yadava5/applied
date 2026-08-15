@@ -51,6 +51,75 @@ const securityHeaders = [
   },
 ];
 
+/**
+ * No-store directives for every route handler under `/api` (#315).
+ *
+ * These three are not a house style — they are exactly what `@supabase/ssr`
+ * hands to `setAll` as its second argument (`applyServerStorage` in
+ * `@supabase/ssr/dist/main/cookies.js`), the headers the library wants on any
+ * response that carries the cookies it wrote. `lib/supabase/middleware.ts`
+ * already applies them to the proxy's response. `tests/unit/api-no-store-
+ * headers.test.mjs` asks the INSTALLED library for them at runtime and fails if
+ * these values ever stop matching, so a version bump is compared rather than
+ * silently diverged from. Do not hand-edit them to something that looks
+ * equivalent.
+ *
+ * WHY THE WHOLE `/api` SURFACE AND NOT ONE HANDLER. #315 was filed against
+ * `app/api/account/delete/route.ts`, which returns JSON while `getUser()` may
+ * have rotated the session, and which declared no `Cache-Control` — so Vercel's
+ * edge supplied one, and it says `public`:
+ *
+ *     $ curl -D - "https://getapplied.vercel.app/login"
+ *     cache-control: public, max-age=0, must-revalidate
+ *
+ * `public` is an explicit shared-cache storage licence. It is the platform's
+ * default rather than anyone's decision, which is the kind that changes under
+ * you, and #234 measured a real `s-maxage=31536000` out of this same
+ * deployment.
+ *
+ * It is not one handler, and the reason was measured rather than assumed. Only
+ * three route handlers import `lib/supabase/server` directly, but every handler
+ * under `app/api/` reaches `createClient()` transitively through
+ * `lib/api/server.ts` -> `getAccessToken()` -> `getCurrentSession()` ->
+ * `auth.getSession()`. Driving the INSTALLED `@supabase/ssr` 0.12.4 with a
+ * cookie jar holding a session past its expiry, `getSession()` refreshed and
+ * called `setAll` once, with all three of these headers and a rewritten
+ * `sb-<ref>-auth-token`. The control — the same probe with a session an hour
+ * from expiry — fired `setAll` zero times and made no network call. So
+ * "getSession only reads the cookie" is false, and the set of handlers whose
+ * response can carry a library-written cookie is every one of them.
+ *
+ * WHY IT IS SAFE TO DECLARE THIS BLANKET. All seventeen handlers under
+ * `app/api/` are user-scoped proxies to the FastAPI backend or auth-adjacent
+ * actions. Not one of them wants to be cached, by a shared cache or a private
+ * one.
+ *
+ * A CONSTRAINT FOR WHOEVER ADDS A CACHING ROUTE LATER: on a production build
+ * this entry OVERRIDES a `Cache-Control` the handler sets itself — measured,
+ * with the handler returning one value and this config another; the config's
+ * won. A route under `/api` that genuinely wants caching has to change this
+ * source pattern, not set its own header and hope.
+ *
+ * The two PKCE callbacks (`/callback`, `/reset-password/callback`) also carry
+ * session cookies and are NOT under `/api`. They sit beside page routes, so
+ * covering them here would mean widening this pattern onto paths that serve
+ * HTML — and `/login` legitimately carries `s-maxage=31536000` as a prerender.
+ * They are PR #312's subject, which is open and unmerged as this lands. The
+ * enumeration in the test named above knows about both, says so, and fails if
+ * a route handler appears that is neither covered here nor one of them.
+ */
+const noStoreHeaders = [
+  { key: "Cache-Control", value: "private, no-cache, no-store, must-revalidate, max-age=0" },
+  { key: "Expires", value: "0" },
+  { key: "Pragma", value: "no-cache" },
+];
+
+/**
+ * The path pattern above. Named so the test can assert against the same string
+ * this config ships, rather than restating it and pinning nothing.
+ */
+export const API_NO_STORE_SOURCE = "/api/:path*";
+
 const nextConfig: NextConfig = {
   /**
    * The router cache. This is the fix for the reported symptom in issue #203:
@@ -125,7 +194,10 @@ const nextConfig: NextConfig = {
     staleTimes: { dynamic: 300, static: 300 },
   },
   async headers() {
-    return [{ source: "/(.*)", headers: securityHeaders }];
+    return [
+      { source: "/(.*)", headers: securityHeaders },
+      { source: API_NO_STORE_SOURCE, headers: noStoreHeaders },
+    ];
   },
   // The System Card is a self-contained Vite build committed under
   // public/system-card/ (see booklet/ · `npm run build:system-card`). Serve its
