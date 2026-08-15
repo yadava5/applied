@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { expireSpentPkceVerifierCookies } from "@/lib/supabase/pkceVerifierCookies";
 import { createClientWithSessionHeaders } from "@/lib/supabase/server";
 
 /**
@@ -32,6 +33,13 @@ import { createClientWithSessionHeaders } from "@/lib/supabase/server";
  * It is applied on the failure branches too: whether a given branch caused a
  * cookie write is not a question a future edit should have to get right, and
  * the call is a no-op when nothing was written.
+ *
+ * The same exits also expire the PKCE verifier cookies the exchange just spent
+ * (#321) — the flow slot and, on the failure branch, the fixed key that
+ * `@supabase/ssr` asks to remove but never flushes. See
+ * `lib/supabase/pkceVerifierCookies.ts` for what is and is not provably spent.
+ * Both are folded into one `finish` so an exit cannot acquire one and miss the
+ * other.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
@@ -60,13 +68,18 @@ export async function GET(request: NextRequest) {
 
   const { supabase, applySessionHeaders } =
     await createClientWithSessionHeaders();
+
+  /** Every exit from here on. One shape, so no branch can carry less. */
+  const finish = (response: NextResponse) =>
+    expireSpentPkceVerifierCookies(request, applySessionHeaders(response));
+
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     const failUrl = new URL("/login", origin);
     failUrl.searchParams.set("error", error.message);
-    return applySessionHeaders(NextResponse.redirect(failUrl));
+    return finish(NextResponse.redirect(failUrl));
   }
 
-  return applySessionHeaders(NextResponse.redirect(new URL(nextPath, origin)));
+  return finish(NextResponse.redirect(new URL(nextPath, origin)));
 }
