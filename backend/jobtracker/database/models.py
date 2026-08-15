@@ -205,6 +205,53 @@ class ClassificationMethod(str, Enum):
     FALLBACK = "fallback"
 
 
+class ReviewDisposition(str, Enum):
+    """WHICH act a human performed on a verdict — agreement or override.
+
+    ``user_corrected`` cannot express this and never could. It is written
+    ``True`` by ``POST /applications/review/{message_id}/classify`` whatever the
+    human chose, so a person who AGREES with the classifier and a person who
+    OVERRULES it produce byte-identical rows. Every "the classifier was wrong N
+    times" figure built on that flag is inflated by an unknown amount, and one
+    audit read the flag on production, concluded the classifier had never once
+    auto-detected a rejection, and reported it — while the message in question
+    had been scored ``rejection`` at 0.75, correctly, and merely held under the
+    0.85 gate for a human who then agreed with it.
+
+    The two acts are different evidence and are now stored as different things.
+
+    NULL is a state, and it is the normal one: no human decision is recorded for
+    this row at all. It is NOT a synonym for any value below.
+
+    ``UNKNOWN`` is the third state this enum exists to make honest. It means a
+    human decision IS on record and which act it was is not recoverable — the
+    row was written before this column existed. Revision ``b3e91c47da05``
+    backfills every pre-existing ``user_corrected = true`` row to it. Nothing
+    guesses: replaying today's classifier over those rows would reconstruct a
+    verdict the correction had already overwritten in place, which is inventing
+    the label in the other direction. A missing label is recoverable; a
+    fabricated one looks like data.
+
+    ``UNATTRIBUTED`` is a live case rather than a historical one, and is kept
+    separate from ``UNKNOWN`` on purpose — folding them together would make the
+    count of rows damaged by this defect unrecoverable the moment the backfill
+    ran. It means the row carried no machine verdict for the human's choice to
+    agree or disagree WITH: a live-scan message minted through
+    ``ScannedMessageIn`` with ``category=None`` has no ``classified_as`` and no
+    ``suggested_category``, so the human supplied the first verdict rather than
+    ruling on one.
+
+    This does NOT redefine ``user_corrected``, which keeps meaning "a human
+    settled this row" — see the field's own comment for why narrowing it would
+    silently move rows into the labeling queue and the needs-review count.
+    """
+
+    CONFIRMED = "confirmed"
+    OVERRIDDEN = "overridden"
+    UNATTRIBUTED = "unattributed"
+    UNKNOWN = "unknown"
+
+
 class EmailSource(str, Enum):
     """Source email account type."""
 
@@ -500,7 +547,34 @@ class Email(TimestampMixin, table=True):
     )
 
     # User interaction
+    #
+    # ``user_corrected`` reads "a human SETTLED this row", not "a human changed
+    # the verdict" — the name is older than the meaning and is deliberately not
+    # being narrowed. Four queries filter ``user_corrected.is_(False)`` as their
+    # definition of not-yet-human-settled
+    # (``scripts/weekly_labeling_workflow.py`` ×2,
+    # ``scripts/generate_ml_monitoring_report.py`` ×2), and none of them filters
+    # ``is_reviewed``. Redefining this flag to mean overrides-only would push
+    # every AGREEMENT back into the weekly labeling queue and into the
+    # needs-review count — a message whose label a human already settled,
+    # leading the queue. That is the same trap ``_settle_thread_siblings``
+    # documents for siblings.
+    #
+    # WHICH act it was lives in ``review_disposition`` below.
     user_corrected: bool = Field(default=False, description="Was classification corrected?")
+    # Agreement or override — the distinction ``user_corrected`` cannot express.
+    #
+    # NULL means no human decision is recorded for this row. Every non-null
+    # value means one is; see :class:`ReviewDisposition` for what each says and
+    # for why ``UNKNOWN`` exists rather than a backfilled guess.
+    #
+    # Unindexed on purpose, exactly like ``suggested_category``: it is read per
+    # row for display and aggregated by the monitoring scripts, and no query
+    # filters on it.
+    review_disposition: Optional[ReviewDisposition] = Field(
+        default=None,
+        description="Whether the human confirmed or overrode the machine's verdict",
+    )
     is_reviewed: bool = Field(default=False, description="Has user reviewed this email?")
 
     # Raw data
