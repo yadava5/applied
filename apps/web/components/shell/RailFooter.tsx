@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
 
 import { LastSynced } from "@/components/gmail/LastSynced";
 import type { RailGmailData } from "@/lib/shell/rail";
+import { useDemoMode } from "./demo-mode";
+import { demoHrefFor } from "./nav";
+import { DemoSignupCta } from "./SessionControls";
 
 /**
  * The sidebar's anchored footer: ONE identity block — who is signed in, and,
@@ -47,8 +52,45 @@ import type { RailGmailData } from "@/lib/shell/rail";
  * The re-sync icon button is still GONE — it was the fourth sync trigger, an
  * unlabelled icon that did something different from the identically-iconed
  * header button. The rail keeps what a rail is for: glanceable truth. Sync is
- * one click away (line → dashboard → `Sync`), and this component remains a
- * server component — no fetch, no state, just what it was handed.
+ * one click away (line → dashboard → `Sync`), and this component still holds
+ * no fetch and no state — just what it was handed, plus one context read.
+ * (It is a client component now, and honestly was before: `Sidebar`, its one
+ * importer, is `"use client"`, so this always compiled into the client graph.
+ * The directive arrived with `useDemoMode`, which merely made it true on the
+ * label too.)
+ *
+ * Fixture mode (`useDemoMode`, /demo and /demo/shell): the demo's conversion
+ * block (`DemoSignupCta`) lives HERE, in chrome the signed-in shell spends on
+ * identity, because the board is the pitch and must not be covered, shifted
+ * or shortened by an ad for itself — the rail is a fixed 240px column and the
+ * footer anchors to its bottom, so nothing about the BOARD's geometry moves.
+ * What CAN move is the rail's own middle run, and that is a hard budget, not
+ * a vibe — measured on the production build: the logo block is 67px, the
+ * nav + stage lens + search content is 469px, so a 693px window (the owner's
+ * real 1309×693, the exact height PR #122 died on) leaves 157px for this
+ * footer. The signed-in footer spends ~115. The first cut of this block
+ * ADDED 163px to that and silently scrolled the lens's `closed` row below
+ * the fold — the #122 failure mode with a new author. So the footer is
+ * tiered on viewport height, and the short tier REPLACES the identity
+ * theater instead of stacking under it:
+ *
+ *   - under 860px: `DemoSignupCta compact` alone (~144px total) — sentence,
+ *     button, beta line. The fixture identity and connection rows yield;
+ *     what they said ("this is a stand-in account") stays said by the board
+ *     row's one honesty badge, which is per-width since #212: the
+ *     `demo · fixture data` pill at `lg`+ (every width this tier serves on
+ *     desktop), the "simulated account · nothing is read" phrase below `lg`,
+ *     where the pill's trailing slot is gone. An earlier revision of this
+ *     note credited the phrase at ALL widths — wrong, it is `lg:hidden`
+ *     beside the pill; session-edge.spec asserts both halves.
+ *   - 860px and up: the full block — identity row, connection line, then the
+ *     pitch (~281px; an 860px window affords 324). Links resolve to the
+ *     public twins (`demoNavHrefs`), because /settings and /dashboard are
+ *     auth bounces for the anonymous visitor this shell serves.
+ *
+ * Both tiers are in the DOM (CSS `min-height` media picks one), so the SSR
+ * payload and every executing locator see one stable tree; specs that touch
+ * the CTA must scope to the visible tier.
  *
  * "Last synced" survived the collapse because it is the answer to the question
  * that drove the repeated manual re-syncs: *did this thing ever run?* Whether
@@ -90,10 +132,12 @@ const ROW =
   "group flex rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2 focus-accent";
 
 function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail: string | null }) {
+  // In fixture mode both destinations are auth bounces; resolve to the twins.
+  const demo = useDemoMode();
   if (!gmail.connected) {
     return (
       <Link
-        href="/settings"
+        href={demo ? demoHrefFor("/settings") : "/settings"}
         aria-label="Gmail is not connected — connect it in settings"
         className={`${ROW} items-start gap-2`}
       >
@@ -119,7 +163,7 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
 
   return (
     <Link
-      href="/dashboard"
+      href={demo ? demoHrefFor("/dashboard") : "/dashboard"}
       aria-label={
         otherMailbox
           ? `Gmail connected as ${otherMailbox} — open dashboard`
@@ -162,14 +206,15 @@ function ConnectionLine({ gmail, userEmail }: { gmail: RailGmailData; userEmail:
 }
 
 export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
+  const demo = useDemoMode();
   // The avatar initial follows whatever the row prints, so the two agree.
   const identity = userName ?? userEmail;
   const initial = identity?.charAt(0).toUpperCase() ?? "·";
 
-  return (
+  const identityBlock = (
     <div className="space-y-0.5">
       <Link
-        href="/settings"
+        href={demo ? demoHrefFor("/settings") : "/settings"}
         // Named, not just "Account": this link and the not-connected Gmail line
         // both point at /settings, and two adjacent links with near-identical
         // accessible names is how a screen reader loses the plot. The email
@@ -200,5 +245,29 @@ export function RailFooter({ gmail, userName = null, userEmail }: FooterProps) {
       </Link>
       {gmail ? <ConnectionLine gmail={gmail} userEmail={userEmail} /> : null}
     </div>
+  );
+
+  if (!demo) return identityBlock;
+
+  // The height-tiered demo footer — the budget arithmetic is in the header
+  // note. 860px: the full block needs 281px under a 536px fixed run, plus
+  // headroom for font metrics; below it, the compact tier's 144px fits the
+  // 693px floor with 13px to spare.
+  return (
+    <>
+      {/* Tall rails: the identity theater, then the invitation under its own
+          rule — where the stand-in identity ends, the ask begins. */}
+      <div className="hidden [@media(min-height:860px)]:block">
+        {identityBlock}
+        <div className="mt-2 border-t border-line-soft px-2 pb-1 pt-3">
+          <DemoSignupCta />
+        </div>
+      </div>
+      {/* Short rails: the invitation alone, inside the signed-in footer's own
+          height budget, so the stage lens above never loses a row to it. */}
+      <div className="px-2 pb-1 [@media(min-height:860px)]:hidden">
+        <DemoSignupCta compact />
+      </div>
+    </>
   );
 }

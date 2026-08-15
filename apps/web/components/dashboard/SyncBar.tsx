@@ -14,6 +14,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { selectClass } from "@/components/ui/formStyles";
 import { onRebuildRequest, requestRebuild } from "@/lib/dashboard/rebuild-bus";
 import { liveSyncTransport, type SyncTransport } from "@/lib/dashboard/transport";
+import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
 import {
   REBUILD_DEFAULT_DEPTH,
   REBUILD_DEFAULT_RANGE,
@@ -320,6 +321,16 @@ export function SyncBar({
     const elapsedMs = Date.now() - startedAt;
     writeRebuildMemory(syncMemoryKey, elapsedMs, end.scanned);
     setLastSync({ ms: elapsedMs, scanned: end.scanned, at: Date.now() });
+    // The rail's ambient field is a status surface (ambient-bus): a run that
+    // actually changed the board — filed, updated or removed rows — surges
+    // it, sized to the news, and this covers the staleness auto-sync too
+    // because that funnels through here. Hoisted above the interrupted
+    // branch: a scan that broke mid-flight still filed what it found. A
+    // "no new mail" pass publishes nothing — a field that stirred for
+    // nothing would train the eye to ignore it.
+    const outcome = readRebuildOutcome(res.body);
+    const changed = outcome.created + outcome.updated + outcome.removed.length;
+    if (changed > 0) publishAmbientPulse(changed);
     // Disconnected / unexpected mid-scan is not "press again" — it is
     // "something is wrong", and it gets the alert, not a resting note.
     if (stopKind(end.stoppedBy) === "broken") {
@@ -335,7 +346,6 @@ export function SyncBar({
     // owes — named rows, one click to restore each. It is rare (only a row
     // whose last email turned out to belong to another employer), and a
     // resting note like "2 filed" would not mention it at all.
-    const outcome = readRebuildOutcome(res.body);
     if (outcome.removed.length > 0) {
       setPhase({ kind: "receipt", op: "sync", outcome });
       router.refresh();
@@ -380,6 +390,10 @@ export function SyncBar({
       }
       const outcome = readRebuildOutcome(res.body);
       writeRebuildMemory(memoryKey, Date.now() - startedAt, outcome.scanned);
+      // Same news contract as runSync: the ambient field surges by what the
+      // rebuild actually changed, never for the run's own sake.
+      const changed = outcome.created + outcome.updated + outcome.removed.length;
+      if (changed > 0) publishAmbientPulse(changed);
       setPhase({ kind: "receipt", op: "rebuild", outcome });
       router.refresh();
     },
@@ -842,9 +856,10 @@ export function SyncBar({
                   // the default twin. So the phrase yields to the pill at
                   // `lg`+ and carries the signage alone below it, where the
                   // pill is gone; session-edge.spec asserts both halves, so
-                  // stripping either stays red. Surfaces without the pill
-                  // (/demo passes no `trailing`) keep the phrase at every
-                  // width.
+                  // stripping either stays red. A surface that passed no
+                  // `trailing` would keep the phrase at every width — none
+                  // ships today: /demo mounts the shell twin (pill in the
+                  // slot) since the consolidation.
                   <span
                     className={`order-last w-full text-xs text-dim sm:order-none sm:w-auto${
                       trailing ? " lg:hidden" : ""

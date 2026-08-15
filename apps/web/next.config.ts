@@ -51,6 +51,75 @@ const securityHeaders = [
   },
 ];
 
+/**
+ * No-store directives for every route handler under `/api` (#315).
+ *
+ * These three are not a house style — they are exactly what `@supabase/ssr`
+ * hands to `setAll` as its second argument (`applyServerStorage` in
+ * `@supabase/ssr/dist/main/cookies.js`), the headers the library wants on any
+ * response that carries the cookies it wrote. `lib/supabase/middleware.ts`
+ * already applies them to the proxy's response. `tests/unit/api-no-store-
+ * headers.test.mjs` asks the INSTALLED library for them at runtime and fails if
+ * these values ever stop matching, so a version bump is compared rather than
+ * silently diverged from. Do not hand-edit them to something that looks
+ * equivalent.
+ *
+ * WHY THE WHOLE `/api` SURFACE AND NOT ONE HANDLER. #315 was filed against
+ * `app/api/account/delete/route.ts`, which returns JSON while `getUser()` may
+ * have rotated the session, and which declared no `Cache-Control` — so Vercel's
+ * edge supplied one, and it says `public`:
+ *
+ *     $ curl -D - "https://getapplied.vercel.app/login"
+ *     cache-control: public, max-age=0, must-revalidate
+ *
+ * `public` is an explicit shared-cache storage licence. It is the platform's
+ * default rather than anyone's decision, which is the kind that changes under
+ * you, and #234 measured a real `s-maxage=31536000` out of this same
+ * deployment.
+ *
+ * It is not one handler, and the reason was measured rather than assumed. Only
+ * three route handlers import `lib/supabase/server` directly, but every handler
+ * under `app/api/` reaches `createClient()` transitively through
+ * `lib/api/server.ts` -> `getAccessToken()` -> `getCurrentSession()` ->
+ * `auth.getSession()`. Driving the INSTALLED `@supabase/ssr` 0.12.4 with a
+ * cookie jar holding a session past its expiry, `getSession()` refreshed and
+ * called `setAll` once, with all three of these headers and a rewritten
+ * `sb-<ref>-auth-token`. The control — the same probe with a session an hour
+ * from expiry — fired `setAll` zero times and made no network call. So
+ * "getSession only reads the cookie" is false, and the set of handlers whose
+ * response can carry a library-written cookie is every one of them.
+ *
+ * WHY IT IS SAFE TO DECLARE THIS BLANKET. All seventeen handlers under
+ * `app/api/` are user-scoped proxies to the FastAPI backend or auth-adjacent
+ * actions. Not one of them wants to be cached, by a shared cache or a private
+ * one.
+ *
+ * A CONSTRAINT FOR WHOEVER ADDS A CACHING ROUTE LATER: on a production build
+ * this entry OVERRIDES a `Cache-Control` the handler sets itself — measured,
+ * with the handler returning one value and this config another; the config's
+ * won. A route under `/api` that genuinely wants caching has to change this
+ * source pattern, not set its own header and hope.
+ *
+ * The two PKCE callbacks (`/callback`, `/reset-password/callback`) also carry
+ * session cookies and are NOT under `/api`. They sit beside page routes, so
+ * covering them here would mean widening this pattern onto paths that serve
+ * HTML — and `/login` legitimately carries `s-maxage=31536000` as a prerender.
+ * They are PR #312's subject, which is open and unmerged as this lands. The
+ * enumeration in the test named above knows about both, says so, and fails if
+ * a route handler appears that is neither covered here nor one of them.
+ */
+const noStoreHeaders = [
+  { key: "Cache-Control", value: "private, no-cache, no-store, must-revalidate, max-age=0" },
+  { key: "Expires", value: "0" },
+  { key: "Pragma", value: "no-cache" },
+];
+
+/**
+ * The path pattern above. Named so the test can assert against the same string
+ * this config ships, rather than restating it and pinning nothing.
+ */
+export const API_NO_STORE_SOURCE = "/api/:path*";
+
 const nextConfig: NextConfig = {
   /**
    * The router cache. This is the fix for the reported symptom in issue #203:
@@ -61,23 +130,57 @@ const nextConfig: NextConfig = {
    * `ƒ Dynamic`, and Next's default `staleTimes.dynamic` is 0, which means no
    * client cache at all, by construction.
    *
-   * WHAT `dynamic: 30` TRADES. Rail navigation within a 30-second window
-   * serves the payload the tab already has instead of asking the origin. In
-   * exchange, data that changed on the server in those 30 seconds — changed by
-   * something OTHER than this tab — is not seen until the window closes.
-   * Nothing in this app changes server-side on its own: every mutation is a
-   * user action in this tab, and `router.refresh()` bumps Next's global
-   * segment-cache version (`invalidateSegmentCacheEntries`), so a refresh
-   * invalidates EVERY route's entry, not just the one you are standing on.
-   * That was checked call-by-call, not assumed — sync, rebuild, stage change,
-   * file, reclassify, add, dismiss, restore, split and delete all refresh.
+   * WHAT A STALE WINDOW TRADES. Rail navigation within the window serves the
+   * payload the tab already has instead of asking the origin. In exchange,
+   * data that changed on the server inside that window — changed by something
+   * OTHER than this tab — is not seen until it closes. Every in-tab mutation
+   * heals itself: `router.refresh()` bumps Next's global segment-cache version
+   * (`invalidateSegmentCacheEntries`), so a refresh invalidates EVERY route's
+   * entry, not just the one you are standing on. That was checked
+   * call-by-call, not assumed — sync, rebuild, stage change, file, reclassify,
+   * add, dismiss, restore, split and delete all refresh.
+   *
+   * WHY IT IS 300 AND NOT 30. Thirty seconds was too short to be the thing it
+   * was for. Measured on production at `dynamic: 30`: /inbox on a first visit
+   * settled in 1124 ms and issued one `_rsc` request; back to /dashboard
+   * inside the window, 78 ms and zero requests; /inbox again inside the
+   * window, 33 ms and zero. The cache was never broken — it was 15–30× and
+   * then it expired. Visit a tab, work for a minute, come back, and the whole
+   * 1124 ms is re-paid, which is experienced as the app being randomly slow.
+   * Nothing pre-warms it away, either: `<Link prefetch={true}>` issues NOTHING
+   * for these `ƒ Dynamic` routes, and an explicit `router.prefetch()` on a cold
+   * route does fire requests but the navigation that follows still cost 460 ms
+   * and still hit the network — the prefetched payload was not reused. The
+   * window is the only knob that works, so it is set to the length of a
+   * working session rather than the length of a pause.
+   *
+   * WHAT MAKES 300 SAFE — AND THE SENTENCE THIS REPLACES. An earlier version of
+   * this note said "nothing in this app changes server-side on its own: every
+   * mutation is a user action in this tab". THAT IS NO LONGER TRUE. #284 added
+   * a scheduled sync — the `crons` entry in the repo-root `vercel.json`, on a
+   * fifteen-minute schedule, hitting `/cron/sync` on the backend project (the
+   * cron expression is not quoted here: its slash-star would close this block
+   * comment, which is exactly how the first draft of this note failed `tsc`).
+   * So mail is filed and the board moves every 15 minutes with no tab open and
+   * nobody watching. A five-minute cache on top of that, alone, would be a
+   * stale-data bug. It does not ship alone: `components/shell/ReturnRefresh`
+   * mounts one listener in the signed-in shell and calls `router.refresh()`
+   * when the reader comes back after being away longer than
+   * `AWAY_REFRESH_THRESHOLD_MS` (60 s — `lib/shell/awayRefresh.ts`). Away
+   * beyond a glance, and the cache is dropped wholesale on return; a glance,
+   * and nothing is spent. The threshold is deliberately BELOW this window and
+   * must stay there: past 300 s the next navigation refetches anyway, so the
+   * two numbers being different is what gives the rule anything to do. The
+   * residual exposure, stated plainly rather than left to be discovered: a
+   * reader who never leaves the tab at all can be up to 300 s behind a
+   * cron-written change, against a cron that runs every 900 s.
    *
    * `components/settings/**` saves to Supabase user metadata, and its writers
    * refresh too (#216/#231) — `/settings` used to pin itself out with
    * `unstable_dynamicStaleTime = 0` when they did not. The pin is gone
    * (perf/nav-latency): every route participates now, and the writer contract
    * is held by `tests/unit/settings-publish-contract.test.mjs` instead of a
-   * per-navigation origin tax. See the note in `app/(app)/settings/page.tsx`.
+   * per-navigation origin tax. See the note in `app/(app)/(protected)/settings/page.tsx`.
    *
    * WHY `static` IS PINNED AT ITS DEFAULT. 300 is already Next 16's default
    * (`config-shared.js`), so this line changes nothing — it is here because
@@ -88,10 +191,13 @@ const nextConfig: NextConfig = {
    * REGRESSION dressed as a tuning knob.
    */
   experimental: {
-    staleTimes: { dynamic: 30, static: 300 },
+    staleTimes: { dynamic: 300, static: 300 },
   },
   async headers() {
-    return [{ source: "/(.*)", headers: securityHeaders }];
+    return [
+      { source: "/(.*)", headers: securityHeaders },
+      { source: API_NO_STORE_SOURCE, headers: noStoreHeaders },
+    ];
   },
   // The System Card is a self-contained Vite build committed under
   // public/system-card/ (see booklet/ · `npm run build:system-card`). Serve its

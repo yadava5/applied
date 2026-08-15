@@ -73,9 +73,6 @@ export const LAST_LOOK_DEMO_KEY = "applied:lastlook:demo";
 /** Scope written into the demo's record. */
 export const LAST_LOOK_DEMO_SCOPE = "demo";
 
-/** How many rows one group of the ledger names before it says "+N more". */
-export const LEDGER_ROWS = 4;
-
 /**
  * A board row, projected to only what the ledger reasons about. The caller
  * does the projecting, which keeps stage semantics (`stageOf`, the board's
@@ -93,6 +90,14 @@ export interface ChangeRow {
   dueAt?: string | null;
   /** `"mail"` (the classifier read it) or `"user"` (you typed it). */
   dueSource?: string | null;
+  /**
+   * How the row itself arrived: `"gmail"` when the sync filed it from the
+   * user's mail, anything else is by hand. Carried for the ledger's PANEL —
+   * an arrival's provenance is part of reading it ("the sync brought this" vs
+   * "I filed this elsewhere") — and deliberately ignored by the derivation:
+   * provenance never makes something a change, so it is not snapshotted.
+   */
+  source?: string | null;
 }
 
 /** One row inside a snapshot: its column word, and its mail-read deadline. */

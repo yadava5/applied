@@ -69,6 +69,12 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", CLIENT_SECRET)
     monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", REDIRECT_URI)
     monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", WEB_APP_URL)
+    # The callback now refuses to bounce the browser to a host this deployment
+    # does not already trust as its front end (see
+    # `config.trusted_web_hosts` and `test_gmail_oauth_return_host.py`), so the
+    # fixture has to DECLARE that host rather than merely name it in one place.
+    # That is the point of the change: the two facts must be stated together.
+    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test")
 
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
@@ -1734,7 +1740,15 @@ async def test_resync_does_not_revert_a_user_corrected_verdict(client: AsyncClie
         ).first()
     # The human's verdict survives the machine's.
     assert email.classified_as == EmailCategory.INTERVIEW
-    assert email.classification_confidence == pytest.approx(0.78)
+    # NULL, and it used to be 0.78. Both spellings assert the same thing — that
+    # the rescan did not write its own verdict here — because 0.78 was the
+    # classifier's figure from BEFORE the correction and the rescan's is 0.95.
+    # Since a correction now clears the column outright (a human decision
+    # carries no probability), "unchanged" reads as None, and asserting it is
+    # strictly stronger than asserting 0.78: it fails if the rescan writes
+    # anything at all, including a value that happens to match the old one.
+    assert email.classification_confidence is None
+    assert email.classification_method == "user"
     assert email.user_corrected is True
     # ...and the row the user created keeps its status.
     listing = (await client.get("/applications", headers=headers)).json()

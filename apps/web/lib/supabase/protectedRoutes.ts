@@ -18,10 +18,19 @@
  *     /inbox      →  307  /login
  *     /settings   →  307  /login
  *
- * In the App Router the `(app)` and `(auth)` route groups are NOT part of the
- * URL, so gating has to happen on the literal prefix. Extend this list rather
- * than the negative matcher in `proxy.ts` when adding a protected page: the
- * proxy keeps running on every app route and only *redirects* for known ones.
+ * In the App Router the `(app)`, `(protected)` and `(auth)` route groups are NOT
+ * part of the URL, so gating has to happen on the literal prefix. Extend this
+ * list rather than the negative matcher in `proxy.ts` when adding a protected
+ * page: the proxy keeps running on every app route and only *redirects* for
+ * known ones.
+ *
+ * This list is the URL-space half of a boundary whose file-space half is the
+ * directory `app/(app)/(protected)/`. They are kept in step by
+ * `tests/unit/protected-routes.test.mjs`, which derives one from the other in
+ * both directions — including the case that matters most here: a page added to
+ * `app/(app)/` but OUTSIDE `(protected)/` is ungated by construction (the shell
+ * layout there is public, because `/import` and `/privacy` must be), so it has
+ * to be declared public on purpose or the gate fails.
  */
 export const PROTECTED_PREFIXES: readonly string[] = ["/dashboard", "/inbox", "/settings"];
 

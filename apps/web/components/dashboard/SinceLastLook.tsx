@@ -13,12 +13,12 @@ import {
   type ReactNode,
 } from "react";
 
+import { daysBetween } from "@/lib/dashboard/age";
 import { boardColumns } from "@/lib/dashboard/board";
 import { dueInfo, duePhrase } from "@/lib/dashboard/deadline";
 import {
   changesSince,
   groupChanges,
-  LEDGER_ROWS,
   momentLabel,
   momentShortLabel,
   parseLastLook,
@@ -216,6 +216,19 @@ const STAGE_COLORS = new Map(
   boardColumns(STAGES).map((column) => [column.label, column.color] as const),
 );
 
+/** The columns' own left-to-right order, for the panel's strip: the changed
+ *  rows draw in the order their columns hold on the board, so the strip reads
+ *  as the board in miniature rather than as a new axis to learn. */
+const COLUMN_ORDER = new Map(
+  boardColumns(STAGES).map((column, index) => [column.label, index] as const),
+);
+
+/** Entries later than this share one delay in the panel's entrance cascade:
+ *  a 40-row morning must not spend a second arriving (25ms × the cap ≈ 300ms
+ *  tail, inside the pulse bars' own ~400ms sweep), and everything past the
+ *  tenth row is below the scroller's fold anyway. */
+const CASCADE_CAP = 12;
+
 function StageWord({ word }: { word: string }) {
   return (
     <span className="label-caps inline-flex shrink-0 items-center gap-1.5 text-muted">
@@ -278,7 +291,7 @@ function ArrivalLine({ children }: { children: ReactNode }) {
 }
 
 /**
- * One row of the ledger, in two lines: the NEWS, then the detail.
+ * One row of the ledger, in three lines: the NEWS, the role, then the record.
  *
  * The first line is who and where it landed — short, so the stage sits hard
  * against the name it describes. It used to be pushed to the panel's right
@@ -291,10 +304,69 @@ function ArrivalLine({ children }: { children: ReactNode }) {
  * than ellipsizing — its tail is what tells two requisitions at one employer
  * apart (see ApplicationCard) — and it carries no leading dash down here: the
  * line break already says it is subordinate to the name above it.
+ *
+ * The third line is the round-three ask made concrete ("very much details"):
+ * everything else the loaded row can honestly say about this entry, and
+ * nothing it cannot —
+ *
+ *   · **filed age** — "filed 12 d ago", the board's own stamp in the age
+ *     panel's own words (`filed ${n} d ago` is DayBars' phrase verbatim). On
+ *     a filed entry it is WHEN the news arrived; on a moved one it is how
+ *     long the row took to get here — the one timing the diff can honestly
+ *     claim, since the derivation cannot know when a move happened, only
+ *     that it did (see lastLook.ts: `updated_at` was rejected as evidence);
+ *   · **provenance**, filed entries only and only when `withSource` — "from
+ *     your mail" / "by hand", the pulse band's exact vocabulary for the same
+ *     fact. An arrival the sync filed and one you filed from another device
+ *     are different news, and provenance is the one field `toChangeRow`
+ *     widened for this line. The caller sets `withSource` only when the
+ *     filed group is MIXED: on a board where everything arrives one way
+ *     (the auto-filed account is the normal one) ten identical tails say
+ *     nothing ten times, so the shared fact moves up into the group's
+ *     heading and this line stays for the case where it distinguishes;
+ *   · **the employer's count**, when it exceeds one — "3 at this employer".
+ *     One company holds many applications here (that is the identity rule),
+ *     and a new requisition at an employer you are already deep in reads
+ *     differently from a first contact. Counted over the loaded rows, the
+ *     same slice every claim in this panel reads (the scope note below the
+ *     scroller is the shared caveat).
+ *
+ * All of it rides one dim 11px line, figures tabular in the text face — a
+ * sentence about the row, not a machine stamp, so no mono (the moment chip
+ * and DueNote keep mono because a bare timestamp is a machine value; "filed
+ * 3 d ago" is prose). A row the board no longer carries (never, in practice:
+ * every entry came out of `rows`) just drops the line.
  */
-function EntryLine({ entry, today }: { entry: ChangeEntry; today: string }) {
+function EntryLine({
+  entry,
+  today,
+  row,
+  atEmployer,
+  withSource,
+  order,
+}: {
+  entry: ChangeEntry;
+  today: string;
+  /** The board row behind the entry — the detail line's source. */
+  row: ChangeRow | undefined;
+  /** Loaded applications at this entry's employer, this row included. */
+  atEmployer: number;
+  /** Name this arrival's provenance here (a mixed filed group). */
+  withSource: boolean;
+  /** Position in the panel's reading order, for the entrance cascade. */
+  order: number;
+}) {
+  const facts: string[] = [];
+  const age = row ? daysBetween(row.filed, today) : null;
+  if (age !== null && age >= 0) {
+    facts.push(age === 0 ? "filed today" : age === 1 ? "filed yesterday" : `filed ${age} d ago`);
+  }
+  if (withSource && row) {
+    facts.push(row.source === "gmail" ? "from your mail" : "by hand");
+  }
+  if (atEmployer > 1) facts.push(`${atEmployer} at this employer`);
   return (
-    <div>
+    <div className="ledger-entry" style={{ ["--i" as string]: Math.min(order, CASCADE_CAP) }}>
       <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-snug">
         <span className="font-medium text-strong">{entry.company}</span>
         {entry.from !== undefined ? (
@@ -308,6 +380,9 @@ function EntryLine({ entry, today }: { entry: ChangeEntry; today: string }) {
         {entry.dueAt ? <DueNote dueAt={entry.dueAt} today={today} /> : null}
       </p>
       <p className="text-[13px] leading-snug text-muted">{entry.position}</p>
+      {facts.length > 0 ? (
+        <p className="tabular mt-0.5 text-[11px] leading-snug text-dim">{facts.join(" · ")}</p>
+      ) : null}
     </div>
   );
 }
@@ -766,6 +841,40 @@ export function SinceLastLook({
    *  prints one by one — two renderings of one reading, never two readings. */
   const counted = groups.reduce((sum, group) => sum + group.count, 0);
 
+  // The panel's own derivations — plain per-render work (a board page is at
+  // most a few hundred rows), placed here rather than in hooks so they cannot
+  // collide with the early returns above.
+  /** The board row behind each entry: the detail lines read the row itself
+   *  (filed day, provenance), never a copy the entry would have to carry. */
+  const rowById = new Map(rows.map((row) => [row.id, row] as const));
+  /** Loaded applications per employer, for "N at this employer". */
+  const perEmployer = new Map<string, number>();
+  for (const row of rows) perEmployer.set(row.company, (perEmployer.get(row.company) ?? 0) + 1);
+  /** The changed rows in board-column order — the strip's units, then run-
+   *  length folded into its caption. `sort` is stable, so entries inside one
+   *  column keep the groups' filed → moved → deadline reading order. */
+  const landed = [...entries].sort(
+    (a, b) =>
+      (COLUMN_ORDER.get(a.to) ?? STAGES.length) - (COLUMN_ORDER.get(b.to) ?? STAGES.length),
+  );
+  const landedCounts: { label: string; count: number }[] = [];
+  for (const entry of landed) {
+    const last = landedCounts[landedCounts.length - 1];
+    if (last !== undefined && last.label === entry.to) last.count += 1;
+    else landedCounts.push({ label: entry.to, count: 1 });
+  }
+  /** Where each group starts in the panel's reading order — the entrance
+   *  cascade runs across the whole list, not per group, so the third group's
+   *  first row cannot land before the first group's last. */
+  const groupStarts: number[] = [];
+  {
+    let acc = 0;
+    for (const group of groups) {
+      groupStarts.push(acc);
+      acc += group.count;
+    }
+  }
+
   return (
     <section
       data-testid="since-last-look"
@@ -870,6 +979,21 @@ export function SinceLastLook({
           (`placePanel`; the beta pill centres the same way), and the loud
           chip's accent dot is the only accent either object carries.
 
+          ROUND THREE — the sheet is a READING surface (owner, verbatim: "i
+          should just read messages or other like it used to do before! …
+          very much details and nice way to view things! and a small kind of
+          animation or graph as well within it!"). The construction stays
+          exactly the family's — same 26rem, same chrome, same centring: the
+          band-coverage trade above was accepted ON this width, so the
+          richness is spent DOWN the sheet, where placePanel's height cap
+          already bounds it, never across the band. What changed is inside
+          the frame: the header states the whole claim, a strip draws where
+          the changed rows sit now, every row is named (the "+N more" cap is
+          gone), and each entry carries a third line of record. Each block
+          below carries its own why. It also wears `pulse-panel` now — the
+          family's one entrance (a 0.18s settle), which the dropdown restyle
+          left off this sheet only.
+
           One measured deviation from PulseDetail's `border-line`, kept from
           the last round because the measurement still binds: the panel's
           ground (`--surface` #0f1011) is 1.04:1 against both the page behind
@@ -888,20 +1012,26 @@ export function SinceLastLook({
           ref={placePanel}
           id={panelId}
           style={{ left: 0 }}
-          className="pointer-events-auto absolute top-full z-30 mt-2 flex w-[min(26rem,calc(100vw-2rem))] flex-col rounded-xl border border-line-strong bg-surface p-4 shadow-xl"
+          className="pulse-panel pointer-events-auto absolute top-full z-30 mt-2 flex w-[min(26rem,calc(100vw-2rem))] flex-col rounded-xl border border-line-strong bg-surface p-4 shadow-xl"
         >
-          {/* The panel's header: since WHEN on the left, the one act that
+          {/* The panel's header is the digest's whole claim in one sentence —
+              "4 changes since yesterday 6:41 pm" — with the one act that
               spends the state on the right. The moment is said nowhere else
-              on a real board — the chip only prints it from `@[36rem]` up,
-              which the signed-in slot never reaches — and it is set in the
-              text face rather than the chip's mono: there it is a bare stamp,
-              here it is the object of a sentence. "Mark as seen" lives here
-              rather than on the chip (#212): the centred plate has to read as
-              one object, and a reader can only destroy the digest with the
-              named rows in front of them — see the trigger's note. */}
+              on a real board (the chip only prints it from `@[36rem]` up,
+              which the signed-in slot never reaches), and the count joined it
+              in round three: restating the chip's number is the point, not a
+              slip — the sheet is the reading surface now, and it has to say
+              everything at every width, the same contract the kinds and the
+              scope note already ride here under. Set in the text face rather
+              than the chip's mono: there the moment is a bare stamp, here it
+              is the object of a sentence. "Mark as seen" lives here rather
+              than on the chip (#212): the centred plate has to read as one
+              object, and a reader can only destroy the digest with the named
+              rows in front of them — see the trigger's note. */}
           <div className="flex shrink-0 items-baseline justify-between gap-3">
-            <p className="text-xs text-dim">
-              since <span className="tabular text-muted">{moment}</span>
+            <p className="text-xs text-muted">
+              <span className="tabular font-medium text-strong">{counted}</span> change
+              {counted === 1 ? "" : "s"} since <span className="tabular">{moment}</span>
             </p>
             <button
               type="button"
@@ -917,40 +1047,145 @@ export function SinceLastLook({
             </button>
           </div>
 
+          {/* THE GRAPH — the changed rows drawn where they sit NOW, one unit
+              per row in its column's own ink, in the columns' own left-to-
+              right order: the board in miniature, saying the one thing no
+              count above it says (the groups are KINDS; this is the outcome).
+              A unit strip rather than a proportional wash for the runway's
+              own reason — three changes are units you can recount, not a
+              ratio — and even a morning that draws all-grey is a true claim:
+              everything that happened is sitting in applied, nothing has
+              advanced. Units, not days: the diff knows WHERE every change
+              landed but only knows WHEN for arrivals (lastLook.ts rejected
+              `updated_at` as evidence), so a changes-per-day sparkline would
+              be a graph the data cannot honestly back.
+
+              The strip is `aria-hidden` decoration over the caption beneath
+              it — the band's own contract ("micro-bars are decoration over
+              the numbers") — and the caption doubles as its legend: the same
+              column dots the entries below already wear, so the strip's inks
+              are named in the panel's one dot vocabulary. Fills measured on
+              this sheet's `--surface` (WCAG 1.4.11 floor 3:1, computed
+              2026-08-14): dark ground worst case `--viz-embeddings` 7.00:1 /
+              `--red` 6.89:1; light worst `--viz-rules` 4.10:1 — every column
+              ink clears both themes. It draws in once, left to right
+              (`ledger-unit`, globals.css), and holds still. */}
+          <div className="shrink-0" data-testid="ledger-landed">
+            <div
+              aria-hidden="true"
+              className="mt-3 flex h-2 gap-px overflow-hidden rounded-full bg-surface-2"
+            >
+              {landed.map((entry, index) => (
+                <span
+                  key={entry.id}
+                  className="ledger-unit h-full min-w-0 flex-1"
+                  style={{
+                    background: STAGE_COLORS.get(entry.to) ?? "var(--stage-applied)",
+                    ["--i" as string]: Math.min(index, 20),
+                  }}
+                />
+              ))}
+            </div>
+            <p className="tabular mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] leading-snug text-dim">
+              {landedCounts.map((column, index) => (
+                <Fragment key={column.label}>
+                  {index > 0 ? <span aria-hidden="true">·</span> : null}
+                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{
+                        background: STAGE_COLORS.get(column.label) ?? "var(--stage-applied)",
+                      }}
+                    />
+                    <span>
+                      <span className="text-muted">{column.count}</span> in {column.label}
+                    </span>
+                  </span>
+                </Fragment>
+              ))}
+            </p>
+          </div>
+
           {/* The groups scroll, the frame does not: `max-height` is measured
               against the screen in `placePanel`, so the busiest morning is
               bounded here instead of running off the bottom of a shell that
               must never scroll (#149). The scroller is this inner box so the
-              header and the scope caveat stay pinned. */}
+              header, the strip and the scope caveat stay pinned.
+
+              Every row is named now. The old LEDGER_ROWS cap ("+4 more") was
+              a residue of the in-flow block this overlay replaced — a growth
+              bound for a sheet that pushed the board as it grew. This one
+              cannot grow past the screen (the height cap IS the bound), and
+              a "+9 more" with nothing to press was the panel saying that the
+              one thing it exists to say is somewhere else — the round-three
+              complaint nearly verbatim. */}
           <div className="mt-3 min-h-0 overflow-y-auto overscroll-contain">
             <dl className="space-y-3.5">
-              {groups.map((group) => {
-                const shown = group.entries.slice(0, LEDGER_ROWS);
-                const hidden = group.count - shown.length;
+              {groups.map((group, groupIndex) => {
+                /* Provenance's one honest home per shape. A MIXED filed
+                   group names it per entry (that is where it distinguishes);
+                   a uniform one — every board in practice, since the account
+                   is auto-filed — collapses the shared fact into the heading
+                   ("all from your mail") instead of saying it N times, in
+                   the auto-filed cell's own words. The deadline group's
+                   provenance is uniform by definition (the derivation only
+                   counts mail-read deadlines), so its heading always carries
+                   it and its entries never do. */
+                const mailFiled =
+                  group.kind === "filed"
+                    ? group.entries.filter((entry) => rowById.get(entry.id)?.source === "gmail")
+                        .length
+                    : 0;
+                const mixedFiled = group.kind === "filed" && mailFiled > 0 && mailFiled < group.count;
+                const shared =
+                  group.kind === "deadline"
+                    ? "read from your mail"
+                    : group.kind === "filed" && !mixedFiled
+                      ? `${group.count === 1 ? "" : "all "}${mailFiled > 0 ? "from your mail" : "by hand"}`
+                      : null;
                 return (
                   <Fragment key={group.kind}>
-                    {/* The kind, not the count: the chip is already the counts
-                        (and on its total form, the entries under each kind ARE
-                        the count) — the same number twice is the thing this
-                        dashboard removed everywhere else.
+                    {/* The kind leads and its count rides after it in dim
+                        figures. The count is NEW here as of round three, not
+                        a duplication: at `lg`+ the chip always wears its
+                        compact total (the in-row slot never reached the
+                        28rem kinds rung — measured on ba2a653), so the
+                        per-kind numbers were said nowhere on desktop; and
+                        with every row named, a long group's size should not
+                        have to be counted by scrolling it. The word stays
+                        its own element so the panel's accessible claim
+                        ("filed", exactly) is the group's word, as the e2e
+                        locates it.
 
                         A run-in heading, ruled to the panel's full width, so
                         each kind reads as one block. It used to be a 7rem
-                        column beside a 5rem gutter, which marooned a 11px caps
-                        label ~180px from the rows it named and left "+N more"
-                        hanging under nothing. The rule is an `after:` pseudo
-                        rather than a child so this element's text stays
-                        exactly the group's word. */}
-                    <dt className="label-caps flex items-center after:ml-3 after:h-px after:flex-1 after:bg-line after:content-['']">
-                      {group.label}
-                    </dt>
-                    <dd className="mt-2 space-y-2.5">
-                      {shown.map((entry) => (
-                        <EntryLine key={entry.id} entry={entry} today={today} />
-                      ))}
-                      {hidden > 0 ? (
-                        <p className="tabular text-xs text-dim">+{hidden} more</p>
+                        column beside a 5rem gutter, which marooned a 11px
+                        caps label ~180px from the rows it named. The rule is
+                        an `after:` pseudo rather than a child so the
+                        heading's text nodes stay exactly the word, the
+                        figure and the shared fact. */}
+                    <dt className="label-caps flex min-w-0 items-center gap-1.5 after:ml-1.5 after:h-px after:min-w-3 after:flex-1 after:bg-line after:content-['']">
+                      <span>{group.label}</span>
+                      <span className="tabular text-[11px] text-dim">{group.count}</span>
+                      {shared !== null ? (
+                        <span className="min-w-0 truncate text-[10px] font-normal normal-case tracking-normal text-dim">
+                          · {shared}
+                        </span>
                       ) : null}
+                    </dt>
+                    <dd className="mt-2 space-y-3">
+                      {group.entries.map((entry, index) => (
+                        <EntryLine
+                          key={entry.id}
+                          entry={entry}
+                          today={today}
+                          row={rowById.get(entry.id)}
+                          atEmployer={perEmployer.get(entry.company) ?? 1}
+                          withSource={mixedFiled}
+                          order={groupStarts[groupIndex] + index}
+                        />
+                      ))}
                     </dd>
                   </Fragment>
                 );

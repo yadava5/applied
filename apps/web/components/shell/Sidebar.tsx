@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import type { RailData } from "@/lib/shell/rail";
+import { AmbientRail } from "./AmbientRail";
+import { useDemoMode } from "./demo-mode";
 import { isNavItemActive, navItems } from "./nav";
 import { NavLink } from "./NavLink";
 import { RailFooter } from "./RailFooter";
@@ -57,17 +59,23 @@ type SidebarProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
+  /** The ambient-mail pref (Settings → Appearance): whether the middle run
+   *  carries its drifting-envelope background. Server-read, so an opted-out
+   *  account never mounts the field at all. */
+  ambient?: boolean;
 };
 
-export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
+export function Sidebar({ rail, userEmail, userName = null, ambient = true }: SidebarProps) {
   const pathname = usePathname();
   const { setRail } = useShellSlots();
+  // Fixture mode: the lockup's home is the board twin, not the auth bounce.
+  const demo = useDemoMode();
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-line-soft bg-surface md:flex">
       <div className="px-4 py-4">
         <Link
-          href="/dashboard"
+          href={demo ? "/demo" : "/dashboard"}
           aria-label="Applied — go to your applications"
           className="brand-logo-link rounded-md text-strong focus-accent"
         >
@@ -75,7 +83,20 @@ export function Sidebar({ rail, userEmail, userName = null }: SidebarProps) {
         </Link>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-4">
+      {/* `relative` parents the ambient canvas below; it is not a stacking
+          context (z-auto), so the canvas's -z-10 still resolves against the
+          sticky aside and paints above bg-surface, under all in-flow content. */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto pb-4">
+        {/* The middle run's BACKGROUND — the landing's ambient mail at rail
+            scale, and the answer to this column reading as a void on the
+            three routes that portal nothing into the slot below. Absolutely
+            positioned and pointer-events-none: zero layout height by
+            construction, so the #122 overflow above cannot recur through it,
+            and the data ban on this rail is untouched — it carries no
+            numbers, it stirs when the ambient bus reports real news (a sync
+            that filed, a stage that moved). Settings → Appearance owns the
+            switch; `enabled` is the account's saved answer. */}
+        <AmbientRail enabled={ambient} />
         <nav className="px-2" aria-label="Primary">
           <ul className="space-y-1">
             {navItems.map((item) => {

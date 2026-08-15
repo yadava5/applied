@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-848%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-813%20collected%20%C2%B7%200%20skipped-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/rules%20macro--F1-0.9791%20(CI%20floor%200.95)-2b9348" alt="Rules macro-F1">
   <img src="https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs&logoColor=white" alt="Next.js">
   <img src="https://img.shields.io/badge/React-19.2-61dafb?logo=react&logoColor=black" alt="React">
@@ -41,15 +41,17 @@
 
 Job hunting generates a flood of email — confirmations, rejections, interview invites, take-home assessments, recruiter follow-ups — and keeping a spreadsheet in sync with it by hand is tedious and wrong within a week. Applied connects to Gmail or iCloud, classifies each message into a job-search category, links related messages into a single tracked application, and shows where every opportunity actually stands. Predictions below a 0.85 confidence gate go to a human review queue instead of being silently accepted, and each correction is written back as training data.
 
-It is a monorepo with two deployment modes over one Python package. On the desktop it is a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier; in the cloud it is a Next.js 16 app on Vercel over Supabase Postgres, where the classifier runs its rules layer only. Both modes import `backend/jobtracker/`; the divergence is deliberate and is described under [Architecture](#architecture).
+It is a monorepo: a Next.js 16 app on Vercel over Supabase Postgres, talking to one FastAPI serverless function that imports `backend/jobtracker/`. The classifier runs its rules layer only in that function, for a budget reason spelled out under [Architecture](#architecture).
 
-> **A note on names.** The product was renamed from JobTracker to Applied. The internal identifiers were not renamed with it, and this README prints them verbatim wherever it gives a path or a command: the Python package is `backend/jobtracker/`, the Xcode project is `JobTracker.xcodeproj`, the macOS app stores its database under `~/Library/Application Support/JobTracker/`, and every environment variable is prefixed `JOBTRACKER_` (`config.py`, `env_prefix="JOBTRACKER_"`). Renaming them would be a migration with no user-visible benefit, so they stayed.
+> **It used to be two.** Applied began as a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier, and the repository carried both modes over one Python package. The desktop client was de-scoped on 2026-08-12 and deleted, along with a second, unmounted set of FastAPI routers that had no user scoping at all (issue #73). `JOBTRACKER_DEPLOYMENT` still exists and `api/index.py` still forces it to `cloud` — that setting selects Postgres over SQLite and the encrypted-row credential store over the macOS Keychain, so it is load-bearing whether or not a desktop app exists.
+
+> **A note on names.** The product was renamed from JobTracker to Applied. The internal identifiers were not renamed with it, and this README prints them verbatim wherever it gives a path or a command: the Python package is `backend/jobtracker/`, and every environment variable is prefixed `JOBTRACKER_` (`config.py`, `env_prefix="JOBTRACKER_"`). Renaming them would be a migration with no user-visible benefit, so they stayed.
 
 ### Why it's interesting
 
-- **A metric that names its stage.** The **rules layer** — 212 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
+- **A metric that names its stage.** The **rules layer** — 220 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
 - **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
-- **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each — **32 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. Twelve tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
+- **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. 21 tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
 - **The trained model exports to something a browser can run.** The SetFit head quantizes from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file (`ml/browser/artifacts/`). Transformers.js executes it on the CPU in the Hugging Face Space with `allowRemoteModels = false`. Which surfaces actually run it, and which do not, is stated in [Implemented vs delegated vs planned](#implemented-vs-delegated-vs-planned).
 - **A README that was wrong on the record.** The coverage paragraph below documents its own correction from 54% to 53.2% and the Python-version artifact that caused it. Commit `5b895d8` carries the full derivation.
 
@@ -57,12 +59,12 @@ It is a monorepo with two deployment modes over one Python package. On the deskt
 
 ## Features
 
-- **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with live status over WebSocket on the desktop and polling in the cloud
+- **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with polled status. The live WebSocket stream belonged to the deleted desktop client; Vercel's Python runtime does not support WebSockets
 - **Automatic classification** into the nine `EmailCategory` enum values — `applied`, `pending_application`, `interview`, `rejection`, `offer`, `assessment`, `follow_up`, `other`, plus `needs_review` for anything under the gate. Eight of the nine are predicted labels; `needs_review` is the routing outcome.
 - **Application linking** — related messages are grouped into one tracked application and relinked when new signals arrive
 - **Human-in-the-loop review** — anything below `CONFIDENCE_AUTO = 0.85` (`classifier/hybrid.py`) lands in a review queue; corrections persist to `training_data` and feed the next retrain
 - **Pipeline views** — Feature Cards, Compact Rows, or a Status Board, filterable by unreviewed and unlinked
-- **Fixture demo** — the full UI on synthetic data at [`/demo`](https://getapplied.vercel.app/demo), no login. Layer 1 recomputes **live in the browser** there via `apps/web/lib/demo/rulesLayer.ts`, a port of the same 212 patterns; layers 2 and 3 are precomputed, because the app's CSP forbids the WASM eval and CDN fetch Transformers.js needs.
+- **Fixture demo** — the full UI on synthetic data at [`/demo`](https://getapplied.vercel.app/demo), no login. Layer 1 recomputes **live in the browser** there via `apps/web/lib/demo/rulesLayer.ts`, a port of the same 220 patterns; layers 2 and 3 are precomputed, because the app's CSP forbids the WASM eval and CDN fetch Transformers.js needs.
 - **Weekly ML operations** — candidate mining for sparse labels, drift and confidence monitoring, and an alert-issue path, all scripted (`scripts/weekly_labeling_cycle.sh`, `scripts/monitoring_cycle.sh`)
 
 ### The three-layer cascade
@@ -77,7 +79,7 @@ flowchart TB
     CF -->|"matched"| Out1["category · method=content_filter"]
     CF -->|"pass"| R
 
-    R{{"1 · rules<br/>212 regex patterns over 7 categories<br/>115 strong · 27 weak · 70 negative<br/>hand-written · classifier/rules.py"}}
+    R{{"1 · rules<br/>220 regex patterns over 7 categories<br/>123 strong · 27 weak · 70 negative<br/>hand-written · classifier/rules.py"}}
     R -->|"scores a category"| Out2["category · method=rules"]
     R -->|"nothing scored"| CLOUD
 
@@ -102,32 +104,19 @@ flowchart TB
     G -->|"no"| Review["needs_review queue<br/>correction → training_data"]
 ```
 
-Thresholds are `CONFIDENCE_AUTO = 0.85` and `CONFIDENCE_MIN_CLASSIFICATION = 0.70`, both defined in `backend/jobtracker/classifier/hybrid.py`. The 212 patterns are counted at their definition site — the `PATTERNS` dict in `classifier/rules.py` — not at any call site.
+Thresholds are `CONFIDENCE_AUTO = 0.85` and `CONFIDENCE_MIN_CLASSIFICATION = 0.70`, both defined in `backend/jobtracker/classifier/hybrid.py`. The 220 patterns are counted at their definition site — the `PATTERNS` dict in `classifier/rules.py` — not at any call site.
 
 ---
 
 ## Architecture
 
-### Two deployment modes, one package
+### One deployment, one package
 
-`JOBTRACKER_DEPLOYMENT` selects the mode. The table in `docs/WEB_ARCHITECTURE.md` is the source for this diagram.
+`JOBTRACKER_DEPLOYMENT` still selects a mode, and `api/index.py` forces it to `cloud` before the app is imported. The table in `docs/WEB_ARCHITECTURE.md` is the source for this diagram.
 
 ```mermaid
 flowchart TB
-    subgraph Desktop["desktop mode — JOBTRACKER_DEPLOYMENT=desktop (default)"]
-        direction TB
-        Swift["SwiftUI app<br/>apps/macos/…/JobTracker.xcodeproj"]
-        Local["FastAPI · 127.0.0.1:8000<br/>jobtracker.main"]
-        SQLite[("SQLite<br/>~/Library/Application Support/JobTracker/")]
-        Keychain["macOS Keychain via keyring"]
-        Full["classifier: rules + embeddings + SetFit"]
-        Swift --> Local
-        Local --> SQLite
-        Local --> Keychain
-        Local --> Full
-    end
-
-    subgraph Cloud["cloud mode — JOBTRACKER_DEPLOYMENT=cloud"]
+    subgraph Cloud["cloud mode — JOBTRACKER_DEPLOYMENT=cloud, forced by api/index.py"]
         direction TB
         Web["Next.js 16 · React 19<br/>apps/web/ on Vercel"]
         Fn["FastAPI on Vercel Python<br/>api/index.py → jobtracker.main_cloud"]
@@ -135,18 +124,19 @@ flowchart TB
         Fernet["user_credentials<br/>Fernet-encrypted rows"]
         Rules["classifier: RULES ONLY"]
         Web -->|"Authorization: Bearer supabase JWT"| Fn
-        Fn -->|"per-transaction request.jwt.claims<br/>RLS: 32 policies, FORCE"| PG
+        Fn -->|"per-transaction request.jwt.claims<br/>RLS: 35 policies, FORCE"| PG
         Fn --> Fernet
         Fn --> Rules
     end
 
-    Pkg["backend/jobtracker/ — one package, both modes"]
-    Pkg -.-> Local
+    Pkg["backend/jobtracker/ — the one package"]
     Pkg -.-> Fn
 
-    Mail["Gmail API · iCloud IMAP"] --> Local
-    Mail --> Fn
+    Mail["Gmail API · iCloud IMAP"] --> Mailfetch["cloud/gmail_client.py"]
+    Mailfetch --> Fn
 ```
+
+The desktop half of this diagram — a SwiftUI app over a local FastAPI process over SQLite and the macOS Keychain, with the full three-layer cascade — was deleted on de-scoping. What remains of it in the package is deliberate: the SQLite paths in `database/connection.py` and the `keyring` import in `credentials/desktop.py` are still reachable under `JOBTRACKER_DEPLOYMENT=desktop`, which is why forcing `cloud` is a gate and not a formality.
 
 ### The design decision that shaped the repo
 
@@ -160,11 +150,11 @@ Three mechanisms hold that line:
 - Root `requirements.txt` is deliberately different from `backend/requirements.txt` and carries a DO-NOT-ADD list.
 - `tests/test_main_cloud.py::test_cloud_classifier_is_rules_only_and_skips_heavy_ml_imports` subprocess-invokes `get_classifier()` under `JOBTRACKER_DEPLOYMENT=cloud` and asserts that neither `torch`, `sentence_transformers`, `setfit` nor `transformers` entered `sys.modules`. The `cloud-smoke` CI job runs it on every push.
 
-The honest consequence: a cloud rules miss collapses to `{category: "other", confidence: 0.0, method: "rules"}`. It does not escalate. Corrections still persist and sync back to macOS, where the full cascade remains canonical.
+The honest consequence: a cloud rules miss collapses to `{category: "other", confidence: 0.0, method: "rules"}`. It does not escalate, and since the desktop client was deleted there is no longer a second surface where the full cascade runs — corrections persist to Postgres and are reviewed in the web app. Layers 2 and 3 remain in the tree, are still exercised by `backend-ci.yml`, and are still what `ml/` trains and evaluates; they are simply not on the request path.
 
 ### Data model
 
-Every tenant table carries `user_id UUID NOT NULL` (Alembic rev `6e64c46d32fd`), keyed to Supabase `auth.users.id`. Desktop rows are owned by a fixed sentinel UUID, `LOCAL_USER_ID`.
+Every tenant table carries `user_id UUID NOT NULL` (Alembic rev `6e64c46d32fd`), keyed to Supabase `auth.users.id`. The column's *default* is a sentinel UUID, `LOCAL_USER_ID` (`database/models.py`), left over from the single-user desktop build — which is why RLS, not application code, is what actually enforces isolation.
 
 ```mermaid
 erDiagram
@@ -253,11 +243,12 @@ erDiagram
 
 RLS here is live, not staged. Verified against the production database on 2026-08-03 and re-read for this README against the migrations and `docs/RLS-AUDIT-2026-08-03.md`:
 
-- **Eight tenant tables** — `applications`, `emails`, `contacts`, `interviews`, `training_data`, `email_embeddings`, `sync_state` (rev `a8d4ec5fba26`) and `user_credentials` (revs `c4_user_credentials_rls`, `c5_force_user_credentials_rls`) — each with `ENABLE` **and** `FORCE ROW LEVEL SECURITY` and four policies (`SELECT` / `INSERT` / `UPDATE` / `DELETE`). That is **32 policies**. `FORCE` is the part that matters: without it the table owner is exempt, and the owner is what an application usually connects as.
+- **Eight tenant tables** — `applications`, `emails`, `contacts`, `interviews`, `training_data`, `email_embeddings`, `sync_state` (rev `a8d4ec5fba26`) and `user_credentials` (revs `c4_user_credentials_rls`, `c5_force_user_credentials_rls`) — each with `ENABLE` **and** `FORCE ROW LEVEL SECURITY` and four policies (`SELECT` / `INSERT` / `UPDATE` / `DELETE`). That is **32** owner policies. `FORCE` is the part that matters: without it the table owner is exempt, and the owner is what an application usually connects as.
+- **A ninth table is deliberately different, and says so.** `gmail_sync_enrollment` (rev `e2b6f0a4d517`) is `ENABLE` + `FORCE` with **3** policies: owner-scoped `INSERT` and `DELETE`, and a `SELECT` policy scoped `TO jobtracker_app` with a permissive predicate. That is the one place a predicate is not `user_id = auth.uid()`, because the scheduled sync carries no JWT and must still enumerate who has Gmail linked. What it exposes to a `jobtracker_app` connection is exactly which user ids have linked Gmail and when — a membership fact. The table holds no ciphertext and no email address, so there is no secret in it to leak. That is **35 policies** across the nine.
 - **The application role cannot bypass any of it.** Production connects as `jobtracker_app`: `rolsuper=false`, `rolbypassrls=false`, `rolcanlogin=true`.
 - **Identity is bound per transaction.** `_install_rls_guc_listener` in `database/connection.py` sets `request.jwt.claims` transaction-locally on every `begin`, so nothing leaks across the PgBouncer transaction pool, and `search_path` is pinned to `public` so a policy cannot be fooled by a shadowed relation.
 - **It fails closed.** With no user bound, `auth.uid()` is NULL, `user_id = NULL` matches nothing, and an unauthenticated path sees zero rows rather than everything.
-- **All 32 predicates are `user_id = (SELECT auth.uid())`** after rev `c6_rls_initplan_hoist`. This is a planning-time change: bare `auth.uid()` is `STABLE` and re-evaluated once per *row*; the sub-select is hoisted into an `InitPlan` evaluated once per *query*. Measured on a **synthetic** 200,000-row sequential scan in a throwaway `postgres:16` — **not** a production measurement — invocations went 200,001 → 1 and the query 126 ms → 10 ms, with an identical row set. The invocation ratio is the part that holds at any table size; Applied's real tables are far smaller.
+- **All 32 owner predicates are `user_id = (SELECT auth.uid())`** after rev `c6_rls_initplan_hoist` — the enumeration policy on `gmail_sync_enrollment` above is the deliberate exception, and it guards a table with no secret in it. This is a planning-time change: bare `auth.uid()` is `STABLE` and re-evaluated once per *row*; the sub-select is hoisted into an `InitPlan` evaluated once per *query*. Measured on a **synthetic** 200,000-row sequential scan in a throwaway `postgres:16` — **not** a production measurement — invocations went 200,001 → 1 and the query 126 ms → 10 ms, with an identical row set. The invocation ratio is the part that holds at any table size; Applied's real tables are far smaller.
 - The migration is a **no-op on SQLite**, so `alembic upgrade head` stays green for the desktop build and for CI.
 
 ---
@@ -275,33 +266,32 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Styling** | Tailwind CSS 4, shadcn/ui-compatible scaffold, Radix Slot |
 | **Auth** | Supabase Auth via `@supabase/ssr` 0.5 (SSR cookie `getAll`/`setAll`) |
 | **API client** | `openapi-fetch` 0.17 over types generated by `openapi-typescript` 7 |
-| **Testing** | Playwright 1.48+ (17 spec files under `apps/web/tests/e2e/`) |
+| **Testing** | Playwright 1.48+ (18 spec files under `apps/web/tests/e2e/`) |
 
 ### Backend
 
 | Category | Technologies |
 | --- | --- |
 | **Runtime** | Python 3.11, FastAPI, Uvicorn |
-| **Data** | SQLModel / SQLAlchemy 2 (async), Alembic, SQLite on desktop, Supabase Postgres via asyncpg in the cloud |
+| **Data** | SQLModel / SQLAlchemy 2 (async), Alembic, Supabase Postgres via asyncpg (SQLite remains the test fixture and the deleted desktop build's store) |
 | **Auth** | PyJWT `[crypto]`, HS256 pinned, `audience="authenticated"`, `require=["exp","sub","aud"]` |
-| **Secrets** | macOS Keychain via `keyring` on desktop; `cryptography.fernet` rows in the cloud |
+| **Secrets** | `cryptography.fernet` rows in `user_credentials` |
 | **Email** | `google-api-python-client` (Gmail, `gmail.readonly`), `aioimaplib` (iCloud), BeautifulSoup + lxml for parsing |
 
 ### ML
 
 | Category | Technologies |
 | --- | --- |
-| **Layer 1** | Hand-written regex engine, 212 patterns across 7 categories |
+| **Layer 1** | Hand-written regex engine, 220 patterns across 7 categories |
 | **Layer 2** | `intfloat/e5-small-v2` (pretrained, downloaded, not trained here) |
 | **Layer 3** | SetFit fine-tuned in this repo on `sentence-transformers/paraphrase-MiniLM-L6-v2`, 8 labels |
 | **Export** | int8 ONNX + Transformers.js (`ml/browser/`), Gradio Space (`ml/demo/`), BentoML service (`ml/bento_service.py`) |
 | **Tracking** | MLflow (`ml/mlruns`, registry alias `production` gated at the 0.95 floor), W&B mirror (offline) |
 
-### Desktop and infrastructure
+### Infrastructure
 
 | Category | Technologies |
 | --- | --- |
-| **macOS app** | SwiftUI, Xcode project target macOS 26.2, local FastAPI sidecar, packaged `.app` |
 | **Hosting** | Vercel (Next.js + one Python function, `maxDuration` 60), Supabase Postgres, Hugging Face Spaces |
 | **CI** | GitHub Actions — 14 workflows (see [Verify it](#verify-it)) |
 
@@ -311,7 +301,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 **The 0.9791 belongs to the rules layer. It is not a whole-system accuracy figure, and the filenames actively mislead on this point.**
 
-The **rules layer** — 212 regex patterns and no model — scores **0.9791 macro-F1** (accuracy 0.9792, 2 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
+The **rules layer** — 220 regex patterns and no model — scores **0.9791 macro-F1** (accuracy 0.9792, 2 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
 
 The trap is that `baseline_hybrid_v3.json` reports 0.9791 too. It does so because it was regenerated under the evaluator's `deterministic` hybrid profile, which calls `set_lite_mode(True)` and blanks `_known_embeddings` — so it measures the deterministic path, which is the regexes. Every metric block in the two files is identical, including both mismatch records; only the `meta` block differs, by `mode`, `hybrid_profile` and timestamp. `benchmark_history.md` says this in its own header. CI runs that profile on purpose, because a gate that consults a stochastic model is a gate that goes red for reasons unrelated to the change under test.
 
@@ -375,26 +365,26 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --o
 
 ## Testing
 
-**848 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 716 `test_*` functions across 55 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 848 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**813 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 776 `test_*` functions across 64 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 813 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
-The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **12 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
+The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
 Those tests drive the production machinery, not a fixture: `jobtracker.database.connection.get_session` with its real GUC and `search_path` handling, against a non-`BYPASSRLS` role, asserting that a raw query with the application-level `WHERE user_id = ...` filter *removed* still returns nothing for another tenant.
 
 `test_migrations_postgres.py` rides in the same job, for a defect the rest of the suite is structurally blind to: on SQLite, `sa.Enum` renders as `VARCHAR`, so a migration can add an enum label in the wrong case and every other test stays green while production 500s on the first write. It applies the whole Alembic chain to a bare database through the real CLI, then asserts the `applicationstatus` labels are the Python enum's member names in declaration order, that a row round-trips, and that the lowercase spelling is genuinely rejected. It is guarded by the same "did it actually run" JUnit check as the RLS suite.
 
-**Coverage**, from the same run: **60.47%** overall — 9,677 statements, 3,825 missed. The distribution matters more than the total. `jobtracker/cloud`, the code that actually deploys, is at **89.9%**; `auth` 80.5%; `database` 78.4%. What pulls the average down is `jobtracker/scripts` at 2,357 statements and 33.6%, of which eight modules no test imports account for 1,010 statements at 0%.
+**Coverage**, from the same run: **60.47%** overall — 8,225 statements, 3,251 missed. The distribution matters more than the total. `jobtracker/cloud`, the code that actually deploys, is at **90.3%**; `auth` 80.5%; `database` 80.1%. What pulls the average down is `jobtracker/scripts` at 2,357 statements and 33.6%, of which eight modules no test imports account for 1,010 statements at 0%.
 
 This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statements of dataset importers" until 2026-08-03, and three of those four numbers were wrong. The corrections, in full, are in commit `5b895d8`: 54% came from a Python 3.14 run, where PEP 649 stops emitting line events for annotation-only class attributes, so the same tree measures 8,018 statements instead of 8,210 — a 192-statement gap across 13 Pydantic models. 61% is dropped rather than restated, because it reaches 60.5% only by excluding 1,234 statements that CI invokes directly as gates. And 2,163 never described dataset importers; those are 662 statements at 0%. The portfolio was citing this README instead of a run, which is how they persisted.
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
 | **Backend unit + integration** | pytest | classifier, API, sync, auth, cloud entrypoint, evaluator, ML-ops scripts |
-| **Database isolation** | pytest + testcontainers / CI service container | 12 RLS enforcement tests against real Postgres |
-| **Web e2e** | Playwright | 17 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
+| **Database isolation** | pytest + testcontainers / CI service container | 21 RLS enforcement tests against real Postgres |
+| **Web e2e** | Playwright | 18 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
-| **macOS** | `xcodebuild` | resolve packages and build the `JobTracker` scheme |
+| **README claims** | `scripts/readme_facts.py --check` | every number on this page, recomputed from the code that defines it; no path filter |
 
 Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 findings on its first CI run (2026-08-07) and `mypy .` under `strict = true` reported 879 across 65 of 92 files. Both were configured in `pyproject.toml` from the start and had never actually run. They print their count on every build and flip to blocking when they reach zero; a gate that is red from birth gets ignored or deleted, and neither should be silenced with `--fix` or blanket `# type: ignore`.
 
@@ -408,11 +398,11 @@ Being precise about this is the point.
 
 ### Implemented — hand-written in this repo
 
-- **The rules engine.** 212 regex patterns across 7 categories (115 strong, 27 weak, 70 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 27 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Only `assessment` declares vetoes today, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
+- **The rules engine.** 220 regex patterns across 7 categories (123 strong, 27 weak, 70 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 35 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 19 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
 - **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the correction-to-training-data loop.
 - **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
 - **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
-- **Multi-tenant isolation** — the `user_id` column and composite indexes, the 32 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
+- **Multi-tenant isolation** — the `user_id` column and composite indexes, the 35 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
 - **The cloud/desktop split** — lazy imports, PEP 562 module `__getattr__`, and the subprocess guard test that proves the heavy stack never enters `sys.modules`.
 - **ML operations** — weekly sparse-label candidate mining with gap-based quotas, drift and confidence monitoring with thresholded alerts, and the alert-issue automation.
 
@@ -428,7 +418,7 @@ Being precise about this is the point.
 
 - **Semantic layers in the cloud.** The deployed Vercel product runs the **rules layer only**, and there is no embedding or SetFit inference on that path. Moving them behind an external inference service is a documented follow-up in `requirements.txt` and `docs/WEB_ARCHITECTURE.md`; nothing is wired.
 - **In-browser inference inside the Applied web app.** The 22.8 MB int8 ONNX build is real and runs in the Hugging Face Space and under `ml/browser/site/`. It does **not** run on `getapplied.vercel.app`: the app's strict CSP forbids the WASM eval and CDN fetch Transformers.js needs, so `/demo` runs layer 1 live in the browser and serves precomputed layer 2 and 3 verdicts.
-- **WebSocket sync in the cloud.** Vercel's Python runtime does not support it; the cloud path polls. The desktop path has live WebSocket status.
+- **WebSocket sync.** Vercel's Python runtime does not support it, so sync status is polled. The desktop path had a live `/ws/sync-status` stream; that router was deleted with the rest of the desktop surface, so there is no WebSocket anywhere in the tree now.
 - **Credential rotation.** `user_credentials.key_id` and a multi-key decrypt path are scaffolded. Only key `v1` is active and rotation is not wired.
 - **A mobile client.** `apps/mobile/` is a reserved directory. There is no app in it.
 - **Green ruff and mypy gates.** Both currently report and do not block. See [Testing](#testing).
@@ -439,10 +429,10 @@ Being precise about this is the point.
 
 ### Prerequisites
 
-- Python 3.11+ (the desktop stack pins 3.11; `backend/.venv311` is the correct venv, not `backend/.venv`)
+- Python 3.11+ (CI pins 3.11; `backend/.venv311` is the venv `scripts/generate_api_schema.sh` prefers, not `backend/.venv`)
 - Node.js 22 and pnpm 10, for the web app — the major is load-bearing, not incidental. `pnpm test:unit` imports `.ts` modules straight from `.mjs` test files and runs them on the runtime's built-in type stripping, which needs **22.6 or newer** (and the built-in glob, 21 or newer). On Node 20 those tests do not fail, they refuse to load with `ERR_UNKNOWN_FILE_EXTENSION` — which is how they once existed while no job ran them
-- macOS with Xcode, for the desktop app only
-- Internet on first run, to download `intfloat/e5-small-v2`
+- A Supabase project (Postgres + Auth) for anything past the landing page and `/demo`
+- Internet on first run of the **ML** tooling, to download `intfloat/e5-small-v2`. The web app and the deployed backend never download a model: the cloud path is rules-only
 
 ### Web app
 
@@ -457,15 +447,21 @@ pnpm dev                       # http://localhost:3000
 
 The landing page (`/`) and the fixture demo (`/demo`) run with **no backend and no Supabase**, so a review deploy needs only placeholder values — which is exactly what `frontend-ci.yml` supplies. See [`apps/web/README.md`](apps/web/README.md) for the full web setup.
 
-### Backend and macOS app
+### Backend
+
+The backend is served by Vercel as a Python function from `api/index.py`; there is no local process to start for normal web work — point `BACKEND_API_URL` at a deployment. To run its suite, or to serve it locally:
 
 ```bash
-./scripts/install.sh           # venv, PyTorch CPU wheels, deps, model, DB
-./scripts/start_backend.sh     # FastAPI on 127.0.0.1:8000
-open apps/macos/JobTracker/JobTracker/JobTracker.xcodeproj
+cd backend
+python3.11 -m venv .venv311
+.venv311/bin/pip install -r ../requirements.txt \
+    pytest pytest-asyncio pytest-cov httpx aiosqlite alembic keyring numpy
+.venv311/bin/python -m pytest tests -q          # see docs/SETUP.md for the two heavy-ML exclusions
+
+JOBTRACKER_DEPLOYMENT=cloud .venv311/bin/python -m uvicorn jobtracker.main_cloud:app --port 8000
 ```
 
-The full walkthrough is in [`docs/SETUP.md`](docs/SETUP.md).
+The full walkthrough — including why `alembic`, `keyring` and `numpy` must be installed by hand — is in [`docs/SETUP.md`](docs/SETUP.md).
 
 ### Environment variables
 
@@ -502,8 +498,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Command | What it does |
 | --- | --- |
-| `./scripts/install.sh` | One-time backend setup: venv, CPU torch, deps, model, DB |
-| `./scripts/start_backend.sh` | Run FastAPI on `127.0.0.1:8000` |
+| `./scripts/generate_api_schema.sh` | Regenerate `apps/web/lib/api/schema.d.ts` from the cloud app; `e2e-ci.yml` fails on any diff |
 | `pnpm dev` / `pnpm build` | Web app, from `apps/web/` |
 | `pnpm typecheck` / `pnpm lint` / `pnpm e2e` | The three checks `frontend-ci.yml` and `e2e-ci.yml` run |
 | `pytest tests -q --cov=jobtracker` | Backend suite with coverage, from `backend/` |
@@ -523,22 +518,21 @@ applied/
 │   ├── web/                 # Next.js 16 App Router product (the cloud UI)
 │   │   ├── app/             # (auth) · (app) · demo · import · api routes
 │   │   ├── lib/demo/        # rulesLayer.ts — layer 1 ported to run live in the tab
-│   │   └── tests/e2e/       # 17 Playwright specs
-│   ├── macos/               # SwiftUI app; path still says JobTracker (see the naming note)
+│   │   └── tests/e2e/       # 18 Playwright specs
 │   └── mobile/              # reserved; empty
 │
 ├── backend/
-│   ├── jobtracker/          # the one package both modes import
-│   │   ├── classifier/      # rules.py (212 patterns) · embeddings.py · setfit_model.py · hybrid.py
-│   │   ├── api/             # desktop routers, unauthenticated by design
-│   │   ├── cloud/           # cloud-only routers, require_user() at the router level
+│   ├── jobtracker/          # the one package
+│   │   ├── classifier/      # rules.py (220 patterns) · embeddings.py · setfit_model.py · hybrid.py
+│   │   ├── cloud/           # every router the app mounts, require_user() at the router level
+│   │   ├── main_cloud.py    # the only app builder
 │   │   ├── auth/            # supabase_jwt.py — HS256 pinned verification
-│   │   ├── credentials/     # types · desktop (Keychain) · cloud (Fernet)
+│   │   ├── credentials/     # types · desktop (Keychain, unused) · cloud (Fernet)
 │   │   ├── database/        # models, connection (the RLS GUC listener lives here)
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
-│   ├── alembic/versions/    # 14 revisions incl. the RLS + InitPlan-hoist migrations
+│   ├── alembic/versions/    # 21 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 55 modules
+│   └── tests/               # 64 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
@@ -575,7 +569,6 @@ Every number above terminates in something you can open.
 | `backend-ci.yml` | `pytest tests -q --cov=jobtracker` (the coverage number lands in the public run log); the rules gate at `--min-macro-f1 0.95`; the deterministic hybrid gate; the `rls-postgres` job with its assert-it-ran step; the `expand-only` job, which walks the Alembic chain one revision at a time against a `postgres:16` service and fails a revision that drops or narrows anything without a module-level `CONTRACT_STEP` saying why; the `cloud-smoke` job that imports the cloud app under `JOBTRACKER_DEPLOYMENT=cloud` and probes `/health` |
 | `frontend-ci.yml` | `pnpm typecheck`, `pnpm lint` (`--max-warnings 0`, so every warn-level rule next ships — the six `jsx-a11y/*` among them — is a red build rather than a printed suggestion), `pnpm test:unit`, `pnpm build` on Node 22 / pnpm 10. The Node major is a constraint, not a default: `test:unit` needs the runtime's type stripping (22.6+), so pinning back to 20 does not fail the job — it stops running the unit suite, which is exactly what happened before |
 | `e2e-ci.yml` | Playwright against a real backend + frontend pair, uploading traces and server logs |
-| `macos-ci.yml` | `xcodebuild` resolves packages and builds the `JobTracker` scheme |
 | `codeql.yml`, `gitleaks.yml` | SAST and full-history secret scanning |
 | `.githooks/pre-commit` (local, opt-in) | The same scan over the *staged* diff, before the commit exists. Not a workflow — git does not enable a hooks path for you, so each clone runs `git config core.hooksPath .githooks` once. CI is the net that always runs; this one exists because a credential that reaches GitHub is published even if the next commit deletes it |
 | `ml-monitoring-weekly.yml` | Scheduled drift/confidence report, artifacts uploaded, alert issue opened on threshold breach |
@@ -605,7 +598,7 @@ Every number above terminates in something you can open.
 | [System Card](https://getapplied.vercel.app/system-card) | Classifier design, evaluation, limitations, safety notes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
 | [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
-| [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST + WebSocket contract |
+| [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 28-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
 | [`docs/ML_STRATEGY.md`](docs/ML_STRATEGY.md) | Classifier behaviour, training lifecycle, metadata contract |
 | [`docs/ML_EXECUTION_TRACKER.md`](docs/ML_EXECUTION_TRACKER.md) | Every ML cycle with its measured results — the source for the cascade's 0.9583 |
 | [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) | What a learned layer must beat before it serves real mail, and what puts it back |

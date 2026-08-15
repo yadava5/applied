@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { RailData } from "@/lib/shell/rail";
+import { DemoModeProvider } from "./demo-mode";
 import { ShellSlotProvider } from "./shell-slots";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -11,8 +12,12 @@ type AppShellFrameProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
-  /** Fixture mode (/demo/shell): the top bar trades sign-out for a demo pill. */
+  /** Fixture mode (/demo, /demo/shell): the top bar trades sign-out for a demo
+   *  pill, the nav resolves to the public twins, and the rail footer carries
+   *  the anonymous visitor's session edge — a signup invitation. */
   demo?: boolean;
+  /** The ambient-mail pref for the rail's background field (Sidebar). */
+  ambient?: boolean;
 };
 
 /**
@@ -51,29 +56,48 @@ export function AppShellFrame({
   userEmail,
   userName = null,
   demo = false,
+  ambient = true,
 }: AppShellFrameProps) {
   return (
     // The slot provider is what lets PAGE-owned interface reach SHELL-owned
     // geometry with one instance: the board portals its stage lens + search
     // into the sidebar's middle run (see shell-slots.tsx for the CLS
     // reasoning), and page headers learn they are inside a shell at all.
+    // The demo provider carries the fixture-mode flag to the chrome's leaves
+    // (nav destinations, rail footer, session edge) without widening their
+    // props — see demo-mode.tsx for why context rather than threading.
     <ShellSlotProvider>
-      <div className="flex h-dvh w-full overflow-hidden">
-        <Sidebar rail={rail} userEmail={userEmail} userName={userName} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar userEmail={userEmail} userName={userName} demo={demo} />
-          {/* ONE page geometry for every authed surface: a shared centred column
-              with a common left edge. The dashboard fills it; narrower pages
-              (settings, inbox) cap their own measure inside it but start at the
-              same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
-              so this pane is the scroll context the whole app shares. */}
-          <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
-            <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
-              {children}
-            </div>
-          </main>
+      <DemoModeProvider demo={demo}>
+        <div className="flex h-dvh w-full overflow-hidden">
+          <Sidebar rail={rail} userEmail={userEmail} userName={userName} ambient={ambient} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <TopBar userEmail={userEmail} userName={userName} demo={demo} />
+            {/* ONE page geometry for every authed surface: a shared centred column
+                with a common left edge. The dashboard fills it; narrower pages
+                (settings, inbox) cap their own measure inside it but start at the
+                same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
+                so this pane is the scroll context the whole app shares.
+
+                `scroll-pt-14` is the clearance an in-page anchor jump needs to
+                land BELOW a parked `PageHeader` (52px: the row's 36 plus the
+                16 of `py-4` it absorbs — see that component). It belongs on the
+                SCROLLPORT rather than on every jump target: `scroll-padding` is
+                the container's own declaration of "this much of me is covered",
+                so one line here replaces a `scroll-mt` edit on each of Settings'
+                six sections, and it can never drift from the header's real
+                height the way six copies would. `:has()` scopes it to panes
+                that actually contain such a row — the same mechanism the
+                `.page-locked` line below uses — which is what keeps it off
+                /privacy, an in-shell document that renders no header and whose
+                contents rail jumps to its own `scroll-mt-24` sections. */}
+            <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4 lg:has-[[data-page-header]]:scroll-pt-14">
+              <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
+      </DemoModeProvider>
     </ShellSlotProvider>
   );
 }

@@ -205,6 +205,53 @@ class ClassificationMethod(str, Enum):
     FALLBACK = "fallback"
 
 
+class ReviewDisposition(str, Enum):
+    """WHICH act a human performed on a verdict — agreement or override.
+
+    ``user_corrected`` cannot express this and never could. It is written
+    ``True`` by ``POST /applications/review/{message_id}/classify`` whatever the
+    human chose, so a person who AGREES with the classifier and a person who
+    OVERRULES it produce byte-identical rows. Every "the classifier was wrong N
+    times" figure built on that flag is inflated by an unknown amount, and one
+    audit read the flag on production, concluded the classifier had never once
+    auto-detected a rejection, and reported it — while the message in question
+    had been scored ``rejection`` at 0.75, correctly, and merely held under the
+    0.85 gate for a human who then agreed with it.
+
+    The two acts are different evidence and are now stored as different things.
+
+    NULL is a state, and it is the normal one: no human decision is recorded for
+    this row at all. It is NOT a synonym for any value below.
+
+    ``UNKNOWN`` is the third state this enum exists to make honest. It means a
+    human decision IS on record and which act it was is not recoverable — the
+    row was written before this column existed. Revision ``b3e91c47da05``
+    backfills every pre-existing ``user_corrected = true`` row to it. Nothing
+    guesses: replaying today's classifier over those rows would reconstruct a
+    verdict the correction had already overwritten in place, which is inventing
+    the label in the other direction. A missing label is recoverable; a
+    fabricated one looks like data.
+
+    ``UNATTRIBUTED`` is a live case rather than a historical one, and is kept
+    separate from ``UNKNOWN`` on purpose — folding them together would make the
+    count of rows damaged by this defect unrecoverable the moment the backfill
+    ran. It means the row carried no machine verdict for the human's choice to
+    agree or disagree WITH: a live-scan message minted through
+    ``ScannedMessageIn`` with ``category=None`` has no ``classified_as`` and no
+    ``suggested_category``, so the human supplied the first verdict rather than
+    ruling on one.
+
+    This does NOT redefine ``user_corrected``, which keeps meaning "a human
+    settled this row" — see the field's own comment for why narrowing it would
+    silently move rows into the labeling queue and the needs-review count.
+    """
+
+    CONFIRMED = "confirmed"
+    OVERRIDDEN = "overridden"
+    UNATTRIBUTED = "unattributed"
+    UNKNOWN = "unknown"
+
+
 class EmailSource(str, Enum):
     """Source email account type."""
 
@@ -500,7 +547,34 @@ class Email(TimestampMixin, table=True):
     )
 
     # User interaction
+    #
+    # ``user_corrected`` reads "a human SETTLED this row", not "a human changed
+    # the verdict" — the name is older than the meaning and is deliberately not
+    # being narrowed. Four queries filter ``user_corrected.is_(False)`` as their
+    # definition of not-yet-human-settled
+    # (``scripts/weekly_labeling_workflow.py`` ×2,
+    # ``scripts/generate_ml_monitoring_report.py`` ×2), and none of them filters
+    # ``is_reviewed``. Redefining this flag to mean overrides-only would push
+    # every AGREEMENT back into the weekly labeling queue and into the
+    # needs-review count — a message whose label a human already settled,
+    # leading the queue. That is the same trap ``_settle_thread_siblings``
+    # documents for siblings.
+    #
+    # WHICH act it was lives in ``review_disposition`` below.
     user_corrected: bool = Field(default=False, description="Was classification corrected?")
+    # Agreement or override — the distinction ``user_corrected`` cannot express.
+    #
+    # NULL means no human decision is recorded for this row. Every non-null
+    # value means one is; see :class:`ReviewDisposition` for what each says and
+    # for why ``UNKNOWN`` exists rather than a backfilled guess.
+    #
+    # Unindexed on purpose, exactly like ``suggested_category``: it is read per
+    # row for display and aggregated by the monitoring scripts, and no query
+    # filters on it.
+    review_disposition: Optional[ReviewDisposition] = Field(
+        default=None,
+        description="Whether the human confirmed or overrode the machine's verdict",
+    )
     is_reviewed: bool = Field(default=False, description="Has user reviewed this email?")
 
     # Raw data
@@ -747,6 +821,20 @@ class SyncState(SQLModel, table=True):
         description="IMAP last UID for incremental sync",
     )
 
+    # THE LEASE. When a sync for this (user, account) started, or NULL when
+    # none is running.
+    #
+    # A timestamp rather than a boolean because a crashed sync must expire.
+    # A serverless function killed on its 60 s ceiling leaves nobody behind to
+    # clear a flag, so a boolean lease would lock the user out of their own
+    # mailbox permanently; "held only if it started within the TTL" cannot.
+    # Taken and tested in ONE conditional UPDATE — see
+    # ``cloud/sync_state.acquire_gmail_sync_lease`` — because a read-then-write
+    # in Python is exactly the race this exists to close.
+    sync_started_at: Optional[datetime] = Field(
+        default=None, description="When the in-flight sync started (lease); NULL if idle"
+    )
+
     # Status - use string column to store enum values
     status: str = Field(default="idle", description="Current sync status")
     error_message: Optional[str] = Field(default=None, description="Last error message")
@@ -820,6 +908,23 @@ class UserCredential(SQLModel, table=True):
         description="Identifier of the encryption key used (rotation support).",
     )
 
+    # When the third party told us this grant is gone — a user revoking Gmail
+    # access at myaccount.google.com — or NULL while it is believed good.
+    #
+    # Written ONLY on a definitive, permanent refusal (``invalid_grant``); never
+    # on a transport error, a timeout or an HTTP 5xx, which are transient and
+    # would otherwise disconnect a working account the first time Google was
+    # unreachable. See ``cloud/gmail_client.load_valid_credentials``.
+    #
+    # Marked rather than deleted so the row keeps the address the UI needs to
+    # name which account to reconnect, and so reconnecting is reversible: the
+    # OAuth callback's upsert clears this back to NULL.
+    revoked_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        description="When the provider refused this grant permanently; NULL if live.",
+    )
+
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(
@@ -837,4 +942,71 @@ class UserCredential(SQLModel, table=True):
             nullable=False,
             server_default=sa.func.now(),
         ),
+    )
+
+
+# =============================================================================
+# Gmail sync enrollment (cloud only)
+# =============================================================================
+
+
+class GmailSyncEnrollment(SQLModel, table=True):
+    """Who has a Gmail credential — the *fact*, with none of the secret.
+
+    WHY A SECOND TABLE INSTEAD OF READING ``user_credentials``
+    ----------------------------------------------------------
+    The scheduled sync (``jobtracker.cloud.cron``) carries no JWT, so
+    ``auth.uid()`` is NULL for it and every policy on ``user_credentials``
+    matches no row. That table is FORCE-RLS and holds Google refresh tokens, so
+    the correct answer to "let the cron enumerate it" is not a wider policy, a
+    ``SECURITY DEFINER`` wrapper or a ``BYPASSRLS`` role — every one of those
+    puts a new path in front of the tokens, and the cron does not want the
+    tokens. It wants the *set of user ids* that hold one.
+
+    So the membership fact is published here, in a table that holds nothing
+    else: a user id and when it was enrolled. No ciphertext, no email address,
+    no ``kind``. The leak this whole design worries about is not guarded
+    against, it is structurally impossible — there is no secret in this table
+    to leak.
+
+    THE DELIBERATE EXPOSURE, stated rather than buried. This table carries a
+    ``SELECT`` policy for the runtime role with a permissive predicate (see the
+    ``gmail_sync_enrollment`` revision), because a policy the cron's
+    identity-less connection cannot satisfy would rebuild the original problem.
+    Any reader connecting as ``jobtracker_app`` can therefore learn WHICH user
+    ids have linked Gmail, and when. That is a membership fact. It is never a
+    token and never an email address, and it is the trade this design makes on
+    purpose.
+
+    HOW IT STAYS TRUE. Written and deleted in the SAME transaction as the Gmail
+    credential itself — ``jobtracker.credentials.cloud.save_gmail_credentials``
+    and ``delete_gmail_credentials`` — so the two tables cannot drift. Nothing
+    else may write it.
+    """
+
+    __tablename__ = "gmail_sync_enrollment"
+
+    # Owner (Supabase auth.users.id) and the whole primary key: enrollment is
+    # membership, so a user is in the set or is not. The Postgres-only foreign
+    # key to ``auth.users(id) ON DELETE CASCADE`` is added by the migration,
+    # mirroring ``user_credentials`` — SQLite has no ``auth`` schema.
+    user_id: uuid.UUID = Field(
+        sa_column=Column(
+            "user_id",
+            sa.Uuid(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
+        description="Supabase auth.users(id) that has a Gmail credential stored.",
+    )
+
+    enrolled_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            "enrolled_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        description="When this user first linked Gmail (not updated on reconnect).",
     )

@@ -4,8 +4,12 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - "scripts/install.sh"
-      - "scripts/start_backend.sh"
+      # `scripts/install.sh` and `scripts/start_backend.sh` used to be listed
+      # here. Both existed only to bootstrap and boot the DESKTOP backend for
+      # the SwiftUI app and were deleted with it (issue #73). A path filter that
+      # names a file which cannot exist is a trigger that can never fire, which
+      # is this repo's recurring defect — so they are removed, not commented out.
+      #
       # The expand-only gate and the fingerprint it reads. Both live outside
       # backend/, so without these two lines a PR that edited only the gate
       # would never run the gate — the same shape as the `integration/web-
@@ -27,8 +31,6 @@ on:
       - integration/web-migration
     paths:
       - "backend/**"
-      - "scripts/install.sh"
-      - "scripts/start_backend.sh"
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
       - ".github/workflows/backend-ci.yml"

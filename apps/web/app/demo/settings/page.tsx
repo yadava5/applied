@@ -11,6 +11,7 @@ import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
+import { DEMO_AMBIENT_COOKIE, parseDemoAmbientPref } from "@/lib/demo/ambientPref";
 import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 import type { GmailStatusResult } from "@/lib/gmail/server";
 
@@ -65,9 +66,11 @@ export default async function DemoSettingsPage() {
   // seeded from a `{weekly: true, reviewAlerts: true}` literal while the twin's
   // board behaved as though both were off — the twin lying about its own
   // state, in the exact place #216 is about.
-  const notifications = parseDemoNotificationPrefs(
-    (await cookies()).get(DEMO_NOTIFICATIONS_COOKIE)?.value,
-  );
+  const jar = await cookies();
+  const notifications = parseDemoNotificationPrefs(jar.get(DEMO_NOTIFICATIONS_COOKIE)?.value);
+  // Same one-cookie honesty for the ambient switch: this page seeds from the
+  // value /demo/shell will render, so the two can never disagree.
+  const ambient = parseDemoAmbientPref(jar.get(DEMO_AMBIENT_COOKIE)?.value);
   return (
     <main data-theme="dark" className="min-h-screen w-full bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-6 pb-16">
@@ -117,7 +120,7 @@ export default async function DemoSettingsPage() {
                   product here — but this page is pinned dark with the rest of
                   the demo, and `mode="demo"` is what says so on the control
                   instead of leaving it looking inert. */}
-              <AppearanceSection mode="demo" />
+              <AppearanceSection mode="demo" initialAmbient={ambient} />
               <GmailConnectionCard result={fixtureGmail()} demo />
               {/* #216: the twin's toggles and its board now read ONE cookie.
                   They used to disagree — this page seeded `{weekly: true,

@@ -92,29 +92,53 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
+            # The verb that takes "with" instead of "forward" — Lever's standard
+            # rejection wording ("we will not be proceeding with your candidacy
+            # for this role at this time"), which matched nothing above. Paired
+            # general + noun-anchored so a BODY alone reaches +6, because a
+            # rejection's subject line reads "Thank you from <Company>" and one
+            # +3 body match can never clear the 0.85 gate. See the backend copy
+            # for the full note.
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
+            # SIX PAIRS FOLLOW. Eight of the sixteen canonical rejection
+            # sentences matched exactly ONE pattern here, which is +3 from a
+            # body — the 0.70 rung, the review queue — while AUTO_FILE_GATE is
+            # 0.85. Each twin below is strictly narrower than its partner and
+            # exists to be the second +3 so a body with no subject support
+            # reaches 0.90. NOT a reweighting of body matches, which would move
+            # every verdict in the corpus at once. See the backend copy for the
+            # full note and the before/after replay.
+            #
             # Replaces `move(d)? forward with other candidates` and
             # `chosen to move forward with another candidate`: neither had the
             # participle, so "we will be moving forward with other candidates
             # whose qualifications more closely match" scored 0.
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (other|another) (candidate|applicant)",
             # Replaces `decided to pursue other candidates`, which required both
             # the lead-in and the noun "candidates"; "pursue other applicants"
             # scored 0.
             r"pursu(e|ing) other (candidates|applicants)",
+            r"(decided|chosen|elected|opted) to pursue other (candidates|applicants)",
             r"not (been )?selected.{0,30}(position|role|interview)",
             # "You have not been selected." — a complete rejection with no
             # trailing noun for the pattern above to anchor on.
             r"\bnot been selected\b",
+            r"\byou (have|were)\b.{0,10}not (been )?selected\b",
             r"not (be )?able to offer.{0,20}(position|role|interview)",
             # "unable" is not "not able", and it is the form ATS templates use:
             # "we are unable to offer you a position at this time".
             r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (offer|extend) you\b",
             r"unable to (proceed|continue|move forward) with",
+            r"unable to (proceed|continue|move forward) with.{0,25}(application|candidacy|process)",
             # Was `won't be advancing…` — contraction only, so "we will not be
             # advancing your candidacy" missed.
             r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
             # --- end of the block FOLLOW_UP.veto repeats -------------------
@@ -449,16 +473,24 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
+            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (other|another) (candidate|applicant)",
             r"pursu(e|ing) other (candidates|applicants)",
+            r"(decided|chosen|elected|opted) to pursue other (candidates|applicants)",
             r"not (been )?selected.{0,30}(position|role|interview)",
             r"\bnot been selected\b",
+            r"\byou (have|were)\b.{0,10}not (been )?selected\b",
             r"not (be )?able to offer.{0,20}(position|role|interview)",
             r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            r"unable to (offer|extend) you\b",
             r"unable to (proceed|continue|move forward) with",
+            r"unable to (proceed|continue|move forward) with.{0,25}(application|candidacy|process)",
             r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
         ],

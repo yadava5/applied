@@ -36,7 +36,12 @@ from fastapi import Depends, FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from jobtracker.config import settings
+from jobtracker.config import (
+    configured_web_app_host,
+    settings,
+    trusted_web_hosts,
+    web_app_host_is_trusted,
+)
 from jobtracker.logging import setup_logging
 
 setup_logging()
@@ -78,22 +83,22 @@ def _build_cors_origin_regex() -> str:
     where ``VERCEL_URL`` is that preview's own hostname. So previews keep
     working and a third party's ``*.vercel.app`` does not match. Same
     behaviour, no wildcard.
+
+    WHERE THE HOSTS COME FROM (changed 2026-08-14). The list used to be built
+    here, which made this function a second, private answer to "which host is
+    the web app?" — the Gmail OAuth callback held the other one, and they
+    silently disagreed in production for weeks. Both now read
+    ``config.trusted_web_hosts``; see that function for the measurement.
+    The behaviour of this regex is unchanged, and
+    ``tests/test_cors_origin_regex.py`` is what says so.
     """
 
-    parts: list[str] = [
-        r"localhost(:\d+)?",
-        r"127\.0\.0\.1(:\d+)?",
+    parts = [
+        # Matched with an optional port so `vercel dev` on any port works;
+        # the remote hosts are matched exactly.
+        rf"{re.escape(host)}(:\d+)?" if host in ("localhost", "127.0.0.1") else re.escape(host)
+        for host in trusted_web_hosts()
     ]
-
-    # This deployment's own hostnames, injected by Vercel. VERCEL_URL is the
-    # per-deployment host (unique per preview); VERCEL_PROJECT_PRODUCTION_URL
-    # is the stable production one. Both arrive WITHOUT a scheme.
-    for var_name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL"):
-        own_host = os.environ.get(var_name, "").strip()
-        if own_host:
-            parts.append(re.escape(own_host))
-
-    parts.extend(re.escape(host) for host in settings.cors_allowed_hosts if host)
     return rf"^https?://({'|'.join(parts)})$"
 
 
@@ -332,6 +337,35 @@ class HealthResponse(BaseModel):
             "`version` cannot: that is a constant in the source."
         ),
     )
+    web_app_host: str | None = Field(
+        default=None,
+        description=(
+            "The hostname the Gmail OAuth callback returns the browser to, "
+            "read from JOBTRACKER_WEB_APP_URL, or null when it is unset. "
+            "Reported so a stale value is VISIBLE without anyone completing a "
+            "connect flow to find out -- which is how the real one survived: "
+            "it named a pre-rename alias for 26 days, the alias served the app "
+            "perfectly, and the only symptom was that every returning user "
+            "arrived on a hostname their session cookie was not issued for. "
+            "Compare it against `web_app_host_trusted` below, never by eye."
+        ),
+    )
+    web_app_host_trusted: bool = Field(
+        default=False,
+        description=(
+            "Whether `web_app_host` is one of the hostnames this deployment "
+            "serves the app on (`config.trusted_web_hosts`). FALSE means the "
+            "Gmail connect flow is broken for every user right now: the "
+            "callback will 503 rather than strand them signed out. "
+            "WHY THIS IS NOT A 503 ON /health. The API also serves the board, "
+            "search, export and the scheduled sync, none of which touch this "
+            "value; failing the whole health check -- or refusing to boot -- "
+            "would turn one wrong redirect target into a total outage, and "
+            "into a deploy that cannot roll forward. So the endpoint stays 200 "
+            "and states the fact, and the failure is loud at the one place it "
+            "actually matters."
+        ),
+    )
 
 
 @app.get(
@@ -365,6 +399,12 @@ async def health_check() -> HealthResponse:
         # Null when the platform did not supply one. Never a placeholder --
         # a made-up SHA is worse than no SHA, because it looks answerable.
         commit=_COMMIT_SHA,
+        # The host only -- never the whole URL, and never the trusted list.
+        # A hostname this deployment publishes anyway is not a secret; the
+        # allow-list is a different question and is not this endpoint's to
+        # answer.
+        web_app_host=configured_web_app_host(),
+        web_app_host_trusted=web_app_host_is_trusted(),
     )
 
 
@@ -485,6 +525,7 @@ async def root() -> dict[str, Any]:
 from jobtracker.auth import current_user  # noqa: E402
 from jobtracker.cloud.account import router as account_cloud_router  # noqa: E402
 from jobtracker.cloud.applications import router as applications_cloud_router  # noqa: E402
+from jobtracker.cloud.cron import router as cron_cloud_router  # noqa: E402
 from jobtracker.cloud.gmail_oauth import router as gmail_cloud_router  # noqa: E402
 
 
@@ -530,3 +571,10 @@ app.include_router(gmail_cloud_router)
 # "danger zone" no longer orphans data when it removes the Supabase auth user.
 # Router declares its own ``require_user()``. See jobtracker.cloud.account.
 app.include_router(account_cloud_router)
+
+# Scheduled sync (GET/POST /cron/sync) — issue #23 (C7). The ONE router here
+# with no ``require_user()``, deliberately: Vercel Cron carries no JWT. It is
+# gated instead on a shared secret compared in constant time, and every unit of
+# work inside runs under an explicit per-user RLS identity, so "no caller
+# identity" never becomes "no scoping". See jobtracker.cloud.cron.
+app.include_router(cron_cloud_router)

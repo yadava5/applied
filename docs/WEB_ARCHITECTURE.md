@@ -6,18 +6,29 @@
 
 ## Deployment modes
 
-Applied runs in one of two modes, selected by
-`JOBTRACKER_DEPLOYMENT`:
+Applied ships in **one** mode. `JOBTRACKER_DEPLOYMENT` still selects
+between two values, and `desktop` is still the default the settings
+object falls back to — but there is no longer a desktop application to
+build, so `cloud` is the only mode with a UI, an app builder or a
+deployment:
 
 | Mode | Host | UI | DB | Auth | Secrets | Classifier |
 |---|---|---|---|---|---|---|
-| `desktop` (default) | local process, bundled .app | SwiftUI (`apps/macos/`) | SQLite (`~/Library/Application Support/JobTracker/`) | single-user, trust-local | macOS Keychain via `keyring` | rules + embeddings + SetFit |
-| `cloud` | Vercel serverless | Next.js on Vercel (`apps/web/`) | Supabase Postgres | Supabase Auth (JWT) | Fernet-encrypted Postgres rows | rules only (v1) |
+| `cloud` | Vercel serverless | Next.js on Vercel (`apps/web/`) | Supabase Postgres | Supabase Auth (JWT) | Fernet-encrypted Postgres rows | rules only |
+| `desktop` (default value, **no app**) | — | deleted 2026-08-12 | SQLite paths still in `database/connection.py` | — | `keyring` still importable | rules + embeddings + SetFit |
 
-Both modes share the same `backend/jobtracker/` package. The divergence
-is kept in:
-- `backend/jobtracker/main.py` (desktop app builder) vs.
-  `backend/jobtracker/main_cloud.py` (cloud app builder).
+The setting is not vestigial: `api/index.py` forces it to `cloud`
+before importing the app precisely because a stray `desktop` value
+would still select SQLite over Postgres and the Keychain over the
+encrypted-row store. That forcing line is pinned by
+`backend/tests/test_the_deployed_app_is_the_cloud_app.py`.
+
+What used to be the divergence:
+- `backend/jobtracker/main.py` (desktop app builder) — **deleted**,
+  along with the unmounted, unscoped routers under
+  `backend/jobtracker/api/` and `backend/jobtracker/services/`
+  (issue #73). `backend/jobtracker/main_cloud.py` is the only app
+  builder.
 - `backend/jobtracker/credentials.py` (to be split in C4).
 - `backend/jobtracker/database/connection.py` (to be dialect-gated in C2).
 - `backend/jobtracker/classifier/hybrid.py` — C6 now short-circuits to
@@ -78,10 +89,13 @@ is kept in:
   does hold at any size is the invocation count: one per query instead
   of one per row. The comparison is unchanged either way, so the
   isolation guarantee is identical.
-- **Desktop.** Unchanged. `jobtracker.main` never imports the auth
-  module; desktop rows are owned by a fixed sentinel UUID
-  (`00000000-0000-0000-0000-000000000000`) declared in
-  `jobtracker.database.models.LOCAL_USER_ID`.
+- **Desktop.** No longer applicable. The desktop app builder never
+  imported the auth module and its rows were owned by a fixed sentinel
+  UUID (`00000000-0000-0000-0000-000000000000`). That constant,
+  `jobtracker.database.models.LOCAL_USER_ID`, still exists and is still
+  the default for a row written without a user — which is why the RLS
+  policies, not the application code, are the thing that actually
+  enforces isolation.
 
 ## Classifier (cloud)
 
@@ -208,13 +222,56 @@ client — that arrives in C10 as a typed `fetch` wrapper bound to
   tampered row) causes `cloud.get_*_credentials` to log and return
   `None` — routers degrade gracefully.
 
+## Sync (cloud) — three triggers, one code path
+
+`POST /gmail/sync` (`jobtracker/cloud/gmail_oauth.py`) is the only sync
+implementation. Everything below is a different way of *calling* it, not
+a second sync:
+
+| Trigger | Who fires it | Budget | Notes |
+|---|---|---|---|
+| "Sync now" | The user | 60 s | The path that completes a first backfill |
+| Arrival auto-sync | `apps/web/components/dashboard/SyncBar.tsx` when the board is stale, with a per-tab cooldown | 60 s | Why "the board never refreshes" is no longer true |
+| `GET\|POST /cron/sync` | Vercel Cron, `*/15 * * * *` | 10 s per user, 45 s per run | The only one that runs **while nobody is looking** |
+
+The cron is what makes "something happened while you were gone" a real
+event: the change ledger can otherwise only report changes the open tab
+itself just fetched. It calls `gmail_sync` directly with an explicit
+`user_id`, wrapped in `user_id_scope(user_id)` so every read inside runs
+under that user's RLS identity — the endpoint has no JWT, but nothing
+inside it is unscoped.
+
+That identity is also what makes the enumeration work at all. A cron
+cannot read `user_credentials` to *discover* its users: that table is
+FORCE-RLS on `auth.uid()`, so an identity-less read of it matches no row.
+The membership fact comes from `gmail_sync_enrollment` instead — one
+query, no identity, written in the same transaction as the credential —
+and each candidate is then probed and synced inside its own
+`user_id_scope`: an identity, not an exemption, so no extra database
+credential is involved. The probes share one connection and re-bind that
+identity per transaction, because a session per user is a fresh ~216 ms
+connection under NullPool and 300 users' worth of them exceeds the run's
+whole budget. Setup, bounds and cost are in
+[`DEPLOYMENT.md`](./DEPLOYMENT.md#who-gets-synced).
+
+**No WebSocket on cloud.** The Vercel Python runtime does not support it,
+so `main_cloud.py` never includes `jobtracker/api/websocket.py` — and,
+per `tests/test_desktop_routers_are_not_mounted.py`, never imports it.
+`sync_ws_manager.broadcast()` is an explicit no-op wherever
+`settings.deployment == "cloud"`, so the call sites in
+`jobtracker/api/sync.py` are unconditional and identical in both
+deployments. The web UI polls; progress after "Sync now" comes from the
+sync response and `GET /auth/gmail/status`, not from a stream.
+
 ## Cloud entrypoints
 
 - `api/index.py` — Vercel Python runtime entry. Prepends `backend/` to
   `sys.path`, forces `JOBTRACKER_DEPLOYMENT=cloud`, re-exports
   `jobtracker.main_cloud.app`.
-- `vercel.json` — routes every path to `api/index.py`, pins Python 3.11,
-  declares the placeholder cron for `/cron/sync` (implemented in C7).
+- `vercel.json` (repo root — the `jobtracker-api` project's config; the
+  web project reads `apps/web/vercel.json`) — routes every path to
+  `api/index.py`, caps it at `maxDuration: 60`, and declares the
+  `*/15 * * * *` cron for `/cron/sync` (C7, shipped).
 - `requirements.txt` (repo root) — Vercel-safe dependency set, no torch
   or keyring; `backend/requirements.txt` keeps the full desktop set.
 
@@ -249,7 +306,7 @@ Supabase Postgres (asyncpg, transaction-mode pooler)
 | Encrypted credentials | #21 (C4) |
 | Gmail web OAuth | C5 |
 | Rules-only cloud classifier | #17 (C6) |
-| WebSocket → polling + cron | C7 |
+| WebSocket → polling + cron | #23 (C7) |
 | test_cloud pytest marker | C8 |
 | Next.js scaffold | C9 |
 | Typed API client | C10 |

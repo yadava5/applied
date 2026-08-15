@@ -7,9 +7,9 @@ import { Menu, X } from "lucide-react";
 
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
-import { isNavItemActive, navItems } from "./nav";
+import { isNavItemActive, navItems, ownsPageHeader } from "./nav";
 import { NavLink } from "./NavLink";
-import { DemoFixturePill, SignOutButton } from "./SessionControls";
+import { DemoFixturePill, DemoSignupCta, SignOutButton } from "./SessionControls";
 
 type TopBarProps = {
   userEmail: string | null;
@@ -29,14 +29,23 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The route's own name, from the nav vocabulary — never hardcoded, because
-  // this one bar serves every authed route (and /demo/shell, whose path
-  // matches no nav item but which IS the board twin). The board route gets an
-  // <h1>: its page surrendered the in-page header row to the worklist, so the
-  // page heading lives here now. Every other route keeps its own <h1> below
-  // and this reads as the location label beside it.
+  // this one bar serves every authed route and the board twins (/demo,
+  // /demo/shell, which `isNavItemActive` counts as /dashboard). The demo
+  // fallback survives as a guard for any future fixture route the matcher
+  // does not know. The board route gets an <h1>: its page surrendered the
+  // in-page header row to the worklist, so the page heading lives here now.
+  // Every other route keeps its own <h1> below and this reads as the location
+  // label beside it.
   const current =
     navItems.find((item) => isNavItemActive(pathname, item.href)) ?? (demo ? navItems[0] : null);
   const isBoardTitle = current?.href === "/dashboard";
+  // Whether the PAGE renders the screen's top line at `lg`+, in which case this
+  // bar yields there. Four routes do now, where only the board used to; the
+  // list and the reasoning live in `./nav`, and `/privacy` is deliberately not
+  // on it. Read from the resolved nav item rather than the raw pathname so the
+  // board twins (/demo, /demo/shell) answer as the board, exactly as they do
+  // for every other decision in this component.
+  const ownsHeader = ownsPageHeader(current?.href);
 
   // The desktop sidebar is hidden below `md`, so this menu is the only way to
   // move between sections on a phone — never leave the user stranded. It closes
@@ -52,15 +61,22 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
   }, [menuOpen]);
 
   return (
-    // On the BOARD route this bar yields at `lg`+: the board's own header row
-    // (SyncBar — title folded in, sign-out in its ⋯ menu) takes the top line,
-    // so the screen never spends 48px on a strip whose middle is empty. Every
-    // other route — and every width below `lg`, where the mobile menu and the
-    // stacked board header need it — keeps this bar exactly as it is.
+    // On every route that renders its OWN header line this bar yields at `lg`+:
+    // the page's row (the board's `SyncBar`, or `PageHeader` on the other
+    // three) takes the top line, so the screen never spends 48px on a strip
+    // whose left end restates the lit rail item and whose middle is empty. That
+    // was the board's arrangement alone; it is all four destinations now, which
+    // is the point — one header language, not two.
+    //
+    // What still keeps this bar: `/privacy` in the shell (no header row of its
+    // own, so this is its only sign-out), and EVERY width below `lg`, where the
+    // mobile menu, the location label and the stacked board header all need it.
+    // Removing it outright would strand every phone user — it is the only
+    // navigation below `md`.
     <header
       className={cn(
         "relative flex h-12 items-center justify-between border-b border-line-soft bg-surface px-4",
-        isBoardTitle && "lg:hidden",
+        ownsHeader && "lg:hidden",
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -84,20 +100,32 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
             `display` in unlayered CSS (globals), which outranks the layered
             utility on the same element — hiding the parent sidesteps that. */}
         <span className="shrink-0 md:hidden">
+          {/* In fixture mode "your applications" is the board twin — the real
+              /dashboard is an auth bounce for the anonymous visitor. */}
           <Link
-            href="/dashboard"
+            href={demo ? "/demo" : "/dashboard"}
             aria-label="Applied — go to your applications"
             className="brand-logo-link text-strong"
           >
             <Logo variant="mark" className="h-7 w-7" />
           </Link>
         </span>
-        {/* The route title. NOT on the board route: its title is the page's
-            one <h1>, rendered by the board's own header row at every width
-            (SyncBar's `title`) — a second copy here, even CSS-hidden at lg,
-            was a duplicate h1 in the document outline and exactly the
-            two-nodes-one-hidden shape that keeps producing strict-mode
-            locator bugs. The node is simply absent, not hidden. Identity
+        {/* The route title — BELOW `lg` only, in practice: this whole bar is
+            `lg:hidden` on the routes that render it, and the one route where
+            the bar survives at `lg` (/privacy in the shell) resolves no nav
+            item, so `current` is null there. That is the answer to "no need to
+            mention the name again for the active tab": above `lg` the rail is
+            the only thing that names the place. Below `lg` the rail is gone
+            (`md:hidden` on the aside) and this label is the only thing that
+            does, so it stays.
+
+            NOT on the board route at any width: its title is the page's one
+            <h1>, rendered by the board's own header row (SyncBar's `title`) —
+            a second copy here, even CSS-hidden at lg, was a duplicate h1 in
+            the document outline and exactly the two-nodes-one-hidden shape
+            that keeps producing strict-mode locator bugs. The node is simply
+            absent, not hidden. A <span> rather than a heading is why the other
+            three can keep theirs beside their pages' `sr-only` <h1>. Identity
             lives in the rail footer (desktop) and the mobile menu (below
             `md`). */}
         {current && !isBoardTitle ? (
@@ -169,6 +197,16 @@ export function TopBar({ userEmail, userName = null, demo = false }: TopBarProps
                 );
               })}
             </ul>
+            {/* Fixture mode: the menu is identity + destinations, and for an
+                anonymous visitor the honest identity story ends in an
+                invitation. Same block the rail footer mounts on desktop —
+                DemoSignupCta is the single copy — closing the menu on
+                navigation like every destination link above. */}
+            {demo ? (
+              <div className="mt-2 border-t border-line-soft px-3 pb-1 pt-2.5">
+                <DemoSignupCta onNavigate={() => setMenuOpen(false)} />
+              </div>
+            ) : null}
           </nav>
         </>
       ) : null}

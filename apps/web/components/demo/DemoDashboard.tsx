@@ -18,6 +18,7 @@ import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
 import { useLocalToday } from "@/lib/dashboard/useLocalToday";
+import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
 import {
   demoApplicationsAsApi,
   demoEarlySearchAsApi,
@@ -126,11 +127,13 @@ export function DemoDashboard({
   sessionEdge = false,
 }: {
   pipeline?: DemoPipeline;
-  /** `flow` — the /demo page twin: natural height, the page scrolls.
-   *  `locked` — the /demo/shell twin: the signed-in dashboard's exact
-   *  geometry (`LOCKED_PAGE_CLASS` root, `variant="locked"` board), which is
-   *  what makes the viewport-lock e2e assertions executable without a
-   *  session. Both mount the pulse where the real page does: the board's
+  /** `locked` — what /demo and /demo/shell both mount (via `DemoShell`): the
+   *  signed-in dashboard's exact geometry (`LOCKED_PAGE_CLASS` root,
+   *  `variant="locked"` board), which is what makes the viewport-lock e2e
+   *  assertions executable without a session. `flow` — natural height, the
+   *  page scrolls; no route mounts it since /demo consolidated onto the
+   *  shell, but it remains the honest default for a bare mount with no shell
+   *  around it. Both mount the pulse where the real page does: the board's
    *  full-width band. */
   variant?: "flow" | "locked";
   /** Held verdicts: the pulse band's count AND the length of the fixture
@@ -154,7 +157,7 @@ export function DemoDashboard({
   reviewSlot?: DemoReviewSlot;
   /** Mounts the SIGNED-IN session edge on the header row instead of the demo
    *  pill — `signedIn` on, `trailing` unset, exactly what
-   *  `app/(app)/dashboard/page.tsx` passes. Off for every organic visitor;
+   *  `app/(app)/(protected)/dashboard/page.tsx` passes. Off for every organic visitor;
    *  /demo/shell's `?session=1` harness knob is the one caller that sets it,
    *  and it is the whole reason that knob exists: the pill is what the twin
    *  renders where the real page renders its session edge, so the one control
@@ -250,6 +253,9 @@ export function DemoDashboard({
         // ledger's baseline so it is never reported back to them as news.
         // Same call, same reason, as the live transport.
         noteUserStageChange(LAST_LOOK_DEMO_KEY, id, status);
+        // And, same as the live transport: a stage that moved surges the
+        // rail's ambient field (only /demo/shell mounts a rail to hear it).
+        publishAmbientPulse(1);
         commit({
           ...s,
           apps: s.apps.map((app) => (app.id === id ? { ...app, status } : app)),
@@ -466,7 +472,7 @@ export function DemoDashboard({
           are counting (`lib/demo/reviewQueue.ts`), which is the subtree this
           twin was missing. The classifier's whole output, held and auto-filed
           alike, is a different fixture (DEMO_REVIEW_QUEUE) shown by the
-          DecisionTrace lower down /demo. Below `lg` the band yields to
+          DecisionTrace on the landing. Below `lg` the band yields to
           the cards' own tags — the phone answer the old full-width strip
           needed a `max-sm:order-last` workaround to approximate. */}
       <SyncBar

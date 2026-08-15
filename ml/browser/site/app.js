@@ -1,7 +1,7 @@
 /* JobTracker classifier, in-browser.
  *
  * Faithful port of the 3-layer hybrid (backend/jobtracker/classifier):
- *   1. rules       — same 212 regexes, same scoring (strong +3 ×2-subject,
+ *   1. rules       — same 220 regexes, same scoring (strong +3 ×2-subject,
  *                    weak +1, negative −5, veto caps the category at 0),
  *                    same margin→confidence tiers, same ATS-domain boost.
  *                    Accept ≥0.9.
@@ -177,7 +177,12 @@ function showTotal(ms) {
 
 async function boot() {
   renderTrace([
-    { layer: 'rules', state: 'passed', note: '201 patterns, ready', ms: null },
+    // No number until rules.json is actually loaded, and then the number is
+    // COUNTED from it (see the re-render below). This line used to hard-code
+    // "201 patterns, ready" while the file it describes carried 212: no claim
+    // site in scripts/readme_facts.py can anchor a number inside a template
+    // literal, so the gate that keeps every other copy honest could not see it.
+    { layer: 'rules', state: 'passed', note: 'loading patterns', ms: null },
     { layer: 'embeddings', state: 'passed', note: 'awaiting model', ms: null },
     { layer: 'setfit', state: 'passed', note: 'awaiting model', ms: null },
   ]);
@@ -198,6 +203,17 @@ async function boot() {
     fetch('./examples.json').then((r) => r.json()),
   ]);
   rules = compileRules(rulesRaw); head = headRaw; examples = exRaw;
+
+  // The scored count, derived from the file the page just compiled — the same
+  // definition scripts/readme_facts.py uses (strong + weak + negative; vetoes
+  // score nothing and stay outside the total).
+  const ruleCount = Object.values(rulesRaw.categories).reduce(
+    (n, g) => n + g.strong.length + g.weak.length + g.negative.length, 0);
+  renderTrace([
+    { layer: 'rules', state: 'passed', note: `${ruleCount} patterns, ready`, ms: null },
+    { layer: 'embeddings', state: 'passed', note: 'awaiting model', ms: null },
+    { layer: 'setfit', state: 'passed', note: 'awaiting model', ms: null },
+  ]);
 
   prog.hidden = false;
   extractor = await pipeline('feature-extraction', 'model', {

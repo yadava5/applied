@@ -19,6 +19,7 @@
 import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 import { createClient } from "@/lib/supabase/client";
 import { demoApplicationsAsApi } from "@/lib/demo/asApplications";
+import { writeDemoAmbientPref } from "@/lib/demo/ambientPref";
 import { writeDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 
 export type SettingsMode = "live" | "demo";
@@ -125,6 +126,10 @@ const demo: SettingsTransport = {
     // reason. Everything else a section writes (display name, gate) is still
     // dropped: nothing on this twin has anywhere to show it.
     if (isNotificationPrefs(data.notifications)) writeDemoNotificationPrefs(data.notifications);
+    // The ambient-mail switch, for the same reason: it promises a change to
+    // the shell's rail, and `/demo/shell` reads this cookie exactly as the
+    // signed-in layout reads the metadata (`lib/demo/ambientPref.ts`).
+    if (typeof data.ambient === "boolean") writeDemoAmbientPref(data.ambient);
     return { ok: true };
   },
   async updatePassword() {

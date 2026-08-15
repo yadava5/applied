@@ -22,12 +22,41 @@ Usage:
     print(settings.database_path)  # ~/Library/Application Support/JobTracker/jobtracker.db
 """
 
+import os
+import urllib.parse
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+class CronSyncUserIdsError(RuntimeError):
+    """``JOBTRACKER_CRON_SYNC_USER_IDS`` holds something that is not a UUID.
+
+    DELIBERATELY NOT A ``ValueError``, AND THAT IS THE WHOLE POINT.
+
+    Pydantic v2 catches ``ValueError``/``AssertionError`` out of a validator
+    and re-raises them as a ``ValidationError`` whose rendering appends
+    ``input_value=<the raw value>`` — for a ``NoDecode`` field that is the
+    **entire env var string**, verbatim. So a validator that says "the value
+    is not echoed" while raising ``ValueError`` is simply wrong: pydantic
+    echoes it a line later. That is not hypothetical; it was measured on
+    pydantic 2.12, and the test that was supposed to catch it passed only
+    because the string happened to be long enough for pydantic to truncate.
+
+    Any other exception type propagates out of the validator untouched, so the
+    message below is all the operator (and all the log) ever sees. The
+    realistic mishap this protects against is not an attacker — it is pasting
+    the wrong variable's contents into this box, e.g. the cron secret, and
+    then finding it verbatim in a build log.
+
+    It still fails at config load, which is the required behaviour: a non-UUID
+    entry would reach the RLS GUC listener as a ``str``, bind no identity at
+    all, and read zero rows without raising.
+    """
 
 
 class Settings(BaseSettings):
@@ -345,6 +374,21 @@ class Settings(BaseSettings):
             "used by `POST /cron/sync` (C7) to reject unauthenticated cron calls."
         ),
     )
+    cron_sync_user_ids: Annotated[list[uuid.UUID], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "NO LONGER CONSULTED. This was the scheduled sync's allowlist "
+            "(JOBTRACKER_CRON_SYNC_USER_IDS='<uuid>,<uuid>') back when the cron "
+            "could not read who had Gmail linked — `user_credentials` is "
+            "FORCE-RLS on auth.uid() and a cron carries no JWT. Since #291 the "
+            "membership fact lives in `gmail_sync_enrollment`, which an "
+            "identity-less connection CAN read, and `jobtracker.cloud.cron` "
+            "enumerates that instead. Nothing reads this field; a deployment "
+            "that still sets the env var is simply ignored. Kept so an existing "
+            "environment cannot fail validation on a variable it was told to "
+            "set, and so this note has somewhere to live."
+        ),
+    )
 
     # -------------------------------------------------------------------------
     # Gmail Web OAuth (cloud, C5). Only consumed when deployment == "cloud".
@@ -385,9 +429,14 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Absolute base URL of the web app the callback bounces the user back "
-            "to after a connect/disconnect, e.g. https://jobtracker-web-five."
-            "vercel.app. Used as a fixed, allow-listed redirect target so the "
-            "callback can never be turned into an open redirect. "
+            "to after a connect/disconnect. Used as a fixed, allow-listed "
+            "redirect target so the callback can never be turned into an open "
+            "redirect. It must ALSO be a host this deployment serves the app on "
+            "(see `trusted_web_hosts`): a merely-reachable alias of the same "
+            "project carries none of the user's cookies, so returning the "
+            "browser there lands it signed out. This description used to carry "
+            "a concrete example, and the example was the pre-rename alias that "
+            "caused exactly that — so it names no host now, deliberately. "
             "Env: JOBTRACKER_WEB_APP_URL."
         ),
     )
@@ -532,6 +581,62 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("cron_sync_user_ids", mode="before")
+    @classmethod
+    def _parse_cron_sync_user_ids(cls, value: Any) -> Any:
+        """Split the comma-separated env var into real ``uuid.UUID`` objects.
+
+        THE PARSE IS THE POINT, AND IT MUST BE LOUD.
+        ``database.connection._apply_transaction_gucs`` binds the RLS identity
+        only when the ContextVar holds a ``uuid.UUID``; for a ``str`` it takes
+        the ``isinstance`` early return and sets **no** ``request.jwt.claims``
+        at all. A string that slipped through here would therefore not raise —
+        it would make every query in that user's sync run with ``auth.uid()``
+        NULL, which RLS answers with zero rows and no error. "Syncs nobody,
+        silently" is precisely the failure this setting exists to end, so a
+        malformed entry has to stop the process rather than degrade into it.
+        (That ``isinstance`` guard is also what makes the listener's f-string
+        interpolation of the claims JSON safe: a UUID's string form is
+        strictly ``[0-9a-fA-F-]``. Feeding it raw strings would remove both
+        properties at once.)
+
+        The failing **index** is named, never the offending value: an operator
+        can paste anything into a Vercel env box and this message reaches logs.
+        That property is why the error is a :class:`CronSyncUserIdsError` and
+        not a ``ValueError`` — see that class for the measurement. Do not
+        "simplify" it back to ``ValueError``; doing so silently reintroduces
+        pydantic's ``input_value=<whole env string>`` echo.
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            items = list(value)
+
+        parsed: list[uuid.UUID] = []
+        for index, item in enumerate(items):
+            if isinstance(item, uuid.UUID):
+                parsed.append(item)
+                continue
+            try:
+                parsed.append(uuid.UUID(str(item)))
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise CronSyncUserIdsError(
+                    f"JOBTRACKER_CRON_SYNC_USER_IDS entry #{index + 1} of "
+                    f"{len(items)} is not a valid UUID ({type(exc).__name__}). "
+                    "The value is withheld from this message because it "
+                    "reaches the logs. Expected a comma-separated list of "
+                    "user UUIDs."
+                # ``from None``, not ``from exc``: ``uuid.UUID`` does not
+                # always keep quiet about its input. A near-miss UUID raises
+                # ``invalid literal for int() with base 16: '<the entry, minus
+                # its dashes>'``, so the chained traceback would quote most of
+                # the value straight back out. Measured, not assumed.
+                ) from None
+        return parsed
+
     def ensure_directories(self) -> None:
         """Create required directories if they don't exist."""
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -554,3 +659,134 @@ def get_settings() -> Settings:
 
 # Convenience alias for importing
 settings = get_settings()
+
+
+def trusted_web_hosts() -> list[str]:
+    """Every hostname this deployment considers to be "the web app".
+
+    ONE LIST, TWO READERS, AND WHY THAT MATTERS
+    -------------------------------------------
+    This deployment already had an answer to "which host is the front end?" —
+    the CORS allowlist in ``main_cloud._build_cors_origin_regex``, derived from
+    the hostnames Vercel injects. It also had a SECOND, unrelated answer: the
+    hand-set ``JOBTRACKER_WEB_APP_URL``, which the Gmail OAuth callback bounces
+    the browser to. Nothing compared them, so they were free to disagree — and
+    on 2026-08-14 they did, measured against production with no credentials:
+
+        $ curl -sD - "https://jobtracker-api-seven.vercel.app\
+/auth/gmail/callback?state=bogus&code=bogus"
+        HTTP/2 302
+        location: https://jobtracker-web-five.vercel.app/settings?gmail=error
+
+    ``jobtracker-web-five.vercel.app`` is a pre-rename alias of the web
+    project. It still serves the app, so nothing looked broken — but **cookies
+    are scoped to a host**, and the user's Supabase session lives on
+    ``getapplied.vercel.app``. Landing on the other name is landing signed out:
+
+        $ curl -sD - "https://jobtracker-web-five.vercel.app\
+/settings?gmail=connected"
+        HTTP/2 307
+        location: /login?gmail=connected&redirect=%2Fsettings
+
+    So finishing a Gmail reconnect dumped the owner on ``/login`` with his
+    session perfectly intact on the host he had come from. Nothing was wrong
+    with sign-in; he was simply on the wrong hostname.
+
+    Returning the hosts from ONE function is the fix for the class rather than
+    the instance. ``main_cloud`` builds its regex from this list, and
+    ``cloud.gmail_oauth._web_redirect`` refuses to bounce anywhere outside it,
+    so the two answers can no longer drift apart in silence.
+
+    THE SPLIT DEPLOYMENT, AND WHY THE WEB HOST MUST BE DECLARED
+    -----------------------------------------------------------
+    This is the part that is easy to get wrong, and the first draft of this
+    change did. ``VERCEL_URL`` and ``VERCEL_PROJECT_PRODUCTION_URL`` are
+    injected PER PROJECT, and this code runs on the **API** project — so what
+    they name is ``jobtracker-api-…``, never the web app. The web host reaches
+    this list through ``JOBTRACKER_CORS_ALLOWED_HOSTS`` or not at all.
+
+    And on 2026-08-14 it did not. Probed live, with ``localhost`` as the
+    control that proves the probe discriminates rather than just being silent:
+
+        $ curl -sD - -H "Origin: http://localhost:3000" \\
+              https://jobtracker-api-seven.vercel.app/health
+        access-control-allow-origin: http://localhost:3000     <- echoed
+
+        $ curl -sD - -H "Origin: https://getapplied.vercel.app" \\
+              https://jobtracker-api-seven.vercel.app/health
+        (no access-control-allow-origin at all)                <- NOT in the list
+
+    Nothing had noticed, because the browser never calls this API: every
+    backend call is made server-side from the web app's route handlers with
+    the user's JWT attached, so CORS has never had to admit the web origin.
+    See the note in ``apps/web/next.config.ts`` for the same finding from the
+    other side.
+
+    So the operator MUST declare the web host in ``JOBTRACKER_CORS_ALLOWED_HOSTS``
+    for the Gmail return-host guard to pass. That is a real requirement, not an
+    incidental one, and ``_web_app_base``'s refusal message names it. Two
+    variables that must agree is not a satisfying resting place — the durable
+    fix is for ``/auth/gmail/authorize`` to carry the CALLER'S OWN origin across
+    the round trip inside the signed, encrypted ``state`` this flow already
+    has, making the return host the origin the user actually started from by
+    construction, and this variable unnecessary. That is a cross-project change
+    and is deliberately not in this commit.
+
+    WHAT IS AND IS NOT IN HERE. ``VERCEL_URL`` is this deployment's own host
+    (unique per preview); ``VERCEL_PROJECT_PRODUCTION_URL`` is the stable
+    production one; both arrive WITHOUT a scheme. ``cors_allowed_hosts`` is the
+    operator declaration described above. ``localhost`` and ``127.0.0.1`` are
+    here for ``vercel dev`` and are matched with an optional port by both
+    readers. Deliberately NO ``*.vercel.app`` wildcard — anyone can deploy one,
+    and re-adding it re-opens SECURITY_AUDIT.md finding 2. See
+    ``backend/tests/test_cors_origin_regex.py``.
+
+    ONE THING THIS LIST DOES NOT CATCH, stated rather than fixed. It contains
+    the API's own hostnames, so ``JOBTRACKER_WEB_APP_URL`` pointed at the API
+    would pass the guard and strand the browser on a backend that serves no
+    ``/settings`` — the same shape as the unset case. "Who may call this API"
+    and "where does the browser go afterwards" are genuinely different
+    questions on a split deployment, and this function currently answers only
+    the first. The signed-state fix above answers the second properly.
+
+    Read from ``os.environ`` at CALL time, not import time, so a test that
+    monkeypatches the environment sees the change without reloading modules.
+    """
+
+    hosts = ["localhost", "127.0.0.1"]
+    for var_name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL"):
+        own_host = os.environ.get(var_name, "").strip()
+        if own_host:
+            hosts.append(own_host)
+    hosts.extend(host for host in settings.cors_allowed_hosts if host)
+    return hosts
+
+
+def configured_web_app_host() -> str | None:
+    """The hostname of ``JOBTRACKER_WEB_APP_URL``, or ``None`` when unset.
+
+    Parsed with ``urlsplit().hostname`` rather than a substring test: that is
+    what makes ``https://getapplied.vercel.app.evil.com`` a different host from
+    ``getapplied.vercel.app`` instead of a match, and it is the difference
+    between a check and the appearance of one.
+    """
+
+    configured = (settings.web_app_url or "").strip()
+    if not configured:
+        return None
+    return urllib.parse.urlsplit(configured).hostname or None
+
+
+def web_app_host_is_trusted() -> bool:
+    """Is the configured return host one this deployment serves the app on?
+
+    The single predicate behind both readers — ``/health`` reports it, and
+    ``cloud.gmail_oauth._web_app_base`` refuses on it. Two call sites, one
+    answer, which is the whole point: this bug existed because the same
+    question had two implementations that were free to disagree.
+    """
+
+    host = configured_web_app_host()
+    if host is None:
+        return False
+    return host.lower() in {trusted.lower() for trusted in trusted_web_hosts()}

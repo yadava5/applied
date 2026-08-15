@@ -12,14 +12,14 @@ requires-python = ">=3.11"
 authors = [
     { name = "Ayush Yadav" }
 ]
-keywords = ["job-tracker", "email", "ml", "fastapi", "swiftui"]
+keywords = ["job-tracker", "email", "ml", "fastapi", "nextjs"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Environment :: MacOS X",
+    "Environment :: Web Environment",
     "Framework :: FastAPI",
     "Intended Audience :: End Users/Desktop",
     "License :: Other/Proprietary License",
-    "Operating System :: MacOS",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business",
@@ -67,8 +67,11 @@ dist = [
     "pyinstaller>=6.3.0",
 ]
 
-[project.scripts]
-jobtracker = "jobtracker.main:run"
+# No [project.scripts]. The `jobtracker` console script pointed at
+# `jobtracker.main:run`, which booted the DESKTOP FastAPI app on 127.0.0.1:8000
+# for the SwiftUI client. Both were deleted when `apps/macos` was de-scoped and
+# the unmounted desktop routers went with it (issue #73). The cloud app has no
+# CLI entry point by design: Vercel imports `api/index.py` as an ASGI callable.
 
 [project.urls]
 Homepage = "https://github.com/yadava5/applied"

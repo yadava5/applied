@@ -12,15 +12,15 @@ This package provides:
 
 Modules:
 --------
-- database: Async SQLite models and connection management
+- database: Async models and connection management
 - email_clients: Gmail and iCloud email fetching
 - classifier: Rule-based, embedding, and SetFit classifiers
-- services: Business logic for sync, classification, analytics
-- api: FastAPI route handlers
+- cloud: the user-scoped FastAPI routers the deployed app mounts
+- main_cloud: the FastAPI app Vercel serves via ``api/index.py``
 
 Usage:
 ------
-    $ uvicorn jobtracker.main:app --host 127.0.0.1 --port 8000
+    $ uvicorn jobtracker.main_cloud:app --host 127.0.0.1 --port 8000
 """
 
 __version__ = "0.1.0"

@@ -1,25 +1,23 @@
-"""Cloud-only ``/applications`` router — demonstrates user_id scoping.
+"""The ``/applications`` router — every query scoped by ``user_id``.
 
-This is the minimum-viable scoped endpoint wired in C3 to prove the
-``current_user`` + ``user_id`` pipeline works end-to-end. Full CRUD,
-linking, and insights endpoints remain in ``jobtracker.api.applications``
-for the desktop build; downstream cloud issues (C11 onwards) will port
-each one over with the same pattern applied here.
+This began as the minimum-viable scoped endpoint wired in C3 to prove the
+``current_user`` + ``user_id`` pipeline works end-to-end, alongside an
+unscoped desktop twin in ``jobtracker.api.applications``. That twin was
+deleted (issue #73) along with ``apps/macos``, so this is now the only
+``/applications`` router in the tree and there is nothing left to port.
 
-Why a separate package instead of extending ``api/applications.py``?
-------------------------------------------------------------------
+Why this package rather than a shared router with a deployment branch?
+----------------------------------------------------------------------
 
-- The desktop router has no auth and passes ``user_id`` implicitly via
-  the local sentinel. Adding a per-endpoint ``Depends(current_user)``
-  branch inside the shared router would bifurcate every handler and
-  regress the 157 desktop tests.
-- The cloud import graph must stay thin. ``api/__init__.py`` eagerly
-  imports every desktop router, which drags in ``jobtracker.credentials``
-  → ``keyring`` and other Keychain-only deps. Cloud routers must sit
-  outside the ``api`` package so they do not trigger that import.
-- Keeping cloud handlers in their own package lets the cloud app
-  mount them with a router-level ``require_user()`` dependency so no
-  individual handler can accidentally skip auth.
+- A per-endpoint ``Depends(current_user)`` branch inside one shared
+  router would bifurcate every handler, and a handler that forgets the
+  branch is a cross-tenant read. Mounting this package with a
+  router-level ``require_user()`` dependency means no individual handler
+  can accidentally skip auth.
+- The cloud import graph must stay thin. The desktop package eagerly
+  imported every router in it, dragging in ``jobtracker.credentials`` →
+  ``keyring`` and other Keychain-only deps that have no place in a
+  serverless bundle with a 250 MB ceiling.
 """
 
 from __future__ import annotations
@@ -47,12 +45,14 @@ from jobtracker.database.models import (
     DEFAULT_APPLICATION_STATUS,
     Application,
     ApplicationStatus,
+    ClassificationMethod,
     Contact,
     Email,
     EmailCategory,
     EmailEmbedding,
     EmailSource,
     Interview,
+    ReviewDisposition,
     TrainingData,
 )
 
@@ -282,10 +282,57 @@ MAX_PAGE_SIZE = 500
 # applications. Same MAX_PAGE_SIZE ceiling.
 DEFAULT_MAIL_PAGE_SIZE = 50
 
+# The most linked messages either mail-reading path will load for ONE
+# application (issue #293). Both reads were unbounded: "every email on this
+# application", with no LIMIT, ordered and then clustered in Python. Bounded by
+# one application's own mail, so it is not a tenant leak — but an unbounded read
+# is a latent outage rather than a slow page, and nothing in the product stops a
+# rebuild from linking a thousand messages to one employer.
+#
+# Sized FAR above any plausible answer, on the same reasoning as
+# ``_COMPANY_ROWS_CAP``: the owner's whole mail table is 52 rows and the largest
+# single application on it holds a handful. This is a rail, not a business rule.
+#
+# It is deliberately not tight, because truncating this read is not "shows fewer
+# messages" — it is a WRONG answer. ``cluster_stored_mail`` sorts clusters by
+# their EARLIEST message and gives the row to cluster 0, and both reads order
+# newest-first, so a cap drops exactly the mail that decides which cluster keeps
+# the application id. Every caller therefore checks
+# :func:`_application_mail_truncated` and refuses to reason about a split from a
+# truncated set rather than proposing one.
+_APPLICATION_MAIL_CAP = 1000
+
 # How recent an application counts as "this week" for the summary tile. Kept
 # in one place so the backend aggregate and the frontend's array-based
 # `summarize()` fold agree on the window (7 days).
 _THIS_WEEK_WINDOW = timedelta(days=7)
+
+
+def _application_mail_truncated(
+    emails: list[Email], user_id: uuid.UUID, application_id: int, surface: str
+) -> bool:
+    """Say so — loudly — if :data:`_APPLICATION_MAIL_CAP` actually bound.
+
+    The mirror of :func:`_warn_if_capped`, for the same reason: a truncated read
+    is not a slow query, it is a wrong one, and a cap that truncates in silence
+    is the shape this codebase keeps finding under "checks that cannot fail".
+    At 52 stored messages this can never fire, which is exactly why it has to be
+    audible if it ever does.
+    """
+
+    if len(emails) < _APPLICATION_MAIL_CAP:
+        return False
+    logger.warning(
+        "Mail for application_id=%s (user_id=%s) hit its %s-message cap on %s. "
+        "The oldest messages were NOT read, so any split proposed from this set "
+        "would file mail under the wrong row; the split is being withheld. "
+        "Raise _APPLICATION_MAIL_CAP.",
+        application_id,
+        user_id,
+        _APPLICATION_MAIL_CAP,
+        surface,
+    )
+    return True
 
 
 class CloudApplicationCreate(BaseModel):
@@ -500,6 +547,14 @@ class MailMessageResponse(BaseModel):
     confidence: float | None = None
     method: str | None = None
     user_corrected: bool = False
+    # WHICH act the human performed — ``"confirmed"``, ``"overridden"``,
+    # ``"unattributed"`` or ``"unknown"``. ``user_corrected`` says only THAT a
+    # human settled the row; a client rendering "corrected by you" off it alone
+    # is telling half the users who touched a row that they overruled a machine
+    # they in fact agreed with. ``None`` means no human decision is recorded;
+    # ``"unknown"`` means one is and predates the column. See
+    # :class:`~jobtracker.database.models.ReviewDisposition`.
+    review_disposition: str | None = None
     is_reviewed: bool = False
     application_id: int | None = None
     # The linked application's employer, resolved in ONE query for the whole
@@ -670,6 +725,43 @@ async def _find_application_by_token(
     return rows[0] if rows else None
 
 
+# The most rows either half of :func:`_company_rows` will load in one call.
+#
+# Sized FAR above any plausible answer — the owner's whole board is 65 rows and
+# the largest single employer on it holds four — so it is a rail against a
+# pathological prefix (a one-letter token on a large board), not a business
+# rule. It is deliberately not tight: a cap that can silently truncate a real
+# answer would re-introduce the bug the comment below spends ten lines on, where
+# a lookup that returned a subset of an employer's rows made the resolver mint
+# duplicates ("six rows each for IXL Learning and Torc Robotics").
+_COMPANY_ROWS_CAP = 500
+
+
+def _warn_if_capped(
+    rows: list[Application], user_id: uuid.UUID, token: str, half: str
+) -> None:
+    """Say so — loudly — if the rail above actually bound.
+
+    A truncated company lookup is not a slow query, it is a WRONG one: the
+    resolver would see fewer rows at an employer than exist and mint a duplicate
+    beside them. At 65 rows this can never fire, which is exactly why it has to
+    be audible if it ever does — a cap that truncates in silence is the shape
+    this codebase keeps finding under "checks that cannot fail".
+    """
+
+    if len(rows) < _COMPANY_ROWS_CAP:
+        return
+    logger.warning(
+        "Company lookup (%s half) hit its %s-row cap for user_id=%s token=%r. "
+        "The resolver is now reasoning about a TRUNCATED set and may file a "
+        "duplicate application; raise _COMPANY_ROWS_CAP.",
+        half,
+        _COMPANY_ROWS_CAP,
+        user_id,
+        token,
+    )
+
+
 async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Application]:
     """Every one of this user's applications at the employer named by ``token``.
 
@@ -680,6 +772,18 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
 
     Two queries, so the common case stays index-assisted: exact equality first,
     then a prefix scan over the leading normalized word, confirmed in Python.
+
+    "Index-assisted" was aspirational until migration ``e7a1c4d92b30``. Both
+    predicates are over ``lower(company)`` and production's only company index
+    was on the RAW column, which cannot answer them — so both were sequential
+    scans, on a function called once per rolled cluster inside the upsert loop.
+    The functional index that migration adds carries ``text_pattern_ops``,
+    without which the prefix half stays a filter rather than an index condition
+    under Supabase's ``en_US.utf8`` collation.
+
+    BOTH reads are capped (see ``_COMPANY_ROWS_CAP``). They were unbounded: a
+    prefix like ``"a"`` matching a large board loaded every row it touched into
+    the session, per cluster, per sync.
     """
 
     live_first = (
@@ -708,8 +812,10 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
                 func.lower(Application.company) == token,
             )
             .order_by(*live_first)
+            .limit(_COMPANY_ROWS_CAP)
         )
     ).all()
+    _warn_if_capped(exact, user_id, token, "exact")
     for row in exact:
         seen[row.id] = row
 
@@ -723,8 +829,10 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
                     func.lower(Application.company).like(f"{prefix}%"),
                 )
                 .order_by(*live_first)
+                .limit(_COMPANY_ROWS_CAP)
             )
         ).all()
+        _warn_if_capped(candidates, user_id, token, "prefix")
         for row in candidates:
             if row.id not in seen and pipeline.matches_company_token(row.company, token):
                 seen[row.id] = row
@@ -908,6 +1016,18 @@ async def _resolve_application_for_email(
     )
 
 
+# How many message ids may travel in one ``WHERE message_id IN (...)``.
+#
+# The number itself is not the point — 750 ids (a first sync's whole scan
+# target) is comfortably inside Postgres's 65535 bind-parameter ceiling, so a
+# single statement would work today. The CHUNKING is the point: a bound that
+# holds only because the current scan target happens to be small is not a
+# bound, and the day somebody raises ``_SYNC_DEFAULT_SCAN_TARGET`` the failure
+# would be a driver-level error on a query nobody edited. Explicit here, and
+# pinned by tests/test_persist_message_refs_is_batched.py.
+_MESSAGE_LOOKUP_CHUNK = 500
+
+
 async def _persist_message_refs(
     session,
     user_id: uuid.UUID,
@@ -960,22 +1080,57 @@ async def _persist_message_refs(
     """
 
     moved_from: dict[int, set[int]] = {}
+
+    # ONE lookup for the whole batch, not one per message.
+    #
+    # ``ix_emails_user_id_message_id`` served the per-message probe this used to
+    # make perfectly — the query was never the cost. The COUNT of round trips
+    # was: ~13 ms function→pooler in production (database/connection.py), paid
+    # sequentially, once per ref. A first sync scans up to 750 messages
+    # (gmail_oauth's ``_SYNC_DEFAULT_SCAN_TARGET``), so the old shape spent
+    # roughly ten seconds of the serverless budget waiting on the network — and
+    # the scheduled run's per-user timeout is 10 s, which is the documented
+    # reason (cron.py) a first sync could be cancelled and never write a cursor.
+    #
+    # The dict is the loop's ONLY source of "does this message already exist",
+    # including for rows the loop itself creates further down: the old code was
+    # protected from a message_id repeated inside one ``refs`` list by
+    # autoflush — the second probe saw the row the first iteration had just
+    # added — and a prefetch taken before the loop cannot see those. Newly
+    # created rows are therefore folded back in as they are made.
+    #
+    # Autoflush is deliberately NOT suppressed around the prefetch. Rows added
+    # by an earlier call in the same session (the rolled path at the two call
+    # sites in ``upsert_applications_for_user`` runs before the review-item
+    # paths) must be visible here, exactly as they were before.
+    existing_by_message_id: dict[str, Email] = {}
+    wanted = [
+        ref.message_id
+        for ref in refs
+        # Built from the refs that SURVIVE the undated skip below, so an
+        # undated message never widens the lookup for a row that will not be
+        # written.
+        if pipeline.to_naive_utc(ref.received_at) is not None
+    ]
+    for start in range(0, len(wanted), _MESSAGE_LOOKUP_CHUNK):
+        chunk = wanted[start : start + _MESSAGE_LOOKUP_CHUNK]
+        for row in (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == user_id,
+                    Email.message_id.in_(chunk),
+                )
+            )
+        ).all():
+            existing_by_message_id[row.message_id] = row
+
     for ref in refs:
         # Naive-UTC: the Email.received_at column is TIMESTAMP WITHOUT TIME ZONE;
         # asyncpg refuses an aware datetime (from parsedate_to_datetime) here.
         received_at = pipeline.to_naive_utc(ref.received_at)
         if received_at is None:
             continue
-        existing = (
-            await session.exec(
-                select(Email)
-                .where(
-                    Email.user_id == user_id,
-                    Email.message_id == ref.message_id,
-                )
-                .limit(1)
-            )
-        ).first()
+        existing = existing_by_message_id.get(ref.message_id)
         category = _safe_category(ref.category)
         # The classifier's PROPOSAL, which only a review ref carries. Written
         # under the same settled-guard as the category below, and — like the
@@ -1026,24 +1181,28 @@ async def _persist_message_refs(
             existing.thread_id = ref.thread_id
             session.add(existing)
         else:
-            session.add(
-                Email(
-                    user_id=user_id,
-                    application_id=application_id,
-                    source_account=EmailSource.GMAIL,
-                    message_id=ref.message_id,
-                    thread_id=ref.thread_id,
-                    subject=ref.subject,
-                    sender_name=ref.sender_name,
-                    sender_email=ref.sender_email,
-                    received_at=received_at,
-                    body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
-                    classified_as=category,
-                    suggested_category=suggestion,
-                    classification_confidence=ref.confidence,
-                    classification_method="rules",
-                )
+            created = Email(
+                user_id=user_id,
+                application_id=application_id,
+                source_account=EmailSource.GMAIL,
+                message_id=ref.message_id,
+                thread_id=ref.thread_id,
+                subject=ref.subject,
+                sender_name=ref.sender_name,
+                sender_email=ref.sender_email,
+                received_at=received_at,
+                body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
+                classified_as=category,
+                suggested_category=suggestion,
+                classification_confidence=ref.confidence,
+                classification_method="rules",
             )
+            session.add(created)
+            # Carry it in the map so a message_id repeated later in THIS list
+            # updates the row just made instead of inserting a second one. The
+            # per-ref SELECT used to get this from autoflush; the batched
+            # prefetch, taken before the loop, cannot.
+            existing_by_message_id[ref.message_id] = created
 
     return moved_from
 
@@ -2570,9 +2729,71 @@ async def classify_review_item(
                 ),
             }
 
+    # WHICH ACT THIS IS — read BEFORE the write below destroys the evidence.
+    #
+    # ``classified_as = category`` overwrites the machine's verdict in place, so
+    # after that line nothing on the row can answer "did the human change it?".
+    # This flag used to be written ``True`` regardless, which made a human who
+    # AGREES and a human who OVERRULES byte-identical. An audit read the flag on
+    # production, concluded the classifier had never once auto-detected a
+    # rejection, and said so — while the Palantir message it was reading had
+    # scored ``rejection`` at 0.75, the right category, held under
+    # ``AUTO_FILE_GATE`` for a human who then agreed with it.
+    #
+    # The machine's verdict is whichever of these is on record:
+    #   * ``suggested_category`` — a PARKED row's proposal, which is exactly this
+    #     column's purpose and survives the overwrite below untouched;
+    #   * ``classified_as`` — a COMMITTED verdict, on a row that was filed and is
+    #     now being relabelled (the two ``Crusoe | Application Received`` rows at
+    #     0.95 are this shape, and are almost certainly agreements).
+    # ``NEEDS_REVIEW`` is not a verdict — it is the typed null of that column —
+    # so it is never read as one here.
+    machine_verdict = email.suggested_category
+    if machine_verdict is None and email.classified_as is not EmailCategory.NEEDS_REVIEW:
+        machine_verdict = email.classified_as
+    if machine_verdict is None:
+        # No proposal and no commitment: a live-scan row minted from a
+        # ``ScannedMessageIn`` carrying ``category=None``. The human supplied the
+        # first verdict rather than ruling on one, and neither word applies.
+        email.review_disposition = ReviewDisposition.UNATTRIBUTED
+    elif machine_verdict is category:
+        email.review_disposition = ReviewDisposition.CONFIRMED
+    else:
+        email.review_disposition = ReviewDisposition.OVERRIDDEN
+
     email.classified_as = category
     email.is_reviewed = True
+    # Still unconditional, and deliberately so: this flag means "a human settled
+    # this row", which an agreement does just as much as an override. The four
+    # queries that filter ``user_corrected.is_(False)`` are asking that question
+    # and would be wrong to get "no" for a confirmed row. What the flag could
+    # never say is WHICH act it was, and that is now said above.
     email.user_corrected = True
+    # A human decision is not a probabilistic verdict, so it carries no
+    # probability. These two lines used to be absent, and the row kept the
+    # confidence and method of the verdict it had just replaced — the Inbox
+    # drew "rejection · 75% · corrected by you", where 75% was the machine's
+    # certainty about a DIFFERENT category. That is the ``classified_as`` defect
+    # family: a stored value that forges a decision nobody made.
+    #
+    # NULL and not 1.0. 1.0 is a claim of total certainty on the same 0–1 scale
+    # the classifier reports on, drawn by the same meter, so it re-forges the
+    # thing this removes — it merely moves the lie from 75% to 100%. NULL says
+    # what is true: no probabilistic verdict exists for this row, and every
+    # reader already treats the column as ``Optional`` (see
+    # ``MailMessageResponse.confidence`` and ``FiledMailList``'s
+    # ``typeof === "number"`` guard, both of which render nothing for null).
+    #
+    # Nothing selects corrected rows BY confidence, so NULL cannot strand them:
+    # ``scripts/weekly_labeling_workflow.py`` and
+    # ``scripts/generate_ml_monitoring_report.py`` — the only two readers left
+    # that compare this column — both filter ``user_corrected.is_(False)``
+    # before they ever look at the number. (The desktop routers under
+    # ``jobtracker/api/`` had two more such queries; #298 deleted them with the
+    # rest of the unmounted desktop surface, so they are no longer a
+    # consideration either way.)
+    email.classification_confidence = None
+    email.classification_method = ClassificationMethod.USER
 
     result: dict[str, object] = {
         "classified_as": category.value,
@@ -2702,6 +2923,26 @@ async def _settle_thread_siblings(
     for sibling in siblings:
         sibling.is_reviewed = True
         sibling.classified_as = category
+        # NOT nulled here, unlike the classified message itself, and the
+        # difference is not an oversight.
+        #
+        # A sibling has the same defect in a quieter form — it ends up holding
+        # the human's category with the classifier's confidence in the verdict
+        # that category replaced. But a sibling keeps ``user_corrected = False``
+        # (it records whether a human read THIS message, and nobody did), and
+        # that flag is exactly what makes the null safe on the corrected row:
+        # ``generate_ml_monitoring_report._count_needs_review`` and
+        # ``weekly_labeling_workflow`` both select
+        # ``user_corrected.is_(False) AND (confidence IS NULL OR < threshold)``
+        # and neither filters ``is_reviewed``. Nulling a sibling therefore moves
+        # it INTO the needs-review count, and the labeling query's
+        # ``case(confidence.is_(None), -1.0)`` ordering puts it first — a
+        # message whose label the human already settled, leading the queue.
+        # Measured against a migrated database, not reasoned about.
+        #
+        # Fixing it properly means teaching those two queries about
+        # ``is_reviewed``, which is a change to what the monitoring numbers mean
+        # and belongs in its own PR with its own before/after counts.
         if isinstance(application_id, int):
             sibling.application_id = application_id
         session.add(sibling)
@@ -3431,6 +3672,9 @@ async def mail_listing_cloud(
             confidence=e.classification_confidence,
             method=e.classification_method,
             user_corrected=e.user_corrected,
+            review_disposition=(
+                e.review_disposition.value if e.review_disposition else None
+            ),
             is_reviewed=e.is_reviewed,
             application_id=e.application_id,
             company=(
@@ -3466,6 +3710,15 @@ async def application_detail_cloud(
     Powers the detail view: subject / sender / date / snippet per message and a
     Gmail deep link to open the real conversation. Scoped to the owner (404 for
     anyone else's row).
+
+    The mail read is CAPPED (``_APPLICATION_MAIL_CAP``). It was unbounded, and
+    an unbounded read is a latent outage rather than a slow page — one
+    application's mail is small today and nothing in the product bounds it. When
+    the cap binds, ``split_candidates`` comes back EMPTY rather than computed:
+    the read is newest-first and the split is decided by the OLDEST message in
+    each cluster, so a proposal built from a truncated set would name the wrong
+    row to retain. Refusing to guess is the same discipline ``NEEDS_REVIEW``
+    encodes for a classifier verdict; the messages themselves are still shown.
     """
 
     async with get_session() as session:
@@ -3480,22 +3733,28 @@ async def application_detail_cloud(
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
             )
-        emails = (
-            await session.exec(
-                select(Email)
-                .where(
-                    Email.user_id == user_id,
-                    Email.application_id == application_id,
+        emails = list(
+            (
+                await session.exec(
+                    select(Email)
+                    .where(
+                        Email.user_id == user_id,
+                        Email.application_id == application_id,
+                    )
+                    .order_by(Email.received_at.desc())
+                    .limit(_APPLICATION_MAIL_CAP)
                 )
-                .order_by(Email.received_at.desc())
-            )
-        ).all()
+            ).all()
+        )
+        truncated = _application_mail_truncated(
+            emails, user_id, application_id, "GET /applications/{id}"
+        )
         # Same session, and last (all rows above are already read) — see
         # _connected_account_email.
         account_email = await _connected_account_email(user_id, session)
         serialized = _serialize(app, account_email)
         messages = [_message_ref_response(e, account_email) for e in emails]
-        clusters = cluster_stored_mail(list(emails))
+        clusters = [] if truncated else cluster_stored_mail(emails)
         candidates = [
             SplitCandidateResponse(
                 role=c.role,
@@ -3564,14 +3823,41 @@ async def split_application_cloud(
                 status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
             )
 
-        emails = (
-            await session.exec(
-                select(Email).where(
-                    Email.user_id == user_id, Email.application_id == application_id
+        emails = list(
+            (
+                await session.exec(
+                    select(Email)
+                    .where(
+                        Email.user_id == user_id,
+                        Email.application_id == application_id,
+                    )
+                    # Newest-first AND capped, matching the detail read. Order
+                    # does not change the clustering — `cluster_stored_mail`
+                    # sorts by each cluster's earliest message — but WHICH rows
+                    # a cap keeps depends on it, so the two paths must truncate
+                    # the same set or the split would not be the one proposed.
+                    .order_by(Email.received_at.desc())
+                    .limit(_APPLICATION_MAIL_CAP)
                 )
+            ).all()
+        )
+        if _application_mail_truncated(
+            emails, user_id, application_id, "POST /applications/{id}/split"
+        ):
+            # REFUSE, rather than split on a subset. This handler COMMITS: it
+            # re-points every message it read at a new row, so a truncated read
+            # does not show fewer messages, it files real mail under the wrong
+            # application and there is no undo for that. 422 rather than the 409
+            # below because "nothing to split" is a benign, expected answer the
+            # UI renders quietly, and this is not that.
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "This application has more stored mail than the split can "
+                    "read safely, so no split was performed."
+                ),
             )
-        ).all()
-        clusters = cluster_stored_mail(list(emails))
+        clusters = cluster_stored_mail(emails)
         if len(clusters) < 2:
             raise HTTPException(
                 status_code=http_status.HTTP_409_CONFLICT,

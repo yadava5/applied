@@ -6,14 +6,11 @@ Shared pytest fixtures and configuration.
 
 This module provides:
 - Test database setup with in-memory SQLite
-- Test client for API testing
 - Common test data factories
 
 IMPORTANT: This file also ensures that tests run against an isolated,
 in-memory SQLite database by setting JOBTRACKER_ENVIRONMENT=test BEFORE
-the FastAPI app (and database engine) are imported. This guarantees that
-test runs never touch your real JobTracker database in
-~/Library/Application Support/JobTracker.
+the database engine is imported.
 
 Fixtures are automatically discovered by pytest.
 """
@@ -23,7 +20,6 @@ from typing import AsyncGenerator
 
 import pytest
 
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
@@ -74,25 +70,18 @@ async def test_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 # =============================================================================
 # API Client Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-async def test_client() -> AsyncGenerator[AsyncClient, None]:
-    """
-    Create an async HTTP client for API testing.
-
-    Uses httpx to make requests to the FastAPI app, and ensures the
-    database schema is initialized against the in-memory test database.
-    """
-    from jobtracker.main import app
-    from jobtracker.database import init_db
-
-    # Ensure all tables exist in the test database before handling requests.
-    await init_db()
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+#
+# There is no shared client fixture here any more. It built
+# ``jobtracker.main.app`` -- the DESKTOP FastAPI app -- which was deleted along
+# with the unmounted desktop routers it mounted (issue #73, ``apps/macos``
+# de-scoped 2026-08-12). Its only consumers went with it.
+#
+# The cloud app is deliberately NOT given a fixture in its place. Every cloud
+# suite that needs one builds it locally, because it has to reload
+# ``jobtracker.config`` under ``JOBTRACKER_DEPLOYMENT=cloud`` first and then
+# dispose of the engine -- see the ``cloud_app`` fixture in
+# tests/test_status_vocabulary.py. A module-scoped client here would leak that
+# reloaded settings object into every other test in the session.
 
 
 # =============================================================================

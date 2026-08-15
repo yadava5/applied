@@ -9,12 +9,13 @@ import { isProtectedPath } from "@/lib/supabase/protectedRoutes";
 
 /**
  * Paths under this prefix require an authenticated Supabase session. In the
- * App Router, route groups `(auth)` and `(app)` are **not** reflected in the
- * URL, so gating happens on the literal URL prefix `/dashboard` (and future
- * protected segments added inside `app/(app)/`). Extend this list rather
- * than the negative matcher in `proxy.ts` when adding new protected pages —
- * that way, the proxy keeps running on all app routes but only *redirects*
- * for known-protected ones.
+ * App Router, route groups `(auth)`, `(app)` and `(protected)` are **not**
+ * reflected in the URL, so gating happens on the literal URL prefix
+ * `/dashboard` (and future protected segments added inside
+ * `app/(app)/(protected)/`). Extend `PROTECTED_PREFIXES` rather than the
+ * negative matcher in `proxy.ts` when adding new protected pages — that way,
+ * the proxy keeps running on all app routes but only *redirects* for
+ * known-protected ones.
  */
 const PUBLIC_AUTH_PATHS = new Set(["/login", "/signup", "/callback"]);
 

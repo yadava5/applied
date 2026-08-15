@@ -14,23 +14,55 @@ So this module deliberately:
 - builds a ``google.oauth2.credentials.Credentials`` from the stored
   token + the operator-supplied web client id/secret, refreshing (and
   re-persisting) the access token when it has expired;
-- fetches a small, bounded batch of recent messages with ``format=
-  "metadata"`` — Subject/From/Date headers plus Gmail's own ``snippet``.
-  We never download full bodies in the cloud path: the snippet is enough
-  signal for the rules classifier, keeps each serverless call fast, and
-  is the more privacy-preserving default (less content leaves Gmail).
+- fetches a small, bounded batch of recent messages with ``format="full"``
+  — Subject/From/Date headers, Gmail's own ``snippet``, and the message
+  body, which is READ FOR CLASSIFICATION AND DISCARDED. See below.
 
 Scope stays least-privilege ``gmail.readonly`` throughout. Tokens are
 never logged and never returned to callers of the HTTP layer.
+
+Reading the body, and why it is not stored
+------------------------------------------
+
+This module used to fetch ``format="metadata"``, so the classifier only ever
+saw the Subject and Gmail's ~200-character ``snippet``. That is not enough
+text to recognise a rejection. Measured on the owner's 52 stored messages:
+the snippet averages 186 characters, an ATS rejection spends that budget on
+its polite preamble, and the sentence carrying the decision falls off the end.
+Of four real rejections, one was decidable from the snippet and three were
+not — one of them has no snippet at all. The classifier had never once filed
+a rejection without a human.
+
+So the body is now fetched. It is **read in flight and never retained**, and
+that is a structural property of the code rather than a promise:
+
+- ``CloudGmailMessage`` — the object every persist path receives — has no
+  body field and must not gain one. Bodies travel beside it in a separate
+  ``dict[message_id, str]`` on :class:`MessagePage`, are handed to
+  ``classifier.classify(...)`` as its ``body`` argument, and fall out of
+  scope when the request ends.
+- ``body_snippet`` continues to be Gmail's OWN snippet, never derived from
+  the body we just read, so what is stored is unchanged by this module.
+- ``tests/test_body_is_never_persisted.py`` drives a real scan whose bodies
+  carry a sentinel and asserts the sentinel reaches no column of ``emails``,
+  no row of ``training_data``, and no API response. That test is what makes
+  the privacy page's retention claim true rather than aspirational.
+
+Bodies are capped at ``_MAX_BODY_CHARS`` and batched more tightly than
+metadata was: ``format="full"`` costs the same 5 quota units per message but
+returns a far larger payload, and ``batch.execute()`` materialises a whole
+batch before the callback drains it, inside a 50 MB serverless slot.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Any, Literal, Optional
@@ -104,12 +136,113 @@ class HistoryPage:
     expired: bool = False
     truncated: bool = False
     unreadable: int = 0
+    # See :class:`MetadataBatch.bodies`. The incremental path classifies the
+    # same way the full scan does, so it needs the same text — otherwise a
+    # message caught by a history walk would be judged on its snippet while
+    # the identical message caught by a full scan was judged on its body.
+    bodies: dict[str, str] = field(default_factory=dict)
 
     @property
     def usable(self) -> bool:
         """True when this page can stand in for a full scan."""
 
         return not (self.expired or self.truncated)
+
+
+# How much of a body the classifier is allowed to see.
+#
+# Not a privacy control — the body is discarded either way — but a memory one,
+# and an honesty one. `format="full"` returns whole marketing emails, and a
+# batch is materialised before it is drained inside a 50 MB slot. 4,000
+# characters is ~600 words: an ATS decision sentence sits in the first
+# paragraph or two, well inside it, while a newsletter's 80 KB of markup is
+# truncated to something the rules layer can scan quickly.
+_MAX_BODY_CHARS = 4000
+
+# `format="full"` payloads are one to two orders of magnitude larger than
+# metadata ones, so the batch that was right for headers is not right here.
+# Quota is unchanged (messages.get is 5 units at any format); this is purely
+# about how much arrives at once.
+_FULL_BATCH_SIZE = 25
+
+_SCRIPT_OR_STYLE = re.compile(
+    r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
+_TAG = re.compile(r"<[^>]+>")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _html_to_text(html: str) -> str:
+    """Rough HTML → text for classification only.
+
+    Regex rather than BeautifulSoup deliberately. bs4 and lxml are both in the
+    cloud bundle, but this runs once per message inside a 60 s serverless
+    budget and the rules layer only needs word order, not a DOM. The same
+    approach is used by ``email_clients/parser.py:_html_to_text``.
+
+    Script and style bodies are removed BEFORE tags are stripped, or their
+    contents survive as text and a CSS block reads to the classifier as prose.
+    """
+
+    html = _SCRIPT_OR_STYLE.sub(" ", html)
+    return _WHITESPACE.sub(" ", _TAG.sub(" ", html)).strip()
+
+
+def _decode_part(part: dict) -> str:
+    """Decode one MIME part's base64url body to text, or "" if undecodable."""
+
+    data = (part.get("body") or {}).get("data")
+    if not data:
+        return ""
+    try:
+        return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
+
+
+def extract_body_text(payload: dict | None) -> str:
+    """Pull readable text out of a ``format="full"`` payload.
+
+    Prefers ``text/plain``; falls back to ``text/html`` stripped to text. The
+    fallback is not a nicety — it is the case that motivated reading bodies at
+    all. A message with no ``text/plain`` part is exactly the one Gmail tends
+    to give a poor snippet for, and the owner's Anthropic rejection is stored
+    with NO snippet whatsoever.
+
+    Walks the part tree iteratively rather than recursively: ``multipart/*``
+    nests arbitrarily (``multipart/mixed`` → ``multipart/alternative`` →
+    parts), the depth is attacker-influenced in the sense that anyone can mail
+    you a deeply nested message, and a recursive walk would rather not be the
+    thing that finds the recursion limit inside a serverless handler.
+
+    Returns at most ``_MAX_BODY_CHARS`` characters.
+    """
+
+    if not payload:
+        return ""
+
+    plain: list[str] = []
+    html: list[str] = []
+    stack = [payload]
+    while stack:
+        part = stack.pop()
+        if not isinstance(part, dict):
+            continue
+        mime = (part.get("mimeType") or "").lower()
+        if mime.startswith("multipart/"):
+            stack.extend(reversed(part.get("parts") or []))
+            continue
+        if mime == "text/plain":
+            plain.append(_decode_part(part))
+        elif mime == "text/html":
+            html.append(_decode_part(part))
+        elif part.get("parts"):
+            stack.extend(reversed(part["parts"]))
+
+    text = " ".join(t for t in plain if t).strip()
+    if not text:
+        text = _html_to_text(" ".join(t for t in html if t)).strip()
+    return _WHITESPACE.sub(" ", text)[:_MAX_BODY_CHARS]
 
 
 @dataclass
@@ -126,6 +259,12 @@ class MetadataBatch:
 
     messages: dict[str, dict]
     dropped: int = 0
+    # Body text per message id, for classification only. Kept OUT of the
+    # parsed ``CloudGmailMessage`` on purpose: that object is what every
+    # persist path receives, and a body field on it would be mapped onto an
+    # ``Email`` row by the next person who adds a column. Here it has to be
+    # asked for by id, which is a thing you can only do deliberately.
+    bodies: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -154,6 +293,10 @@ class MessagePage:
     next_page_token: Optional[str]
     list_pages_walked: int = 1
     unreadable: int = 0
+    # See :class:`MetadataBatch.bodies`. Read at the ``classifier.classify``
+    # call sites in ``gmail_oauth.py`` and nowhere else; never persisted, never
+    # serialised into a response, never logged.
+    bodies: dict[str, str] = field(default_factory=dict)
     # PEP 604 rather than this module's older ``Optional[...]`` habit: the
     # project's ruff config selects UP, and new lines should not add to the
     # advisory count it is trying to drive to zero.
@@ -198,6 +341,95 @@ def _google_credentials_from_stored(stored: GmailCredentials) -> Credentials:
     )
 
 
+# OAuth 2.0 error codes (RFC 6749 §5.2) that mean the grant is GONE — the user
+# revoked access, or the refresh token was expired/reissued. Retrying cannot
+# help; only the user reconnecting can.
+#
+# Deliberately narrow. Everything NOT on this list — a TransportError, a DNS
+# failure, a timeout, an HTTP 500 from Google, a rate limit — is transient, and
+# treating one of those as a revocation would disconnect a perfectly good
+# account the first time the network hiccuped. When in doubt the answer is "not
+# revoked": the cost of missing a real revocation is one wasted cron slot until
+# the next failure, while the cost of a false positive is telling a user their
+# working mailbox needs reconnecting.
+_PERMANENT_GRANT_FAILURES = ("invalid_grant", "invalid_client", "unauthorized_client")
+
+
+def _is_permanently_revoked(exc: BaseException) -> bool:
+    """Is this refresh failure the definitive "this grant is gone"?
+
+    Matched on ``RefreshError`` — google-auth's OAuth-level failure — AND on
+    the error code inside it. The type alone is not enough: google-auth raises
+    ``RefreshError`` for some retryable server-side conditions too. The string
+    alone is not enough either, because a transport exception could carry a URL
+    containing any of these words.
+
+    ``str(exc)`` here holds the OAuth error document, not a token: google-auth
+    puts the response *body* of a FAILED exchange in the message, and a failed
+    exchange returns ``{"error": "invalid_grant", ...}`` with no credential in
+    it. Nothing from this is logged or stored regardless — only the verdict is.
+    """
+
+    from google.auth.exceptions import RefreshError
+
+    if not isinstance(exc, RefreshError):
+        return False
+    haystack = " ".join(str(arg) for arg in exc.args).lower()
+    return any(code in haystack for code in _PERMANENT_GRANT_FAILURES)
+
+
+async def mark_gmail_credential_revoked(user_id: uuid.UUID) -> None:
+    """Record that this user's Gmail grant is gone. Never raises.
+
+    WHY THIS MATTERS BEYOND TIDINESS. ``cron._gmail_sync_position`` decides who
+    is syncable by asking whether a credential row exists. A revoked user's row
+    stayed, so they answered "yes" forever: every scheduled run picked them as a
+    candidate, spent one of the ~4 slots a 45 s budget affords on a sync that
+    could only fail, and pushed a user whose mailbox still works out of the
+    batch. The failure was visible in ``errors[]`` and changed nothing.
+
+    MARKED, NOT DELETED. The row keeps the address the UI needs to name which
+    account to reconnect, and the OAuth callback's upsert clears ``revoked_at``
+    — so reconnecting is self-service and this is reversible. Deleting on the
+    strength of an exception-type heuristic would not be.
+
+    Its own session and its own swallow: this is bookkeeping on a path that is
+    already returning ``None`` to a caller which will degrade correctly without
+    it. A failure to record must never become the error the user sees.
+    """
+
+    from sqlalchemy import update as sa_update
+
+    from jobtracker.credentials.cloud import KIND_GMAIL
+    from jobtracker.database import get_session
+    from jobtracker.database.models import UserCredential
+
+    try:
+        async with get_session() as session:
+            await session.exec(
+                sa_update(UserCredential)
+                .where(
+                    UserCredential.user_id == user_id,
+                    UserCredential.kind == KIND_GMAIL,
+                    UserCredential.revoked_at.is_(None),
+                )
+                .values(revoked_at=datetime.utcnow())
+            )
+            await session.commit()
+        logger.warning(
+            "Gmail grant for user_id=%s is revoked at the provider; marked "
+            "disconnected so the schedule stops spending a slot on it. The "
+            "user must reconnect.",
+            user_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — bookkeeping may not mask the cause
+        logger.warning(
+            "Could not mark the Gmail credential revoked for user_id=%s (%s).",
+            user_id,
+            type(exc).__name__,
+        )
+
+
 async def load_valid_credentials(user_id: uuid.UUID) -> Optional[Credentials]:
     """Return refreshed, ready-to-use google credentials for ``user_id``.
 
@@ -232,6 +464,10 @@ async def load_valid_credentials(user_id: uuid.UUID) -> Optional[Credentials]:
                 user_id,
                 type(exc).__name__,
             )
+            # A REVOKED grant is permanent and must be written down; a network
+            # blip is not. Only the former.
+            if _is_permanently_revoked(exc):
+                await mark_gmail_credential_revoked(user_id)
             return None
 
         await update_gmail_access_token(
@@ -278,7 +514,12 @@ def _batch_fetch_metadata(
         if response is not None:
             results[request_id] = response
 
-    chunk = max(1, min(batch_size, 100))
+    # Clamped to ``_FULL_BATCH_SIZE`` rather than Gmail's 100 ceiling: the
+    # configured ``gmail_batch_size`` was chosen when this fetched metadata.
+    # Honouring it verbatim against ``format="full"`` would put up to 100 whole
+    # messages in memory at once.
+    chunk = max(1, min(batch_size, _FULL_BATCH_SIZE))
+    bodies: dict[str, str] = {}
     for start in range(0, len(ids), chunk):
         window = ids[start : start + chunk]
         batch = service.new_batch_http_request(callback=_on_result)
@@ -286,15 +527,45 @@ def _batch_fetch_metadata(
             batch.add(
                 service.users()
                 .messages()
-                .get(
-                    userId="me",
-                    id=message_id,
-                    format="metadata",
-                    metadataHeaders=["Subject", "From", "Date"],
-                ),
+                .get(userId="me", id=message_id, format="full"),
                 request_id=message_id,
             )
         batch.execute()
+        # Reduce each full payload to text, then REPLACE it with a slim copy
+        # carrying only what `_parse_metadata_message` reads. Without this the
+        # map accumulates whole message bodies across every batch of a
+        # 2,000-message mine inside a 50 MB slot; the batch itself is transient,
+        # but `results` is not.
+        #
+        # A new dict rather than popping `parts`/`body` off the one Gmail
+        # handed back. Mutating a response this function does not own is how a
+        # second read of the same object silently returns no body — which is
+        # exactly what happened to the fixture in
+        # `tests/test_body_is_never_persisted.py`, where the first call stripped
+        # a module-level payload and every later call then classified on the
+        # snippet while still reporting success.
+        for message_id in window:
+            raw = results.get(message_id)
+            if not isinstance(raw, dict):
+                continue
+            payload = raw.get("payload")
+            if not isinstance(payload, dict):
+                # Malformed, and it must STAY malformed. Normalising it into a
+                # slim well-formed shape here would make it parse, and a
+                # message manufactured from garbage is precisely what
+                # ``unreadable`` exists to count instead of inventing. Left
+                # exactly as Gmail sent it so `_parse_metadata_message` still
+                # rejects it (test_unparseable_metadata_also_counts_as_unreadable).
+                continue
+            text = extract_body_text(payload)
+            if text:
+                bodies[message_id] = text
+            results[message_id] = {
+                "id": raw.get("id", message_id),
+                "threadId": raw.get("threadId", ""),
+                "snippet": raw.get("snippet", ""),
+                "payload": {"headers": payload.get("headers", [])},
+            }
         if pause_seconds and (start + chunk) < len(ids):
             time.sleep(pause_seconds)
 
@@ -309,7 +580,7 @@ def _batch_fetch_metadata(
             len(set(ids)),
         )
 
-    return MetadataBatch(messages=results, dropped=dropped)
+    return MetadataBatch(messages=results, dropped=dropped, bodies=bodies)
 
 
 def _collect_page(
@@ -375,6 +646,11 @@ def _collect_page(
         next_page_token=next_token,
         unreadable=len(ids) - len(out),
         result_size_estimate=estimate,
+        # Only for ids that actually produced a message: a body with no parsed
+        # message beside it has nothing to be classified against, and carrying
+        # it would be retaining body text for no reason at all.
+        bodies={m.message_id: fetched.bodies[m.message_id] for m in out
+                if m.message_id in fetched.bodies},
     )
 
 
@@ -623,7 +899,12 @@ def _collect_history(
     # Gmail returns history oldest-first; the full scan returns newest-first.
     # Normalize so the two paths hand the pipeline the same ordering.
     out.sort(key=_received_sort_key, reverse=True)
-    return HistoryPage(messages=out, unreadable=len(ids) - len(out))
+    return HistoryPage(
+        messages=out,
+        unreadable=len(ids) - len(out),
+        bodies={m.message_id: fetched.bodies[m.message_id] for m in out
+                if m.message_id in fetched.bodies},
+    )
 
 
 def _received_sort_key(message: CloudGmailMessage) -> float:
