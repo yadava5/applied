@@ -205,6 +205,15 @@ test.describe("the post-auth boot (/import — a boot route that needs no sessio
       onDemo.map((e) => e.value),
       "/demo has no auth transition to dramatise",
     ).not.toContain("1");
+    // The same claim taken a second way, and the one that does not depend on
+    // the mutation log having been recorded at all: a page the boot may not
+    // cover must also leave the flag alone. Measured — with `demo` added to
+    // the path rule, the log assertion above passed under a five-worker run
+    // while this one goes red, so the log alone is not enough.
+    expect(
+      await page.evaluate((key) => window.sessionStorage.getItem(key), BOOT_FLAG_KEY),
+      "/demo consumed a flag it was not allowed to act on",
+    ).not.toBeNull();
 
     // The positive control for that negative, in the same lifecycle: the flag
     // was not consumed by the page that ignored it, so arriving on a route the
