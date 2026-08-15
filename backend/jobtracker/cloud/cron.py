@@ -112,8 +112,11 @@ previous user's identity. Pinned, in both directions, by
 ``tests/test_rls_postgres.py::test_the_probe_loop_rebinds_identity_per_transaction``
 and its negative twin.
 
-Cost, after: one connection plus one round trip per user (~13 ms function →
-pooler), instead of one connection per user.
+Cost, after: TWO connections for the whole enumeration — one for the enrollment
+query and one held open across every probe — plus one round trip per user
+(~13 ms function → pooler). Not one; the number is small and fixed, which is
+the property that matters, and ``test_the_whole_enumeration_uses_one_connection``
+asserts the fixed bound rather than a per-user count.
 
 WHAT BOUNDS THE WORK
 --------------------
@@ -474,14 +477,15 @@ async def list_syncable_user_ids(
     candidates do not come from one query, and the key mirrors the SQL it
     replaces exactly: never-synced first, then oldest sync first, then user id.
 
-    COST. ONE connection for the whole enumeration — the probe loop re-binds the
-    identity per transaction on a connection it opens once, rather than opening
-    a session per user. Under NullPool a session is a fresh TCP+TLS+auth
-    connection at ~216 ms (issue #203), so the previous shape spent 65 s
-    enumerating 300 users against a 45 s budget and could sync nobody at all.
-    Now it is one connection plus one round trip per user. ``limit`` still does
-    NOT bound the loop — the cap is applied to the sorted result, because
-    ordering by cursor requires knowing every candidate's cursor.
+    COST. A FIXED number of connections for the whole enumeration — two: one for
+    the enrollment query, one held open across every probe, which re-binds the
+    identity per transaction rather than opening a session per user. Under
+    NullPool a session is a fresh TCP+TLS+auth connection at ~216 ms (issue
+    #203), so the previous shape spent 65 s enumerating 300 users against a 45 s
+    budget and could sync nobody at all. Now it is two connections plus one
+    round trip per user. ``limit`` still does NOT bound the loop — the cap is
+    applied to the sorted result, because ordering by cursor requires knowing
+    every candidate's cursor.
 
     So the loop is bounded twice: by ``_CRON_MAX_PROBES``, and by the run's own
     deadline if the caller passes one. Both are reported rather than silent —

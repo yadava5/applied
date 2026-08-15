@@ -826,7 +826,16 @@ async def test_the_handler_ignores_any_user_selecting_input(
 
 
 # =============================================================================
-# The allowlist's env-var parse: real UUIDs, and junk stops the process.
+# The retired allowlist's env-var parse: real UUIDs, and junk stops the process.
+#
+# THE CRON NO LONGER READS THIS FIELD. It enumerates ``gmail_sync_enrollment``
+# (issue #291), and ``settings.cron_sync_user_ids`` is consulted nowhere — so
+# nothing below is evidence that the allowlist selects users. What these three
+# still guard is the half that did not retire: pydantic validates the field on
+# every ``Settings()`` construction, so a deployment that still has the env var
+# set from before can still fail at config load, and the validator's refusal to
+# echo the raw value into a build log still matters. They are kept for that and
+# not as a description of how the schedule works.
 # =============================================================================
 
 
@@ -850,6 +859,9 @@ def test_the_allowlist_parses_from_the_env_var_as_uuid_objects(
     claims at all, which RLS answers with zero rows and NO error. A list of
     strings here would therefore produce exactly the silent "syncs nobody"
     this whole change exists to end, so the element type is asserted directly.
+
+    Historical: nothing reads this field any more (see the banner above). The
+    parse is still exercised because it still runs at config load.
     """
 
     a, b = uuid.uuid4(), uuid.uuid4()

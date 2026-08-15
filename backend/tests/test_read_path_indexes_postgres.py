@@ -508,6 +508,94 @@ def test_the_board_index_the_issue_proposed_does_not_work(seeded_engine):
         _recreate(seeded_engine, BOARD_INDEX)
 
 
+# =============================================================================
+# …and the SQL above is the SQL the handlers actually emit
+# =============================================================================
+
+
+def test_the_orm_emits_the_predicates_these_indexes_were_measured_against(
+    seeded_engine,
+):
+    """CLOSE THE LITERAL-VS-ORM GAP. Otherwise every test above can be green
+    while all three indexes are dead in production.
+
+    The queries in this module are literals on purpose — a refactor of a handler
+    must not quietly change what is measured. The risk runs the other way too:
+    if SQLAlchemy compiles something the indexes do not match, nothing here
+    would say so. So this builds the statements the way the handlers build them,
+    compiles them for Postgres, and EXPLAINs *that* — not a retyped copy.
+
+    The sharpest case is ``Email.is_reviewed == False``. Postgres renders it as
+    ``NOT is_reviewed`` in a plan while the partial index's predicate says
+    ``is_reviewed = false``; they match, and this is the assertion that keeps
+    knowing so.
+    """
+
+    from sqlalchemy import func
+    from sqlalchemy.dialects import postgresql
+    from sqlmodel import select
+
+    from jobtracker.database.models import Application, Email, EmailCategory
+
+    review_predicates = (
+        Email.user_id == USER,
+        Email.classified_as == EmailCategory.NEEDS_REVIEW,
+        Email.application_id.is_(None),
+        Email.is_reviewed == False,  # noqa: E712
+    )
+
+    statements = {
+        MAIL_INDEX: (
+            select(Email)
+            .where(Email.user_id == USER, Email.classified_as == EmailCategory.REJECTION)
+            .order_by(Email.received_at.desc(), Email.id.desc())
+            .offset(0)
+            .limit(50),
+            select(func.count())
+            .select_from(Email)
+            .where(Email.user_id == USER, Email.classified_as == EmailCategory.REJECTION),
+        ),
+        REVIEW_INDEX: (
+            select(Email)
+            .where(*review_predicates)
+            .order_by(Email.received_at.desc())
+            .limit(100),
+            select(
+                func.count(
+                    func.distinct(func.coalesce(Email.thread_id, Email.message_id))
+                )
+            )
+            .select_from(Email)
+            .where(*review_predicates),
+        ),
+        BOARD_INDEX: (
+            select(Application)
+            .where(Application.user_id == USER, Application.dismissed_at.is_(None))
+            .order_by(Application.created_at.desc(), Application.id.desc())
+            .offset(0)
+            .limit(50),
+        ),
+    }
+
+    for index_name, group in statements.items():
+        for statement in group:
+            sql = str(
+                statement.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+            with seeded_engine.connect() as conn:
+                plan = "\n".join(
+                    r[0] for r in conn.execute(text(f"EXPLAIN (COSTS OFF) {sql}"))
+                )
+            assert index_name in plan, (
+                "the statement the HANDLER compiles does not use "
+                f"{index_name}, even though the literal in this module does — "
+                f"the index is dead in production:\n{sql}\n\n{plan}"
+            )
+
+
 def test_the_collation_is_the_production_one(seeded_engine):
     """Pin the fixture's assumption, as the company-index module does.
 

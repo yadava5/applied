@@ -209,9 +209,10 @@ curl -s -H "Authorization: Bearer $CRON_SECRET" https://<api-host>/cron/sync
 ```
 
 `users_synced: 0` with `candidates: 0` means the enumeration found
-nobody. Check `JOBTRACKER_CRON_SYNC_USER_IDS` (below) before concluding
-that nobody has connected a mailbox — an unset allowlist is the
-fail-closed default and reports exactly this.
+nobody. Two different causes, and the logs separate them: an empty
+`gmail_sync_enrollment` (nobody has connected a mailbox on this
+deployment) or an enrolled population whose grants have all been revoked
+at Google. See [Who gets synced](#who-gets-synced) below.
 
 ### What bounds a run
 
@@ -267,52 +268,57 @@ reads the 750-message target before its 10 s timeout:
 Realistically production runs one user on an incremental delta: two Gmail
 calls and a couple of seconds per run.
 
-### Who gets synced — set this too, or the cron syncs nobody
+### Who gets synced
 
-| Env var | Value |
-|---|---|
-| `JOBTRACKER_CRON_SYNC_USER_IDS` | Comma-separated user UUIDs, e.g. `<uuid>,<uuid>` |
+**Nothing to configure.** Connecting a Gmail mailbox enrolls that user in
+the schedule, in the same transaction as the token itself.
 
-**The cron cannot discover its own users.** `user_credentials` has RLS
-ENABLEd and FORCEd with `USING (user_id = auth.uid())` against a
-NOBYPASSRLS runtime role; a cron carries no JWT, so `auth.uid()` is NULL
-and an identity-less `SELECT` matches no row. The first implementation
-did exactly that and enumerated zero users in production while returning
-a tidy `200`.
+**The cron cannot read `user_credentials` to discover its users.** That
+table has RLS ENABLEd and FORCEd with `USING (user_id = auth.uid())`
+against a NOBYPASSRLS runtime role; a cron carries no JWT, so
+`auth.uid()` is NULL and an identity-less `SELECT` matches no row. The
+first implementation did exactly that and enumerated zero users in
+production while returning a tidy `200`.
 
-So the cron is given an **identity** rather than an exemption. The env
-var names the users the schedule may act for, and each one's sync runs
-inside `user_id_scope(uid)` — the same mechanism the Gmail OAuth callback
-already uses to write `user_credentials` without a request JWT, applied
-per transaction with `set_config(..., is_local => true)` so the shared
-PgBouncer can never hand a stale identity to the next tenant. Every read
-and write then passes RLS exactly as a signed-in request's would. **No
-policy was changed, no DDL was applied, and no new database credential
-exists.**
+So the *membership fact* is published to a table that holds nothing else
+— `gmail_sync_enrollment` (revision `e2b6f0a4d517`, issue #291): a user
+id and when it was enrolled, no ciphertext and no address, with a
+`SELECT` policy scoped to the runtime role rather than to `auth.uid()`.
+The enumeration is one query with no identity bound. `save_gmail_
+credentials` writes that row and `delete_gmail_credentials` removes it,
+both in the same transaction as the credential, so the two cannot drift.
 
-Set it in the Vercel dashboard for Production and **redeploy** — env is
-injected at deploy time. Unset or empty means the cron syncs nobody,
-which is the deliberate fail-closed default: the alternative reading
-("no allowlist, so no restriction") would walk every mailbox in the
-database on a schedule. A malformed entry fails at config load rather
-than degrading into a silent zero-user run, because a non-UUID string
-would reach the GUC listener, bind no identity at all, and read nothing
-without raising.
+Each candidate's *cursor* still has to be read under that user's own
+identity, because `sync_state` is FORCE-RLS too. Those probes share one
+connection and re-bind the identity per transaction (bind, read,
+`ROLLBACK`, bind the next) — the same `is_local => true` guarantee that
+makes the shared PgBouncer safe for ordinary requests. Under NullPool a
+*session* is a fresh ~216 ms connection, so a probe per user cost 65 s of
+a 45 s budget at 300 enrolled users and the run could sync nobody.
 
-**The honest cost is list rot.** A second user who connects Gmail is not
-background-synced until an operator adds their id here and redeploys, and
-the cron cannot detect that by construction — an identity it was never
-given is invisible to it. The detection lives where the fact *is* known:
-the OAuth callback logs a warning at credential-save time when the user
-it just connected is absent from the allowlist. Their interactive sync is
-unaffected; what they lack is refresh while they are away.
+An empty enrollment table means the cron syncs nobody, which is the same
+fail-closed default the old allowlist had without the operator step it
+needed. Enrollment cannot see **revocation** — a grant withdrawn at
+Google sets `user_credentials.revoked_at` and leaves the enrollment row
+standing — so the per-user probe checks that too, and a revoked user
+drops out of the candidate list rather than failing every run forever.
+
+> **`JOBTRACKER_CRON_SYNC_USER_IDS` is no longer read.** It was the
+> hand-maintained allowlist this replaced, and its honest cost was list
+> rot: a second user who connected Gmail got no background sync until an
+> operator edited the env var and redeployed. A deployment that still
+> sets the variable is simply ignored; it can be deleted from the Vercel
+> project at any time.
 
 **Verified against a real Postgres**, in `tests/test_rls_postgres.py`:
-`test_cron_enumeration_uses_the_configured_allowlist` (the enumeration
-returns the configured users with no ambient identity, controlled against
-a raw unscoped read that returns nothing) and
-`test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity` (a run
-for one user sees only that user's rows, leaves the other user's rows
+`test_cron_enumeration_uses_the_enrollment_table` (the enumeration
+returns the enrolled users with no ambient identity, controlled against a
+raw unscoped read of `user_credentials` that returns nothing),
+`test_the_probe_loop_rebinds_identity_per_transaction` **and its negative
+twin**, which removes the `ROLLBACK` and shows the next user's read runs
+under the previous user's identity, and
+`test_cron_syncs_only_the_enrolled_user_and_leaks_no_identity` (a run for
+one user sees only that user's rows, leaves the other user's rows
 byte-identical, and leaves no identity bound afterwards). SQLite has no
 RLS, so the unit tests in `tests/test_cron_sync.py` cannot prove any of
 that — which is why the Postgres tests exist.
