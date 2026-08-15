@@ -76,7 +76,17 @@ def main() -> int:
     args = ap.parse_args()
 
     cases = generate(args.seed)
-    print(f"adversarial mail corpus — seed {args.seed}, {len(cases)} invented emails")
+    # Say plainly that the seed does not currently vary anything: every case is
+    # ENUMERATED, not sampled, so the corpus is identical for any seed. Printing
+    # "seed N" without this reads as though the corpus derives from it, and a
+    # reader comparing two runs at different seeds would draw a false
+    # conclusion from their agreement. The knob is kept for future randomised
+    # axes, and ``test_corpus_is_deterministic`` pins that nothing has silently
+    # become random in the meantime.
+    print(
+        f"adversarial mail corpus — {len(cases)} invented emails "
+        f"(fully enumerated; seed {args.seed} is reserved, not yet used)"
+    )
 
     by_axis: dict[str, int] = {}
     for c in cases:

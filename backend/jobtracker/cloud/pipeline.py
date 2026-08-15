@@ -1792,6 +1792,16 @@ def partition_applications(
        same application as its confirmation, and it means behaviour changes only
        for employers with several applications.
 
+    ONE narrow order-dependence survives the two passes, introduced by the
+    requisition-id guard in :func:`_may_join`: a message carrying a role token
+    but NO req id, at an employer holding two clusters that share that title and
+    differ only by requisition id, joins whichever of them was minted first.
+    Before the guard the question could not arise, because those two clusters
+    were one. It is the right trade — the alternative is collapsing two
+    applications — and the case needs an employer with two same-titled openings
+    plus a message that names the title without the id, but it is stated here
+    rather than left for someone to discover.
+
     A role-less message at an employer with SEVERAL applications is returned in
     the second element instead of being guessed at. Guessing here is not a cosmetic
     error: attributing a rejection to the wrong one of four Amazon rows settles a
