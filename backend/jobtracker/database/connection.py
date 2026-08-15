@@ -474,6 +474,19 @@ async def _apply_runtime_migrations(conn) -> None:
         )
         logger.info("Applied migration: added emails.suggested_category")
 
+    if "review_disposition" not in columns:
+        # Same reasoning as the column above, and the same failure if it is
+        # skipped: ``create_all`` adds missing TABLES, never missing COLUMNS, and
+        # every ``select(Email)`` emits an explicit column list, so an existing
+        # desktop DB would raise an OperationalError on its first read rather
+        # than degrade quietly. VARCHAR(12) is what ``create_all`` writes on a
+        # fresh DB (the longest member name, ``UNATTRIBUTED``); SQLite ignores
+        # the length either way.
+        await conn.execute(
+            text("ALTER TABLE emails ADD COLUMN review_disposition VARCHAR(12)")
+        )
+        logger.info("Applied migration: added emails.review_disposition")
+
     await _ensure_fts_search_objects(conn)
 
 

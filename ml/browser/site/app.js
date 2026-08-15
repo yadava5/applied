@@ -1,7 +1,7 @@
 /* JobTracker classifier, in-browser.
  *
  * Faithful port of the 3-layer hybrid (backend/jobtracker/classifier):
- *   1. rules       — same 214 regexes, same scoring (strong +3 ×2-subject,
+ *   1. rules       — same 220 regexes, same scoring (strong +3 ×2-subject,
  *                    weak +1, negative −5, veto caps the category at 0),
  *                    same margin→confidence tiers, same ATS-domain boost.
  *                    Accept ≥0.9.

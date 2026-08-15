@@ -1249,6 +1249,8 @@ export interface components {
              * @default false
              */
             user_corrected: boolean;
+            /** Review Disposition */
+            review_disposition?: string | null;
             /**
              * Is Reviewed
              * @default false

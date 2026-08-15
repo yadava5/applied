@@ -72,6 +72,13 @@ PARENT_REVISION = "b7c31e0d94aa"
 ENROLLMENT_REVISION = "e2b6f0a4d517"
 ENROLLMENT_PARENT = "a9d3e5f2c841"
 
+# The disposition revision and its parent. It CREATES a type rather than adding
+# a label to one, which is a different Postgres-only hazard and has its own
+# section at the bottom of this file.
+DISPOSITION_REVISION = "b3e91c47da05"
+DISPOSITION_PARENT = ENROLLMENT_REVISION
+
+
 OWNER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
@@ -555,3 +562,145 @@ def test_the_enumeration_policy_is_role_scoped_and_the_grant_is_narrow(
         f"jobtracker_app holds {sorted(privileges)} on gmail_sync_enrollment. "
         "Nothing updates this table; UPDATE must not be granted."
     )
+
+
+# =============================================================================
+# b3e91c47da05 — a type CREATED, and a backfill written INTO it
+#
+# `b9e42f7c10ad` above is about adding a label to a type that exists. This is
+# the other half: a revision that creates its own type and then writes to the
+# column in the same breath. SQLite renders `sa.Enum` as VARCHAR and accepts a
+# bare string, so the whole hazard is invisible to every other suite — the
+# first draft of this revision shipped
+#
+#     UPDATE emails SET review_disposition = $1::VARCHAR
+#
+# which is green on SQLite and, on Postgres:
+#
+#     DatatypeMismatch: column "review_disposition" is of type
+#     reviewdisposition but expression is of type character varying
+#
+# i.e. `alembic upgrade head` on merge to main, against production, failing at
+# the statement AFTER the column was added.
+# =============================================================================
+
+
+def _insert_settled_email(engine: Engine, message_id: str, corrected: bool) -> None:
+    """One `emails` row as production holds it, before the column exists.
+
+    Raw SQL on purpose, and it is the opposite of the reasoning on
+    `_insert_application`: the point here is a row written by the OLD code, so
+    it must not go through a model that already knows about the new column.
+    """
+
+    with engine.begin() as c:
+        c.execute(
+            text(
+                "INSERT INTO emails (user_id, source_account, message_id, "
+                " received_at, classified_as, user_corrected, is_reviewed, created_at) "
+                "VALUES (:u, 'GMAIL', :m, :t, 'REJECTION', :corr, :corr, :t)"
+            ),
+            {
+                "u": str(OWNER),
+                "m": message_id,
+                "t": datetime(2026, 8, 11, 9, 0),
+                "corr": corrected,
+            },
+        )
+
+
+def test_the_review_disposition_labels_are_the_python_enum_names_in_order(
+    migrated: Engine,
+) -> None:
+    """A created type is subject to the same uppercase rule as an altered one.
+
+    SQLAlchemy persists an enum's NAME, so the type must hold ``'CONFIRMED'``
+    while the API speaks ``"confirmed"``. Getting this backwards is valid DDL
+    and then 500s on the first write — the failure ``b9e42f7c10ad`` is written
+    about, reached by a different route.
+    """
+
+    from jobtracker.database.models import ReviewDisposition
+
+    labels = _enum_labels(migrated, "reviewdisposition")
+
+    assert labels == [d.name for d in ReviewDisposition]
+    # The API's spelling is NOT a label.
+    assert "confirmed" not in labels
+
+
+def test_the_backfill_writes_unknown_through_the_enum_type(engine: Engine) -> None:
+    """The statement that was broken, run against the dialect it was broken on.
+
+    Walks to the revision BEFORE the column exists, writes the two shapes
+    production holds, and upgrades — so it measures the migration rather than
+    the model, and it is the only place in the repo where the bind type of that
+    UPDATE is exercised at all.
+
+    Mutation: declaring the table construct's column ``sa.String()`` instead of
+    the enum type → ``DatatypeMismatch`` and a non-zero ``alembic upgrade``,
+    which is what the first draft did.
+    """
+
+    _alembic("upgrade", DISPOSITION_PARENT)
+
+    with engine.connect() as c:
+        assert (
+            c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            == DISPOSITION_PARENT
+        )
+        assert not c.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = 'emails' "
+                "AND column_name = 'review_disposition'"
+            )
+        ).all(), "the column must not exist yet, or this test proves nothing"
+
+    _insert_settled_email(engine, "pg-legacy-corrected", corrected=True)
+    _insert_settled_email(engine, "pg-legacy-untouched", corrected=False)
+
+    _alembic("upgrade", DISPOSITION_REVISION)
+
+    with engine.connect() as c:
+        rows = dict(
+            c.execute(
+                text("SELECT message_id, review_disposition::text FROM emails")
+            ).all()
+        )
+
+    # A human decided; which act it was is not recoverable. Not "confirmed",
+    # not "overridden", and not NULL — NULL already means something else.
+    assert rows["pg-legacy-corrected"] == "UNKNOWN"
+    assert rows["pg-legacy-untouched"] is None
+
+
+def test_the_disposition_downgrade_takes_the_type_with_it(migrated: Engine) -> None:
+    """A created type must be dropped, or the next upgrade collides on it.
+
+    ``b9e42f7c10ad``'s downgrade deliberately leaves its LABEL behind because
+    Postgres has no ``DROP VALUE``. A whole type is different: it can be
+    dropped, it has exactly one dependent column, and leaving it would make
+    ``CREATE TYPE`` fail the second time the chain ran.
+    """
+
+    assert "reviewdisposition" in _all_type_names(migrated)
+
+    _alembic("downgrade", DISPOSITION_PARENT)
+
+    assert "reviewdisposition" not in _all_type_names(migrated)
+
+    # And the chain is re-runnable, which is the property the drop exists for.
+    _alembic("upgrade", "head")
+    assert "reviewdisposition" in _all_type_names(migrated)
+
+
+def _all_type_names(engine: Engine) -> set[str]:
+    """Every enum type name in the database."""
+
+    with engine.connect() as c:
+        return {
+            row[0]
+            for row in c.execute(
+                text("SELECT typname FROM pg_type WHERE typtype = 'e'")
+            )
+        }

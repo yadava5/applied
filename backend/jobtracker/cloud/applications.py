@@ -52,6 +52,7 @@ from jobtracker.database.models import (
     EmailEmbedding,
     EmailSource,
     Interview,
+    ReviewDisposition,
     TrainingData,
 )
 
@@ -499,6 +500,14 @@ class MailMessageResponse(BaseModel):
     confidence: float | None = None
     method: str | None = None
     user_corrected: bool = False
+    # WHICH act the human performed — ``"confirmed"``, ``"overridden"``,
+    # ``"unattributed"`` or ``"unknown"``. ``user_corrected`` says only THAT a
+    # human settled the row; a client rendering "corrected by you" off it alone
+    # is telling half the users who touched a row that they overruled a machine
+    # they in fact agreed with. ``None`` means no human decision is recorded;
+    # ``"unknown"`` means one is and predates the column. See
+    # :class:`~jobtracker.database.models.ReviewDisposition`.
+    review_disposition: str | None = None
     is_reviewed: bool = False
     application_id: int | None = None
     # The linked application's employer, resolved in ONE query for the whole
@@ -2673,8 +2682,45 @@ async def classify_review_item(
                 ),
             }
 
+    # WHICH ACT THIS IS — read BEFORE the write below destroys the evidence.
+    #
+    # ``classified_as = category`` overwrites the machine's verdict in place, so
+    # after that line nothing on the row can answer "did the human change it?".
+    # This flag used to be written ``True`` regardless, which made a human who
+    # AGREES and a human who OVERRULES byte-identical. An audit read the flag on
+    # production, concluded the classifier had never once auto-detected a
+    # rejection, and said so — while the Palantir message it was reading had
+    # scored ``rejection`` at 0.75, the right category, held under
+    # ``AUTO_FILE_GATE`` for a human who then agreed with it.
+    #
+    # The machine's verdict is whichever of these is on record:
+    #   * ``suggested_category`` — a PARKED row's proposal, which is exactly this
+    #     column's purpose and survives the overwrite below untouched;
+    #   * ``classified_as`` — a COMMITTED verdict, on a row that was filed and is
+    #     now being relabelled (the two ``Crusoe | Application Received`` rows at
+    #     0.95 are this shape, and are almost certainly agreements).
+    # ``NEEDS_REVIEW`` is not a verdict — it is the typed null of that column —
+    # so it is never read as one here.
+    machine_verdict = email.suggested_category
+    if machine_verdict is None and email.classified_as is not EmailCategory.NEEDS_REVIEW:
+        machine_verdict = email.classified_as
+    if machine_verdict is None:
+        # No proposal and no commitment: a live-scan row minted from a
+        # ``ScannedMessageIn`` carrying ``category=None``. The human supplied the
+        # first verdict rather than ruling on one, and neither word applies.
+        email.review_disposition = ReviewDisposition.UNATTRIBUTED
+    elif machine_verdict is category:
+        email.review_disposition = ReviewDisposition.CONFIRMED
+    else:
+        email.review_disposition = ReviewDisposition.OVERRIDDEN
+
     email.classified_as = category
     email.is_reviewed = True
+    # Still unconditional, and deliberately so: this flag means "a human settled
+    # this row", which an agreement does just as much as an override. The four
+    # queries that filter ``user_corrected.is_(False)`` are asking that question
+    # and would be wrong to get "no" for a confirmed row. What the flag could
+    # never say is WHICH act it was, and that is now said above.
     email.user_corrected = True
     # A human decision is not a probabilistic verdict, so it carries no
     # probability. These two lines used to be absent, and the row kept the
@@ -3579,6 +3625,9 @@ async def mail_listing_cloud(
             confidence=e.classification_confidence,
             method=e.classification_method,
             user_corrected=e.user_corrected,
+            review_disposition=(
+                e.review_disposition.value if e.review_disposition else None
+            ),
             is_reviewed=e.is_reviewed,
             application_id=e.application_id,
             company=(
