@@ -143,11 +143,18 @@ function GmailCardFallback() {
       aria-label="Checking your Gmail connection"
       className="scroll-mt-16 rounded-xl border border-line-soft bg-surface p-5 lg:scroll-mt-4"
     >
-      <div className="h-6 w-24 animate-pulse rounded bg-surface-2" />
-      <div className="mt-2 h-4 w-full max-w-sm animate-pulse rounded bg-surface-2" />
-      <div className="mt-4 h-4 w-40 animate-pulse rounded bg-surface-2" />
+      {/* Hairline outlines, not pulsing plates. This box is the one pending
+          surface on the route that OUTLIVES `loading.tsx` — it holds the Gmail
+          slot for the whole backend round-trip after the rest of Settings has
+          already swapped to content — so a filled `animate-pulse` blob here
+          left one panel speaking the old texture in the middle of a page
+          drawn entirely in the quiet form. Same boxes, same heights: the
+          swap's geometry is unchanged. */}
+      <div className="h-6 w-24 rounded border border-line-strong" />
+      <div className="mt-2 h-4 w-full max-w-sm rounded border border-line" />
+      <div className="mt-4 h-4 w-40 rounded border border-line" />
       <div className="mt-6 border-t border-line-soft pt-4">
-        <div className="h-4 w-56 animate-pulse rounded bg-surface-2" />
+        <div className="h-4 w-56 rounded border border-line" />
       </div>
     </div>
   );

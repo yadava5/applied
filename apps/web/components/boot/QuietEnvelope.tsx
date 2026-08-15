@@ -22,7 +22,12 @@ export function QuietEnvelope({
 }) {
   return (
     <span
-      className={cn("boot-quiet-env shrink-0", className)}
+      // `inline-block`, not the default `inline`: a bare <span> ignores width
+      // and height, so outside a flex row (where it would be blockified) the
+      // sizing className silently did nothing and the svg grew to the line's
+      // full width. Flex parents blockify it anyway, so this costs the
+      // existing call sites nothing.
+      className={cn("boot-quiet-env inline-block shrink-0", className)}
       style={{ "--i": index } as CSSProperties}
       data-lit={lit || undefined}
       aria-hidden="true"
