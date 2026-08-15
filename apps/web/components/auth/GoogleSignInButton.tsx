@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { armBoot } from "@/lib/boot/flag";
 import { createClient } from "@/lib/supabase/client";
 
 /**
@@ -103,6 +104,12 @@ export function GoogleSignInButton({
       setIsRedirecting(false);
       return;
     }
+
+    // Arm the post-auth Triage boot for the return document (storage only —
+    // this page is about to be replaced, so the same-tab event would only
+    // race the redirect). BOOT_INIT_SCRIPT raises the cover pre-paint when
+    // /callback lands us back on the target route.
+    armBoot(safeRedirect, { notify: false });
 
     // `data.url` is Supabase's `/auth/v1/authorize` URL. Hand the browser to it
     // via a top-level navigation — it 302s to Google's consent screen and back

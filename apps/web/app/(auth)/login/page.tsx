@@ -10,6 +10,7 @@ import {
 } from "@/components/auth/GoogleSignInButton";
 import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
+import { armBoot } from "@/lib/boot/flag";
 import {
   LOGIN_MIN_PASSWORD,
   credentialProblem,
@@ -143,6 +144,11 @@ function LoginForm() {
       setIsSubmitting(false);
       return;
     }
+
+    // Cover the app's first render with the Triage boot before the
+    // navigation starts — the overlay lives in the root layout and survives
+    // this client-side transition.
+    armBoot(redirectTo.startsWith("/") ? redirectTo : "/dashboard");
 
     // `refresh()` is required so the proxy re-runs with the newly-set
     // session cookies before navigating into the protected area.
