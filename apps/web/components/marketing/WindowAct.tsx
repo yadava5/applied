@@ -23,9 +23,10 @@ import { ACT, BOARD } from "./copy";
  *   1  the verdict lands — the camera pans to the board's foot and the row
  *      travels to `closed` by the board's own layout animation; the receipt
  *      card (`ChangedRow`) floats in over the foot, pointing at the descent;
- *   2  the mail behind it — the camera returns to the head as the detail
- *      pane docks open on the moved row: the composition the owner approved
- *      (worklist beside the open pane, trail, gate meter).
+ *   2  the mail behind it — the camera HOLDS at the foot as the detail pane
+ *      docks open on the moved row, so the row and the mail that moved it
+ *      share one frame: the composition the owner approved (worklist beside
+ *      the open pane, trail, gate meter), plus the row it is about.
  *
  * MECHANISM. IntersectionObserver over three sentinel zones against a centre
  * band — `ClaimsDescent`'s idiom exactly: the page scrolls normally and the
@@ -166,11 +167,11 @@ export function WindowAct() {
                 height="calc(100dvh - 13.5rem)"
                 caption={false}
                 beat={beat}
-                // Beat 1 only: that scene pans past the board's foot and
-                // clears a strip for the card (see LandingBoard). At beat 2
-                // the camera is back at the head — the strip is gone and the
-                // open pane carries the story, so the receipt stands down
-                // rather than sit on rows it would otherwise cover.
+                // Beat 1 only: that scene pans PAST the board's foot and
+                // clears a strip for the card (see LandingBoard). Beat 2
+                // holds at the foot but drops the strip, so the card would
+                // land on the very rows the docked pane is explaining — it
+                // stands down and the pane carries the story.
                 overlay={
                   beat === 1 ? (
                     <Reveal>

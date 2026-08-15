@@ -278,6 +278,27 @@ test("beat 0's zone outlasts the pin", () => {
   );
 });
 
+test("beat 2 keeps the moved row in frame", () => {
+  // Measured: the verdict row lands in the CLOSED group at 679-735 of a 783px
+  // board, while a head-anchored stage shows 0-552 at a 768-tall viewport and
+  // 0-384 at 600. A camera that returns to the head at beat 2 argues "the row
+  // opens on the mail that moved it" with the row off-stage at every height,
+  // so only beat 0 rests at the head.
+  const board = graph.get(marketing("LandingBoard.tsx"));
+  assert.ok(board, "LandingBoard.tsx is not in the landing graph");
+  assert.match(
+    board,
+    /beat < 1 \? 0 :/,
+    "the camera no longer holds the foot for every beat past the first — beat 2's row goes off-stage",
+  );
+  // And it must re-measure: the board GROWS when the pane docks open (743 to
+  // 783), so a height read once per beat pans to a foot that has since moved.
+  assert.ok(
+    board.includes("new ResizeObserver"),
+    "the camera measures the board once per beat again — the docked pane moves the foot under it",
+  );
+});
+
 test("the split verdict stays TWO micro-beats under ONE headline", () => {
   const descent = graph.get(descentPath);
   assert.ok(descent, "ClaimsDescent.tsx is not in the landing graph");

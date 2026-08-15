@@ -62,12 +62,12 @@ export function LandingBoard({
   caption?: boolean;
   /**
    * The window act's scene index (WindowAct → MarketingBoard). Here it also
-   * drives the CAMERA: the board is taller than the stage, and beat 1 pans
-   * the crop to the board's foot so the closed group is on screen when the
-   * verdict row arrives there; every other beat rests at the head, where the
-   * pulse band and — from beat 2 — the opened detail pane sit. A transform
-   * inside the clip, so the page's own scroll geometry never moves: CLS
-   * stays zero by construction. Reduced motion pans by cut, not by glide.
+   * drives the CAMERA: the board is taller than the stage, so beat 0 rests at
+   * the head (the pulse band and the still-quiet rows) and beats 1 and 2 hold
+   * at the foot, where the verdict row lands and the pane docks open beside
+   * it. A transform inside the clip, so the page's own scroll geometry never
+   * moves: CLS stays zero by construction. Reduced motion pans by cut, not by
+   * glide.
    */
   beat?: number;
   /** A figure floated over the stage's foot (the act's receipt card). */
@@ -79,25 +79,45 @@ export function LandingBoard({
   const [near, setNear] = useState(false);
   const [wide, setWide] = useState(false);
 
-  // The camera. Measured at beat time (not cached): the board's height
-  // changes when the pane docks open and rows fold, and a stale measure
-  // would pan past the foot. Nothing here runs for beat-less callers.
+  // The camera. Nothing here runs for beat-less callers.
   //
+  // Beats 1 AND 2 sit at the board's foot; only the head rests at the top.
   // Beat 1 pans PAST the foot by `OVERLAY_ROOM`: the board's last rows clear
   // the stage's lower band entirely, and the receipt card (`overlay`) lands
   // in the emptied strip instead of on top of the very rows it documents —
   // measured, a bottom-corner float covered either the moved row's identity
-  // or its neighbours' controls at every corner.
+  // or its neighbours' controls at every corner. Beat 2 drops that strip,
+  // because the card stands down and the docked pane wants the room.
+  //
+  // Beat 2 used to return to the head, and measurement caught what that cost:
+  // the moved row lands in the CLOSED group at the board's foot (679–735 of a
+  // 783px board), while the head-anchored stage shows only 0–552 at a 768-tall
+  // viewport and 0–384 at 600. So the scene captioned "the row opens on the
+  // mail that moved it" was arguing about a row that was off-stage at every
+  // height. Holding at the foot puts the row and the mail behind it in one
+  // frame, and turns beat 2 from a cut back to the head into a 112px settle —
+  // the row the visitor watched arrive is never out of sight.
+  //
+  // Measured through a ResizeObserver rather than once per beat: the board
+  // GROWS when the pane docks open (743 → 783), and a measurement taken at
+  // beat time would pan to a foot that has since moved.
   useEffect(() => {
     if (beat === undefined) return;
-    if (beat === 1) {
-      const stage = stageRef.current;
-      const pan = panRef.current;
-      if (!stage || !pan) return;
-      setPanY(-Math.max(0, pan.scrollHeight - stage.clientHeight + OVERLAY_ROOM));
-    } else {
-      setPanY(0);
+    const stage = stageRef.current;
+    const pan = panRef.current;
+    if (!stage || !pan) return;
+    const room = beat === 1 ? OVERLAY_ROOM : 0;
+    const measure = () =>
+      setPanY(beat < 1 ? 0 : -Math.max(0, pan.scrollHeight - stage.clientHeight + room));
+    // The observer's own first callback is the initial measurement, so the
+    // effect body never sets state synchronously (react-hooks/set-state-in-effect).
+    if (typeof ResizeObserver === "undefined") {
+      const id = window.setTimeout(measure, 0);
+      return () => window.clearTimeout(id);
     }
+    const ro = new ResizeObserver(measure);
+    ro.observe(pan);
+    return () => ro.disconnect();
   }, [beat]);
 
   // `lg`+ is a mount condition, not just a display one: a phone should never
@@ -151,14 +171,14 @@ export function LandingBoard({
         </div>
         {/* The crop edge: the board continues below this line, and the fade
             says so. Decoration only — it must never intercept the board —
-            and it stands down while the camera is AT the foot (beat 1),
-            where "this continues" would be false and the closed rows are
+            and it stands down while the camera is AT the foot (beats 1 and
+            2), where "this continues" would be false and the closed rows are
             the scene's whole point. */}
         <div
           aria-hidden
           className={cn(
             "pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background transition-opacity duration-500 motion-reduce:transition-none",
-            beat === 1 && "opacity-0",
+            (beat ?? 0) >= 1 && "opacity-0",
           )}
         />
         {/* The act's receipt card, in the strip beat 1 cleared below the

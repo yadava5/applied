@@ -189,10 +189,15 @@ export function ClaimsDescent() {
 
         {/* ---- the artifact, riding alongside (`lg`+) ---------------------- */}
         <div className="hidden lg:block">
-          {/* `py-10`, not `py-16`: the wall label below costs the exhibit 24px
-              of head room, and on a 660px-tall viewport the split verdicts are
-              the bottom of the frame. The padding pays the label back. */}
-          <div className="sticky top-24 py-10">
+          {/* `top-20 py-6`, tighter than the `top-24 py-16` this replaces.
+              The exhibit is 464px of fixed content plus its wall label, and
+              its last line is the one that says the email is synthetic and
+              the verdicts are computed live — the sentence that stops a
+              visitor reading these as verdicts on real mail. At a 600px
+              viewport, 96px of offset and 64px of padding cropped it away.
+              80 + 24 clears the nav by 24px and the whole exhibit fits.
+              Nothing moves out of the card: the offset pays for it. */}
+          <div className="sticky top-20 py-6">
             {/* The exhibit's wall label. It changes with the stage, so the
                 reader is never looking at a state the page has not named —
                 and on the merged claim it is what marks the second micro-beat
