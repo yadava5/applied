@@ -1335,3 +1335,102 @@ async def test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity(
         f"The leak probe read a table holding {real_rows} rows. It must hold "
         "both users' credentials, or an empty result proves nothing."
     )
+
+
+# =============================================================================
+# Guarantee 6: the sync lease works under FORCE RLS as the non-bypass role.
+#
+# THIS IS THE ONE THAT CANNOT BE TESTED ON SQLITE, and the failure it guards
+# against is total rather than partial. ``acquire_gmail_sync_lease`` decides
+# whether a sync may proceed from the ROW COUNT of a conditional UPDATE. If a
+# policy silently filtered that UPDATE to zero rows, the helper would read
+# "nobody updated" as "somebody else holds the lease" and answer 409 to every
+# sync, for every user, forever — including the "Sync now" button. Every
+# assertion in tests/test_sync_lease.py would stay green, because SQLite has no
+# RLS at all.
+#
+# That is precisely the shape cron.py's own docstring records: an unscoped
+# SELECT that matched no row on Postgres while every unit test passed on
+# SQLite. A rowcount-driven decision under RLS has to be exercised against
+# real policies and a real NOBYPASSRLS role, which is what this fixture gives.
+# =============================================================================
+
+
+async def test_the_sync_lease_is_taken_and_released_under_rls(
+    pg_app: AsyncEngine,
+) -> None:
+    """Acquire → refuse → release → re-acquire, as the app role."""
+
+    from jobtracker.cloud.sync_state import (
+        acquire_gmail_sync_lease,
+        release_gmail_sync_lease,
+    )
+    from jobtracker.database import user_id_scope
+
+    mailbox = "owner-a@example.com"
+
+    with user_id_scope(USER_A):
+        # A first sync has no sync_state row: the INSERT path, under a policy
+        # whose WITH CHECK must accept the row the helper builds.
+        assert await acquire_gmail_sync_lease(USER_A, mailbox) is True, (
+            "the lease could not be taken at all under RLS — every sync would "
+            "409 forever, including the user's own Sync now button"
+        )
+
+        # The conditional UPDATE must see the row it just wrote. If the UPDATE
+        # were filtered to zero rows this would ALSO return False, so the
+        # release/re-acquire below is what tells the two apart.
+        assert await acquire_gmail_sync_lease(USER_A, mailbox) is False
+
+        await release_gmail_sync_lease(USER_A, mailbox)
+
+        # THE DISCRIMINATING ASSERTION. Releasing is an UPDATE and re-acquiring
+        # is an UPDATE; if either were silently filtering to zero rows, this
+        # could not come back True.
+        assert await acquire_gmail_sync_lease(USER_A, mailbox) is True, (
+            "the lease was never actually released/re-taken — the UPDATE is "
+            "being filtered to zero rows by a policy"
+        )
+
+
+async def test_one_users_lease_does_not_block_another_under_rls(
+    pg_app: AsyncEngine,
+) -> None:
+    """Cross-tenant: A holding a lease must not stop B taking theirs.
+
+    A policy mistake in the other direction — an UPDATE that reached rows it
+    should not — would show up here as B being refused because A's row matched.
+    """
+
+    from jobtracker.cloud.sync_state import acquire_gmail_sync_lease
+    from jobtracker.database import user_id_scope
+
+    with user_id_scope(USER_A):
+        assert await acquire_gmail_sync_lease(USER_A, "a@example.com") is True
+
+    with user_id_scope(USER_B):
+        assert await acquire_gmail_sync_lease(USER_B, "b@example.com") is True
+
+
+async def test_sync_state_has_an_update_policy(pg_app: AsyncEngine) -> None:
+    """Read the policy catalogue directly, rather than inferring it.
+
+    The behavioural tests above are the real gate; this one names the mechanism
+    so a failure says "the UPDATE policy is missing" instead of leaving someone
+    to work that out from a 409.
+    """
+
+    async with pg_app.begin() as c:
+        rows = (
+            await c.execute(
+                text(
+                    "SELECT cmd FROM pg_policies "
+                    "WHERE tablename = 'sync_state' AND cmd IN ('ALL', 'UPDATE')"
+                )
+            )
+        ).all()
+
+    assert rows, (
+        "sync_state has no UPDATE (or ALL) policy, so the lease's conditional "
+        "UPDATE can only ever affect zero rows under FORCE RLS"
+    )

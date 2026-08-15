@@ -1304,6 +1304,15 @@ export interface components {
          *     sync now gates on: without it, a low-confidence guess used to manufacture a
          *     fake ``interviewing``/``offered`` row. ``thread_id``/``snippet`` let a
          *     persisted row deep-link + show the underlying mail in the detail view.
+         *
+         *     EVERY STRING IS BOUNDED. Not for storage — the persist layer truncates to
+         *     its own column widths anyway (``body_snippet`` to 500) — but because
+         *     truncation happens far too late to matter. Pydantic parses the WHOLE body
+         *     into Python objects before a single field is read, so an unbounded string
+         *     is memory the process allocates on an attacker's say-so, inside a function
+         *     with a fixed memory ceiling. The limits are generous multiples of what
+         *     Gmail actually emits (a snippet is ~200 characters, an RFC-5321 address is
+         *     at most 320) so nothing a real client sends is refused.
          */
         PipelineItemIn: {
             /** Message Id */

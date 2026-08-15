@@ -118,6 +118,12 @@ async def _upsert_credential(
                 "nonce": stmt.excluded.nonce,
                 "key_id": stmt.excluded.key_id,
                 "updated_at": stmt.excluded.updated_at,
+                # RECONNECTING UN-REVOKES. Writing a fresh credential is the
+                # only evidence that could exist that the grant is good again,
+                # and without clearing this a user who reconnected would stay
+                # invisible to the scheduled sync permanently — a wedge with no
+                # self-service way out.
+                "revoked_at": None,
             },
         )
         await session.exec(stmt)
@@ -140,6 +146,7 @@ async def _upsert_credential(
         row.nonce = b""
         row.key_id = ACTIVE_KEY_ID
         row.updated_at = now
+        row.revoked_at = None  # see the ON CONFLICT branch above
         session.add(row)
         return
 

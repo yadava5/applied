@@ -69,7 +69,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, 
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jobtracker.auth import current_user
 from jobtracker.config import settings
@@ -211,17 +211,26 @@ class PipelineItemIn(BaseModel):
     sync now gates on: without it, a low-confidence guess used to manufacture a
     fake ``interviewing``/``offered`` row. ``thread_id``/``snippet`` let a
     persisted row deep-link + show the underlying mail in the detail view.
+
+    EVERY STRING IS BOUNDED. Not for storage — the persist layer truncates to
+    its own column widths anyway (``body_snippet`` to 500) — but because
+    truncation happens far too late to matter. Pydantic parses the WHOLE body
+    into Python objects before a single field is read, so an unbounded string
+    is memory the process allocates on an attacker's say-so, inside a function
+    with a fixed memory ceiling. The limits are generous multiples of what
+    Gmail actually emits (a snippet is ~200 characters, an RFC-5321 address is
+    at most 320) so nothing a real client sends is refused.
     """
 
-    message_id: str
-    category: str
-    sender_email: str = ""
-    subject: str = ""
-    sender_name: str | None = None
-    received_at: str | None = None  # ISO-8601
+    message_id: str = Field(max_length=256)
+    category: str = Field(max_length=64)
+    sender_email: str = Field(default="", max_length=512)
+    subject: str = Field(default="", max_length=2000)
+    sender_name: str | None = Field(default=None, max_length=512)
+    received_at: str | None = Field(default=None, max_length=64)  # ISO-8601
     confidence: float = 0.0
-    thread_id: str | None = None
-    snippet: str = ""
+    thread_id: str | None = Field(default=None, max_length=256)
+    snippet: str = Field(default="", max_length=2000)
 
 
 class PipelineAnalyzeRequest(BaseModel):
@@ -242,6 +251,44 @@ class PipelineAnalyzeResponse(BaseModel):
     job_related: int
     category_summary: dict[str, int]
     follow_ups: list[FollowUpOut]
+
+
+class SyncAlreadyRunning(HTTPException):
+    """429: this mailbox already has a sync in flight.
+
+    429 RATHER THAN 409, WHICH IS WHAT "CONFLICT" WOULD OTHERWISE ARGUE FOR.
+    409 is already spoken for on this endpoint: it means "Gmail is not
+    connected", and the web app reads it that way in four places —
+    ``SyncBar.tsx`` sets ``notConnected: res.status === 409`` and
+    ``lib/gmail/server.ts`` maps 409 to ``{kind: "not_connected"}``. Reusing it
+    would tell a user whose mailbox is working perfectly, and is being synced
+    right now, to go and reconnect their account. Overlapping syncs are routine
+    — ``SyncBar`` runs a staleness auto-sync on arrival, so landing on the
+    dashboard and pressing "Sync now", or simply having two tabs open, collides
+    — which makes the wrong message the COMMON case rather than an edge one.
+
+    429 is also the honest reading. This lease is the rate limit: the section
+    of work it comes from is "nothing stops a user hammering sync", and "you
+    are already doing this, try again shortly" is exactly what 429 means. It
+    carries ``Retry-After`` so a client can wait the right amount of time
+    instead of guessing, and nothing in the web app currently reads 429 on any
+    path, so the new code cannot be mistaken for an existing meaning.
+
+    ITS OWN TYPE, not a bare ``HTTPException(429, ...)``, so the scheduled run
+    can tell a lease conflict (``skipped`` — a sync is happening) from a real
+    fault (``errors`` — a stale candidate list) by catching the class rather
+    than comparing a number.
+    """
+
+    def __init__(self, retry_after_seconds: int = 15) -> None:
+        super().__init__(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "A sync is already running for this mailbox. Wait for it to "
+                "finish before starting another."
+            ),
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
 
 
 class SyncRequest(BaseModel):
@@ -268,7 +315,15 @@ class SyncRequest(BaseModel):
       additive-only.
     """
 
-    items: list[PipelineItemIn] | None = None
+    # BOUNDED, for the same reason every string on ``PipelineItemIn`` is.
+    # Processing already discards everything past ``gmail_fetch_hard_cap``
+    # (2000) — but that slice happens after Pydantic has already materialised
+    # the entire list, so it caps the WORK and not the ALLOCATION.
+    #
+    # Set above the hard cap rather than at it, so this rejects abuse without
+    # ever turning a client that merely relayed a few too many items into a
+    # 422; that client's surplus is still silently dropped exactly as before.
+    items: list[PipelineItemIn] | None = Field(default=None, max_length=2500)
     count: int | None = None
     range: str | None = None
     scope: str | None = None
@@ -1533,8 +1588,10 @@ async def gmail_sync(
         sync_gmail_pipeline_additive,
     )
     from jobtracker.cloud.sync_state import (
+        acquire_gmail_sync_lease,
         note_gmail_sync_failure,
         record_gmail_sync_success,
+        release_gmail_sync_lease,
     )
 
     # Default to the durable additive merge; only an explicit "rebuild" (the
@@ -1581,6 +1638,24 @@ async def gmail_sync(
     # key a cursor on.
     stored = await get_gmail_credentials(user_id)
     account_email = stored.email if stored else None
+
+    # ONE sync per mailbox at a time. Nothing used to stop an authenticated
+    # account firing unlimited parallel calls, each a 750-message scan, burning
+    # function-seconds and the user's own Gmail quota while racing N copies of
+    # the additive merge over the same rows.
+    #
+    # Keyed on the linked address because that is what the lease row is keyed
+    # on. An items-only relay from a user with no Gmail connected has no
+    # address to key on and takes no lease: it makes no Gmail calls, so the
+    # cost it could multiply is not the one this guards.
+    #
+    # The lease EXPIRES (see ``_SYNC_LEASE_TTL_SECONDS``), so a sync killed by
+    # the function ceiling cannot lock its owner out of their own mailbox.
+    lease_held = False
+    if account_email is not None:
+        lease_held = await acquire_gmail_sync_lease(user_id, account_email)
+        if not lease_held:
+            raise SyncAlreadyRunning()
 
     try:
         if payload.items is not None:
@@ -1764,8 +1839,9 @@ async def gmail_sync(
                 )
             ).one()
     except HTTPException:
-        # 409 not-connected / 503 not-configured are the caller's problem to
-        # fix, not a sync failure worth recording against the mailbox.
+        # 409 not-connected / 429 already-running / 503 not-configured are the
+        # caller's problem to fix, not a sync failure worth recording against
+        # the mailbox.
         raise
     except Exception as exc:
         if account_email is not None:
@@ -1773,6 +1849,12 @@ async def gmail_sync(
             # a log or a stored field.
             await note_gmail_sync_failure(user_id, account_email, type(exc).__name__)
         raise
+    finally:
+        # EVERY exit, including the ``HTTPException`` re-raise above — which
+        # records no failure and would otherwise hold the lease for a full TTL
+        # after a 400 the user could fix and retry in seconds.
+        if lease_held:
+            await release_gmail_sync_lease(user_id, account_email)
 
     logger.info(
         "Gmail sync for user_id=%s: mode=%s incremental=%s created=%s updated=%s "

@@ -198,6 +198,95 @@ def _google_credentials_from_stored(stored: GmailCredentials) -> Credentials:
     )
 
 
+# OAuth 2.0 error codes (RFC 6749 §5.2) that mean the grant is GONE — the user
+# revoked access, or the refresh token was expired/reissued. Retrying cannot
+# help; only the user reconnecting can.
+#
+# Deliberately narrow. Everything NOT on this list — a TransportError, a DNS
+# failure, a timeout, an HTTP 500 from Google, a rate limit — is transient, and
+# treating one of those as a revocation would disconnect a perfectly good
+# account the first time the network hiccuped. When in doubt the answer is "not
+# revoked": the cost of missing a real revocation is one wasted cron slot until
+# the next failure, while the cost of a false positive is telling a user their
+# working mailbox needs reconnecting.
+_PERMANENT_GRANT_FAILURES = ("invalid_grant", "invalid_client", "unauthorized_client")
+
+
+def _is_permanently_revoked(exc: BaseException) -> bool:
+    """Is this refresh failure the definitive "this grant is gone"?
+
+    Matched on ``RefreshError`` — google-auth's OAuth-level failure — AND on
+    the error code inside it. The type alone is not enough: google-auth raises
+    ``RefreshError`` for some retryable server-side conditions too. The string
+    alone is not enough either, because a transport exception could carry a URL
+    containing any of these words.
+
+    ``str(exc)`` here holds the OAuth error document, not a token: google-auth
+    puts the response *body* of a FAILED exchange in the message, and a failed
+    exchange returns ``{"error": "invalid_grant", ...}`` with no credential in
+    it. Nothing from this is logged or stored regardless — only the verdict is.
+    """
+
+    from google.auth.exceptions import RefreshError
+
+    if not isinstance(exc, RefreshError):
+        return False
+    haystack = " ".join(str(arg) for arg in exc.args).lower()
+    return any(code in haystack for code in _PERMANENT_GRANT_FAILURES)
+
+
+async def mark_gmail_credential_revoked(user_id: uuid.UUID) -> None:
+    """Record that this user's Gmail grant is gone. Never raises.
+
+    WHY THIS MATTERS BEYOND TIDINESS. ``cron._gmail_sync_position`` decides who
+    is syncable by asking whether a credential row exists. A revoked user's row
+    stayed, so they answered "yes" forever: every scheduled run picked them as a
+    candidate, spent one of the ~4 slots a 45 s budget affords on a sync that
+    could only fail, and pushed a user whose mailbox still works out of the
+    batch. The failure was visible in ``errors[]`` and changed nothing.
+
+    MARKED, NOT DELETED. The row keeps the address the UI needs to name which
+    account to reconnect, and the OAuth callback's upsert clears ``revoked_at``
+    — so reconnecting is self-service and this is reversible. Deleting on the
+    strength of an exception-type heuristic would not be.
+
+    Its own session and its own swallow: this is bookkeeping on a path that is
+    already returning ``None`` to a caller which will degrade correctly without
+    it. A failure to record must never become the error the user sees.
+    """
+
+    from sqlalchemy import update as sa_update
+
+    from jobtracker.credentials.cloud import KIND_GMAIL
+    from jobtracker.database import get_session
+    from jobtracker.database.models import UserCredential
+
+    try:
+        async with get_session() as session:
+            await session.exec(
+                sa_update(UserCredential)
+                .where(
+                    UserCredential.user_id == user_id,
+                    UserCredential.kind == KIND_GMAIL,
+                    UserCredential.revoked_at.is_(None),
+                )
+                .values(revoked_at=datetime.utcnow())
+            )
+            await session.commit()
+        logger.warning(
+            "Gmail grant for user_id=%s is revoked at the provider; marked "
+            "disconnected so the schedule stops spending a slot on it. The "
+            "user must reconnect.",
+            user_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — bookkeeping may not mask the cause
+        logger.warning(
+            "Could not mark the Gmail credential revoked for user_id=%s (%s).",
+            user_id,
+            type(exc).__name__,
+        )
+
+
 async def load_valid_credentials(user_id: uuid.UUID) -> Optional[Credentials]:
     """Return refreshed, ready-to-use google credentials for ``user_id``.
 
@@ -232,6 +321,10 @@ async def load_valid_credentials(user_id: uuid.UUID) -> Optional[Credentials]:
                 user_id,
                 type(exc).__name__,
             )
+            # A REVOKED grant is permanent and must be written down; a network
+            # blip is not. Only the former.
+            if _is_permanently_revoked(exc):
+                await mark_gmail_credential_revoked(user_id)
             return None
 
         await update_gmail_access_token(

@@ -39,10 +39,13 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete as sa_delete
+from sqlalchemy import or_
+from sqlalchemy import update as sa_update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from jobtracker.database import get_session
@@ -173,6 +176,153 @@ async def note_gmail_sync_failure(
             "Could not record sync failure for user_id=%s (%s).",
             user_id,
             type(exc).__name__,
+        )
+
+
+# How long a lease may be held before another sync is allowed to break it.
+#
+# Sized ABOVE every ceiling a sync can legitimately hit: Vercel gives
+# ``api/index.py`` ``maxDuration: 60`` and the scan's own budget is 30 s, so a
+# sync that is still running at 120 s is not running — the function that owned
+# it is gone. Too short and two real syncs overlap, which is the thing being
+# prevented; too long and a crash locks the user out of their own mailbox for
+# that whole window. This is the shortest value that cannot pre-empt a live
+# sync.
+_SYNC_LEASE_TTL_SECONDS = 120.0
+
+
+async def acquire_gmail_sync_lease(
+    user_id: uuid.UUID, account_email: str, *, now: datetime | None = None
+) -> bool:
+    """Take the in-flight lease for this mailbox. ``True`` if we got it.
+
+    Nothing else stopped a user hammering ``POST /gmail/sync``: each call is a
+    scan of up to 750 messages, so unlimited parallel calls burn Vercel
+    function-seconds and the user's own Gmail quota while racing N copies of the
+    additive merge over the same rows.
+
+    THE TEST AND THE WRITE ARE ONE STATEMENT. A ``SELECT`` followed by an
+    ``UPDATE`` in Python is precisely the race being closed — two requests both
+    read "idle", both write "mine", both proceed. So the condition lives in the
+    ``WHERE`` clause and the verdict is the row count: exactly one of two
+    concurrent callers can match a row whose lease is free, because the other's
+    UPDATE waits on that row's lock and then re-evaluates the predicate against
+    the committed value.
+
+    EXPIRY IS PART OF THE PREDICATE, not a separate sweep. A sync killed
+    mid-flight — the 60 s function ceiling, an OOM, a deploy — leaves
+    ``sync_started_at`` set with nobody to clear it, and a lease that cannot
+    expire would lock that user out of their own mailbox permanently. A lease
+    older than ``_SYNC_LEASE_TTL_SECONDS`` is therefore simply available, which
+    means recovery needs no operator, no cron and no cleanup job.
+
+    A FIRST SYNC HAS NO ROW. ``sync_state`` is written when a sync *succeeds*,
+    so a brand-new user's conditional UPDATE matches nothing — and treating "no
+    row" as "someone else holds it" would 409 every new user forever, on exactly
+    the 750-message path this lease exists to protect. So a miss is
+    disambiguated: no row at all means the mailbox is idle and the row is
+    created holding the lease. Two racers can reach that insert together; the
+    loser trips ``uq_sync_state_user_account`` and retries the UPDATE, where it
+    correctly loses to the winner's lease.
+    """
+
+    moment = now or datetime.utcnow()
+    cutoff = moment - timedelta(seconds=_SYNC_LEASE_TTL_SECONDS)
+
+    async with get_session() as session:
+        if await _take_lease(session, user_id, account_email, moment, cutoff):
+            await session.commit()
+            return True
+
+        # Nobody to update: either the row does not exist, or the lease is
+        # genuinely held. Only the first is ours to fix.
+        if await load_gmail_sync_state(session, user_id, account_email) is not None:
+            await session.commit()
+            return False
+
+        session.add(
+            SyncState(
+                user_id=user_id,
+                account_type=GMAIL_ACCOUNT_TYPE,
+                account_email=account_email,
+                sync_started_at=moment,
+            )
+        )
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Another request created the row between our SELECT and our
+            # INSERT. It holds the lease unless it has already expired, and
+            # the conditional UPDATE is the only thing that can tell.
+            await session.rollback()
+        else:
+            return True
+
+    async with get_session() as session:
+        won = await _take_lease(session, user_id, account_email, moment, cutoff)
+        await session.commit()
+        return won
+
+
+async def _take_lease(
+    session: Any,
+    user_id: uuid.UUID,
+    account_email: str,
+    moment: datetime,
+    cutoff: datetime,
+) -> bool:
+    """The conditional UPDATE. ``True`` when it claimed a row."""
+
+    result = await session.exec(
+        sa_update(SyncState)
+        .where(
+            SyncState.user_id == user_id,
+            SyncState.account_type == GMAIL_ACCOUNT_TYPE,
+            SyncState.account_email == account_email,
+            or_(
+                SyncState.sync_started_at.is_(None),
+                SyncState.sync_started_at < cutoff,
+            ),
+        )
+        .values(sync_started_at=moment)
+    )
+    return bool(result.rowcount)
+
+
+async def release_gmail_sync_lease(user_id: uuid.UUID, account_email: str) -> None:
+    """Hand the lease back. Never raises.
+
+    Called from a ``finally``, so it runs on the failure paths too — including
+    the ``HTTPException`` re-raise, which does NOT record a sync failure and
+    would otherwise leave the lease held for a full TTL after a 400 the user
+    could fix and retry in seconds.
+
+    Its own session: the request's may be rolled back and unusable by the time
+    this runs. Swallow-and-log for the same reason
+    :func:`note_gmail_sync_failure` does — a lease that fails to release costs
+    one TTL, while an exception raised out of a ``finally`` would REPLACE the
+    error the caller needs to see.
+    """
+
+    try:
+        async with get_session() as session:
+            await session.exec(
+                sa_update(SyncState)
+                .where(
+                    SyncState.user_id == user_id,
+                    SyncState.account_type == GMAIL_ACCOUNT_TYPE,
+                    SyncState.account_email == account_email,
+                )
+                .values(sync_started_at=None)
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — must never mask the real failure
+        logger.warning(
+            "Could not release the sync lease for user_id=%s (%s); it will "
+            "expire on its own in %ss.",
+            user_id,
+            type(exc).__name__,
+            _SYNC_LEASE_TTL_SECONDS,
         )
 
 
