@@ -670,9 +670,25 @@ _NAME_IS_ADDRESS = re.compile(r"^\S+@\S+\.\S+$")
 
 # Pure filler that is never itself a role title (kept SEPARATE from the company
 # stopwords, which reject legitimate title words like "Software"/"Engineer").
+# Words that can never BE a job title on their own. Two groups: articles and
+# mail-thread noise, and — added after the adversarial corpus caught it — the
+# LIFECYCLE NOUNS that name what a message is about rather than what the job is.
+#
+# "Interview at <Employer>" is one of the commonest subjects an ATS sends, and
+# ``_ROLE_PATTERNS``' "<TITLE> at <Company>" rule captured "Interview" from it.
+# That is not a cosmetic wrong title: the role token IS the application's
+# identity, so the interview mail keyed on "interview" while the confirmation
+# keyed on the real title, and the board grew a second card. Same for "Offer
+# from <Employer>" and "Assessment at <Employer>".
+#
+# Safe for real titles because ``_clean_role`` only rejects a capture when
+# EVERY word is filler — "Application Engineer" and "Offer Management Lead"
+# survive; the bare noun does not.
 _ROLE_FILLER: frozenset[str] = frozenset(
     {"the", "a", "an", "your", "our", "my", "this", "that", "new", "re",
-     "fw", "fwd", "update", "status", "position", "role", "opening"}
+     "fw", "fwd", "update", "status", "position", "role", "opening",
+     "interview", "interviewing", "application", "assessment", "offer",
+     "invitation", "opportunity", "rejection", "confirmation"}
 )
 
 # Role named in the subject. Tried in order; the capture is validated against
@@ -1211,8 +1227,16 @@ def _rank_to_status(rank: int) -> str:
     return "applied"
 
 
+# A standalone requisition code, in the NORMALIZED token form — lowercased,
+# with punctuation already collapsed to spaces, so "JR0093214" arrives as
+# "jr0093214" and "R-77120" as "r 77120". Only the unambiguous ATS shapes; the
+# labelled patterns in ``_REQ_ID_PATTERNS`` need an explicit "id:" and so
+# cannot be confused with a company name in the first place.
+_REQ_CODE_TOKEN = re.compile(r"(?:r|jr|req)\s?\d{4,10}")
+
+
 def _valid_company_token(token: str) -> bool:
-    """A token is a usable company only if it is not a stopword or a bare number."""
+    """A token is a usable company only if it is not a stopword, number or req id."""
 
     if not token or len(token) < 2:
         return False
@@ -1220,6 +1244,15 @@ def _valid_company_token(token: str) -> bool:
     if all(w in _COMPANY_STOPWORDS for w in words):
         return False
     if words[0] in _COMPANY_STOPWORDS:
+        return False
+    # A requisition code identifies an APPLICATION, never an employer. Workday
+    # and Greenhouse write subjects like "Interview for JR0093214 at <Employer>",
+    # which puts the code exactly where ``_SUBJECT_COMPANY`` looks for a company
+    # — so the code became the employer, minting a card titled "JR0093214" for a
+    # company that does not exist AND splitting it off the real application whose
+    # id it was. Rejecting it here lets the resolver fall through to the sender
+    # name and the rest of the subject, which do name the employer.
+    if _REQ_CODE_TOKEN.fullmatch(token):
         return False
     return re.fullmatch(r"[0-9]+", token) is None
 
@@ -1732,6 +1765,42 @@ def _qualifies_for_hard_row(item: PipelineItem) -> tuple[str, str] | None:
     return resolve_employer(item.sender_email, item.subject, item.sender_name)
 
 
+def _may_join(
+    cluster_req_id: str | None,
+    cluster_role_token: str | None,
+    req_id: str | None,
+    role_token: str | None,
+) -> bool:
+    """Does a message with this identity belong to a cluster with that one?
+
+    The cascade this file documents is "requisition id first, then role token",
+    and the docstrings on both :func:`partition_applications` and
+    ``_pick_application`` state that nothing outranks the employer's own number.
+    The code did not honour that: the two clauses were OR-ed, so a role-token
+    match joined a cluster whose requisition id EXPLICITLY DISAGREED.
+
+    Two openings at one employer routinely share a title — "Mechanical
+    Engineer (R-40881)" and "Mechanical Engineer (R-40882)" — and the ids are
+    the only thing that tells them apart. OR-ing collapsed them onto one card,
+    which is the strictly worse direction of failure: a split leaves the user
+    two cards to merge by hand, but a merge destroys a record silently and
+    nothing on the board says a second application ever existed.
+
+    The guard is narrow on purpose. It fires only when BOTH sides carry an id
+    and the ids differ; when either is None the message may still join, which
+    is what preserves "each message may carry the half of the identity the
+    other lacked" — the confirmation brings the requisition id, the interview
+    invite that follows brings only the title, and they are still one
+    application.
+    """
+
+    if req_id is not None and cluster_req_id is not None and req_id != cluster_req_id:
+        return False
+    if req_id is not None and cluster_req_id == req_id:
+        return True
+    return role_token is not None and cluster_role_token == role_token
+
+
 @dataclass(frozen=True)
 class _Cluster:
     """One application's worth of gated mail, before it becomes a row."""
@@ -1763,6 +1832,16 @@ def partition_applications(
        message (different sender, no shared role text, no shared thread) on the
        same application as its confirmation, and it means behaviour changes only
        for employers with several applications.
+
+    ONE narrow order-dependence survives the two passes, introduced by the
+    requisition-id guard in :func:`_may_join`: a message carrying a role token
+    but NO req id, at an employer holding two clusters that share that title and
+    differ only by requisition id, joins whichever of them was minted first.
+    Before the guard the question could not arise, because those two clusters
+    were one. It is the right trade — the alternative is collapsing two
+    applications — and the case needs an employer with two same-titled openings
+    plus a message that names the title without the id, but it is stated here
+    rather than left for someone to discover.
 
     A role-less message at an employer with SEVERAL applications is returned in
     the second element instead of being guessed at. Guessing here is not a cosmetic
@@ -1810,8 +1889,7 @@ def partition_applications(
                 (
                     c
                     for c in keyed
-                    if (req_id is not None and c.req_id == req_id)
-                    or (role_token is not None and c.role_token == role_token)
+                    if _may_join(c.req_id, c.role_token, req_id, role_token)
                 ),
                 None,
             )

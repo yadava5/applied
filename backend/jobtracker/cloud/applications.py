@@ -948,6 +948,17 @@ def _pick_application(
                 return row
     if role_token is not None:
         for row in rows:
+            # A row whose requisition id CONTRADICTS this one is a different
+            # application, however identical the titles read — which is exactly
+            # what the docstring above promises ("Nothing outranks it") and what
+            # the unguarded role-token match used to break. Two openings at one
+            # employer often share a title and differ only by id; landing the
+            # second one's mail on the first one's row merges two applications
+            # into one card, silently, with no way back. Mirrors
+            # :func:`pipeline._may_join` on the in-scan side; the two must agree
+            # or a cluster and its stored row disagree about what they are.
+            if req_id is not None and row.req_id and row.req_id != req_id:
+                continue
             if row.role_token and row.role_token == role_token:
                 return row
 
