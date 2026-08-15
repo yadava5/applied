@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # The head of backend/alembic/versions/ as of this commit.
 # Update it in the same commit that adds a revision; the test enforces this.
-EXPECTED_REVISION = "b3e91c47da05"
+EXPECTED_REVISION = "c8f3a1d64b27"
 
 
 async def read_applied_revision(session) -> str | None:

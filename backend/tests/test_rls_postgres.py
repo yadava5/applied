@@ -1209,9 +1209,10 @@ async def test_enrollment_writes_are_still_owner_scoped(pg_app: AsyncEngine) -> 
 # inversion — restructured rather than merely negated, because the fix changed
 # how enumeration works, not just its result.
 #
-# The cron now takes its users from ``settings.cron_sync_user_ids`` and runs
-# each one's work inside ``user_id_scope(uid)``. No policy changed, no DDL ran,
-# and no new database credential exists.
+# The cron now takes its users from ``gmail_sync_enrollment`` (issue #291,
+# revision ``e2b6f0a4d517``) — one identity-less query, no allowlist — and runs
+# each one's work inside ``user_id_scope(uid)``. No policy changed for this, no
+# new DDL ran, and no new database credential exists.
 # =============================================================================
 
 
@@ -1227,30 +1228,32 @@ def _gmail_creds(email: str):
     )
 
 
-def _set_allowlist(monkeypatch: pytest.MonkeyPatch, *user_ids: uuid.UUID) -> None:
-    """Point the cron's allowlist at ``user_ids`` on the instance it reads.
+async def _unenroll(pg_app: AsyncEngine, *user_ids: uuid.UUID) -> None:
+    """Remove enrollment rows through the ADMIN engine.
 
-    ``monkeypatch.setattr(cron_module.settings, ...)`` and NOT
-    ``monkeypatch.setenv`` + reload: four sibling modules reload
-    ``jobtracker.config`` and orphan the ``settings`` object other modules
-    hold, which is the trap ``_live_settings_instances`` above exists to
-    document. Reaching through ``cron_module.settings`` cannot pick the wrong
-    one. The env-var parse itself is covered in ``tests/test_cron_sync.py``.
+    Test surgery, not a product path: the product's own writer
+    (``delete_gmail_credentials``) would take the credential row with it, and
+    these tests need a user who still HAS a live credential and is simply not
+    enrolled — which is what makes "the enumeration reads the enrollment table"
+    an observable fact rather than a restatement.
     """
 
-    import jobtracker.cloud.cron as cron_module
+    async with pg_app.begin() as c:
+        for user_id in user_ids:
+            await c.execute(
+                text("DELETE FROM gmail_sync_enrollment WHERE user_id = :u"),
+                {"u": str(user_id)},
+            )
 
-    monkeypatch.setattr(cron_module.settings, "cron_sync_user_ids", list(user_ids))
 
-
-async def test_cron_enumeration_uses_the_configured_allowlist(
+async def test_cron_enumeration_uses_the_enrollment_table(
     pg_app: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The enumeration now returns users — because it binds an identity per user.
+    """The enumeration returns users — from a table, with no identity bound.
 
     This is the inversion of ``test_cron_enumeration_sees_no_users_without_
     identity``. It is called with **no identity bound at all**, exactly as the
-    cron runs, and it must return the configured users anyway.
+    cron runs, and it must return the enrolled users anyway.
 
     THE CONTROL IS THE FIRST ASSERTION, and it is what makes the rest mean
     something. An unscoped raw ``SELECT count(*) FROM user_credentials`` on the
@@ -1258,8 +1261,9 @@ async def test_cron_enumeration_uses_the_configured_allowlist(
     line ever returns 2, this module is not testing RLS at all (wrong backend,
     or a BYPASSRLS role) and every assertion below would pass for free. So:
     same connection machinery, same absence of an ambient identity, one read
-    returns nothing and the other returns both users. The only difference is
-    the per-user ``user_id_scope`` inside the enumeration.
+    returns nothing and the other returns both users. The difference is the
+    enrollment table's role-scoped policy for the membership half, and the
+    per-user ``user_id_scope`` for the cursor half.
     """
 
     from jobtracker.cloud.cron import list_syncable_user_ids
@@ -1280,37 +1284,162 @@ async def test_cron_enumeration_uses_the_configured_allowlist(
     )
 
     # …and yet the enumeration, called with no identity bound, finds both.
-    _set_allowlist(monkeypatch, USER_A, USER_B)
     candidates = await list_syncable_user_ids(100)
     assert candidates == [USER_A, USER_B], (
-        f"The configured enumeration returned {candidates}. Each configured id "
-        "must be probed inside its own user_id_scope; without the binding RLS "
-        "returns nothing and the cron is back to syncing nobody."
+        f"The enumeration returned {candidates}. The membership half must come "
+        "from gmail_sync_enrollment and each id must then be probed inside its "
+        "own user_id_scope; without the binding RLS returns nothing and the "
+        "cron is back to syncing nobody."
     )
 
-    # The allowlist is the ONLY thing that selects users: B still has a
-    # credential row, and still must not be enumerated.
-    _set_allowlist(monkeypatch, USER_A)
+    # ENROLLMENT is the ONLY thing that selects users: B still has a live
+    # credential row, and still must not be enumerated once un-enrolled.
+    await _unenroll(pg_app, USER_B)
     assert await list_syncable_user_ids(100) == [USER_A]
 
-    # Empty is FAIL-CLOSED — nobody, not everybody.
-    _set_allowlist(monkeypatch)
+    # An enrolled id with no Gmail credential is skipped rather than handed to
+    # gmail_sync to fail on every run forever — and this is the half that the
+    # enrollment table CANNOT answer, so the per-user probe has to. USER_A is
+    # kept alongside so a blanket "returns nothing" cannot pass this.
+    async with pg_app.begin() as c:
+        await c.execute(
+            text("INSERT INTO auth.users(id) VALUES (:u) ON CONFLICT DO NOTHING"),
+            {"u": str(USER_B)},
+        )
+        await c.execute(
+            text("INSERT INTO gmail_sync_enrollment(user_id) VALUES (:u)"),
+            {"u": str(USER_B)},
+        )
+        await c.execute(
+            text("DELETE FROM user_credentials WHERE user_id = :u"),
+            {"u": str(USER_B)},
+        )
+    assert await list_syncable_user_ids(100) == [USER_A]
+
+    # Empty is FAIL-CLOSED — nobody, not everybody, even though both users
+    # still exist and USER_A's credential is still live.
+    await _unenroll(pg_app, USER_A, USER_B)
     assert await list_syncable_user_ids(100) == []
 
-    # A configured id with no Gmail credential is skipped rather than handed to
-    # gmail_sync to fail on every run forever. USER_A is kept alongside so a
-    # blanket "returns nothing" cannot pass this.
-    stranger = uuid.uuid4()
-    _set_allowlist(monkeypatch, USER_A, stranger)
-    assert await list_syncable_user_ids(100) == [USER_A]
+
+async def test_the_probe_loop_rebinds_identity_per_transaction(
+    pg_app: AsyncEngine,
+) -> None:
+    """ONE connection, a different tenant every transaction, nothing bleeding.
+
+    This is the mechanism issue #294's enumeration fix rests on, asserted
+    against Postgres because it is invisible anywhere else: the identity is a
+    transaction-local GUC applied by the engine's ``begin`` listener, and SQLite
+    has neither.
+
+    Three things, and the third is the one that would be a cross-tenant read if
+    it were wrong:
+
+    1. every probe ran on the SAME backend — ``pg_backend_pid()`` does not move,
+       so this really is one connection and not the per-user connections the fix
+       removed;
+    2. each probe saw its OWN user's credential row and no other, on an
+       unfiltered read that only ``auth.uid()`` can bound;
+    3. no identity survives the loop.
+    """
+
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.database import get_session, user_id_scope
+    from jobtracker.database.connection import get_current_user_id, get_engine
+
+    for user_id, address in ((USER_A, "a@example.com"), (USER_B, "b@example.com")):
+        with user_id_scope(user_id):
+            assert await save_gmail_credentials(user_id, _gmail_creds(address)) is True
+
+    probe = text(
+        "SELECT pg_backend_pid(), "
+        "(SELECT count(*) FROM user_credentials), "
+        "coalesce(current_setting('request.jwt.claims', true), '')"
+    )
+
+    seen: list[tuple[int, int, str]] = []
+    async with get_engine().connect() as conn:
+        for user_id in (USER_A, USER_B, USER_A):
+            with user_id_scope(user_id):
+                seen.append(tuple((await conn.execute(probe)).one()))
+            # The rollback under test. See the negative twin below.
+            await conn.rollback()
+
+    pids = {row[0] for row in seen}
+    assert len(pids) == 1, (
+        f"the probes ran on {len(pids)} different backends {pids}; this is not "
+        "the one-connection loop the fix installs"
+    )
+
+    # Each probe saw exactly ONE credential row — its own user's. An unfiltered
+    # count over a table holding two rows can only be bounded by auth.uid().
+    assert [row[1] for row in seen] == [1, 1, 1], (
+        f"unfiltered credential counts were {[r[1] for r in seen]}; anything "
+        "other than 1 means the identity was wrong or absent for that probe"
+    )
+    assert [str(USER_A) in seen[0][2], str(USER_B) in seen[1][2], str(USER_A) in seen[2][2]] == [
+        True,
+        True,
+        True,
+    ], f"the bound claims did not follow the loop: {[r[2] for r in seen]}"
+
+    assert get_current_user_id() is None
+    async with get_session() as s:
+        assert (await s.exec(text("SELECT * FROM user_credentials"))).all() == []
 
 
-async def test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity(
+async def test_without_the_rollback_the_next_probe_runs_as_the_previous_user(
+    pg_app: AsyncEngine,
+) -> None:
+    """PROVE THE INSTRUMENT. The rollback above is load-bearing, not tidiness.
+
+    Same loop, same connection, the ``ROLLBACK`` removed. The GUC is applied on
+    transaction ``begin``; leaving the transaction open means there is no second
+    ``begin``, so USER_B's read runs under USER_A's identity and sees USER_A's
+    row. Without this test, the green one above is an assertion that some code
+    ran — the rollback could be deleted and everything would still pass on
+    SQLite and, worse, look plausible on Postgres.
+
+    Asserting the DEFECT, deliberately, in the same shape
+    ``test_the_default_opclass_would_not_have_worked`` uses for the company
+    index: the fix is only meaningful because the un-fixed version is
+    observably wrong.
+    """
+
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.database import user_id_scope
+    from jobtracker.database.connection import get_engine
+
+    for user_id, address in ((USER_A, "a@example.com"), (USER_B, "b@example.com")):
+        with user_id_scope(user_id):
+            assert await save_gmail_credentials(user_id, _gmail_creds(address)) is True
+
+    probe = text("SELECT coalesce(current_setting('request.jwt.claims', true), '')")
+
+    async with get_engine().connect() as conn:
+        with user_id_scope(USER_A):
+            first = (await conn.execute(probe)).scalar()
+        # NO ROLLBACK HERE — that is the whole point.
+        with user_id_scope(USER_B):
+            second = (await conn.execute(probe)).scalar()
+        await conn.rollback()
+
+    assert str(USER_A) in first, first
+    assert str(USER_A) in second and str(USER_B) not in second, (
+        f"the second probe ran as {second!r}. It was expected to inherit "
+        "USER_A's identity because the transaction was never ended — if this "
+        "now shows USER_B, the rollback in list_syncable_user_ids has stopped "
+        "being the thing that isolates the probes and this suite no longer "
+        "knows what does."
+    )
+
+
+async def test_cron_syncs_only_the_enrolled_user_and_leaks_no_identity(
     pg_app: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The isolation property, end to end, through the real handler.
 
-    Two users exist with identical shapes. Only USER_A is allowlisted. Three
+    Two users exist with identical shapes. Only USER_A is enrolled. Three
     things must hold afterwards, and each targets a different way the identity
     binding can be got wrong:
 
@@ -1444,7 +1573,10 @@ async def test_cron_syncs_only_the_allowlisted_user_and_leaks_no_identity(
 
     monkeypatch.setattr(gmail_module, "gmail_sync", fake_sync)
     monkeypatch.setattr(cron_module.settings, "vercel_cron_secret", cron_secret)
-    _set_allowlist(monkeypatch, USER_A)
+    # USER_B keeps a live credential and a cursor and is simply not enrolled —
+    # so if the enumeration ever went back to scanning credentials, this run
+    # would touch USER_B and assertion 2 below would go red.
+    await _unenroll(pg_app, USER_B)
 
     # ---- run the real handler, gate included -----------------------------
     # Called directly rather than through an ASGI client, deliberately: the
