@@ -300,6 +300,10 @@ each number above comes from. The design write-ups it summarises live in the
 [System Card](https://getapplied.vercel.app/system-card) and in [`docs/`](docs/), which are the
 places to go for depth — this section is a map, not the territory.
 
+The setup and deployment instructions here are the maintainer's, and are published so the claims
+above can be traced to something runnable. They are not an offer of a licence: running your own
+copy of Applied needs written permission, per [Licensing and partnership](#licensing-and-partnership).
+
 It is a monorepo: a Next.js 16 app on Vercel over Supabase Postgres, talking to one FastAPI serverless function that imports `backend/jobtracker/`. The classifier runs its rules layer only in that function, for a budget reason spelled out under [Architecture](#architecture).
 
 > **It used to be two.** Applied began as a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier, and the repository carried both modes over one Python package. The desktop client was de-scoped on 2026-08-12 and deleted, along with a second, unmounted set of FastAPI routers that had no user scoping at all (issue #73). `JOBTRACKER_DEPLOYMENT` still exists and `api/index.py` still forces it to `cloud` — that setting selects Postgres over SQLite and the encrypted-row credential store over the macOS Keychain, so it is load-bearing whether or not a desktop app exists.
