@@ -59,7 +59,7 @@ sentence-transformers>=5.7.0  # Sentence embeddings (loads e5-small-v2)
 # this app loads exactly one model, from a local path it wrote itself
 # (backend/checkpoints, appdata/models/setfit), and never from a user-supplied
 # repo id. Unblocking needs a setfit release that supports transformers 5.
-transformers>=4.40,<5         # HuggingFace transformers (see the note above)
+transformers>=5.15.0,<6         # HuggingFace transformers (see the note above)
 setfit>=1.1.3                 # Few-shot text classification
 scikit-learn>=1.3.0           # ML utilities (cosine similarity, etc.)
 numpy>=1.24.0                 # Numerical operations, embedding serialization
