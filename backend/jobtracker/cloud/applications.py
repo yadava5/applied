@@ -2724,14 +2724,26 @@ async def _settle_thread_siblings(
     for sibling in siblings:
         sibling.is_reviewed = True
         sibling.classified_as = category
-        # Same reasoning as the classified message itself: the category on this
-        # row no longer came from the classifier, so the classifier's confidence
-        # in its own overwritten verdict describes nothing here either. The
-        # method records what produced the LABEL (the user, transitively through
-        # the thread); ``user_corrected`` stays False because it records whether
-        # a human read THIS message, and nobody did.
-        sibling.classification_confidence = None
-        sibling.classification_method = ClassificationMethod.USER
+        # NOT nulled here, unlike the classified message itself, and the
+        # difference is not an oversight.
+        #
+        # A sibling has the same defect in a quieter form — it ends up holding
+        # the human's category with the classifier's confidence in the verdict
+        # that category replaced. But a sibling keeps ``user_corrected = False``
+        # (it records whether a human read THIS message, and nobody did), and
+        # that flag is exactly what makes the null safe on the corrected row:
+        # ``generate_ml_monitoring_report._count_needs_review`` and
+        # ``weekly_labeling_workflow`` both select
+        # ``user_corrected.is_(False) AND (confidence IS NULL OR < threshold)``
+        # and neither filters ``is_reviewed``. Nulling a sibling therefore moves
+        # it INTO the needs-review count, and the labeling query's
+        # ``case(confidence.is_(None), -1.0)`` ordering puts it first — a
+        # message whose label the human already settled, leading the queue.
+        # Measured against a migrated database, not reasoned about.
+        #
+        # Fixing it properly means teaching those two queries about
+        # ``is_reviewed``, which is a change to what the monitoring numbers mean
+        # and belongs in its own PR with its own before/after counts.
         if isinstance(application_id, int):
             sibling.application_id = application_id
         session.add(sibling)

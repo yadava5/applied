@@ -29,6 +29,7 @@ import {
   applyVerdictCorrection,
   scanMessagePayload,
   UNSTORABLE_ROW_NOTE,
+  verdictShowsConfidence,
 } from "../../lib/gmail/scan-correction.ts";
 import { categoryChips, chipTotal } from "../../lib/gmail/types.ts";
 
@@ -173,57 +174,63 @@ test("a correction moves the ROW and the COUNTS together", () => {
   );
 });
 
-test("a corrected row carries no confidence — the user's label was never scored", () => {
-  // This test used to assert the opposite (`confidence` unchanged at 0), on the
-  // reasoning that the number stayed true as the machine's own report. It does
-  // not stay true, because nothing in the row says it belongs to the machine:
-  // `GateMeter` and the percentage column sit immediately beside the category
-  // chip, which now holds the USER's category, and beside "corrected by you".
-  // The owner's Inbox drew "rejection · 75% · corrected by you", where 75% was
-  // the classifier's certainty about `applied`.
-  const next = applyVerdictCorrection(
-    { verdicts: [ASSESSMENT_CALLED_OTHER], summary: { other: 1 } },
-    "m-1",
-    "assessment",
-  );
-
-  assert.equal(next.verdicts[0].confidence, null);
-  // `method` is deliberately NOT rewritten here. This state is client-side only
-  // and never persisted; the backend stamps `classification_method = "user"` on
-  // the row it stores, and inventing a second vocabulary in the browser would
-  // be one more thing to keep in step.
-  assert.equal(next.verdicts[0].method, "rules");
-});
-
-test("the correction does not write 1.0 instead of clearing the number", () => {
-  // The other way to get this wrong. 1.0 is a claim of total certainty on the
-  // classifier's own scale, drawn by the classifier's own meter, behind a label
-  // nothing scored — the same forgery at a different number.
+test("the machine's confidence survives a correction — the relay needs it", () => {
+  // Not 1.0: that is a claim of total certainty, on the classifier's scale and
+  // drawn by the classifier's meter, behind a label nothing scored.
+  //
+  // And not null either, which is the version of this fix that got written
+  // first and was wrong. `toPipelineItems` relays `confidence` to /gmail/sync,
+  // where it is required and gates persistence (auto-file 0.85, review floor
+  // 0.70), and `scanMessagePayload` sends it to the classify endpoint to mint
+  // the row as a faithful copy of the machine's verdict. A null degrades to 0.0
+  // at both, below both gates, so the reader's correction would file nothing.
+  // The display fix lives in `verdictShowsConfidence` instead.
   const next = applyVerdictCorrection(
     { verdicts: [{ ...ASSESSMENT_CALLED_OTHER, confidence: 0.75 }], summary: { other: 1 } },
     "m-1",
     "assessment",
   );
 
-  assert.equal(next.verdicts[0].confidence, null);
-  assert.notEqual(next.verdicts[0].confidence, 1);
+  assert.equal(next.verdicts[0].confidence, 0.75);
+  assert.equal(next.verdicts[0].method, "rules");
 });
 
-test("a corrected row can still be corrected again — the payload just omits the number", () => {
-  // `scanMessagePayload` guards on `typeof === "number"`, so a null confidence
-  // drops the field rather than sending `null` at a `float | None` the endpoint
-  // would still accept. The re-correction lands on a row that already exists,
-  // which the backend updates in place, so no verdict is re-minted from it.
+test("a corrected row still yields a payload carrying the machine's verdict", () => {
+  // The round trip has to stay completable: the correction can be re-sent, and
+  // the mint has to describe what the classifier said, not what the reader did.
   const next = applyVerdictCorrection(
-    { verdicts: [ASSESSMENT_CALLED_OTHER], summary: { other: 1 } },
+    { verdicts: [{ ...ASSESSMENT_CALLED_OTHER, confidence: 0.75 }], summary: { other: 1 } },
     "m-1",
     "assessment",
   );
   const payload = scanMessagePayload(next.verdicts[0]);
 
   assert.ok(payload, "a dated row must still yield a payload after correction");
-  assert.equal("confidence" in payload, false);
+  assert.equal(payload.confidence, 0.75);
   assert.equal(payload.sender_email, ASSESSMENT_CALLED_OTHER.sender_email);
+});
+
+// --- What the row may DRAW ---------------------------------------------------
+
+test("a row draws the confidence only while the verdict is the classifier's", () => {
+  // The owner's Inbox drew "rejection · 75% · corrected by you", where 75% was
+  // the classifier's certainty about `applied`. A confidence figure rendered
+  // beside a category is a claim about THAT category.
+  assert.equal(verdictShowsConfidence(ASSESSMENT_CALLED_OTHER), true);
+
+  const next = applyVerdictCorrection(
+    { verdicts: [ASSESSMENT_CALLED_OTHER], summary: { other: 1 } },
+    "m-1",
+    "assessment",
+  );
+  assert.equal(verdictShowsConfidence(next.verdicts[0]), false);
+});
+
+test("a 0% verdict still draws its figure — absent is not the same as zero", () => {
+  // The guard is on WHOSE verdict it is, never on the value. A falsy check here
+  // would hide the meter for the one message this whole flow exists for: the
+  // assessment email the classifier called `other` at 0%.
+  assert.equal(verdictShowsConfidence({ ...ASSESSMENT_CALLED_OTHER, confidence: 0 }), true);
 });
 
 test("the last message of a category takes its chip with it", () => {

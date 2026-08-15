@@ -51,6 +51,14 @@ Design notes
   query in ``apps/macos/.../LocalDatabase.swift`` already excludes
   ``classification_confidence IS NULL``. So no row moves into or out of any
   queue as a result of this backfill.
+
+  That reasoning holds BECAUSE the predicate here is ``user_corrected = true``,
+  and it does not generalise. A thread SIBLING settled by
+  ``_settle_thread_siblings`` keeps ``user_corrected = false``, and neither
+  monitoring query filters ``is_reviewed`` — so nulling a sibling's confidence
+  would move it INTO the needs-review count and to the front of the weekly
+  labeling queue. Siblings are deliberately left alone; see
+  ``tests/test_corrected_rows_carry_no_confidence.py`` for the measurement.
 - Idempotent. Re-running it selects the same rows and writes the same values.
 - The downgrade CANNOT restore what this erases. The confidence figures being
   cleared were the machine's certainty about categories that

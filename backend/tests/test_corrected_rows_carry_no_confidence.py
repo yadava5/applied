@@ -278,20 +278,34 @@ async def test_the_mail_listing_reports_no_confidence_for_a_corrected_row(cloud_
 # =============================================================================
 
 
-async def test_a_settled_thread_sibling_also_loses_the_machines_number(cloud_app):
-    """One decision settles the conversation — and the number goes with it.
+async def test_a_settled_thread_sibling_KEEPS_the_machines_number_for_now(cloud_app):
+    """Pins a defect this PR deliberately does NOT fix, and why.
 
     ``_settle_thread_siblings`` writes the human's category onto the other
-    messages of the thread. Those rows had the same defect in a quieter form:
-    the classifier's confidence in ITS verdict, sitting under a category that
-    came from a person who never read that message.
+    messages of the thread, so a sibling ends up holding the human's category
+    with the classifier's confidence in the verdict that category replaced —
+    the same forgery as the corrected row, one step removed.
 
-    ``user_corrected`` stays False on a sibling on purpose — it records whether
-    a human read THIS message, and nobody did — so this is not a duplicate of
-    the test above; it is the case that assertion cannot reach.
+    Nulling it here was written, measured, and REVERTED. A sibling keeps
+    ``user_corrected = False`` by design (the flag records whether a human read
+    THAT message, and nobody did), and that flag is exactly what makes the null
+    safe on the corrected row. Both
+    ``generate_ml_monitoring_report._count_needs_review`` and
+    ``weekly_labeling_workflow`` select
+    ``user_corrected.is_(False) AND (confidence IS NULL OR < threshold)`` and
+    NEITHER filters ``is_reviewed`` — so a nulled sibling is counted as needing
+    review, and the labeling query's ``case(confidence.is_(None), -1.0)``
+    ordering puts it at the FRONT of the candidate list. A message whose label
+    the human already settled would lead the weekly queue.
 
-    Mutation: dropping the two new lines in ``_settle_thread_siblings`` → fails,
-    the sibling still reports 0.75.
+    Verified against a migrated database, not reasoned about: seeding one
+    sibling in each state and running the monitoring predicate returned only
+    the nulled one.
+
+    Fixing it properly means teaching those two queries about ``is_reviewed``,
+    which changes what the monitoring numbers mean and needs its own before/after
+    counts. This test exists so the current state is a recorded decision rather
+    than an oversight, and so that whoever does fix it sees this note first.
     """
 
     await _seed_machine_verdict(
@@ -309,8 +323,9 @@ async def test_a_settled_thread_sibling_also_loses_the_machines_number(cloud_app
     assert sibling.classified_as.value == "rejection"
     # Not the human's own decision — they read one message, not this one.
     assert sibling.user_corrected is False
-    assert sibling.classification_confidence is None
-    assert sibling.classification_method == "user"
+    # The known-imperfect part, pinned so a change to it is deliberate.
+    assert sibling.classification_confidence == pytest.approx(MACHINE_CONFIDENCE)
+    assert sibling.classification_method == "rules"
 
 
 # =============================================================================

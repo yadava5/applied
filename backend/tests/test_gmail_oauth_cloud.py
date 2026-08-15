@@ -1734,7 +1734,15 @@ async def test_resync_does_not_revert_a_user_corrected_verdict(client: AsyncClie
         ).first()
     # The human's verdict survives the machine's.
     assert email.classified_as == EmailCategory.INTERVIEW
-    assert email.classification_confidence == pytest.approx(0.78)
+    # NULL, and it used to be 0.78. Both spellings assert the same thing — that
+    # the rescan did not write its own verdict here — because 0.78 was the
+    # classifier's figure from BEFORE the correction and the rescan's is 0.95.
+    # Since a correction now clears the column outright (a human decision
+    # carries no probability), "unchanged" reads as None, and asserting it is
+    # strictly stronger than asserting 0.78: it fails if the rescan writes
+    # anything at all, including a value that happens to match the old one.
+    assert email.classification_confidence is None
+    assert email.classification_method == "user"
     assert email.user_corrected is True
     # ...and the row the user created keeps its status.
     listing = (await client.get("/applications", headers=headers)).json()

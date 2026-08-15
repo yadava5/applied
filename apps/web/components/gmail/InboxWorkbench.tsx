@@ -16,6 +16,7 @@ import {
   applyVerdictCorrection,
   scanMessagePayload,
   UNSTORABLE_ROW_NOTE,
+  verdictShowsConfidence,
 } from "@/lib/gmail/scan-correction";
 import { filedSummary } from "@/lib/gmail/sync-state";
 import {
@@ -140,12 +141,13 @@ function VerdictRow({
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
         <span className="truncate">{meta.label}</span>
       </span>
-      {/* A verdict the reader replaced carries no confidence — see
-          `applyVerdictCorrection`. The slots keep their widths so the meters
-          stay a column rather than a scatter, and the em-dash says "no figure"
-          where a percentage would otherwise be read as certainty about the
-          reader's own label. */}
-      {typeof v.confidence === "number" ? (
+      {/* The meter and the percentage belong to the CLASSIFIER's verdict, so
+          they are drawn only while the verdict on this row is still the
+          classifier's (`verdictShowsConfidence`). The slots keep their widths
+          so the meters stay a column rather than a scatter, and the em-dash
+          says "no figure" where a percentage would otherwise be read as
+          certainty about the reader's own label. */}
+      {verdictShowsConfidence(v) ? (
         <>
           <GateMeter confidence={v.confidence} className="hidden sm:inline-block" />
           <span
