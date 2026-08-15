@@ -20,8 +20,11 @@ type AppShellProps = {
 };
 
 /**
- * Protected shell used under `app/(app)/` (and by the signed-in branch of
- * `/import`): live data around the shared frame. The geometry itself —
+ * The app shell, mounted in exactly one place — `app/(app)/layout.tsx`, on its
+ * signed-in branch — around every route in that group, `/import` and `/privacy`
+ * included: live data around the shared frame. Those two used to mount it from
+ * inside their own pages, which is what made a navigation onto either of them
+ * rebuild the whole shell (see that layout). The geometry itself —
  * viewport lock, the one scroll pane, the flow/locked page contract — lives
  * in `AppShellFrame`, which `/demo/shell` also mounts over fixtures so the
  * lock stays testable without a session.

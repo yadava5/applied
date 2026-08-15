@@ -18,8 +18,10 @@ import { AWAY_REFRESH_THRESHOLD_MS, shouldRefreshOnReturn } from "@/lib/shell/aw
  * tab involved.
  *
  * MOUNTED ONCE, BY `AppShell`, ON PURPOSE. `AppShell` is the SIGNED-IN
- * wrapper — `app/(app)/layout.tsx`, plus the authenticated branches of
- * `/import` and `/privacy`. `/demo/shell` mounts `AppShellFrame` instead, one
+ * wrapper, and there is exactly one mount of it: `app/(app)/layout.tsx`, on the
+ * branch where a user exists — which now covers the authenticated `/import` and
+ * `/privacy` too, since those routes stopped mounting shells of their own.
+ * `/demo/shell` mounts `AppShellFrame` instead, one
  * level down, so the fixture twin cannot reach this listener at all. That is
  * structural, not a pathname check: there is no server behind the demo to
  * refresh from, and a `pathname.startsWith("/demo")` guard would be one

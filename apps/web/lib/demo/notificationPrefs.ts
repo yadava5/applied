@@ -5,7 +5,7 @@
  * WHY A COOKIE, and not `localStorage` like the theme. The property that
  * matters is the READ path, not the write: on the live product the SERVER
  * reads the prefs and renders both surfaces from them —
- * `app/(app)/settings/page.tsx` seeds the toggles, `app/(app)/dashboard/page.tsx`
+ * `app/(app)/(protected)/settings/page.tsx` seeds the toggles, `app/(app)/(protected)/dashboard/page.tsx`
  * places the queue and builds the subtitle. A cookie reproduces exactly that
  * topology for the public twin (written by the browser, read by the server on
  * the next request), so `/demo` and `/demo/settings` cannot disagree about

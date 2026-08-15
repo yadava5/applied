@@ -1,8 +1,13 @@
+"use client";
+
+import { useShellSlots } from "@/components/shell/shell-slots";
+import { cn } from "@/lib/utils";
+
 /**
  * The Settings page's table of contents — plain anchors into the section ids,
- * in the form each viewport can carry. Server-rendered in both: no scroll-spy,
- * no state — the shell's scroll pane honours the fragment jumps, and each
- * section's `scroll-mt` keeps its heading clear of whatever is pinned above it.
+ * in the form each viewport can carry. No scroll-spy, no state — the scroll
+ * pane honours the fragment jumps, and it declares its own `scroll-padding-top`
+ * so a jump clears whatever is pinned above the cards.
  *
  *  - `lg` and up: a sticky rail beside the cards.
  *  - below `lg`: a chip strip pinned to the top of the scroll pane. The rail
@@ -15,6 +20,20 @@
  * The strip's accessible name is deliberately not the rail's: two navigations
  * answering to "Settings sections" is a worse a11y tree to move through, and an
  * ambiguous selector for anything driving the page.
+ *
+ * WHERE THE `lg` RAIL PARKS depends on which scrollport it is in, exactly as
+ * `/privacy`'s contents rail already documents. Inside the shell, `PageHeader`
+ * is parked across the top 52px of `<main>`, and a rail sticking at 4px would
+ * slide under it and lose its first two links. On `/demo/settings` the twin is
+ * its own document-scrolling page with nothing pinned above the cards, and 56px
+ * of offset there would be a gap answering to nothing.
+ *
+ * `inShell` comes from the shell's slot context rather than a prop, because a
+ * prop is a thing two call sites can disagree about — and not disagreeing with
+ * the real page is the twin's whole job. Outside a shell the context's default
+ * answers `false`, so a bare mount gets the standalone form. It is a
+ * render-time constant, identical on the server pass and every client render,
+ * so branching markup on it cannot desync hydration (see `shell-slots.tsx`).
  */
 const ITEMS: { id: string; label: string }[] = [
   { id: "profile", label: "Profile" },
@@ -26,6 +45,8 @@ const ITEMS: { id: string; label: string }[] = [
 ];
 
 export function SettingsNav() {
+  const { inShell } = useShellSlots();
+
   return (
     <>
       {/* `-mx-6` bleeds the strip to the scroll pane's edges — both pages that
@@ -51,7 +72,12 @@ export function SettingsNav() {
 
       <nav
         aria-label="Settings sections"
-        className="hidden lg:block lg:self-start lg:sticky lg:top-1"
+        className={cn(
+          "hidden lg:block lg:self-start lg:sticky",
+          // 14 = PageHeader's parked 52px, rounded up to the scale's next step
+          // so the rail's first link clears it rather than kissing it.
+          inShell ? "lg:top-14" : "lg:top-1",
+        )}
       >
         <ul className="space-y-0.5 border-l border-line-soft">
           {ITEMS.map((item) => (

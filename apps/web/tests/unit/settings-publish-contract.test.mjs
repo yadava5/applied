@@ -71,7 +71,7 @@ test("every settings section that calls saveMetadata also calls router.refresh",
     offenders,
     [],
     `these settings sections write metadata without router.refresh(), which shows ` +
-      `stale controls for 30 s under the router cache (see app/(app)/settings/page.tsx): ` +
+      `stale controls for 30 s under the router cache (see app/(app)/(protected)/settings/page.tsx): ` +
       offenders.join(", "),
   );
 });

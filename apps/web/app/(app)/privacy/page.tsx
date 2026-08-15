@@ -2,9 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Logo } from "@/components/brand/Logo";
-import { AppShell } from "@/components/shell/AppShell";
-import { loadRailData } from "@/lib/shell/rail";
-import { getCurrentUser, userDisplayName } from "@/lib/supabase/auth";
+import { getCurrentUser } from "@/lib/supabase/auth";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,6 +21,12 @@ import { cn } from "@/lib/utils";
  *
  * No nav item lights up in shell mode, and that is correct — the policy is not
  * one of the app's four destinations, it is a document the app links to.
+ *
+ * The shell is NOT mounted here. It used to be, from inside this page, and that
+ * is what made every navigation onto this route rebuild the whole shell from
+ * nothing — the same defect `/import` had, for the same reason. The route lives
+ * under `app/(app)/` now and the layout owns the chrome; this file renders a
+ * document either way. See `app/(app)/layout.tsx` for the measurement.
  *
  * EVERY SENTENCE ON THIS PAGE IS A DESCRIPTION OF CODE IN THIS REPO. It is not
  * a template, and it must not be edited into one. If a behaviour changes, the
@@ -549,32 +553,27 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
 }
 
 export default async function PrivacyPage() {
-  // Started before the auth read so the two round-trips overlap — the same
-  // ordering `/import` uses a few files over, and the same one the `(app)`
-  // layout uses. The probe resolves its token from the cookie jar (no network)
-  // and never throws, so nothing is gained by queueing it behind `getUser`.
-  // Signed out, it is simply never awaited.
-  const rail = loadRailData();
-  // `getCurrentUser()` rather than a bare `supabase.auth.getUser()` (what
-  // /import reaches for): it is the same read, React-`cache()`d, so the shell
-  // below shares this verified round-trip instead of paying for a second one.
+  // The same React-`cache()`d read the `(app)` layout above already made this
+  // request, so the two share one verified Supabase Auth round-trip. The rail's
+  // backend probe is the layout's business now — this page mounts no shell.
   const user = await getCurrentUser();
 
   // --- Signed in: the document inside the app shell -------------------------
   if (user) {
     return (
-      <AppShell rail={rail} userEmail={user.email ?? null} userName={userDisplayName(user)}>
-        {/* Measure capped, but on the shell's shared left edge (no mx-auto),
-            the same as /import. The page brings NO chrome of its own — the
-            rail and the top bar are the way back, which is the whole reason
-            it renders here. The shell is viewport-locked (`h-dvh`, <main> the
-            one scroll pane) and this is a FLOW page: it scrolls inside that
-            pane and declares no `page-locked`, so the document still never
-            scrolls. */}
-        <div className="w-full max-w-5xl pb-16">
-          <PrivacyDocument inShell />
-        </div>
-      </AppShell>
+      // Measure capped, but on the shell's shared left edge (no mx-auto), the
+      // same as /import. The page brings NO chrome of its own — the rail and
+      // the top bar are the way back, which is the whole reason it renders
+      // here, and it is why this route deliberately keeps TopBar at `lg`+ while
+      // the four nav destinations shed it (see `ownsPageHeader` in
+      // `components/shell/nav.ts`): a document with no header row of its own
+      // would otherwise have no sign-out at all. The shell is viewport-locked
+      // (`h-dvh`, <main> the one scroll pane) and this is a FLOW page: it
+      // scrolls inside that pane and declares no `page-locked`, so the document
+      // still never scrolls.
+      <div className="w-full max-w-5xl pb-16">
+        <PrivacyDocument inShell />
+      </div>
     );
   }
 

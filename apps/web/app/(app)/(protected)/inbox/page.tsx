@@ -6,6 +6,7 @@ import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { InboxWorkbench } from "@/components/gmail/InboxWorkbench";
 import { FiledMailList } from "@/components/mail/FiledMailList";
 import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { getMail } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { FILED_PAGE_SIZE, readFiledMailPage } from "@/lib/mail/filed";
@@ -45,11 +46,14 @@ export const metadata: Metadata = {
  * design — a phone's one content pane should not hide behind a nested
  * scroller — and the page flows in <main> as before.
  *
- * HEADING (#197). The rail names this place and the top bar prints "Inbox"
- * beside the menu, so the page renders no visible title of its own — the
- * third copy, plus its subtitle, was the complaint. One `sr-only` <h1> keeps
- * the document outline for assistive tech; the stored-message count survives
- * as the filter row's "all N" chip, where it is a control rather than prose.
+ * HEADING (#197). The rail names this place, so the page renders no visible
+ * title of its own — the third copy, plus its subtitle, was the complaint. One
+ * `sr-only` <h1> keeps the document outline for assistive tech; the stored-
+ * message count survives as the filter row's "all N" chip, where it is a
+ * control rather than prose. The top bar used to print "Inbox" beside the menu
+ * at every width; above `lg` it yields entirely now (see `PageHeader`), so the
+ * lit rail item is the only thing that names the place there. Below `lg`, where
+ * the rail is hidden, the bar and its label are still what say where you are.
  */
 
 type SearchParams = Promise<{
@@ -59,6 +63,17 @@ type SearchParams = Promise<{
   page?: string;
 }>;
 
+/**
+ * The page's header line — the view switch, the standing privacy link, and (at
+ * `lg`+, via `PageHeader`) the session edge.
+ *
+ * These are the inbox's own CONTROLS, which is the whole test for what may sit
+ * on a header row here: the counts a header could otherwise print already exist
+ * one plate down as `FiledMailList`'s category chips, where they are filters
+ * rather than prose, and the route's name already exists in the lit rail item.
+ * Promoting either would be the restatement #196/#197/#199 removed. The switch
+ * is navigation WITHIN the page, so this is where it belongs.
+ */
 function ViewSwitch({ scan }: { scan: boolean }) {
   const tab = (active: boolean) =>
     cn(
@@ -71,6 +86,10 @@ function ViewSwitch({ scan }: { scan: boolean }) {
     // and this is the surface that displays what was read from Gmail. The
     // Gmail card carries the other standing copy, at the consent moment.
     // Nothing equivalent goes on the dashboard (decided).
+    //
+    // `justify-between` inside `PageHeader`'s `flex-1` slot puts the switch on
+    // the left and the privacy link against the `⋯` menu on the right — the
+    // board's own arrangement (state left, controls right, session edge last).
     <div className="flex flex-wrap items-center justify-between gap-3">
       {/* `aria-current="true"`, not `"page"`. These tabs pick a VIEW within
           one page; the rail's Inbox item is the thing that names where you
@@ -167,7 +186,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
             block that keeps the 1×1 box inside the pane's own scroll math
             (the escaped-`sr-only` document-scroll family, #149). */}
         <h1 className="sr-only">Inbox</h1>
-        <ViewSwitch scan />
+        <PageHeader>
+          <ViewSwitch scan />
+        </PageHeader>
         {connected ? (
           <InboxWorkbench email={result.status.email} />
         ) : result.kind === "auth" ? (
@@ -212,7 +233,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
     <section className={cn("relative", LOCKED_PAGE_CLASS)}>
       {/* Same one-heading + containment arrangement as the scan view above. */}
       <h1 className="sr-only">Inbox</h1>
-      <ViewSwitch scan={false} />
+      <PageHeader>
+        <ViewSwitch scan={false} />
+      </PageHeader>
       {page ? (
         <FiledMailList page={page} activeCategory={category} q={q} />
       ) : (

@@ -9,6 +9,7 @@ import { GmailConnectionCard } from "@/components/settings/GmailConnectionCard";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { readAmbientPref } from "@/lib/settings/ambient";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
@@ -75,11 +76,13 @@ export const metadata: Metadata = {
  * reference material (Gmail safeguards, the restricted-scope scale story)
  * survives in disclosures on the Gmail card.
  *
- * No visible in-page title (#199): the rail and the TopBar's location label
- * already both say "Settings", so a third copy plus a subtitle restating the
- * section list was noise. Same resolution as the board route — one place owns
- * the visible name — but here TopBar is that place, so the page keeps only an
- * sr-only h1 for the document outline.
+ * No visible in-page title (#199): a copy plus a subtitle restating the section
+ * list was noise. Same resolution as the board route — one place owns the
+ * visible name — and above `lg` that place is now the lit rail item alone:
+ * TopBar yields on this route (see `components/shell/PageHeader`), so its
+ * location label is gone at the width the owner works at. Below `lg` the rail
+ * is hidden and the bar's label is what names the page. Either way this file
+ * keeps only an sr-only h1, for the document outline.
  *
  * These same sections render publicly on `/demo/settings` over the simulated
  * settings transport — that twin is where their e2e coverage executes,
@@ -180,6 +183,17 @@ export default async function SettingsPage({
     // never extend the document's scroll area (the standing sr-only trap).
     <section className="relative space-y-6">
       <h1 className="sr-only">Settings</h1>
+
+      {/* The header line at `lg`+, in the board's idiom — carrying the session
+          edge and nothing else, deliberately. Settings has no state to promote
+          that is not already stated once by something that is also a control:
+          the section list IS `SettingsNav` (a sticky rail beside the cards at
+          this width, not header material), the identity is the rail footer's,
+          the Gmail connection is the card's own — and it is behind a Suspense
+          boundary precisely so this render does not block on it (#203), which a
+          header claim would undo. So: controls alone. It exists because TopBar
+          yields here now and sign-out has to stay reachable above `lg`. */}
+      <PageHeader />
 
       {banner ? (
         <div

@@ -9,7 +9,7 @@
  * nothing at all: `readNotificationPrefs` could have returned constants and
  * every suite would have stayed green.
  *
- * They live here, out of `app/(app)/dashboard/page.tsx`, for exactly one
+ * They live here, out of `app/(app)/(protected)/dashboard/page.tsx`, for exactly one
  * reason — a Server Component page cannot be imported by `node --test`, and
  * these two derivations are pure. The public twin
  * (`components/demo/DemoDashboard.tsx`) calls the SAME two functions, which

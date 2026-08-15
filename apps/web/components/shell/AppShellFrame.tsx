@@ -76,8 +76,21 @@ export function AppShellFrame({
                 with a common left edge. The dashboard fills it; narrower pages
                 (settings, inbox) cap their own measure inside it but start at the
                 same x. `overflow-y-auto` here is NOT inert: the shell is h-dvh,
-                so this pane is the scroll context the whole app shares. */}
-            <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
+                so this pane is the scroll context the whole app shares.
+
+                `scroll-pt-14` is the clearance an in-page anchor jump needs to
+                land BELOW a parked `PageHeader` (52px: the row's 36 plus the
+                16 of `py-4` it absorbs — see that component). It belongs on the
+                SCROLLPORT rather than on every jump target: `scroll-padding` is
+                the container's own declaration of "this much of me is covered",
+                so one line here replaces a `scroll-mt` edit on each of Settings'
+                six sections, and it can never drift from the header's real
+                height the way six copies would. `:has()` scopes it to panes
+                that actually contain such a row — the same mechanism the
+                `.page-locked` line below uses — which is what keeps it off
+                /privacy, an in-shell document that renders no header and whose
+                contents rail jumps to its own `scroll-mt-24` sections. */}
+            <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4 lg:has-[[data-page-header]]:scroll-pt-14">
               <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:has-[.page-locked]:min-h-0">
                 {children}
               </div>
