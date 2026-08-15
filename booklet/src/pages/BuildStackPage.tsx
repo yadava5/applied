@@ -93,9 +93,8 @@ export const BuildStackPage: React.FC<{
       }}
     >
       Two homes for one model: it is <b>trained</b> in Python against the
-      FastAPI backend and the macOS app, and it <b>ships</b> as a portable int8
-      ONNX served by the Next.js 16 web app — the same three-layer verdict on
-      either side.
+      FastAPI backend, and it <b>ships</b> as a portable int8 ONNX served by the
+      Next.js 16 web app — the same three-layer verdict on either side.
     </p>
 
     <div style={{ position: "absolute", left: "0.75in", bottom: "1.1in" }}>
