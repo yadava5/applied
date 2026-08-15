@@ -27,6 +27,7 @@
 # patched releases anyway; that is luck, not a floor, and it stops being true
 # the day a transitive cap pulls one of them back down.
 #
+# TRIGGER PROBE (delete with this branch).
 # Nothing checks this mechanically. When you raise a floor in
 # backend/requirements.txt for a shared package, raise it here too.
 
