@@ -48,8 +48,15 @@ import { cn } from "@/lib/utils";
  *     `classifier.classify(...)` calls in cloud/gmail_oauth.py.
  *     THE CLAIM IS RETENTION, NOT REQUEST, and unlike the old one it is enforced rather
  *     than asserted: backend/tests/test_body_is_never_persisted.py drives a scan whose
- *     bodies carry a sentinel and fails if it reaches any column, the training table, or
- *     any response. Line numbers are deliberately omitted here — the previous version of
+ *     bodies carry a sentinel and fails if it reaches any column of any table, any log
+ *     record, or any response the scan touches — GET /gmail/inbox included, which an audit
+ *     on 2026-08-15 found was the one response the file never checked even though it is the
+ *     handler that reads bodies. The same audit found "or logged" had no test at all and the
+ *     stored-snippet check was positional, passing for a body prefix that stopped short of
+ *     the sentinel; both are now enforced, the snippet by EQUALITY rather than absence.
+ *     Note the limit of "enforced": the workflow is path-filtered to backend/, and the repo
+ *     has no branch protection, so a red run does not block a merge and editing THIS FILE
+ *     runs nothing. Line numbers are deliberately omitted here — the previous version of
  *     this citation pinned :292-293 and :413, and both moved with the change that made
  *     the claim false. Name the thing, not its address.
  *   · the stored row                        — backend/jobtracker/database/models.py:348-429
@@ -347,10 +354,17 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
             <P>
               “Read and discarded” is a claim about code, so it is enforced by code.{" "}
               <M>backend/tests/test_body_is_never_persisted.py</M> runs a scan whose message
-              bodies contain a marker string, then searches every column of every stored row,
-              every row of the training table, and every API response for it. The test fails if
-              the marker appears anywhere. It was checked by deliberately storing a body and
-              confirming it goes red.
+              bodies contain a marker string, then searches for it in every column of every
+              table in the schema, in every log record the scan emits, and in the response of
+              every endpoint it touches — including <M>GET /gmail/inbox</M>, the endpoint that
+              does the reading. The test fails if the marker appears anywhere.
+            </P>
+            <P>
+              A marker alone would not be enough, and saying so is part of the claim. A body
+              that got stored but stopped short of the marker would pass a search for it, so
+              the test also asserts that what is stored <em>equals</em> Gmail’s snippet rather
+              than merely lacking the marker. Every one of these checks was watched failing
+              against a deliberately leaked body before it was trusted.
             </P>
             <P>
               A scan covers a date range you choose. A full rebuild also searches archived mail,
@@ -431,9 +445,13 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
               consequence of one. The app <em>does</em> fetch a body (section 3); it does not keep
               it. Checked against the production database on {MEASURED}: across all 52 rows,{" "}
               <M>body_text</M>, <M>body_html</M> and <M>raw_headers</M> were empty on every one.
-              Enforced on every commit by{" "}
-              <M>backend/tests/test_body_is_never_persisted.py</M>, which fails if a body reaches
-              any column here — or the training table, which this list does not cover.
+              Enforced by <M>backend/tests/test_body_is_never_persisted.py</M>, which fails if a
+              body reaches any column here, the training table, a log line, or any response the
+              scan touches. It
+              runs in CI on every pull request that touches <M>backend/</M>. This repository has
+              no branch protection, so a failing run is a signal the author has to read rather
+              than a mechanical block on merging — and a change to this page alone does not run
+              it.
             </p>
 
             <P>

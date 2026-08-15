@@ -1059,9 +1059,13 @@ async def gmail_inbox(
     not request. What actually happens: ``format="full"`` gets, capped at
     ``_MAX_BODY_CHARS``, and the body is handed to the classifier and dropped
     on the same line — see the read below and
-    ``tests/test_body_is_never_persisted.py``, which fails the build if a
-    marker string planted in a body reaches any stored column, the training
-    table, or any response.
+    ``tests/test_body_is_never_persisted.py``, which fails if a marker string
+    planted in a body reaches any stored column, the training table, a log
+    record, or any response — THIS response included, which that test did not
+    cover until 2026-08-15: a full body returned from here passed the whole
+    file green. It runs in CI on pull requests touching ``backend/``; the
+    repository has no branch protection, so a red run does not itself block a
+    merge.
 
     Each verdict therefore carries the Gmail ``snippet`` rather than the text
     the verdict was actually made from, plus a deep link to the message, which
