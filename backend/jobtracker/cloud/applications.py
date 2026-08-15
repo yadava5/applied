@@ -282,10 +282,57 @@ MAX_PAGE_SIZE = 500
 # applications. Same MAX_PAGE_SIZE ceiling.
 DEFAULT_MAIL_PAGE_SIZE = 50
 
+# The most linked messages either mail-reading path will load for ONE
+# application (issue #293). Both reads were unbounded: "every email on this
+# application", with no LIMIT, ordered and then clustered in Python. Bounded by
+# one application's own mail, so it is not a tenant leak — but an unbounded read
+# is a latent outage rather than a slow page, and nothing in the product stops a
+# rebuild from linking a thousand messages to one employer.
+#
+# Sized FAR above any plausible answer, on the same reasoning as
+# ``_COMPANY_ROWS_CAP``: the owner's whole mail table is 52 rows and the largest
+# single application on it holds a handful. This is a rail, not a business rule.
+#
+# It is deliberately not tight, because truncating this read is not "shows fewer
+# messages" — it is a WRONG answer. ``cluster_stored_mail`` sorts clusters by
+# their EARLIEST message and gives the row to cluster 0, and both reads order
+# newest-first, so a cap drops exactly the mail that decides which cluster keeps
+# the application id. Every caller therefore checks
+# :func:`_application_mail_truncated` and refuses to reason about a split from a
+# truncated set rather than proposing one.
+_APPLICATION_MAIL_CAP = 1000
+
 # How recent an application counts as "this week" for the summary tile. Kept
 # in one place so the backend aggregate and the frontend's array-based
 # `summarize()` fold agree on the window (7 days).
 _THIS_WEEK_WINDOW = timedelta(days=7)
+
+
+def _application_mail_truncated(
+    emails: list[Email], user_id: uuid.UUID, application_id: int, surface: str
+) -> bool:
+    """Say so — loudly — if :data:`_APPLICATION_MAIL_CAP` actually bound.
+
+    The mirror of :func:`_warn_if_capped`, for the same reason: a truncated read
+    is not a slow query, it is a wrong one, and a cap that truncates in silence
+    is the shape this codebase keeps finding under "checks that cannot fail".
+    At 52 stored messages this can never fire, which is exactly why it has to be
+    audible if it ever does.
+    """
+
+    if len(emails) < _APPLICATION_MAIL_CAP:
+        return False
+    logger.warning(
+        "Mail for application_id=%s (user_id=%s) hit its %s-message cap on %s. "
+        "The oldest messages were NOT read, so any split proposed from this set "
+        "would file mail under the wrong row; the split is being withheld. "
+        "Raise _APPLICATION_MAIL_CAP.",
+        application_id,
+        user_id,
+        _APPLICATION_MAIL_CAP,
+        surface,
+    )
+    return True
 
 
 class CloudApplicationCreate(BaseModel):
@@ -901,6 +948,17 @@ def _pick_application(
                 return row
     if role_token is not None:
         for row in rows:
+            # A row whose requisition id CONTRADICTS this one is a different
+            # application, however identical the titles read — which is exactly
+            # what the docstring above promises ("Nothing outranks it") and what
+            # the unguarded role-token match used to break. Two openings at one
+            # employer often share a title and differ only by id; landing the
+            # second one's mail on the first one's row merges two applications
+            # into one card, silently, with no way back. Mirrors
+            # :func:`pipeline._may_join` on the in-scan side; the two must agree
+            # or a cluster and its stored row disagree about what they are.
+            if req_id is not None and row.req_id and row.req_id != req_id:
+                continue
             if row.role_token and row.role_token == role_token:
                 return row
 
@@ -3663,6 +3721,15 @@ async def application_detail_cloud(
     Powers the detail view: subject / sender / date / snippet per message and a
     Gmail deep link to open the real conversation. Scoped to the owner (404 for
     anyone else's row).
+
+    The mail read is CAPPED (``_APPLICATION_MAIL_CAP``). It was unbounded, and
+    an unbounded read is a latent outage rather than a slow page — one
+    application's mail is small today and nothing in the product bounds it. When
+    the cap binds, ``split_candidates`` comes back EMPTY rather than computed:
+    the read is newest-first and the split is decided by the OLDEST message in
+    each cluster, so a proposal built from a truncated set would name the wrong
+    row to retain. Refusing to guess is the same discipline ``NEEDS_REVIEW``
+    encodes for a classifier verdict; the messages themselves are still shown.
     """
 
     async with get_session() as session:
@@ -3677,22 +3744,28 @@ async def application_detail_cloud(
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
             )
-        emails = (
-            await session.exec(
-                select(Email)
-                .where(
-                    Email.user_id == user_id,
-                    Email.application_id == application_id,
+        emails = list(
+            (
+                await session.exec(
+                    select(Email)
+                    .where(
+                        Email.user_id == user_id,
+                        Email.application_id == application_id,
+                    )
+                    .order_by(Email.received_at.desc())
+                    .limit(_APPLICATION_MAIL_CAP)
                 )
-                .order_by(Email.received_at.desc())
-            )
-        ).all()
+            ).all()
+        )
+        truncated = _application_mail_truncated(
+            emails, user_id, application_id, "GET /applications/{id}"
+        )
         # Same session, and last (all rows above are already read) — see
         # _connected_account_email.
         account_email = await _connected_account_email(user_id, session)
         serialized = _serialize(app, account_email)
         messages = [_message_ref_response(e, account_email) for e in emails]
-        clusters = cluster_stored_mail(list(emails))
+        clusters = [] if truncated else cluster_stored_mail(emails)
         candidates = [
             SplitCandidateResponse(
                 role=c.role,
@@ -3761,14 +3834,41 @@ async def split_application_cloud(
                 status_code=http_status.HTTP_404_NOT_FOUND, detail="Application not found."
             )
 
-        emails = (
-            await session.exec(
-                select(Email).where(
-                    Email.user_id == user_id, Email.application_id == application_id
+        emails = list(
+            (
+                await session.exec(
+                    select(Email)
+                    .where(
+                        Email.user_id == user_id,
+                        Email.application_id == application_id,
+                    )
+                    # Newest-first AND capped, matching the detail read. Order
+                    # does not change the clustering — `cluster_stored_mail`
+                    # sorts by each cluster's earliest message — but WHICH rows
+                    # a cap keeps depends on it, so the two paths must truncate
+                    # the same set or the split would not be the one proposed.
+                    .order_by(Email.received_at.desc())
+                    .limit(_APPLICATION_MAIL_CAP)
                 )
+            ).all()
+        )
+        if _application_mail_truncated(
+            emails, user_id, application_id, "POST /applications/{id}/split"
+        ):
+            # REFUSE, rather than split on a subset. This handler COMMITS: it
+            # re-points every message it read at a new row, so a truncated read
+            # does not show fewer messages, it files real mail under the wrong
+            # application and there is no undo for that. 422 rather than the 409
+            # below because "nothing to split" is a benign, expected answer the
+            # UI renders quietly, and this is not that.
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "This application has more stored mail than the split can "
+                    "read safely, so no split was performed."
+                ),
             )
-        ).all()
-        clusters = cluster_stored_mail(list(emails))
+        clusters = cluster_stored_mail(emails)
         if len(clusters) < 2:
             raise HTTPException(
                 status_code=http_status.HTTP_409_CONFLICT,

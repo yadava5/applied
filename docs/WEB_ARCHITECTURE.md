@@ -242,13 +242,17 @@ under that user's RLS identity — the endpoint has no JWT, but nothing
 inside it is unscoped.
 
 That identity is also what makes the enumeration work at all. A cron
-cannot *discover* its users: `user_credentials` is FORCE-RLS on
-`auth.uid()`, so an identity-less read of it matches no row. The users
-come from `JOBTRACKER_CRON_SYNC_USER_IDS` instead, and each is probed and
-synced inside its own `user_id_scope` — an identity, not an exemption, so
-no policy, migration or extra database credential is involved. Setup,
-bounds, cost and the list-rot cost of enumerating from config are in
-[`DEPLOYMENT.md`](./DEPLOYMENT.md#scheduled-sync-vercel-cron).
+cannot read `user_credentials` to *discover* its users: that table is
+FORCE-RLS on `auth.uid()`, so an identity-less read of it matches no row.
+The membership fact comes from `gmail_sync_enrollment` instead — one
+query, no identity, written in the same transaction as the credential —
+and each candidate is then probed and synced inside its own
+`user_id_scope`: an identity, not an exemption, so no extra database
+credential is involved. The probes share one connection and re-bind that
+identity per transaction, because a session per user is a fresh ~216 ms
+connection under NullPool and 300 users' worth of them exceeds the run's
+whole budget. Setup, bounds and cost are in
+[`DEPLOYMENT.md`](./DEPLOYMENT.md#who-gets-synced).
 
 **No WebSocket on cloud.** The Vercel Python runtime does not support it,
 so `main_cloud.py` never includes `jobtracker/api/websocket.py` — and,

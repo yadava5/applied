@@ -5,7 +5,8 @@ import {
   RECOVERY_MARKER_VALUE,
   recoveryMarkerCookieOptions,
 } from "@/lib/auth/recoverySession";
-import { createClient } from "@/lib/supabase/server";
+import { expireSpentPkceVerifierCookies } from "@/lib/supabase/pkceVerifierCookies";
+import { createClientWithSessionHeaders } from "@/lib/supabase/server";
 
 /**
  * Where a password-recovery email lands.
@@ -50,9 +51,22 @@ export async function GET(request: NextRequest) {
     return destination;
   }
 
-  const supabase = await createClient();
+  const { supabase, applySessionHeaders } =
+    await createClientWithSessionHeaders();
+
+  /**
+   * Every exit from here on. Both halves ride the SAME already-constructed
+   * `destination`: the no-store headers the exchange asked for (#242), and the
+   * expiry of the verifier cookies it just spent (#321). A recovery link is
+   * the flow most likely to be opened twice — once from the mail client's
+   * preview, once from the real browser — so the failure branch below is not
+   * hypothetical, and it is the branch `@supabase/ssr` flushes nothing on.
+   */
+  const finish = (response: NextResponse) =>
+    expireSpentPkceVerifierCookies(request, applySessionHeaders(response));
+
   const { error } = await supabase.auth.exchangeCodeForSession(code);
-  if (error) return destination;
+  if (error) return finish(destination);
 
   // Written onto the response being returned, not into the `next/headers`
   // store — the same way `lib/supabase/middleware.ts` writes the refreshed
@@ -67,5 +81,9 @@ export async function GET(request: NextRequest) {
     recoveryMarkerCookieOptions(process.env.NODE_ENV === "production"),
   );
 
-  return destination;
+  // Applied HERE, after the exchange, and not at the `NextResponse.redirect`
+  // above: `destination` is constructed before the client exists, so there is
+  // nothing to copy from at that point — no headers yet (#242), and no spent
+  // verifier yet (#321). Same reason the marker cookie is written down here.
+  return finish(destination);
 }

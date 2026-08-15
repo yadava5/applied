@@ -3,6 +3,8 @@ import { Geist_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 import { BetaBanner } from "@/components/beta/BetaBanner";
+import { BootOverlay } from "@/components/boot/BootOverlay";
+import { BOOT_INIT_SCRIPT } from "@/lib/boot/flag";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
 /**
@@ -84,9 +86,14 @@ export default function RootLayout({
       <head>
         {/* Apply the saved theme before paint — no flash, pages stay static. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {/* Raise the post-auth boot cover before paint when a sign-in armed
+            it (lib/boot/flag.ts) — same pattern, same reason: no flash. */}
+        <script dangerouslySetInnerHTML={{ __html: BOOT_INIT_SCRIPT }} />
       </head>
       <body className="flex min-h-full flex-col">
         {children}
+        {/* Root-mounted so it survives the login → dashboard navigation. */}
+        <BootOverlay />
         <BetaBanner />
       </body>
     </html>

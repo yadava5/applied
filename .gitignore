@@ -119,3 +119,12 @@ build/
 # in /tmp would take the "no git checkout here" arm and pass for the wrong
 # reason. Ignored so a crashed run cannot leave a committable artifact.
 .ignore-build-mutant.sh
+
+## Footage pipeline intermediates.
+# `apps/web/scripts/footage/render.sh` records the real UI into PNG frame
+# sequences and writes contact sheets and negative-control clips beside them —
+# hundreds of megabytes per run, all of it derivable. Only the encoded clips it
+# produces are committed, under apps/web/public/footage/. The `.server.log`
+# sibling is the captured app's stdout, kept for when a run fails.
+apps/web/.footage-frames/
+apps/web/.footage-frames.server.log

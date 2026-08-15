@@ -371,6 +371,15 @@ export interface paths {
          *     Powers the detail view: subject / sender / date / snippet per message and a
          *     Gmail deep link to open the real conversation. Scoped to the owner (404 for
          *     anyone else's row).
+         *
+         *     The mail read is CAPPED (``_APPLICATION_MAIL_CAP``). It was unbounded, and
+         *     an unbounded read is a latent outage rather than a slow page — one
+         *     application's mail is small today and nothing in the product bounds it. When
+         *     the cap binds, ``split_candidates`` comes back EMPTY rather than computed:
+         *     the read is newest-first and the split is decided by the OLDEST message in
+         *     each cluster, so a proposal built from a truncated set would name the wrong
+         *     row to retain. Refusing to guess is the same discipline ``NEEDS_REVIEW``
+         *     encodes for a classifier verdict; the messages themselves are still shown.
          */
         get: operations["application_detail_cloud_applications__application_id__get"];
         put?: never;
@@ -655,15 +664,26 @@ export interface paths {
          *       carries ``next_page_token``; the web client loops until it reaches
          *       ``count`` or the token is null, showing a progress tally.
          *
-         *     A single invocation fetches at most ``gmail_fetch_page_size`` messages
-         *     (batched metadata gets, no bodies) so it stays inside the Vercel function
-         *     budget; big mines are many bounded pages, not one fragile mega-call.
+         *     A single invocation fetches at most ``gmail_fetch_page_size`` messages so
+         *     it stays inside the Vercel function budget; big mines are many bounded
+         *     pages, not one fragile mega-call.
          *
-         *     Full bodies are never fetched or returned. Each verdict carries the Gmail
-         *     ``snippet`` the classification was made from plus a deep link to the
-         *     message, which is what makes a scan row judgeable at all. The per-user,
-         *     per-page short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is
-         *     verified on every request before the cache is consulted.
+         *     Bodies ARE fetched, and are never returned. This paragraph used to say
+         *     "batched metadata gets, no bodies" and "full bodies are never fetched or
+         *     returned"; both stopped being true when the classifier started reading
+         *     bodies, and the distinction the sentence was reaching for is *retention*,
+         *     not request. What actually happens: ``format="full"`` gets, capped at
+         *     ``_MAX_BODY_CHARS``, and the body is handed to the classifier and dropped
+         *     on the same line — see the read below and
+         *     ``tests/test_body_is_never_persisted.py``, which fails the build if a
+         *     marker string planted in a body reaches any stored column, the training
+         *     table, or any response.
+         *
+         *     Each verdict therefore carries the Gmail ``snippet`` rather than the text
+         *     the verdict was actually made from, plus a deep link to the message, which
+         *     is what makes a scan row judgeable at all. The per-user, per-page short-TTL
+         *     cache + ``ETag``/``If-None-Match`` are unchanged; auth is verified on every
+         *     request before the cache is consulted.
          */
         get: operations["gmail_inbox_gmail_inbox_get"];
         put?: never;

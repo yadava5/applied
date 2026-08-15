@@ -1622,3 +1622,131 @@ body {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * The Triage boot (components/boot/BootOverlay + lib/boot/triage.ts) — the
+ * post-auth trademark render, and its quiet form for loading.tsx surfaces.
+ *
+ * Visibility rides `data-boot` on <html>, raised before paint by
+ * BOOT_INIT_SCRIPT (lib/boot/flag.ts) for the OAuth document round-trip so a
+ * half-loaded shell never flashes before hydration, and by the overlay itself
+ * for same-tab sign-ins. The failsafe animation is deliberate paranoia: if
+ * the boot script ever dies after the pre-paint cover went up, the cover
+ * retires itself at 10 s instead of holding the app hostage.
+ * ------------------------------------------------------------------------- */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50; /* above the shell; above the beta pill's z-40 */
+  display: none;
+}
+html[data-boot="1"] .boot-overlay {
+  display: block;
+  animation: boot-failsafe 0.5s ease 10s forwards;
+}
+.boot-overlay__cover {
+  position: absolute;
+  inset: 0;
+  background: var(--background);
+}
+/* The exit's fly-home leg: the cover fades to reveal the real shell while
+ * the canvas mark lands on the header logo. */
+.boot-overlay[data-reveal="1"] .boot-overlay__cover {
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.boot-overlay__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+@keyframes boot-failsafe {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* The quiet form: hairline outlines at the real row geometry, carrying the
+ * boot's classify signal — each row's envelope takes its turn under the rules
+ * hue with a verdict-dot flash. The negative base delay keeps the wave
+ * mid-flight at first paint (a skeleton that may live 700 ms cannot wait
+ * 670 ms for its first spark), matching the boot loop's seeded field.
+ * `--boot-quiet-step` is the per-row stagger; the 4.8 s period is the
+ * prototype's cadence. */
+.boot-quiet-env {
+  color: var(--text-dim);
+  opacity: 0.75;
+  animation: boot-quiet-classify 4.8s linear infinite;
+  animation-delay: calc(var(--i, 0) * var(--boot-quiet-step, 1.2s) - 0.9s);
+}
+.boot-quiet-env .boot-quiet-dot {
+  opacity: 0;
+  animation: boot-quiet-dot 4.8s linear infinite;
+  animation-delay: calc(var(--i, 0) * var(--boot-quiet-step, 1.2s) - 0.9s);
+}
+@keyframes boot-quiet-classify {
+  0%,
+  8% {
+    color: var(--text-dim);
+  }
+  14%,
+  26% {
+    color: var(--viz-rules);
+  }
+  36%,
+  100% {
+    color: var(--text-dim);
+  }
+}
+@keyframes boot-quiet-dot {
+  0%,
+  12% {
+    opacity: 0;
+  }
+  18%,
+  26% {
+    opacity: 1;
+  }
+  36%,
+  100% {
+    opacity: 0;
+  }
+}
+/* Settings holds no mail rows: attention travels its cards as a border lift
+ * on the same cadence instead. */
+.boot-quiet-card {
+  animation: boot-quiet-lift 4.8s linear infinite;
+  animation-delay: calc(var(--i, 0) * var(--boot-quiet-step, 1.2s) - 0.9s);
+}
+@keyframes boot-quiet-lift {
+  0%,
+  8% {
+    border-color: var(--line-soft);
+  }
+  14%,
+  26% {
+    border-color: var(--line-strong);
+  }
+  36%,
+  100% {
+    border-color: var(--line-soft);
+  }
+}
+/* Reduced motion: the quiet form freezes into its identity poster — the row
+ * marked `data-lit` keeps its verdict, everything else rests. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-quiet-env,
+  .boot-quiet-env .boot-quiet-dot,
+  .boot-quiet-card {
+    animation: none !important;
+  }
+  .boot-quiet-env[data-lit] {
+    color: var(--viz-rules);
+  }
+  .boot-quiet-env[data-lit] .boot-quiet-dot {
+    opacity: 1;
+  }
+}

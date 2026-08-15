@@ -86,8 +86,24 @@ export const PRIVACY = {
     "Applied connects with one Google permission — gmail.readonly. It can read your mail; the grant carries no right to send, delete or change anything.",
   retention:
     "The classifier reads a message's body to decide, then discards it. No body is written to the database, returned by an endpoint, or logged. What is kept: a subject line, a sender, a date, Gmail's own short preview, and the verdict.",
+  /**
+   * The enforcement sentence, and the one place on this page a visitor could
+   * catch the product out — so it states the SCOPE of the check rather than
+   * implying there is none.
+   *
+   * It used to end "— on every commit", which #338's own audit then documented
+   * as false: the workflow that runs this test is path-filtered to `backend/`,
+   * the repo has no branch protection, and editing the privacy copy runs
+   * nothing. All three were true when the sentence was written; none of them
+   * made it true. A claim about a gate is a claim about when the gate fires.
+   *
+   * The scan's reach is the widened one #338 shipped — every column of every
+   * table, every log record, and every response it touches, `GET /gmail/inbox`
+   * included, which was the one response the file never checked despite being
+   * the handler that does the reading.
+   */
   mechanism:
-    "That is a claim about code, so code enforces it: a test runs a scan whose message bodies carry a marker string and fails if the marker reaches any stored column, the training table, or any response — on every commit.",
+    "That is a claim about code, so code enforces it: a test runs a scan whose message bodies carry a marker string, and fails if the marker reaches any column of any table, any log record, or any response the scan touches — the inbox endpoint that does the reading included. It runs in CI on every change to the backend.",
   /** The machine value the mechanism sentence names. Mono where rendered. */
   testPath: "backend/tests/test_body_is_never_persisted.py",
   systemCardLead: "The System Card is the full walkthrough behind that promise —",

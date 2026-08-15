@@ -7,10 +7,15 @@ Create Date: 2026-08-14 16:40:00.000000
 WHAT THIS IS FOR (issue #291)
 -----------------------------
 
-The scheduled Gmail sync only acts for users named in
-``JOBTRACKER_CRON_SYNC_USER_IDS``. A new user therefore gets no background sync
-until a human edits Vercel configuration and redeploys — it breaks at user #3,
+The scheduled Gmail sync only acted for users named in
+``JOBTRACKER_CRON_SYNC_USER_IDS``. A new user therefore got no background sync
+until a human edited Vercel configuration and redeployed — it broke at user #3,
 not at scale.
+
+    This revision was deploy 1 of 2: it publishes the table and backfills it,
+    and nothing read it. ``jobtracker.cloud.cron`` became that reader in the
+    change that added ``c8f3a1d64b27``, and the env var is no longer consulted
+    anywhere.
 
 The env var exists for a real reason and the reason is still true: the cron
 carries no JWT, ``user_credentials`` is FORCE-RLS on ``auth.uid()``, and an

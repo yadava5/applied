@@ -843,17 +843,15 @@ async def _exchange_and_store(
     otherwise would bounce the user to ``?gmail=connected`` while
     ``/auth/gmail/status`` honestly reports disconnected.
 
-    Also the one place that can notice **background-sync list rot**. The
-    scheduled sync enumerates its users from configuration
-    (``settings.cron_sync_user_ids``) rather than from ``user_credentials``,
-    because a cron carries no JWT and that table is FORCE-RLS on
-    ``auth.uid()`` — see ``jobtracker.cloud.cron``. The honest cost of
-    enumerating from config is that a second user who connects Gmail is
-    silently never background-synced, and the cron cannot detect that by
-    construction: an identity it was never given is invisible to it. This
-    function *is* the moment the fact becomes known, so it says so here. Their
-    board still refreshes when they open it; what they do not get is anything
-    while they are away.
+    This used to be the one place that could notice **background-sync list
+    rot**: the scheduled sync enumerated its users from configuration
+    (``JOBTRACKER_CRON_SYNC_USER_IDS``), so a second user who connected Gmail
+    was silently never background-synced and the cron could not detect that by
+    construction. There is no list to rot any more — the cron enumerates
+    ``gmail_sync_enrollment``, which ``save_gmail_credentials`` writes in the
+    SAME transaction as the token below, so connecting a mailbox *is* enrolling
+    it. The warning that stood here is gone with the condition it warned about;
+    leaving it would be a check that can no longer fail.
     """
 
     loop = asyncio.get_running_loop()
@@ -867,17 +865,6 @@ async def _exchange_and_store(
         if not await save_gmail_credentials(user_id, stored):
             raise RuntimeError("credential store rejected the Gmail token save")
 
-    # Checked AFTER the save succeeded, so this only ever fires for a mailbox
-    # that really is connected. Warning, not error: the connection worked and
-    # the user is not broken — an operator has an env var to update.
-    if user_id not in settings.cron_sync_user_ids:
-        logger.warning(
-            "Gmail connected for user_id=%s, who is NOT in "
-            "JOBTRACKER_CRON_SYNC_USER_IDS — this mailbox will not be "
-            "background-synced on the schedule until that env var includes "
-            "them and the API is redeployed. Interactive sync is unaffected.",
-            user_id,
-        )
     return stored
 
 
@@ -1061,15 +1048,26 @@ async def gmail_inbox(
       carries ``next_page_token``; the web client loops until it reaches
       ``count`` or the token is null, showing a progress tally.
 
-    A single invocation fetches at most ``gmail_fetch_page_size`` messages
-    (batched metadata gets, no bodies) so it stays inside the Vercel function
-    budget; big mines are many bounded pages, not one fragile mega-call.
+    A single invocation fetches at most ``gmail_fetch_page_size`` messages so
+    it stays inside the Vercel function budget; big mines are many bounded
+    pages, not one fragile mega-call.
 
-    Full bodies are never fetched or returned. Each verdict carries the Gmail
-    ``snippet`` the classification was made from plus a deep link to the
-    message, which is what makes a scan row judgeable at all. The per-user,
-    per-page short-TTL cache + ``ETag``/``If-None-Match`` are unchanged; auth is
-    verified on every request before the cache is consulted.
+    Bodies ARE fetched, and are never returned. This paragraph used to say
+    "batched metadata gets, no bodies" and "full bodies are never fetched or
+    returned"; both stopped being true when the classifier started reading
+    bodies, and the distinction the sentence was reaching for is *retention*,
+    not request. What actually happens: ``format="full"`` gets, capped at
+    ``_MAX_BODY_CHARS``, and the body is handed to the classifier and dropped
+    on the same line — see the read below and
+    ``tests/test_body_is_never_persisted.py``, which fails the build if a
+    marker string planted in a body reaches any stored column, the training
+    table, or any response.
+
+    Each verdict therefore carries the Gmail ``snippet`` rather than the text
+    the verdict was actually made from, plus a deep link to the message, which
+    is what makes a scan row judgeable at all. The per-user, per-page short-TTL
+    cache + ``ETag``/``If-None-Match`` are unchanged; auth is verified on every
+    request before the cache is consulted.
     """
 
     _require_configured()
