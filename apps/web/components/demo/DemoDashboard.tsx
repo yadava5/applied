@@ -157,7 +157,7 @@ export function DemoDashboard({
   reviewSlot?: DemoReviewSlot;
   /** Mounts the SIGNED-IN session edge on the header row instead of the demo
    *  pill — `signedIn` on, `trailing` unset, exactly what
-   *  `app/(app)/dashboard/page.tsx` passes. Off for every organic visitor;
+   *  `app/(app)/(protected)/dashboard/page.tsx` passes. Off for every organic visitor;
    *  /demo/shell's `?session=1` harness knob is the one caller that sets it,
    *  and it is the whole reason that knob exists: the pill is what the twin
    *  renders where the real page renders its session edge, so the one control

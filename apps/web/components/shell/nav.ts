@@ -18,6 +18,39 @@ export const navItems: NavItem[] = [
 ];
 
 /**
+ * The destinations whose PAGE renders the screen's top line at `lg`+, so the
+ * shell's `TopBar` yields there.
+ *
+ * The board has always done this: `SyncBar`'s row carries the title, the state,
+ * the sync cluster and — in its `⋯` menu — sign-out, so the screen never spends
+ * 48px on a strip whose middle is empty. The other three destinations now do it
+ * too, through `components/shell/PageHeader`, which is what makes the top of
+ * /inbox, /settings and /import read like the top of the board instead of like
+ * a second, foreign chrome.
+ *
+ * A LIST, not `current !== null`, and that distinction is load-bearing:
+ * `/privacy` also renders inside the shell, lights no nav item, and has no
+ * header row of its own. It keeps `TopBar` at every width — which is the only
+ * place its sign-out lives. Any future in-shell surface that brings no header
+ * must stay off this list for the same reason.
+ *
+ * Every entry must render `<PageHeader>` (or the board's `SyncBar` with
+ * `signedIn`) on its signed-in surface, or that route loses sign-out above
+ * `lg`. `tests/unit/page-header-contract.test.mjs` is the gate.
+ */
+const PAGE_HEADER_HREFS: ReadonlySet<string> = new Set([
+  "/dashboard",
+  "/inbox",
+  "/import",
+  "/settings",
+]);
+
+/** True when the route at `href` renders its own header line at `lg`+. */
+export function ownsPageHeader(href: string | null | undefined): boolean {
+  return href != null && PAGE_HEADER_HREFS.has(href);
+}
+
+/**
  * Where each destination lives when the shell is mounted over fixtures
  * (`AppShellFrame`'s `demo` — /demo and /demo/shell). Every signed-in target
  * sits behind the auth proxy, so for the anonymous visitor the demo serves,

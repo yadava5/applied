@@ -1,13 +1,11 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import { AppShell } from "@/components/shell/AppShell";
 import { ImportMail } from "@/components/import/ImportMail";
 import { Logo } from "@/components/brand/Logo";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { getGmailStatus } from "@/lib/gmail/server";
-import { loadRailData } from "@/lib/shell/rail";
-import { userDisplayName } from "@/lib/supabase/auth";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
   title: "Import your mail",
@@ -22,13 +20,20 @@ export const metadata: Metadata = {
  * no upload — the privacy-preserving way to try the classifier on your OWN
  * mail.
  *
- * The route lives outside the `(app)` group so signed-out visitors can reach
- * it, but it is dual-mode:
+ * The route is dual-mode:
  *   - Signed in  → rendered INSIDE the app shell (sidebar + sign-out), with
  *     "Import mail" active, so a user who arrives from the sidebar or an inbox/
  *     settings CTA is never stranded on a shell-less page with no way back.
  *   - Signed out → the standalone public page, which carries its own header
  *     and links so it, too, is never a dead end.
+ *
+ * The shell is NOT this page's to mount. It used to be — the route sat outside
+ * `app/(app)/` and rendered its own `<AppShell>` — and that is precisely why
+ * navigating here from any other tab tore the whole shell down and rebuilt it
+ * (see `app/(app)/layout.tsx` for the measurement). The route now lives inside
+ * the group and the layout decides: shell when there is a user, `children` bare
+ * when there is not. This page still branches on the same fact, because the
+ * BODY differs — but it no longer owns any chrome.
  *
  * Naming: signed in, the page prints NO title of its own — the rail and the
  * top bar both already say "Import mail", and a third copy in the window was
@@ -47,12 +52,13 @@ export default async function ImportPage() {
   // unhandled rejection (same contract the dashboard's floated review-queue
   // read relies on).
   const gmailPromise = getGmailStatus();
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // `getCurrentUser()`, not a bare `createClient().auth.getUser()`: the layout
+  // above already made this verified read this request, and the memoized
+  // accessor is what lets the two share one Supabase Auth round-trip instead
+  // of paying for a second.
+  const user = await getCurrentUser();
 
-  // --- Signed in: keep the whole app shell around the import tool ----------
+  // --- Signed in: the body that goes inside the shell the layout mounts ----
   if (user) {
     // The same GET the rail footer's probe makes in this render pass
     // (request-memoized fetch — same URL, same headers — so no second backend
@@ -65,15 +71,16 @@ export default async function ImportPage() {
       gmail.kind === "ok" && !(gmail.status.configured && gmail.status.connected);
 
     return (
-      // `loadRailData()` is free here: it is `getGmailStatus()` under a
-      // different name, and this render already fired that probe above — the
-      // fetch is request-memoized on the identical URL and headers, so the
-      // shell reuses this page's answer rather than making a second call.
-      <AppShell
-        rail={loadRailData()}
-        userEmail={user.email ?? null}
-        userName={userDisplayName(user)}
-      >
+      <>
+        {/* The route's header line at `lg`+, in the board's idiom (see
+            `PageHeader`). Import has nothing true to SAY on it: the rail
+            already names the place, and the one on-device claim this page
+            makes lives exactly once, in `ImportMail`'s note — #198 deleted the
+            mode pill that restated it and this is not the place to bring it
+            back. So the row carries the session edge alone, which is the whole
+            reason it exists: at `lg`+ the shell's TopBar yields on this route,
+            and sign-out has to stay reachable. */}
+        <PageHeader />
         {/* Centred BOTH ways. The signed-out branch below has always centred
             this same measure; this branch sat it on the left edge, so the two
             modes of the one page disagreed — that inconsistency was the #198
@@ -102,7 +109,7 @@ export default async function ImportPage() {
             </p>
           ) : null}
         </div>
-      </AppShell>
+      </>
     );
   }
 

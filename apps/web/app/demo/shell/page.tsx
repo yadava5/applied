@@ -74,7 +74,7 @@ export const dynamic = "force-dynamic";
  *
  *   - `?session=1` mounts the SIGNED-IN session edge on the board's header
  *     row in place of that identity block's pill — `signedIn` on and
- *     `trailing` unset, the exact pair `app/(app)/dashboard/page.tsx` passes
+ *     `trailing` unset, the exact pair `app/(app)/(protected)/dashboard/page.tsx` passes
  *     to `SyncBar`. Third harness knob, same reasoning as `?review=N`, and
  *     the case it was written for is that sentence word for word: sign-out on
  *     the board route is a user-facing control that renders on no other

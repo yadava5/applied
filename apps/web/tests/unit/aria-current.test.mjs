@@ -176,7 +176,7 @@ test("the inbox view switch still SAYS which view is selected", () => {
   // list above. Both tabs must still announce their selected state, by the
   // value the filed-mail category chips already use.
   assert.deepEqual(
-    attrsIn("app/(app)/inbox/page.tsx").sort(),
+    attrsIn("app/(app)/(protected)/inbox/page.tsx").sort(),
     ['aria-current={!scan ? "true" : undefined}', 'aria-current={scan ? "true" : undefined}'],
     "both inbox view tabs must carry aria-current, and it must be \"true\"",
   );

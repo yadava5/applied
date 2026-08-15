@@ -111,7 +111,7 @@ const nextConfig: NextConfig = {
    * `unstable_dynamicStaleTime = 0` when they did not. The pin is gone
    * (perf/nav-latency): every route participates now, and the writer contract
    * is held by `tests/unit/settings-publish-contract.test.mjs` instead of a
-   * per-navigation origin tax. See the note in `app/(app)/settings/page.tsx`.
+   * per-navigation origin tax. See the note in `app/(app)/(protected)/settings/page.tsx`.
    *
    * WHY `static` IS PINNED AT ITS DEFAULT. 300 is already Next 16's default
    * (`config-shared.js`), so this line changes nothing — it is here because
