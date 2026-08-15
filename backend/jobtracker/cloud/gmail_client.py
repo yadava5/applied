@@ -44,9 +44,12 @@ that is a structural property of the code rather than a promise:
 - ``body_snippet`` continues to be Gmail's OWN snippet, never derived from
   the body we just read, so what is stored is unchanged by this module.
 - ``tests/test_body_is_never_persisted.py`` drives a real scan whose bodies
-  carry a sentinel and asserts the sentinel reaches no column of ``emails``,
-  no row of ``training_data``, and no API response. That test is what makes
-  the privacy page's retention claim true rather than aspirational.
+  carry a sentinel and asserts the sentinel reaches no column of any table in
+  the schema, no log record, and no response of any endpoint the scan touches
+  — ``GET /gmail/inbox`` included. It also asserts the stored snippet EQUALS
+  Gmail's, because a sentinel search alone passes for a body prefix that stops
+  short of the sentinel. That test is what makes the privacy page's retention
+  claim true rather than aspirational.
 
 Bodies are capped at ``_MAX_BODY_CHARS`` and batched more tightly than
 metadata was: ``format="full"`` costs the same 5 quota units per message but

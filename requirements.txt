@@ -20,15 +20,15 @@
 # Web Framework
 # -----------------------------------------------------------------------------
 fastapi>=0.109.0
-pydantic>=2.5.0
+pydantic>=2.13.4
 pydantic-settings>=2.1.0
-email-validator>=2.0.0
+email-validator>=2.3.0
 
 # -----------------------------------------------------------------------------
 # Database (Postgres via Supabase)
 # -----------------------------------------------------------------------------
 sqlmodel>=0.0.39
-sqlalchemy[asyncio]>=2.0.51
+sqlalchemy[asyncio]>=2.0.52
 asyncpg>=0.31.0
 
 # -----------------------------------------------------------------------------
@@ -40,7 +40,7 @@ cryptography>=50.0.0
 # -----------------------------------------------------------------------------
 # Email Integration (cloud Gmail OAuth wired in C5, IMAP stays)
 # -----------------------------------------------------------------------------
-google-api-python-client>=2.100.0
+google-api-python-client>=2.198.0
 google-auth-httplib2>=0.1.1
 # >=1.2.4: Flow.from_client_config must accept + forward the explicit
 # code_verifier / autogenerate_code_verifier kwargs the stateless PKCE
@@ -56,7 +56,7 @@ aioimaplib>=2.0.1
 # -----------------------------------------------------------------------------
 beautifulsoup4>=4.12.0
 lxml>=6.1.0                   # >=6.1.0: PYSEC-2026-87, matching backend/requirements.txt
-python-dateutil>=2.8.0
+python-dateutil>=2.9.0.post0
 
 # -----------------------------------------------------------------------------
 # Security pins (transitive; floors raised to patched versions)

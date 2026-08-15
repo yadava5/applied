@@ -136,6 +136,16 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
     monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
     monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ENC_KEY)
+    # ``GET /gmail/inbox`` calls ``_require_configured()`` before anything else
+    # and 503s without these two. Without them the inbox test below would get a
+    # 503 whose body trivially lacks the sentinel — an absence assertion that
+    # passes because the endpoint never ran.
+    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setenv(
+        "JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", "http://test/gmail/callback"
+    )
+    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", "http://test")
 
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
@@ -186,6 +196,12 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     hybrid_module.settings = config_module.settings
     hybrid_module._classifier = None
 
+    # ``GET /gmail/inbox`` consults a MODULE-LEVEL cache before it does any
+    # work. A page left there by an earlier test would be served straight back,
+    # so the inbox test below would assert against a response the handler under
+    # test never built.
+    gmail_module._INBOX_CACHE.clear()
+
     from jobtracker.database import init_db
 
     await init_db()
@@ -205,6 +221,66 @@ def _collect(service: Any = None) -> Any:
 
     service = service or FakeService(pages=[(["m-rejection"], None)], metadata=RAW)
     return gc._collect_page(service, query="in:inbox", page_size=10, page_token=None)
+
+
+# The tables the sweep below MUST reach for the privacy page's "every column of
+# every stored row" to be a true sentence. Named so that a table disappearing
+# from the schema fails loudly rather than shrinking the sweep in silence. The
+# sweep itself is not limited to these — it walks whatever `sqlite_master`
+# reports, so a table added later is covered the day it is added.
+TABLES_THAT_MUST_BE_SWEPT = frozenset(
+    {
+        "applications",
+        "contacts",
+        "email_embeddings",
+        "emails",
+        "gmail_sync_enrollment",
+        "interviews",
+        "sync_state",
+        "training_data",
+        "user_credentials",
+    }
+)
+
+
+async def _sweep_every_table(session: Any) -> tuple[dict[str, int], list[str]]:
+    """``SELECT *`` every table in the schema; return row counts + haystacks.
+
+    Deliberately schema-driven rather than a hand-written list of models. The
+    privacy page says "every column of every stored row", and a list of three
+    ORM classes is not that sentence — it is the subset somebody remembered.
+    This also reaches the FTS5 shadow tables (``emails_fts_data`` and friends),
+    which hold indexed COPIES of whatever text columns are indexed and would
+    otherwise be a body's second home.
+    """
+
+    from sqlalchemy import text
+
+    names = sorted(
+        r[0]
+        for r in (
+            await session.exec(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+        ).all()
+    )
+
+    counts: dict[str, int] = {}
+    haystacks: list[str] = []
+    for name in names:
+        rows = (await session.exec(text(f'SELECT * FROM "{name}"'))).all()
+        counts[name] = len(rows)
+        for row in rows:
+            for value in row:
+                # bytes columns (the FTS shadow blobs) are decoded as well as
+                # repr'd: a body indexed into an FTS b-tree is a byte run, and
+                # `repr(b"...")` escapes it out of reach of a plain substring
+                # search.
+                if isinstance(value, (bytes, bytearray)):
+                    haystacks.append(bytes(value).decode("utf-8", errors="ignore"))
+                haystacks.append(f"{name}:{value!r}")
+
+    return counts, haystacks
 
 
 # =============================================================================
@@ -336,6 +412,137 @@ async def test_the_body_reaches_no_pipeline_item(cloud_app) -> None:
     )
 
 
+async def test_the_inbox_endpoint_never_serves_the_body(cloud_app, monkeypatch) -> None:
+    """``GET /gmail/inbox`` is the public endpoint that reads bodies. Sweep it.
+
+    This is the gap that mattered most. The file used to check four responses
+    and this was not one of them, even though it is the handler that fetches
+    bodies in the first place and the one whose docstring is published as
+    OpenAPI contract text. A full body in this response passed the whole file
+    green.
+
+    The fake page is the REAL fetch path's output — ``_collect()`` returns the
+    same ``MessagePage`` the Gmail client builds, sentinel-carrying ``bodies``
+    and all — so this drives the handler with exactly what production hands it.
+
+    Mutation: ``snippet=unescape(page.bodies.get(mid) or msg.snippet)[:500]``
+    at the ``InboxVerdict`` construction → fails.
+    """
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+
+    page = _collect()
+    assert SENTINEL in page.bodies["m-rejection"], "fixture regressed"
+
+    async def _fake_page(user_id: Any, **_kwargs: Any) -> Any:
+        return page
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    headers = {"Authorization": f"Bearer {_token_for(OWNER)}"}
+    async with AsyncClient(
+        transport=ASGITransport(app=cloud_app), base_url="http://test"
+    ) as client:
+        res = await client.get("/gmail/inbox", headers=headers)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+
+    # POSITIVE CONTROL, and the only reason the absence below means anything.
+    # `test_the_fetched_body_is_what_makes_the_verdict_right` proves the snippet
+    # alone yields APPLIED and only the body yields REJECTION. So a `rejection`
+    # verdict here is proof the BODY reached the classifier on THIS path. Without
+    # it, an empty `bodies` dict would make the sentinel absent for free.
+    assert body["scanned"] == 1, body
+    verdict = body["verdicts"][0]
+    assert verdict["category"] == "rejection", (
+        f"the inbox path classified on the snippet, not the body: {verdict}"
+    )
+
+    # And having read it, the response does not carry it — whole serialised
+    # response, not the fields anyone thought to name.
+    assert SENTINEL not in res.text, "GET /gmail/inbox served the body"
+    # The verdict carries GMAIL's snippet, not a slice of the text it judged.
+    assert verdict["snippet"] == REJECTION_SNIPPET
+
+
+async def test_the_body_is_never_logged(cloud_app, caplog, monkeypatch) -> None:
+    """"…never logged" is a third of the published claim and had no test at all.
+
+    ``caplog`` appeared zero times in this file. Logging the body at INFO inside
+    the very function the other tests drive left every one of them green, which
+    is exactly the shape of defect the rest of this file exists to prevent.
+
+    Captured at DEBUG across the whole fetch → classify → sync → inbox path,
+    because a body reaches a log most plausibly through a debug line somebody
+    added while chasing a misclassification and forgot to remove.
+
+    Mutation: ``logger.info("classifying %s", text)`` in ``gmail_inbox`` → fails.
+    """
+
+    import logging
+
+    import jobtracker.cloud.gmail_client as gmail_client_module
+    from jobtracker.classifier import get_classifier
+    from jobtracker.cloud import gmail_oauth, pipeline
+
+    caplog.set_level(logging.DEBUG)
+
+    page = _collect()
+    items = await gmail_oauth._classify_messages(
+        page.messages, get_classifier(), pipeline, page.bodies
+    )
+    payload = [
+        {
+            "message_id": i.message_id,
+            "category": i.category,
+            "sender_email": i.sender_email,
+            "subject": i.subject,
+            "sender_name": i.sender_name,
+            "received_at": i.received_at.isoformat() if i.received_at else None,
+            "confidence": i.confidence,
+            "thread_id": i.thread_id,
+            "snippet": i.snippet,
+        }
+        for i in items
+    ]
+
+    async def _fake_page(user_id: Any, **_kwargs: Any) -> Any:
+        return page
+
+    monkeypatch.setattr(gmail_client_module, "fetch_message_page", _fake_page)
+
+    headers = {"Authorization": f"Bearer {_token_for(OWNER)}"}
+    async with AsyncClient(
+        transport=ASGITransport(app=cloud_app), base_url="http://test"
+    ) as client:
+        sync = await client.post("/gmail/sync", json={"items": payload}, headers=headers)
+        assert sync.status_code == 200, sync.text
+        inbox = await client.get("/gmail/inbox", headers=headers)
+        assert inbox.status_code == 200, inbox.text
+
+    # POSITIVE CONTROL on the INSTRUMENT. An assertion that no record contains
+    # the sentinel is free if caplog captured nothing — and caplog defaults to
+    # WARNING and only sees records that propagate to root, so "captured
+    # nothing" is the likely state, not a far-fetched one. The sync path emits
+    # its summary at INFO from `jobtracker.cloud.gmail_oauth`; requiring a
+    # record from that logger proves the handler's own records are visible here.
+    assert caplog.records, "caplog captured nothing — the sweep below proves nothing"
+    assert any(r.name.startswith("jobtracker.") for r in caplog.records), (
+        "no record from a jobtracker logger reached caplog; product logging is "
+        f"invisible to this test: {sorted({r.name for r in caplog.records})}"
+    )
+
+    # The sweep. `getMessage()` renders %-args, so a body passed as a lazy
+    # logging argument is caught as well as one f-string'd into the message.
+    for record in caplog.records:
+        haystack = f"{record.name} {record.msg!r} {record.args!r} {record.getMessage()}"
+        assert SENTINEL not in haystack, (
+            f"a body was logged by {record.name} at {record.levelname}: "
+            f"{record.getMessage()[:200]}"
+        )
+
+
 async def test_no_database_row_and_no_response_holds_the_body(cloud_app) -> None:
     """End to end: fetch → classify → sync → store → read back.
 
@@ -403,9 +610,36 @@ async def test_no_database_row_and_no_response_holds_the_body(cloud_app) -> None
         # The stored preview must remain GMAIL's snippet.
         assert row.body_text is None
         assert row.body_html is None
+        # STRUCTURAL, not positional. The sentinel check above only catches a
+        # body because the sentinel happens to sit at offset 313 of a 396-char
+        # body and the column truncates at 500 — a body PREFIX that stops short
+        # of the sentinel is a retained body and passed every assertion in this
+        # file. What the privacy page promises is that the stored preview is
+        # Gmail's own snippet, so assert exactly that: equality, not absence.
+        assert row.body_snippet == REJECTION_SNIPPET, (
+            "the stored preview is not Gmail's snippet — something re-derived "
+            f"it from the body we read: {row.body_snippet!r}"
+        )
 
     for row in training:
         assert SENTINEL not in str(row.model_dump()), "a body reached training_data"
+
+    # And every OTHER table. "Any stored column" is the published claim; two ORM
+    # classes are not that. `applications` in particular holds `req_id` and
+    # `role_token`, both derived from message text and neither swept nor served
+    # by any response this file checks.
+    async with get_session() as session:
+        counts, haystacks = await _sweep_every_table(session)
+
+    missing = TABLES_THAT_MUST_BE_SWEPT - counts.keys()
+    assert not missing, f"the sweep never reached: {sorted(missing)}"
+    # Positive controls: a sweep over empty tables proves nothing, so require
+    # rows in the two the scan is supposed to have written.
+    assert counts["emails"] > 0, "no emails row — the sweep proved nothing"
+    assert counts["applications"] > 0, "no applications row — the sweep proved nothing"
+
+    for haystack in haystacks:
+        assert SENTINEL not in haystack, f"a body reached a stored column: {haystack[:200]}"
 
 
 async def test_a_correction_does_not_carry_the_body_into_training_data(
@@ -468,4 +702,16 @@ async def test_a_correction_does_not_carry_the_body_into_training_data(
         assert SENTINEL not in str(row.model_dump())
         assert row.body_text == REJECTION_SNIPPET or SENTINEL not in (
             row.body_text or ""
+        )
+        # The line above is satisfied by its second branch whenever the sentinel
+        # is absent, so it does not actually pin the text. This does, and it is
+        # what makes `training_data` an INDEPENDENT check rather than a second
+        # detector on the same leak: `_add_training_example` reads
+        # `email.body_snippet`, so a sentinel can only arrive here if it already
+        # reached `emails`. Equality catches the case the sentinel cannot — a
+        # future "improvement" that feeds the corpus the full text the message
+        # was classified on reddens here even with no sentinel in play.
+        assert row.body_text == REJECTION_SNIPPET, (
+            "the retrain corpus is no longer being fed Gmail's snippet: "
+            f"{row.body_text!r}"
         )

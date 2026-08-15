@@ -606,6 +606,17 @@ export interface paths {
          *     only ever wants ``gmail.readonly``, and merged prior grants would make
          *     the token response's scope set diverge from the requested one, which
          *     strict OAuth clients reject.
+         *
+         *     WHY THE ORIGIN IS A PARAMETER AND NOT A HEADER. This endpoint is never
+         *     called by a browser: the web app's ``/api/gmail/authorize`` route handler
+         *     calls it server-side with the user's Supabase JWT attached, which is why
+         *     CORS never had to admit the web origin and why the missing allowlist entry
+         *     went unnoticed for weeks (``config.trusted_web_hosts`` has the probe). A
+         *     server-side caller has no ``Origin`` header to read, so it states its
+         *     origin explicitly and this endpoint decides whether to believe it —
+         *     against the same list, before Google is reached. Refusing here rather than
+         *     in the callback is the point: the user is told at the click, not after
+         *     consenting.
          */
         get: operations["gmail_authorize_auth_gmail_authorize_get"];
         put?: never;
@@ -675,9 +686,13 @@ export interface paths {
          *     not request. What actually happens: ``format="full"`` gets, capped at
          *     ``_MAX_BODY_CHARS``, and the body is handed to the classifier and dropped
          *     on the same line — see the read below and
-         *     ``tests/test_body_is_never_persisted.py``, which fails the build if a
-         *     marker string planted in a body reaches any stored column, the training
-         *     table, or any response.
+         *     ``tests/test_body_is_never_persisted.py``, which fails if a marker string
+         *     planted in a body reaches any stored column, the training table, a log
+         *     record, or any response — THIS response included, which that test did not
+         *     cover until 2026-08-15: a full body returned from here passed the whole
+         *     file green. It runs in CI on pull requests touching ``backend/``; the
+         *     repository has no branch protection, so a red run does not itself block a
+         *     merge.
          *
          *     Each verdict therefore carries the Gmail ``snippet`` rather than the text
          *     the verdict was actually made from, plus a deep link to the message, which
@@ -1112,12 +1127,12 @@ export interface components {
             commit?: string | null;
             /**
              * Web App Host
-             * @description The hostname the Gmail OAuth callback returns the browser to, read from JOBTRACKER_WEB_APP_URL, or null when it is unset. Reported so a stale value is VISIBLE without anyone completing a connect flow to find out -- which is how the real one survived: it named a pre-rename alias for 26 days, the alias served the app perfectly, and the only symptom was that every returning user arrived on a hostname their session cookie was not issued for. Compare it against `web_app_host_trusted` below, never by eye.
+             * @description The hostname of the Gmail OAuth callback's FALLBACK return destination, read from JOBTRACKER_WEB_APP_URL, or null when it is unset. Since #333 the normal destination is the origin the caller started from, validated at /auth/gmail/authorize and carried in the signed state, so this value is consulted only for a callback that arrives without one. Still reported, because a stale value is otherwise INVISIBLE until somebody completes a connect flow -- which is how the real one survived: it named a pre-rename alias for 26 days, the alias served the app perfectly, and the only symptom was that every returning user arrived on a hostname their session cookie was not issued for. Compare it against `web_app_host_trusted` below, never by eye.
              */
             web_app_host?: string | null;
             /**
              * Web App Host Trusted
-             * @description Whether `web_app_host` is one of the hostnames this deployment serves the app on (`config.trusted_web_hosts`). FALSE means the Gmail connect flow is broken for every user right now: the callback will 503 rather than strand them signed out. WHY THIS IS NOT A 503 ON /health. The API also serves the board, search, export and the scheduled sync, none of which touch this value; failing the whole health check -- or refusing to boot -- would turn one wrong redirect target into a total outage, and into a deploy that cannot roll forward. So the endpoint stays 200 and states the fact, and the failure is loud at the one place it actually matters.
+             * @description Whether `web_app_host` is one of the hostnames this deployment serves the app on (`config.trusted_web_hosts`). NOT a verdict on the connect flow as a whole any more: a caller that sends its own origin never reaches the fallback, so FALSE here with the origin path working is a fine state and TRUE is not a guarantee. What FALSE does mean is that a callback which arrives WITHOUT a carried origin -- a state minted by an older web deploy, or one too forged to read -- will 503 rather than strand the user signed out. Read it as 'is the fallback usable?'. WHY THIS IS NOT A 503 ON /health. The API also serves the board, search, export and the scheduled sync, none of which touch this value; failing the whole health check -- or refusing to boot -- would turn one wrong redirect target into a total outage, and into a deploy that cannot roll forward. So the endpoint stays 200 and states the fact, and the failure is loud at the one place it actually matters.
              * @default false
              */
             web_app_host_trusted: boolean;
@@ -2344,7 +2359,10 @@ export interface operations {
     };
     gmail_authorize_auth_gmail_authorize_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The origin (scheme://host[:port]) the caller is being browsed on, which the callback will return the browser to. Validated against this deployment's trusted web hosts HERE, before any consent URL exists, and then carried across the round trip inside the signed state. Omit it and the callback falls back to the operator's JOBTRACKER_WEB_APP_URL. */
+                return_origin?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };

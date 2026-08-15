@@ -428,16 +428,23 @@ class Settings(BaseSettings):
     web_app_url: str | None = Field(
         default=None,
         description=(
-            "Absolute base URL of the web app the callback bounces the user back "
-            "to after a connect/disconnect. Used as a fixed, allow-listed "
-            "redirect target so the callback can never be turned into an open "
-            "redirect. It must ALSO be a host this deployment serves the app on "
-            "(see `trusted_web_hosts`): a merely-reachable alias of the same "
-            "project carries none of the user's cookies, so returning the "
-            "browser there lands it signed out. This description used to carry "
-            "a concrete example, and the example was the pre-rename alias that "
-            "caused exactly that — so it names no host now, deliberately. "
-            "Env: JOBTRACKER_WEB_APP_URL."
+            "FALLBACK base URL of the web app the callback bounces the user "
+            "back to after a connect/disconnect. No longer the primary answer: "
+            "`/auth/gmail/authorize` now takes the caller's own origin, "
+            "validates it against `trusted_web_hosts` AT MINT TIME, and carries "
+            "it across the round trip inside the signed `state` — so the "
+            "browser returns to the origin the user actually started from, by "
+            "construction. This value is only consulted when a request arrives "
+            "WITHOUT that origin: a state minted by an older deploy, or a "
+            "callback whose state was forged/expired and therefore carries no "
+            "trustworthy destination at all. When it is used it is still held "
+            "to the same rule — it must be a host this deployment serves the "
+            "app on (see `trusted_web_hosts`), because a merely-reachable alias "
+            "of the same project carries none of the user's cookies and "
+            "returning the browser there lands it signed out. This description "
+            "used to carry a concrete example, and the example was the "
+            "pre-rename alias that caused exactly that — so it names no host "
+            "now, deliberately. Env: JOBTRACKER_WEB_APP_URL."
         ),
     )
     gmail_fetch_max_results: int = Field(
@@ -526,11 +533,21 @@ class Settings(BaseSettings):
     # ``secret_encryption_key`` is required twice over: to encrypt the stored
     # refresh token (C4) and to sign the OAuth ``state`` token — so it belongs
     # here even though it is not a "Google" value.
+    #
+    # ``web_app_url`` USED TO BE IN THIS TUPLE and deliberately is not any more
+    # (#333). The flow's return destination is now the caller's own origin,
+    # validated against ``trusted_web_hosts`` when ``/auth/gmail/authorize``
+    # mints the state and carried across the round trip inside it, so a
+    # deployment with the variable unset is fully able to offer a connect
+    # button. Leaving it here would have made this list state a requirement the
+    # code no longer has — a 503 saying "set JOBTRACKER_WEB_APP_URL" on a
+    # deployment that does not need it is exactly the kind of untrue check this
+    # change exists to remove. It remains a *fallback* (see the field), and the
+    # one place that reads it still refuses an untrusted value.
     _GMAIL_OAUTH_REQUIRED_FIELDS: ClassVar[tuple[str, ...]] = (
         "google_oauth_client_id",
         "google_oauth_client_secret",
         "gmail_oauth_redirect_uri",
-        "web_app_url",
         "secret_encryption_key",
     )
 
@@ -724,13 +741,24 @@ def trusted_web_hosts() -> list[str]:
 
     So the operator MUST declare the web host in ``JOBTRACKER_CORS_ALLOWED_HOSTS``
     for the Gmail return-host guard to pass. That is a real requirement, not an
-    incidental one, and ``_web_app_base``'s refusal message names it. Two
-    variables that must agree is not a satisfying resting place — the durable
-    fix is for ``/auth/gmail/authorize`` to carry the CALLER'S OWN origin across
-    the round trip inside the signed, encrypted ``state`` this flow already
-    has, making the return host the origin the user actually started from by
-    construction, and this variable unnecessary. That is a cross-project change
-    and is deliberately not in this commit.
+    incidental one, and the refusal messages name it.
+
+    THE SECOND VARIABLE IS GONE (#333). What stood here said the durable fix
+    was for ``/auth/gmail/authorize`` to carry the CALLER'S OWN origin across
+    the round trip inside the signed ``state`` this flow already has, and that
+    it was deliberately not in that commit. It is in the tree now:
+    ``cloud.gmail_oauth._validated_return_origin`` checks the caller's origin
+    against this list **when the state is minted** — before Google is ever
+    reached — and ``_verify_state`` hands the callback the origin the user
+    actually started from. ``JOBTRACKER_WEB_APP_URL`` is a fallback for states
+    minted before that shipped, not the answer.
+
+    Validating at MINT and not at CONSUME is the whole design. An origin that
+    round-tripped through ``state`` without being checked first would be an
+    open redirect signed by us, which is strictly worse than the
+    two-variables-must-agree bug it replaces. This list is therefore still
+    load-bearing, and declaring the web host here is still required — what
+    changed is that it is now the ONLY thing that has to be right.
 
     WHAT IS AND IS NOT IN HERE. ``VERCEL_URL`` is this deployment's own host
     (unique per preview); ``VERCEL_PROJECT_PRODUCTION_URL`` is the stable
@@ -741,13 +769,15 @@ def trusted_web_hosts() -> list[str]:
     and re-adding it re-opens SECURITY_AUDIT.md finding 2. See
     ``backend/tests/test_cors_origin_regex.py``.
 
-    ONE THING THIS LIST DOES NOT CATCH, stated rather than fixed. It contains
-    the API's own hostnames, so ``JOBTRACKER_WEB_APP_URL`` pointed at the API
-    would pass the guard and strand the browser on a backend that serves no
-    ``/settings`` — the same shape as the unset case. "Who may call this API"
-    and "where does the browser go afterwards" are genuinely different
-    questions on a split deployment, and this function currently answers only
-    the first. The signed-state fix above answers the second properly.
+    THIS LIST CONTAINS THE API'S OWN HOSTNAMES, which is correct for CORS and
+    wrong for a return destination: pointed at the API, a return host would
+    pass "is it ours?" and strand the browser on a backend that serves no
+    ``/settings`` — the same broken outcome as the unset case in a different
+    costume. "Who may call this API" and "where does the browser go
+    afterwards" are genuinely different questions on a split deployment, and
+    this function answers only the first. :func:`return_origin_is_this_api`
+    answers the second by subtracting this deployment's own origins from it;
+    ``/auth/gmail/authorize`` applies both.
 
     Read from ``os.environ`` at CALL time, not import time, so a test that
     monkeypatches the environment sees the change without reloading modules.
@@ -790,3 +820,153 @@ def web_app_host_is_trusted() -> bool:
     if host is None:
         return False
     return host.lower() in {trusted.lower() for trusted in trusted_web_hosts()}
+
+
+# =============================================================================
+# The caller's own origin as a return destination (#333)
+# =============================================================================
+#
+# ``/auth/gmail/authorize`` is called SERVER-SIDE by the web app's route
+# handler with the user's JWT attached, so there is no browser ``Origin``
+# header to read — the web app states its own origin explicitly and this
+# module decides whether to believe it. The decision happens once, when the
+# state is minted; the callback consumes an origin this code already approved.
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin_of(url: str) -> str | None:
+    """Reduce a URL to ``scheme://host[:port]``, or ``None`` if it is not one.
+
+    Lowercased, with a redundant default port dropped so ``https://x`` and
+    ``https://x:443`` are the same string rather than two. IPv6 literals are
+    refused rather than reconstructed: ``urlsplit().hostname`` strips the
+    brackets, so rebuilding one would emit a URL that no longer parses, and
+    nothing this deployment serves is reached by address anyway.
+    """
+
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        # Malformed port, malformed IPv6 literal — ``urlsplit`` defers both to
+        # attribute access, so they land here rather than at the split.
+        return None
+    if not scheme or not host or ":" in host:
+        return None
+    if port is not None and port == _DEFAULT_PORTS.get(scheme):
+        port = None
+    return f"{scheme}://{host}" + (f":{port}" if port is not None else "")
+
+
+def canonical_return_origin(raw: str) -> str | None:
+    """Parse a caller-supplied return origin, or ``None`` if it is not usable.
+
+    WHAT COMES BACK IS REBUILT, NEVER THE CALLER'S BYTES. This is the property
+    that matters, and it is the one a "does it look right?" check would miss.
+    Validating the *submitted string* and then storing that same string leaves
+    a parser differential: Python's ``urlsplit`` and a browser's URL parser do
+    not agree about backslashes, userinfo or stray whitespace, so
+    ``https://getapplied.vercel.app@evil.com`` can be approved by one reading
+    and followed by the other. Everything returned from here is assembled from
+    parsed components, so the string that reaches the signed state is one this
+    code constructed — the whole smuggling class disappears rather than being
+    enumerated.
+
+    Refused outright, before any allowlist is consulted:
+
+    - anything that is not ``http``/``https`` (no ``javascript:``, no ``data:``)
+    - ``http`` for a remote host — a return that downgrades the scheme sends
+      the browser somewhere its Secure session cookie will not follow. Local
+      development is the exception, and is spelled out as one.
+    - credentials in the authority (``user:pass@host``), the classic way a
+      trusted hostname is made to *appear* first in a URL
+    - any path, query or fragment beyond a bare ``/`` — an origin is a scheme,
+      a host and a port; a caller sending more is not sending an origin, and
+      the redirect this feeds appends its own path.
+    """
+
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        parts = urllib.parse.urlsplit(value)
+        has_credentials = parts.username is not None or parts.password is not None
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return None
+    if has_credentials:
+        return None
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        return None
+    if scheme not in ("http", "https"):
+        return None
+    if scheme == "http" and host not in ("localhost", "127.0.0.1"):
+        return None
+    return _origin_of(value)
+
+
+def return_origin_is_trusted(origin: str) -> bool:
+    """Is ``origin``'s hostname one this deployment serves the web app on?
+
+    The trust decision, and the only one — read :func:`trusted_web_hosts` for
+    where that list comes from and why it is the same list CORS is built from.
+    Compared on the parsed hostname, port-insensitively, because
+    ``trusted_web_hosts`` holds hostnames and ``vercel dev`` picks its own port.
+    """
+
+    host = (urllib.parse.urlsplit(origin).hostname or "").lower()
+    if not host:
+        return False
+    return host in {trusted.lower() for trusted in trusted_web_hosts()}
+
+
+def api_own_hosts() -> set[str]:
+    """Hostnames that are THIS API, at any port.
+
+    ``VERCEL_URL`` (this deployment, unique per preview) and
+    ``VERCEL_PROJECT_PRODUCTION_URL`` (the stable production one) are injected
+    per PROJECT, and this code runs on the API project — so what they name is
+    never the web app. They are in ``trusted_web_hosts`` because CORS wants
+    them there; they must not be a place the browser is sent.
+    """
+
+    hosts: set[str] = set()
+    for var_name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL"):
+        host = os.environ.get(var_name, "").strip().lower()
+        if host:
+            hosts.add(host)
+    return hosts
+
+
+def api_own_origins() -> set[str]:
+    """Origins that are THIS API, port included.
+
+    Derived from ``gmail_oauth_redirect_uri``, which names the API's own
+    callback URL by definition and so is the one self-identifying fact that
+    survives off Vercel. Matched at ORIGIN granularity rather than hostname
+    granularity on purpose: a local split runs the web app on
+    ``http://localhost:3000`` and this API on ``http://localhost:8000``, which
+    differ only by port. Subtracting the bare hostname would make local
+    development — one of the outcomes #333 exists to deliver — impossible.
+    """
+
+    origin = _origin_of(settings.gmail_oauth_redirect_uri or "")
+    return {origin} if origin else set()
+
+
+def return_origin_is_this_api(origin: str) -> bool:
+    """Would returning the browser to ``origin`` strand it on the backend?
+
+    The case ``trusted_web_hosts`` cannot catch and says so: its list contains
+    this API's own hostnames, so "is it ours?" answers yes for a destination
+    that serves no ``/settings``. Same broken outcome as an unset return host,
+    in a different costume — which is why it is checked separately rather than
+    trusted to fall out of the allowlist.
+    """
+
+    host = (urllib.parse.urlsplit(origin).hostname or "").lower()
+    return bool(host) and (host in api_own_hosts() or origin in api_own_origins())

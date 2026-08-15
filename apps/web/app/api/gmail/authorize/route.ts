@@ -22,10 +22,19 @@ import { getGmailAuthorizeUrl } from "@/lib/gmail/server";
  * This is the fix for the "Can't connect Gmail" dead end: a signed-in tester
  * whose token was rejected used to be told "Gmail isn't enabled on this
  * deployment yet", which is both wrong and actionless.
+ *
+ * `origin` does double duty now (#333): it is where we send the user on a
+ * failure, and it is what we ask the backend to return them to on success.
+ * The backend used to answer the second question from its own
+ * `JOBTRACKER_WEB_APP_URL`, which is a different Vercel project's idea of
+ * which host we are — it named a pre-rename alias for 26 days and every
+ * returning user landed signed out, because cookies are scoped to a host.
+ * This request arrived on the host whose cookie the user actually holds, so
+ * it is the only reliable answer, and it is the one we send.
  */
 export async function GET(request: NextRequest) {
   const { origin } = new URL(request.url);
-  const result = await getGmailAuthorizeUrl();
+  const result = await getGmailAuthorizeUrl(origin);
 
   if (result.kind === "ok") {
     return NextResponse.redirect(result.url);

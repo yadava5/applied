@@ -43,14 +43,26 @@ Security properties
   signed state** — tamper-proof via the HS256 signature, unreadable to
   the browser/Google/URL logs via the encryption, and expiring with the
   state's TTL.
-- **No open redirect**: the post-callback destination is the operator-
-  configured ``web_app_url``, never a value taken from the request.
-- **And it must be OUR host**: that configured value is additionally checked
-  against ``config.trusted_web_hosts`` — the same list CORS is built from —
-  because "not attacker-controlled" turned out not to imply "correct". A
-  stale alias of our own project satisfied the open-redirect property
+- **No open redirect, with the destination taken from the caller**: the
+  post-callback destination is the origin the caller started from, and it is
+  checked against ``config.trusted_web_hosts`` — the same list CORS is built
+  from — **when ``authorize`` mints the state**, before Google is ever
+  reached. What crosses the round trip is therefore an origin this backend
+  already approved, riding inside a token it signed. Validating at mint and
+  not at consume is the load-bearing half: an unchecked origin round-tripping
+  through ``state`` would be an open redirect carrying our own signature.
+- **And it must not be US**: ``trusted_web_hosts`` contains this API's own
+  hostnames, because CORS needs them there. A return origin naming the API
+  passes "is it ours?" and strands the browser on a backend that serves no
+  ``/settings``, so it is subtracted separately
+  (``config.return_origin_is_this_api``).
+- **The fallback is still allow-listed**: a request that carries no origin —
+  a state minted before this shipped, or one too forged to read — falls back
+  to the operator-configured ``web_app_url``, held to the same trusted-host
+  rule, because "not attacker-controlled" turned out not to imply "correct".
+  A stale alias of our own project satisfied the open-redirect property
   perfectly and still landed every user signed out, since cookies are scoped
-  to a hostname. See ``_web_app_base`` and
+  to a hostname. See ``_validated_return_origin``, ``_web_app_base`` and
   ``tests/test_gmail_oauth_return_host.py``.
 - **Revocable**: disconnect calls Google's revocation endpoint and then
   deletes the local ciphertext.
@@ -80,7 +92,10 @@ from pydantic import BaseModel, Field
 
 from jobtracker.auth import current_user
 from jobtracker.config import (
+    canonical_return_origin,
     configured_web_app_host,
+    return_origin_is_this_api,
+    return_origin_is_trusted,
     settings,
     web_app_host_is_trusted,
 )
@@ -501,7 +516,9 @@ def _generate_code_verifier() -> str:
     return secrets.token_urlsafe(64)
 
 
-def _sign_state(user_id: uuid.UUID, code_verifier: str) -> str:
+def _sign_state(
+    user_id: uuid.UUID, code_verifier: str, return_origin: str | None = None
+) -> str:
     """Return an HS256-signed state binding the flow to ``user_id``.
 
     The PKCE ``code_verifier`` rides along in the ``cv`` claim,
@@ -510,10 +527,25 @@ def _sign_state(user_id: uuid.UUID, code_verifier: str) -> str:
     secret from everything the state transits (browser history, Google,
     proxy/URL logs). Only this backend can decrypt it in the callback —
     which is what makes PKCE work across two serverless invocations.
+
+    ``return_origin`` — where the browser goes afterwards — rides in the ``ro``
+    claim, SIGNED BUT NOT ENCRYPTED, and the difference from ``cv`` is
+    deliberate. The verifier is a secret; the origin is the address bar the
+    user is looking at. Fernet-wrapping it would imitate the line above without
+    buying anything, and would hide the one value worth being able to read off
+    a state while debugging a redirect. What the signature gives it is the only
+    property it needs: this backend validated it at mint
+    (:func:`_validated_return_origin`) and nothing between here and the
+    callback can change it.
+
+    Omitted entirely when ``None``, rather than written as null: the callback
+    distinguishes "no origin was carried" (fall back to ``web_app_url``) from
+    "an origin was carried", and an absent claim is the honest spelling of the
+    first.
     """
 
     now = datetime.now(UTC)
-    payload = {
+    payload: dict[str, Any] = {
         "sub": str(user_id),
         "aud": _STATE_AUDIENCE,
         "iat": now,
@@ -521,15 +553,31 @@ def _sign_state(user_id: uuid.UUID, code_verifier: str) -> str:
         "jti": secrets.token_urlsafe(16),
         "cv": _require_fernet().encrypt(code_verifier.encode("utf-8")).decode("ascii"),
     }
+    if return_origin:
+        payload["ro"] = return_origin
     return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
 
 
-def _verify_state(token: str) -> tuple[uuid.UUID, str] | None:
-    """Return ``(user_id, code_verifier)`` for a valid state, else ``None``.
+def _verify_state(token: str) -> tuple[uuid.UUID, str, str | None] | None:
+    """Return ``(user_id, code_verifier, return_origin)`` for a valid state.
 
-    A state without a decryptable ``cv`` claim (forged, expired key, or
-    minted by a pre-PKCE deploy) is treated as invalid — the callback
-    bounces back with ``?gmail=error`` and the user simply reconnects.
+    ``None`` for an invalid one. A state without a decryptable ``cv`` claim
+    (forged, expired key, or minted by a pre-PKCE deploy) is treated as
+    invalid — the callback bounces back with ``?gmail=error`` and the user
+    simply reconnects.
+
+    ``ro`` IS READ WITH ``.get`` AND ITS ABSENCE IS NOT AN ERROR. The web app
+    and this API are separate Vercel projects that deploy independently, so
+    there is a window in which states minted by the older web deploy arrive
+    here carrying no origin. Treating that as an invalid state would break
+    every connect started seconds before the deploy; it means "fall back to
+    ``web_app_url``", which is exactly what that setting is still for.
+
+    The claim is re-parsed through :func:`canonical_return_origin` rather than
+    trusted as a string. That is not a second trust decision — no allowlist is
+    consulted here, and the origin was checked against one at mint — it is the
+    guarantee that only a shape this code can construct ever reaches a
+    ``Location`` header, however the claim got into the token.
     """
 
     try:
@@ -544,7 +592,13 @@ def _verify_state(token: str) -> tuple[uuid.UUID, str] | None:
         code_verifier = (
             _require_fernet().decrypt(str(payload["cv"]).encode("ascii")).decode("utf-8")
         )
-        return user_id, code_verifier
+        claimed_origin = payload.get("ro")
+        return_origin = (
+            canonical_return_origin(claimed_origin)
+            if isinstance(claimed_origin, str)
+            else None
+        )
+        return user_id, code_verifier, return_origin
     except (
         jwt.InvalidTokenError,
         InvalidToken,
@@ -595,7 +649,14 @@ def _build_flow(code_verifier: str | None = None) -> Flow:
 
 
 def _web_app_base() -> str:
-    """The base URL to bounce the browser back to, or raise.
+    """The FALLBACK base URL to bounce the browser back to, or raise.
+
+    NO LONGER THE PRIMARY ANSWER (#333). The destination is normally the origin
+    the caller started from, validated at ``/auth/gmail/authorize`` and carried
+    in the signed state; this runs only when no such origin reached the
+    callback — a state minted by an older web deploy, or one too forged to
+    read. Everything below is why, when it does run, it refuses rather than
+    guesses.
 
     WHY THIS IS NOT JUST ``settings.web_app_url.rstrip("/")`` ANY MORE
     -----------------------------------------------------------------
@@ -659,14 +720,106 @@ def _web_app_base() -> str:
     return configured
 
 
-def _web_redirect(outcome: str) -> RedirectResponse:
+def _validated_return_origin(raw: str) -> str:
+    """Approve the caller's own origin as a return destination, or refuse.
+
+    THE ONE PLACE THE TRUST DECISION IS MADE, and it is made HERE — at
+    ``/auth/gmail/authorize``, before a consent URL exists and before Google is
+    ever reached — not in the callback. That ordering is the whole design of
+    #333. Carrying an origin across the round trip inside a token we signed is
+    only safe if we checked it before signing; a callback that validated
+    instead would be an open redirect for the entire ten-minute window in which
+    the check could be made to pass, and would have relocated the trust
+    decision to the leg an attacker reaches.
+
+    Three refusals, three different operator stories, so the message has to say
+    which one happened:
+
+    1. Not an origin at all — a scheme we will not emit, credentials in the
+       authority, a path. :func:`config.canonical_return_origin` decides, and
+       what it returns is REBUILT from parsed parts, so the string that ends up
+       in the state is one this code constructed.
+    2. Not ours — the hostname is outside ``config.trusted_web_hosts``. This is
+       the actionable one: the operator adds it to
+       ``JOBTRACKER_CORS_ALLOWED_HOSTS`` and it works.
+    3. Ours, but it is THIS API. The trusted list contains the API's own
+       hostnames because CORS needs them there; returning the browser to one
+       strands it on a backend that serves no ``/settings``. Adding a host to
+       the allowlist cannot fix this and the message must not suggest it can.
+
+    400, NOT 503. ``_web_app_base``'s 503 means "this deployment is
+    misconfigured", and ``apps/web/lib/gmail/server.ts`` maps 503 onto "Gmail
+    isn't enabled on this deployment yet" — wrong and actionless for a caller
+    that sent a bad origin, and precisely the dead end the authorize route
+    handler's docstring exists to prevent. A 400 lands on ``?gmail=error``.
+    """
+
+    origin = canonical_return_origin(raw)
+    if origin is None:
+        # Truncated: this reaches logs, and the caller controls the bytes.
+        shown = (raw or "").strip()[:120]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Gmail OAuth cannot start: return_origin '{shown}' is not a "
+                "usable web origin. Expected exactly scheme://host[:port] — "
+                "https for a remote host, http only for localhost — with no "
+                "credentials, path, query or fragment."
+            ),
+        )
+
+    if not return_origin_is_trusted(origin):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Gmail OAuth cannot start: return_origin '{origin}' is not a "
+                "host this deployment serves the web app on, so the browser "
+                "would be returned to a hostname that does not carry the "
+                "user's session, i.e. signed out. If this origin really is "
+                "ours, add its hostname to JOBTRACKER_CORS_ALLOWED_HOSTS. See "
+                "config.trusted_web_hosts."
+            ),
+        )
+
+    if return_origin_is_this_api(origin):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Gmail OAuth cannot start: return_origin '{origin}' is this "
+                "API's own origin, not the web app's. It appears in the "
+                "trusted list because CORS is built from the same list; "
+                "returning the browser here would strand it on a backend that "
+                "serves no /settings. Send the origin the user is actually "
+                "browsing. See config.return_origin_is_this_api."
+            ),
+        )
+
+    return origin
+
+
+def _web_redirect(outcome: str, return_origin: str | None = None) -> RedirectResponse:
     """Redirect the browser back to the web app's settings page.
 
     ``outcome`` is a coarse, non-sensitive status token (``connected`` /
     ``error``); no token or email ever rides in the URL.
+
+    ``return_origin`` IS NOT A VALUE FROM THIS REQUEST. It reaches here only
+    out of :func:`_verify_state`, i.e. out of a token this backend signed,
+    carrying an origin :func:`_validated_return_origin` approved before the
+    consent URL was minted. The open-redirect guarantee is unchanged in
+    substance and moved in mechanism: it used to rest on "the destination is
+    operator configuration", and now rests on "the destination was checked
+    against the operator's trusted list one leg earlier and signed". Nothing
+    the callback receives from Google can influence it — see
+    ``tests/test_gmail_oauth_return_host.py``, which asserts the callback grew
+    no destination parameter of its own.
+
+    ``None`` means no origin crossed the round trip (a state from an older
+    deploy, or one too forged to read) and the operator-configured fallback
+    answers instead.
     """
 
-    base = _web_app_base()
+    base = return_origin or _web_app_base()
     target = f"{base}/settings?gmail={urllib.parse.quote(outcome)}"
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
 
@@ -739,6 +892,17 @@ async def gmail_status(
 @router.get("/auth/gmail/authorize", response_model=GmailAuthorizeResponse)
 async def gmail_authorize(
     user_id: uuid.UUID = Depends(current_user),
+    return_origin: str | None = Query(
+        default=None,
+        description=(
+            "The origin (scheme://host[:port]) the caller is being browsed on, "
+            "which the callback will return the browser to. Validated against "
+            "this deployment's trusted web hosts HERE, before any consent URL "
+            "exists, and then carried across the round trip inside the signed "
+            "state. Omit it and the callback falls back to the operator's "
+            "JOBTRACKER_WEB_APP_URL."
+        ),
+    ),
 ) -> GmailAuthorizeResponse:
     """Return the Google consent URL for the authenticated user.
 
@@ -752,16 +916,31 @@ async def gmail_authorize(
     only ever wants ``gmail.readonly``, and merged prior grants would make
     the token response's scope set diverge from the requested one, which
     strict OAuth clients reject.
+
+    WHY THE ORIGIN IS A PARAMETER AND NOT A HEADER. This endpoint is never
+    called by a browser: the web app's ``/api/gmail/authorize`` route handler
+    calls it server-side with the user's Supabase JWT attached, which is why
+    CORS never had to admit the web origin and why the missing allowlist entry
+    went unnoticed for weeks (``config.trusted_web_hosts`` has the probe). A
+    server-side caller has no ``Origin`` header to read, so it states its
+    origin explicitly and this endpoint decides whether to believe it —
+    against the same list, before Google is reached. Refusing here rather than
+    in the callback is the point: the user is told at the click, not after
+    consenting.
     """
 
     _require_configured()
+
+    validated_origin = (
+        _validated_return_origin(return_origin) if return_origin else None
+    )
 
     code_verifier = _generate_code_verifier()
     flow = _build_flow(code_verifier=code_verifier)
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
-        state=_sign_state(user_id, code_verifier),
+        state=_sign_state(user_id, code_verifier, validated_origin),
     )
     return GmailAuthorizeResponse(authorization_url=authorization_url)
 
@@ -778,6 +957,15 @@ async def gmail_callback(
     here from Google, not from the app) — identity comes from the signed
     ``state``. On any failure we bounce back to the web app with
     ``?gmail=error`` rather than leaking details.
+
+    So does the DESTINATION, and only from there. The state carries the origin
+    the user started from, approved by ``_validated_return_origin`` one leg
+    earlier; this function takes no destination parameter of its own and must
+    not grow one. The two paths above that redirect *before* the state has been
+    read — a provider error, and a state too forged to decode — genuinely do
+    not know where the user came from and fall back to the operator's
+    ``web_app_url``; there is nothing better to do, and inventing one from the
+    request is the open redirect this design refuses.
     """
 
     if not settings.gmail_oauth_configured:
@@ -794,7 +982,7 @@ async def gmail_callback(
     if verified is None:
         logger.warning("Gmail callback rejected: invalid or expired state.")
         return _web_redirect("error")
-    user_id, code_verifier = verified
+    user_id, code_verifier, return_origin = verified
 
     try:
         stored = await _exchange_and_store(user_id, code, code_verifier)
@@ -804,10 +992,10 @@ async def gmail_callback(
             user_id,
             type(exc).__name__,
         )
-        return _web_redirect("error")
+        return _web_redirect("error", return_origin)
 
     logger.info("Gmail connected for user_id=%s (%s).", user_id, stored.email)
-    return _web_redirect("connected")
+    return _web_redirect("connected", return_origin)
 
 
 def _exchange_code(code: str, code_verifier: str) -> GmailCredentials:
@@ -1059,9 +1247,13 @@ async def gmail_inbox(
     not request. What actually happens: ``format="full"`` gets, capped at
     ``_MAX_BODY_CHARS``, and the body is handed to the classifier and dropped
     on the same line — see the read below and
-    ``tests/test_body_is_never_persisted.py``, which fails the build if a
-    marker string planted in a body reaches any stored column, the training
-    table, or any response.
+    ``tests/test_body_is_never_persisted.py``, which fails if a marker string
+    planted in a body reaches any stored column, the training table, a log
+    record, or any response — THIS response included, which that test did not
+    cover until 2026-08-15: a full body returned from here passed the whole
+    file green. It runs in CI on pull requests touching ``backend/``; the
+    repository has no branch protection, so a red run does not itself block a
+    merge.
 
     Each verdict therefore carries the Gmail ``snippet`` rather than the text
     the verdict was actually made from, plus a deep link to the message, which
