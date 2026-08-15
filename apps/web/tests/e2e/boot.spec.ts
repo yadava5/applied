@@ -127,7 +127,28 @@ async function waitForCover(page: Page, state: "raised" | "cleared", timeout = 1
   return log[log.length - 1];
 }
 
+/**
+ * WHY THIS FILE IS PRODUCTION-ONLY. Every assertion below hangs off the cover
+ * being raised BEFORE paint, by the inline BOOT_INIT_SCRIPT in <head>. Under
+ * `next dev` that script is served from an on-demand compile, so whether it
+ * runs while the document is still parsing depends on how warm the compiler
+ * happens to be — the dev-server job fails three of these and flakes the
+ * fourth, always as `data-boot never reached raised`. That is a real
+ * dev-versus-production difference, not a slow machine, and it cannot be
+ * waited out without giving up the "before hydration" claim that is the point.
+ * So the file is collected by the job that can satisfy it: the same idiom
+ * `tests/e2e/production.spec.ts` uses, and only `playwright (production
+ * build)` sets PLAYWRIGHT_PROD_BUILD=1. No bound below is loosened by this —
+ * the gate changes which job runs the file, nothing about what it demands.
+ */
+const PROD_BUILD = process.env.PLAYWRIGHT_PROD_BUILD === "1";
+
 test.describe("the post-auth boot (/import — a boot route that needs no session)", () => {
+  test.skip(
+    !PROD_BUILD,
+    "Runs only against `next start`; set PLAYWRIGHT_PROD_BUILD=1.",
+  );
+
   test("covers the screen before hydration and clears itself once resolved", async ({ page }) => {
     const watch = startConsoleWatch(page);
     await page.addInitScript(watchBootFlag);
