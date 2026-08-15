@@ -39,7 +39,19 @@ const DISMISS_KEY = "jobtracker:beta-banner-dismissed:v1";
  * cover board rows on /dashboard) — it now shows only on the narrative
  * surfaces (landing, /demo) that were designed around it.
  */
-const HIDE_ON = ["/settings", "/inbox", "/demo", "/dashboard", "/import"];
+const HIDE_ON = [
+  "/settings",
+  "/inbox",
+  "/demo",
+  "/dashboard",
+  "/import",
+  // The landing candidates: a fixed app toast floating over a sales page's
+  // hero board is app chrome leaking into marketing — access is the page's
+  // own Access section there, not a pill's.
+  "/landing-a",
+  "/landing-b",
+  "/landing-c",
+];
 
 export function BetaBanner() {
   const pathname = usePathname();

@@ -6,10 +6,11 @@ import { LandingBoard } from "@/components/marketing/LandingBoard";
 import { AccessSection, DecisionSection, PrivacySection } from "@/components/marketing/sections";
 
 /**
- * Landing candidate A — FULL BLEED. The demo shell runs edge to edge as the
- * hero: maximum "this is the product", minimum surround (the Linear stance —
- * a live workspace, zero hero CTAs). The headline is deliberately compact and
- * centred; the board does the pitching.
+ * Landing candidate A — FULL BLEED. The product fills the first screen: one
+ * compact headline band, then the board takes every remaining pixel of the
+ * viewport (the Linear stance — a live workspace, zero hero CTAs, no
+ * surround). The stage height is viewport-derived but fixed per viewport, so
+ * the reservation still holds and CLS stays zero.
  *
  * All three candidates share copy (`components/marketing/copy.ts`) and
  * sections; only the staging differs. `noindex` while the choice is open —
@@ -25,18 +26,22 @@ export default function LandingA() {
     <main className="flex flex-col bg-background text-foreground">
       <MarketingNav />
 
-      {/* ---- hero: six words, then the product --------------------------- */}
-      <section className="mx-auto w-full max-w-3xl px-6 pt-16 pb-10 text-center sm:pt-20">
-        <h1 className="text-balance text-4xl font-semibold tracking-tight text-strong sm:text-5xl">
-          {HERO.headline}
-        </h1>
-        <p className="mx-auto mt-4 max-w-xl text-balance text-muted">{HERO.subhead}</p>
+      {/* ---- the takeover: one band of words, then the product ----------- */}
+      {/* The viewport takeover is a `lg`+ composition — below it the still
+          renders at natural height rather than floating in a 100dvh void. */}
+      <section className="flex flex-col lg:min-h-[calc(100dvh-3.5rem)]">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-x-12 gap-y-3 px-6 pt-9 pb-6 lg:flex-row lg:items-end lg:justify-between">
+          <h1 className="max-w-xl text-balance text-3xl font-semibold tracking-tight text-strong sm:text-4xl">
+            {HERO.headline}
+          </h1>
+          <p className="max-w-md text-balance text-sm text-muted lg:pb-1 lg:text-right">
+            {HERO.subhead}
+          </p>
+        </div>
+        <div className="w-full flex-1 px-4 pb-4 lg:px-6">
+          <LandingBoard height="clamp(480px, calc(100dvh - 16.5rem), 900px)" />
+        </div>
       </section>
-
-      {/* ---- the board, edge to edge ------------------------------------- */}
-      <div className="w-full border-t border-line-soft px-4 pt-5 pb-6 lg:px-6">
-        <LandingBoard height="min(74vh, 720px)" />
-      </div>
 
       <DecisionSection />
       <PrivacySection />

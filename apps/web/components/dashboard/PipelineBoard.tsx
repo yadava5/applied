@@ -364,9 +364,15 @@ export function PipelineBoard({
   pulse,
   beforeList,
   afterList,
+  search = true,
 }: {
   applications: Application[];
   interactive?: boolean;
+  /** Whether the board offers its search field (over `SEARCH_AFTER` rows).
+   *  Off on the marketing embeds (`components/marketing/MarketingBoard.tsx`):
+   *  a sales page shows what the product did, not its query tools. Every
+   *  product surface keeps the default. */
+  search?: boolean;
   /** `locked` fills the shell's viewport pane and scrolls only the list;
    *  `flow` renders natural height for pages that scroll themselves. */
   variant?: "locked" | "flow";
@@ -567,7 +573,7 @@ export function PipelineBoard({
   // `pointer-events-none`, where 14 fixtures cleared this threshold and put a
   // search box on a brand-new user's first dashboard that they could not type
   // into.
-  const showSearch = interactive && applications.length > SEARCH_AFTER;
+  const showSearch = interactive && search && applications.length > SEARCH_AFTER;
 
   const columns = boardColumns(STAGES);
   /**

@@ -15,9 +15,8 @@ import { BOARD } from "./copy";
  *
  *  1. TRANSPORT. `PipelineBoard`'s `transport` prop DEFAULTS to the live
  *     transport, which PATCHes /api/applications/* — on localhost, against a
- *     signed-in owner's real production data. So this embed never mounts the
- *     board directly: it mounts `DemoDashboard`, the /demo twin whose
- *     in-memory transports are the whole point of its existence, and
+ *     signed-in owner's real production data. So this embed only ever mounts
+ *     `MarketingBoard`, whose transport is in-memory by construction, and
  *     `tests/unit/landing-variants.test.mjs` asserts no other path exists
  *     from the landing pages to the board.
  *
@@ -39,8 +38,8 @@ import { BOARD } from "./copy";
  * layout. The live board keeps rendering (CSS-hidden) once mounted so a
  * resize never resets a visitor's drags.
  */
-const DemoDashboard = dynamic(
-  () => import("@/components/demo/DemoDashboard").then((m) => m.DemoDashboard),
+const MarketingBoard = dynamic(
+  () => import("./MarketingBoard").then((m) => m.MarketingBoard),
   { ssr: false },
 );
 
@@ -101,7 +100,7 @@ export function LandingBoard({
       {/* ---- the stage (`lg`+) ------------------------------------------- */}
       <div ref={stageRef} className="relative hidden lg:block" style={{ height }}>
         <div className="absolute inset-0 overflow-clip">
-          {live ? <DemoDashboard variant="flow" /> : <StageSkeleton />}
+          {live ? <MarketingBoard /> : <StageSkeleton />}
         </div>
         {/* The crop edge: the board continues below this line, and the fade
             says so. Decoration only — it must never intercept the board. */}
@@ -145,8 +144,8 @@ function StageSkeleton() {
   return (
     <div aria-hidden className="flex h-full flex-col gap-4 motion-safe:animate-pulse">
       <div className="flex items-center justify-between gap-4">
-        <div className="h-9 w-56 rounded-lg bg-surface-2" />
-        <div className="h-9 w-40 rounded-lg bg-surface-2" />
+        <div className="h-5 w-44 rounded bg-surface-2" />
+        <div className="h-5 w-56 rounded bg-surface-2" />
       </div>
       <div className="flex min-h-0 flex-1 gap-5">
         <div className="hidden w-56 shrink-0 rounded-xl bg-surface lg:block" />

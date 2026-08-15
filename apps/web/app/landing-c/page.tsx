@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { ChangedRow } from "@/components/marketing/ChangedRow";
 import { ClaimsDescent } from "@/components/marketing/ClaimsDescent";
 import { MarketingFooter, MarketingNav } from "@/components/marketing/chrome";
 import { HERO } from "@/components/marketing/copy";
@@ -7,15 +8,16 @@ import { LandingBoard } from "@/components/marketing/LandingBoard";
 import { AccessSection } from "@/components/marketing/sections";
 
 /**
- * Landing candidate C — IN MOTION. The board still leads (board-first is the
- * whole family's stance), and then the page descends: one claim per screen,
- * with one synthetic rejection email riding alongside — read, cut at Gmail's
- * preview, classified live by the shipped rules layer, and finally stripped
- * to the columns the database actually keeps. The most editorial of the
- * three; the discipline is one claim per screen, never a return to the
- * chaptered case study this family replaces.
+ * Landing candidate C — IN MOTION. The hero is the outcome at its smallest:
+ * the single row the classifier just moved (Larkspur — the same application
+ * the descent's email decides). Then the page descends, one claim per screen,
+ * the email riding alongside — read whole, cut at Gmail's preview, classified
+ * live, stripped to what the database keeps. The FULL board appears after the
+ * argument, and Access closes. The most editorial of the three; the
+ * discipline is one claim per screen, never a return to the chaptered case
+ * study this family replaces.
  *
- * Same copy as A and B (`copy.ts`); the descent restages it.
+ * Same copy as A and B (`copy.ts`); the staging is the difference.
  */
 export const metadata: Metadata = {
   title: "Landing C — in motion",
@@ -27,19 +29,26 @@ export default function LandingC() {
     <main className="flex flex-col bg-background text-foreground">
       <MarketingNav />
 
-      {/* ---- hero: the product first, compact ---------------------------- */}
-      <section className="mx-auto w-full max-w-6xl px-6 pt-16 pb-10 sm:pt-20">
+      {/* ---- hero: the row that just changed ----------------------------- */}
+      <section className="mx-auto w-full max-w-6xl px-6 pt-16 pb-16 sm:pt-20">
         <h1 className="max-w-2xl text-balance text-4xl font-semibold tracking-tight text-strong sm:text-5xl">
           {HERO.headline}
         </h1>
         <p className="mt-4 max-w-xl text-balance text-muted">{HERO.subhead}</p>
+        <div className="mt-10 max-w-2xl">
+          <ChangedRow />
+        </div>
       </section>
-      <div className="w-full border-t border-line-soft px-4 pt-5 pb-6 lg:px-6">
-        <LandingBoard height="min(56vh, 560px)" />
-      </div>
 
       {/* ---- the descent: one claim per screen --------------------------- */}
       <ClaimsDescent />
+
+      {/* ---- the whole board, after the argument ------------------------- */}
+      <section className="border-t border-line-soft">
+        <div className="w-full px-4 py-14 lg:px-6">
+          <LandingBoard height="min(62vh, 640px)" />
+        </div>
+      </section>
 
       <AccessSection />
       <MarketingFooter />

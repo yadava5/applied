@@ -2,6 +2,8 @@
 
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
 
+import { PREVIEW_CHARS, VERDICT_EMAIL } from "./verdictEmailData";
+
 /**
  * Variant C's travelling artifact: one synthetic rejection, classified LIVE.
  *
@@ -23,14 +25,11 @@ import { classifyWithRules } from "@/lib/demo/rulesLayer";
 
 export type VerdictStage = "raw" | "split" | "retained";
 
-const SENDER_NAME = "Larkspur Systems Recruiting";
-const SENDER_EMAIL = "no-reply@larkspur.dev";
-const SUBJECT = "Your application to Larkspur Systems";
-const BODY =
-  "Hi Ayush, thank you for the time and care you put into your application for the Staff Software Engineer role at Larkspur Systems, and for walking us through your work. We know how much effort a search takes, and we genuinely appreciate your interest in the team. After careful review, we have decided to move forward with other candidates whose experience more closely matches the role. We'd be glad to see you apply again as new positions open.";
-
-/** Gmail's snippet budget — the honest reason the preview verdict is wrong. */
-const PREVIEW_CHARS = 200;
+// The email itself lives in verdictEmailData.ts (plain data, no directive) so
+// variant C's server-rendered hero row can derive its stage chip from the
+// same live classification this component shows.
+const { senderName: SENDER_NAME, senderEmail: SENDER_EMAIL, subject: SUBJECT, body: BODY } =
+  VERDICT_EMAIL;
 
 const PREVIEW = BODY.slice(0, PREVIEW_CHARS);
 const REST = BODY.slice(PREVIEW_CHARS);

@@ -7,17 +7,24 @@ import { BOARD } from "./copy";
  * At 375px a live `PipelineBoard` is not a demo, it is a struggle: drag needs
  * a pointer, the spine collapses to chips, and the detail sheet takes the
  * screen. So under `lg` the embed renders this deliberate capture instead —
- * five rows from the same fixture family the live board mounts
- * (`lib/demo/demoData.ts`), no dates (a static still must not claim a
- * relative age), the product's own type system. Server-renderable by
- * construction: nothing here reads a clock, so there is no hydration risk and
- * no CLS.
+ * five rows, ONE PER STAGE, from the showcase fixture the live board mounts
+ * (`components/marketing/showcase.ts`): even the still shows a board that has
+ * moved, which is the promise the headline above it makes. No dates (a static
+ * still must not claim a relative age), the product's own type system.
+ * Server-renderable by construction: nothing here reads a clock, so there is
+ * no hydration risk and no CLS.
  */
 const ROWS: { company: string; role: string; stage: string; signal: string; tone?: "reject" }[] = [
   {
+    company: "Waypoint Robotics",
+    role: "Software Engineer, Controls",
+    stage: "applied",
+    signal: "Thanks for applying",
+  },
+  {
     company: "Kestrel Dynamics",
     role: "Software Engineer, Simulation",
-    stage: "interviewing",
+    stage: "assessment",
     signal: "Next step: online assessment (90 min)",
   },
   {
@@ -27,20 +34,14 @@ const ROWS: { company: string; role: string; stage: string; signal: string; tone
     signal: "Interview availability — technical round",
   },
   {
-    company: "Copperline",
-    role: "Backend Engineer, Payments",
-    stage: "applied",
-    signal: "We received your application",
+    company: "Meridian Grid",
+    role: "Software Engineer, Energy",
+    stage: "offered",
+    signal: "Congratulations — offer details inside",
   },
   {
-    company: "Quarry Data",
-    role: "Data Engineer",
-    stage: "applied",
-    signal: "Thanks for applying",
-  },
-  {
-    company: "Atlas Freight",
-    role: "Software Engineer II",
+    company: "Larkspur Systems",
+    role: "Staff Software Engineer",
     stage: "rejected",
     signal: "Moving forward with other candidates",
     tone: "reject",
