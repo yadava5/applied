@@ -79,9 +79,12 @@ import { ACT, BOARD } from "./copy";
  * 45vh to 19vh.
  */
 
-/** The narration's lines, in the order the strip stacks them: the three scenes,
- *  then scene 0's revisited line. */
+/** The narration's lines, in the order the strip stacks them: one per scene,
+ *  then scene 0's revisited line. `SETTLED` is derived from the scene count
+ *  rather than written as `LINES.length - 1`, so adding a fourth scene cannot
+ *  quietly point the revisit at the new scene's caption instead. */
 const LINES = [...ACT.captions, ACT.settled];
+const SETTLED = ACT.captions.length;
 
 export function WindowAct() {
   const [beat, setBeat] = useState(0);
@@ -123,7 +126,7 @@ export function WindowAct() {
         <div className="mx-auto w-full max-w-6xl px-4 pb-2 sm:px-6">
           <div className="grid min-h-6 items-start">
             {LINES.map((line, index) => {
-              const active = index === (beat === 0 && settled ? LINES.length - 1 : beat);
+              const active = index === (beat === 0 && settled ? SETTLED : beat);
               return (
                 <p
                   key={line}

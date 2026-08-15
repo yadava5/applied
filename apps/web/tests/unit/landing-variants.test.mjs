@@ -243,6 +243,14 @@ test("the window act captions every beat — beat 0 is never wordless", () => {
     "ACT.settled is gone — scene 0's opening line would sit over a moved board",
   );
   assert.ok(act.includes("ACT.settled"), "WindowAct stopped using scene 0's revisited line");
+  // The revisit line has to be addressed by the scene COUNT. Indexed off the
+  // rendered array's length instead, a fourth scene would silently retarget
+  // the revisit at that scene's caption and this whole test would stay green.
+  assert.match(
+    act,
+    /SETTLED\s*=\s*ACT\.captions\.length/,
+    "the revisited line is no longer addressed by the scene count — a fourth scene would hide it",
+  );
 });
 
 test("beat 0's zone outlasts the pin", () => {
