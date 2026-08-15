@@ -6,18 +6,19 @@
 <h1 align="center">Applied</h1>
 
 <p align="center">
-  <strong>A job-application tracker driven by your inbox — it classifies every message through a three-layer cascade that escalates only when the cheap layer cannot decide, and builds the pipeline for you.</strong>
+  <strong>Applied turns a job-search inbox into a pipeline. Connect your mail and every
+  confirmation, rejection, interview invite and take-home lands on the application it belongs to —
+  instead of in a spreadsheet that is wrong within a week.</strong>
 </p>
 
 <p align="center">
-  <a href="https://getapplied.vercel.app"><strong>Live App</strong></a> ·
-  <a href="https://getapplied.vercel.app/system-card"><strong>System Card</strong></a> ·
-  <a href="https://getapplied.vercel.app/demo"><strong>Fixture Demo</strong></a> ·
-  <a href="https://huggingface.co/spaces/yadava5/jobtracker-classifier"><strong>Classifier Space</strong></a> ·
-  <a href="#features">Features</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#testing">Testing</a> ·
-  <a href="#getting-started">Getting Started</a>
+  <a href="https://getapplied.vercel.app"><strong>Live app</strong></a> ·
+  <a href="#status-and-access"><strong>Status &amp; access</strong></a> ·
+  <a href="https://getapplied.vercel.app/demo">Try it, no account</a> ·
+  <a href="https://getapplied.vercel.app/privacy">Privacy</a> ·
+  <a href="https://getapplied.vercel.app/system-card">System Card</a> ·
+  <a href="#what-you-can-check">What you can check</a> ·
+  <a href="#licensing-and-partnership">Licensing</a>
 </p>
 
 <p align="center">
@@ -27,37 +28,22 @@
   <img src="https://img.shields.io/badge/React-19.2-61dafb?logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/Python-3.11-3776ab?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/Postgres-RLS%20forced-336791?logo=postgresql&logoColor=white" alt="Postgres RLS">
-  <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue" alt="License">
-</p>
-
-<p align="center">
-  Applied is one of six projects presented together at
-  <a href="https://yadava5.github.io/Portfolio-2.0/">yadava5.github.io/Portfolio-2.0</a>.
+  <img src="https://img.shields.io/badge/license-proprietary%20%C2%B7%20all%20rights%20reserved-8b1a1a" alt="License: proprietary, all rights reserved">
 </p>
 
 ---
 
-## Overview
+## What it does
 
 Job hunting generates a flood of email — confirmations, rejections, interview invites, take-home assessments, recruiter follow-ups — and keeping a spreadsheet in sync with it by hand is tedious and wrong within a week. Applied connects to Gmail or iCloud, classifies each message into a job-search category, links related messages into a single tracked application, and shows where every opportunity actually stands. Predictions below a 0.85 confidence gate go to a human review queue instead of being silently accepted, and each correction is written back as training data.
 
-It is a monorepo: a Next.js 16 app on Vercel over Supabase Postgres, talking to one FastAPI serverless function that imports `backend/jobtracker/`. The classifier runs its rules layer only in that function, for a budget reason spelled out under [Architecture](#architecture).
+It is single-user by construction. Every table is scoped to one account and Postgres enforces
+that scoping itself, so there is no shared workspace, no recruiter view and no way for one
+account's mail to reach another's. It is for a person running their own search — someone sending
+dozens of applications a term, someone changing industries, anyone whose inbox is the only
+honest record of where they applied.
 
-> **It used to be two.** Applied began as a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier, and the repository carried both modes over one Python package. The desktop client was de-scoped on 2026-08-12 and deleted, along with a second, unmounted set of FastAPI routers that had no user scoping at all (issue #73). `JOBTRACKER_DEPLOYMENT` still exists and `api/index.py` still forces it to `cloud` — that setting selects Postgres over SQLite and the encrypted-row credential store over the macOS Keychain, so it is load-bearing whether or not a desktop app exists.
-
-> **A note on names.** The product was renamed from JobTracker to Applied. The internal identifiers were not renamed with it, and this README prints them verbatim wherever it gives a path or a command: the Python package is `backend/jobtracker/`, and every environment variable is prefixed `JOBTRACKER_` (`config.py`, `env_prefix="JOBTRACKER_"`). Renaming them would be a migration with no user-visible benefit, so they stayed.
-
-### Why it's interesting
-
-- **A metric that names its stage.** The **rules layer** — 220 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
-- **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
-- **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. 21 tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
-- **The trained model exports to something a browser can run.** The SetFit head quantizes from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file (`ml/browser/artifacts/`). Transformers.js executes it on the CPU in the Hugging Face Space with `allowRemoteModels = false`. Which surfaces actually run it, and which do not, is stated in [Implemented vs delegated vs planned](#implemented-vs-delegated-vs-planned).
-- **A README that was wrong on the record.** The coverage paragraph below documents its own correction from 54% to 53.2% and the Python-version artifact that caused it. Commit `5b895d8` carries the full derivation.
-
----
-
-## Features
+### In the product today
 
 - **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with polled status. The live WebSocket stream belonged to the deleted desktop client; Vercel's Python runtime does not support WebSockets
 - **Automatic classification** into the nine `EmailCategory` enum values — `applied`, `pending_application`, `interview`, `rejection`, `offer`, `assessment`, `follow_up`, `other`, plus `needs_review` for anything under the gate. Eight of the nine are predicted labels; `needs_review` is the routing outcome.
@@ -108,9 +94,219 @@ Thresholds are `CONFIDENCE_AUTO = 0.85` and `CONFIDENCE_MIN_CLASSIFICATION = 0.7
 
 ---
 
-## Architecture
+## Status and access
 
-### One deployment, one package
+Applied is **in beta and under active development**, built and run by one person. There is no
+company behind it and no staff.
+
+**Connecting your own Gmail is invite-only.** `gmail.readonly` is a Google *restricted* scope:
+until the app completes Google's OAuth verification and an independent CASA security assessment,
+it may authorize at most **100 test users**, each added by address on the OAuth consent screen.
+That cap is Google's, not a positioning choice, and it is why access is granted by hand.
+
+**To ask for a seat**, email **aesh.03.23@gmail.com** with the Google account you would connect
+read-only. Say roughly how you would use it; that is the feedback the beta exists for.
+
+**What works with no invite and no account:**
+
+- [`/demo`](https://getapplied.vercel.app/demo) — the whole interface over synthetic mail. Layer 1
+  recomputes live in your browser.
+- [`/import`](https://getapplied.vercel.app/import) — drop a Google Takeout export and have your
+  own mail classified on-device.
+
+What Applied reads from a connected mailbox, what it keeps, and how to delete all of it is written
+out claim-by-claim at [`/privacy`](https://getapplied.vercel.app/privacy), with each claim cited to
+the file that implements it.
+
+---
+
+## What you can check
+
+The reason to trust a product that reads your mail is not a promise; it is something you can open.
+Applied publishes specific numbers about itself and `scripts/readme_facts.py` recomputes every one
+of them from the code that defines it — [`readme-facts.yml`](.github/workflows/readme-facts.yml)
+fails the build when a claim on this page stops matching the source, and a claim reworded so the
+checker can no longer find it fails too. Where each number terminates is in [Verify it](#verify-it).
+
+- **The classifier is deterministic, and it is not an LLM.** Classification is regexes, an
+  embedding comparison and a small fine-tuned head — all of it code you can read. No hosted model
+  provider is in the path, so your mail is never sent to one.
+- **The body is read to classify, then discarded.** Applied fetches the full message because
+  Gmail's snippet is too short to recognise a rejection, and stores only that short snippet.
+  `backend/tests/test_body_is_never_persisted.py` proves it rather than asserting it: a sentinel
+  string planted in every fake body is searched for in every column of every stored row and in
+  every API response, with a positive control that fails if the body was never fetched — because
+  an absence test passes trivially when nothing was there to find.
+- **Nothing is filed for you below the confidence gate.** A prediction under the gate goes to a
+  human review queue instead of being written as a decision, and your correction is what the next
+  retrain learns from.
+- **A metric that names its stage.** The **rules layer** — 220 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
+- **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
+- **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. 21 tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
+- **The trained model exports to something a browser can run.** The SetFit head quantizes from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file (`ml/browser/artifacts/`). Transformers.js executes it on the CPU in the Hugging Face Space with `allowRemoteModels = false`. Which surfaces actually run it, and which do not, is stated in [Implemented vs delegated vs planned](#implemented-vs-delegated-vs-planned).
+
+---
+
+## Classifier evaluation
+
+**The 0.9791 belongs to the rules layer. It is not a whole-system accuracy figure, and the filenames actively mislead on this point.**
+
+The **rules layer** — 220 regex patterns and no model — scores **0.9791 macro-F1** (accuracy 0.9792, 2 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
+
+The trap is that `baseline_hybrid_v3.json` reports 0.9791 too. It does so because it was regenerated under the evaluator's `deterministic` hybrid profile, which calls `set_lite_mode(True)` and blanks `_known_embeddings` — so it measures the deterministic path, which is the regexes. Every metric block in the two files is identical, including both mismatch records; only the `meta` block differs, by `mode`, `hybrid_profile` and timestamp. `benchmark_history.md` says this in its own header. CI runs that profile on purpose, because a gate that consults a stochastic model is a gate that goes red for reasons unrelated to the change under test.
+
+Being fair to the model: on the **v2** set the cascade beat the rules — 0.9843 against 0.9686 macro-F1 (`docs/ML_EXECUTION_TRACKER.md`, Cycle B5). The learned layers are not decoration; they lost on v3.
+
+That comparison is now a measurement rather than a citation. `scripts/cascade_gate.sh` scores the full cascade and the rules layer over the same set in one run, and commits the delta, the per-example exchange and the checkpoint that produced it to `backend/data/evaluation/baseline_cascade_v3.json`. It does **not** run in CI, and the reason is not an omission: no SetFit checkpoint ships in this repository, so a GitHub-hosted runner has nothing to load. `learning-gate.yml` is therefore `workflow_dispatch`, and on a hosted runner it fails naming the directory it searched rather than degrading to the rules layer and reporting that as the cascade. What the number gates — the margin a learned layer has to clear before it may touch real mail, and what puts it back — is [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md).
+
+What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9791 generalizes, and 96 examples is a small sample under any reading.
+
+```bash
+cd backend
+# the exact rules gate CI runs
+python -m jobtracker.scripts.evaluate_classifier \
+  --mode rules \
+  --dataset data/evaluation/classifier_eval_v3.jsonl \
+  --baseline data/evaluation/baseline_rules_v3.json \
+  --tolerance 0.001 --min-macro-f1 0.95
+
+# the deterministic hybrid gate — same numbers, and that is the point
+python -m jobtracker.scripts.evaluate_classifier \
+  --mode hybrid --hybrid-profile deterministic \
+  --dataset data/evaluation/classifier_eval_v3.jsonl \
+  --baseline data/evaluation/baseline_hybrid_v3.json \
+  --tolerance 0.001 --min-macro-f1 0.95
+
+# the full cascade — this is the one that reads 0.9583
+python -m jobtracker.scripts.evaluate_classifier \
+  --mode hybrid --hybrid-profile full \
+  --dataset data/evaluation/classifier_eval_v3.jsonl
+```
+
+The last command prints an `answered by:` line next to the score, and it refuses to report a verdict at all when no semantic layer answered: `_assert_layers_exercised` fails a `full`-profile run whose ML layers never loaded, unless you override it with `--allow-degraded-layers`. That guard exists because a cascade with no SetFit model on disk degrades to rules and reports 0.9791 again — flatteringly, for a classifier that is not running. It is the same failure `--require-semantic` guards in the latency benchmark.
+
+---
+
+## Performance
+
+**Per-layer classifier latency.** 96-example v3 set, warm (a warmup pass excludes model load and lazy imports), 3 repetitions — 288 classifications.
+
+| Layer | p50 | p95 | answered |
+| --- | ---: | ---: | ---: |
+| `content_filter` | 0.036 ms | 0.043 ms | 15 |
+| `rules` | **0.176 ms** | 0.241 ms | 174 |
+| `fallback` | 0.262 ms | 21.176 ms | 39 |
+| `setfit` | **17.649 ms** | 37.702 ms | 60 |
+
+The ratio is the result: SetFit costs roughly **100×** the rules layer at p50, and the rules layer alone answers 174 of the 288. That is the cascade doing its job as a measurement rather than an assertion. It is reported per layer because a single mean is a statement about the corpus mix as much as about the code — change the proportion of inputs the regexes catch and the mean moves with no code change. The script uses nearest-rank percentiles deliberately, because numpy's interpolated default disagrees on a sample this small.
+
+**Provenance, stated plainly:** these figures come from the run recorded in commit `2c17470` (2026-08-03). **No results artifact is committed**, and the commit does not record the machine, so treat the absolute milliseconds as machine-dependent and the ratio as the durable claim. Regenerate with:
+
+```bash
+cd backend
+python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --output latency.json
+```
+
+`--require-semantic` fails a run in which no model answered. The cascade degrades to rules when SetFit will not import, and a degraded run reports flatteringly low latency for a classifier that is not actually running.
+
+**Model size.** The SetFit head exports to ONNX at **90,362,391 bytes** float32 and quantizes to **22,843,695 bytes** int8 — measured on `ml/browser/artifacts/model.onnx` and `model_quantized.onnx`, both committed.
+
+---
+
+## Implemented vs delegated vs planned
+
+Being precise about this is the point.
+
+### Implemented — hand-written in this repo
+
+- **The rules engine.** 220 regex patterns across 7 categories (123 strong, 27 weak, 70 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 35 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 19 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
+- **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the correction-to-training-data loop.
+- **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
+- **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
+- **Multi-tenant isolation** — the `user_id` column and composite indexes, the 35 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
+- **The cloud/desktop split** — lazy imports, PEP 562 module `__getattr__`, and the subprocess guard test that proves the heavy stack never enters `sys.modules`.
+- **ML operations** — weekly sparse-label candidate mining with gap-based quotas, drift and confidence monitoring with thresholded alerts, and the alert-issue automation.
+
+### Delegated — on purpose
+
+- **The embedding model.** `intfloat/e5-small-v2` is **pretrained and used as shipped**. It is downloaded, not trained here; only the stored example set it compares against is this project's.
+- **The SetFit body and training loop.** The `setfit` library does contrastive fine-tuning over a sentence-transformers backbone. This project supplies the data, the sampling policy and the provenance contract.
+- **ONNX quantization.** The int8 export is produced by the standard toolchain (`ml/browser/export_onnx.py`) and executed by Transformers.js. No custom kernel, no custom quantizer.
+- **Identity.** Supabase Auth issues and signs the JWT. This repo verifies it — HS256 pinned, so `alg: none` and `alg: RS256` are rejected — and never mints one.
+- **Mail access.** `google-api-python-client` for Gmail and `aioimaplib` for iCloud. No hand-rolled IMAP or OAuth transport.
+
+### Planned — not in this build
+
+- **Semantic layers in the cloud.** The deployed Vercel product runs the **rules layer only**, and there is no embedding or SetFit inference on that path. Moving them behind an external inference service is a documented follow-up in `requirements.txt` and `docs/WEB_ARCHITECTURE.md`; nothing is wired.
+- **In-browser inference inside the Applied web app.** The 22.8 MB int8 ONNX build is real and runs in the Hugging Face Space and under `ml/browser/site/`. It does **not** run on `getapplied.vercel.app`: the app's strict CSP forbids the WASM eval and CDN fetch Transformers.js needs, so `/demo` runs layer 1 live in the browser and serves precomputed layer 2 and 3 verdicts.
+- **WebSocket sync.** Vercel's Python runtime does not support it, so sync status is polled. The desktop path had a live `/ws/sync-status` stream; that router was deleted with the rest of the desktop surface, so there is no WebSocket anywhere in the tree now.
+- **Credential rotation.** `user_credentials.key_id` and a multi-key decrypt path are scaffolded. Only key `v1` is active and rotation is not wired.
+- **A mobile client.** `apps/mobile/` is a reserved directory. There is no app in it.
+- **Green ruff and mypy gates.** Both currently report and do not block. See [Testing](#testing).
+
+---
+
+## Licensing and partnership
+
+Applied is **proprietary software, all rights reserved** — see [LICENSE](LICENSE). The source is
+published so that the claims on this page can be checked, not so the software can be taken: no
+licence to use, copy, modify, host, distribute or build on it is granted by its availability here.
+Copies distributed under the repository's earlier licence keep the grant they were given — a
+licence, once given, runs with the copy — and the PRIOR VERSIONS section of the licence file says
+so in terms. Third-party dependencies keep their own licences, which nothing here alters.
+
+**To license Applied, host it, evaluate it for an institution, or talk about a partnership,
+sponsorship or funding**, contact Ayush Yadav at **aesh.03.23@gmail.com**. Permission is granted
+only in writing.
+
+**Contributions.** This is not an open-source project and pull requests are not accepted — the
+licence grants no rights, so there is nothing to contribute under. Bug reports, a claim on this
+page you can show is wrong, and security findings are genuinely wanted: email the address above.
+
+---
+
+## Who makes it
+
+**Ayush Yadav** — sole author and maintainer. Design, full-stack engineering, and ML.
+[github.com/yadava5](https://github.com/yadava5) · aesh.03.23@gmail.com
+
+---
+
+## Documentation
+
+| Doc | What's inside |
+| --- | --- |
+| [System Card](https://getapplied.vercel.app/system-card) | Classifier design, evaluation, limitations, safety notes |
+| [Privacy](https://getapplied.vercel.app/privacy) | What Applied reads, what it stores, where it runs, how to delete it — each claim cited to the file that implements it |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
+| [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
+| [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 28-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
+| [`docs/ML_STRATEGY.md`](docs/ML_STRATEGY.md) | Classifier behaviour, training lifecycle, metadata contract |
+| [`docs/ML_EXECUTION_TRACKER.md`](docs/ML_EXECUTION_TRACKER.md) | Every ML cycle with its measured results — the source for the cascade's 0.9583 |
+| [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) | What a learned layer must beat before it serves real mail, and what puts it back |
+| [`docs/ML_WEEKLY_OPERATIONS.md`](docs/ML_WEEKLY_OPERATIONS.md) · [`docs/ML_MONITORING_RUNBOOK.md`](docs/ML_MONITORING_RUNBOOK.md) | Weekly SOP and monitoring triage |
+| [`docs/RLS-AUDIT-2026-08-03.md`](docs/RLS-AUDIT-2026-08-03.md) | Live row-level-security audit |
+| [`docs/SETUP.md`](docs/SETUP.md) | Local setup and day-to-day development |
+| [`DEPLOY.md`](DEPLOY.md) | Cloud deployment paths (auth, applications API, Gmail OAuth) |
+
+---
+
+## Under the hood
+
+Everything below is for someone reading the code: how Applied is built, how to run it, and where
+each number above comes from. The design write-ups it summarises live in the
+[System Card](https://getapplied.vercel.app/system-card) and in [`docs/`](docs/), which are the
+places to go for depth — this section is a map, not the territory.
+
+It is a monorepo: a Next.js 16 app on Vercel over Supabase Postgres, talking to one FastAPI serverless function that imports `backend/jobtracker/`. The classifier runs its rules layer only in that function, for a budget reason spelled out under [Architecture](#architecture).
+
+> **It used to be two.** Applied began as a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier, and the repository carried both modes over one Python package. The desktop client was de-scoped on 2026-08-12 and deleted, along with a second, unmounted set of FastAPI routers that had no user scoping at all (issue #73). `JOBTRACKER_DEPLOYMENT` still exists and `api/index.py` still forces it to `cloud` — that setting selects Postgres over SQLite and the encrypted-row credential store over the macOS Keychain, so it is load-bearing whether or not a desktop app exists.
+
+> **A note on names.** The product was renamed from JobTracker to Applied. The internal identifiers were not renamed with it, and this README prints them verbatim wherever it gives a path or a command: the Python package is `backend/jobtracker/`, and every environment variable is prefixed `JOBTRACKER_` (`config.py`, `env_prefix="JOBTRACKER_"`). Renaming them would be a migration with no user-visible benefit, so they stayed.
+
+### Architecture
+
+#### One deployment, one package
 
 `JOBTRACKER_DEPLOYMENT` still selects a mode, and `api/index.py` forces it to `cloud` before the app is imported. The table in `docs/WEB_ARCHITECTURE.md` is the source for this diagram.
 
@@ -138,7 +334,7 @@ flowchart TB
 
 The desktop half of this diagram — a SwiftUI app over a local FastAPI process over SQLite and the macOS Keychain, with the full three-layer cascade — was deleted on de-scoping. What remains of it in the package is deliberate: the SQLite paths in `database/connection.py` and the `keyring` import in `credentials/desktop.py` are still reachable under `JOBTRACKER_DEPLOYMENT=desktop`, which is why forcing `cloud` is a gate and not a formality.
 
-### The design decision that shaped the repo
+#### The design decision that shaped the repo
 
 **One classifier package, two import graphs.** The desktop app runs all three layers. The cloud deployment runs the rules layer alone, and that is not a simplification for the README — it is enforced in code.
 
@@ -152,7 +348,7 @@ Three mechanisms hold that line:
 
 The honest consequence: a cloud rules miss collapses to `{category: "other", confidence: 0.0, method: "rules"}`. It does not escalate, and since the desktop client was deleted there is no longer a second surface where the full cascade runs — corrections persist to Postgres and are reviewed in the web app. Layers 2 and 3 remain in the tree, are still exercised by `backend-ci.yml`, and are still what `ml/` trains and evaluates; they are simply not on the request path.
 
-### Data model
+#### Data model
 
 Every tenant table carries `user_id UUID NOT NULL` (Alembic rev `6e64c46d32fd`), keyed to Supabase `auth.users.id`. The column's *default* is a sentinel UUID, `LOCAL_USER_ID` (`database/models.py`), left over from the single-user desktop build — which is why RLS, not application code, is what actually enforces isolation.
 
@@ -239,7 +435,7 @@ erDiagram
 
 `auth_users` is Supabase's `auth.users`; it is not defined by this repo's migrations, and it does not exist under SQLite, where the same columns are plain UUIDs.
 
-### Row-level security, as deployed
+#### Row-level security, as deployed
 
 RLS here is live, not staged. Verified against the production database on 2026-08-03 and re-read for this README against the migrations and `docs/RLS-AUDIT-2026-08-03.md`:
 
@@ -251,13 +447,11 @@ RLS here is live, not staged. Verified against the production database on 2026-0
 - **All 32 owner predicates are `user_id = (SELECT auth.uid())`** after rev `c6_rls_initplan_hoist` — the enumeration policy on `gmail_sync_enrollment` above is the deliberate exception, and it guards a table with no secret in it. This is a planning-time change: bare `auth.uid()` is `STABLE` and re-evaluated once per *row*; the sub-select is hoisted into an `InitPlan` evaluated once per *query*. Measured on a **synthetic** 200,000-row sequential scan in a throwaway `postgres:16` — **not** a production measurement — invocations went 200,001 → 1 and the query 126 ms → 10 ms, with an identical row set. The invocation ratio is the part that holds at any table size; Applied's real tables are far smaller.
 - The migration is a **no-op on SQLite**, so `alembic upgrade head` stays green for the desktop build and for CI.
 
----
-
-## Tech Stack
+### Tech Stack
 
 Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI workflows.
 
-### Web
+#### Web
 
 | Category | Technologies |
 | --- | --- |
@@ -268,7 +462,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **API client** | `openapi-fetch` 0.17 over types generated by `openapi-typescript` 7 |
 | **Testing** | Playwright 1.48+ (18 spec files under `apps/web/tests/e2e/`) |
 
-### Backend
+#### Backend
 
 | Category | Technologies |
 | --- | --- |
@@ -278,7 +472,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Secrets** | `cryptography.fernet` rows in `user_credentials` |
 | **Email** | `google-api-python-client` (Gmail, `gmail.readonly`), `aioimaplib` (iCloud), BeautifulSoup + lxml for parsing |
 
-### ML
+#### ML
 
 | Category | Technologies |
 | --- | --- |
@@ -288,82 +482,14 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Export** | int8 ONNX + Transformers.js (`ml/browser/`), Gradio Space (`ml/demo/`), BentoML service (`ml/bento_service.py`) |
 | **Tracking** | MLflow (`ml/mlruns`, registry alias `production` gated at the 0.95 floor), W&B mirror (offline) |
 
-### Infrastructure
+#### Infrastructure
 
 | Category | Technologies |
 | --- | --- |
 | **Hosting** | Vercel (Next.js + one Python function, `maxDuration` 60), Supabase Postgres, Hugging Face Spaces |
 | **CI** | GitHub Actions — 13 workflows (see [Verify it](#verify-it)) |
 
----
-
-## Classifier evaluation
-
-**The 0.9791 belongs to the rules layer. It is not a whole-system accuracy figure, and the filenames actively mislead on this point.**
-
-The **rules layer** — 220 regex patterns and no model — scores **0.9791 macro-F1** (accuracy 0.9792, 2 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
-
-The trap is that `baseline_hybrid_v3.json` reports 0.9791 too. It does so because it was regenerated under the evaluator's `deterministic` hybrid profile, which calls `set_lite_mode(True)` and blanks `_known_embeddings` — so it measures the deterministic path, which is the regexes. Every metric block in the two files is identical, including both mismatch records; only the `meta` block differs, by `mode`, `hybrid_profile` and timestamp. `benchmark_history.md` says this in its own header. CI runs that profile on purpose, because a gate that consults a stochastic model is a gate that goes red for reasons unrelated to the change under test.
-
-Being fair to the model: on the **v2** set the cascade beat the rules — 0.9843 against 0.9686 macro-F1 (`docs/ML_EXECUTION_TRACKER.md`, Cycle B5). The learned layers are not decoration; they lost on v3.
-
-That comparison is now a measurement rather than a citation. `scripts/cascade_gate.sh` scores the full cascade and the rules layer over the same set in one run, and commits the delta, the per-example exchange and the checkpoint that produced it to `backend/data/evaluation/baseline_cascade_v3.json`. It does **not** run in CI, and the reason is not an omission: no SetFit checkpoint ships in this repository, so a GitHub-hosted runner has nothing to load. `learning-gate.yml` is therefore `workflow_dispatch`, and on a hosted runner it fails naming the directory it searched rather than degrading to the rules layer and reporting that as the cascade. What the number gates — the margin a learned layer has to clear before it may touch real mail, and what puts it back — is [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md).
-
-What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9791 generalizes, and 96 examples is a small sample under any reading.
-
-```bash
-cd backend
-# the exact rules gate CI runs
-python -m jobtracker.scripts.evaluate_classifier \
-  --mode rules \
-  --dataset data/evaluation/classifier_eval_v3.jsonl \
-  --baseline data/evaluation/baseline_rules_v3.json \
-  --tolerance 0.001 --min-macro-f1 0.95
-
-# the deterministic hybrid gate — same numbers, and that is the point
-python -m jobtracker.scripts.evaluate_classifier \
-  --mode hybrid --hybrid-profile deterministic \
-  --dataset data/evaluation/classifier_eval_v3.jsonl \
-  --baseline data/evaluation/baseline_hybrid_v3.json \
-  --tolerance 0.001 --min-macro-f1 0.95
-
-# the full cascade — this is the one that reads 0.9583
-python -m jobtracker.scripts.evaluate_classifier \
-  --mode hybrid --hybrid-profile full \
-  --dataset data/evaluation/classifier_eval_v3.jsonl
-```
-
-The last command prints an `answered by:` line next to the score, and it refuses to report a verdict at all when no semantic layer answered: `_assert_layers_exercised` fails a `full`-profile run whose ML layers never loaded, unless you override it with `--allow-degraded-layers`. That guard exists because a cascade with no SetFit model on disk degrades to rules and reports 0.9791 again — flatteringly, for a classifier that is not running. It is the same failure `--require-semantic` guards in the latency benchmark.
-
----
-
-## Performance
-
-**Per-layer classifier latency.** 96-example v3 set, warm (a warmup pass excludes model load and lazy imports), 3 repetitions — 288 classifications.
-
-| Layer | p50 | p95 | answered |
-| --- | ---: | ---: | ---: |
-| `content_filter` | 0.036 ms | 0.043 ms | 15 |
-| `rules` | **0.176 ms** | 0.241 ms | 174 |
-| `fallback` | 0.262 ms | 21.176 ms | 39 |
-| `setfit` | **17.649 ms** | 37.702 ms | 60 |
-
-The ratio is the result: SetFit costs roughly **100×** the rules layer at p50, and the rules layer alone answers 174 of the 288. That is the cascade doing its job as a measurement rather than an assertion. It is reported per layer because a single mean is a statement about the corpus mix as much as about the code — change the proportion of inputs the regexes catch and the mean moves with no code change. The script uses nearest-rank percentiles deliberately, because numpy's interpolated default disagrees on a sample this small.
-
-**Provenance, stated plainly:** these figures come from the run recorded in commit `2c17470` (2026-08-03). **No results artifact is committed**, and the commit does not record the machine, so treat the absolute milliseconds as machine-dependent and the ratio as the durable claim. Regenerate with:
-
-```bash
-cd backend
-python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --output latency.json
-```
-
-`--require-semantic` fails a run in which no model answered. The cascade degrades to rules when SetFit will not import, and a degraded run reports flatteringly low latency for a classifier that is not actually running.
-
-**Model size.** The SetFit head exports to ONNX at **90,362,391 bytes** float32 and quantizes to **22,843,695 bytes** int8 — measured on `ml/browser/artifacts/model.onnx` and `model_quantized.onnx`, both committed.
-
----
-
-## Testing
+### Testing
 
 **813 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 807 `test_*` functions across 65 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 813 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
@@ -390,51 +516,16 @@ Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 finding
 
 **Dependencies.** A local `pip-audit -r requirements.txt` against the root file — the set that ships to Vercel — reported **0 known vulnerabilities** when the audit ran on 2026-08-03. The CI step is advisory and, because the job's working directory is `backend/`, it resolves `backend/requirements.txt` instead — the full desktop set. It reported **8 known vulnerabilities in 2 packages** (cryptography, transformers) on 2026-08-07, and `transformers` is the tell: it is pinned in `backend/requirements.txt` and appears nowhere in the root file, so the findings cannot be describing the Vercel surface the step's own comment names. Neither figure covers torch, which CI installs out-of-band from the PyTorch CPU index. Use `pip-audit` and not `osv-scanner` against these files: osv-scanner resolves each `>=` floor to its *minimum* and reports the worst case the constraints permit, which overstated this repository by two orders of magnitude.
 
----
+### Getting Started
 
-## Implemented vs delegated vs planned
-
-Being precise about this is the point.
-
-### Implemented — hand-written in this repo
-
-- **The rules engine.** 220 regex patterns across 7 categories (123 strong, 27 weak, 70 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 35 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 19 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
-- **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the correction-to-training-data loop.
-- **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
-- **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
-- **Multi-tenant isolation** — the `user_id` column and composite indexes, the 35 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
-- **The cloud/desktop split** — lazy imports, PEP 562 module `__getattr__`, and the subprocess guard test that proves the heavy stack never enters `sys.modules`.
-- **ML operations** — weekly sparse-label candidate mining with gap-based quotas, drift and confidence monitoring with thresholded alerts, and the alert-issue automation.
-
-### Delegated — on purpose
-
-- **The embedding model.** `intfloat/e5-small-v2` is **pretrained and used as shipped**. It is downloaded, not trained here; only the stored example set it compares against is this project's.
-- **The SetFit body and training loop.** The `setfit` library does contrastive fine-tuning over a sentence-transformers backbone. This project supplies the data, the sampling policy and the provenance contract.
-- **ONNX quantization.** The int8 export is produced by the standard toolchain (`ml/browser/export_onnx.py`) and executed by Transformers.js. No custom kernel, no custom quantizer.
-- **Identity.** Supabase Auth issues and signs the JWT. This repo verifies it — HS256 pinned, so `alg: none` and `alg: RS256` are rejected — and never mints one.
-- **Mail access.** `google-api-python-client` for Gmail and `aioimaplib` for iCloud. No hand-rolled IMAP or OAuth transport.
-
-### Planned — not in this build
-
-- **Semantic layers in the cloud.** The deployed Vercel product runs the **rules layer only**, and there is no embedding or SetFit inference on that path. Moving them behind an external inference service is a documented follow-up in `requirements.txt` and `docs/WEB_ARCHITECTURE.md`; nothing is wired.
-- **In-browser inference inside the Applied web app.** The 22.8 MB int8 ONNX build is real and runs in the Hugging Face Space and under `ml/browser/site/`. It does **not** run on `getapplied.vercel.app`: the app's strict CSP forbids the WASM eval and CDN fetch Transformers.js needs, so `/demo` runs layer 1 live in the browser and serves precomputed layer 2 and 3 verdicts.
-- **WebSocket sync.** Vercel's Python runtime does not support it, so sync status is polled. The desktop path had a live `/ws/sync-status` stream; that router was deleted with the rest of the desktop surface, so there is no WebSocket anywhere in the tree now.
-- **Credential rotation.** `user_credentials.key_id` and a multi-key decrypt path are scaffolded. Only key `v1` is active and rotation is not wired.
-- **A mobile client.** `apps/mobile/` is a reserved directory. There is no app in it.
-- **Green ruff and mypy gates.** Both currently report and do not block. See [Testing](#testing).
-
----
-
-## Getting Started
-
-### Prerequisites
+#### Prerequisites
 
 - Python 3.11+ (CI pins 3.11; `backend/.venv311` is the venv `scripts/generate_api_schema.sh` prefers, not `backend/.venv`)
 - Node.js 22 and pnpm 10, for the web app — the major is load-bearing, not incidental. `pnpm test:unit` imports `.ts` modules straight from `.mjs` test files and runs them on the runtime's built-in type stripping, which needs **22.6 or newer** (and the built-in glob, 21 or newer). On Node 20 those tests do not fail, they refuse to load with `ERR_UNKNOWN_FILE_EXTENSION` — which is how they once existed while no job ran them
 - A Supabase project (Postgres + Auth) for anything past the landing page and `/demo`
 - Internet on first run of the **ML** tooling, to download `intfloat/e5-small-v2`. The web app and the deployed backend never download a model: the cloud path is rules-only
 
-### Web app
+#### Web app
 
 ```bash
 git clone https://github.com/yadava5/applied.git
@@ -447,7 +538,7 @@ pnpm dev                       # http://localhost:3000
 
 The landing page (`/`) and the fixture demo (`/demo`) run with **no backend and no Supabase**, so a review deploy needs only placeholder values — which is exactly what `frontend-ci.yml` supplies. See [`apps/web/README.md`](apps/web/README.md) for the full web setup.
 
-### Backend
+#### Backend
 
 The backend is served by Vercel as a Python function from `api/index.py`; there is no local process to start for normal web work — point `BACKEND_API_URL` at a deployment. To run its suite, or to serve it locally:
 
@@ -463,7 +554,7 @@ JOBTRACKER_DEPLOYMENT=cloud .venv311/bin/python -m uvicorn jobtracker.main_cloud
 
 The full walkthrough — including why `alembic`, `keyring` and `numpy` must be installed by hand — is in [`docs/SETUP.md`](docs/SETUP.md).
 
-### Environment variables
+#### Environment variables
 
 Backend settings use the `JOBTRACKER_` prefix (`backend/jobtracker/config.py`).
 
@@ -494,7 +585,7 @@ Generate a Fernet key with:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-### Commands
+#### Commands
 
 | Command | What it does |
 | --- | --- |
@@ -508,9 +599,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `./scripts/monitoring_cycle.sh` | Drift and confidence monitoring report |
 | `python3 scripts/readme_facts.py` | Verify every number in this README against the code (`--write` to repair, `--record` to re-measure the suite) |
 
----
+<details>
+<summary><strong>Project structure</strong> — where each of the above lives</summary>
 
-## Project Structure
 
 ```
 applied/
@@ -546,9 +637,9 @@ applied/
 └── .github/workflows/       # 13 workflows
 ```
 
----
+</details>
 
-## Technical Decisions
+### Technical Decisions
 
 **Rules first, model last.** Ordering the cascade cheapest-first is not only a latency decision; it is an explainability one. A regex hit can be shown to a user as the phrase that matched. The measured cost — 0.176 ms against 17.649 ms at p50 — is what makes the ordering worth the extra code path, and the review queue is what catches the cases where the cheap layer was confidently wrong. The tradeoff is real: the rules are hand-maintained and every new ATS phrasing is a code change.
 
@@ -556,9 +647,7 @@ applied/
 
 **Deployment mode as an import-graph decision.** The alternative to splitting the classifier by deployment was a single build that carries torch everywhere — which does not fit in a Vercel function — or two divergent packages, which drift. Applied keeps one package and makes the divergence a property of the import graph, then tests that property in a subprocess. The cost is honesty overhead: the cloud is a weaker classifier than the desktop, and every surface that talks about accuracy has to say which one it means.
 
----
-
-## Verify it
+### Verify it
 
 Every number above terminates in something you can open.
 
@@ -588,41 +677,6 @@ Every number above terminates in something you can open.
 **Third-party score.** [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/yadava5/applied) grades this repository against 18 supply-chain checks and publishes the result. It is computed by someone else, which is the entire value: a number this project calculates about itself is a claim. Several of the 18 grade repository *settings* that no file in the repo can turn on, so the score moving up over time is a better signal than wherever it starts.
 
 **Security posture.** `docs/RLS-AUDIT-2026-08-03.md` is the read of the live database, including a retracted finding it kept rather than deleted, and `docs/harden-2026-08-03.sql` is the applied fix with its verification query.
-
----
-
-## Documentation
-
-| Doc | What's inside |
-| --- | --- |
-| [System Card](https://getapplied.vercel.app/system-card) | Classifier design, evaluation, limitations, safety notes |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and component boundaries |
-| [`docs/WEB_ARCHITECTURE.md`](docs/WEB_ARCHITECTURE.md) | Deployment modes, cloud auth flow, credential storage |
-| [`docs/API_SPEC.md`](docs/API_SPEC.md) | Backend REST contract — auth, the 28-route table, and the shapes worth stating in prose. The machine-checked authority is `apps/web/lib/api/schema.d.ts`, generated from the app and gated by `e2e-ci.yml` |
-| [`docs/ML_STRATEGY.md`](docs/ML_STRATEGY.md) | Classifier behaviour, training lifecycle, metadata contract |
-| [`docs/ML_EXECUTION_TRACKER.md`](docs/ML_EXECUTION_TRACKER.md) | Every ML cycle with its measured results — the source for the cascade's 0.9583 |
-| [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) | What a learned layer must beat before it serves real mail, and what puts it back |
-| [`docs/ML_WEEKLY_OPERATIONS.md`](docs/ML_WEEKLY_OPERATIONS.md) · [`docs/ML_MONITORING_RUNBOOK.md`](docs/ML_MONITORING_RUNBOOK.md) | Weekly SOP and monitoring triage |
-| [`docs/RLS-AUDIT-2026-08-03.md`](docs/RLS-AUDIT-2026-08-03.md) | Live row-level-security audit |
-| [`docs/SETUP.md`](docs/SETUP.md) | Local setup and day-to-day development |
-| [`DEPLOY.md`](DEPLOY.md) | Cloud deployment paths (auth, applications API, Gmail OAuth) |
-
----
-
-## Author
-
-**Ayush Yadav** — sole author and maintainer. Design, full-stack engineering, and ML.
-[github.com/yadava5](https://github.com/yadava5)
-
----
-
-## License
-
-Applied is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE).
-
-You may use, run, self-host, study, and modify it for any **noncommercial** purpose. **Commercial use of any kind requires a separate license** — contact Ayush Yadav at **aesh.03.23@gmail.com** to discuss commercial licensing or sponsorship.
-
-See the [LICENSE](LICENSE) file for the full terms.
 
 ---
 
