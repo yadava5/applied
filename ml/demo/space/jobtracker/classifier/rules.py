@@ -99,8 +99,8 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # rejection's subject line reads "Thank you from <Company>" and one
             # +3 body match can never clear the 0.85 gate. See the backend copy
             # for the full note.
-            r"not (be )?(proceeding|continuing) with",
-            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             # Replaces `move(d)? forward with other candidates` and
@@ -458,8 +458,8 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
-            r"not (be )?(proceeding|continuing) with",
-            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",

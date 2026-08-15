@@ -6,7 +6,10 @@ fetch uses:
 
 - ``build_gmail_query`` — range + scope → Gmail query string.
 - ``_collect_page`` — one ``messages.list`` page → batched
-  ``messages.get(format=metadata)`` → ordered, parsed messages + cursor.
+  ``messages.get(format=full)`` → ordered, parsed messages + cursor, plus the
+  in-flight body text the classifier reads and nothing retains (see
+  ``test_body_is_never_persisted.py``). This said ``format=metadata`` until the
+  fetch changed.
 
 The batching (≤ ``gmail_batch_size`` per ``new_batch_http_request``), the
 newest-first ordering, dropped-sub-request tolerance, and the 500-id list
@@ -85,7 +88,16 @@ class _Messages:
             listing["resultSizeEstimate"] = self._s.result_size_estimate
         return _Exec(listing)
 
-    def get(self, *, userId: str, id: str, format: str, metadataHeaders):  # noqa: A002,N803
+    def get(self, *, userId: str, id: str, format: str, metadataHeaders=None):  # noqa: A002,N803
+        # The format is RECORDED rather than ignored. It used to be pinned by
+        # making ``metadataHeaders`` a required argument, which broke loudly
+        # when the client moved to ``format="full"`` — the right instinct, but
+        # it could only ever say "not metadata any more", never which format
+        # was asked for. ``get_formats`` lets a test assert the actual value,
+        # which is what ``test_body_is_never_persisted`` needs: reading bodies
+        # is the whole point there, and a silent fallback to metadata would
+        # make its absence-assertions pass for the wrong reason.
+        self._s.get_formats.append(format)
         return _GetRequest(id)
 
 
@@ -184,6 +196,8 @@ class FakeService:
         self.metadata = metadata
         self.list_calls: list[dict] = []
         self.batch_sizes: list[int] = []
+        # Every ``format`` a messages.get was built with, in order.
+        self.get_formats: list[str] = []
         # ids whose metadata sub-request fails outright (vs. answering empty)
         self.batch_errors = batch_errors or set()
         # Gmail's own ``resultSizeEstimate``; ``None`` omits the field entirely.

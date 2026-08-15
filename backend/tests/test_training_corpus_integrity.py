@@ -107,6 +107,9 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", CLIENT_SECRET)
     monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", REDIRECT_URI)
     monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", WEB_APP_URL)
+    # See the same pair in `test_gmail_oauth_cloud.py`: the return host must be
+    # one this deployment trusts, so the fixture declares it.
+    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test")
 
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module

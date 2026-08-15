@@ -45,6 +45,13 @@ Security properties
   state's TTL.
 - **No open redirect**: the post-callback destination is the operator-
   configured ``web_app_url``, never a value taken from the request.
+- **And it must be OUR host**: that configured value is additionally checked
+  against ``config.trusted_web_hosts`` — the same list CORS is built from —
+  because "not attacker-controlled" turned out not to imply "correct". A
+  stale alias of our own project satisfied the open-redirect property
+  perfectly and still landed every user signed out, since cookies are scoped
+  to a hostname. See ``_web_app_base`` and
+  ``tests/test_gmail_oauth_return_host.py``.
 - **Revocable**: disconnect calls Google's revocation endpoint and then
   deletes the local ciphertext.
 """
@@ -72,7 +79,11 @@ from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
 
 from jobtracker.auth import current_user
-from jobtracker.config import settings
+from jobtracker.config import (
+    configured_web_app_host,
+    settings,
+    web_app_host_is_trusted,
+)
 from jobtracker.credentials.cloud import (
     CredentialEncryptionError,
     _require_fernet,
@@ -583,6 +594,71 @@ def _build_flow(code_verifier: str | None = None) -> Flow:
     return flow
 
 
+def _web_app_base() -> str:
+    """The base URL to bounce the browser back to, or raise.
+
+    WHY THIS IS NOT JUST ``settings.web_app_url.rstrip("/")`` ANY MORE
+    -----------------------------------------------------------------
+    It was, and it sent every Gmail connect/disconnect to the wrong hostname
+    for weeks. ``JOBTRACKER_WEB_APP_URL`` still named
+    ``jobtracker-web-five.vercel.app`` — a pre-rename alias of the web project
+    — long after the app became ``getapplied.vercel.app``. Both aliases serve
+    the same deployment, so every page rendered correctly and nothing looked
+    broken. But **cookies are scoped to a host**: the user's Supabase session
+    exists on the name they signed in on and nowhere else. Arriving on the
+    other alias is arriving signed out, so the proxy did its job and sent them
+    to ``/login`` — after a successful Gmail connect, with a live session, from
+    a click that never touched sign-in. Reproduced against production with no
+    credentials; the two curls are quoted in ``config.trusted_web_hosts``.
+
+    THE PROPERTY THIS PRESERVES. The destination still comes from operator
+    configuration and NEVER from the request — that is the open-redirect
+    guarantee in this module's header and it is untouched. What is added is the
+    other half: the configured value must name a host this deployment already
+    trusts as its front end (the same list CORS is built from). A hostname that
+    is merely *reachable* is not the same as the hostname the session is on,
+    and that distinction is the whole bug.
+
+    WHY IT RAISES RATHER THAN GUESSING. Falling back to a host we picked would
+    make a misconfiguration invisible again, one layer down. Worse, the old
+    code's own fallback was silent and actively harmful: with ``web_app_url``
+    unset, ``(None or "").rstrip("/")`` yields ``""`` and the target becomes
+    the RELATIVE ``/settings?gmail=connected``, which the browser resolves
+    against the API's host — stranding the user on the backend, which has no
+    such page. 503 with a message naming the offending host is a deploy problem
+    an operator can read and fix in one edit.
+    """
+
+    configured = (settings.web_app_url or "").strip().rstrip("/")
+    if not configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL is not set, "
+                "so there is no web app to return the browser to."
+            ),
+        )
+
+    if not web_app_host_is_trusted():
+        host = configured_web_app_host() or ""
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL points at "
+                f"'{host}', which this deployment does not recognise as a host "
+                "it serves the web app on. Returning the browser there would "
+                "land it on a hostname that does not carry the user's session, "
+                "i.e. signed out. TWO variables have to agree, and this API "
+                "runs on a different Vercel project from the web app so it "
+                "cannot infer the second: set JOBTRACKER_WEB_APP_URL to the "
+                f"origin the app is served from, AND add '{host}' to "
+                "JOBTRACKER_CORS_ALLOWED_HOSTS so this deployment knows it is "
+                "ours. See config.trusted_web_hosts."
+            ),
+        )
+    return configured
+
+
 def _web_redirect(outcome: str) -> RedirectResponse:
     """Redirect the browser back to the web app's settings page.
 
@@ -590,7 +666,7 @@ def _web_redirect(outcome: str) -> RedirectResponse:
     ``error``); no token or email ever rides in the URL.
     """
 
-    base = (settings.web_app_url or "").rstrip("/")
+    base = _web_app_base()
     target = f"{base}/settings?gmail={urllib.parse.quote(outcome)}"
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
 
@@ -1057,7 +1133,15 @@ async def gmail_inbox(
     verdicts: list[InboxVerdict] = []
     summary = dict.fromkeys(pipeline.CANONICAL_CATEGORIES, 0)
     for msg in page.messages:
-        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        # The body if the fetch produced one, else the snippet. Read here and
+        # discarded: the ``InboxVerdict`` built below carries the SNIPPET, so
+        # the body never reaches the response. See
+        # ``tests/test_body_is_never_persisted.py``.
+        result = await classifier.classify(
+            msg.subject,
+            page.bodies.get(msg.message_id) or msg.snippet,
+            msg.sender_email,
+        )
         category = result.category.value
         summary[category] = summary.get(category, 0) + 1
         verdicts.append(
@@ -1100,9 +1184,10 @@ async def gmail_inbox(
         unreadable=page.unreadable,
         result_size_estimate=page.result_size_estimate,
         note=(
-            "Classified from subject + Gmail snippet using the rules-only cloud "
-            "classifier (gmail.readonly). Full-body + SetFit classification runs "
-            "in the desktop app."
+            "Classified from the subject and the message body using the "
+            "rules-only cloud classifier (gmail.readonly). The body is read to "
+            "classify and discarded — only Gmail's own short snippet is ever "
+            "stored. SetFit classification runs in the desktop app."
         ),
     )
 
@@ -1230,12 +1315,30 @@ class _ScanOutcome:
     result_size_estimate: int | None = None
 
 
-async def _classify_messages(messages: list[Any], classifier: Any, pipeline: Any) -> list[Any]:
-    """Run each fetched message through the classifier into a PipelineItem."""
+async def _classify_messages(
+    messages: list[Any],
+    classifier: Any,
+    pipeline: Any,
+    bodies: dict[str, str] | None = None,
+) -> list[Any]:
+    """Run each fetched message through the classifier into a PipelineItem.
 
+    ``bodies`` is the in-flight body text from the fetch (see
+    ``gmail_client.MessagePage.bodies``). It is READ HERE AND NOWHERE ELSE:
+    the ``PipelineItem`` built below carries ``snippet``, never ``body``, so
+    nothing downstream — persistence, the API response, ``training_data`` — can
+    see it. ``tests/test_body_is_never_persisted.py`` is the enforcement.
+
+    Falls back to the snippet when a message produced no body text, so a
+    message Gmail answered with headers only classifies exactly as it did
+    before rather than as an empty string.
+    """
+
+    bodies = bodies or {}
     items: list[Any] = []
     for msg in messages:
-        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        text = bodies.get(msg.message_id) or msg.snippet
+        result = await classifier.classify(msg.subject, text, msg.sender_email)
         items.append(
             pipeline.PipelineItem(
                 message_id=msg.message_id,
@@ -1339,7 +1442,9 @@ async def _full_scan(
             # a partial read of the window and must not be called complete.
             stopped_by = STOPPED_DISCONNECTED
             break
-        items.extend(await _classify_messages(page.messages, classifier, pipeline))
+        items.extend(
+            await _classify_messages(page.messages, classifier, pipeline, page.bodies)
+        )
         scanned += len(page.messages)
         unreadable += page.unreadable
         if page.result_size_estimate is not None:
@@ -1409,7 +1514,7 @@ async def _incremental_scan(
     )
     if page is None or not page.usable:
         return None
-    items = await _classify_messages(page.messages, classifier, pipeline)
+    items = await _classify_messages(page.messages, classifier, pipeline, page.bodies)
     return _ScanRead(
         items=items,
         scanned=len(page.messages),
