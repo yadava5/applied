@@ -110,8 +110,16 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # you from Palantir Technologies". One body match can never reach
             # 0.90. Two can — which is the only way this category clears a gate
             # that acknowledgements clear from their subject line alone.
-            r"not (be )?(proceeding|continuing) with",
-            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
+            #
+            # The contraction arm is not decoration either. Supernova's real
+            # rejection says "it is unfortunate that we won't be proceeding
+            # with your application" — and with only the literal "not" spelling
+            # here, reading the whole body still classified it `applied`. That
+            # is the same defect `(won't|will not) be advancing` below already
+            # records, in the mirror direction: whichever spelling gets written
+            # first, the other one scores zero. Both inflections, always.
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             # Replaces `move(d)? forward with other candidates` and
@@ -469,8 +477,8 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
-            r"not (be )?(proceeding|continuing) with",
-            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with",
+            r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",

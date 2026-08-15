@@ -1078,7 +1078,15 @@ async def gmail_inbox(
     verdicts: list[InboxVerdict] = []
     summary = dict.fromkeys(pipeline.CANONICAL_CATEGORIES, 0)
     for msg in page.messages:
-        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        # The body if the fetch produced one, else the snippet. Read here and
+        # discarded: the ``InboxVerdict`` built below carries the SNIPPET, so
+        # the body never reaches the response. See
+        # ``tests/test_body_is_never_persisted.py``.
+        result = await classifier.classify(
+            msg.subject,
+            page.bodies.get(msg.message_id) or msg.snippet,
+            msg.sender_email,
+        )
         category = result.category.value
         summary[category] = summary.get(category, 0) + 1
         verdicts.append(
@@ -1121,9 +1129,10 @@ async def gmail_inbox(
         unreadable=page.unreadable,
         result_size_estimate=page.result_size_estimate,
         note=(
-            "Classified from subject + Gmail snippet using the rules-only cloud "
-            "classifier (gmail.readonly). Full-body + SetFit classification runs "
-            "in the desktop app."
+            "Classified from the subject and the message body using the "
+            "rules-only cloud classifier (gmail.readonly). The body is read to "
+            "classify and discarded — only Gmail's own short snippet is ever "
+            "stored. SetFit classification runs in the desktop app."
         ),
     )
 
@@ -1251,12 +1260,30 @@ class _ScanOutcome:
     result_size_estimate: int | None = None
 
 
-async def _classify_messages(messages: list[Any], classifier: Any, pipeline: Any) -> list[Any]:
-    """Run each fetched message through the classifier into a PipelineItem."""
+async def _classify_messages(
+    messages: list[Any],
+    classifier: Any,
+    pipeline: Any,
+    bodies: dict[str, str] | None = None,
+) -> list[Any]:
+    """Run each fetched message through the classifier into a PipelineItem.
 
+    ``bodies`` is the in-flight body text from the fetch (see
+    ``gmail_client.MessagePage.bodies``). It is READ HERE AND NOWHERE ELSE:
+    the ``PipelineItem`` built below carries ``snippet``, never ``body``, so
+    nothing downstream — persistence, the API response, ``training_data`` — can
+    see it. ``tests/test_body_is_never_persisted.py`` is the enforcement.
+
+    Falls back to the snippet when a message produced no body text, so a
+    message Gmail answered with headers only classifies exactly as it did
+    before rather than as an empty string.
+    """
+
+    bodies = bodies or {}
     items: list[Any] = []
     for msg in messages:
-        result = await classifier.classify(msg.subject, msg.snippet, msg.sender_email)
+        text = bodies.get(msg.message_id) or msg.snippet
+        result = await classifier.classify(msg.subject, text, msg.sender_email)
         items.append(
             pipeline.PipelineItem(
                 message_id=msg.message_id,
@@ -1360,7 +1387,9 @@ async def _full_scan(
             # a partial read of the window and must not be called complete.
             stopped_by = STOPPED_DISCONNECTED
             break
-        items.extend(await _classify_messages(page.messages, classifier, pipeline))
+        items.extend(
+            await _classify_messages(page.messages, classifier, pipeline, page.bodies)
+        )
         scanned += len(page.messages)
         unreadable += page.unreadable
         if page.result_size_estimate is not None:
@@ -1430,7 +1459,7 @@ async def _incremental_scan(
     )
     if page is None or not page.usable:
         return None
-    items = await _classify_messages(page.messages, classifier, pipeline)
+    items = await _classify_messages(page.messages, classifier, pipeline, page.bodies)
     return _ScanRead(
         items=items,
         scanned=len(page.messages),
