@@ -106,11 +106,24 @@ export interface CorrectionResult extends ScanState {
  * whole-set analysis from `POST /gmail/pipeline`, not a tally of the rendered
  * rows, so it has to be moved deliberately rather than recomputed.
  *
- * `needs_review` is cleared because a human has now reviewed it; `confidence`
- * is left alone, exactly as the backend leaves `classification_confidence`
- * alone. The number was the machine's report of its own certainty and stays
- * true as that — overwriting it with 1.0 would put a claim the classifier
- * never made behind the user's label.
+ * `needs_review` is cleared because a human has now reviewed it, and
+ * `confidence` is CLEARED — it used to be left alone, with the reasoning that
+ * the number stayed true as the machine's report of its own certainty.
+ *
+ * It does not stay true, because nothing in the row says it belongs to the
+ * machine. The figure is drawn by `GateMeter` immediately beside the category
+ * chip, which now holds the USER's category, and beside the words "corrected by
+ * you" — so a row where the reader chose `rejection` reads "rejection · 75% ·
+ * corrected by you", and the 75% was the classifier's certainty about
+ * `applied`. Rendered next to a verdict, a confidence figure is a claim about
+ * THAT verdict; keeping it re-attributes an old number to a new label.
+ *
+ * The old comment was right about the other half and it still stands: the fix
+ * is not 1.0. That would put a claim of total certainty, on the same scale and
+ * the same meter, behind a label that was never scored at all. A human decision
+ * carries no probability, so it carries no number — `null`, and the render
+ * sites draw nothing. This mirrors the backend, which now also nulls
+ * `classification_confidence` on a correction (`cloud/applications.py`).
  */
 export function applyVerdictCorrection(
   state: ScanState,
@@ -124,7 +137,7 @@ export function applyVerdictCorrection(
 
   const verdicts = state.verdicts.map((v) =>
     v.message_id === messageId
-      ? { ...v, category, needs_review: false, user_corrected: true }
+      ? { ...v, category, confidence: null, needs_review: false, user_corrected: true }
       : v,
   );
 

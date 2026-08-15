@@ -47,6 +47,7 @@ from jobtracker.database.models import (
     DEFAULT_APPLICATION_STATUS,
     Application,
     ApplicationStatus,
+    ClassificationMethod,
     Contact,
     Email,
     EmailCategory,
@@ -2573,6 +2574,27 @@ async def classify_review_item(
     email.classified_as = category
     email.is_reviewed = True
     email.user_corrected = True
+    # A human decision is not a probabilistic verdict, so it carries no
+    # probability. These two lines used to be absent, and the row kept the
+    # confidence and method of the verdict it had just replaced — the Inbox
+    # drew "rejection · 75% · corrected by you", where 75% was the machine's
+    # certainty about a DIFFERENT category. That is the ``classified_as`` defect
+    # family: a stored value that forges a decision nobody made.
+    #
+    # NULL and not 1.0. 1.0 is a claim of total certainty on the same 0–1 scale
+    # the classifier reports on, drawn by the same meter, so it re-forges the
+    # thing this removes — it merely moves the lie from 75% to 100%. NULL says
+    # what is true: no probabilistic verdict exists for this row, and every
+    # reader already treats the column as ``Optional`` (see
+    # ``MailMessageResponse.confidence`` and ``FiledMailList``'s
+    # ``typeof === "number"`` guard, both of which render nothing for null).
+    #
+    # Nothing selects corrected rows BY confidence, so NULL cannot strand them:
+    # ``weekly_labeling_workflow`` and ``generate_ml_monitoring_report`` both
+    # filter ``user_corrected.is_(False)`` before they ever look at the number,
+    # and ``api/classification.py``'s seed and needs-review queries do the same.
+    email.classification_confidence = None
+    email.classification_method = ClassificationMethod.USER
 
     result: dict[str, object] = {
         "classified_as": category.value,
@@ -2702,6 +2724,14 @@ async def _settle_thread_siblings(
     for sibling in siblings:
         sibling.is_reviewed = True
         sibling.classified_as = category
+        # Same reasoning as the classified message itself: the category on this
+        # row no longer came from the classifier, so the classifier's confidence
+        # in its own overwritten verdict describes nothing here either. The
+        # method records what produced the LABEL (the user, transitively through
+        # the thread); ``user_corrected`` stays False because it records whether
+        # a human read THIS message, and nobody did.
+        sibling.classification_confidence = None
+        sibling.classification_method = ClassificationMethod.USER
         if isinstance(application_id, int):
             sibling.application_id = application_id
         session.add(sibling)

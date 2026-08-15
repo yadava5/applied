@@ -173,15 +173,57 @@ test("a correction moves the ROW and the COUNTS together", () => {
   );
 });
 
-test("the machine's confidence is left alone — the user's label is not a 100% classifier", () => {
+test("a corrected row carries no confidence — the user's label was never scored", () => {
+  // This test used to assert the opposite (`confidence` unchanged at 0), on the
+  // reasoning that the number stayed true as the machine's own report. It does
+  // not stay true, because nothing in the row says it belongs to the machine:
+  // `GateMeter` and the percentage column sit immediately beside the category
+  // chip, which now holds the USER's category, and beside "corrected by you".
+  // The owner's Inbox drew "rejection · 75% · corrected by you", where 75% was
+  // the classifier's certainty about `applied`.
   const next = applyVerdictCorrection(
     { verdicts: [ASSESSMENT_CALLED_OTHER], summary: { other: 1 } },
     "m-1",
     "assessment",
   );
 
-  assert.equal(next.verdicts[0].confidence, 0);
+  assert.equal(next.verdicts[0].confidence, null);
+  // `method` is deliberately NOT rewritten here. This state is client-side only
+  // and never persisted; the backend stamps `classification_method = "user"` on
+  // the row it stores, and inventing a second vocabulary in the browser would
+  // be one more thing to keep in step.
   assert.equal(next.verdicts[0].method, "rules");
+});
+
+test("the correction does not write 1.0 instead of clearing the number", () => {
+  // The other way to get this wrong. 1.0 is a claim of total certainty on the
+  // classifier's own scale, drawn by the classifier's own meter, behind a label
+  // nothing scored — the same forgery at a different number.
+  const next = applyVerdictCorrection(
+    { verdicts: [{ ...ASSESSMENT_CALLED_OTHER, confidence: 0.75 }], summary: { other: 1 } },
+    "m-1",
+    "assessment",
+  );
+
+  assert.equal(next.verdicts[0].confidence, null);
+  assert.notEqual(next.verdicts[0].confidence, 1);
+});
+
+test("a corrected row can still be corrected again — the payload just omits the number", () => {
+  // `scanMessagePayload` guards on `typeof === "number"`, so a null confidence
+  // drops the field rather than sending `null` at a `float | None` the endpoint
+  // would still accept. The re-correction lands on a row that already exists,
+  // which the backend updates in place, so no verdict is re-minted from it.
+  const next = applyVerdictCorrection(
+    { verdicts: [ASSESSMENT_CALLED_OTHER], summary: { other: 1 } },
+    "m-1",
+    "assessment",
+  );
+  const payload = scanMessagePayload(next.verdicts[0]);
+
+  assert.ok(payload, "a dated row must still yield a payload after correction");
+  assert.equal("confidence" in payload, false);
+  assert.equal(payload.sender_email, ASSESSMENT_CALLED_OTHER.sender_email);
 });
 
 test("the last message of a category takes its chip with it", () => {

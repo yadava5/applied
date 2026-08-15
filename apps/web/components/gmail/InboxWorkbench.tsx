@@ -140,13 +140,27 @@ function VerdictRow({
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
         <span className="truncate">{meta.label}</span>
       </span>
-      <GateMeter confidence={v.confidence} className="hidden sm:inline-block" />
-      <span
-        className="tabular w-10 text-right font-mono text-[11px]"
-        style={{ color: v.needs_review ? "var(--amber)" : "var(--green)" }}
-      >
-        {pct(v.confidence)}
-      </span>
+      {/* A verdict the reader replaced carries no confidence — see
+          `applyVerdictCorrection`. The slots keep their widths so the meters
+          stay a column rather than a scatter, and the em-dash says "no figure"
+          where a percentage would otherwise be read as certainty about the
+          reader's own label. */}
+      {typeof v.confidence === "number" ? (
+        <>
+          <GateMeter confidence={v.confidence} className="hidden sm:inline-block" />
+          <span
+            className="tabular w-10 text-right font-mono text-[11px]"
+            style={{ color: v.needs_review ? "var(--amber)" : "var(--green)" }}
+          >
+            {pct(v.confidence)}
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="hidden h-1 w-14 shrink-0 sm:inline-block" aria-hidden />
+          <span className="tabular w-10 text-right font-mono text-[11px] text-dim">—</span>
+        </>
+      )}
       {v.needs_review ? (
         <span className="rounded-full border border-review/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-review">
           review

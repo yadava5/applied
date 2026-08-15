@@ -26,7 +26,14 @@ export interface InboxVerdict {
   sender_email: string;
   sender_name: string | null;
   category: string;
-  confidence: number;
+  /**
+   * The classifier's certainty about `category`, or `null` once a human has
+   * replaced `category` with their own — a decision nobody scored, so there is
+   * no number to show. The mine always sends one; only
+   * `applyVerdictCorrection` clears it. Render sites must guard on
+   * `typeof === "number"` rather than assume a figure is present.
+   */
+  confidence: number | null;
   method: string;
   needs_review: boolean;
   /** ISO-8601 receipt time (Date header), or null if unparseable. */
