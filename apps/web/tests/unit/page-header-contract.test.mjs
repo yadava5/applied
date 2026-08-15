@@ -139,6 +139,56 @@ test("PageHeader is the sign-out it promises to be", () => {
   assert.match(source, /useSignOut\(\)/, "PageHeader's Sign out no longer ends the session");
 });
 
+test("the header is PARKED, so sign-out cannot go below the fold", () => {
+  // "Reachable" is not "present". The bar this component replaced (`TopBar`)
+  // sat outside `<main>` and never moved; this one lives inside the scroll
+  // pane, and in flow it reached top -176 on /import and -1534 on /settings at
+  // 1024 — sign-out unreachable without scrolling back up, on the two routes
+  // the complaint named. These are one mechanism, not a set of preferences:
+  // `sticky` + `top-0` parks the row at y=16 — the board's own line, because
+  // the offset insets from the scrollport's CONTENT box and `<main>`'s `py-4`
+  // is already that 16 — so it never jumps; the background is what stops
+  // content showing through it; and `before:bottom-full` covers the 16px above
+  // it, measured leaking a card's sliced top edge without it. `top-4` is the
+  // tempting wrong value and puts the row 16px below the board's line. Drop any
+  // one of these and the fix is cosmetic.
+  const source = code(read("components", "shell", "PageHeader.tsx"));
+  for (const utility of [
+    "lg:sticky",
+    "lg:top-0",
+    "lg:bg-background",
+    "lg:before:bottom-full",
+    "lg:before:bg-background",
+  ]) {
+    assert.ok(
+      source.includes(utility),
+      `PageHeader lost \`${utility}\` — the session edge scrolls out of reach on ` +
+        `the flow pages (/settings, /import) without it`,
+    );
+  }
+});
+
+test("the scroll pane clears the parked row for anchor jumps", () => {
+  // The other half, and the reason Settings' six sections need no `scroll-mt`
+  // edit: the SCROLLPORT declares how much of itself is covered. Scoped by
+  // `:has()` so /privacy — in the shell, no header row — keeps its own jumps.
+  const frame = code(read("components", "shell", "AppShellFrame.tsx"));
+  assert.match(
+    frame,
+    /lg:has-\[\[data-page-header\]\]:scroll-pt-14/,
+    "<main> no longer reserves room under a parked PageHeader, so a jump to a " +
+      "Settings section lands with its heading underneath the row",
+  );
+  // And the rail that parks in the same scrollport has to clear it too.
+  const nav = code(read("components", "settings", "SettingsNav.tsx"));
+  assert.match(
+    nav,
+    /inShell \? "lg:top-14" : "lg:top-1"/,
+    "SettingsNav's sticky offset no longer distinguishes the shell's scrollport " +
+      "from the standalone twin's — in the shell its first links park under the header",
+  );
+});
+
 // --- The contract ------------------------------------------------------------
 
 test("every route that hides the top bar renders its own header with a sign-out", () => {
