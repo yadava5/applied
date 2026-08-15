@@ -61,6 +61,45 @@ const SESSION = {
 /** The code that makes the stubbed exchange fail, for the error branches. */
 export const FAILING_CODE = "code-that-does-not-exchange";
 
+/** The three cookie names a PKCE flow start writes, for this storage key. */
+export const LEGACY_VERIFIER = `${STORAGE_KEY}-code-verifier`;
+export const FLOW_INDEX = `${STORAGE_KEY}-flows-code-verifier`;
+export const slotFor = (flowId) => `${STORAGE_KEY}-flow-${flowId}-code-verifier`;
+
+/**
+ * The verifier cookies a browser holds after starting `flows` in order, the
+ * last one being the flow the callback is about to exchange (#321).
+ *
+ * Built by running the INSTALLED library's own `applyServerStorage` over the
+ * storage keys auth-js's `storePKCEVerifier` writes, rather than by hand: the
+ * property the fix turns on is that the flow slot and the fixed legacy key
+ * carry BYTE-IDENTICAL `base64-…` values, and that has to come out of the real
+ * encoder or the test only asserts what this file believes.
+ *
+ * `storePKCEVerifier` writes the slot, then the index of pending ids, then
+ * dual-writes the newest verifier to the fixed key — which is the key, and the
+ * only key, a server-side exchange can read.
+ */
+export async function mintVerifierCookies(flows) {
+  const setItems = { [FLOW_INDEX]: JSON.stringify(flows.map((f) => f.flowId)) };
+  for (const { flowId, verifier } of flows) {
+    setItems[slotFor(flowId)] = JSON.stringify(verifier);
+  }
+  setItems[LEGACY_VERIFIER] = JSON.stringify(flows.at(-1).verifier);
+
+  const minted = [];
+  await applyServerStorage(
+    {
+      getAll: () => [],
+      setAll: (cookies) => minted.push(...cookies),
+      setItems,
+      removedItems: {},
+    },
+    STORAGE,
+  );
+  return minted.map(({ name, value }) => ({ name, value }));
+}
+
 /** The two handlers under test, and the query each needs to reach the exchange. */
 export const CALLBACK_ROUTES = [
   {
@@ -101,14 +140,15 @@ export async function libraryEmission() {
  * A `next/headers` cookie store that behaves like a Route Handler's: writes
  * succeed and are recorded.
  */
-function cookieJar() {
-  const jar = new Map();
+function cookieJar(initial = []) {
+  const jar = new Map(initial.map(({ name, value }) => [name, value]));
   const writes = [];
   return {
     getAll: () => [...jar].map(([name, value]) => ({ name, value })),
     set(name, value, options) {
       writes.push({ name, value, options });
-      jar.set(name, value);
+      if (options?.maxAge === 0) jar.delete(name);
+      else jar.set(name, value);
     },
     writes,
   };
@@ -175,16 +215,24 @@ async function loadRoute(file) {
  * the ordering that matters: `setAll` fires while the handler is still deciding
  * what to return, exactly as it does in production.
  */
-export async function runCallback(route, { code = "valid-code" } = {}) {
+export async function runCallback(
+  route,
+  { code = "valid-code", cookies = [] } = {},
+) {
   const { NextRequest } = await import("next/server.js");
   const { GET } = await loadRoute(route.file);
 
-  const store = cookieJar();
+  const store = cookieJar(cookies);
   globalThis.__callbackCookieStore = store;
   globalThis.__callbackSupabaseStub = (_url, _key, options) => ({
     auth: {
       async exchangeCodeForSession(authCode) {
         if (authCode === FAILING_CODE) {
+          // Nothing is flushed. Measured against the installed packages: a
+          // failed exchange buffers the legacy verifier's removal but emits
+          // only INITIAL_SESSION, which is not an event `createServerClient`
+          // applies storage on — so NO Set-Cookie of any kind leaves here.
+          // The route is the only thing that can clean up after this (#321).
           return {
             data: { session: null, user: null },
             error: { message: "invalid flow state", name: "AuthApiError" },
@@ -196,7 +244,15 @@ export async function runCallback(route, { code = "valid-code" } = {}) {
             setAll: (cookies, headers) =>
               options.cookies.setAll(cookies, headers),
             setItems: { [STORAGE_KEY]: JSON.stringify(SESSION) },
-            removedItems: {},
+            // What `removePKCEVerifier` asks for with no flow id — the fixed
+            // key alone — flushed on SIGNED_IN. The flow slot and the index
+            // are NOT in here, which is the whole of #321: the server has no
+            // flow id, so it cannot name them.
+            removedItems: store
+              .getAll()
+              .some(({ name }) => name === LEGACY_VERIFIER)
+              ? { [LEGACY_VERIFIER]: true }
+              : {},
           },
           STORAGE,
         );
@@ -208,8 +264,14 @@ export async function runCallback(route, { code = "valid-code" } = {}) {
     },
   });
 
+  const request = new NextRequest(route.url(code), {
+    headers: cookies.length
+      ? { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") }
+      : {},
+  });
+
   try {
-    const response = await GET(new NextRequest(route.url(code)));
+    const response = await GET(request);
     return { response, writes: store.writes };
   } finally {
     delete globalThis.__callbackCookieStore;
