@@ -1,0 +1,32 @@
+{
+  "generated": "2026-08-15T06:35:40.781Z",
+  "clips": [
+    {
+      "id": "gmail-connects",
+      "width": 832,
+      "height": 192,
+      "seconds": 6.73,
+      "webm": 85501,
+      "mp4": 332774,
+      "poster": 11472
+    },
+    {
+      "id": "board-syncs",
+      "width": 832,
+      "height": 224,
+      "seconds": 4.9,
+      "webm": 59810,
+      "mp4": 234962,
+      "poster": 19694
+    },
+    {
+      "id": "rules-read-the-body",
+      "width": 832,
+      "height": 454,
+      "seconds": 5,
+      "webm": 120087,
+      "mp4": 257493,
+      "poster": 21878
+    }
+  ]
+}

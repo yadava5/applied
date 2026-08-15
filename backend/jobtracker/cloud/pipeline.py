@@ -731,9 +731,31 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\brole:\s*(?P<role>[^.!?\n]{3,90}?)\s*(?=[.!?\n]|$)", re.IGNORECASE),
     # "...application for the <ROLE> position", "...interest in the <ROLE> position",
     # "...applying to our <ROLE> role", "...application for the <ROLE> role"
+    #
+    # The anchor must be the article NEAREST the trailing keyword, not the
+    # leftmost one. ``re.search`` returns the leftmost match, so the plain form
+    # of this pattern anchored on the first preposition+article in the sentence
+    # and let the lazy capture stretch across everything up to the sentence's
+    # single "position" — which is how SimpliSafe's rejection ("Thank you for
+    # your interest in SimpliSafe and our Software Engineer I- User Systems
+    # position.") yielded the role "interest in SimpliSafe and our Software
+    # Engineer I- User Systems" and minted a SECOND card for a job already on
+    # the board.
+    #
+    # The capture is therefore TEMPERED: it may not run across another
+    # anchor+article sequence. The leftmost start ("for your ") can then no
+    # longer match at all, so the engine advances to the innermost one
+    # ("and our ") on its own. Re-anchoring beats post-cutting because it
+    # happens before the length bound is spent, and it needs no second list of
+    # prepositions to be kept in sync.
+    #
+    # ``and`` joins the anchor alternation for the same message: an employer
+    # that names itself and then its role ("interest in <Employer> and our
+    # <ROLE> position") offers no preposition at the inner anchor.
     re.compile(
-        r"\b(?:for|in|to)\s+(?:the|our|your|a|an)\s+"
-        r"(?P<role>[^.!?\n]{3,90}?)\s+"
+        r"\b(?:for|in|to|and)\s+(?:the|our|your|a|an)\s+"
+        r"(?P<role>(?:(?!\b(?:for|in|to|at|with|and)\s+(?:the|our|your|a|an)\s)"
+        r"[^.!?\n]){3,90}?)\s+"
         r"(?:position|role|opening|opportunity|req)\b",
         re.IGNORECASE,
     ),
@@ -1030,6 +1052,25 @@ def _clean_role(raw: str) -> str | None:
     # a preposition + article, which a real job title does not.
     role = re.sub(r"^.*\b(?:in|for|to|at|with)\s+(?:the|our|your|a|an)\s+", "", role, flags=re.IGNORECASE)
     role = role.strip(" .,;:-–—")
+    # Last line of defence: a capture that STILL spans a clause boundary is a
+    # sentence fragment, not a title, and a wrong role is strictly worse than no
+    # role — `_pick_application`'s rule 4 files a role-less message onto the
+    # employer's existing row, while a wrong role mints a duplicate card.
+    #
+    # Reachable independently of the body pattern above: the Ashby ``role:``
+    # pattern is deliberately untempered (Ashby prints the title verbatim after
+    # the colon), so "applying to our role: Software Engineer and our Storage
+    # team" arrives here intact. Refusing is the correct outcome.
+    #
+    # Scoped to a conjunction/preposition + article sequence, plus the bare
+    # possessives "our"/"your" which never appear inside a real job title. A
+    # bare "the" is NOT refused: "Head of the Americas" is a legitimate title,
+    # and the cut above has already removed every "the" that follows a
+    # preposition.
+    if re.search(r"\b(?:and|for|in|to|at|with)\s+(?:the|our|your|a|an)\b", role, re.IGNORECASE):
+        return None
+    if re.search(r"\b(?:our|your)\b", role, re.IGNORECASE):
+        return None
     words = role.split()
     if not words or len(role) < 3:
         return None
