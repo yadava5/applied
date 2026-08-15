@@ -92,8 +92,13 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * the next zone. Where that scroll lands is the browser's business; the
  * product's promise is the pane's chrome, so the arrival gate is the pane
  * being open on the row the visitor clicked. Chasing that down is also what
- * surfaced the release race recorded on `visitorRow` — which is a defect in
- * the page, not in this file, and is reported rather than retried into green.
+ * surfaced the release race recorded on `visitorRow` — a defect in the page,
+ * not in this file, which was reported rather than retried into green and has
+ * since been fixed in `MarketingBoard` (the page's claim on a card load is
+ * armed in the same task that hands the seed to the board, so a visitor's load
+ * is always scheduled first; the row's identity no longer decides anything).
+ * The race is why this file's own coverage of the moved row stops at the
+ * camera — see `visitorRow` for what still gates pointing it at Larkspur.
  *
  * TWO ASSERTIONS IN THE FIRST DRAFT COULD NOT FAIL, and both were caught by
  * running the mutation rather than by reading the code. `toHaveText(/rejected/)`
@@ -283,21 +288,25 @@ const movedRow = (page: Page) =>
 /**
  * The row the VISITOR opens, and deliberately NOT the one the act moves.
  *
- * `MarketingBoard` tells a visitor's open from the page's own by id — the
- * beat-2 seed is the one id the page ever opens — and both sides of that
- * comparison are set from effects that defer off the effect body. Clicking
+ * `MarketingBoard` used to tell a visitor's open from the page's own by id —
+ * the beat-2 seed being the one id the page ever opens — with both sides of
+ * that comparison set from effects that defer off the effect body. Clicking
  * Larkspur at beat 1 scrolls further to reach its pane, which carries the act
- * into zone 2, which sets the seed to Larkspur's own id; if the pane's
- * `transport.detail` call lands after that, the visitor's open is read as the
- * page's and the camera never releases. Measured on a production build: about
- * four full-file runs in ten went red that way at both heights, with the
- * camera resting un-released at −279.5px and −263.5px.
+ * into zone 2, which set the seed to Larkspur's own id; if the pane's
+ * `transport.detail` call landed after that, the visitor's open was read as
+ * the page's and the camera never released. Measured on a production build:
+ * about four full-file runs in ten went red that way at both heights, with the
+ * camera resting un-released at −279.5px and −263.5px. Atlas Freight is the
+ * last row of the closed group, in frame at beat 1 by the same camera, and it
+ * is never seeded: the act stayed at beat 1 in every run at both heights.
  *
- * That is a defect in the release, not in this test, and it is reported rather
- * than papered over — a flaky gate under `retries: 2` is an intermittently
- * green one. Atlas Freight is the last row of the closed group, in frame at
- * beat 1 by the same camera, and it is never seeded: the act stayed at beat 1
- * in every run at both heights. Do not "simplify" this back to `movedRow`.
+ * The race is fixed — the page's claim is armed in the same task that hands
+ * the seed to the board, so a visitor's load always runs first, and the id is
+ * no longer what decides. This locator should MOVE to `movedRow`, because the
+ * row that was flaky is the one worth pinning, and it should move on evidence:
+ * `--repeat-each=10` at 1024×768 and 1024×600 with the click retargeted, ten
+ * of ten at both. Until that run exists, retargeting would trade a documented
+ * choice for an unproven one, so it stands.
  */
 const visitorRow = (page: Page) =>
   page.locator(".board-row").filter({ hasText: "Atlas Freight" });
@@ -446,10 +455,13 @@ test.describe("landing B (/landing-b)", () => {
    * page announced.
    *
    * `d2144ec` fixed it in `MarketingBoard`: `transport.detail(id)` is the call
-   * every pane load passes through, so an id that is not the page's own seed
-   * is the visitor's hand on the wheel, and `LandingBoard` returns the camera
-   * to `translateY(0)` — beat 0's frame, where the pane renders its whole
-   * header.
+   * every pane load passes through, so a load the page did not cause is the
+   * visitor's hand on the wheel, and `LandingBoard` returns the camera to
+   * `translateY(0)` — beat 0's frame, where the pane renders its whole header.
+   * That first cut read the id and raced (see `visitorRow`); the page's claim
+   * is now armed in the same task that hands the seed to the board, and a
+   * gesture recorded in the capture phase settles anything the ordering leaves
+   * open. Both are causes, and neither depends on which row was clicked.
    *
    * This asserts the PROPERTY, not the mechanism: the close control's box
    * lies inside the stage's clip rect. The unit gate cannot see it — the
