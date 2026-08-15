@@ -226,6 +226,34 @@ rather than leaking, and nothing needs maintaining when the schema grows.
 every policy on it, so a table that is `ENABLE`-only looks protected in
 `pg_policies` and is not.
 
+### A new table needs an explicit `GRANT`, and nothing tells you so
+
+`verify_rls.py` checks policies. It does **not** check privileges, and the two
+are different gates: a table can be perfectly policied and still be unreadable
+because the runtime role was never granted anything on it. `e2b6f0a4d517` is
+the first revision to create a table since the cutover to `jobtracker_app`, so
+there is no precedent and no evidence that `ALTER DEFAULT PRIVILEGES` is set
+for that role. Issue the grant in the revision:
+
+```sql
+GRANT SELECT, INSERT, DELETE ON <new_table> TO jobtracker_app;
+```
+
+Narrow it to the verbs the code actually uses — withholding `UPDATE` on a table
+nothing updates is free. And note the failure mode if you forget: the runtime
+error surfaces wherever the first write is, which for `gmail_sync_enrollment`
+would have been inside `save_gmail_credentials`, whose `except` turns it into
+`False` and fails the **OAuth callback**. Linking Gmail breaks for every user,
+and nothing in the message says "privileges".
+
+A revision that also names a role in a policy (`CREATE POLICY ... TO
+jobtracker_app`) has a second problem: the chain is applied to bare Postgres
+containers by `tests/test_migrations_postgres.py`,
+`tests/test_cascade_delete_postgres.py` and `scripts/check_expand_only.py`,
+where that role does not exist. Create a `NOLOGIN NOBYPASSRLS` stub when it is
+absent rather than branching the policy's shape — a shape that only production
+ever applies is a shape no test can check.
+
 This complements `tests/test_rls_postgres.py` rather than duplicating it. That
 suite proves the policies actually isolate tenants — but against a database the
 test built. This proves the property holds on the database real rows live in,

@@ -51,7 +51,7 @@ It is a monorepo: a Next.js 16 app on Vercel over Supabase Postgres, talking to 
 
 - **A metric that names its stage.** The **rules layer** — 214 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
 - **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
-- **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each — **32 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. Seventeen tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
+- **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. Nineteen tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
 - **The trained model exports to something a browser can run.** The SetFit head quantizes from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file (`ml/browser/artifacts/`). Transformers.js executes it on the CPU in the Hugging Face Space with `allowRemoteModels = false`. Which surfaces actually run it, and which do not, is stated in [Implemented vs delegated vs planned](#implemented-vs-delegated-vs-planned).
 - **A README that was wrong on the record.** The coverage paragraph below documents its own correction from 54% to 53.2% and the Python-version artifact that caused it. Commit `5b895d8` carries the full derivation.
 
@@ -124,7 +124,7 @@ flowchart TB
         Fernet["user_credentials<br/>Fernet-encrypted rows"]
         Rules["classifier: RULES ONLY"]
         Web -->|"Authorization: Bearer supabase JWT"| Fn
-        Fn -->|"per-transaction request.jwt.claims<br/>RLS: 32 policies, FORCE"| PG
+        Fn -->|"per-transaction request.jwt.claims<br/>RLS: 35 policies, FORCE"| PG
         Fn --> Fernet
         Fn --> Rules
     end
@@ -243,11 +243,12 @@ erDiagram
 
 RLS here is live, not staged. Verified against the production database on 2026-08-03 and re-read for this README against the migrations and `docs/RLS-AUDIT-2026-08-03.md`:
 
-- **Eight tenant tables** — `applications`, `emails`, `contacts`, `interviews`, `training_data`, `email_embeddings`, `sync_state` (rev `a8d4ec5fba26`) and `user_credentials` (revs `c4_user_credentials_rls`, `c5_force_user_credentials_rls`) — each with `ENABLE` **and** `FORCE ROW LEVEL SECURITY` and four policies (`SELECT` / `INSERT` / `UPDATE` / `DELETE`). That is **32 policies**. `FORCE` is the part that matters: without it the table owner is exempt, and the owner is what an application usually connects as.
+- **Eight tenant tables** — `applications`, `emails`, `contacts`, `interviews`, `training_data`, `email_embeddings`, `sync_state` (rev `a8d4ec5fba26`) and `user_credentials` (revs `c4_user_credentials_rls`, `c5_force_user_credentials_rls`) — each with `ENABLE` **and** `FORCE ROW LEVEL SECURITY` and four policies (`SELECT` / `INSERT` / `UPDATE` / `DELETE`). That is **32** owner policies. `FORCE` is the part that matters: without it the table owner is exempt, and the owner is what an application usually connects as.
+- **A ninth table is deliberately different, and says so.** `gmail_sync_enrollment` (rev `e2b6f0a4d517`) is `ENABLE` + `FORCE` with **3** policies: owner-scoped `INSERT` and `DELETE`, and a `SELECT` policy scoped `TO jobtracker_app` with a permissive predicate. That is the one place a predicate is not `user_id = auth.uid()`, because the scheduled sync carries no JWT and must still enumerate who has Gmail linked. What it exposes to a `jobtracker_app` connection is exactly which user ids have linked Gmail and when — a membership fact. The table holds no ciphertext and no email address, so there is no secret in it to leak. That is **35 policies** across the nine.
 - **The application role cannot bypass any of it.** Production connects as `jobtracker_app`: `rolsuper=false`, `rolbypassrls=false`, `rolcanlogin=true`.
 - **Identity is bound per transaction.** `_install_rls_guc_listener` in `database/connection.py` sets `request.jwt.claims` transaction-locally on every `begin`, so nothing leaks across the PgBouncer transaction pool, and `search_path` is pinned to `public` so a policy cannot be fooled by a shadowed relation.
 - **It fails closed.** With no user bound, `auth.uid()` is NULL, `user_id = NULL` matches nothing, and an unauthenticated path sees zero rows rather than everything.
-- **All 32 predicates are `user_id = (SELECT auth.uid())`** after rev `c6_rls_initplan_hoist`. This is a planning-time change: bare `auth.uid()` is `STABLE` and re-evaluated once per *row*; the sub-select is hoisted into an `InitPlan` evaluated once per *query*. Measured on a **synthetic** 200,000-row sequential scan in a throwaway `postgres:16` — **not** a production measurement — invocations went 200,001 → 1 and the query 126 ms → 10 ms, with an identical row set. The invocation ratio is the part that holds at any table size; Applied's real tables are far smaller.
+- **All 32 owner predicates are `user_id = (SELECT auth.uid())`** after rev `c6_rls_initplan_hoist` — the enumeration policy on `gmail_sync_enrollment` above is the deliberate exception, and it guards a table with no secret in it. This is a planning-time change: bare `auth.uid()` is `STABLE` and re-evaluated once per *row*; the sub-select is hoisted into an `InitPlan` evaluated once per *query*. Measured on a **synthetic** 200,000-row sequential scan in a throwaway `postgres:16` — **not** a production measurement — invocations went 200,001 → 1 and the query 126 ms → 10 ms, with an identical row set. The invocation ratio is the part that holds at any table size; Applied's real tables are far smaller.
 - The migration is a **no-op on SQLite**, so `alembic upgrade head` stays green for the desktop build and for CI.
 
 ---
@@ -364,9 +365,9 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --o
 
 ## Testing
 
-**813 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 731 `test_*` functions across 61 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 813 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**813 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 735 `test_*` functions across 61 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 813 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
-The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **17 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
+The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **19 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
 Those tests drive the production machinery, not a fixture: `jobtracker.database.connection.get_session` with its real GUC and `search_path` handling, against a non-`BYPASSRLS` role, asserting that a raw query with the application-level `WHERE user_id = ...` filter *removed* still returns nothing for another tenant.
 
@@ -379,7 +380,7 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | Layer | Tooling | Scope |
 | --- | --- | --- |
 | **Backend unit + integration** | pytest | classifier, API, sync, auth, cloud entrypoint, evaluator, ML-ops scripts |
-| **Database isolation** | pytest + testcontainers / CI service container | 17 RLS enforcement tests against real Postgres |
+| **Database isolation** | pytest + testcontainers / CI service container | 19 RLS enforcement tests against real Postgres |
 | **Web e2e** | Playwright | 17 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
@@ -401,7 +402,7 @@ Being precise about this is the point.
 - **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the correction-to-training-data loop.
 - **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
 - **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
-- **Multi-tenant isolation** — the `user_id` column and composite indexes, the 32 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
+- **Multi-tenant isolation** — the `user_id` column and composite indexes, the 35 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
 - **The cloud/desktop split** — lazy imports, PEP 562 module `__getattr__`, and the subprocess guard test that proves the heavy stack never enters `sys.modules`.
 - **ML operations** — weekly sparse-label candidate mining with gap-based quotas, drift and confidence monitoring with thresholded alerts, and the alert-issue automation.
 
@@ -529,7 +530,7 @@ applied/
 │   │   ├── credentials/     # types · desktop (Keychain, unused) · cloud (Fernet)
 │   │   ├── database/        # models, connection (the RLS GUC listener lives here)
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
-│   ├── alembic/versions/    # 18 revisions incl. the RLS + InitPlan-hoist migrations
+│   ├── alembic/versions/    # 19 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
 │   └── tests/               # 61 modules
 │

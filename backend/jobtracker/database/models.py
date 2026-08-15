@@ -869,3 +869,70 @@ class UserCredential(SQLModel, table=True):
             server_default=sa.func.now(),
         ),
     )
+
+
+# =============================================================================
+# Gmail sync enrollment (cloud only)
+# =============================================================================
+
+
+class GmailSyncEnrollment(SQLModel, table=True):
+    """Who has a Gmail credential — the *fact*, with none of the secret.
+
+    WHY A SECOND TABLE INSTEAD OF READING ``user_credentials``
+    ----------------------------------------------------------
+    The scheduled sync (``jobtracker.cloud.cron``) carries no JWT, so
+    ``auth.uid()`` is NULL for it and every policy on ``user_credentials``
+    matches no row. That table is FORCE-RLS and holds Google refresh tokens, so
+    the correct answer to "let the cron enumerate it" is not a wider policy, a
+    ``SECURITY DEFINER`` wrapper or a ``BYPASSRLS`` role — every one of those
+    puts a new path in front of the tokens, and the cron does not want the
+    tokens. It wants the *set of user ids* that hold one.
+
+    So the membership fact is published here, in a table that holds nothing
+    else: a user id and when it was enrolled. No ciphertext, no email address,
+    no ``kind``. The leak this whole design worries about is not guarded
+    against, it is structurally impossible — there is no secret in this table
+    to leak.
+
+    THE DELIBERATE EXPOSURE, stated rather than buried. This table carries a
+    ``SELECT`` policy for the runtime role with a permissive predicate (see the
+    ``gmail_sync_enrollment`` revision), because a policy the cron's
+    identity-less connection cannot satisfy would rebuild the original problem.
+    Any reader connecting as ``jobtracker_app`` can therefore learn WHICH user
+    ids have linked Gmail, and when. That is a membership fact. It is never a
+    token and never an email address, and it is the trade this design makes on
+    purpose.
+
+    HOW IT STAYS TRUE. Written and deleted in the SAME transaction as the Gmail
+    credential itself — ``jobtracker.credentials.cloud.save_gmail_credentials``
+    and ``delete_gmail_credentials`` — so the two tables cannot drift. Nothing
+    else may write it.
+    """
+
+    __tablename__ = "gmail_sync_enrollment"
+
+    # Owner (Supabase auth.users.id) and the whole primary key: enrollment is
+    # membership, so a user is in the set or is not. The Postgres-only foreign
+    # key to ``auth.users(id) ON DELETE CASCADE`` is added by the migration,
+    # mirroring ``user_credentials`` — SQLite has no ``auth`` schema.
+    user_id: uuid.UUID = Field(
+        sa_column=Column(
+            "user_id",
+            sa.Uuid(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
+        description="Supabase auth.users(id) that has a Gmail credential stored.",
+    )
+
+    enrolled_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            "enrolled_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        description="When this user first linked Gmail (not updated on reconnect).",
+    )

@@ -312,6 +312,39 @@ async def _admin_build(engine: AsyncEngine) -> None:
         )
         await c.execute(text("ALTER TABLE user_credentials FORCE ROW LEVEL SECURITY"))
 
+        # gmail_sync_enrollment (revision e2b6f0a4d517), mirrored exactly —
+        # including the asymmetry that is the whole point of the table. SELECT
+        # is permissive and role-scoped so the identity-less cron can enumerate
+        # it; INSERT/DELETE stay owner-scoped so the runtime role can still only
+        # enroll or un-enroll ITSELF. There is no UPDATE policy because there is
+        # no UPDATE: `ON CONFLICT DO NOTHING` needs none.
+        #
+        # Writing the permissive SELECT here is not "making the test pass". It
+        # is what production runs, and the assertion that matters
+        # (test_enrollment_enumerates_without_an_identity) is paired with a
+        # control on user_credentials that goes red the moment RLS stops being
+        # enforced at all on this run.
+        await c.execute(text("ALTER TABLE gmail_sync_enrollment ENABLE ROW LEVEL SECURITY"))
+        await c.execute(text("ALTER TABLE gmail_sync_enrollment FORCE ROW LEVEL SECURITY"))
+        await c.execute(
+            text(
+                "CREATE POLICY gmail_sync_enrollment_enumerate ON gmail_sync_enrollment "
+                f"FOR SELECT TO {APP_ROLE} USING (true)"
+            )
+        )
+        await c.execute(
+            text(
+                "CREATE POLICY gmail_sync_enrollment_owner_insert ON gmail_sync_enrollment "
+                f"FOR INSERT TO {APP_ROLE} WITH CHECK (user_id = (SELECT auth.uid()))"
+            )
+        )
+        await c.execute(
+            text(
+                "CREATE POLICY gmail_sync_enrollment_owner_delete ON gmail_sync_enrollment "
+                f"FOR DELETE TO {APP_ROLE} USING (user_id = (SELECT auth.uid()))"
+            )
+        )
+
 
 # Build the schema/role/RLS exactly once across the module; each test just
 # truncates the tenant tables. Kept function-scoped (fresh admin engine per
@@ -389,7 +422,10 @@ async def pg_app() -> AsyncIterator[AsyncEngine]:
     # real failure or invent a fake one.
     async with admin.begin() as c:
         await c.execute(
-            text("TRUNCATE applications, user_credentials, sync_state RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE applications, user_credentials, sync_state, "
+                "gmail_sync_enrollment RESTART IDENTITY CASCADE"
+            )
         )
 
     instances = _live_settings_instances()
@@ -1016,6 +1052,149 @@ async def test_credential_save_read_is_scoped_and_cross_user_blocked(
     # A save with NO GUC bound is blocked by RLS; the helper swallows the DB
     # error and reports failure (False) rather than silently writing.
     assert await save_gmail_credentials(USER_A, creds) is False
+
+
+# =============================================================================
+# gmail_sync_enrollment: the membership fact, readable with no identity bound
+# (issue #291).
+# =============================================================================
+
+
+async def test_enrollment_enumerates_without_an_identity_and_holds_no_secret(
+    pg_app: AsyncEngine,
+) -> None:
+    """The cron's question, answered on the connection the cron actually has.
+
+    THE CONTROL IS THE FIRST ASSERTION, and without it the rest passes for
+    free on any backend. On the SAME connection machinery, with the SAME
+    absence of an ambient identity, a raw ``SELECT count(*) FROM
+    user_credentials`` must return **0** — that is RLS genuinely denying. If
+    that line ever returns 2, this module is not testing RLS at all (wrong
+    backend, or a BYPASSRLS role) and the enumeration below proves nothing.
+
+    Then the same identity-less connection reads ``gmail_sync_enrollment`` and
+    gets both users, because that table's SELECT policy is permissive and
+    scoped to the runtime role rather than to ``auth.uid()``. One read blind,
+    one read sighted, one connection: the difference is the policy, which is
+    the property under test.
+
+    The writers are the REAL ones. Nothing here hand-writes an INSERT into
+    ``gmail_sync_enrollment``; every row arrives through
+    ``save_gmail_credentials`` and leaves through ``delete_gmail_credentials``,
+    so a future change that writes one table without the other fails here
+    rather than in production six weeks later.
+
+    And the secret is structurally absent, not merely unselected: asking this
+    table for ``ciphertext`` is an undefined-column error. ``match=`` is
+    load-bearing — this suite has already been burned by a bare
+    ``pytest.raises(DBAPIError)`` going green off a uniqueness violation
+    instead of the thing it meant to assert.
+    """
+
+    from jobtracker.credentials.cloud import (
+        delete_gmail_credentials,
+        save_gmail_credentials,
+    )
+    from jobtracker.database import get_session, user_id_scope
+
+    for user_id, address in ((USER_A, "a@example.com"), (USER_B, "b@example.com")):
+        with user_id_scope(user_id):
+            assert await save_gmail_credentials(user_id, _gmail_creds(address)) is True
+
+    async with get_session() as s:
+        # CONTROL: RLS really is denying an identity-less read of the token table.
+        blind = (await s.exec(text("SELECT count(*) FROM user_credentials"))).scalar()
+        assert blind == 0, (
+            f"An unscoped read of user_credentials returned {blind} rows. RLS is "
+            "NOT being enforced on this run, so nothing below is a real test."
+        )
+
+        # …and yet the membership fact IS readable with no identity bound.
+        enrolled = sorted(
+            (await s.exec(text("SELECT user_id FROM gmail_sync_enrollment"))).scalars().all()
+        )
+    assert enrolled == sorted([USER_A, USER_B]), (
+        f"The identity-less enumeration returned {enrolled}. If it is empty, the "
+        "enumeration policy is scoped to auth.uid() and the cron is back to "
+        "syncing nobody — which is the bug issue #291 exists to close."
+    )
+
+    # The table cannot hand out a secret it does not have. Not "the query does
+    # not select it" — the column does not exist.
+    async with get_session() as s:
+        with pytest.raises(DBAPIError, match=r'column "ciphertext" does not exist'):
+            await s.exec(text("SELECT ciphertext FROM gmail_sync_enrollment"))
+
+    # Disconnecting withdraws the enrollment in the same transaction as the
+    # token delete, so the two tables cannot drift.
+    with user_id_scope(USER_A):
+        assert await delete_gmail_credentials(USER_A) is True
+
+    async with get_session() as s:
+        remaining = (
+            (await s.exec(text("SELECT user_id FROM gmail_sync_enrollment"))).scalars().all()
+        )
+    assert remaining == [USER_B], (
+        f"After USER_A disconnected, the enrollment set is {remaining}. A row "
+        "that outlives its credential makes the cron spend a slot on a user "
+        "who has no mailbox to sync."
+    )
+
+
+async def test_enrollment_writes_are_still_owner_scoped(pg_app: AsyncEngine) -> None:
+    """Permissive SELECT does not mean permissive anything else.
+
+    The enumeration policy is the deliberate exposure and it is bounded to
+    reading. A ``jobtracker_app`` connection still cannot enroll somebody else
+    (``WITH CHECK (user_id = auth.uid())``), and cannot un-enroll them
+    (``USING`` on DELETE). Without this the "membership only" claim would rest
+    on nobody having tried the other verbs.
+
+    ORDER MATTERS, and it is the whole reason this is not two lines. The
+    forged INSERT runs BEFORE USER_A has any enrollment row, so a primary-key
+    collision is impossible and row-level security is the only thing left that
+    can refuse it. Written the other way round — A enrolled first — the insert
+    is refused by ``gmail_sync_enrollment_pkey`` and the test passes with the
+    policy dropped entirely. That is not hypothetical: it is what this test did
+    on its first run, and only the ``match=`` on the exception message showed
+    it, exactly as ``test_sync_state_cross_tenant_overwrite_is_refused``
+    records for the same trap one table over.
+    """
+
+    from jobtracker.credentials.cloud import save_gmail_credentials
+    from jobtracker.database import get_session, user_id_scope
+    from jobtracker.database.models import GmailSyncEnrollment
+
+    # B, correctly identified as B, may not enroll A — and A is not yet
+    # enrolled, so nothing but the policy can stop this.
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            with pytest.raises(
+                DBAPIError, match="new row violates row-level security policy"
+            ):
+                s.add(GmailSyncEnrollment(user_id=USER_A))
+                await s.commit()
+
+    with user_id_scope(USER_A):
+        assert await save_gmail_credentials(USER_A, _gmail_creds("a@example.com")) is True
+
+    # …nor delete A's. RLS answers a cross-tenant DELETE by matching no row
+    # rather than by raising, so this asserts the row SURVIVES.
+    with user_id_scope(USER_B):
+        async with get_session() as s:
+            await s.exec(
+                text(f"DELETE FROM gmail_sync_enrollment WHERE user_id = '{USER_A}'::uuid")
+            )
+            await s.commit()
+
+    async with get_session() as s:
+        survivors = (
+            (await s.exec(text("SELECT user_id FROM gmail_sync_enrollment"))).scalars().all()
+        )
+    assert survivors == [USER_A], (
+        "USER_B deleted USER_A's enrollment row. The DELETE policy is not "
+        f"owner-scoped; the table now reads {survivors}."
+    )
 
 
 # =============================================================================

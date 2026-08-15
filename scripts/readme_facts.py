@@ -213,6 +213,7 @@ BACKEND_RULES = "backend/jobtracker/classifier/rules.py"
 DEMO_SPACE_RULES = "ml/demo/space/jobtracker/classifier/rules.py"
 RLS_MIGRATION = "backend/alembic/versions/a8d4ec5fba26_enable_rls_policies_postgres_only.py"
 USER_CREDS_RLS = "backend/alembic/versions/c4_user_credentials_rls.py"
+ENROLLMENT_RLS = "backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py"
 HYBRID = "backend/jobtracker/classifier/hybrid.py"
 
 
@@ -267,10 +268,46 @@ def policies_per_table() -> int:
     raise SystemExit(f"  ✗ {RLS_MIGRATION}: no `for table in RLS_TABLES:` loop found")
 
 
-def rls_policies() -> int:
-    """Not hard-coded as tables×4: the loop is counted, the one-off revision added."""
+def rls_owner_policies() -> int:
+    """The owner-scoped policies: `user_id = auth.uid()` on the tenant tables.
+
+    Not hard-coded as tables×4: the loop is counted, the one-off revision added.
+    """
     loop = (rls_tables() - 1) * policies_per_table()
     return loop + count_in(USER_CREDS_RLS, r"CREATE POLICY")
+
+
+def rls_enrollment_policies() -> int:
+    """The policies on `gmail_sync_enrollment` (rev e2b6f0a4d517).
+
+    Counted separately because they are NOT the owner-scoped shape: one of the
+    three is a permissive SELECT for the runtime role, which is what lets the
+    identity-less cron enumerate who has Gmail linked. Folding them into
+    `rls_owner_policies` would make the README's "all N predicates are
+    `user_id = (SELECT auth.uid())`" claim false while every gate stayed green.
+
+    Read out of the `_POSTGRES_UPGRADE_SQL` assignment specifically, not out of
+    the file: that revision's docstring quotes its own enumeration policy, and
+    a whole-file `count_in` therefore returned 5 for a table that has 3 — a
+    number nobody would have questioned because it was still "derived".
+
+    `ast.dump` rather than `.value`, because the assignment is an f-string
+    (a `JoinedStr`, whose literal halves are separate nodes) — the same shape
+    `policies_per_table` reads for the same reason.
+    """
+    node = _assigned(ENROLLMENT_RLS, "_POSTGRES_UPGRADE_SQL")
+    count = ast.dump(node).count("CREATE POLICY")
+    if count == 0:
+        raise SystemExit(
+            f"  ✗ {ENROLLMENT_RLS}: _POSTGRES_UPGRADE_SQL issues no CREATE POLICY. "
+            f"A table with no policy fails scripts/verify_rls.py on the deploy."
+        )
+    return count
+
+
+def rls_policies() -> int:
+    """Every CREATE POLICY the RLS migrations issue, of either shape."""
+    return rls_owner_policies() + rls_enrollment_policies()
 
 
 def float_const(rel: str, name: str) -> float:
@@ -704,6 +741,21 @@ FACTS: dict[str, dict] = {
             {"re": r"and (\w+) policies \(`SELECT`", "word": True},
         ],
     },
+    "rlsOwnerPolicies": {
+        "kind": "static",
+        "describe": "owner-scoped CREATE POLICY statements (the tenant tables)",
+        "compute": rls_owner_policies,
+        "sites": [
+            r"That is \*\*(\d+)\*\* owner policies",
+            r"\*\*All (\d+) owner predicates are",
+        ],
+    },
+    "rlsEnrollmentPolicies": {
+        "kind": "static",
+        "describe": "CREATE POLICY statements on gmail_sync_enrollment",
+        "compute": rls_enrollment_policies,
+        "sites": [r"\+ `FORCE` with \*\*(\d+)\*\* policies"],
+    },
     "rlsPolicies": {
         "kind": "static",
         "describe": "CREATE POLICY statements across the RLS migrations",
@@ -711,8 +763,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"— \*\*(\d+) policies\*\* —",
             r"RLS: (\d+) policies, FORCE",
-            r"That is \*\*(\d+) policies\*\*",
-            r"\*\*All (\d+) predicates are",
+            r"That is \*\*(\d+) policies\*\* across the nine",
             r"the (\d+) RLS policies",
         ],
     },
@@ -1279,11 +1330,27 @@ INVARIANTS = [
     },
     {
         "name": "every tenant table gets the same four policies",
-        "holds": lambda f: f["rlsPolicies"] == f["rlsTenantTables"] * f["rlsPoliciesPerTable"],
+        "holds": lambda f: f["rlsOwnerPolicies"] == f["rlsTenantTables"] * f["rlsPoliciesPerTable"],
         "explain": lambda f: (
             f"{f['rlsTenantTables']} tables x {f['rlsPoliciesPerTable']} policies = "
             f"{f['rlsTenantTables'] * f['rlsPoliciesPerTable']}, but the migrations issue "
-            f"{f['rlsPolicies']} CREATE POLICY statements. One table is short a policy."
+            f"{f['rlsOwnerPolicies']} owner-scoped CREATE POLICY statements. "
+            f"One table is short a policy."
+        ),
+    },
+    {
+        # The total is the sum of the two SHAPES, and they are counted apart on
+        # purpose: gmail_sync_enrollment's SELECT policy is permissive, so
+        # letting it be absorbed into the owner-policy count is exactly how
+        # "all N predicates are user_id = auth.uid()" would become false with
+        # every gate still green.
+        "name": "the policy total is the owner policies plus the enrollment policies",
+        "holds": lambda f: (
+            f["rlsPolicies"] == f["rlsOwnerPolicies"] + f["rlsEnrollmentPolicies"]
+        ),
+        "explain": lambda f: (
+            f"{f['rlsOwnerPolicies']} owner + {f['rlsEnrollmentPolicies']} enrollment = "
+            f"{f['rlsOwnerPolicies'] + f['rlsEnrollmentPolicies']}, not {f['rlsPolicies']}."
         ),
     },
     {
