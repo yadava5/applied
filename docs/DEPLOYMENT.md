@@ -261,9 +261,10 @@ reads the 750-message target before its 10 s timeout:
   budgeting on it. Pro allows 100 cron jobs per project at a
   once-per-minute minimum interval, so one job at `*/15` is well inside
   the schedule limits.
-- **Supabase** — one connection for the enumeration plus a handful per
-  user under NullPool. Well inside the free tier's pooler limits at this
-  user count.
+- **Supabase** — **two** connections for the whole enumeration, however
+  many users are enrolled (one for the membership query, one held open
+  across every cursor probe), plus a handful per user actually synced
+  under NullPool. Well inside the free tier's pooler limits.
 
 Realistically production runs one user on an incremental delta: two Gmail
 calls and a couple of seconds per run.
