@@ -32,6 +32,26 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * stretched — with the stroke weight re-chosen for display size: optical
  * weight is a size decision, and the 24px lockup's stroke does not survive
  * a 10× scale-up unexamined.
+ *
+ * READING ORDER — decided, not incidental (2026-08-15). The composed order
+ * is thesis → ask → scene, so the ask sits ABOVE the visual climax. The
+ * original brief asked for the reverse (dot lands, line holds, then the
+ * ask), and it is honored in TIME — the ask rises at 1.3s, alongside the
+ * dot's landing — but it cannot be honored in SPACE: the wordmark's
+ * descenders bleed off the page's bottom edge, sliced by the footer's
+ * hairline, so the scene must be the band's last element. Nothing can sit
+ * below it without destroying that crop. And the spatial order earns its
+ * keep: the page ends on the product's name punctuated by the verdict —
+ * the more confident close than ending on a button — while the emerald
+ * ask, one short glance back up, rhymes with the full stop. Do not "fix"
+ * this by moving the ask below the scene.
+ *
+ * Type in the scene: mono marks the machine value and STOPS at its edge.
+ * The F1 figures are mono (read out of the benchmark JSONs); the words
+ * beside them — `what ships`, `benchmarked, not shipped` — are captions,
+ * set in the product's caps-label voice (`.act__words`, the `.label-caps`
+ * device restated in scene units; the class itself cannot apply here
+ * because its color would override the rail's fill).
  */
 
 /* ---- scene geometry (viewBox 0 0 1200 370) ------------------------------ */
@@ -84,12 +104,18 @@ function Scene() {
 
       {/* the neural layers, as ghosts: present, benchmarked, not shipped.
           Dashed, achromatic, and the envelope crosses them without an event —
-          the page's central comparison restaged as furniture. */}
+          the page's central comparison restaged as furniture. The DASHES stay
+          quiet (opacity in globals.css, per theme, measured to the 3:1
+          non-text floor); the label rides the full dim rank, because a caption
+          the visitor cannot read makes the comparison it exists for silent. */}
       <g className="act__ghosts" stroke="currentColor">
         <line x1="560" y1="24" x2="560" y2="104" strokeWidth="1.5" strokeDasharray="3 5" />
         <line x1="800" y1="24" x2="800" y2="104" strokeWidth="1.5" strokeDasharray="3 5" />
-        <text x="569" y="21" fontSize="10.5" fill="currentColor" stroke="none" className="font-mono">
-          {DECISION.cascadeF1} · benchmarked, not shipped
+        <text x="569" y="21" fontSize="10.5" fill="currentColor" stroke="none">
+          <tspan className="font-mono">{DECISION.cascadeF1}</tspan>
+          {/* literal caps: text-transform on SVG text is uneven across
+              engines, and the svg is aria-hidden, so casing is free */}
+          <tspan className="act__words">{" · BENCHMARKED, NOT SHIPPED"}</tspan>
         </text>
       </g>
 
@@ -106,8 +132,9 @@ function Scene() {
           stroke="currentColor"
           strokeWidth="1.5"
         />
-        <text x="369" y="21" fontSize="10.5" fill="currentColor" className="act__tag font-mono">
-          {DECISION.rulesF1} · what ships
+        <text x="369" y="21" fontSize="10.5" fill="currentColor" className="act__tag">
+          <tspan className="font-mono">{DECISION.rulesF1}</tspan>
+          <tspan className="act__words">{" · WHAT SHIPS"}</tspan>
         </text>
       </g>
 
@@ -241,7 +268,10 @@ export function ClosingAct() {
     <section ref={ref} className={`act act-band relative border-t border-line-soft ${state}`}>
       {/* the ask — rises once the full stop lands, then holds. Outside the
           keyed scene so a replay never yanks a link out from under a click. */}
-      <div className="mx-auto w-full max-w-6xl px-6 pt-16 sm:pt-20">
+      {/* pt is deliberately shallow: the section above already carries py-24,
+          and this band answers it directly — a deep top pad here read as a
+          dead gap in front of the page's closing image. */}
+      <div className="mx-auto w-full max-w-6xl px-6 pt-8 sm:pt-10">
         <div className="act__ask">
           <p className="text-base font-medium text-strong sm:text-lg">{CLOSING.thesis}</p>
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
