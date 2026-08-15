@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 # Web Framework (Async)
 # -----------------------------------------------------------------------------
-fastapi>=0.109.0              # Modern async web framework
+fastapi>=0.141.1              # Modern async web framework
 uvicorn[standard]>=0.27.0     # ASGI server with uvloop
 pydantic>=2.13.4               # Data validation using Python type hints
 pydantic-settings>=2.14.2     # Settings management with env var support (>=2.14.2: GHSA-4xgf-cpjx-pc3j)
