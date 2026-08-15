@@ -205,6 +205,10 @@ export function FiledMailList({
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
                   <span className="truncate">{meta.label}</span>
                 </span>
+                {/* Null since the review endpoint stopped leaving the machine's
+                    number on a row the human relabelled. The slots hold their
+                    widths so the meters stay a column; "corrected by you" below
+                    is what the row says instead. */}
                 {typeof m.confidence === "number" ? (
                   <>
                     <GateMeter confidence={m.confidence} className="hidden sm:inline-block" />
@@ -217,7 +221,12 @@ export function FiledMailList({
                       {pct(m.confidence)}
                     </span>
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <span className="hidden h-1 w-14 shrink-0 sm:inline-block" aria-hidden />
+                    <span className="tabular w-10 text-right font-mono text-[11px] text-dim">—</span>
+                  </>
+                )}
                 <span className="tabular hidden w-12 shrink-0 text-right font-mono text-[10px] text-dim md:inline">
                   {m.received_at ? shortDate(m.received_at) : ""}
                 </span>

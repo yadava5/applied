@@ -28,6 +28,29 @@
 import type { CategorySummary, InboxVerdict } from "./types";
 
 /**
+ * May a row draw the classifier's confidence next to its verdict?
+ *
+ * Only while the verdict is still the classifier's. A confidence figure
+ * rendered beside a category reads as a claim about THAT category — the meter,
+ * the percentage and the amber/green hue all say "this is how sure we are of
+ * this" — so once a reader has replaced the category, the old number describes
+ * a verdict that is no longer on screen. The owner's Inbox drew
+ * "rejection · 75% · corrected by you", where 75% was the classifier's
+ * certainty about `applied`.
+ *
+ * A predicate rather than an inline `!v.user_corrected` at the render site,
+ * because the render site is a TSX component with no unit test around it and
+ * this rule is the whole point of the fix. Here it can be asserted directly.
+ *
+ * Note this deliberately does NOT clear `v.confidence`: that value is relayed
+ * to the sync and classify endpoints, where dropping it files nothing. See
+ * `applyVerdictCorrection`.
+ */
+export function verdictShowsConfidence(v: InboxVerdict): boolean {
+  return !v.user_corrected;
+}
+
+/**
  * What the classify endpoint needs to STORE a message it has never seen —
  * `ScannedMessageIn` in `backend/jobtracker/cloud/applications.py`.
  *
@@ -106,11 +129,30 @@ export interface CorrectionResult extends ScanState {
  * whole-set analysis from `POST /gmail/pipeline`, not a tally of the rendered
  * rows, so it has to be moved deliberately rather than recomputed.
  *
- * `needs_review` is cleared because a human has now reviewed it; `confidence`
- * is left alone, exactly as the backend leaves `classification_confidence`
- * alone. The number was the machine's report of its own certainty and stays
- * true as that — overwriting it with 1.0 would put a claim the classifier
- * never made behind the user's label.
+ * `needs_review` is cleared because a human has now reviewed it. `confidence`
+ * is LEFT ALONE, and the reason is worth stating because the obvious change
+ * here is wrong in two different ways.
+ *
+ * It cannot be set to 1.0: that is a claim of total certainty, on the
+ * classifier's own scale and drawn by the classifier's own meter, behind a
+ * label nothing ever scored.
+ *
+ * It cannot be nulled either, which is less obvious. This object is not only
+ * display state — `toPipelineItems` relays it to `/gmail/sync`, where
+ * `confidence` is required and GATES PERSISTENCE (auto-file 0.85, review floor
+ * 0.70), and `scanMessagePayload` sends it to the classify endpoint to mint the
+ * row as a faithful copy of the machine's verdict before the correction is
+ * applied on top. A null degrades to 0.0 at both, which is below both gates —
+ * the reader's correction would silently file nothing, which is the exact bug
+ * `PipelineItem`'s own comment records.
+ *
+ * So the number stays, correctly, as the MACHINE's report about the machine's
+ * verdict — and the fix for "rejection · 75% · corrected by you" belongs at the
+ * render, which must not draw a confidence figure beside a verdict the
+ * classifier did not produce. That is `verdictShowsConfidence`. The stored row
+ * is a separate matter and is handled server-side: the classify endpoint nulls
+ * `classification_confidence` (`cloud/applications.py`), so the filed ledger
+ * shows no percentage for a corrected row.
  */
 export function applyVerdictCorrection(
   state: ScanState,

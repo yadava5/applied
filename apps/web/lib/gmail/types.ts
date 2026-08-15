@@ -26,6 +26,18 @@ export interface InboxVerdict {
   sender_email: string;
   sender_name: string | null;
   category: string;
+  /**
+   * The CLASSIFIER's certainty about the category it chose. Stays put when a
+   * reader overrules the verdict, and must: it is relayed to `/gmail/sync` by
+   * `toPipelineItems` (where `PipelineItem.confidence` is required and gates
+   * persistence) and to the classify endpoint by `scanMessagePayload`, which
+   * mints the row as a faithful copy of what the machine said BEFORE applying
+   * the correction on top.
+   *
+   * It is therefore not a claim about the displayed verdict once that verdict
+   * is the reader's, and must not be RENDERED beside one — see
+   * `verdictShowsConfidence`.
+   */
   confidence: number;
   method: string;
   needs_review: boolean;

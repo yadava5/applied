@@ -159,6 +159,11 @@ STANDARD_REJECTION_SENTENCES = [
     "We are unable to proceed with your candidacy.",
     # WAS-MISS: `won't be advancing` covered the contraction only.
     "We will not be advancing your candidacy at this time.",
+    # WAS-MISS: the verb that takes "with" rather than "forward". Every
+    # `forward` pattern in the list missed it, so Lever's standard rejection
+    # scored on `regret to inform` alone. This is the owner's Palantir mail.
+    "We regret to inform you that we will not be proceeding with your candidacy for this role.",
+    "We will not be continuing with your application at this time.",
     # --- shapes that already worked; here so a rewrite cannot lose them ------
     "We will not be moving forward with your application.",
     "We have decided to move forward with other candidates.",
@@ -254,6 +259,118 @@ def test_the_real_confirmation_still_classifies_applied_at_090() -> None:
     # Since #260 the sender is matched as a domain (exact or proper subdomain)
     # rather than as a substring, and this address matches either way. Both
     # values are above AUTO_FILE_GATE, so what this message DOES is unchanged.
+    assert result.confidence == pytest.approx(0.95), result.scores
+    assert result.scores["rejection"] <= 0, result.matched_patterns
+
+
+# ---------------------------------------------------------------------------
+# The second production rejection: Palantir, via Lever.
+#
+# The Anthropic mail above proved a rejection could be BEATEN by an ambiguous
+# subject. This one proves the quieter half of the same problem — the classifier
+# read it correctly and still could not act on it.
+#
+# A strong SUBJECT match scores +6 and a strong BODY match scores +3. Rejections
+# put their verdict in the body and title themselves "Thank you from <Company>";
+# acknowledgements put theirs in the subject ("Thank you for applying to X").
+# So an acknowledgement reaches 0.90 from its subject line alone while a
+# rejection carrying one decisive sentence lands on 0.70 — under AUTO_FILE_GATE,
+# held for a human. On the owner's 52 stored messages the classifier had never
+# once filed a rejection without one, and this asymmetry is why.
+# ---------------------------------------------------------------------------
+PALANTIR_SENDER = "no-reply@hire.lever.co"
+PALANTIR_SUBJECT = (
+    "Thank you from Palantir Technologies - Ayush Yadav - Software Engineer, New Grad"
+)
+# Email 114, exactly as stored: Gmail's snippet, truncated where Gmail truncates.
+PALANTIR_SNIPPET = (
+    "Dear Ayush, Thank you for your interest in Palantir. After careful "
+    "consideration, we regret to inform you that we will not be proceeding "
+    "with your candidacy for this role at this time. Please note that"
+)
+
+
+def test_the_palantir_rejection_clears_the_auto_file_gate() -> None:
+    """subject + snippet — what the scan actually classifies. Was rejection/0.75.
+
+    The CATEGORY was never wrong here, which is why this needs its own test: an
+    assertion on the category alone passed both before and after. What was wrong
+    is that "we will not be proceeding with your candidacy" — the sentence
+    stating the decision — matched no pattern at all, leaving `regret to inform`
+    to carry the message alone at +3. That is the 0.70 rung; the ATS bonus took
+    it to 0.75; AUTO_FILE_GATE is 0.85.
+
+    Mutation: removing BOTH halves of the new `(proceeding|continuing) with`
+    pair → fails at 0.75. Removing either half alone still passes at 0.95,
+    because this particular message also says "regret to inform" and only needs
+    one more +3 from anywhere. The pair earns its second half on the sentence
+    that has no such support — see
+    ``test_a_bare_proceeding_with_sentence_reaches_the_trusted_rung``, which is
+    where the general/noun-anchored pairing is actually load-bearing. Measured,
+    not assumed: the first draft of this docstring claimed either half alone
+    would fail here, and running the mutation showed it does not.
+    """
+    result = CLASSIFIER.classify(PALANTIR_SUBJECT, PALANTIR_SNIPPET, PALANTIR_SENDER)
+
+    assert result.category is EmailCategory.REJECTION, result.scores
+    assert result.confidence >= pipeline.AUTO_FILE_GATE, result.scores
+
+
+def test_the_palantir_sentence_alone_is_a_rejection() -> None:
+    """snippet ONLY. The subject is "Thank you from …", which helps nothing.
+
+    Asserted at 0.90 rather than at the gate: the whole point of pairing the
+    patterns is that a BODY with no subject support still reaches the rung the
+    hybrid layer trusts, and only the pair does that.
+    """
+    result = CLASSIFIER.classify("", PALANTIR_SNIPPET, PALANTIR_SENDER)
+
+    assert result.category is EmailCategory.REJECTION, result.scores
+    assert result.confidence >= 0.90, result.scores
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "We will not be proceeding with your candidacy at this time.",
+        "We will not be continuing with your application at this time.",
+    ],
+)
+def test_a_bare_proceeding_with_sentence_reaches_the_trusted_rung(body: str) -> None:
+    """The decision sentence with NO "regret"/"unfortunately" to lean on.
+
+    This is where the general/noun-anchored pair is load-bearing, and the reason
+    the new patterns were added as a pair rather than singly — the same
+    reasoning the infinitive already carries in `rules.py`. One strong body
+    match is +3, which is the 0.70 rung: enough to reach the review queue, never
+    enough to file. Two is +6, which is 0.90, the rung `hybrid.py` trusts.
+
+    Mutation: dropping either half → fails at 0.70 (measured, both arms).
+    """
+    result = CLASSIFIER.classify("", body, None)
+
+    assert result.category is EmailCategory.REJECTION, result.scores
+    assert result.confidence >= 0.90, result.scores
+
+
+def test_the_palantir_acknowledgement_is_untouched() -> None:
+    """The over-correction canary for THIS change, and it is a real message.
+
+    Email 86 is the owner's Palantir *acknowledgement*, from the same Lever
+    relay, filed `applied` at 0.95. A `proceeding with` pattern loose enough to
+    reach it would turn every "reviewing your application" mail into a
+    rejection — the #10 failure mode, where a narrow patch fixes one message and
+    regresses the class it belongs to.
+    """
+    result = CLASSIFIER.classify(
+        "Your application has been received!",
+        "Hi Ayush, Thank you for submitting your application to be a Software "
+        "Engineer, New Grad at Palantir. Our team is reviewing your application "
+        "and will be in touch if we think you're a potential match",
+        PALANTIR_SENDER,
+    )
+
+    assert result.category is EmailCategory.APPLIED, result.scores
     assert result.confidence == pytest.approx(0.95), result.scores
     assert result.scores["rejection"] <= 0, result.matched_patterns
 

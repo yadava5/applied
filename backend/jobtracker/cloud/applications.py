@@ -45,6 +45,7 @@ from jobtracker.database.models import (
     DEFAULT_APPLICATION_STATUS,
     Application,
     ApplicationStatus,
+    ClassificationMethod,
     Contact,
     Email,
     EmailCategory,
@@ -2571,6 +2572,31 @@ async def classify_review_item(
     email.classified_as = category
     email.is_reviewed = True
     email.user_corrected = True
+    # A human decision is not a probabilistic verdict, so it carries no
+    # probability. These two lines used to be absent, and the row kept the
+    # confidence and method of the verdict it had just replaced — the Inbox
+    # drew "rejection · 75% · corrected by you", where 75% was the machine's
+    # certainty about a DIFFERENT category. That is the ``classified_as`` defect
+    # family: a stored value that forges a decision nobody made.
+    #
+    # NULL and not 1.0. 1.0 is a claim of total certainty on the same 0–1 scale
+    # the classifier reports on, drawn by the same meter, so it re-forges the
+    # thing this removes — it merely moves the lie from 75% to 100%. NULL says
+    # what is true: no probabilistic verdict exists for this row, and every
+    # reader already treats the column as ``Optional`` (see
+    # ``MailMessageResponse.confidence`` and ``FiledMailList``'s
+    # ``typeof === "number"`` guard, both of which render nothing for null).
+    #
+    # Nothing selects corrected rows BY confidence, so NULL cannot strand them:
+    # ``scripts/weekly_labeling_workflow.py`` and
+    # ``scripts/generate_ml_monitoring_report.py`` — the only two readers left
+    # that compare this column — both filter ``user_corrected.is_(False)``
+    # before they ever look at the number. (The desktop routers under
+    # ``jobtracker/api/`` had two more such queries; #298 deleted them with the
+    # rest of the unmounted desktop surface, so they are no longer a
+    # consideration either way.)
+    email.classification_confidence = None
+    email.classification_method = ClassificationMethod.USER
 
     result: dict[str, object] = {
         "classified_as": category.value,
@@ -2700,6 +2726,26 @@ async def _settle_thread_siblings(
     for sibling in siblings:
         sibling.is_reviewed = True
         sibling.classified_as = category
+        # NOT nulled here, unlike the classified message itself, and the
+        # difference is not an oversight.
+        #
+        # A sibling has the same defect in a quieter form — it ends up holding
+        # the human's category with the classifier's confidence in the verdict
+        # that category replaced. But a sibling keeps ``user_corrected = False``
+        # (it records whether a human read THIS message, and nobody did), and
+        # that flag is exactly what makes the null safe on the corrected row:
+        # ``generate_ml_monitoring_report._count_needs_review`` and
+        # ``weekly_labeling_workflow`` both select
+        # ``user_corrected.is_(False) AND (confidence IS NULL OR < threshold)``
+        # and neither filters ``is_reviewed``. Nulling a sibling therefore moves
+        # it INTO the needs-review count, and the labeling query's
+        # ``case(confidence.is_(None), -1.0)`` ordering puts it first — a
+        # message whose label the human already settled, leading the queue.
+        # Measured against a migrated database, not reasoned about.
+        #
+        # Fixing it properly means teaching those two queries about
+        # ``is_reviewed``, which is a change to what the monitoring numbers mean
+        # and belongs in its own PR with its own before/after counts.
         if isinstance(application_id, int):
             sibling.application_id = application_id
         session.add(sibling)

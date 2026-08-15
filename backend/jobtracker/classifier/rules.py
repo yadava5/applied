@@ -92,6 +92,26 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
+            # The verb that takes "with" instead of "forward". Every pattern
+            # above wants the word "forward" somewhere, and the nearest of them
+            # — `not (be )?(moving|proceeding) forward` — misses "we will not be
+            # proceeding with your candidacy for this role at this time"
+            # outright. That is Lever's standard rejection wording and it is
+            # what the owner's real Palantir rejection says, so the sentence
+            # stating the decision scored ZERO: `regret to inform` carried the
+            # whole message alone at +3, which is the 0.70 rung, which is under
+            # AUTO_FILE_GATE. The verdict was right and the mail was held for
+            # review anyway.
+            #
+            # Paired general + noun-anchored, exactly like the infinitive above,
+            # and for a structural reason rather than a stylistic one: a strong
+            # SUBJECT match is +6 and a strong BODY match is +3, but rejections
+            # state their verdict in the body while their subject reads "Thank
+            # you from Palantir Technologies". One body match can never reach
+            # 0.90. Two can — which is the only way this category clears a gate
+            # that acknowledgements clear from their subject line alone.
+            r"not (be )?(proceeding|continuing) with",
+            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             # Replaces `move(d)? forward with other candidates` and
@@ -449,6 +469,8 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
+            r"not (be )?(proceeding|continuing) with",
+            r"not (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
             r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
