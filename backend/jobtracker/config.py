@@ -22,6 +22,8 @@ Usage:
     print(settings.database_path)  # ~/Library/Application Support/JobTracker/jobtracker.db
 """
 
+import os
+import urllib.parse
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -426,9 +428,14 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Absolute base URL of the web app the callback bounces the user back "
-            "to after a connect/disconnect, e.g. https://jobtracker-web-five."
-            "vercel.app. Used as a fixed, allow-listed redirect target so the "
-            "callback can never be turned into an open redirect. "
+            "to after a connect/disconnect. Used as a fixed, allow-listed "
+            "redirect target so the callback can never be turned into an open "
+            "redirect. It must ALSO be a host this deployment serves the app on "
+            "(see `trusted_web_hosts`): a merely-reachable alias of the same "
+            "project carries none of the user's cookies, so returning the "
+            "browser there lands it signed out. This description used to carry "
+            "a concrete example, and the example was the pre-rename alias that "
+            "caused exactly that — so it names no host now, deliberately. "
             "Env: JOBTRACKER_WEB_APP_URL."
         ),
     )
@@ -651,3 +658,91 @@ def get_settings() -> Settings:
 
 # Convenience alias for importing
 settings = get_settings()
+
+
+def trusted_web_hosts() -> list[str]:
+    """Every hostname this deployment considers to be "the web app".
+
+    ONE LIST, TWO READERS, AND WHY THAT MATTERS
+    -------------------------------------------
+    This deployment already had an answer to "which host is the front end?" —
+    the CORS allowlist in ``main_cloud._build_cors_origin_regex``, derived from
+    the hostnames Vercel injects. It also had a SECOND, unrelated answer: the
+    hand-set ``JOBTRACKER_WEB_APP_URL``, which the Gmail OAuth callback bounces
+    the browser to. Nothing compared them, so they were free to disagree — and
+    on 2026-08-14 they did, measured against production with no credentials:
+
+        $ curl -sD - "https://jobtracker-api-seven.vercel.app\
+/auth/gmail/callback?state=bogus&code=bogus"
+        HTTP/2 302
+        location: https://jobtracker-web-five.vercel.app/settings?gmail=error
+
+    ``jobtracker-web-five.vercel.app`` is a pre-rename alias of the web
+    project. It still serves the app, so nothing looked broken — but **cookies
+    are scoped to a host**, and the user's Supabase session lives on
+    ``getapplied.vercel.app``. Landing on the other name is landing signed out:
+
+        $ curl -sD - "https://jobtracker-web-five.vercel.app\
+/settings?gmail=connected"
+        HTTP/2 307
+        location: /login?gmail=connected&redirect=%2Fsettings
+
+    So finishing a Gmail reconnect dumped the owner on ``/login`` with his
+    session perfectly intact on the host he had come from. Nothing was wrong
+    with sign-in; he was simply on the wrong hostname.
+
+    Returning the hosts from ONE function is the fix for the class rather than
+    the instance. ``main_cloud`` builds its regex from this list, and
+    ``cloud.gmail_oauth._web_redirect`` refuses to bounce anywhere outside it,
+    so the two answers can no longer drift apart in silence.
+
+    WHAT IS AND IS NOT IN HERE. ``VERCEL_URL`` is this deployment's own host
+    (unique per preview); ``VERCEL_PROJECT_PRODUCTION_URL`` is the stable
+    production one; both arrive WITHOUT a scheme. ``cors_allowed_hosts`` is the
+    documented operator escape hatch for a custom domain. ``localhost`` and
+    ``127.0.0.1`` are here for ``vercel dev`` and are matched with an optional
+    port by both readers. Deliberately NO ``*.vercel.app`` wildcard — anyone
+    can deploy one, and re-adding it re-opens SECURITY_AUDIT.md finding 2. See
+    ``backend/tests/test_cors_origin_regex.py``.
+
+    Read from ``os.environ`` at CALL time, not import time, so a test that
+    monkeypatches the environment sees the change without reloading modules.
+    """
+
+    hosts = ["localhost", "127.0.0.1"]
+    for var_name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL"):
+        own_host = os.environ.get(var_name, "").strip()
+        if own_host:
+            hosts.append(own_host)
+    hosts.extend(host for host in settings.cors_allowed_hosts if host)
+    return hosts
+
+
+def configured_web_app_host() -> str | None:
+    """The hostname of ``JOBTRACKER_WEB_APP_URL``, or ``None`` when unset.
+
+    Parsed with ``urlsplit().hostname`` rather than a substring test: that is
+    what makes ``https://getapplied.vercel.app.evil.com`` a different host from
+    ``getapplied.vercel.app`` instead of a match, and it is the difference
+    between a check and the appearance of one.
+    """
+
+    configured = (settings.web_app_url or "").strip()
+    if not configured:
+        return None
+    return urllib.parse.urlsplit(configured).hostname or None
+
+
+def web_app_host_is_trusted() -> bool:
+    """Is the configured return host one this deployment serves the app on?
+
+    The single predicate behind both readers — ``/health`` reports it, and
+    ``cloud.gmail_oauth._web_app_base`` refuses on it. Two call sites, one
+    answer, which is the whole point: this bug existed because the same
+    question had two implementations that were free to disagree.
+    """
+
+    host = configured_web_app_host()
+    if host is None:
+        return False
+    return host.lower() in {trusted.lower() for trusted in trusted_web_hosts()}

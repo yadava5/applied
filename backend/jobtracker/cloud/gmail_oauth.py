@@ -45,6 +45,13 @@ Security properties
   state's TTL.
 - **No open redirect**: the post-callback destination is the operator-
   configured ``web_app_url``, never a value taken from the request.
+- **And it must be OUR host**: that configured value is additionally checked
+  against ``config.trusted_web_hosts`` — the same list CORS is built from —
+  because "not attacker-controlled" turned out not to imply "correct". A
+  stale alias of our own project satisfied the open-redirect property
+  perfectly and still landed every user signed out, since cookies are scoped
+  to a hostname. See ``_web_app_base`` and
+  ``tests/test_gmail_oauth_return_host.py``.
 - **Revocable**: disconnect calls Google's revocation endpoint and then
   deletes the local ciphertext.
 """
@@ -72,7 +79,11 @@ from googleapiclient.discovery import build
 from pydantic import BaseModel
 
 from jobtracker.auth import current_user
-from jobtracker.config import settings
+from jobtracker.config import (
+    configured_web_app_host,
+    settings,
+    web_app_host_is_trusted,
+)
 from jobtracker.credentials.cloud import (
     CredentialEncryptionError,
     _require_fernet,
@@ -528,6 +539,66 @@ def _build_flow(code_verifier: str | None = None) -> Flow:
     return flow
 
 
+def _web_app_base() -> str:
+    """The base URL to bounce the browser back to, or raise.
+
+    WHY THIS IS NOT JUST ``settings.web_app_url.rstrip("/")`` ANY MORE
+    -----------------------------------------------------------------
+    It was, and it sent every Gmail connect/disconnect to the wrong hostname
+    for weeks. ``JOBTRACKER_WEB_APP_URL`` still named
+    ``jobtracker-web-five.vercel.app`` — a pre-rename alias of the web project
+    — long after the app became ``getapplied.vercel.app``. Both aliases serve
+    the same deployment, so every page rendered correctly and nothing looked
+    broken. But **cookies are scoped to a host**: the user's Supabase session
+    exists on the name they signed in on and nowhere else. Arriving on the
+    other alias is arriving signed out, so the proxy did its job and sent them
+    to ``/login`` — after a successful Gmail connect, with a live session, from
+    a click that never touched sign-in. Reproduced against production with no
+    credentials; the two curls are quoted in ``config.trusted_web_hosts``.
+
+    THE PROPERTY THIS PRESERVES. The destination still comes from operator
+    configuration and NEVER from the request — that is the open-redirect
+    guarantee in this module's header and it is untouched. What is added is the
+    other half: the configured value must name a host this deployment already
+    trusts as its front end (the same list CORS is built from). A hostname that
+    is merely *reachable* is not the same as the hostname the session is on,
+    and that distinction is the whole bug.
+
+    WHY IT RAISES RATHER THAN GUESSING. Falling back to a host we picked would
+    make a misconfiguration invisible again, one layer down. Worse, the old
+    code's own fallback was silent and actively harmful: with ``web_app_url``
+    unset, ``(None or "").rstrip("/")`` yields ``""`` and the target becomes
+    the RELATIVE ``/settings?gmail=connected``, which the browser resolves
+    against the API's host — stranding the user on the backend, which has no
+    such page. 503 with a message naming the offending host is a deploy problem
+    an operator can read and fix in one edit.
+    """
+
+    configured = (settings.web_app_url or "").strip().rstrip("/")
+    if not configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL is not set, "
+                "so there is no web app to return the browser to."
+            ),
+        )
+
+    if not web_app_host_is_trusted():
+        host = configured_web_app_host() or ""
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL points at "
+                f"'{host}', which is not one of this deployment's web app hosts. "
+                "Returning the browser there would land it on a hostname that "
+                "does not carry the user's session, i.e. signed out. Set "
+                "JOBTRACKER_WEB_APP_URL to the host the app is served from."
+            ),
+        )
+    return configured
+
+
 def _web_redirect(outcome: str) -> RedirectResponse:
     """Redirect the browser back to the web app's settings page.
 
@@ -535,7 +606,7 @@ def _web_redirect(outcome: str) -> RedirectResponse:
     ``error``); no token or email ever rides in the URL.
     """
 
-    base = (settings.web_app_url or "").rstrip("/")
+    base = _web_app_base()
     target = f"{base}/settings?gmail={urllib.parse.quote(outcome)}"
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
 
