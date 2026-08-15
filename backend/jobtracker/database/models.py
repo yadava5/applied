@@ -747,6 +747,20 @@ class SyncState(SQLModel, table=True):
         description="IMAP last UID for incremental sync",
     )
 
+    # THE LEASE. When a sync for this (user, account) started, or NULL when
+    # none is running.
+    #
+    # A timestamp rather than a boolean because a crashed sync must expire.
+    # A serverless function killed on its 60 s ceiling leaves nobody behind to
+    # clear a flag, so a boolean lease would lock the user out of their own
+    # mailbox permanently; "held only if it started within the TTL" cannot.
+    # Taken and tested in ONE conditional UPDATE — see
+    # ``cloud/sync_state.acquire_gmail_sync_lease`` — because a read-then-write
+    # in Python is exactly the race this exists to close.
+    sync_started_at: Optional[datetime] = Field(
+        default=None, description="When the in-flight sync started (lease); NULL if idle"
+    )
+
     # Status - use string column to store enum values
     status: str = Field(default="idle", description="Current sync status")
     error_message: Optional[str] = Field(default=None, description="Last error message")
@@ -818,6 +832,23 @@ class UserCredential(SQLModel, table=True):
         default="v1",
         sa_column=Column("key_id", sa.Text, nullable=False, server_default="v1"),
         description="Identifier of the encryption key used (rotation support).",
+    )
+
+    # When the third party told us this grant is gone — a user revoking Gmail
+    # access at myaccount.google.com — or NULL while it is believed good.
+    #
+    # Written ONLY on a definitive, permanent refusal (``invalid_grant``); never
+    # on a transport error, a timeout or an HTTP 5xx, which are transient and
+    # would otherwise disconnect a working account the first time Google was
+    # unreachable. See ``cloud/gmail_client.load_valid_credentials``.
+    #
+    # Marked rather than deleted so the row keeps the address the UI needs to
+    # name which account to reconnect, and so reconnecting is reversible: the
+    # OAuth callback's upsert clears this back to NULL.
+    revoked_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        description="When the provider refused this grant permanently; NULL if live.",
     )
 
     created_at: datetime = Field(

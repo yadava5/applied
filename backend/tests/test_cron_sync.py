@@ -650,6 +650,10 @@ async def test_return_shape_when_nobody_has_connected_a_mailbox(
         "users_synced": 0,
         "errors": [],
         "candidates": 0,
+        # A run that reached nobody skipped nobody either. Present in the shape
+        # because a lease conflict is NOT an error and has to be countable
+        # separately — see the ``skipped`` field's own tests.
+        "skipped": 0,
         "stopped_by": "complete",
     }
 
@@ -943,3 +947,219 @@ def test_junk_in_the_allowlist_fails_loudly_and_does_not_echo_the_value(
 # a WebSocket path is ever reintroduced the deployment branch has to be
 # reintroduced with it -- and re-tested.
 # =============================================================================
+
+# =============================================================================
+# A run that achieved nothing may not report success.
+#
+# ``/cron/sync`` answered 200 whether every user synced or every user failed.
+# Vercel's cron dashboard reads the status code and nothing else, so the
+# schedule showed green while nothing worked — this estate's documented "checks
+# that cannot fail" shape, on the one surface nobody inspects by hand.
+# =============================================================================
+
+
+def _pin_candidates(monkeypatch: pytest.MonkeyPatch, *user_ids: uuid.UUID) -> None:
+    """Pin the candidate list, so a test can be about the REPORTING alone.
+
+    Enumeration has its own tests; seeding real credential rows here would make
+    these assertions depend on two mechanisms at once.
+    """
+
+    import jobtracker.cloud.cron as cron_module
+
+    async def _fake(limit: int, *, deadline: float | None = None) -> list[uuid.UUID]:
+        return list(user_ids)[:limit]
+
+    monkeypatch.setattr(cron_module, "list_syncable_user_ids", _fake)
+
+
+def _per_user_result(monkeypatch: pytest.MonkeyPatch, behaviour) -> None:
+    """Replace the per-user sync with ``behaviour(user_id)``."""
+
+    import jobtracker.cloud.cron as cron_module
+
+    async def _fake(user_id: uuid.UUID) -> None:
+        await behaviour(user_id)
+
+    monkeypatch.setattr(cron_module, "_sync_one_user", _fake)
+
+
+async def _fire(client: AsyncClient):
+    return await client.post("/cron/sync", headers={"x-vercel-cron-secret": CRON_SECRET})
+
+
+async def test_a_run_where_every_user_failed_does_not_answer_200(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE DEFECT. Both candidates raise and the schedule still showed green."""
+
+    _pin_candidates(monkeypatch, USER_A, USER_B)
+
+    async def _always_fail(user_id: uuid.UUID) -> None:
+        raise RuntimeError("gmail exploded")
+
+    _per_user_result(monkeypatch, _always_fail)
+
+    response = await _fire(client)
+
+    assert response.status_code == 503, (
+        f"a run that synced nobody and failed everybody answered "
+        f"{response.status_code}"
+    )
+    body = response.json()
+    assert body["users_synced"] == 0
+    assert len(body["errors"]) == 2, body
+    # The body survives the non-2xx. A status code alone would lose WHICH users
+    # failed, which is the other half of being honest.
+    assert all("RuntimeError" in e for e in body["errors"]), body
+
+
+async def test_a_partial_failure_still_answers_200(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One of two failed — a working schedule with one bad mailbox.
+
+    Pins the BOUNDARY: identical wiring to the test above, differing only in
+    that one user succeeds. A dashboard that goes red on any single-user blip
+    is a dashboard that gets muted.
+    """
+
+    _pin_candidates(monkeypatch, USER_A, USER_B)
+
+    async def _fail_one(user_id: uuid.UUID) -> None:
+        if user_id == USER_B:
+            raise RuntimeError("gmail exploded")
+
+    _per_user_result(monkeypatch, _fail_one)
+
+    response = await _fire(client)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["users_synced"] == 1
+    assert len(body["errors"]) == 1
+
+
+async def test_a_run_that_only_collided_with_live_syncs_is_not_a_failure(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE FALSE RED that ``skipped`` exists to prevent.
+
+    Both users are mid-sync in their browsers, so the per-user lease refuses
+    both. Every candidate went unsynced BY THIS RUN — and every one of them is
+    being synced. Counting those as errors would fire the honest status code on
+    the healthiest possible outcome.
+    """
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+
+    _pin_candidates(monkeypatch, USER_A, USER_B)
+
+    async def _already_running(user_id: uuid.UUID) -> None:
+        # Read off the RELOADED module. ``_build_cloud_app`` reloads
+        # gmail_oauth, which rebinds the class object; an instance of the
+        # pre-reload class would not be caught by the handler's ``except``.
+        raise gmail_module.SyncAlreadyRunning()
+
+    _per_user_result(monkeypatch, _already_running)
+
+    response = await _fire(client)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["skipped"] == 2, body
+    assert body["errors"] == [], (
+        "a lease conflict is not an error — it means a sync is already running"
+    )
+
+
+async def test_the_not_connected_409_is_still_an_error(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """"Gmail is not connected" is also a 409, and it IS a fault.
+
+    It means the candidate list is stale: enumeration said this user has a
+    mailbox and the sync disagreed. Matching the lease conflict on its STATUS
+    CODE rather than its type would swallow this and let a wholly broken
+    deployment report itself healthy — the same defect this section fixes, one
+    level down.
+    """
+
+    from fastapi import HTTPException
+    from fastapi import status as http_status
+
+    _pin_candidates(monkeypatch, USER_A)
+
+    async def _not_connected(user_id: uuid.UUID) -> None:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="Gmail is not connected for this user. Connect it first.",
+        )
+
+    _per_user_result(monkeypatch, _not_connected)
+
+    response = await _fire(client)
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    assert body["skipped"] == 0, body
+    assert body["errors"] == [f"{USER_A}: HTTP409"], body
+
+
+async def test_the_enumeration_loop_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``limit`` was applied AFTER probing every configured user.
+
+    Each probe opens its own session (~216 ms under NullPool), so the cost
+    scaled with the allowlist rather than the batch: 500 configured users and a
+    batch of 5 meant 500 probes and a run with no time left to sync anybody.
+    """
+
+    import jobtracker.cloud.cron as cron_module
+
+    configured = [uuid.uuid4() for _ in range(500)]
+    monkeypatch.setattr(cron_module.settings, "cron_sync_user_ids", configured)
+
+    probes: list[uuid.UUID] = []
+
+    async def _fake_position(user_id: uuid.UUID):
+        probes.append(user_id)
+        return True, datetime.utcnow() - timedelta(hours=1)
+
+    monkeypatch.setattr(cron_module, "_gmail_sync_position", _fake_position)
+
+    await cron_module.list_syncable_user_ids(5)
+
+    assert len(probes) <= cron_module._CRON_MAX_PROBES, (
+        f"the enumeration probed {len(probes)} of {len(configured)} configured "
+        f"users; the cap is {cron_module._CRON_MAX_PROBES}"
+    )
+    # Non-vacuity: it must still probe enough to fill the batch, or "bounded"
+    # would be satisfied by never enumerating anybody.
+    assert len(probes) >= 5
+
+
+async def test_the_enumeration_stops_on_the_run_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deadline already past stops the loop before the first probe."""
+
+    import jobtracker.cloud.cron as cron_module
+
+    monkeypatch.setattr(
+        cron_module.settings,
+        "cron_sync_user_ids",
+        [uuid.uuid4() for _ in range(10)],
+    )
+
+    probes: list[uuid.UUID] = []
+
+    async def _fake_position(user_id: uuid.UUID):
+        probes.append(user_id)
+        return True, None
+
+    monkeypatch.setattr(cron_module, "_gmail_sync_position", _fake_position)
+
+    result = await cron_module.list_syncable_user_ids(5, deadline=time.monotonic() - 1)
+
+    assert probes == []
+    assert result == []

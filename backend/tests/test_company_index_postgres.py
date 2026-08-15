@@ -36,11 +36,11 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
+
+from tests.pg_support import reset_public_schema, resolve_admin_url, sync_url
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
@@ -55,37 +55,12 @@ SEED_ROWS = 200_000
 USER = uuid.UUID("3c9f1b52-7d0a-4e63-9f18-5b2c84a7e011")
 
 
-def _resolve_admin_url() -> tuple[str | None, Any]:
-    """Find a Postgres, starting one if that is what it takes.
+ADMIN_URL, _OWNED_CONTAINER = resolve_admin_url()
 
-    Same resolution as ``test_migrations_postgres.py`` — an explicit
-    ``JOBTRACKER_TEST_PG_ADMIN_URL`` (CI's service container) wins, else a
-    throwaway ``postgres:16``, else skip. A suite that runs only when a human
-    exported a variable is a suite that never runs.
-    """
-
-    explicit = os.environ.get("JOBTRACKER_TEST_PG_ADMIN_URL")
-    if explicit:
-        return explicit, None
-    try:
-        from testcontainers.community.postgres import PostgresContainer
-    except Exception:  # pragma: no cover - machine without the test extra
-        return None, None
-    try:
-        container = PostgresContainer("postgres:16")
-        container.start()
-    except Exception:  # pragma: no cover - no docker daemon, or it refused
-        return None, None
-    return container.get_connection_url(), container
-
-
-ADMIN_URL, _OWNED_CONTAINER = _resolve_admin_url()
-
-
-def teardown_module(module) -> None:  # noqa: ANN001 - pytest hook signature
-    if _OWNED_CONTAINER is not None:
-        _OWNED_CONTAINER.stop()
-
+# NO ``teardown_module`` stopping the container: it is SHARED with
+# ``test_cascade_delete_postgres`` (see tests/pg_support.py), so whichever
+# module finished first would pull the server out from under the other.
+# A throwaway container dies with the pytest process.
 
 pytestmark = pytest.mark.skipif(
     not ADMIN_URL,
@@ -99,14 +74,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _sync_url() -> str:
-    return (
-        make_url(ADMIN_URL)
-        .set(drivername="postgresql+psycopg")
-        .render_as_string(hide_password=False)
-    )
-
-
 @pytest.fixture(scope="module")
 def seeded_engine():
     """A migrated database with a table large enough to prefer an index.
@@ -118,28 +85,14 @@ def seeded_engine():
     ``CREATE INDEX`` here would stay green if the migration were deleted.
     """
 
-    url = _sync_url()
+    url = sync_url(ADMIN_URL)
     engine = create_engine(url, future=True)
 
-    # The RLS migrations create policies over ``auth.uid()``, which Postgres
-    # resolves at policy-creation time, so the chain cannot apply to a database
-    # with no ``auth`` schema. Production gets it from Supabase; provide the
-    # same two objects, as test_migrations_postgres.py does.
-    with engine.begin() as conn:
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS auth"))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS auth.users (id uuid primary key)"))
-        conn.execute(
-            text("INSERT INTO auth.users(id) VALUES (:a) ON CONFLICT DO NOTHING"),
-            {"a": USER},
-        )
-        conn.execute(
-            text(
-                "CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid "
-                "LANGUAGE sql STABLE AS $$ SELECT NULLIF("
-                "current_setting('request.jwt.claims', true)::json->>'sub', "
-                "'')::uuid $$"
-            )
-        )
+    # Take the schema for this module. Under CI every Postgres suite shares one
+    # database, so a module that skipped this would inherit the previous one's
+    # tables and its `upgrade head` would fail with "relation already exists" —
+    # a test-ordering problem wearing the costume of a broken migration.
+    reset_public_schema(engine, owner_ids=(USER,))
 
     proc = subprocess.run(
         [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],

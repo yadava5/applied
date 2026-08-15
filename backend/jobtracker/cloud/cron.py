@@ -121,6 +121,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func as sa_func
 from sqlmodel import select
@@ -158,6 +159,25 @@ _CRON_RUN_BUDGET_SECONDS = 45.0
 # run ran out of users or ran out of budget.
 STOPPED_COMPLETE = "complete"  # every candidate in this batch was attempted
 STOPPED_DEADLINE = "deadline"  # the run's time budget ran out
+
+# The most configured users a single run will PROBE while building its
+# candidate list. See :func:`list_syncable_user_ids` for why the batch cap does
+# not bound that loop and what this rail costs.
+#
+# DELIBERATELY ABOVE ``settings.sync_batch_size`` (default 100). Set below it,
+# the enumeration could never return as many candidates as the batch allows, so
+# ``len(candidates) >= batch_size`` would be unsatisfiable and ``STOPPED_BATCH``
+# would become a state the response could never report — a reachable-looking
+# branch that is structurally dead, which is the defect shape this module has
+# already been through once.
+#
+# It is not the operative bound and is not presented as one: the run's own
+# deadline is, exactly as ``_CRON_RUN_BUDGET_SECONDS`` is the operative bound on
+# the sync loop. At ~216 ms per probe (issue #203) the 45 s budget stops the
+# enumeration around 200 users anyway. This is the rail for the case the
+# deadline cannot catch — an allowlist that grew far past what this design
+# supports — and it is far above any allowlist this deployment has.
+_CRON_MAX_PROBES = 200
 STOPPED_BATCH = "batch"  # the batch cap was reached; more users are waiting
 
 
@@ -188,6 +208,16 @@ class CronSyncResponse(BaseModel):
             "mailbox, before any sync was attempted. Zero here means the "
             "enumeration found nobody — a different fault from every sync "
             "failing."
+        ),
+    )
+    skipped: int = Field(
+        default=0,
+        description=(
+            "Users whose sync was declined because one was already running for "
+            "that mailbox (429). NOT an error: it is the per-user lease doing "
+            "its job, and it happens routinely when a user is syncing in the "
+            "browser as the schedule fires. Counted separately so it can never "
+            "make an otherwise-healthy run report failure."
         ),
     )
     stopped_by: str = Field(
@@ -324,6 +354,13 @@ async def _gmail_sync_position(
                     .where(
                         UserCredential.user_id == user_id,
                         UserCredential.kind == KIND_GMAIL,
+                        # A grant the user revoked at Google is not a connected
+                        # mailbox. Without this the row's mere existence kept
+                        # answering "yes" forever: the user was picked as a
+                        # candidate every fifteen minutes, spent one of the ~4
+                        # slots this run can afford on a sync that could only
+                        # fail, and crowded out someone whose mail still works.
+                        UserCredential.revoked_at.is_(None),
                     )
                     .limit(1)
                 )
@@ -350,7 +387,9 @@ async def _gmail_sync_position(
     return True, last_sync
 
 
-async def list_syncable_user_ids(limit: int) -> list[uuid.UUID]:
+async def list_syncable_user_ids(
+    limit: int, *, deadline: float | None = None
+) -> list[uuid.UUID]:
     """Configured users with a connected Gmail mailbox, least-recently-synced first.
 
     Two halves, and the split is the whole design:
@@ -379,12 +418,31 @@ async def list_syncable_user_ids(limit: int) -> list[uuid.UUID]:
     candidates no longer come from one query, and the key mirrors the SQL it
     replaces exactly: never-synced first, then oldest sync first, then user id.
 
-    COST. This is one connection per configured user instead of one per run,
-    and under the cloud engine's NullPool a connection is ~216 ms (issue
-    #203). That is affordable because the allowlist is small by construction —
-    it is a hand-maintained env var, not a table — and because the run's own
-    45 s budget is taken before this call, so a long enumeration eats into the
-    syncing time rather than overrunning the function's 60 s ceiling.
+    COST, AND THE BOUND ON IT. This is one connection per configured user
+    instead of one per run, and under the cloud engine's NullPool a connection
+    is ~216 ms (issue #203). ``limit`` does NOT bound it: the cap is applied to
+    the sorted result, after every configured user has already been probed, so
+    the work here scales with the size of the allowlist and not with the size
+    of the batch. That was affordable while the allowlist was a handful of
+    UUIDs and stops being affordable well before it is a hundred — at ~216 ms
+    each, 200 configured users would spend the whole 45 s run enumerating and
+    sync nobody.
+
+    So the loop is bounded twice: by ``_CRON_MAX_PROBES``, and by the run's own
+    deadline if the caller passes one. Both are reported rather than silent —
+    an enumeration that stopped early is the difference between "nobody needed
+    syncing" and "we never looked".
+
+    WHAT THE BOUND COSTS, said plainly. Ordering least-recently-synced first
+    requires knowing every candidate's position, so a probe cap necessarily
+    ranks only the users it reached. For an allowlist inside the cap — every
+    real deployment today — the fairness property is exactly as before: a run
+    that stops on its deadline leaves the users it skipped at the front of the
+    next run's queue. PAST the cap that guarantee does not hold; the users
+    beyond it are not ranked at all, and would need a rotation this does not
+    implement. The honest summary is that the cap is a rail against an
+    allowlist that grew past what this design supports, and the log line says
+    so when it binds.
     """
 
     configured = list(settings.cron_sync_user_ids)
@@ -393,7 +451,21 @@ async def list_syncable_user_ids(limit: int) -> list[uuid.UUID]:
 
     # (never_synced_rank, last_sync_at, user_id) — the SQL ORDER BY, in Python.
     ranked: list[tuple[int, datetime, uuid.UUID]] = []
+    probed = 0
     for user_id in configured:
+        if probed >= _CRON_MAX_PROBES or (
+            deadline is not None and time.monotonic() >= deadline
+        ):
+            logger.warning(
+                "Scheduled sync enumerated only %s of %s configured user(s) "
+                "(%s). The users past that point were not ranked and cannot be "
+                "picked this run.",
+                probed,
+                len(configured),
+                "probe cap" if probed >= _CRON_MAX_PROBES else "run deadline",
+            )
+            break
+        probed += 1
         has_gmail, last_sync = await _gmail_sync_position(user_id)
         if not has_gmail:
             continue
@@ -497,10 +569,15 @@ async def cron_sync(request: Request) -> CronSyncResponse:
 
     _authorize(request)
 
+    # Function-level, like ``_sync_one_user``'s import of the same module: it
+    # pulls in the Google client libraries, which must not be paid at
+    # collection time.
+    from jobtracker.cloud.gmail_oauth import SyncAlreadyRunning
+
     deadline = time.monotonic() + _CRON_RUN_BUDGET_SECONDS
     batch_size = max(1, settings.sync_batch_size)
 
-    candidates = await list_syncable_user_ids(batch_size)
+    candidates = await list_syncable_user_ids(batch_size, deadline=deadline)
     if not candidates:
         # Said out loud rather than returned as a bland zero, and the two
         # reasons are separated because they have different remedies: an empty
@@ -524,6 +601,7 @@ async def cron_sync(request: Request) -> CronSyncResponse:
         return CronSyncResponse(users_synced=0, errors=[], candidates=0)
 
     synced = 0
+    skipped = 0
     errors: list[str] = []
     stopped_by = STOPPED_COMPLETE
 
@@ -555,6 +633,29 @@ async def cron_sync(request: Request) -> CronSyncResponse:
                 user_id,
                 _CRON_PER_USER_TIMEOUT_SECONDS,
             )
+        except SyncAlreadyRunning:
+            # THE LEASE, NOT A FAULT. A user syncing in the browser as the
+            # schedule fires makes ``gmail_sync`` answer 429, and counting that
+            # as an error would turn the honest status code below into a false
+            # red on the exact signal it exists to make trustworthy — the sync
+            # it collided with is a sync that HAPPENED.
+            #
+            # Matched on the TYPE, not the status code, so that "Gmail is not
+            # connected" (409 — a genuine fault, the candidate list is stale)
+            # cannot be swallowed by the same branch.
+            skipped += 1
+            logger.info(
+                "Scheduled sync skipped user_id=%s: a sync is already running "
+                "for that mailbox.",
+                user_id,
+            )
+        except HTTPException as exc:
+            errors.append(f"{user_id}: HTTP{exc.status_code}")
+            logger.warning(
+                "Scheduled sync for user_id=%s failed (HTTP %s).",
+                user_id,
+                exc.status_code,
+            )
         except Exception as exc:  # noqa: BLE001 — one user may not sink the batch
             # Type name only. A Gmail/HTTP error's ``str()`` can carry a token
             # or a request URL, and this list is returned over the wire.
@@ -573,16 +674,51 @@ async def cron_sync(request: Request) -> CronSyncResponse:
             stopped_by = STOPPED_BATCH
 
     logger.info(
-        "Scheduled sync: candidates=%s users_synced=%s errors=%s stopped_by=%s",
+        "Scheduled sync: candidates=%s users_synced=%s skipped=%s errors=%s "
+        "stopped_by=%s",
         len(candidates),
         synced,
+        skipped,
         len(errors),
         stopped_by,
     )
 
-    return CronSyncResponse(
+    # A RUN THAT SYNCED NOBODY AND FAILED EVERYBODY IS NOT A SUCCESS.
+    #
+    # This returned 200 no matter what happened. Vercel's cron dashboard reads
+    # the status code and nothing else, so the schedule showed green while
+    # every user's sync raised — the estate's "checks that cannot fail" shape,
+    # on the one surface nobody watches by hand.
+    #
+    # The condition is deliberately the narrowest one that cannot false-alarm:
+    # errors present AND not a single user synced. A partial failure still
+    # returns 200 because a run that synced four of five users did work, and a
+    # dashboard that goes red on every transient single-user blip is a
+    # dashboard that gets muted. ``skipped`` is excluded from the numerator by
+    # construction — a lease conflict means a sync was already running, so a
+    # run that skipped everyone collided with real work rather than failing.
+    #
+    # 503 rather than 500: this is "the dependency did not answer", it is
+    # retryable, and Vercel does not retry a failed cron invocation either way.
+    # The body is still the full CronSyncResponse — a status code alone would
+    # lose which users failed and why, which is the other half of being honest.
+    body = CronSyncResponse(
         users_synced=synced,
         errors=errors,
         candidates=len(candidates),
+        skipped=skipped,
         stopped_by=stopped_by,
     )
+    if errors and synced == 0:
+        logger.error(
+            "Scheduled sync synced NOBODY: %s candidate(s), %s error(s), "
+            "%s skipped. Answering 503 so the schedule does not show green.",
+            len(candidates),
+            len(errors),
+            skipped,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=body.model_dump(),
+        )
+    return body

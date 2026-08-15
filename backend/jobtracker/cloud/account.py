@@ -9,10 +9,17 @@ Every entity table carries ``user_id`` and the request runs under the per-user
 RLS context (the ``jobtracker_app`` role + the ``request.jwt.claims`` GUC set
 from ``set_current_user_id``), so each delete is doubly scoped to the caller:
 an explicit ``WHERE user_id = <caller>`` filter AND row-level security. Rows are
-removed children-before-parents to respect the (RESTRICT-default) foreign keys:
-``email_embeddings → emails`` and ``contacts / interviews / emails →
-applications``. ``training_data``, ``sync_state`` and ``user_credentials`` carry
-no cross-entity FK.
+removed children-before-parents — ``email_embeddings → emails`` and
+``contacts / interviews / emails → applications``. ``training_data``,
+``sync_state`` and ``user_credentials`` carry no cross-entity FK.
+
+Those four keys are ``ON DELETE CASCADE`` since ``a9d3e5f2c841``; before it they
+were NO ACTION and this ordering was mandatory rather than merely correct. It is
+KEPT anyway, and not from inertia: the child deletes are scoped by ``user_id``
+as well, which is a second layer the database's cascade does not provide, and
+this repo has already found that DDL it assumed was applied can be absent in
+production. Belt and braces — the cascade is what makes a purge interrupted
+half-way stop leaving orphans that RLS then makes permanently unreachable.
 
 Before any of that, the caller's Gmail grant is revoked at Google — the
 ``user_credentials`` row is the only place the token exists, so once the purge
@@ -51,8 +58,9 @@ logger = logging.getLogger(__name__)
 # with no identity and RLS would fail closed (delete nothing).
 router = APIRouter(tags=["Account"], dependencies=[require_user()])
 
-# Children before parents (see module docstring). Order matters because the
-# foreign keys default to RESTRICT — deleting a parent first would error.
+# Children before parents (see module docstring). Kept explicit even though the
+# four cross-entity keys now cascade: these deletes are also user-scoped, which
+# the cascade is not.
 _DELETION_ORDER: tuple[type, ...] = (
     EmailEmbedding,
     Contact,
