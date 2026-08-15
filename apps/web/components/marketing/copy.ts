@@ -181,6 +181,47 @@ export const CLAIMS = {
 } as const;
 
 /**
+ * The words around the one product recording the descent plays
+ * (`ProductClip`, wired into the decision claim).
+ *
+ * Three clips were recorded; one is placed. `board-syncs` has no sentence in
+ * the descent that describes what it shows — the test a clip has to pass here
+ * is that the paragraph beside it already says what the frames say, without
+ * the reader being told — and `gmail-connects` shows the consent screen for
+ * the pre-rename host, which is not something a sales page can put on screen.
+ *
+ * `label` is the wall label, the same device the travelling exhibit uses. It
+ * is not decoration: the board embed on this same page advertises itself as
+ * "the shipped board, not a video" (`BOARD.live`), so anything that IS one
+ * has to say so in the page's own voice, or that distinction quietly dies.
+ */
+export const FOOTAGE = {
+  label: "Recorded in the app",
+  /** The clip's own control. It is the reduced-motion path — nothing autoplays
+   *  there — and the way anyone re-watches five seconds they scrolled past. */
+  play: "Play",
+  replay: "Replay ↺",
+  rules: {
+    /**
+     * The accessible name. A silent screen recording carries all of its
+     * meaning in pixels, so it needs the same text equivalent an image does —
+     * what happens, in order, not what it is called.
+     */
+    name:
+      "Screen recording: a rejection body is typed into the classifier sandbox on Applied's demo page, and the rules layer re-scores it as the text arrives — the verdict moves from Other to Rejection, and the line beneath it changes from deferring to the neural layers to answering on its own.",
+    /**
+     * The caption does one job the label cannot: it scopes the numbers inside
+     * the frame. The confidence in the recording is one email's, from the
+     * accept bar the layer uses at read time; the figure directly above it is
+     * a macro-F1 over a held-out set. A visitor who reads them as the same
+     * quantity has been misled by the staging, not by the copy.
+     */
+    caption:
+      "The classifier sandbox on the demo page, recorded there. The confidence beside the verdict is this one email's, scored live by the rules layer — not the benchmark above it.",
+  },
+} as const;
+
+/**
  * Wall labels for the descent's travelling exhibit — sentinel index → what the
  * artifact is showing right now. Parallel to `ClaimsDescent`'s STAGES, and the
  * same device as the window act's captions: an exhibit that changes state

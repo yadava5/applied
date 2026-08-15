@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
-import { ARTIFACT, CLAIMS, DECISION, PRIVACY } from "./copy";
+import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, PRIVACY } from "./copy";
+import { CLIPS, ProductClip } from "./ProductClip";
 import { VerdictEmail, type VerdictStage } from "./VerdictEmail";
 
 /**
@@ -148,6 +149,20 @@ export function ClaimsDescent() {
               <p>{DECISION.body}</p>
               <BenchmarkFigure className="mt-2" />
               <p className="text-sm text-dim">{DECISION.gate}</p>
+              {/* The only beat of the four whose exhibit column repeats the
+                  previous screen's artifact, and the only one whose claim is
+                  about a layer the reader cannot see working. The recording
+                  is that layer working, on the surface this paragraph names
+                  ("in your own browser, on the demo") — the rules answering
+                  a body on their own, and deferring to the neural layers
+                  before they can. It goes last because the argument is
+                  claim, evidence, gate, and only then the thing running. */}
+              <ProductClip
+                clip={CLIPS.rulesReadTheBody}
+                name={FOOTAGE.rules.name}
+                caption={FOOTAGE.rules.caption}
+                className="mt-2"
+              />
             </Claim>
           </div>
 
