@@ -158,14 +158,29 @@ export async function getGmailStatus(): Promise<GmailStatusResult> {
  * user. Returns a labelled failure (never throws) so the authorize route
  * handler can bounce the browser to the *right* place: `/login` for a missing
  * session, or `/settings?gmail=<flag>` with an honest flag otherwise.
+ *
+ * `returnOrigin` is the origin THIS request arrived on, and it is what the
+ * backend's callback will return the browser to (#333). We have to say it out
+ * loud: this call is made server-side with the user's JWT attached, so the
+ * backend sees no browser `Origin` header and would otherwise have to guess
+ * from `JOBTRACKER_WEB_APP_URL` — a second variable that has to agree with the
+ * first, and that silently disagreed in production. The backend validates this
+ * against its own trusted-host list before minting anything, so sending it is
+ * a request, not an instruction. Omitting it is safe and falls back to the old
+ * behaviour, which is what makes this deployable independently of the API.
  */
-export async function getGmailAuthorizeUrl(): Promise<GmailAuthorizeResult> {
+export async function getGmailAuthorizeUrl(
+  returnOrigin?: string,
+): Promise<GmailAuthorizeResult> {
   const token = await sessionToken();
   if (!token) return { kind: "unauthenticated" };
 
   try {
     const { BACKEND_API_URL } = serverEnv();
-    const res = await fetch(`${BACKEND_API_URL}/auth/gmail/authorize`, {
+    const query = returnOrigin
+      ? `?return_origin=${encodeURIComponent(returnOrigin)}`
+      : "";
+    const res = await fetch(`${BACKEND_API_URL}/auth/gmail/authorize${query}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       cache: "no-store",
     });

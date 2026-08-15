@@ -53,13 +53,22 @@ def _token_for(user_id: str) -> str:
 
 
 @pytest.fixture
-async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
+async def cloud_app(monkeypatch: pytest.MonkeyPatch, request: Any) -> AsyncIterator[Any]:
     """Cloud app configured with Gmail OAuth env + in-memory DB.
 
     Mirrors the proven reload sequence in ``test_user_id_scoping`` and adds
     the Gmail OAuth env vars plus a reload of ``jobtracker.cloud.gmail_oauth``
     so the router binds to the freshly-reloaded settings.
+
+    Indirectly parametrizable with the value of ``JOBTRACKER_WEB_APP_URL``, so
+    a test can ask for the deployment that no longer sets it at all (#333).
+    That case has to be reachable from HERE rather than from a unit test: the
+    claim is that the whole round trip works without the variable, and the only
+    way to be sure ``_web_app_base`` is not still on the success path is to
+    make it raise if it is reached.
     """
+
+    web_app_url = getattr(request, "param", WEB_APP_URL)
 
     monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
     monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
@@ -68,13 +77,26 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID", CLIENT_ID)
     monkeypatch.setenv("JOBTRACKER_GOOGLE_OAUTH_CLIENT_SECRET", CLIENT_SECRET)
     monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", REDIRECT_URI)
-    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", WEB_APP_URL)
+    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", web_app_url)
     # The callback now refuses to bounce the browser to a host this deployment
     # does not already trust as its front end (see
     # `config.trusted_web_hosts` and `test_gmail_oauth_return_host.py`), so the
     # fixture has to DECLARE that host rather than merely name it in one place.
     # That is the point of the change: the two facts must be stated together.
-    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test")
+    #
+    # `api.example.test` — this fixture's own REDIRECT_URI host — is declared
+    # alongside it deliberately. On the real deployment the API's hostnames are
+    # in the trusted list because Vercel injects them and CORS is built from
+    # the same list; there is no `VERCEL_*` here, so declaring it is how that
+    # shape is reproduced. Without it the "returning the browser to the API
+    # strands it" test would be refused by the ALLOWLIST rather than by the
+    # self-check it exists to exercise, and would pass with that check deleted.
+    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "web.example.test,api.example.test")
+    # Pinned rather than inherited: these are what make a host "the API", and a
+    # value leaking in from the surrounding environment would silently change
+    # which origins the tests below expect to be refused.
+    monkeypatch.setenv("VERCEL_URL", "")
+    monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "")
 
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
@@ -201,6 +223,179 @@ async def test_authorize_returns_least_privilege_consent_url(client: AsyncClient
 async def test_authorize_requires_auth(client: AsyncClient) -> None:
     resp = await client.get("/auth/gmail/authorize")
     assert resp.status_code == 401
+
+
+# ── #333: the caller's own origin, over real HTTP ─────────────────────────
+
+
+async def test_authorize_carries_the_callers_origin_in_the_state(
+    client: AsyncClient,
+) -> None:
+    """A trusted `return_origin` reaches the state, canonicalised.
+
+    The claim is deliberately NOT encrypted the way `cv` is — the origin is the
+    address bar the user is looking at, not a secret — so it can be read
+    straight off the decoded state here, which is also how it is read when
+    debugging a redirect in production.
+    """
+
+    resp = await client.get(
+        "/auth/gmail/authorize",
+        params={"return_origin": f"{WEB_APP_URL}/"},
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    state = urllib.parse.parse_qs(
+        urllib.parse.urlparse(resp.json()["authorization_url"]).query
+    )["state"][0]
+
+    decoded = pyjwt.decode(
+        state,
+        ENC_KEY,
+        algorithms=["HS256"],
+        audience="jobtracker:gmail-oauth-state",
+    )
+    assert decoded["ro"] == WEB_APP_URL, (
+        "the trailing slash must be normalised away by the backend, not "
+        "carried into a Location header"
+    )
+
+
+async def test_authorize_refuses_an_untrusted_origin_before_google(
+    client: AsyncClient,
+) -> None:
+    """ACCEPTANCE #2. Refused at `/authorize`, with the origin named.
+
+    "Before Google is ever reached" is asserted by the absence of a consent
+    URL in the response, not by trusting the reading of the source: a 400 body
+    carries no `authorization_url`, so nothing was minted and the user is told
+    at the click rather than after consenting.
+
+    400 and not 503 matters at this seam specifically: `lib/gmail/server.ts`
+    maps 503 to "Gmail isn't enabled on this deployment yet", which for a bad
+    origin is both wrong and actionless.
+    """
+
+    resp = await client.get(
+        "/auth/gmail/authorize",
+        params={"return_origin": "https://evil.example.com"},
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert "authorization_url" not in body
+    assert "evil.example.com" in body["detail"]
+
+
+async def test_authorize_refuses_the_apis_own_origin(client: AsyncClient) -> None:
+    """ACCEPTANCE #4. The stranded-on-the-backend case, over HTTP.
+
+    `api.example.test` IS in this deployment's trusted list (see the fixture,
+    which reproduces why: CORS and the return host read one list, and the API's
+    own hostnames belong on it). It is still refused, because the API serves no
+    `/settings` and returning the browser there is the same broken outcome as
+    an unset return host wearing a different costume.
+    """
+
+    api_origin = f"https://{urllib.parse.urlparse(REDIRECT_URI).hostname}"
+    resp = await client.get(
+        "/auth/gmail/authorize",
+        params={"return_origin": api_origin},
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "api.example.test" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("cloud_app", [""], indirect=True)
+async def test_the_round_trip_returns_to_the_caller_with_web_app_url_unset(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACCEPTANCE #1. Connect works with JOBTRACKER_WEB_APP_URL unset entirely.
+
+    Proved through the CALLBACK, not at `/authorize`: a 200 from `/authorize`
+    would say nothing about whether `_web_app_base` is still on the success
+    path. Here the variable is empty, so that helper raises 503 if it is
+    reached at all — the redirect below can only come from the origin carried
+    in the state.
+    """
+
+    from datetime import datetime, timedelta
+
+    import jobtracker.cloud.gmail_oauth as gmail_module
+    from jobtracker.credentials.types import GmailCredentials
+
+    resp = await client.get(
+        "/auth/gmail/authorize",
+        params={"return_origin": WEB_APP_URL},
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    state = urllib.parse.parse_qs(
+        urllib.parse.urlparse(resp.json()["authorization_url"]).query
+    )["state"][0]
+
+    def _fake_exchange(code: str, code_verifier: str) -> GmailCredentials:
+        return GmailCredentials(
+            access_token="ya29.fake",
+            refresh_token="1//fake-refresh",
+            token_expiry=datetime.utcnow() + timedelta(hours=1),
+            email="owner@example.test",
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+        )
+
+    monkeypatch.setattr(gmail_module, "_exchange_code", _fake_exchange)
+
+    resp = await client.get(
+        "/auth/gmail/callback",
+        params={"code": "auth-code-from-google", "state": state},
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"{WEB_APP_URL}/settings?gmail=connected"
+
+
+@pytest.mark.parametrize("cloud_app", [""], indirect=True)
+async def test_with_web_app_url_unset_a_stateless_callback_still_refuses_loudly(
+    client: AsyncClient,
+) -> None:
+    """The other half of ACCEPTANCE #1, so it is not read as "unset is fine".
+
+    A callback whose state cannot be read carries no origin, and there is
+    genuinely nowhere to send the browser. It must 503 with the operator
+    message rather than degrade into the RELATIVE `/settings?...` the old code
+    produced — which the browser resolved against the API's own host, stranding
+    the user on a backend with no such page. Silent wrong answers are the
+    failure mode this whole area is about.
+    """
+
+    resp = await client.get(
+        "/auth/gmail/callback",
+        params={"code": "irrelevant", "state": "not-a-valid-token"},
+    )
+
+    assert resp.status_code == 503, resp.text
+    assert "JOBTRACKER_WEB_APP_URL" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("cloud_app", [""], indirect=True)
+async def test_status_is_configured_without_the_web_app_url(
+    client: AsyncClient,
+) -> None:
+    """The variable is off the "required to offer Gmail" list, and must be.
+
+    Leaving it there would make the deployment report itself unconfigured — a
+    503 naming a variable the flow no longer needs — which is exactly the kind
+    of untrue requirement #333 exists to remove.
+    """
+
+    resp = await client.get(
+        "/auth/gmail/status",
+        headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["configured"] is True
 
 
 async def test_callback_forged_state_redirects_error_not_500(client: AsyncClient) -> None:
