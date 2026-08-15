@@ -129,8 +129,10 @@ fails the build when a claim on this page stops matching the source, and a claim
 checker can no longer find it fails too. Where each number terminates is in [Verify it](#verify-it).
 
 - **The classifier is deterministic, and it is not an LLM.** Classification is regexes, an
-  embedding comparison and a small fine-tuned head — all of it code you can read. No hosted model
-  provider is in the path, so your mail is never sent to one.
+  embedding comparison and a small fine-tuned head, all of it code in this repository rather than a
+  prompt — and on the deployed path it is the rules layer alone, which is a limitation and is
+  stated as one below. No hosted model provider is in the path either way, so your mail is never
+  sent to one.
 - **The body is read to classify, then discarded.** Applied fetches the full message because
   Gmail's snippet is too short to recognise a rejection, and stores only that short snippet.
   `backend/tests/test_body_is_never_persisted.py` proves it rather than asserting it: a sentinel
