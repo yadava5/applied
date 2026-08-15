@@ -1420,3 +1420,164 @@ async def test_an_employer_the_mail_names_itself_is_never_second_guessed(test_se
 
     assert filed.get("needs_company_confirmation") is None
     assert filed["application_id"] is not None
+
+
+# --- the leftmost-anchor misfire (SimpliSafe, #320 regression) -----------------
+#
+# Reported from the live board on 2026-08-15: a rejection for a job already
+# tracked minted a SECOND card instead of settling the first. Row 73 held
+# "SimpliSafe" / "software engineer i user systems" in APPLIED; row 124 arrived
+# as "Simplisafe" / "interest in simplisafe and our software engineer i user
+# systems" in REJECTED. Same job, twice.
+#
+# The cause is `_ROLE_BODY_PATTERNS`' preposition+article pattern. `re.search`
+# returns the LEFTMOST match, so it anchored on "for your " at offset 20 and the
+# lazy capture stretched to the sentence's single "position", swallowing the
+# employer name and a conjunction. The correct anchor is "and our " at offset
+# 52 — which was not an anchor at all, because "and" was missing from the
+# alternation.
+#
+# A regression from #320: before the body-reading change the classifier only saw
+# Gmail's ~200-char snippet, so these body patterns fired on far less text than
+# they now do.
+
+SIMPLISAFE_SUBJECT = "Important information about your application to SimpliSafe"
+SIMPLISAFE_REJECTION = (
+    "Hi Ayush, Thank you for your interest in SimpliSafe and our Software "
+    "Engineer I- User Systems position. We have carefully reviewed your "
+    "application."
+)
+# Exactly what row 73 already carries, so a match here is a settled card.
+SIMPLISAFE_ROLE_TOKEN = "software engineer i user systems"
+
+
+def test_the_role_anchors_on_the_article_nearest_the_keyword():
+    """The reported body, verbatim. The employer name must not enter the role.
+
+    Mutation: drop `and` from the anchor alternation in the second
+    `_ROLE_BODY_PATTERNS` entry → the only remaining anchor is the leftmost
+    "for your " and the capture becomes the reported
+    "interest in SimpliSafe and our Software Engineer I- User Systems".
+    Mutation: drop the tempering (the negative lookahead inside the capture) →
+    "for your " matches again and the same wrong role returns.
+    """
+
+    assert p.role_from_message(SIMPLISAFE_SUBJECT, SIMPLISAFE_REJECTION) == (
+        "Software Engineer I- User Systems"
+    )
+
+
+def test_the_rejection_settles_the_existing_card_instead_of_minting_one():
+    """The damage the user actually saw, asserted at the identity layer.
+
+    The role above is only worth extracting because of what it keys. This is the
+    assertion that encodes the bug report: the rejection must resolve ONTO row
+    73, not past it.
+
+    Mutation: either mutation above → the token becomes
+    "interest in simplisafe and our software engineer i user systems", which
+    matches no row, and `_pick_application` returns None — the caller's signal
+    to mint the duplicate card.
+    """
+
+    row_73 = stored("SimpliSafe", role_token=SIMPLISAFE_ROLE_TOKEN, app_id=73)
+
+    role = p.role_from_message(SIMPLISAFE_SUBJECT, SIMPLISAFE_REJECTION)
+    picked = apps._pick_application(
+        [row_73],
+        p.extract_req_id(SIMPLISAFE_SUBJECT, SIMPLISAFE_REJECTION),
+        p.normalize_role_token(role),
+    )
+
+    assert picked is row_73
+
+
+def test_employer_narrowing_ignores_the_case_the_employer_typed():
+    """"SimpliSafe" and "Simplisafe" are one employer, not two.
+
+    The two live rows disagree on case, which would be a SECOND independent
+    cause of duplicate cards if the employer half of the key were
+    case-sensitive. It is not — both sides go through `_normalize_token` — and
+    that is asserted here rather than read off the source.
+
+    Mutation: drop the `.lower()` from `_normalize_token` → every assertion here
+    fails and the duplicate has two causes instead of one.
+    """
+
+    assert p.matches_company_token("SimpliSafe", "simplisafe")
+    assert p.matches_company_token("Simplisafe", "simplisafe")
+    assert p.matches_company_token("SIMPLISAFE", "simplisafe")
+    # Both spellings normalise to the one token the lookup queries by.
+    assert p.normalize_company_name("SimpliSafe") == p.normalize_company_name("Simplisafe")
+
+
+@pytest.mark.parametrize(
+    ("snippet", "expected"),
+    [
+        # The fix, on the shape that motivated it.
+        (
+            "Thank you for your interest in Acme and the Backend Engineer role.",
+            "Backend Engineer",
+        ),
+        # `and` as an anchor must not invent a role out of ordinary prose. The
+        # all-lowercase capture "hiring manager for this" is refused by the
+        # Title-Case guard, which is the only thing standing between the wider
+        # alternation and a fabricated identity.
+        (
+            "We received your resume and the hiring manager for this position "
+            "will review it shortly.",
+            None,
+        ),
+        (
+            "Thanks for applying. We will keep your resume on file and the "
+            "recruiter for the role will be in touch.",
+            None,
+        ),
+        # `at`/`with` temper a capture but are deliberately NOT outer anchors,
+        # so this refuses rather than re-anchoring on "at the". A decision, not
+        # an accident: a wrong role is strictly worse than no role, because
+        # `_pick_application` rule 4 files a role-less message onto the
+        # employer's existing row.
+        (
+            "Thank you for your interest in the Software Engineer at the Edge position.",
+            None,
+        ),
+        # The residual refusal, reached through the Ashby `role:` pattern, which
+        # is deliberately untempered because Ashby prints the title verbatim
+        # after the colon. Here the template does not, and the fragment must be
+        # refused rather than keyed.
+        #
+        # The next two cases isolate the two halves of that refusal. Written
+        # because the obvious single case ("... and our Storage team") trips
+        # BOTH halves, so either one could be deleted with the suite still
+        # green — a gate that cannot fail.
+        #
+        # Only the anchor+article half sees this one: "and the" is exactly the
+        # gap in `_clean_role`'s existing cut, which knows `in|for|to|at|with`
+        # but not `and`.
+        (
+            "Thank you for applying to our role: Software Engineer and the Storage team",
+            None,
+        ),
+        # Only the bare-possessive half sees this one: "our" here follows a
+        # comma, not an anchor.
+        (
+            "Thank you for applying to our role: Software Engineer, our Flagship team",
+            None,
+        ),
+        # A legitimate title containing "the" is NOT collateral damage.
+        (
+            "Thank you for your interest in the Head of the Americas position.",
+            "Head of the Americas",
+        ),
+    ],
+)
+def test_a_body_capture_that_spans_a_clause_is_refused(snippet, expected):
+    """A sentence fragment is never an identity.
+
+    Mutation: remove the `\\b(?:and|for|in|to|at|with)\\s+(?:the|our|your|a|an)\\b`
+    refusal in `_clean_role` → the Ashby case yields
+    "Software Engineer and our Storage team".
+    """
+
+    assert p.role_from_message("Update on your application", snippet) == expected
