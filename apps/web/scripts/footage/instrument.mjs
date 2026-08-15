@@ -39,14 +39,20 @@ async function screencastSize(launchOpts, label) {
   const page = await ctx.newPage();
   await page.goto(BASE + PATH_, { waitUntil: "domcontentloaded" });
   const client = await ctx.newCDPSession(page);
+  // The ack is fire-and-forget and its rejection is swallowed: the browser is
+  // closed the moment the first frame arrives, and an ack still in flight then
+  // rejects with "Target page, context or browser has been closed" — an
+  // unhandled rejection that kills the process AFTER the answer has already
+  // been printed, which reads like the probe failed when it did not.
   const size = await new Promise((resolve) => {
-    client.on("Page.screencastFrame", async ({ data, sessionId }) => {
+    client.on("Page.screencastFrame", ({ data, sessionId }) => {
       resolve(pngSize(data));
-      try { await client.send("Page.screencastFrameAck", { sessionId }); } catch { /* stopped */ }
+      client.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
     });
-    client.send("Page.startScreencast", { format: "png", everyNthFrame: 1, maxWidth: 6000, maxHeight: 6000 });
+    client.send("Page.startScreencast", { format: "png", everyNthFrame: 1, maxWidth: 6000, maxHeight: 6000 }).catch(() => {});
   });
   console.log(`A. screencast [${label}] -> ${size.join("x")} (CSS viewport is 1440x900)`);
+  await client.send("Page.stopScreencast").catch(() => {});
   await browser.close();
 }
 

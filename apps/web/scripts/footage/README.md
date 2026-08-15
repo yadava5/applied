@@ -24,10 +24,20 @@ like that.**
 | --- | --- | ---: | ---: | ---: |
 | `gmail-connects` | The Gmail card at "Not connected", the one permission Google is asked for, and the same card at "Connected". | 6.7s | 83.5 KB | 325.0 KB |
 | `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 58.4 KB | 229.5 KB |
-| `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through 174 characters of preamble, flips to `REJECTION 70%` on "…we have decided…", and lands at `90%` — over the bar where layer 1 answers alone. | 5.0s | 117.3 KB | 251.5 KB |
+| `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through 174 characters of preamble, flips to an amber `REJECTION 70%` (measured: 2.25s–2.45s in the encoded clip, so the middle beat is a readable 250ms, not a single frame), and lands green at `90%` — over the bar where layer 1 answers alone. | 5.0s | 117.3 KB | 251.5 KB |
 
 Each ships with a `.jpg` poster (its first frame, which is also the frame it
 loops back to) and is listed in `manifest.json` with its real byte count.
+
+**The poster is the BEFORE state, and whoever places these has to decide whether
+that is what they want.** First frame was the brief, and a loop's first frame is
+its "before" by construction — so `gmail-connects.jpg` reads *Gmail · Not
+connected*, `board-syncs.jpg` shows the pre-sync counters, and
+`rules-read-the-body.jpg` is an empty field. If the poster is used as a
+`<video poster>` or as the reduced-motion/data-saver still, that is the single
+image those visitors see, and it shows the product not having done the thing.
+Re-render a poster from a later frame if that is wrong for the placement:
+`renderStill` in `render.mjs` takes `frame`.
 
 **Both encodes ship.** VP9/WebM is 2.1–3.9x smaller than the H.264 fallback on
 this material — flat UI with large unchanging areas is exactly what VP9 is good
@@ -43,9 +53,15 @@ or the other way round.
 
 Two of the three are captured from **`/demo`**, which is public and needs no
 login. That is deliberate and must stay that way: the owner's real account holds
-65 genuine job applications with real employer names and real rejections, and
-none of that goes on a public marketing page. `/demo` runs the same shipped
-components over fixture data.
+genuine job applications with real employer names and real rejections, and none
+of that goes on a public marketing page. `/demo` runs the same shipped components
+over fixture data.
+
+(No count is given on purpose. The number moves every week, and the one place it
+was actually observed here — the tail of the OAuth recording — read *42 filed ·
+35 open* on the day it was made, not the 65 this task was briefed with. Whichever
+is right, a number that cannot be re-derived from anything in this repo does not
+belong in it.)
 
 | clip | captured from |
 | --- | --- |
@@ -99,8 +115,8 @@ UI says, it says in the clip.
   this clip takes. The only ways to remove it are to drop the consent screen
   entirely or to re-record after Google approves the app.
 - **17.6s onward — the return, the Settings scroll, and the real dashboard.**
-  The tail of the recording is the owner's actual board: 42 filed applications
-  with real employer names. **The clip ends on the connection card, not on the
+  The tail of the recording is the owner's actual board — 42 filed, 35 open on
+  the day it was recorded, every employer name real. **The clip ends on the connection card, not on the
   dashboard**, and it must keep ending there.
 
 The clip is **uncaptioned**, on purpose. A caption of the "here is what you'll
