@@ -2588,9 +2588,13 @@ async def classify_review_item(
     # ``typeof === "number"`` guard, both of which render nothing for null).
     #
     # Nothing selects corrected rows BY confidence, so NULL cannot strand them:
-    # ``weekly_labeling_workflow`` and ``generate_ml_monitoring_report`` both
-    # filter ``user_corrected.is_(False)`` before they ever look at the number,
-    # and ``api/classification.py``'s seed and needs-review queries do the same.
+    # ``scripts/weekly_labeling_workflow.py`` and
+    # ``scripts/generate_ml_monitoring_report.py`` — the only two readers left
+    # that compare this column — both filter ``user_corrected.is_(False)``
+    # before they ever look at the number. (The desktop routers under
+    # ``jobtracker/api/`` had two more such queries; #298 deleted them with the
+    # rest of the unmounted desktop surface, so they are no longer a
+    # consideration either way.)
     email.classification_confidence = None
     email.classification_method = ClassificationMethod.USER
 

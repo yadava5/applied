@@ -42,15 +42,16 @@ Design notes
   came from a person may lose the classifier's number.
 - Safe against every reader, checked one by one. Nothing selects a corrected
   row BY confidence: ``scripts/weekly_labeling_workflow.py`` and
-  ``scripts/generate_ml_monitoring_report.py`` filter
-  ``user_corrected.is_(False)`` before they compare the column, and so do
-  ``api/classification.py``'s training-seed query (which additionally requires
-  ``classification_method == "rules"``) and its needs-review list (which
-  additionally requires ``classification_confidence != None``, so the
-  ``or 0.0`` at its response site cannot fire on a NULL). The macOS review
-  query in ``apps/macos/.../LocalDatabase.swift`` already excludes
-  ``classification_confidence IS NULL``. So no row moves into or out of any
-  queue as a result of this backfill.
+  ``scripts/generate_ml_monitoring_report.py`` — the only two readers that
+  compare this column — filter ``user_corrected.is_(False)`` before they
+  reach it. So no row moves into or out of any queue as a result of this
+  backfill.
+
+  This was originally checked against four more readers: two queries in
+  ``jobtracker/api/`` (both of which also filtered ``user_corrected``) and the
+  macOS review query, which excluded ``classification_confidence IS NULL``
+  anyway. #298 deleted all of them along with the rest of the unmounted desktop
+  surface, so the audit is smaller than it was and its conclusion is unchanged.
 
   That reasoning holds BECAUSE the predicate here is ``user_corrected = true``,
   and it does not generalise. A thread SIBLING settled by
