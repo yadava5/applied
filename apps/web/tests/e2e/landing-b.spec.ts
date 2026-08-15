@@ -73,6 +73,28 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  *   the closing observer fired at load ..... the "not before it is seen" half
  *   a 2400px box in the hero ............... all three overflow readings
  *
+ * The visitor's-pane test was added the same way (2026-08-15, same rig, both
+ * heights). `MarketingBoard`'s release condition disabled — `if (id !==
+ * seededRef.current)` → `if (id === -1)`, so a visitor open never reaches
+ * `onVisitorOpen` and the camera stays panned — put the pane's × 270–274px
+ * above the clip at 1024×768 and 480–624px above it at 1024×600, red on both
+ * viewports across two runs, with the other eight tests green; green again on
+ * restore, 10/10 three runs running. Companion bounds not independently
+ * reddened, and named as such: the × `toHaveCount(1)`,
+ * `stage.contains(control)`, the stage-really-crops-the-board guard, the
+ * `below` edge and the two horizontal ones.
+ *
+ * A THIRD ASSERTION THAT COULD NOT HOLD, caught the same way. That test first
+ * gated on the act still being at beat 1 after the click, and it went red on
+ * the UNMUTATED build: a visitor open moves focus into the pane
+ * (`ApplicationDetail`'s `focusOnOpen`) and `focus()` scrolls the viewport to
+ * reach a pane the crop has pushed off-screen, which can carry the act into
+ * the next zone. Where that scroll lands is the browser's business; the
+ * product's promise is the pane's chrome, so the arrival gate is the pane
+ * being open on the row the visitor clicked. Chasing that down is also what
+ * surfaced the release race recorded on `visitorRow` — which is a defect in
+ * the page, not in this file, and is reported rather than retried into green.
+ *
  * TWO ASSERTIONS IN THE FIRST DRAFT COULD NOT FAIL, and both were caught by
  * running the mutation rather than by reading the code. `toHaveText(/rejected/)`
  * on the moved row stayed GREEN with the act's beat-1 effect disabled — the
@@ -93,6 +115,11 @@ const PROD_BUILD = process.env.PLAYWRIGHT_PROD_BUILD === "1";
  *  measured here because it is the tight case: the descent's exhibit clears
  *  600px by single-digit pixels. */
 const DESKTOP_1024 = { width: 1024, height: 600 };
+/** The other height the act is verified at. Both are measured for the visitor's
+ *  pane (see the test): the stage is `calc(100dvh - 13.5rem)`, so the crop is
+ *  552px tall here and 384px at 600 — two different amounts of room for a
+ *  control the camera can push off the top. */
+const DESKTOP_1024_768 = { width: 1024, height: 768 };
 const TABLET_768 = { width: 768, height: 1024 };
 
 /** The exhibit's closing sentence — the honesty guarantee, matched on the
@@ -148,15 +175,46 @@ async function settledHeight(page: Page, selector: string): Promise<number> {
 }
 
 /**
- * Put the window act at beat 2 and prove it got there.
+ * Wait for an element's top edge to stop moving, then return it.
  *
- * The order matters and is not decoration: beat 2's docked pane is gated on
- * the verdict having ALREADY landed (`MarketingBoard` waits for the row to
- * read `rejected`), and beat 1's move is on a 750ms timer. Jumping straight to
- * zone 2 opens nothing. So the reader passes through beat 1 the way a real one
- * does, and each arrival is asserted rather than slept through.
+ * Same instrument as `settledHeight`, for the other axis: the camera is a
+ * 700ms eased `translateY`, and `getBoundingClientRect` reports the animating
+ * value, so anything read mid-pan is a coordinate the visitor never sees.
+ *
+ * Sampled every 150ms on this build the pan reads −391.5px at the click and
+ * has settled by 750ms at both heights. The 1.5s floor is deliberately past
+ * twice that: a pan that has not STARTED yet returns the same pre-pan rect on
+ * every read, which two equal readings would report as a settle. (The reds
+ * that first sent this helper looking for a mid-flight read were not that —
+ * they were a genuinely un-released camera, and they are recorded in the
+ * test.)
+ *
+ * It settles just as readily on a camera that is not moving, which is what the
+ * mutation produces: a broken build fails on the geometry, with the geometry's
+ * own message, rather than timing out here.
  */
-async function driveToBeatTwo(page: Page): Promise<void> {
+async function settledTop(page: Page, selector: string): Promise<number> {
+  const read = () =>
+    page.evaluate(
+      (sel) => document.querySelector(sel)?.getBoundingClientRect().top ?? Number.NaN,
+      selector,
+    );
+  await page.waitForTimeout(1_500);
+  let previous = await read();
+  for (let i = 0; i < 40; i += 1) {
+    await page.waitForTimeout(200);
+    const current = await read();
+    if (Number.isFinite(current) && current === previous) return current;
+    previous = current;
+  }
+  throw new Error(`${selector} never settled (last top ${previous})`);
+}
+
+/**
+ * Put the window act at beat 1 and prove it got there — the camera panned to
+ * the board's foot, and the verdict actually landed on the row.
+ */
+async function driveToBeatOne(page: Page): Promise<void> {
   // The board is client-mounted at `lg`+ only (`LandingBoard`), so measuring
   // before it exists would measure `StageSkeleton` — a test that cannot fail.
   await expect(page.getByTestId("pipeline-board")).toBeVisible();
@@ -170,6 +228,19 @@ async function driveToBeatTwo(page: Page): Promise<void> {
   // act's beat-1 effect disabled the text form stayed green and this form
   // goes red.
   await expect(page.getByLabel("Change stage for Larkspur Systems")).toHaveValue("rejected");
+}
+
+/**
+ * Put the window act at beat 2 and prove it got there.
+ *
+ * The order matters and is not decoration: beat 2's docked pane is gated on
+ * the verdict having ALREADY landed (`MarketingBoard` waits for the row to
+ * read `rejected`), and beat 1's move is on a 750ms timer. Jumping straight to
+ * zone 2 opens nothing. So the reader passes through beat 1 the way a real one
+ * does, and each arrival is asserted rather than slept through.
+ */
+async function driveToBeatTwo(page: Page): Promise<void> {
+  await driveToBeatOne(page);
 
   await centreOn(page, "[data-beat='2']");
   await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
@@ -200,9 +271,36 @@ const activeCaption = (page: Page) =>
     .locator("section[aria-label='The board, live'] p[aria-hidden='false']")
     .filter({ hasText: NARRATION });
 
+/** The detail pane's own close control, by the label `ApplicationDetail`
+ *  gives it — used as a raw selector inside `page.evaluate`, where a
+ *  Playwright locator cannot go. */
+const CLOSE_CONTROL = 'button[aria-label="Close detail"]';
+
 /** The Larkspur row inside the live board — the one the act moves. */
 const movedRow = (page: Page) =>
   page.locator(".board-row").filter({ hasText: "Larkspur Systems" });
+
+/**
+ * The row the VISITOR opens, and deliberately NOT the one the act moves.
+ *
+ * `MarketingBoard` tells a visitor's open from the page's own by id — the
+ * beat-2 seed is the one id the page ever opens — and both sides of that
+ * comparison are set from effects that defer off the effect body. Clicking
+ * Larkspur at beat 1 scrolls further to reach its pane, which carries the act
+ * into zone 2, which sets the seed to Larkspur's own id; if the pane's
+ * `transport.detail` call lands after that, the visitor's open is read as the
+ * page's and the camera never releases. Measured on a production build: about
+ * four full-file runs in ten went red that way at both heights, with the
+ * camera resting un-released at −279.5px and −263.5px.
+ *
+ * That is a defect in the release, not in this test, and it is reported rather
+ * than papered over — a flaky gate under `retries: 2` is an intermittently
+ * green one. Atlas Freight is the last row of the closed group, in frame at
+ * beat 1 by the same camera, and it is never seeded: the act stayed at beat 1
+ * in every run at both heights. Do not "simplify" this back to `movedRow`.
+ */
+const visitorRow = (page: Page) =>
+  page.locator(".board-row").filter({ hasText: "Atlas Freight" });
 
 test.describe("landing B (/landing-b)", () => {
   test.skip(
@@ -337,6 +435,110 @@ test.describe("landing B (/landing-b)", () => {
       `the moved row is ${-below}px below the stage's bottom edge — it is clipped out of frame at beat 2`,
     ).toBeGreaterThanOrEqual(-1);
   });
+
+  /**
+   * SEED 3, and the one defect on this page that SHIPPED. The window crops a
+   * live product, so every control the crop pushes off-stage becomes
+   * unreachable — and at beat 1 the camera is panned to the board's foot, so
+   * a visitor who clicks a row got a detail pane whose own × was rendered
+   * ABOVE the visible frame (measured then: 304px above it at a 768-tall
+   * viewport). The pane could only be closed with Escape, which nothing on the
+   * page announced.
+   *
+   * `d2144ec` fixed it in `MarketingBoard`: `transport.detail(id)` is the call
+   * every pane load passes through, so an id that is not the page's own seed
+   * is the visitor's hand on the wheel, and `LandingBoard` returns the camera
+   * to `translateY(0)` — beat 0's frame, where the pane renders its whole
+   * header.
+   *
+   * This asserts the PROPERTY, not the mechanism: the close control's box
+   * lies inside the stage's clip rect. The unit gate cannot see it — the
+   * release is a runtime pan, not a string — and neither can a `toBeVisible`,
+   * because a control panned out of an `overflow-clip` ancestor still reports
+   * real coordinates and still passes every visibility check Playwright has.
+   *
+   * Both heights, because they are different amounts of room (552px of stage
+   * at 768, 384px at 600) and the original defect was found across both.
+   *
+   * The row clicked is `visitorRow`, NOT the row the act moves. That choice is
+   * load-bearing and its reason is a defect — read the locator's docblock
+   * before changing it.
+   */
+  for (const viewport of [DESKTOP_1024_768, DESKTOP_1024]) {
+    const size = `${viewport.width}x${viewport.height}`;
+    test(`a pane the visitor opens keeps its close control in frame at ${size}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/landing-b");
+
+      await driveToBeatOne(page);
+
+      // The visitor takes the wheel: a click on the row's own identity button,
+      // the gesture the board exposes for "open the mail behind this row".
+      // NOT the moved row — see `visitorRow`, where the reason is a defect.
+      await page.getByRole("button", { name: /^Open Atlas Freight/ }).click();
+      // The arrival gate is the PANE ON THAT ROW, not the beat: a visitor open
+      // moves focus into the pane (`ApplicationDetail`'s `focusOnOpen`, true
+      // for every open a person performed) and `focus()` scrolls the viewport
+      // to reach it, so the act's scene index after the click is the browser's
+      // business, not the product's promise. What is promised is this: a pane
+      // the VISITOR opened has its own chrome in frame.
+      const close = page.getByRole("button", { name: "Close detail" });
+      await expect(page.getByTestId("application-detail")).toBeVisible();
+      await expect(visitorRow(page)).toHaveAttribute("data-detail-open", "true");
+      // ApplicationDetail has a docked path and a Dialog path; at `lg`+ this
+      // is the docked one, and exactly one × exists to measure.
+      await expect(close).toHaveCount(1);
+
+      // The release is a 700ms eased pan. Measure after it stops.
+      await settledTop(page, CLOSE_CONTROL);
+
+      const frame = await page.evaluate((sel) => {
+        const control = document.querySelector<HTMLElement>(sel);
+        const board = document.querySelector<HTMLElement>("[data-testid='pipeline-board']");
+        if (!control || !board) return { error: "no close control on the docked pane" } as const;
+        // Walk up from the BOARD, not from the ×: the pane is itself
+        // `overflow-hidden`, so a walk from the button would stop at the pane
+        // and "inside the clip" would be trivially true.
+        let stage: HTMLElement | null = board.parentElement;
+        while (stage && !/clip|hidden|auto|scroll/.test(getComputedStyle(stage).overflowY)) {
+          stage = stage.parentElement;
+        }
+        if (!stage) return { error: "the board has no clipping ancestor" } as const;
+        return {
+          control: control.getBoundingClientRect().toJSON(),
+          stage: stage.getBoundingClientRect().toJSON(),
+          stageHoldsControl: stage.contains(control),
+          boardHeight: board.getBoundingClientRect().height,
+        };
+      }, CLOSE_CONTROL);
+
+      expect("error" in frame ? frame.error : "", "the scene did not compose").toBe("");
+      if ("error" in frame) return;
+
+      // The stage has to be the box that actually crops the board, or every
+      // containment reading below is about an unrelated rectangle.
+      expect(frame.stageHoldsControl, "the pane is not inside the board's stage").toBe(true);
+      expect(
+        frame.stage.height,
+        `the stage is ${frame.stage.height}px for a ${frame.boardHeight}px board — it is not cropping anything, so this test is measuring the wrong box`,
+      ).toBeLessThan(frame.boardHeight);
+
+      const above = frame.control.top - frame.stage.top;
+      const below = frame.stage.bottom - frame.control.bottom;
+      expect(
+        above,
+        `the pane's close control is ${-above}px ABOVE the framed window at ${size} — the camera never handed the frame back, so a visitor who opened this card can only close it with Escape`,
+      ).toBeGreaterThanOrEqual(-1);
+      expect(
+        below,
+        `the pane's close control is ${-below}px below the framed window at ${size}`,
+      ).toBeGreaterThanOrEqual(-1);
+      expect(frame.control.left).toBeGreaterThanOrEqual(frame.stage.left - 1);
+      expect(frame.control.right).toBeLessThanOrEqual(frame.stage.right + 1);
+    });
+  }
 
   /**
    * The closing act plays once on scroll-into-view and HOLDS. "Holds" is the

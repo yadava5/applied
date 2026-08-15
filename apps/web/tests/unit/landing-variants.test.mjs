@@ -30,6 +30,38 @@
  * it names exists on disk; every page is noindex; the footer keeps the
  * /privacy link Google's OAuth verification looks for.
  *
+ * The closing act's key and the product clip's words joined that list once they
+ * became rendered strings, and both are held on the same principle:
+ *
+ *   · the rail labels (`CLOSING.railShips` / `railGhost`) are WORDS. The
+ *     figures beside them are composed in `ClosingAct` from `DECISION`, so a
+ *     digit typed into a label — the drift where 0.979 acquires a second home
+ *     and its attribution stops travelling with it — is a failure. Both
+ *     figures are held: only 0.979 had a no-hardcoding scan, and 0.958 could
+ *     be typed anywhere on the page with every gate green.
+ *   · `FOOTAGE` states no number at all. It sits beside the benchmark, and a
+ *     figure in the recording's own words reads as a second measurement; the
+ *     one number the frames contain is scoped by the caption instead.
+ *
+ * Both read the STRIPPED source (`graph.get`, never `readFileSync`): the two
+ * components' docblocks quote `DECISION.rulesF1` and `FOOTAGE.label` verbatim,
+ * so a scan of raw source would stay green with the render deleted and the
+ * comment left behind.
+ *
+ * MUTATION-TESTED AT INTRODUCTION (2026-08-15). Nine deliberate breaks, each
+ * watched go red and green again on restore: an empty rail label; `0.979`
+ * typed into a rail label; `0.958` typed into `ClosingAct` in place of the
+ * composed value; the `{DECISION.rulesF1}` span deleted (its docblock mention
+ * left behind); an empty `FOOTAGE.label`; a figure added to the clip's
+ * caption; the label no longer naming a recording; the caption's scoping
+ * clause dropped; `ClaimsDescent` inlining the clip's accessible name.
+ * Companion bounds NOT independently reddened, and named as such rather than
+ * claimed: the three graph-reachability guards, the key-present regexes (the
+ * empty-string mutations prove the value, not the key), `act.includes(
+ * "CLOSING.railShips")`, the `rulesF1: "0.979"` shape match, `lines.length >=
+ * 5`, and the three "these words render" checks on ProductClip and
+ * ClaimsDescent.
+ *
  * And it holds the three STRUCTURAL bets the round-two edit made, each of
  * which is a copy claim in disguise:
  *
@@ -114,6 +146,8 @@ const marketing = (name) => join(webRoot, "components", "marketing", name);
 const copyPath = marketing("copy.ts");
 const actPath = marketing("WindowAct.tsx");
 const descentPath = marketing("ClaimsDescent.tsx");
+const closingPath = marketing("ClosingAct.tsx");
+const clipPath = marketing("ProductClip.tsx");
 /** Repo-relative (webRoot is apps/web), because the copy names it verbatim. */
 const PRIVACY_TEST_PATH = "backend/tests/test_body_is_never_persisted.py";
 
@@ -173,6 +207,74 @@ test("0.979 is stated once, in copy.ts, attributed to the rules stage", () => {
       !src.includes("0.979"),
       `${rel(file)} hardcodes 0.979 — the figure lives in copy.ts so its attribution cannot drift`,
     );
+  }
+});
+
+test("the closing act's rail labels are words, and compose the figures", () => {
+  const copySrc = graph.get(copyPath);
+  const act = graph.get(closingPath);
+  assert.ok(act, "ClosingAct.tsx is not in the landing graph — the closing act is unmounted");
+
+  // The scene's key is DOM text now: as svg `<text>` inside a 1200-unit
+  // viewBox it measured 3.1–3.3px at 375 and 8.3–9.0px at 1024, so the page's
+  // central comparison was under any legible floor at every width. Words that
+  // render are copy, and copy lives in one file.
+  const labels = new Map();
+  for (const key of ["railShips", "railGhost"]) {
+    const found = new RegExp(`${key}:\\s*"([^"]*)"`).exec(copySrc);
+    assert.ok(
+      found,
+      `CLOSING.${key} is gone from copy.ts — the rail's words are back inside the drawing`,
+    );
+    assert.ok(
+      found[1].trim().length > 0,
+      `CLOSING.${key} is empty — the rail it names claims nothing`,
+    );
+    labels.set(key, found[1]);
+    assert.ok(act.includes(`CLOSING.${key}`), `ClosingAct stopped rendering CLOSING.${key}`);
+  }
+
+  // COMPOSED, NOT TYPED. The label carries the attribution and `DECISION`
+  // carries the figure; a digit in the label gives the number a second home,
+  // and the attribution stops travelling with it. That drift is the whole
+  // reason this file exists — 0.979 is the RULES stage, not the cascade.
+  for (const [key, label] of labels) {
+    assert.ok(
+      !/\d/.test(label),
+      `CLOSING.${key} ("${label}") types a figure into the rail label — the digits are DECISION.rulesF1 / DECISION.cascadeF1, composed beside it in ClosingAct`,
+    );
+  }
+
+  for (const [key, figure] of [
+    ["rulesF1", "0.979"],
+    ["cascadeF1", "0.958"],
+  ]) {
+    const stated = copySrc.split(figure).length - 1;
+    assert.equal(
+      stated,
+      1,
+      `${figure} is written ${stated} times in copy.ts — it is stated once, as DECISION.${key}`,
+    );
+    assert.match(
+      copySrc,
+      new RegExp(`${key}:\\s*"${figure}"`),
+      `DECISION.${key} is no longer ${figure}`,
+    );
+    assert.ok(
+      act.includes(`DECISION.${key}`),
+      `the closing act's key no longer composes DECISION.${key} — its figure is not the single-sourced one`,
+    );
+    // The 0.979 half restates the scan above; the 0.958 half is new. The
+    // cascade figure had no no-hardcoding rule at all, so it could be typed
+    // into any landing module — including the rail it labels — with every
+    // gate green.
+    for (const [file, src] of graph) {
+      if (!isLandingModule(file) || file === copyPath) continue;
+      assert.ok(
+        !src.includes(figure),
+        `${rel(file)} hardcodes ${figure} — the figure lives in copy.ts so its attribution cannot drift`,
+      );
+    }
   }
 });
 
@@ -324,6 +426,68 @@ test("the split verdict stays TWO micro-beats under ONE headline", () => {
     graph.get(copyPath).includes("first two hundred characters being polite"),
     "the polite-preamble sentence is gone from copy.ts",
   );
+});
+
+test("the product clip's words add no number, and no claim the page does not make", () => {
+  const copySrc = graph.get(copyPath);
+  const clip = graph.get(clipPath);
+  const descent = graph.get(descentPath);
+  assert.ok(clip, "ProductClip.tsx is not in the landing graph — the recording is unmounted");
+  assert.ok(descent, "ClaimsDescent.tsx is not in the landing graph");
+
+  // Sliced to the next export rather than to a closing brace: FOOTAGE nests a
+  // `rules` block, so `} as const` is not the first `}` in it.
+  const start = copySrc.indexOf("export const FOOTAGE");
+  assert.ok(start >= 0, "FOOTAGE is gone from copy.ts — the recording's words left the copy file");
+  const after = copySrc.slice(start + 1);
+  const stop = after.indexOf("\nexport const");
+  const block = stop === -1 ? after : after.slice(0, stop);
+
+  const lines = [...block.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  // Five: the wall label, the clip's two control words, its accessible name
+  // and its caption. Fewer means one is gone — or that this slice stopped
+  // finding any of them, which would make everything below vacuous.
+  assert.ok(lines.length >= 5, `FOOTAGE holds ${lines.length} strings — one of the five is gone`);
+  for (const [i, line] of lines.entries()) {
+    assert.ok(line.trim().length > 0, `FOOTAGE string ${i} is empty`);
+  }
+
+  // NO NEW NUMBER. The clip is placed against the decision claim, one screen
+  // from the benchmark: any figure in its own words reads as a second
+  // measurement of the same thing. The one number inside the FRAME is this
+  // email's confidence, and the caption is what scopes it — so the caption has
+  // to keep saying it is not the benchmark above it.
+  for (const line of lines) {
+    assert.ok(
+      !/\d/.test(line),
+      `FOOTAGE states a figure ("${line}") — the recording sits beside the benchmark and a number in its words reads as a second measurement`,
+    );
+  }
+  const caption = /caption:\s*"([^"]*)"/.exec(block);
+  assert.ok(caption, "FOOTAGE.rules.caption is gone — the clip's numbers are unscoped");
+  assert.match(
+    caption[1],
+    /not the benchmark/,
+    "the caption no longer separates the confidence in the frame from the macro-F1 above it — two different quantities, one staging that invites the confusion",
+  );
+
+  // AND IT SAYS WHAT IT IS. The board embed on this same page advertises
+  // itself as "the shipped board, not a video" (BOARD.live). A thing that IS
+  // one has to say so in the page's own voice or that distinction dies.
+  const label = /label:\s*"([^"]*)"/.exec(block);
+  assert.ok(label, "FOOTAGE.label is gone — the recording no longer declares itself");
+  assert.match(
+    label[1],
+    /record/i,
+    `FOOTAGE.label ("${label[1]}") stopped naming the clip a recording — BOARD.live calls the board "not a video", and that contrast is the claim`,
+  );
+
+  // The words this test holds are the words that render.
+  assert.ok(clip.includes("FOOTAGE.label"), "ProductClip stopped rendering the wall label");
+  assert.ok(clip.includes("aria-label={name}"), "the recording lost its text equivalent");
+  for (const key of ["FOOTAGE.rules.name", "FOOTAGE.rules.caption"]) {
+    assert.ok(descent.includes(key), `ClaimsDescent no longer passes ${key} — the clip's words are elsewhere`);
+  }
 });
 
 test("the page has a persistent path to its one conversion surface", () => {
