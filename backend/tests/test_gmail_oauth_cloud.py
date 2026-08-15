@@ -37,6 +37,12 @@ ENC_KEY = Fernet.generate_key().decode()  # valid Fernet key; also signs state
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
+# An origin this deployment has never heard of. A whole ORIGIN and not a bare
+# hostname, because that is what the refusal has to name: acceptance #2 of #333
+# asks for the offending origin in the message, and asserting a domain
+# *substring* would also pass on a message that named
+# `https://evil.example.com.getapplied.vercel.app`.
+HOSTILE_ORIGIN = "https://evil.example.com"
 CLIENT_ID = "test-client-id.apps.googleusercontent.com"
 CLIENT_SECRET = "test-client-secret"
 REDIRECT_URI = "https://api.example.test/auth/gmail/callback"
@@ -278,14 +284,14 @@ async def test_authorize_refuses_an_untrusted_origin_before_google(
 
     resp = await client.get(
         "/auth/gmail/authorize",
-        params={"return_origin": "https://evil.example.com"},
+        params={"return_origin": HOSTILE_ORIGIN},
         headers={"Authorization": f"Bearer {_token_for(USER_A)}"},
     )
 
     assert resp.status_code == 400, resp.text
     body = resp.json()
     assert "authorization_url" not in body
-    assert "evil.example.com" in body["detail"]
+    assert HOSTILE_ORIGIN in body["detail"]
 
 
 async def test_authorize_refuses_the_apis_own_origin(client: AsyncClient) -> None:
