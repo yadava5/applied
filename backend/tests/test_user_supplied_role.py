@@ -1,9 +1,12 @@
 """A role the sync can never know, typed by the person who applied.
 
 Issue #72. Every application filed from Gmail lands with ``position = ""`` for
-two independent reasons: the Gmail path fetches ``format=metadata`` so no body
-is ever read, and ``_role_from_subject`` runs four regexes over a subject line
-that names the COMPANY — "Thanks for applying to Supabase" — and never the role.
+two independent reasons: at the time, the Gmail path fetched ``format=metadata``
+so no body was ever read, and ``_role_from_subject`` runs four regexes over a
+subject line that names the COMPANY — "Thanks for applying to Supabase" — and
+never the role. The first reason has since changed (the fetch reads bodies now,
+and discards them), but the field is still the human's: nothing extracts a role
+from the body, and the stored row still holds only the snippet.
 Both hold for all three of the owner's real production subjects.
 
 The chosen answer is the cheapest honest one: let the user type it, and remember
