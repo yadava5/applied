@@ -58,20 +58,35 @@ import importlib
 import pytest
 from fastapi import HTTPException
 
-# The production pairing, reproduced. These are the two real hostnames; the
-# incident is precisely that they are different.
+# The production pairing, reproduced. These are the real hostnames; the
+# incident is precisely that the first two are different.
 APP_HOST = "getapplied.vercel.app"
 STALE_ALIAS = "jobtracker-web-five.vercel.app"
+# THE HOST THIS CODE ACTUALLY RUNS ON. `VERCEL_PROJECT_PRODUCTION_URL` is
+# injected per PROJECT and the backend is its own Vercel project, so what it
+# names is the API — never the web app. Defaulting the fixture to APP_HOST
+# would model a deployment that cannot exist, and every test below would be
+# measuring a twin: a guard anchored on hosts the API cannot know would look
+# fine here and 503 the moment the env var was corrected in production. That
+# near-miss is why this constant is spelled out rather than defaulted.
+API_HOST = "jobtracker-api-seven.vercel.app"
 
 
 def _module(
     monkeypatch: pytest.MonkeyPatch,
     *,
     web_app_url: str | None,
-    production_url: str = APP_HOST,
-    allowed_hosts: str = "",
+    production_url: str = API_HOST,
+    allowed_hosts: str = APP_HOST,
 ):
     """Load the Gmail OAuth router under a given deployment environment.
+
+    The defaults are the SHAPE of the real deployment: this process is the API
+    project (``production_url``), and the web host is known only because the
+    operator declared it (``allowed_hosts``). A test that wants the
+    undeclared case — which is what production looked like on 2026-08-14,
+    proved by the CORS probe quoted in ``config.trusted_web_hosts`` — passes
+    ``allowed_hosts=""``.
 
     Reloads ``config`` first so ``settings`` (an ``lru_cache``d singleton)
     picks the environment up, then the router so it binds to the fresh module.
@@ -185,6 +200,9 @@ def test_an_unset_web_app_url_is_refused(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_the_apps_own_production_host_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     """The correct configuration — what production must be changed to.
 
+    Both variables, on the real deployment shape: this process is the API
+    project, and the web host is trusted because the operator declared it.
+
     This is also the positive control for every refusal above: if the trusted
     list were empty, or the check inverted, this test goes red and the others
     would be passing for the wrong reason.
@@ -195,6 +213,40 @@ def test_the_apps_own_production_host_is_accepted(monkeypatch: pytest.MonkeyPatc
     response = gmail_oauth._web_redirect("connected")
     assert response.status_code == 302
     assert response.headers["location"] == f"https://{APP_HOST}/settings?gmail=connected"
+
+
+def test_the_right_url_with_the_host_undeclared_is_refused_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The near-miss this whole guard nearly shipped, pinned.
+
+    ``JOBTRACKER_WEB_APP_URL`` is set to exactly the right origin — and the
+    guard still refuses, because this API project has no way to know that
+    origin is ours unless somebody says so. That was production's actual state
+    on 2026-08-14: the CORS probe in ``config.trusted_web_hosts`` shows
+    ``getapplied.vercel.app`` was NOT declared, so correcting only the first
+    variable would have turned "connects to the wrong host" into "cannot
+    connect at all".
+
+    Refusing is the right behaviour — a return host this deployment cannot
+    vouch for is exactly what caused the incident — but the message has to
+    carry the operator to the fix rather than just saying no. That is what is
+    asserted here, and it is the reason this test exists at all.
+    """
+
+    gmail_oauth = _module(
+        monkeypatch, web_app_url=f"https://{APP_HOST}", allowed_hosts=""
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        gmail_oauth._web_redirect("connected")
+
+    detail = str(excinfo.value.detail)
+    assert "JOBTRACKER_CORS_ALLOWED_HOSTS" in detail, (
+        "the refusal names neither the second variable nor the remedy, so an "
+        f"operator who set the obvious one is stuck. Got: {detail}"
+    )
+    assert APP_HOST in detail, "the refusal must name the host to declare"
 
 
 def test_a_trailing_slash_is_still_tolerated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,7 +278,6 @@ def test_a_custom_domain_declared_by_the_operator_is_accepted(
     gmail_oauth = _module(
         monkeypatch,
         web_app_url="https://applied.example.com",
-        production_url=APP_HOST,
         allowed_hosts="applied.example.com",
     )
 

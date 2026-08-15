@@ -696,14 +696,57 @@ def trusted_web_hosts() -> list[str]:
     ``cloud.gmail_oauth._web_redirect`` refuses to bounce anywhere outside it,
     so the two answers can no longer drift apart in silence.
 
+    THE SPLIT DEPLOYMENT, AND WHY THE WEB HOST MUST BE DECLARED
+    -----------------------------------------------------------
+    This is the part that is easy to get wrong, and the first draft of this
+    change did. ``VERCEL_URL`` and ``VERCEL_PROJECT_PRODUCTION_URL`` are
+    injected PER PROJECT, and this code runs on the **API** project — so what
+    they name is ``jobtracker-api-…``, never the web app. The web host reaches
+    this list through ``JOBTRACKER_CORS_ALLOWED_HOSTS`` or not at all.
+
+    And on 2026-08-14 it did not. Probed live, with ``localhost`` as the
+    control that proves the probe discriminates rather than just being silent:
+
+        $ curl -sD - -H "Origin: http://localhost:3000" \\
+              https://jobtracker-api-seven.vercel.app/health
+        access-control-allow-origin: http://localhost:3000     <- echoed
+
+        $ curl -sD - -H "Origin: https://getapplied.vercel.app" \\
+              https://jobtracker-api-seven.vercel.app/health
+        (no access-control-allow-origin at all)                <- NOT in the list
+
+    Nothing had noticed, because the browser never calls this API: every
+    backend call is made server-side from the web app's route handlers with
+    the user's JWT attached, so CORS has never had to admit the web origin.
+    See the note in ``apps/web/next.config.ts`` for the same finding from the
+    other side.
+
+    So the operator MUST declare the web host in ``JOBTRACKER_CORS_ALLOWED_HOSTS``
+    for the Gmail return-host guard to pass. That is a real requirement, not an
+    incidental one, and ``_web_app_base``'s refusal message names it. Two
+    variables that must agree is not a satisfying resting place — the durable
+    fix is for ``/auth/gmail/authorize`` to carry the CALLER'S OWN origin across
+    the round trip inside the signed, encrypted ``state`` this flow already
+    has, making the return host the origin the user actually started from by
+    construction, and this variable unnecessary. That is a cross-project change
+    and is deliberately not in this commit.
+
     WHAT IS AND IS NOT IN HERE. ``VERCEL_URL`` is this deployment's own host
     (unique per preview); ``VERCEL_PROJECT_PRODUCTION_URL`` is the stable
     production one; both arrive WITHOUT a scheme. ``cors_allowed_hosts`` is the
-    documented operator escape hatch for a custom domain. ``localhost`` and
-    ``127.0.0.1`` are here for ``vercel dev`` and are matched with an optional
-    port by both readers. Deliberately NO ``*.vercel.app`` wildcard — anyone
-    can deploy one, and re-adding it re-opens SECURITY_AUDIT.md finding 2. See
+    operator declaration described above. ``localhost`` and ``127.0.0.1`` are
+    here for ``vercel dev`` and are matched with an optional port by both
+    readers. Deliberately NO ``*.vercel.app`` wildcard — anyone can deploy one,
+    and re-adding it re-opens SECURITY_AUDIT.md finding 2. See
     ``backend/tests/test_cors_origin_regex.py``.
+
+    ONE THING THIS LIST DOES NOT CATCH, stated rather than fixed. It contains
+    the API's own hostnames, so ``JOBTRACKER_WEB_APP_URL`` pointed at the API
+    would pass the guard and strand the browser on a backend that serves no
+    ``/settings`` — the same shape as the unset case. "Who may call this API"
+    and "where does the browser go afterwards" are genuinely different
+    questions on a split deployment, and this function currently answers only
+    the first. The signed-state fix above answers the second properly.
 
     Read from ``os.environ`` at CALL time, not import time, so a test that
     monkeypatches the environment sees the change without reloading modules.

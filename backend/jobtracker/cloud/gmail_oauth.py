@@ -590,10 +590,15 @@ def _web_app_base() -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 f"Gmail OAuth cannot complete: JOBTRACKER_WEB_APP_URL points at "
-                f"'{host}', which is not one of this deployment's web app hosts. "
-                "Returning the browser there would land it on a hostname that "
-                "does not carry the user's session, i.e. signed out. Set "
-                "JOBTRACKER_WEB_APP_URL to the host the app is served from."
+                f"'{host}', which this deployment does not recognise as a host "
+                "it serves the web app on. Returning the browser there would "
+                "land it on a hostname that does not carry the user's session, "
+                "i.e. signed out. TWO variables have to agree, and this API "
+                "runs on a different Vercel project from the web app so it "
+                "cannot infer the second: set JOBTRACKER_WEB_APP_URL to the "
+                f"origin the app is served from, AND add '{host}' to "
+                "JOBTRACKER_CORS_ALLOWED_HOSTS so this deployment knows it is "
+                "ours. See config.trusted_web_hosts."
             ),
         )
     return configured

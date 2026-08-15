@@ -1090,6 +1090,17 @@ export interface components {
              * @description The git commit SHA this deployment was built from, taken verbatim from VERCEL_GIT_COMMIT_SHA, or null when the platform does not supply one. Answers 'what code is actually running?', which `version` cannot: that is a constant in the source.
              */
             commit?: string | null;
+            /**
+             * Web App Host
+             * @description The hostname the Gmail OAuth callback returns the browser to, read from JOBTRACKER_WEB_APP_URL, or null when it is unset. Reported so a stale value is VISIBLE without anyone completing a connect flow to find out -- which is how the real one survived: it named a pre-rename alias for 26 days, the alias served the app perfectly, and the only symptom was that every returning user arrived on a hostname their session cookie was not issued for. Compare it against `web_app_host_trusted` below, never by eye.
+             */
+            web_app_host?: string | null;
+            /**
+             * Web App Host Trusted
+             * @description Whether `web_app_host` is one of the hostnames this deployment serves the app on (`config.trusted_web_hosts`). FALSE means the Gmail connect flow is broken for every user right now: the callback will 503 rather than strand them signed out. WHY THIS IS NOT A 503 ON /health. The API also serves the board, search, export and the scheduled sync, none of which touch this value; failing the whole health check -- or refusing to boot -- would turn one wrong redirect target into a total outage, and into a deploy that cannot roll forward. So the endpoint stays 200 and states the fact, and the failure is loud at the one place it actually matters.
+             * @default false
+             */
+            web_app_host_trusted: boolean;
         };
         /** InboxResponse */
         InboxResponse: {
