@@ -926,43 +926,20 @@ def test_junk_in_the_allowlist_fails_loudly_and_does_not_echo_the_value(
 
 # =============================================================================
 # The WebSocket broadcast no-op (issue #23's second criterion).
+#
+# GONE, and this note is the record of why rather than a silent deletion.
+#
+# ``test_broadcast_is_a_no_op_where_no_websocket_router_can_exist`` built a
+# ``jobtracker.api.websocket.SyncWebSocketManager``, flipped
+# ``settings.deployment`` between "desktop" and "cloud", and asserted the
+# broadcast delivered in the first and no-opped in the second. That whole module
+# was deleted with the desktop routers -- Vercel's Python runtime has never
+# supported WebSockets, the only caller was ``jobtracker/api/sync.py``, and the
+# only client was the SwiftUI app's ``SyncWebSocketClient.swift``.
+#
+# So #23's second criterion is now satisfied structurally rather than by
+# assertion: there is no broadcast to no-op, and no transport to gate on. That
+# is a STRONGER guarantee than the test gave, but it is a different one, and if
+# a WebSocket path is ever reintroduced the deployment branch has to be
+# reintroduced with it -- and re-tested.
 # =============================================================================
-
-
-async def test_broadcast_is_a_no_op_where_no_websocket_router_can_exist() -> None:
-    """``sync_ws_manager.broadcast`` no-ops in cloud and delivers on desktop.
-
-    Both paths, because "it does nothing" is only meaningful next to a run
-    where it does something — a broadcast that never delivered anywhere would
-    satisfy the cloud half on its own.
-    """
-
-    import jobtracker.api.websocket as ws_module
-
-    delivered: list[dict[str, Any]] = []
-
-    class FakeConnection:
-        async def send_json(self, message: dict[str, Any]) -> None:
-            delivered.append(message)
-
-    manager = ws_module.SyncWebSocketManager()
-    manager._connections.add(FakeConnection())  # type: ignore[arg-type]
-
-    # Desktop: the transport exists, the message is delivered.
-    original = ws_module.settings.deployment
-    try:
-        ws_module.settings.deployment = "desktop"
-        await manager.broadcast({"event": "started"})
-        assert delivered == [{"event": "started"}]
-
-        # Cloud: no router can be mounted, so this is a no-op — with the SAME
-        # call site and the SAME registered connection.
-        ws_module.settings.deployment = "cloud"
-        await manager.broadcast({"event": "completed"})
-        assert delivered == [{"event": "started"}], (
-            "broadcast() delivered in cloud mode, where no WebSocket router "
-            "can be mounted."
-        )
-        assert ws_module.websocket_transport_available() is False
-    finally:
-        ws_module.settings.deployment = original

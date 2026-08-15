@@ -12,11 +12,14 @@ runs.
 
 | Workflow | File | Trigger (paths) | Runtime | Gates |
 |---|---|---|---|---|
-| **Backend CI** | `backend-ci.yml` | `backend/**`, `scripts/install.sh`, `scripts/start_backend.sh`, itself | ubuntu-latest, Python 3.11 | pytest + classifier rules-v3 gate + hybrid v3 deterministic gate + cloud-smoke |
+| **Backend CI** | `backend-ci.yml` | `backend/**`, `scripts/check_expand_only.py`, `scripts/schema_fingerprint.sql`, itself | ubuntu-latest, Python 3.11 | pytest + classifier rules-v3 gate + hybrid v3 deterministic gate + RLS/migration suites on real Postgres + expand-only + cloud-smoke |
 | **Frontend CI** | `frontend-ci.yml` | `apps/web/**`, itself | ubuntu-latest, Node 22 + pnpm 10 | `pnpm install --frozen-lockfile` -> `typecheck` -> `lint` -> `test:unit` -> `build` |
-| **E2E CI** | `e2e-ci.yml` | `apps/web/**`, `backend/**`, `api/**`, itself | ubuntu-latest, Node 22 + Python 3.11 | Boots uvicorn + Next.js dev, runs Playwright chromium smoke, uploads `playwright-report` + `test-results` (videos, traces) as artifacts |
-| **macOS CI** | `macos-ci.yml` | `apps/macos/**`, `scripts/bundle.sh`, `scripts/generate_icons.sh`, itself | macos-latest, Xcode | `xcodebuild` Debug build of the SwiftUI app |
+| **E2E CI** | `e2e-ci.yml` | `apps/web/**`, `backend/**`, `api/**`, `scripts/generate_api_schema.sh`, itself | ubuntu-latest, Node 22 + Python 3.11 | API schema drift gate, then Playwright against a Next.js dev server **and** a real production build; uploads `playwright-report` + `test-results` (videos, traces) as artifacts |
 | **ML monitoring (weekly)** | `ml-monitoring-weekly.yml` | cron | ubuntu-latest | Rolling classifier drift check |
+| **README facts** | `readme-facts.yml` | **no path filter** | ubuntu-latest, stdlib only | Every number the README asserts still agrees with the code |
+
+`macos-ci.yml` is gone. It built the SwiftUI app in `apps/macos/`, which was
+de-scoped on 2026-08-12 and deleted.
 
 All workflows also respond to `workflow_dispatch` so maintainers can
 re-run a green gate on demand (e.g. after a flake).
@@ -96,9 +99,13 @@ Any non-zero exit fails the job. `--frozen-lockfile` ensures
    jobs).
 2. `pnpm exec playwright install --with-deps chromium` fetches the
    browser and its Linux system libs.
-3. Boots `uvicorn jobtracker.main:app` on `127.0.0.1:8000` in the
-   background (with `JOBTRACKER_ENVIRONMENT=test` so the backend uses
-   the in-memory SQLite fixture) and polls `/health` up to 60 s.
+3. Regenerates `apps/web/lib/api/schema.d.ts` from `jobtracker.main_cloud` and
+   fails on any diff — the API schema drift gate. **No backend server is
+   booted.** This step used to boot `uvicorn jobtracker.main:app` on
+   `127.0.0.1:8000`; that was the desktop app, deleted with the unmounted
+   desktop routers (issue #73). Every route the specs visit is public or
+   redirects at the protected layout before any API call, which the sibling
+   `playwright-production` job — same suite, no backend, green — demonstrates.
 4. Boots `pnpm dev` on `127.0.0.1:3000` in the background and polls
    `/login` up to 90 s so Next.js has time to Turbopack-compile the
    first route.
@@ -121,7 +128,10 @@ test fails the workflow, which is the whole point of having the gate.
 |---|---|---|
 | Vercel (Preview) — `apps/web/` + `api/index.py` | Every PR push (via the Vercel GitHub integration) | **frontend-ci** + **e2e-ci** green are required before merge |
 | Vercel (Production) — `main` branch | Merge to `main` | All of the above + **backend-ci** (both `test` and `cloud-smoke` jobs) |
-| macOS `.app` bundle | Manual release tag | **macos-ci** (Debug build on every PR), release script on tag |
+
+There is no third surface. The macOS `.app` bundle used to be one, cut by
+`scripts/bundle.sh` and notarised by `scripts/notarize.sh`; the app, both
+scripts and `macos-ci.yml` were deleted when the desktop client was de-scoped.
 
 `PLAYWRIGHT_BASE_URL` is wired as an env var on the E2E job so a
 follow-up change can point the smoke suite at a real Vercel Preview
@@ -318,11 +328,11 @@ pnpm install --frozen-lockfile
 pnpm typecheck && pnpm lint && pnpm build
 
 # E2E CI
-# (Terminal 1) Boot backend
-cd backend
-JOBTRACKER_ENVIRONMENT=test python -m uvicorn jobtracker.main:app --port 8000
+# (Terminal 1) The API schema drift gate — no server involved
+./scripts/generate_api_schema.sh
+git diff --exit-code apps/web/lib/api/schema.d.ts
 
-# (Terminal 2) Boot frontend
+# (Terminal 2) Boot frontend. No backend: CI boots none either.
 cd apps/web
 pnpm dev
 

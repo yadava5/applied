@@ -41,9 +41,11 @@
 
 Job hunting generates a flood of email — confirmations, rejections, interview invites, take-home assessments, recruiter follow-ups — and keeping a spreadsheet in sync with it by hand is tedious and wrong within a week. Applied connects to Gmail or iCloud, classifies each message into a job-search category, links related messages into a single tracked application, and shows where every opportunity actually stands. Predictions below a 0.85 confidence gate go to a human review queue instead of being silently accepted, and each correction is written back as training data.
 
-It is a monorepo with two deployment modes over one Python package. On the desktop it is a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier; in the cloud it is a Next.js 16 app on Vercel over Supabase Postgres, where the classifier runs its rules layer only. Both modes import `backend/jobtracker/`; the divergence is deliberate and is described under [Architecture](#architecture).
+It is a monorepo: a Next.js 16 app on Vercel over Supabase Postgres, talking to one FastAPI serverless function that imports `backend/jobtracker/`. The classifier runs its rules layer only in that function, for a budget reason spelled out under [Architecture](#architecture).
 
-> **A note on names.** The product was renamed from JobTracker to Applied. The internal identifiers were not renamed with it, and this README prints them verbatim wherever it gives a path or a command: the Python package is `backend/jobtracker/`, the Xcode project is `JobTracker.xcodeproj`, the macOS app stores its database under `~/Library/Application Support/JobTracker/`, and every environment variable is prefixed `JOBTRACKER_` (`config.py`, `env_prefix="JOBTRACKER_"`). Renaming them would be a migration with no user-visible benefit, so they stayed.
+> **It used to be two.** Applied began as a SwiftUI macOS app driving a local FastAPI process with the full three-layer classifier, and the repository carried both modes over one Python package. The desktop client was de-scoped on 2026-08-12 and deleted, along with a second, unmounted set of FastAPI routers that had no user scoping at all (issue #73). `JOBTRACKER_DEPLOYMENT` still exists and `api/index.py` still forces it to `cloud` — that setting selects Postgres over SQLite and the encrypted-row credential store over the macOS Keychain, so it is load-bearing whether or not a desktop app exists.
+
+> **A note on names.** The product was renamed from JobTracker to Applied. The internal identifiers were not renamed with it, and this README prints them verbatim wherever it gives a path or a command: the Python package is `backend/jobtracker/`, and every environment variable is prefixed `JOBTRACKER_` (`config.py`, `env_prefix="JOBTRACKER_"`). Renaming them would be a migration with no user-visible benefit, so they stayed.
 
 ### Why it's interesting
 
@@ -57,7 +59,7 @@ It is a monorepo with two deployment modes over one Python package. On the deskt
 
 ## Features
 
-- **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with live status over WebSocket on the desktop and polling in the cloud
+- **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with polled status. The live WebSocket stream belonged to the deleted desktop client; Vercel's Python runtime does not support WebSockets
 - **Automatic classification** into the nine `EmailCategory` enum values — `applied`, `pending_application`, `interview`, `rejection`, `offer`, `assessment`, `follow_up`, `other`, plus `needs_review` for anything under the gate. Eight of the nine are predicted labels; `needs_review` is the routing outcome.
 - **Application linking** — related messages are grouped into one tracked application and relinked when new signals arrive
 - **Human-in-the-loop review** — anything below `CONFIDENCE_AUTO = 0.85` (`classifier/hybrid.py`) lands in a review queue; corrections persist to `training_data` and feed the next retrain
@@ -108,26 +110,13 @@ Thresholds are `CONFIDENCE_AUTO = 0.85` and `CONFIDENCE_MIN_CLASSIFICATION = 0.7
 
 ## Architecture
 
-### Two deployment modes, one package
+### One deployment, one package
 
-`JOBTRACKER_DEPLOYMENT` selects the mode. The table in `docs/WEB_ARCHITECTURE.md` is the source for this diagram.
+`JOBTRACKER_DEPLOYMENT` still selects a mode, and `api/index.py` forces it to `cloud` before the app is imported. The table in `docs/WEB_ARCHITECTURE.md` is the source for this diagram.
 
 ```mermaid
 flowchart TB
-    subgraph Desktop["desktop mode — JOBTRACKER_DEPLOYMENT=desktop (default)"]
-        direction TB
-        Swift["SwiftUI app<br/>apps/macos/…/JobTracker.xcodeproj"]
-        Local["FastAPI · 127.0.0.1:8000<br/>jobtracker.main"]
-        SQLite[("SQLite<br/>~/Library/Application Support/JobTracker/")]
-        Keychain["macOS Keychain via keyring"]
-        Full["classifier: rules + embeddings + SetFit"]
-        Swift --> Local
-        Local --> SQLite
-        Local --> Keychain
-        Local --> Full
-    end
-
-    subgraph Cloud["cloud mode — JOBTRACKER_DEPLOYMENT=cloud"]
+    subgraph Cloud["cloud mode — JOBTRACKER_DEPLOYMENT=cloud, forced by api/index.py"]
         direction TB
         Web["Next.js 16 · React 19<br/>apps/web/ on Vercel"]
         Fn["FastAPI on Vercel Python<br/>api/index.py → jobtracker.main_cloud"]
@@ -140,13 +129,14 @@ flowchart TB
         Fn --> Rules
     end
 
-    Pkg["backend/jobtracker/ — one package, both modes"]
-    Pkg -.-> Local
+    Pkg["backend/jobtracker/ — the one package"]
     Pkg -.-> Fn
 
-    Mail["Gmail API · iCloud IMAP"] --> Local
-    Mail --> Fn
+    Mail["Gmail API · iCloud IMAP"] --> Mailfetch["cloud/gmail_client.py"]
+    Mailfetch --> Fn
 ```
+
+The desktop half of this diagram — a SwiftUI app over a local FastAPI process over SQLite and the macOS Keychain, with the full three-layer cascade — was deleted on de-scoping. What remains of it in the package is deliberate: the SQLite paths in `database/connection.py` and the `keyring` import in `credentials/desktop.py` are still reachable under `JOBTRACKER_DEPLOYMENT=desktop`, which is why forcing `cloud` is a gate and not a formality.
 
 ### The design decision that shaped the repo
 
@@ -160,11 +150,11 @@ Three mechanisms hold that line:
 - Root `requirements.txt` is deliberately different from `backend/requirements.txt` and carries a DO-NOT-ADD list.
 - `tests/test_main_cloud.py::test_cloud_classifier_is_rules_only_and_skips_heavy_ml_imports` subprocess-invokes `get_classifier()` under `JOBTRACKER_DEPLOYMENT=cloud` and asserts that neither `torch`, `sentence_transformers`, `setfit` nor `transformers` entered `sys.modules`. The `cloud-smoke` CI job runs it on every push.
 
-The honest consequence: a cloud rules miss collapses to `{category: "other", confidence: 0.0, method: "rules"}`. It does not escalate. Corrections still persist and sync back to macOS, where the full cascade remains canonical.
+The honest consequence: a cloud rules miss collapses to `{category: "other", confidence: 0.0, method: "rules"}`. It does not escalate, and since the desktop client was deleted there is no longer a second surface where the full cascade runs — corrections persist to Postgres and are reviewed in the web app. Layers 2 and 3 remain in the tree, are still exercised by `backend-ci.yml`, and are still what `ml/` trains and evaluates; they are simply not on the request path.
 
 ### Data model
 
-Every tenant table carries `user_id UUID NOT NULL` (Alembic rev `6e64c46d32fd`), keyed to Supabase `auth.users.id`. Desktop rows are owned by a fixed sentinel UUID, `LOCAL_USER_ID`.
+Every tenant table carries `user_id UUID NOT NULL` (Alembic rev `6e64c46d32fd`), keyed to Supabase `auth.users.id`. The column's *default* is a sentinel UUID, `LOCAL_USER_ID` (`database/models.py`), left over from the single-user desktop build — which is why RLS, not application code, is what actually enforces isolation.
 
 ```mermaid
 erDiagram
@@ -282,9 +272,9 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | Category | Technologies |
 | --- | --- |
 | **Runtime** | Python 3.11, FastAPI, Uvicorn |
-| **Data** | SQLModel / SQLAlchemy 2 (async), Alembic, SQLite on desktop, Supabase Postgres via asyncpg in the cloud |
+| **Data** | SQLModel / SQLAlchemy 2 (async), Alembic, Supabase Postgres via asyncpg (SQLite remains the test fixture and the deleted desktop build's store) |
 | **Auth** | PyJWT `[crypto]`, HS256 pinned, `audience="authenticated"`, `require=["exp","sub","aud"]` |
-| **Secrets** | macOS Keychain via `keyring` on desktop; `cryptography.fernet` rows in the cloud |
+| **Secrets** | `cryptography.fernet` rows in `user_credentials` |
 | **Email** | `google-api-python-client` (Gmail, `gmail.readonly`), `aioimaplib` (iCloud), BeautifulSoup + lxml for parsing |
 
 ### ML
@@ -297,13 +287,12 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Export** | int8 ONNX + Transformers.js (`ml/browser/`), Gradio Space (`ml/demo/`), BentoML service (`ml/bento_service.py`) |
 | **Tracking** | MLflow (`ml/mlruns`, registry alias `production` gated at the 0.95 floor), W&B mirror (offline) |
 
-### Desktop and infrastructure
+### Infrastructure
 
 | Category | Technologies |
 | --- | --- |
-| **macOS app** | SwiftUI, Xcode project target macOS 26.2, local FastAPI sidecar, packaged `.app` |
 | **Hosting** | Vercel (Next.js + one Python function, `maxDuration` 60), Supabase Postgres, Hugging Face Spaces |
-| **CI** | GitHub Actions — 14 workflows (see [Verify it](#verify-it)) |
+| **CI** | GitHub Actions — 13 workflows (see [Verify it](#verify-it)) |
 
 ---
 
@@ -375,7 +364,7 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --o
 
 ## Testing
 
-**848 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 740 `test_*` functions across 56 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 848 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**848 tests collected, 0 skipped.** These figures were recorded on 2026-08-14 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 658 `test_*` functions across 52 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 848 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **14 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -394,7 +383,7 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | **Web e2e** | Playwright | 17 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
-| **macOS** | `xcodebuild` | resolve packages and build the `JobTracker` scheme |
+| **README claims** | `scripts/readme_facts.py --check` | every number on this page, recomputed from the code that defines it; no path filter |
 
 Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 findings on its first CI run (2026-08-07) and `mypy .` under `strict = true` reported 879 across 65 of 92 files. Both were configured in `pyproject.toml` from the start and had never actually run. They print their count on every build and flip to blocking when they reach zero; a gate that is red from birth gets ignored or deleted, and neither should be silenced with `--fix` or blanket `# type: ignore`.
 
@@ -428,7 +417,7 @@ Being precise about this is the point.
 
 - **Semantic layers in the cloud.** The deployed Vercel product runs the **rules layer only**, and there is no embedding or SetFit inference on that path. Moving them behind an external inference service is a documented follow-up in `requirements.txt` and `docs/WEB_ARCHITECTURE.md`; nothing is wired.
 - **In-browser inference inside the Applied web app.** The 22.8 MB int8 ONNX build is real and runs in the Hugging Face Space and under `ml/browser/site/`. It does **not** run on `getapplied.vercel.app`: the app's strict CSP forbids the WASM eval and CDN fetch Transformers.js needs, so `/demo` runs layer 1 live in the browser and serves precomputed layer 2 and 3 verdicts.
-- **WebSocket sync in the cloud.** Vercel's Python runtime does not support it; the cloud path polls. The desktop path has live WebSocket status.
+- **WebSocket sync.** Vercel's Python runtime does not support it, so sync status is polled. The desktop path had a live `/ws/sync-status` stream; that router was deleted with the rest of the desktop surface, so there is no WebSocket anywhere in the tree now.
 - **Credential rotation.** `user_credentials.key_id` and a multi-key decrypt path are scaffolded. Only key `v1` is active and rotation is not wired.
 - **A mobile client.** `apps/mobile/` is a reserved directory. There is no app in it.
 - **Green ruff and mypy gates.** Both currently report and do not block. See [Testing](#testing).
@@ -439,10 +428,10 @@ Being precise about this is the point.
 
 ### Prerequisites
 
-- Python 3.11+ (the desktop stack pins 3.11; `backend/.venv311` is the correct venv, not `backend/.venv`)
+- Python 3.11+ (CI pins 3.11; `backend/.venv311` is the venv `scripts/generate_api_schema.sh` prefers, not `backend/.venv`)
 - Node.js 22 and pnpm 10, for the web app — the major is load-bearing, not incidental. `pnpm test:unit` imports `.ts` modules straight from `.mjs` test files and runs them on the runtime's built-in type stripping, which needs **22.6 or newer** (and the built-in glob, 21 or newer). On Node 20 those tests do not fail, they refuse to load with `ERR_UNKNOWN_FILE_EXTENSION` — which is how they once existed while no job ran them
-- macOS with Xcode, for the desktop app only
-- Internet on first run, to download `intfloat/e5-small-v2`
+- A Supabase project (Postgres + Auth) for anything past the landing page and `/demo`
+- Internet on first run of the **ML** tooling, to download `intfloat/e5-small-v2`. The web app and the deployed backend never download a model: the cloud path is rules-only
 
 ### Web app
 
@@ -457,15 +446,21 @@ pnpm dev                       # http://localhost:3000
 
 The landing page (`/`) and the fixture demo (`/demo`) run with **no backend and no Supabase**, so a review deploy needs only placeholder values — which is exactly what `frontend-ci.yml` supplies. See [`apps/web/README.md`](apps/web/README.md) for the full web setup.
 
-### Backend and macOS app
+### Backend
+
+The backend is served by Vercel as a Python function from `api/index.py`; there is no local process to start for normal web work — point `BACKEND_API_URL` at a deployment. To run its suite, or to serve it locally:
 
 ```bash
-./scripts/install.sh           # venv, PyTorch CPU wheels, deps, model, DB
-./scripts/start_backend.sh     # FastAPI on 127.0.0.1:8000
-open apps/macos/JobTracker/JobTracker/JobTracker.xcodeproj
+cd backend
+python3.11 -m venv .venv311
+.venv311/bin/pip install -r ../requirements.txt \
+    pytest pytest-asyncio pytest-cov httpx aiosqlite alembic keyring numpy
+.venv311/bin/python -m pytest tests -q          # see docs/SETUP.md for the two heavy-ML exclusions
+
+JOBTRACKER_DEPLOYMENT=cloud .venv311/bin/python -m uvicorn jobtracker.main_cloud:app --port 8000
 ```
 
-The full walkthrough is in [`docs/SETUP.md`](docs/SETUP.md).
+The full walkthrough — including why `alembic`, `keyring` and `numpy` must be installed by hand — is in [`docs/SETUP.md`](docs/SETUP.md).
 
 ### Environment variables
 
@@ -502,8 +497,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Command | What it does |
 | --- | --- |
-| `./scripts/install.sh` | One-time backend setup: venv, CPU torch, deps, model, DB |
-| `./scripts/start_backend.sh` | Run FastAPI on `127.0.0.1:8000` |
+| `./scripts/generate_api_schema.sh` | Regenerate `apps/web/lib/api/schema.d.ts` from the cloud app; `e2e-ci.yml` fails on any diff |
 | `pnpm dev` / `pnpm build` | Web app, from `apps/web/` |
 | `pnpm typecheck` / `pnpm lint` / `pnpm e2e` | The three checks `frontend-ci.yml` and `e2e-ci.yml` run |
 | `pytest tests -q --cov=jobtracker` | Backend suite with coverage, from `backend/` |
@@ -524,21 +518,20 @@ applied/
 │   │   ├── app/             # (auth) · (app) · demo · import · api routes
 │   │   ├── lib/demo/        # rulesLayer.ts — layer 1 ported to run live in the tab
 │   │   └── tests/e2e/       # 17 Playwright specs
-│   ├── macos/               # SwiftUI app; path still says JobTracker (see the naming note)
 │   └── mobile/              # reserved; empty
 │
 ├── backend/
-│   ├── jobtracker/          # the one package both modes import
+│   ├── jobtracker/          # the one package
 │   │   ├── classifier/      # rules.py (212 patterns) · embeddings.py · setfit_model.py · hybrid.py
-│   │   ├── api/             # desktop routers, unauthenticated by design
-│   │   ├── cloud/           # cloud-only routers, require_user() at the router level
+│   │   ├── cloud/           # every router the app mounts, require_user() at the router level
+│   │   ├── main_cloud.py    # the only app builder
 │   │   ├── auth/            # supabase_jwt.py — HS256 pinned verification
-│   │   ├── credentials/     # types · desktop (Keychain) · cloud (Fernet)
+│   │   ├── credentials/     # types · desktop (Keychain, unused) · cloud (Fernet)
 │   │   ├── database/        # models, connection (the RLS GUC listener lives here)
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 14 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 56 modules
+│   └── tests/               # 52 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
@@ -549,7 +542,7 @@ applied/
 ├── api/index.py             # Vercel Python entry → jobtracker.main_cloud
 ├── requirements.txt         # the CLOUD dependency set; deliberately not backend/requirements.txt
 ├── docs/                    # architecture, API spec, ML strategy + runbooks, RLS audit
-└── .github/workflows/       # 14 workflows
+└── .github/workflows/       # 13 workflows
 ```
 
 ---
@@ -575,7 +568,6 @@ Every number above terminates in something you can open.
 | `backend-ci.yml` | `pytest tests -q --cov=jobtracker` (the coverage number lands in the public run log); the rules gate at `--min-macro-f1 0.95`; the deterministic hybrid gate; the `rls-postgres` job with its assert-it-ran step; the `expand-only` job, which walks the Alembic chain one revision at a time against a `postgres:16` service and fails a revision that drops or narrows anything without a module-level `CONTRACT_STEP` saying why; the `cloud-smoke` job that imports the cloud app under `JOBTRACKER_DEPLOYMENT=cloud` and probes `/health` |
 | `frontend-ci.yml` | `pnpm typecheck`, `pnpm lint` (`--max-warnings 0`, so every warn-level rule next ships — the six `jsx-a11y/*` among them — is a red build rather than a printed suggestion), `pnpm test:unit`, `pnpm build` on Node 22 / pnpm 10. The Node major is a constraint, not a default: `test:unit` needs the runtime's type stripping (22.6+), so pinning back to 20 does not fail the job — it stops running the unit suite, which is exactly what happened before |
 | `e2e-ci.yml` | Playwright against a real backend + frontend pair, uploading traces and server logs |
-| `macos-ci.yml` | `xcodebuild` resolves packages and builds the `JobTracker` scheme |
 | `codeql.yml`, `gitleaks.yml` | SAST and full-history secret scanning |
 | `.githooks/pre-commit` (local, opt-in) | The same scan over the *staged* diff, before the commit exists. Not a workflow — git does not enable a hooks path for you, so each clone runs `git config core.hooksPath .githooks` once. CI is the net that always runs; this one exists because a credential that reaches GitHub is published even if the next commit deletes it |
 | `ml-monitoring-weekly.yml` | Scheduled drift/confidence report, artifacts uploaded, alert issue opened on threshold breach |

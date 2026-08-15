@@ -125,10 +125,14 @@ and writes it through `openapi-typescript`. It needs the backend's Python
 dependencies — `backend/.venv311` is used automatically when it exists,
 otherwise `python3` from PATH, or set `PYTHON=…`.
 
-No URL, and no running server: the desktop app on `:8000` (`jobtracker.main`,
-what the e2e job boots) serves a *different* contract, and a deployed URL
-serves whatever was deployed last rather than what is in this checkout. Both
-of those were what the old `api:gen` / `api:gen:local` scripts pointed at.
+No URL, and no running server. Both of the alternatives the old `api:gen` /
+`api:gen:local` scripts pointed at were wrong: `:8000` used to be the desktop
+app (`jobtracker.main`, booted by the e2e job), which served a *different*
+contract — that is how the committed bindings drifted to cover 4 of the 20
+paths the cloud app serves. A deployed URL is no better; it answers with
+whatever was deployed last rather than what is in this checkout. The desktop
+app has since been deleted and the e2e job boots no backend at all, which
+removes the first trap but not the second.
 
 `.github/workflows/e2e-ci.yml` runs the same script and fails on any diff, so
 a stale `schema.d.ts` is a red build rather than a silent lie. After
