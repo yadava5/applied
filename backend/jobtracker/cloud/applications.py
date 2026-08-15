@@ -669,6 +669,43 @@ async def _find_application_by_token(
     return rows[0] if rows else None
 
 
+# The most rows either half of :func:`_company_rows` will load in one call.
+#
+# Sized FAR above any plausible answer — the owner's whole board is 65 rows and
+# the largest single employer on it holds four — so it is a rail against a
+# pathological prefix (a one-letter token on a large board), not a business
+# rule. It is deliberately not tight: a cap that can silently truncate a real
+# answer would re-introduce the bug the comment below spends ten lines on, where
+# a lookup that returned a subset of an employer's rows made the resolver mint
+# duplicates ("six rows each for IXL Learning and Torc Robotics").
+_COMPANY_ROWS_CAP = 500
+
+
+def _warn_if_capped(
+    rows: list[Application], user_id: uuid.UUID, token: str, half: str
+) -> None:
+    """Say so — loudly — if the rail above actually bound.
+
+    A truncated company lookup is not a slow query, it is a WRONG one: the
+    resolver would see fewer rows at an employer than exist and mint a duplicate
+    beside them. At 65 rows this can never fire, which is exactly why it has to
+    be audible if it ever does — a cap that truncates in silence is the shape
+    this codebase keeps finding under "checks that cannot fail".
+    """
+
+    if len(rows) < _COMPANY_ROWS_CAP:
+        return
+    logger.warning(
+        "Company lookup (%s half) hit its %s-row cap for user_id=%s token=%r. "
+        "The resolver is now reasoning about a TRUNCATED set and may file a "
+        "duplicate application; raise _COMPANY_ROWS_CAP.",
+        half,
+        _COMPANY_ROWS_CAP,
+        user_id,
+        token,
+    )
+
+
 async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Application]:
     """Every one of this user's applications at the employer named by ``token``.
 
@@ -679,6 +716,18 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
 
     Two queries, so the common case stays index-assisted: exact equality first,
     then a prefix scan over the leading normalized word, confirmed in Python.
+
+    "Index-assisted" was aspirational until migration ``e7a1c4d92b30``. Both
+    predicates are over ``lower(company)`` and production's only company index
+    was on the RAW column, which cannot answer them — so both were sequential
+    scans, on a function called once per rolled cluster inside the upsert loop.
+    The functional index that migration adds carries ``text_pattern_ops``,
+    without which the prefix half stays a filter rather than an index condition
+    under Supabase's ``en_US.utf8`` collation.
+
+    BOTH reads are capped (see ``_COMPANY_ROWS_CAP``). They were unbounded: a
+    prefix like ``"a"`` matching a large board loaded every row it touched into
+    the session, per cluster, per sync.
     """
 
     live_first = (
@@ -707,8 +756,10 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
                 func.lower(Application.company) == token,
             )
             .order_by(*live_first)
+            .limit(_COMPANY_ROWS_CAP)
         )
     ).all()
+    _warn_if_capped(exact, user_id, token, "exact")
     for row in exact:
         seen[row.id] = row
 
@@ -722,8 +773,10 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
                     func.lower(Application.company).like(f"{prefix}%"),
                 )
                 .order_by(*live_first)
+                .limit(_COMPANY_ROWS_CAP)
             )
         ).all()
+        _warn_if_capped(candidates, user_id, token, "prefix")
         for row in candidates:
             if row.id not in seen and pipeline.matches_company_token(row.company, token):
                 seen[row.id] = row
@@ -907,6 +960,18 @@ async def _resolve_application_for_email(
     )
 
 
+# How many message ids may travel in one ``WHERE message_id IN (...)``.
+#
+# The number itself is not the point — 750 ids (a first sync's whole scan
+# target) is comfortably inside Postgres's 65535 bind-parameter ceiling, so a
+# single statement would work today. The CHUNKING is the point: a bound that
+# holds only because the current scan target happens to be small is not a
+# bound, and the day somebody raises ``_SYNC_DEFAULT_SCAN_TARGET`` the failure
+# would be a driver-level error on a query nobody edited. Explicit here, and
+# pinned by tests/test_persist_message_refs_is_batched.py.
+_MESSAGE_LOOKUP_CHUNK = 500
+
+
 async def _persist_message_refs(
     session,
     user_id: uuid.UUID,
@@ -959,22 +1024,57 @@ async def _persist_message_refs(
     """
 
     moved_from: dict[int, set[int]] = {}
+
+    # ONE lookup for the whole batch, not one per message.
+    #
+    # ``ix_emails_user_id_message_id`` served the per-message probe this used to
+    # make perfectly — the query was never the cost. The COUNT of round trips
+    # was: ~13 ms function→pooler in production (database/connection.py), paid
+    # sequentially, once per ref. A first sync scans up to 750 messages
+    # (gmail_oauth's ``_SYNC_DEFAULT_SCAN_TARGET``), so the old shape spent
+    # roughly ten seconds of the serverless budget waiting on the network — and
+    # the scheduled run's per-user timeout is 10 s, which is the documented
+    # reason (cron.py) a first sync could be cancelled and never write a cursor.
+    #
+    # The dict is the loop's ONLY source of "does this message already exist",
+    # including for rows the loop itself creates further down: the old code was
+    # protected from a message_id repeated inside one ``refs`` list by
+    # autoflush — the second probe saw the row the first iteration had just
+    # added — and a prefetch taken before the loop cannot see those. Newly
+    # created rows are therefore folded back in as they are made.
+    #
+    # Autoflush is deliberately NOT suppressed around the prefetch. Rows added
+    # by an earlier call in the same session (the rolled path at the two call
+    # sites in ``upsert_applications_for_user`` runs before the review-item
+    # paths) must be visible here, exactly as they were before.
+    existing_by_message_id: dict[str, Email] = {}
+    wanted = [
+        ref.message_id
+        for ref in refs
+        # Built from the refs that SURVIVE the undated skip below, so an
+        # undated message never widens the lookup for a row that will not be
+        # written.
+        if pipeline.to_naive_utc(ref.received_at) is not None
+    ]
+    for start in range(0, len(wanted), _MESSAGE_LOOKUP_CHUNK):
+        chunk = wanted[start : start + _MESSAGE_LOOKUP_CHUNK]
+        for row in (
+            await session.exec(
+                select(Email).where(
+                    Email.user_id == user_id,
+                    Email.message_id.in_(chunk),
+                )
+            )
+        ).all():
+            existing_by_message_id[row.message_id] = row
+
     for ref in refs:
         # Naive-UTC: the Email.received_at column is TIMESTAMP WITHOUT TIME ZONE;
         # asyncpg refuses an aware datetime (from parsedate_to_datetime) here.
         received_at = pipeline.to_naive_utc(ref.received_at)
         if received_at is None:
             continue
-        existing = (
-            await session.exec(
-                select(Email)
-                .where(
-                    Email.user_id == user_id,
-                    Email.message_id == ref.message_id,
-                )
-                .limit(1)
-            )
-        ).first()
+        existing = existing_by_message_id.get(ref.message_id)
         category = _safe_category(ref.category)
         # The classifier's PROPOSAL, which only a review ref carries. Written
         # under the same settled-guard as the category below, and — like the
@@ -1025,24 +1125,28 @@ async def _persist_message_refs(
             existing.thread_id = ref.thread_id
             session.add(existing)
         else:
-            session.add(
-                Email(
-                    user_id=user_id,
-                    application_id=application_id,
-                    source_account=EmailSource.GMAIL,
-                    message_id=ref.message_id,
-                    thread_id=ref.thread_id,
-                    subject=ref.subject,
-                    sender_name=ref.sender_name,
-                    sender_email=ref.sender_email,
-                    received_at=received_at,
-                    body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
-                    classified_as=category,
-                    suggested_category=suggestion,
-                    classification_confidence=ref.confidence,
-                    classification_method="rules",
-                )
+            created = Email(
+                user_id=user_id,
+                application_id=application_id,
+                source_account=EmailSource.GMAIL,
+                message_id=ref.message_id,
+                thread_id=ref.thread_id,
+                subject=ref.subject,
+                sender_name=ref.sender_name,
+                sender_email=ref.sender_email,
+                received_at=received_at,
+                body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
+                classified_as=category,
+                suggested_category=suggestion,
+                classification_confidence=ref.confidence,
+                classification_method="rules",
             )
+            session.add(created)
+            # Carry it in the map so a message_id repeated later in THIS list
+            # updates the row just made instead of inserting a second one. The
+            # per-ref SELECT used to get this from autoflush; the batched
+            # prefetch, taken before the loop, cannot.
+            existing_by_message_id[ref.message_id] = created
 
     return moved_from
 
