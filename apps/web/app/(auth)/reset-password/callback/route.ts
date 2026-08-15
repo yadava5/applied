@@ -5,7 +5,7 @@ import {
   RECOVERY_MARKER_VALUE,
   recoveryMarkerCookieOptions,
 } from "@/lib/auth/recoverySession";
-import { createClient } from "@/lib/supabase/server";
+import { createClientWithSessionHeaders } from "@/lib/supabase/server";
 
 /**
  * Where a password-recovery email lands.
@@ -50,9 +50,10 @@ export async function GET(request: NextRequest) {
     return destination;
   }
 
-  const supabase = await createClient();
+  const { supabase, applySessionHeaders } =
+    await createClientWithSessionHeaders();
   const { error } = await supabase.auth.exchangeCodeForSession(code);
-  if (error) return destination;
+  if (error) return applySessionHeaders(destination);
 
   // Written onto the response being returned, not into the `next/headers`
   // store — the same way `lib/supabase/middleware.ts` writes the refreshed
@@ -67,5 +68,10 @@ export async function GET(request: NextRequest) {
     recoveryMarkerCookieOptions(process.env.NODE_ENV === "production"),
   );
 
-  return destination;
+  // The no-store headers `@supabase/ssr` handed to `setAll` during the
+  // exchange (#242). Applied HERE, after the exchange, and not at the
+  // `NextResponse.redirect` on line 44: `destination` is constructed before
+  // the client exists, so there is nothing to copy from at that point. Same
+  // reason the marker cookie is written down here.
+  return applySessionHeaders(destination);
 }
