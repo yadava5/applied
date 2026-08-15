@@ -508,9 +508,11 @@ def _revision_parent(revision: str) -> str:
 
     import ast
 
-    path = next(
-        (BACKEND_DIR / "alembic" / "versions").glob(f"{revision}_*.py")
-    )
+    # Not ``next(glob(...))``: a bare ``StopIteration`` at import time is a
+    # collection error for the whole module and says nothing about revisions.
+    matches = sorted((BACKEND_DIR / "alembic" / "versions").glob(f"{revision}_*.py"))
+    assert len(matches) == 1, f"expected one module for {revision}, found {matches}"
+    path = matches[0]
     for node in ast.parse(path.read_text()).body:
         if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "down_revision":
             parent = ast.literal_eval(node.value)
