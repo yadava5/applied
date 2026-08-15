@@ -12,18 +12,37 @@ green.
 So the two modules added here share a single container, memoised for the
 process. The existing two are deliberately left alone: rewriting their
 resolution is unrelated to this change set, and three containers is inside what
-a laptop and a CI runner handle. Under CI nothing here starts anything at all —
-``JOBTRACKER_TEST_PG_ADMIN_URL`` names the service container and every suite
-uses it.
+a laptop and a CI runner handle.
 
-THE SHARED-DATABASE RULE. When that variable IS set, every Postgres suite in
-this repo points at the SAME database, so each one must begin by making the
-schema its own. ``reset_public_schema`` is that step, and it is the same
-``DROP SCHEMA public CASCADE`` / ``CREATE SCHEMA public`` the two existing
+WHERE THIS ACTUALLY RUNS, checked rather than assumed. ``backend-ci.yml``'s
+whole-suite ``test`` job sets only ``JOBTRACKER_ENVIRONMENT`` and
+``PYTHON_KEYRING_BACKEND`` — it does NOT set
+``JOBTRACKER_TEST_PG_ADMIN_URL`` — so on CI every Postgres module resolves its
+own throwaway container via testcontainers, and the two modules sharing this
+helper share one. The jobs that DO export that variable (``rls-postgres``,
+``migrations``) each run a single module against it, so nothing is shared there
+either.
+
+THE SHARED-DATABASE RULE, and its limit. When that variable is set, every
+Postgres suite pointed at it lands in the SAME database, so each must begin by
+making the schema its own. ``reset_public_schema`` is that step, and it is the
+same ``DROP SCHEMA public CASCADE`` / ``CREATE SCHEMA public`` the two existing
 suites already perform for the same reason. Without it, whichever module runs
 second inherits the first one's tables and its ``alembic upgrade head`` fails
 with "relation already exists" — a failure about test ordering wearing the
 costume of a broken migration.
+
+That per-module reset is NOT sufficient for the one configuration nothing in CI
+uses: exporting ``JOBTRACKER_TEST_PG_ADMIN_URL`` and running the WHOLE suite,
+which points all four Postgres modules at one database. ``test_rls_postgres``
+builds its schema once per process behind a module-level ``_SCHEMA_READY`` flag
+and ``test_migrations_postgres`` rebuilds per test, so a reset here can land
+between another module's build and its use; the observed symptom is
+``type "applicationstatus" already exists`` from this helper's own
+``upgrade head``. Measured, not theorised — and measured only there: with the
+variable unset (CI's arrangement, one container per module) the same suite runs
+clean under ``--cov``. If you want a single local Postgres for everything, run
+the four Postgres modules in separate pytest invocations.
 """
 
 from __future__ import annotations
