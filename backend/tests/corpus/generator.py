@@ -901,6 +901,68 @@ def _axis_hostile_text(b: _Builder) -> None:
     )
 
 
+def _axis_lifecycle_noun_subjects(b: _Builder) -> None:
+    """Subjects whose leading word is what the MAIL is, not what the JOB is.
+
+    "Interview at <Employer>", "Offer from <Employer>", "Assessment at
+    <Employer>" are among the commonest ATS subjects there are, and the
+    "<TITLE> at <Company>" subject rule reads the leading noun as the title.
+    Because the role token IS the application's identity, that mints a card
+    keyed on "interview" beside the one keyed on the real title — the same
+    second-card failure as the reported bug, from a completely different cause.
+
+    Each pair is a confirmation naming the real title, then a follow-up whose
+    subject leads with the lifecycle noun and whose BODY names the real title.
+    The body is what must win.
+    """
+
+    specs = [
+        ("Interview at {display}", "interview", "Platform Engineer"),
+        ("Offer from {display}", "offer", "Data Engineer"),
+        ("Assessment at {display}", "assessment", "Backend Engineer"),
+        ("Application - {display}", "applied", "Frontend Engineer"),
+        ("Update - {display}", "rejection", "Security Analyst"),
+    ]
+    for subj_tmpl, cat, role in specs:
+        display, token = b.employer()
+        ident = f"{token}|{role}"
+        b.add(
+            axis="lifecycle-noun-subject", category="applied",
+            sender="no-reply@greenhouse-mail.io", sender_name=display,
+            subject=f"Thank you for applying to {display}",
+            snippet=f"Thank you for your interest in the {role} position.",
+            identity=ident, employer=token, role=role,
+        )
+        b.add(
+            axis="lifecycle-noun-subject", category=cat,
+            sender="no-reply@greenhouse-mail.io", sender_name=display,
+            subject=subj_tmpl.format(display=display),
+            snippet=f"Regarding the {role} position, please see the details below.",
+            identity=ident, employer=token, role=role,
+            note="subject leads with a lifecycle noun; the body names the real title",
+        )
+
+    # A real title that CONTAINS a lifecycle noun must still survive.
+    for role in ("Application Engineer", "Offer Management Lead"):
+        display, token = b.employer()
+        ident = f"{token}|{role}"
+        b.add(
+            axis="lifecycle-noun-subject", category="applied",
+            sender="no-reply@lever.co", sender_name=f"{display} via Lever",
+            subject=f"Your application to {display}",
+            snippet=f"Thank you for your interest in the {role} position.",
+            identity=ident, employer=token, role=role,
+        )
+        b.add(
+            axis="lifecycle-noun-subject", category="interview",
+            sender="no-reply@lever.co", sender_name=f"{display} via Lever",
+            subject=f"{role} at {display}",
+            snippet=f"We would like to interview you for the {role} position.",
+            identity=ident, employer=token, role=role,
+            note="a real title containing a lifecycle noun must NOT be filtered out",
+        )
+
+
 def _axis_req_id_identity(b: _Builder) -> None:
     """Requisition ids: the strongest identity signal, and its failure shapes."""
 
@@ -975,6 +1037,7 @@ _AXES = (
     _axis_two_roles_one_employer,
     _axis_non_job_mail,
     _axis_hostile_text,
+    _axis_lifecycle_noun_subjects,
     _axis_req_id_identity,
 )
 

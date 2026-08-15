@@ -24,16 +24,21 @@ including them would let a status bug masquerade as an identity failure.
 
 Scoring
 -------
-Three buckets, not two. Cardinality alone is not enough — "2 cards where 2 were
-expected" is satisfied even when both messages sit on the wrong cards.
+Scoring is per MESSAGE against ground truth, never per-employer cardinality:
+"2 cards where 2 were expected" is satisfied even when both messages sit on
+the wrong cards.
 
 * **SPLIT** — one ground-truth application spread over more than one card.
   Counted as the number of EXTRA cards, so a 3-way split scores 2.
 * **MERGE** — one card holding messages from more than one ground-truth
   application. The strictly worse failure: it destroys a record silently, and
   a fix that refuses roles more aggressively pushes errors here.
-* **MISATTRIBUTION** — a message on a card whose majority identity is not its
-  own, at correct overall cardinality. Invisible to a counting metric.
+* **NOISE-ON-CARD** — mail that must never become an application, on one.
+* **SHOULD-HAVE-BEEN-REVIEWED** — role-less mail at a multi-application
+  employer that got guessed onto a card instead of going to the queue.
+
+There is deliberately no separate misattribution bucket; see the long comment
+at its former site in :func:`_score_grouping` for why MERGE subsumes it.
 
 ``expect_review`` cases are scored in their own bucket: role-less mail at a
 multi-application employer is SUPPOSED to be unplaceable, and counting the
@@ -159,7 +164,6 @@ class Score:
     layer: str
     splits: int = 0
     merges: int = 0
-    misattributed: int = 0
     minted_from_noise: int = 0
     wrong_review: int = 0
     gated_items: int = 0
@@ -171,7 +175,6 @@ class Score:
         return (
             self.splits
             + self.merges
-            + self.misattributed
             + self.minted_from_noise
             + self.wrong_review
         )
@@ -253,21 +256,25 @@ def _score_grouping(
                 )
             )
 
-        # Misattribution at correct cardinality: a message on a card whose
-        # majority identity is not its own.
-        owned = [by_mid[m].identity for m in mids if m in by_mid and by_mid[m].identity]
-        if owned:
-            majority = Counter(owned).most_common(1)[0][0]
-            strays = [
-                m
-                for m in mids
-                if m in by_mid
-                and by_mid[m].identity is not None
-                and by_mid[m].identity != majority
-            ]
-            # Already counted as MERGE; only report when cardinality was right.
-            if strays and len(set(owned)) == 1:
-                score.misattributed += len(strays)
+        # NO SEPARATE MISATTRIBUTION BUCKET — deliberately, and this note is
+        # here so it does not get "helpfully" re-added.
+        #
+        # The first version of this file counted "a message on a card whose
+        # MAJORITY identity is not its own, at correct cardinality" with the
+        # guard ``if strays and len(set(owned)) == 1``. Those two conditions are
+        # mutually exclusive: ``strays`` is non-empty only when some identity
+        # differs from the majority, while ``len(set(owned)) == 1`` requires
+        # every identity to be equal. The branch could never execute, and every
+        # run duly reported ``MISATTRIBUTED 0`` — a zero that reads as "checked,
+        # clean" while meaning "never checked". That is precisely the
+        # cannot-fail-check shape this harness exists to hunt.
+        #
+        # It is not replaced with a working version because MERGE already
+        # subsumes the measurable case: if two applications' messages cross onto
+        # each other's cards, each card holds two distinct identities and MERGE
+        # fires. A pure swap — card A holding exactly B's messages and vice
+        # versa — is undetectable in principle, because a card has no identity
+        # apart from the messages grouped onto it.
 
     return score
 

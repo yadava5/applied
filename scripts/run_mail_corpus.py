@@ -42,7 +42,6 @@ def _report(score: Score, cases_n: int, verbose: bool) -> None:
     print()
     print(f"  SPLIT   (one application → several cards)   {score.splits}")
     print(f"  MERGE   (several applications → one card)   {score.merges}")
-    print(f"  MISATTRIBUTED (right count, wrong card)     {score.misattributed}")
     print(f"  NOISE ON A CARD                             {score.minted_from_noise}")
     print(f"  SHOULD HAVE GONE TO REVIEW                  {score.wrong_review}")
     print(f"  {'-' * 44}")
