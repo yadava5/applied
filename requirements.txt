@@ -56,7 +56,7 @@ aioimaplib>=2.0.1
 # -----------------------------------------------------------------------------
 beautifulsoup4>=4.12.0
 lxml>=6.1.0                   # >=6.1.0: PYSEC-2026-87, matching backend/requirements.txt
-python-dateutil>=2.8.0
+python-dateutil>=2.9.0.post0
 
 # -----------------------------------------------------------------------------
 # Security pins (transitive; floors raised to patched versions)
