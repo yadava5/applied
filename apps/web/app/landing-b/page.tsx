@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ClaimsDescent } from "@/components/marketing/ClaimsDescent";
 import { MarketingFooter, MarketingNav } from "@/components/marketing/chrome";
+import { ClosingAct } from "@/components/marketing/ClosingAct";
 import { HERO } from "@/components/marketing/copy";
 import { AccessSection } from "@/components/marketing/sections";
 import { WindowAct } from "@/components/marketing/WindowAct";
@@ -56,6 +57,7 @@ export default function LandingB() {
       <ClaimsDescent />
 
       <AccessSection />
+      <ClosingAct />
       <MarketingFooter />
     </main>
   );

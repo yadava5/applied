@@ -1279,3 +1279,288 @@ body {
  * sheet's slide (plus their exits) live in components/ui/Dialog.tsx via the
  * motion library now — one implementation for enter AND exit, collapsed to
  * instant under prefers-reduced-motion there (`useReducedMotion`). */
+
+/* ---------------------------------------------------------------------------
+ * Closing act (components/marketing/ClosingAct.tsx) — landing B's ending.
+ * One envelope crosses the full width, clears the single rules rail, and
+ * collapses into the emerald verdict, which falls and seats itself as the
+ * full stop after the drawn `applied` wordmark; then the thesis and the
+ * seat ask rise and everything holds. One IO sentinel fires it; the scene
+ * button replays it (remounted per run, so these animations restart).
+ * Strokes carry `pathLength="1"`, so every draw is stroke-dashoffset 1 → 0;
+ * the dashoffset is set on each letter <g> and inherits to its paths. The
+ * filled circles (i-dot, verdict) cannot be dash-drawn, so they enter by
+ * opacity/scale. `.act--static` — and the reduced-motion block at the end —
+ * is the fully composed end state: wordmark drawn, verdict seated, ask
+ * visible, no travel.
+ * ------------------------------------------------------------------------- */
+.act-band {
+  /* the one piece of atmosphere: a faint emerald bloom under the landing
+   * corner of the full stop. No canvas, no ambient field. */
+  background: radial-gradient(
+    90% 70% at 82% 100%,
+    color-mix(in oklab, var(--viz-setfit) 7%, transparent),
+    transparent 62%
+  );
+}
+.act__scene:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+.act__word {
+  color: var(--text-strong);
+}
+.act__rules {
+  color: var(--viz-rules);
+}
+/* The rail's tag is the one piece of text in the scene. Light's --viz-rules
+ * (#0284c7) measures 3.92:1 on #fafafa — fine for the rail (non-text, 3:1
+ * floor) but under AA for the tag, so the tag alone steps down a shade:
+ * #0369a1 measures 5.68:1. Dark needs no override (#38bdf8 → 9.24:1). */
+[data-theme="light"] .act__tag {
+  fill: #0369a1;
+}
+.act__rail {
+  opacity: 0.8;
+}
+.act__ghosts {
+  color: var(--text-dim);
+}
+
+/* pre-play: everything waits. The travel group idles off-canvas (the svg
+ * clips it), so the band is quiet until the sentinel fires. */
+.act .act__draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.act .act__guide,
+.act .act__ghosts,
+.act .act__tag,
+.act .act__pop,
+.act .act__dot,
+.act .act__ripple,
+.act .act__ask,
+.act .act__hint {
+  opacity: 0;
+}
+.act .act__travel {
+  transform: translateX(-70px);
+}
+.act .act__pop,
+.act .act__dot,
+.act .act__ripple,
+.act .act__envelope,
+.act .act__rail {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* the play — fires once, runs ~1.5s, holds on `forwards` */
+.act--play .act__guide {
+  animation: act-fade 0.4s ease 0s forwards;
+}
+/* the ghosts hold at 0.45 — inert furniture, never as loud as what ships */
+.act--play .act__ghosts {
+  animation: act-fade-dim 0.4s ease 0.05s forwards;
+}
+.act--play .act__draw {
+  animation: act-draw 0.4s ease var(--d, 0s) forwards;
+}
+.act--play .act__tag {
+  animation: act-fade 0.35s ease 0.1s forwards;
+}
+/* the rail flares as the envelope passes it (~0.26s into the travel) */
+.act--play .act__rail {
+  animation:
+    act-draw 0.3s ease var(--d, 0s) forwards,
+    act-flare 0.45s ease 0.24s;
+}
+.act--play .act__pop {
+  animation: act-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--d, 0s) forwards;
+}
+.act--play .act__travel {
+  animation: act-travel 0.85s cubic-bezier(0.45, 0, 0.3, 1) forwards;
+}
+.act--play .act__envelope {
+  animation: act-consume 0.16s ease-in 0.72s forwards;
+}
+.act--play .act__dot {
+  animation: act-dot 0.6s 0.8s both;
+}
+.act--play .act__ripple {
+  animation: act-ripple 0.55s ease-out 1.2s forwards;
+}
+.act--play .act__ask {
+  animation: act-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) 1.3s forwards;
+}
+.act--play .act__hint {
+  animation: act-fade 0.5s ease 1.55s forwards;
+}
+
+@keyframes act-fade {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes act-fade-dim {
+  to {
+    opacity: 0.45;
+  }
+}
+@keyframes act-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes act-flare {
+  0%,
+  100% {
+    filter: none;
+    opacity: 0.8;
+  }
+  45% {
+    filter: drop-shadow(0 0 6px currentColor);
+    opacity: 1;
+  }
+}
+@keyframes act-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes act-travel {
+  from {
+    transform: translateX(-70px);
+  }
+  to {
+    transform: translateX(1147px);
+  }
+}
+@keyframes act-consume {
+  to {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+/* pop in where the envelope collapses, fall, squash on impact, settle.
+ * translateY(271.2px) = lane y=64 → baseline seat y=335.2 (scene units). */
+@keyframes act-dot {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.4);
+    animation-timing-function: ease-out;
+  }
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(0.58);
+    animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.5);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(271.2px) scale(1.1, 0.84);
+    animation-timing-function: cubic-bezier(0.25, 0, 0.3, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(271.2px) scale(1);
+  }
+}
+@keyframes act-ripple {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+@keyframes act-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* the composed end state — what reduced motion (and a replayed page that has
+ * already played, via `forwards` above) shows: sentence drawn, verdict
+ * seated, ask standing. No envelope: it became the dot. */
+.act--static .act__draw,
+.act--static .act__rail {
+  stroke-dashoffset: 0;
+}
+.act--static .act__guide,
+.act--static .act__tag,
+.act--static .act__pop,
+.act--static .act__ask,
+.act--static .act__hint {
+  opacity: 1;
+}
+.act--static .act__ghosts {
+  opacity: 0.45;
+}
+.act--static .act__dot {
+  opacity: 1;
+  transform: translateY(271.2px) scale(1);
+}
+.act--static .act__travel {
+  display: none;
+}
+
+/* The close's ask, painted in the verdict emerald — the one accent button on
+ * the page. Ink is a fixed near-black so it holds in both themes; measured
+ * (WCAG 2, see ClosingAct): #06130d on #34d399 (dark theme) and on #059669
+ * (light theme) both clear 4.5:1 for text. */
+.act-cta {
+  background: var(--viz-setfit);
+  color: #06130d;
+  transition: filter 150ms ease;
+}
+.act-cta:hover {
+  filter: brightness(1.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .act .act__draw,
+  .act .act__rail {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+  .act .act__guide,
+  .act .act__tag,
+  .act .act__pop,
+  .act .act__ask,
+  .act .act__hint {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .act .act__ghosts {
+    animation: none !important;
+    opacity: 0.45 !important;
+  }
+  .act .act__dot {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: translateY(271.2px) scale(1) !important;
+  }
+  .act .act__ripple {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+  .act .act__travel,
+  .act .act__envelope {
+    animation: none !important;
+  }
+  .act .act__travel {
+    display: none;
+  }
+}
