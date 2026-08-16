@@ -194,7 +194,7 @@ jobs:
           pnpm exec playwright test tests/e2e/landing-b.spec.ts \
             --project=chromium \
             --retries=0 \
-            --workers=4 \
+            --workers=8 \
             --repeat-each=100 \
             -g "keeps its close control in frame"
 
