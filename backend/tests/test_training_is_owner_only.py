@@ -122,9 +122,7 @@ def allowlist(monkeypatch: pytest.MonkeyPatch):
     """
 
     def _set(*user_ids: uuid.UUID) -> None:
-        monkeypatch.setattr(
-            _config().settings, "training_allowed_user_ids", list(user_ids)
-        )
+        monkeypatch.setattr(_config().settings, "training_allowed_user_ids", list(user_ids))
 
     _set()
     return _set
@@ -352,9 +350,7 @@ async def test_an_unknown_source_is_not_synthetic(
         await classifier._get_training_data(user_id=STRANGER)
 
 
-async def test_bulk_import_is_not_synthetic(
-    allowlist, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_bulk_import_is_not_synthetic(allowlist, monkeypatch: pytest.MonkeyPatch) -> None:
     """It is in ``SOURCE_PRIORITY`` but nothing writes it — so it is unknown."""
 
     assert "bulk_import" not in SYNTHETIC_TRAINING_SOURCES
@@ -399,7 +395,9 @@ async def test_a_cross_user_corpus_still_raises_the_cross_user_error(
     monkeypatch.setattr(
         SetFitClassifier,
         "_load_training_rows",
-        _loader_returning(*_rows(OWNER, "user_correction", 3), *_rows(STRANGER, "user_correction", 3)),
+        _loader_returning(
+            *_rows(OWNER, "user_correction", 3), *_rows(STRANGER, "user_correction", 3)
+        ),
     )
 
     classifier = SetFitClassifier()
@@ -429,9 +427,7 @@ async def test_a_synthetic_corpus_spanning_users_is_still_refused(
 
 
 def test_the_env_var_parses_a_comma_separated_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        "JOBTRACKER_TRAINING_ALLOWED_USER_IDS", f" {OWNER} , {STRANGER} "
-    )
+    monkeypatch.setenv("JOBTRACKER_TRAINING_ALLOWED_USER_IDS", f" {OWNER} , {STRANGER} ")
 
     parsed = _config().Settings(_env_file=None).training_allowed_user_ids
 
@@ -444,9 +440,7 @@ def test_the_env_var_parses_a_comma_separated_list(monkeypatch: pytest.MonkeyPat
 def test_a_malformed_entry_stops_the_process(monkeypatch: pytest.MonkeyPatch) -> None:
     """And is not a ``ValidationError``, which would echo the whole variable."""
 
-    monkeypatch.setenv(
-        "JOBTRACKER_TRAINING_ALLOWED_USER_IDS", f"{OWNER},not-a-uuid-at-all"
-    )
+    monkeypatch.setenv("JOBTRACKER_TRAINING_ALLOWED_USER_IDS", f"{OWNER},not-a-uuid-at-all")
 
     with pytest.raises(_config().TrainingAllowedUserIdsError) as excinfo:
         _config().Settings(_env_file=None)
