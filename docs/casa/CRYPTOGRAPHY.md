@@ -77,6 +77,21 @@ required. The column is reserved for a future AEAD upgrade (for example
 ChaCha20-Poly1305) that would need one.
 (`backend/jobtracker/credentials/cloud.py:24-27`)
 
+Verified against production on 2026-08-15 — the stored state matches the
+description exactly:
+
+```sql
+SELECT kind, key_id, length(nonce) AS nonce_len, length(ciphertext) AS ct_len
+FROM user_credentials;
+--  gmail_oauth | v1 | 0 | 804
+```
+
+One credential row exists, it is Gmail, it records key `v1`, its `nonce` is
+zero bytes, and the ciphertext is opaque. **No plaintext, no key and no
+ciphertext content was read to produce this — only lengths and the key
+identifier**, which is why the query selects `length(...)` rather than the
+columns themselves.
+
 ### 3.3 Key management, and the honest state of rotation
 
 The key is supplied as the environment variable
