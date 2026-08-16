@@ -83,33 +83,38 @@ Greenhouse rejection and classifies it twice:
 
 ### 3.1 The before-and-after, in production data
 
-The body-reading change shipped on **2026-08-14**
-(commit `b6e986e`, "read the message body to classify, and never keep it").
-Production's `emails` table straddles it:
+The body-reading change is commit `b6e986e`, "read the message body to
+classify, and never keep it", authored **2026-08-15 01:47 UTC**. Production's
+`emails` table straddles it:
 
 ```sql
 SELECT classified_as, user_corrected, classification_method,
-       created_at::date, round(classification_confidence::numeric,3) AS conf
+       to_char(created_at,'YYYY-MM-DD HH24:MI:SS') AS created_utc,
+       round(classification_confidence::numeric,3) AS conf
 FROM emails WHERE classified_as = 'REJECTION' ORDER BY created_at;
 ```
 
-| Created | `user_corrected` | Method | Confidence |
+| Created (UTC) | `user_corrected` | Method | Confidence |
 | --- | --- | --- | --- |
-| 2026-08-13 | **true** | `user` | — |
-| 2026-08-13 | **true** | `user` | — |
-| 2026-08-13 | **true** | `user` | — |
-| 2026-08-14 | **true** | `user` | — |
-| **2026-08-15** | false | `rules` | 0.900 |
-| **2026-08-15** | false | `rules` | 0.950 |
+| 2026-08-13 04:22:57 | **true** | `user` | — |
+| 2026-08-13 16:50:06 | **true** | `user` | — |
+| 2026-08-13 17:41:31 | **true** | `user` | — |
+| 2026-08-14 19:56:25 | **true** | `user` | — |
+| — *commit `b6e986e`, 2026-08-15 01:47 UTC* — | | | |
+| 2026-08-15 05:58:07 | false | `rules` | 0.900 |
+| 2026-08-15 05:58:08 | false | `rules` | 0.950 |
 
-Every rejection filed **before** the body was read was filed by a human
-correcting the classifier. Every rejection filed **after** was filed by the
-classifier itself, at 0.90 and 0.95 confidence. The scope is what changed; the
-rules did not.
+Every rejection recorded **before** the change was filed by a human correcting
+the classifier. Both recorded **after** it — about four hours later — were
+filed by the classifier itself, at 0.90 and 0.95 confidence. The scope is what
+changed; the rules did not.
 
-*Stated honestly:* this is `N = 6` over three days on a two-user deployment.
-It is a clean before-and-after on the only production data that exists, not a
-statistically powered study, and it is offered as such.
+*Stated honestly, three limits:* this is `N = 6` over three days on a two-user
+deployment. The boundary is the **commit** timestamp; the deploy followed the
+push to `main` and is not separately recorded here, so the four-hour gap is the
+margin rather than a measured interval. And it is a clean before-and-after on
+the only production data that exists, not a statistically powered study. It is
+offered as exactly that.
 
 ### 3.2 Narrower Gmail scopes, considered and rejected
 
