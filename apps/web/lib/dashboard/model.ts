@@ -5,12 +5,10 @@
  * dashboard can never drift from the model's real behaviour.
  *
  *   · AUTO_FILE_GATE — the confidence gate. Below it, nothing is auto-filed;
- *     the email waits for a human, and that answer is recorded as the user's
- *     and never overwritten by a later sync. It does NOT become training data
- *     in any sense that changes a later classification: the deployed
- *     classifier is rules-only (hybrid.py:284 short-circuits on
- *     `deployment == "cloud"`) and nothing reads the corpus back.
- *     This is the ONE web definition of that number (#229 collapsed a
+ *     the email waits for a human and the correction is recorded against that
+ *     user's account. No model trains on it: the training machinery ships in
+ *     the repository but no hosted path reaches it, and no checkpoint is
+ *     published. This is the ONE web definition of that number (#229 collapsed a
  *     second copy in components/viz/GateMeter.tsx into it), and it is held in
  *     lock-step with the backend's `CONFIDENCE_AUTO`
  *     (backend/jobtracker/classifier/hybrid.py) by an invariant in

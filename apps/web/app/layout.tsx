@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Geist_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
@@ -71,11 +72,24 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  /**
+   * The per-request CSP nonce, minted in `proxy.ts`. Next stamps its own
+   * framework and RSC-payload scripts automatically, but not the two raw
+   * `<script dangerouslySetInnerHTML>` tags below, so they are nonced here.
+   *
+   * THIS `headers()` READ IS WHAT MAKES EVERY ROUTE DYNAMIC. That is inherent
+   * to nonces rather than a cost of this line — Next cannot inject a nonce
+   * into a build-time prerender either way — but it is the mechanical reason
+   * `/`, `/login`, `/signup`, `/forgot-password` and `/demo/inbox` moved from
+   * `○ Static` to `ƒ Dynamic`. See `lib/security/csp.ts` for the measurements
+   * that made that trade acceptable.
+   */
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html
       lang="en"
@@ -84,11 +98,13 @@ export default function RootLayout({
       className={`${atkinson.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
-        {/* Apply the saved theme before paint — no flash, pages stay static. */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {/* Apply the saved theme before paint — no flash. Nonced by hand:
+            Next stamps its OWN inline scripts but not a raw
+            dangerouslySetInnerHTML one (lib/security/csp.ts). */}
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         {/* Raise the post-auth boot cover before paint when a sign-in armed
             it (lib/boot/flag.ts) — same pattern, same reason: no flash. */}
-        <script dangerouslySetInnerHTML={{ __html: BOOT_INIT_SCRIPT }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: BOOT_INIT_SCRIPT }} />
       </head>
       <body className="flex min-h-full flex-col">
         {children}
