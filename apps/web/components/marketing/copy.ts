@@ -57,8 +57,16 @@
 export const HERO = {
   /** 7 words. The loss, not the chore, is the subject. */
   headline: "You don't lose the offer. You lose the email.",
+  /**
+   * Length is a LAYOUT constraint here, not a taste one. Measured on a
+   * production build: at 1024×600 the rewritten hero pushed `pipeline-board`
+   * to 607.5px, 7.5px under the fold — zero board pixels visible, which kills
+   * the page's whole argument. Subhead line-height is 28px, so one line back
+   * is ~20px inside the fold. Keep this at two lines at 1024. Re-measure if
+   * you touch it; do not eyeball it.
+   */
   subhead:
-    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied reads the verdict, moves the row, and tells you who is waiting on you — without an AI reading your mail, and without ever storing the message body.",
+    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied moves the row for you — no AI reads your mail, and the message body is never stored.",
 } as const;
 
 /** The board embed's provenance line — shown with every live mount. */
