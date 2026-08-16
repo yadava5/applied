@@ -8,7 +8,11 @@ Layers:
 -------
 1. Rules (rules.py): Regex patterns for common ATS phrases
 2. Embeddings (embeddings.py): Sentence similarity using e5-small-v2
-3. SetFit (setfit_model.py): Few-shot ML trained on user corrections
+3. SetFit (setfit_model.py): Few-shot ML, fit offline on a labelled corpus
+   (synthetic seeds and public-dataset rows). NOT trained on user
+   corrections: nothing hosted retrains, and a training run refuses any
+   user who is not on JOBTRACKER_TRAINING_ALLOWED_USER_IDS. See the
+   module header in setfit_model.py for why that is a policy constraint.
 
 The hybrid classifier (hybrid.py) combines all layers:
 - High-confidence rule matches are accepted immediately
