@@ -14,8 +14,7 @@
  *     explicitly-confirmed action may hit `DELETE`, which erases both.
  *  2. The undo window for the recoverable removal. The request is not sent
  *     until the window expires, so "Undo" is a `clearTimeout` and nothing
- *     reaches the server — no dismissal to reverse, and no training example
- *     written and then re-written by the reversal.
+ *     reaches the server — there is no dismissal to reverse.
  *  3. The row-menu keyboard model: which key means what, and which item that
  *     lands on. Plus the one-menu-at-a-time registry.
  *
@@ -31,7 +30,15 @@ export interface ProxyRequest {
   body?: Record<string, unknown>;
 }
 
-/** PATCH the row's stage. Sticky + trains; also restores a dismissed row. */
+/**
+ * PATCH the row's stage. Sticky (the row is tagged user-owned, so a later sync
+ * never overwrites it); also restores a dismissed row.
+ *
+ * It trains nothing and labels no mail — `record_status_correction`
+ * (`backend/jobtracker/cloud/applications.py:2253`) deliberately writes no
+ * `training_data` example, because "what stage is this APPLICATION at?" is not
+ * an answer to "what is this MESSAGE?".
+ */
 export function statusChangeRequest(id: number, status: string): ProxyRequest {
   return { path: `/api/applications/${id}`, method: "PATCH", body: { status } };
 }
@@ -61,9 +68,16 @@ export function roleChangeRequest(id: number, role: string | null): ProxyRequest
 
 /**
  * "Not an application" — RECOVERABLE. Dismisses the row (off the board, off the
- * summary) and trains the classifier that the mail was misfiled. Nothing is
- * erased: the backend keeps the row under `?dismissed=true` and restores it on
- * demand.
+ * summary). Nothing is erased: the backend keeps the row under `?dismissed=true`
+ * and restores it on demand.
+ *
+ * It trains nothing, and it records no training example either. `dismiss_application`
+ * (`backend/jobtracker/cloud/applications.py:2378`) deliberately writes NO
+ * per-message row — labelling every linked email `other` while leaving each one's
+ * stored `classified_as` alone made the corpus disagree with the database. What it
+ * does write is `dismissed_reason = "user"`, and a later sync honours that
+ * (`applications.py:1521`) instead of putting the row back. That stickiness is the
+ * only thing the hint may claim.
  */
 export function removeFromBoardRequest(id: number): ProxyRequest {
   return { path: `/api/applications/${id}/dismiss`, method: "POST" };
@@ -123,7 +137,13 @@ export const REMOVE_LABEL = "Not an application";
  * derived from the constant so the copy can never drift from the timer.
  */
 export const REMOVE_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo`;
-export const REMOVE_TRAINS_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo · trains the model`;
+/**
+ * The synced-row variant. It used to end "· trains the model", which was false
+ * twice over: no deployed path trains on anything, and this action does not even
+ * record a training example. The sync stickiness it names instead is the one thing
+ * that genuinely differs for a Gmail row — see {@link removeFromBoardRequest}.
+ */
+export const REMOVE_STICKY_HINT = `takes it off the board · ${UNDO_WINDOW_SECONDS} s to undo · a later sync won't bring it back`;
 export const DELETE_LABEL = "Delete permanently";
 export const DELETE_HINT = "erases the row and its emails";
 export const DELETE_CONFIRM_QUESTION =

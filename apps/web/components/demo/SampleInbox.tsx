@@ -186,7 +186,7 @@ function ExpandedTrace({ email }: { email: SampleEmail }) {
 
       <p className="mt-3 text-xs leading-relaxed text-dim">
         {needsReview
-          ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and the correction becomes new SetFit training data."
+          ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and that answer is saved as yours. No model trains on it: the deployed classifier is rules-only."
           : `Confidence clears the 0.85 gate, so Applied files this as “${pretty(category)}” automatically.`}
       </p>
 

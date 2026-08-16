@@ -19,7 +19,7 @@ import {
   REMOVE_FAILED,
   REMOVE_HINT,
   REMOVE_LABEL,
-  REMOVE_TRAINS_HINT,
+  REMOVE_STICKY_HINT,
   UNDO_LABEL,
   UNDO_WINDOW_SECONDS,
   deletedMessage,
@@ -372,7 +372,7 @@ export function ApplicationRow({
     {
       key: "dismiss",
       label: REMOVE_LABEL,
-      hint: fromGmail ? REMOVE_TRAINS_HINT : REMOVE_HINT,
+      hint: fromGmail ? REMOVE_STICKY_HINT : REMOVE_HINT,
       onSelect: () => {
         setError(null);
         setConfirmingDelete(false);
