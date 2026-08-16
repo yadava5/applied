@@ -54,19 +54,73 @@ TRAINING_METADATA_SUPPORTED_SCHEMA_VERSIONS = {TRAINING_METADATA_SCHEMA_VERSION}
 # admin role that RLS does not constrain and an unfiltered
 # ``select(TrainingData)`` would quietly return every tenant's corrections.
 #
-# Two defences, deliberately redundant:
+# Three defences, deliberately redundant:
 #   1. ``user_id`` is a *required keyword argument* on every training entry
 #      point and becomes a ``WHERE`` clause on the corpus read.
 #   2. The rows that actually came back are inspected, and anything owned by
 #      another user raises. Derived from the data, not from a caller's promise.
+#   3. The one user those rows belong to must be on an explicit allowlist, or
+#      the corpus must be entirely synthetic. Default-deny.
 #
 # (2) is unreachable while (1) holds. That is the point: it is what catches the
 # future refactor that deletes the ``WHERE`` as redundant, or a caller that
-# passes the wrong id. Do not remove either half.
+# passes the wrong id. Do not remove any of the three.
+#
+# (3) exists because (1) and (2) together only buy *single-user*, which is not
+# the same as *owner-only*: they are satisfied perfectly by a run that pools
+# nothing and trains happily on one stranger's mailbox, because whoever called
+# passed that stranger's id. The allowlist is what makes the answer to "whose
+# mail may this model see" a configured fact rather than an argument. It is
+# empty by default and nothing in the hosted deployment sets it, so production
+# refuses everyone — the desired state, since no deployed path retrains.
 
 
-class CrossUserTrainingError(RuntimeError):
+class TrainingPolicyError(RuntimeError):
+    """Base for every refusal to train on data-policy grounds.
+
+    Exists so ``train()``'s re-raise clause names one type and keeps naming it
+    when a fourth defence is added. A policy refusal caught by the broad
+    ``except Exception`` below it would be demoted to a log line, and the
+    caller — ``POST /classify/retrain``, ``scripts/ml_cycle.sh --retrain`` —
+    would see a success it did not get.
+    """
+
+
+class CrossUserTrainingError(TrainingPolicyError):
     """Raised when a training corpus contains rows owned by another user."""
+
+
+class TrainingNotAllowedError(TrainingPolicyError):
+    """Raised when the corpus is one user's but that user is not allowlisted."""
+
+
+# Sources that cannot, by construction, be any Applied user's mail.
+#
+# Surveyed rather than assumed. Exactly one code path writes a row from a real
+# mailbox — ``classify_review_item`` in ``jobtracker.cloud.applications`` — and
+# it always writes ``source="user_correction"``. Production's ``training_data``
+# holds 11 rows, every one of them ``user_correction``, belonging to one user
+# (checked 2026-08-15), so this exemption grants nothing there today.
+#
+# The members below come from the two importers instead:
+#   * ``mock_seed`` / ``mock_seed_v2`` / ``mock_seed_v3`` — generated fixtures
+#     (``scripts/generate_mock_training_data.py``, then the JSONL importer).
+#   * ``external_dataset`` — public third-party corpora via
+#     ``scripts/import_to_db.py``. Nobody's inbox.
+#
+# ``bulk_import`` is deliberately ABSENT even though ``SOURCE_PRIORITY`` lists
+# it: nothing in the tree writes it, so admitting it would be admitting a value
+# whose provenance no one can state. Unknown sources fail closed — which also
+# covers ``import_jsonl_training_data.py --source``, whose value is whatever an
+# operator typed.
+SYNTHETIC_TRAINING_SOURCES = frozenset(
+    {
+        "mock_seed",
+        "mock_seed_v2",
+        "mock_seed_v3",
+        "external_dataset",
+    }
+)
 
 
 def resolve_training_user_id() -> uuid.UUID:
@@ -541,6 +595,9 @@ class SetFitClassifier:
                 anyone other than ``user_id``. Deliberately propagates past the
                 catch-all below — a policy breach must stop the run, not land
                 in a log line nobody reads.
+            TrainingNotAllowedError: if ``user_id`` is not on
+                ``JOBTRACKER_TRAINING_ALLOWED_USER_IDS`` and the corpus is not
+                entirely synthetic. Propagates for the same reason.
         """
         if self._is_training:
             logger.warning("Training already in progress")
@@ -572,10 +629,12 @@ class SetFitClassifier:
 
             logger.info("SetFit training completed successfully")
 
-        except CrossUserTrainingError:
+        except TrainingPolicyError:
             # Never demote a policy violation to a log line: the caller
             # (POST /classify/retrain, scripts/ml_cycle.sh --retrain) has to
-            # see this fail.
+            # see this fail. Catches the BASE class on purpose — naming the
+            # subclasses individually is how the next guard gets added and
+            # then silently swallowed by the ``except Exception`` below.
             raise
         except Exception as e:
             logger.error(f"SetFit training failed: {e}")
@@ -632,6 +691,74 @@ class SetFitClassifier:
             "user at a time (see resolve_training_user_id())."
         )
 
+    @staticmethod
+    def _assert_training_allowed(
+        rows: "list[TrainingData]",
+        *,
+        user_id: uuid.UUID,
+    ) -> None:
+        """Refuse unless ``user_id`` is allowlisted or the corpus is synthetic.
+
+        Layered ON TOP of :meth:`_assert_single_user_corpus`, never instead of
+        it: that one answers "is this corpus one person's?", this one answers
+        "is that person allowed to be trained on?". Both questions have to be
+        asked, because a corpus can be flawlessly single-user and still be a
+        stranger's mailbox.
+
+        DEFAULT-DENY. ``settings.training_allowed_user_ids`` is empty unless
+        ``JOBTRACKER_TRAINING_ALLOWED_USER_IDS`` names someone, and nothing in
+        the hosted deployment sets it, so the deployed app refuses every user
+        including the owner. That is the intended production state — no
+        deployed path retrains — and it means a dropped or misspelled env var
+        stops training rather than quietly widening it.
+
+        WHY THE ROWS ARE READ BEFORE THIS RUNS, since an assessor will ask.
+        The synthetic exemption is a fact about the corpus, so there is no
+        cheaper place to establish it. The read is already narrowed to a single
+        ``user_id`` by :meth:`_load_training_rows` and already proven
+        single-user by the guard above; this check then runs before any text is
+        assembled, so a refused corpus never becomes training material, never
+        reaches a tokenizer, and never leaves this method.
+
+        A corpus is synthetic only if EVERY row's ``source`` is in
+        :data:`SYNTHETIC_TRAINING_SOURCES`. Not "any", not "most": one
+        ``user_correction`` mixed into fixtures is real mail, and the whole run
+        needs the allowlist. An empty corpus is refused too — ``all()`` of
+        nothing is ``True``, and a gate that opens on no evidence is the
+        check-that-cannot-fail shape this repo keeps producing.
+        """
+
+        # Read through the config MODULE, not this file's import-time binding.
+        # ``importlib.reload(jobtracker.config)`` rebuilds the settings
+        # singleton (several tests and the cloud app-factory path do it), and a
+        # module-level binding captured before that reload would have this gate
+        # consulting an allowlist that is no longer the live one. Whichever
+        # direction that lands in is wrong; a permission has to be read from
+        # the configuration actually in force.
+        from jobtracker.config import settings as current_settings
+
+        if user_id in current_settings.training_allowed_user_ids:
+            return
+
+        sources = {str(row.source or "unknown") for row in rows}
+        if rows and sources <= SYNTHETIC_TRAINING_SOURCES:
+            return
+
+        raise TrainingNotAllowedError(
+            f"Refusing to train: user_id={user_id} is not on the training "
+            "allowlist, and the corpus is not entirely synthetic (sources "
+            f"present: {sorted(sources) or ['<empty corpus>']}; synthetic "
+            f"sources are {sorted(SYNTHETIC_TRAINING_SOURCES)}). Applied reads "
+            "mail under Gmail's restricted gmail.readonly scope, whose "
+            "user-data policy allows training only a model personalized to one "
+            "end user, so whose mailbox a model may see is a configured fact, "
+            "not a caller's argument. To allow this user, add the id to "
+            f"JOBTRACKER_TRAINING_ALLOWED_USER_IDS (comma-separated UUIDs): "
+            f"JOBTRACKER_TRAINING_ALLOWED_USER_IDS={user_id}. The variable is "
+            "unset in the hosted deployment on purpose; setting it there would "
+            "be a policy change, not a fix."
+        )
+
     async def _get_training_data(self, *, user_id: uuid.UUID) -> tuple[list[str], list[str]]:
         """Get one user's training data from the database.
 
@@ -640,6 +767,8 @@ class SetFitClassifier:
 
         Raises:
             CrossUserTrainingError: if any loaded row belongs to another user.
+            TrainingNotAllowedError: if that user is not allowlisted and the
+                corpus is not entirely synthetic.
         """
         try:
             from jobtracker.database import get_session
@@ -657,6 +786,12 @@ class SetFitClassifier:
                 # a foreign user whose rows are all ``needs_review`` would
                 # otherwise slip past unnoticed.
                 self._assert_single_user_corpus(examples, user_id=user_id)
+
+                # Then: is this one user allowed to be trained on at all?
+                # Same reason for sitting here — the sources are read off the
+                # raw rows, so a ``user_correction`` that would be dropped for
+                # being ``needs_review`` still counts against "all synthetic".
+                self._assert_training_allowed(examples, user_id=user_id)
 
                 by_label_source: dict[str, dict[str, list[str]]] = {}
                 for data in examples:
@@ -746,9 +881,12 @@ class SetFitClassifier:
 
             return texts, labels
 
-        except CrossUserTrainingError:
-            # See ``train``: this one is never logged-and-swallowed. Returning
+        except TrainingPolicyError:
+            # See ``train``: these are never logged-and-swallowed. Returning
             # ``[], []`` here would turn a policy breach into a silent no-op.
+            # The BASE class, for the reason given there — this clause named
+            # only ``CrossUserTrainingError`` and duly swallowed the allowlist
+            # refusal the first time it ran. Measured, not imagined.
             raise
         except Exception as e:
             logger.error(f"Failed to get training data: {e}")

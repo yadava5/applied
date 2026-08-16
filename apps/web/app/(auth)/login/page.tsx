@@ -16,6 +16,7 @@ import {
   credentialProblem,
   type CredentialField,
 } from "@/lib/auth/credentials";
+import { safeRedirectPath } from "@/lib/auth/redirect";
 import { createClient } from "@/lib/supabase/client";
 
 /**
@@ -88,7 +89,9 @@ function LoginFormSkeleton() {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect") ?? "/dashboard";
+  // Vetted where the URL is READ, so nothing downstream — the boot flag, the
+  // navigation, the Google button — ever holds an unchecked destination.
+  const redirectTo = safeRedirectPath(searchParams.get("redirect"));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -148,12 +151,16 @@ function LoginForm() {
     // Cover the app's first render with the Triage boot before the
     // navigation starts — the overlay lives in the root layout and survives
     // this client-side transition.
-    armBoot(redirectTo.startsWith("/") ? redirectTo : "/dashboard");
+    armBoot(safeRedirectPath(redirectTo));
 
     // `refresh()` is required so the proxy re-runs with the newly-set
     // session cookies before navigating into the protected area.
     router.refresh();
-    router.replace(redirectTo);
+    // Re-applied at the sink, not only at the read above. `safeRedirectPath`
+    // is idempotent, so this costs nothing — and it means an edit that starts
+    // sourcing the destination from somewhere else cannot hand this
+    // `router.replace` an off-origin URL by forgetting the guard.
+    router.replace(safeRedirectPath(redirectTo));
   }
 
   return (
