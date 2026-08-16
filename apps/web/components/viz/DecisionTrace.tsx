@@ -192,7 +192,7 @@ export function DecisionTrace() {
                   </div>
                   <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
                     {item.needsReview
-                      ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and the correction becomes new SetFit training data."
+                      ? "Confidence sits below the 0.85 gate, so nothing is auto-filed — the email waits for a human, and the correction is recorded against your account. No model trains on it."
                       : `Confidence clears the 0.85 gate, so Applied files this as “${item.category.replace("_", " ")}” automatically.`}
                   </p>
                 </div>

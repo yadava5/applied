@@ -120,7 +120,7 @@ export function Cascade() {
           </p>
           <p className="rounded-md border border-line-soft bg-surface px-3 py-2 text-[13px] text-muted">
             <span className="font-mono text-[11px] text-review">&lt; 0.85 </span>
-            a human decides — and the correction becomes new training data.
+            a human decides — and the correction is recorded as yours, not trained on.
           </p>
         </div>
       </div>

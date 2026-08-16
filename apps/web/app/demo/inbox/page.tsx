@@ -61,17 +61,8 @@ export default function DemoInboxPage() {
           >
             <span className="text-strong">How these verdicts are produced.</span> The emails are
             synthetic — invented companies, no real mail is read. The verdicts are not: each is the exact
-            output of the shipped 3-layer classifier (the same quantized int8 ONNX pipeline running on
-            the{" "}
-            <a
-              href="https://huggingface.co/spaces/yadava5/jobtracker-classifier"
-              target="_blank"
-              rel="noreferrer"
-              className="text-strong underline-offset-4 hover:underline"
-            >
-              Hugging Face Space ↗
-            </a>
-            ). Layers 2–3 (the 23 MB model) are precomputed offline; layer 1 (regex rules) is recomputed
+            output of the shipped 3-layer classifier, recorded when it ran. Layers 2–3 are precomputed
+            offline and their weights are no longer published; layer 1 (regex rules) is recomputed
             live in your browser below each trace. Nothing here is hand-tuned.
           </div>
         </section>

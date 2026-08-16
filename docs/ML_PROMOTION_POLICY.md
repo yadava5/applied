@@ -154,10 +154,23 @@ recorded against private data.
 | `scripts/cascade_gate.sh`, locally | the full cascade, where the checkpoint actually is |
 
 That hosted-CI failure is the honest state of things, not an oversight. Making
-it green means publishing a checkpoint the workflow can download, which is a
-decision about distributing a model trained partly on real mail (39 of the 192
-training examples in the current checkpoint are user corrections) — not a CI
-chore.
+it green means publishing a checkpoint the workflow can download — and that
+decision has now been made, in the negative.
+
+**Settled 2026-08-15: no checkpoint gets published.** The checkpoint trained on
+2026-03-06 recorded 39 of its 192 training examples as user corrections, which
+makes it a model fitted partly on mail read under Gmail's restricted
+`gmail.readonly` scope. Google's Workspace API user-data policy forbids
+training on that data and reaches derived and aggregated data as well, so the
+artifact was withdrawn from this repository and from both Hugging Face
+surfaces rather than published to satisfy a CI job. The corrections were the
+maintainer's own; the policy turns on where the data came from, not who owned
+it.
+
+The consequence for this gate is that it stays red on hosted CI, permanently,
+and that is now the intended state rather than a gap waiting to be closed. The
+only thing that would change it is a checkpoint trained on synthetic data only
+— `backend/tests/corpus/` is the intended source — which has not been run.
 
 ## Provenance a verdict needs
 

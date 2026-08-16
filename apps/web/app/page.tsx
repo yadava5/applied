@@ -40,7 +40,12 @@ import { Logo } from "@/components/brand/Logo";
  * and, via the <noscript> below, with JavaScript disabled.
  */
 
-const SPACE_URL = "https://huggingface.co/spaces/yadava5/jobtracker-classifier";
+// The Hugging Face Space that used to live here was made private on 2026-08-15:
+// it served the int8 ONNX weights of a checkpoint fitted partly on mail read
+// under Gmail's restricted `gmail.readonly` scope, which may not be published.
+// Every door that pointed at it now points at /import, which classifies in the
+// browser with the rules layer and ships no weights at all.
+const IMPORT_URL = "/import";
 const SYSTEM_CARD = "/system-card";
 
 /**
@@ -94,10 +99,10 @@ export default function Landing() {
               live demo
             </a>
             {/*
-              Deliberately NOT NEW_TAB. The demo and Space links above open in a
-              new tab so the landing survives behind them, but signing in is the
-              opposite: opening /login in a second tab strands the user on a
-              stale landing page and leaves them with two tabs after auth.
+              Deliberately NOT NEW_TAB. The demo link above opens in a new tab so
+              the landing survives behind it, but signing in is the opposite:
+              opening /login in a second tab strands the user on a stale landing
+              page and leaves them with two tabs after auth.
             */}
             <Link
               href="/login"
@@ -142,8 +147,8 @@ export default function Landing() {
         </div>
         <p className="mt-6 font-mono text-[11px] text-dim">
           zero servers ·{" "}
-          <a href={SPACE_URL} {...NEW_TAB} className="text-muted underline-offset-4 hover:text-strong hover:underline">
-            run the classifier ↗
+          <a href={IMPORT_URL} className="text-muted underline-offset-4 hover:text-strong hover:underline">
+            run the classifier →
           </a>
         </p>
         <div className="scroll-cue mt-16 font-mono text-[11px] text-dim" aria-hidden>
@@ -483,10 +488,10 @@ export default function Landing() {
                 body: "Drop a Google Takeout .mbox; it's parsed and classified in your browser. No upload, no sign-in.",
               },
               {
-                href: SPACE_URL,
-                title: "In-browser classifier",
-                arrow: "↗",
-                body: "Paste your own text; it is classified client-side, on your CPU — nothing uploaded.",
+                href: "/demo",
+                title: "Watch it decide",
+                arrow: "→",
+                body: "A synthetic inbox with every verdict traced layer by layer — why each email landed where it did.",
               },
               {
                 href: SYSTEM_CARD,
@@ -495,8 +500,8 @@ export default function Landing() {
                 body: "The full printed walkthrough: the why, the cascade, and the receipts.",
               },
             ].map((door, i) => (
-              // Every door leaves the landing (live app / System Card / the
-              // external Space), so each opens in a new tab per the standard.
+              // Every door leaves the landing (import / demo / System Card), so
+              // each opens in a new tab per the standard.
               <a
                 key={door.title}
                 href={door.href}
@@ -549,8 +554,8 @@ export default function Landing() {
             <a href="/demo" {...NEW_TAB} className="transition-colors hover:text-strong">
               Live demo
             </a>
-            <a href={SPACE_URL} {...NEW_TAB} className="transition-colors hover:text-strong">
-              Classifier ↗
+            <a href={IMPORT_URL} className="transition-colors hover:text-strong">
+              Import mail
             </a>
           </nav>
         </div>

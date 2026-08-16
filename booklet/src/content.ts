@@ -37,7 +37,11 @@ export const BRAND = {
   year: "2026",
   liveUrl: "getapplied.vercel.app",
   qrTarget: "https://getapplied.vercel.app",
-  spaceUrl: "huggingface.co/spaces/yadava5/jobtracker-classifier",
+  // Was the Hugging Face Space. Made private 2026-08-15: it served the int8
+  // ONNX weights of a checkpoint fitted partly on restricted-scope Gmail, which
+  // may not be published. /import runs the rules layer in the tab and ships no
+  // weights, so it is the honest "run it yourself" destination now.
+  spaceUrl: "getapplied.vercel.app/import",
 } as const;
 
 export const MASTHEAD = {
@@ -640,8 +644,8 @@ export const BUILD = {
     liveLabel: "LIVE WEB APP",
     liveUrl: "getapplied.vercel.app",
     spaceLabel: "IN-BROWSER CLASSIFIER",
-    spaceUrl: "hf.co/spaces/yadava5/jobtracker-classifier",
-    spaceNote: "int8 ONNX · zero servers · runs entirely in the tab",
+    spaceUrl: "getapplied.vercel.app/import",
+    spaceNote: "201 rules · zero servers · runs entirely in the tab",
     leftArrowLabel: "open it",
     rightArrowLabel: "classify",
     microNote: "three layers · one gate · zero servers",

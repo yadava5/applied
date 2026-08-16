@@ -49,6 +49,21 @@ backend/client_secret.json
 models/
 backend/checkpoints/
 
+## Trained model weights, and anything derived from them, are never committed.
+## The checkpoint these were exported from was fitted partly on real mailbox
+## corrections, and Google's restricted-scope terms reach derived and
+## aggregated data as well as the raw messages — so a published checkpoint is
+## a compliance problem regardless of whose mail it was. Re-adding any of these
+## puts the weights back in a public bundle. Regenerate them locally with
+## `ml/browser/export_onnx.py`; do not commit the output.
+*.onnx
+*.safetensors
+*.pkl
+ml/browser/artifacts/head.json
+ml/browser/artifacts/examples.json
+ml/browser/site/head.json
+ml/browser/site/examples.json
+
 ## External training datasets (downloaded locally, never committed)
 backend/data/external/
 backend/data/processed/

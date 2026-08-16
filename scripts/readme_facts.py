@@ -1131,32 +1131,49 @@ FACTS: dict[str, dict] = {
             {"re": r"of the (\w+) are predicted labels", "word": True},
         ],
     },
-    # ── artifacts on disk ──
+    # ── artifacts NO LONGER on disk ──
+    #
+    # These three used to be `file_bytes(...)` over ml/browser/artifacts/. The
+    # weights were withdrawn on 2026-08-15 (a model fitted partly on
+    # restricted-scope Gmail may not be published; see README "The published
+    # checkpoint was withdrawn" and docs/ML_PROMOTION_POLICY.md), so there is
+    # no file left to stat and `file_bytes` would raise.
+    #
+    # They are PINNED rather than deleted, deliberately. The numbers are real
+    # measurements of a real export (2026-08-03) and they are still quoted in
+    # four places; dropping the registrations would let that prose drift with
+    # nothing watching it. What a pinned fact can no longer do is notice a
+    # re-export that changes the size — so if the checkpoint is ever rebuilt
+    # (synthetic-only), these must be re-measured by hand, not trusted.
+    #
+    # Note the failure mode that is being avoided: `file_bytes` raises on a
+    # missing path, which is the safe direction. Had it returned 0, `--write`
+    # would have cheerfully rewritten the README to "0 bytes" and gone green.
     "onnxFloat32Bytes": {
         "kind": "static",
-        "describe": "bytes of ml/browser/artifacts/model.onnx",
-        "compute": lambda: file_bytes("ml/browser/artifacts/model.onnx"),
+        "describe": "bytes of the withdrawn model.onnx (pinned 2026-08-03)",
+        "compute": lambda: 90362391,
         "sites": [
             r"from ([\d,]+) bytes of float32",
-            r"exports to ONNX at \*\*([\d,]+) bytes\*\* float32",
+            r"exported to ONNX at \*\*([\d,]+) bytes\*\* float32",
         ],
     },
     "onnxInt8Bytes": {
         "kind": "static",
-        "describe": "bytes of ml/browser/artifacts/model_quantized.onnx",
-        "compute": lambda: file_bytes("ml/browser/artifacts/model_quantized.onnx"),
+        "describe": "bytes of the withdrawn model_quantized.onnx (pinned 2026-08-03)",
+        "compute": lambda: 22843695,
         "sites": [
             r"\*\*([\d,]+)-byte int8 ONNX\*\*",
-            r"quantizes to \*\*([\d,]+) bytes\*\* int8",
-            r"— ([\d,]+) bytes; check it with",
+            r"quantized to \*\*([\d,]+) bytes\*\* int8",
+            r"— was ([\d,]+) bytes",
         ],
     },
     "onnxInt8Mb": {
         # Its own fact, not a formatting of onnxInt8Bytes: a byte-count site
         # regex must never capture "22.8" and rewrite it to "22843695 MB".
         "kind": "static",
-        "describe": "ml/browser/artifacts/model_quantized.onnx in MB, 1 decimal",
-        "compute": lambda: round(file_bytes("ml/browser/artifacts/model_quantized.onnx") / 1e6, 1),
+        "describe": "the withdrawn model_quantized.onnx in MB, 1 decimal (pinned)",
+        "compute": lambda: round(22843695 / 1e6, 1),
         "sites": [r"The ([\d.]+) MB int8 ONNX build"],
     },
     # ── the repository itself ──
