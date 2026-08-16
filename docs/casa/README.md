@@ -42,5 +42,5 @@ throughout:
 | One key serves both credential encryption and OAuth `state` signing | `CRYPTOGRAPHY.md` §3.4 |
 | `anon` retains a grant on `gmail_sync_enrollment` — inert, but drift | `ARCHITECTURE-AND-TENANT-ISOLATION.md` §4.1 |
 | Supabase Auth log retention is plan-dependent and must be confirmed | `AUTHENTICATION-LOGGING.md` §4 |
-| Vercel audit-log retention for environment-variable access must be confirmed | `SECRET-ACCESS-POLICY.md` §3.2 |
+| **Vercel audit-log availability is UNVERIFIED** — it is plan-gated and is named as a compensating control without having been observed. Must be checked and the bullet corrected before filing | `SECRET-ACCESS-POLICY.md` §3.2 |
 | `ml/demo/space/jobtracker/credentials/cloud.py` is a vendored copy of the credential module and does not carry the access logging | `SECRET-ACCESS-POLICY.md` §3.1 |

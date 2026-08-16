@@ -226,14 +226,18 @@ dependency this project has decided against.
 2. **The key never leaves the process.** It is not logged, not returned, not
    written to disk, and not included in error messages — §2.3 rule 3 covers
    the mechanism that keeps it out of error output.
-3. **Human access to the value is logged by the platform, not by us.**
-   Vercel records dashboard and CLI access to environment variables in its own
-   account audit trail; GitHub records access to Actions secrets. These are the
-   logs that matter, because a human reading the secret is the threat this
-   control is actually about, and a compromised runtime would not honestly log
-   its own read anyway. **The owner should confirm the audit-log retention
-   available on the current Vercel plan when filing this control** — it is
-   plan-dependent and is not asserted here.
+3. **Human access to the value would be logged by the platform, not by us —
+   and this limb is UNVERIFIED.** A human reading the secret out of the Vercel
+   dashboard or CLI is the threat this control is actually about; a compromised
+   runtime would not honestly log its own read anyway. Vercel offers an account
+   audit log, and GitHub records access to Actions secrets. **But Vercel's audit
+   log is a plan-gated feature and it has not been confirmed as available or
+   enabled on this account.** It is listed as the intended compensating control,
+   not as one that has been observed working. **The owner must check the Vercel
+   dashboard for audit-log availability and retention before this control is
+   filed, and this bullet must be corrected to match what is found.** Claiming a
+   platform log that turns out not to exist would be worse than claiming
+   nothing.
 4. **Use of the key is logged even though reads of it are not** (§3.1). Every
    *effect* the key has — every credential decrypt — produces a record. That is
    the closer proxy to "was this secret used, and for whom".
