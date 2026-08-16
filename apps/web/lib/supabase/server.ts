@@ -91,6 +91,34 @@ export async function createClientWithSessionHeaders() {
     publicEnv.NEXT_PUBLIC_SUPABASE_URL,
     publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
+      // `Secure` ON THE AUTH COOKIES (CASA 2.3.1 / 2.3.2)
+      // -------------------------------------------------
+      // `@supabase/ssr` 0.12.4's `DEFAULT_COOKIE_OPTIONS`
+      // (`dist/main/utils/constants.js`) is exactly `{ path: "/",
+      // sameSite: "lax", httpOnly: false, maxAge: 400 * 24 * 60 * 60 }`. There
+      // is no `secure` key in it at all, and nothing else supplies one — so
+      // every session cookie this app wrote went out without `Secure`, which
+      // is a session token a browser will replay over plain HTTP. Both cookie
+      // paths in the library build their options as `{ ...DEFAULT_COOKIE_OPTIONS,
+      // ...options.cookieOptions, maxAge }` (`applyServerStorage`, and the
+      // browser storage's `setItem`), so what is set here is what goes on the
+      // wire. `sameSite: "lax"` and `path: "/"` already come from the defaults;
+      // `tests/unit/cookie-attributes.test.mjs` asserts all three against the
+      // installed library rather than trusting that.
+      //
+      // `NODE_ENV` is the gate, for the same reason
+      // `lib/auth/recoverySession.ts` gives for the recovery marker: every
+      // deployed environment gets it and only `next dev` does not. A local
+      // `next start` is `NODE_ENV=production` and so sets it over plain HTTP —
+      // which is fine, because browsers treat `http://localhost` as a secure
+      // origin and store `Secure` cookies from it.
+      //
+      // `httpOnly` is deliberately NOT raised here and must stay the library's
+      // `false`. The browser client (`lib/supabase/client.ts`) carries the
+      // session in `document.cookie`; an HttpOnly auth cookie is invisible to
+      // it and breaks sign-in outright. That is a compensating-control
+      // decision, not an oversight.
+      cookieOptions: { secure: process.env.NODE_ENV === "production" },
       cookies: {
         getAll() {
           return cookieStore.getAll();
