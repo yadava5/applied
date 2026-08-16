@@ -202,9 +202,31 @@ prominent, user-facing feature the data serves; there is no other use.
   create, train, or improve a machine learning or artificial intelligence model
   beyond that specific user's personalized model for the appropriate use case
   or user-facing feature."* Applied's classifier is **rules-based**. A user's
-  correction is recorded and affects only that user's own future
-  classifications; corrections are never pooled across accounts and no shared
-  or generalized model is trained on user data.
+  correction is recorded against that user's own account; corrections are never
+  pooled across accounts, and no shared or generalized model is trained on user
+  data. In the hosted application no model is trained at all — there is nothing
+  installed to train one with, and no retrain runs in production.
+
+  **A checkpoint that was trained on corrections, and its withdrawal.** Stated
+  here rather than left for a reviewer to find in the repository's history. An
+  earlier, experimental stage of this project fine-tuned a SetFit classifier
+  offline, and **39 of that checkpoint's 192 training examples were user
+  corrections**. They were the operator's own mail: the checkpoint was trained
+  on 2026-03-06, four months before any second account existed, and the project
+  has never had another user whose mail could have entered it. That checkpoint
+  never ran in the hosted application, which has classified with rules
+  throughout — but it *was* published, both to a public Hugging Face model
+  repository and as committed weights in the public source repository.
+
+  On **2026-08-15** it was withdrawn. The weights and every artifact derived
+  from them — the ONNX exports, the fitted classifier head, and the embedding
+  bank computed with the fine-tuned encoder — were deleted from the source tree
+  and blocked from re-entering it, and both Hugging Face surfaces were made
+  private. Two limits are recorded rather than glossed: the blobs remain
+  reachable through the public repository's **git history**, which cannot be
+  undone without rewriting that history, and the model repository had been
+  downloaded 13 times before it was closed. Any future checkpoint will be
+  trained on the synthetic corpus at `backend/tests/corpus/` only.
 - **No permanent copies.** The policy's Terms of Service note prohibits
   *"scraping, building databases … or otherwise creating permanent copies of
   Google User data."* Applied does not archive mail. The message body is never
