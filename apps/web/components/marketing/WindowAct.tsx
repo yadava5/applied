@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { Reveal } from "@/components/landing/Reveal";
 import { cn } from "@/lib/utils";
-import { ChangedRow } from "./ChangedRow";
+import { ChangedRow, ReceiptStrip } from "./ChangedRow";
+import { OFFER_EMAIL } from "./verdictEmailData";
 import { LandingBoard } from "./LandingBoard";
 import { NEW_TAB } from "./chrome";
 import { ACT, BOARD } from "./copy";
@@ -20,13 +21,16 @@ import { ACT, BOARD } from "./copy";
  *
  *   0  the board as the product left it — Larkspur still filed, 19 days
  *      quiet; the visitor can already drag rows and open cards;
- *   1  the verdict lands — the camera pans to the board's foot and the row
- *      travels to `closed` by the board's own layout animation; the receipt
- *      card (`ChangedRow`) floats in over the foot, pointing at the descent;
+ *   1  the offer lands — the camera pans to the board's foot, the receipt
+ *      (`ReceiptStrip`) docks to the frame's foot and ANNOUNCES the move,
+ *      and only then does the row travel to `offered` by the board's own
+ *      layout animation, at the act's slowed tempo (tempo.ts) — announce,
+ *      then move, so there is something to watch and a reason to watch it;
  *   2  the mail behind it — the camera HOLDS at the foot as the detail pane
- *      docks open on the moved row, so the row and the mail that moved it
- *      share one frame: the composition the owner approved (worklist beside
- *      the open pane, trail, gate meter), plus the row it is about.
+ *      docks open on the moved row (after the row has LANDED — see
+ *      MarketingBoard), so the row and the mail that moved it share one
+ *      frame: the composition the owner approved (worklist beside the open
+ *      pane, trail, gate meter), plus the row it is about.
  *
  * MECHANISM. IntersectionObserver over three sentinel zones against a centre
  * band — `ClaimsDescent`'s idiom exactly: the page scrolls normally and the
@@ -73,11 +77,17 @@ import { ACT, BOARD } from "./copy";
  *     already on screen and captioned through ~0.9vh of approach before it
  *     pins, so 0.19vh of pinned stillness is a beat, not dead air.
  *
- * Solving for D0 ≈ 0.19vh, D1 ≈ 0.97vh (the beat-1 choreography is ~1.5s: a
- * 700ms pan, then the 750ms breath before the row travels) and D2 ≈ 0.67vh
- * gives H = 2.7 and 24/36/40 — 30vh shorter than the 300vh/30-35-35 it
- * replaces, with beat 0's zone down from 90vh to 65vh and its dead air from
- * 45vh to 19vh.
+ * Solving for D0 ≈ 0.19vh, D1 ≈ 0.97vh and D2 ≈ 0.67vh gives H = 2.7 and
+ * 24/36/40 — 30vh shorter than the 300vh/30-35-35 it replaces, with beat 0's
+ * zone down from 90vh to 65vh and its dead air from 45vh to 19vh.
+ *
+ * The beat-1 choreography has since been retimed for legibility (tempo.ts:
+ * pan, announce, breathe, then a 1.4s glide — ~3.9s end to end), which is
+ * LONGER than D1's dwell buys a steady scroller. That is deliberate and
+ * safe: beat 2 holds the same foot framing, so a reader who scrolls on mid-
+ * glide watches the row land in the very frame the pane then opens in — and
+ * the pane itself waits for the landing (MarketingBoard's `landedAtRef`),
+ * whichever zone the reader is in when it completes.
  */
 
 /** The narration's lines, in the order the strip stacks them: one per scene,
@@ -124,7 +134,7 @@ export function WindowAct() {
             line shares one grid cell, so the strip's height is fixed and the
             frame below it never moves. Below `lg` there are no scenes, so the
             strip rests on the first line and captions the still. */}
-        <div className="mx-auto w-full max-w-6xl px-4 pb-2 sm:px-6">
+        <div className="mx-auto w-full max-w-6xl px-4 pb-1.5 sm:px-6">
           <div className="grid min-h-6 items-start">
             {LINES.map((line, index) => {
               const active = index === (beat === 0 && settled ? SETTLED : beat);
@@ -145,7 +155,7 @@ export function WindowAct() {
         </div>
         <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
           <div className="overflow-clip rounded-2xl border border-line bg-surface shadow-[0_24px_60px_-30px_rgb(0_0_0/0.55)]">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2.5 sm:px-5">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2 sm:px-5">
               <span className="label-caps flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
                 {BOARD.live}
@@ -167,15 +177,17 @@ export function WindowAct() {
                 height="calc(100dvh - 13.5rem)"
                 caption={false}
                 beat={beat}
-                // Beat 1 only: that scene pans PAST the board's foot and
-                // clears a strip for the card (see LandingBoard). Beat 2
-                // holds at the foot but drops the strip, so the card would
-                // land on the very rows the docked pane is explaining — it
-                // stands down and the pane carries the story.
+                // Beats 1 and 2: the receipt docks over the frame's foot as a
+                // strip of window chrome (see LandingBoard), and the camera's
+                // `room` keeps the last row clear of it. It rides through
+                // beat 2 because it covers no rows there and its "the email
+                // that did it ↓" is the line that hands off to the descent —
+                // and because mounting per-beat is what left the receipt
+                // stranded mid-scroll between the composed frames.
                 overlay={
-                  beat === 1 ? (
+                  beat >= 1 ? (
                     <Reveal>
-                      <ChangedRow />
+                      <ReceiptStrip />
                     </Reveal>
                   ) : null
                 }
@@ -198,9 +210,12 @@ export function WindowAct() {
         <div data-beat={2} className="h-[40%]" />
       </div>
 
-      {/* ---- below `lg`: the receipt in flow under the still -------------- */}
+      {/* ---- below `lg`: the receipt in flow under the still. The ACT's
+              receipt — the offer — with the bridge line, because the exhibit
+              the descent opens on below is the other mail (the invitation),
+              not this one. ------------------------------------------------ */}
       <div className="mx-auto mt-5 w-full max-w-6xl px-4 sm:px-6 lg:hidden">
-        <ChangedRow />
+        <ChangedRow email={OFFER_EMAIL} foot="bridge" />
       </div>
     </section>
   );

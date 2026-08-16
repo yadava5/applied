@@ -17,13 +17,16 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  *   2  the board, live in the window — the product before any explanation,
  *      and captioned, because the scene the page bets on cannot be the one
  *      with nothing to read on it;
- *   3  the verdict lands — the window's row travels to closed, on its own;
+ *   3  the offer lands — the receipt strip announces it, then the window's
+ *      row travels to offered, on its own (a WIN, deliberately: the page's
+ *      flagship moment must never turn the visitor down);
  *   4  the mail behind it — the detail pane docks open (the approved
- *      composition), its trail ending in the receipt card's "the email that
- *      did it ↓";
- *   5  the descent takes that exact email and makes ONE claim in two beats:
- *      first the mail as Gmail hands it over, the preview visibly ending
- *      before the sentence that matters; then the SPLIT VERDICT — the same
+ *      composition) once the row has landed, and the strip's "not every
+ *      reply says its verdict ↓" hands off to the harder case;
+ *   5  the descent takes that harder case — the interview invitation whose
+ *      preview reads as a routine acknowledgment — and makes ONE claim in
+ *      two beats: first the mail as Gmail hands it over, the preview visibly
+ *      ending where the inviting begins; then the SPLIT VERDICT — the same
  *      body classified live twice — the one artifact on the page nothing
  *      else can fake, placed after the act it explains;
  *   6  the benchmark that chose what ships;
@@ -32,9 +35,11 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  *      reachable from the nav at any depth ("Get access").
  *
  * Screens 2–4 are `WindowAct` (the window pins, scroll advances the scene);
- * 5–7 are `ClaimsDescent` — same copy, same staging as /landing-c, so the
- * hand-off from the window's open trail to the descent's email is one
- * continuous case: the same Larkspur application end to end.
+ * 5–7 are `ClaimsDescent` — same copy, same staging as /landing-c. The act
+ * and the descent are two cases from the same board on purpose: the offer is
+ * the promise kept (Larkspur), and the invitation is why keeping it takes
+ * reading past the preview (Northstar, sitting in the interviewing group of
+ * the very board the act plays on).
  */
 export const metadata: Metadata = {
   title: "Landing B — the window, in motion",
@@ -46,12 +51,19 @@ export default function LandingB() {
     <main className="flex flex-col bg-background text-foreground">
       <MarketingNav />
 
-      {/* ---- hero: the headline at display scale ------------------------- */}
-      <section className="mx-auto w-full max-w-6xl px-6 pt-20 pb-12 sm:pt-24">
-        <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl lg:text-7xl">
+      {/* ---- hero: the headline at display scale -------------------------
+          The paddings and the display bump are a FOLD budget, not taste: at
+          1024×600 the board's summary strip plus one full application row
+          need `pipeline-board` to start by ~466px, and this page's whole bet
+          is that row being visible before anyone scrolls. The 7xl step waits
+          for `xl` because at 1024 those extra ~25px of headline are exactly
+          the row's margin. Re-measure on `next build && next start` if any
+          of this moves — `next dev` cannot measure it. */}
+      <section className="mx-auto w-full max-w-6xl px-6 pt-9 pb-4 sm:pt-11">
+        <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl xl:text-7xl">
           {HERO.headline}
         </h1>
-        <p className="mt-6 max-w-xl text-balance text-lg text-muted">{HERO.subhead}</p>
+        <p className="mt-4 max-w-xl text-balance text-lg text-muted">{HERO.subhead}</p>
       </section>
 
       {/* ---- the window act: the app proves it before the page explains -- */}

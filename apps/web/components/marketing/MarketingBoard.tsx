@@ -9,8 +9,9 @@ import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport } from "@/lib/dashboard/transport";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
-import { VERDICT_EMAIL } from "./verdictEmailData";
-import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./showcase";
+import { OFFER_EMAIL } from "./verdictEmailData";
+import { showcaseApplications, showcasePendingVerdict, OFFER_SIGNAL } from "./showcase";
+import { VERDICT_BREATH_MS, VERDICT_SETTLE_MS, VERDICT_TRAVEL } from "./tempo";
 
 /**
  * How long after a visitor's own gesture a card load still belongs to that
@@ -18,9 +19,10 @@ import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./
  * and runs on the next macrotask, so this only has to span click → passive
  * flush → `setTimeout(0)` → the transport's own await — far less than this,
  * even on a first paint under load. It is also far short of the earliest the
- * page can seed (beat 1's 750ms breath has to elapse before the row reads
- * `rejected`), so a gesture that opened nothing — a drag, the stage lens —
- * has expired long before the seed's load arrives.
+ * page can seed: beat 1's breath (`VERDICT_BREATH_MS`) has to elapse before
+ * the row is even committed, and the seed then waits out the row's travel on
+ * top of that (`landedAtRef`) — so a gesture that opened nothing — a drag,
+ * the stage lens — has expired long before the seed's load arrives.
  *
  * The margin in the first paragraph is REASONED FROM THE SCHEDULING, not
  * measured: no run has timed a click to its load on this page, at either
@@ -58,12 +60,15 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    * caller — is the resting board, exactly as before. With a beat:
    *
    *   0  the board one verdict early: Larkspur still in `applied`, 19 days
-   *      quiet (the pulse's amber share and the age tag foreshadow it);
-   *   1+ the verdict lands — the row is committed to `rejected` and the
-   *      board's own layout animation carries it to the closed group;
+   *      quiet (the pulse's amber share and the age tag foreshadow a reply);
+   *   1+ the offer lands — the row is committed to `offered` and the board's
+   *      own layout animation carries it to the offered group, at the act's
+   *      `VERDICT_TRAVEL` tempo;
    *   2+ the detail opens on that row (the board's `openDetailId` seed —
    *      docked only, no focus theft), which is the composition the owner
    *      approved: worklist beside the open pane, trail and gate meter shown.
+   *      The seed waits for the row to have LANDED, not merely for its
+   *      status to have flipped — see `landedAtRef`.
    *
    * Beats only ever ADVANCE state (a verdict does not un-happen when the
    * visitor scrolls back up), each fires once, and none of them touches a
@@ -117,6 +122,17 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
   // page has stopped driving and never starts again this visit.
   const pendingSeedRef = useRef<number | undefined>(undefined);
   const tookOverRef = useRef(false);
+  /**
+   * When the moved row will have finished TRAVELLING — commit time plus the
+   * glide plus its settle — set in the same timer that commits the move,
+   * before the commit itself. The beat-2 seed waits this out: gating on the
+   * status value alone docked the pane ~1.4s before the row it names entered
+   * the frame (measured: −227px relative to the stage clip at +40ms after
+   * the commit), which made the scene's caption false while the move it
+   * narrates was still happening. Starts at 0, not ∞: a row the VISITOR
+   * dragged to `offered` has no travel of the page's to wait for.
+   */
+  const landedAtRef = useRef(0);
   // −∞, not 0: `performance.now()` counts from navigation start, so a zero
   // here would read as "a gesture 300ms ago" on a page that has just loaded
   // and hand the camera back before the visitor has touched anything.
@@ -228,8 +244,8 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
           //
           // So the row gets a fresh object, values copied, handed over AFTER
           // the board has captured the old one. Nothing else changes: the copy
-          // renders identically, the board's height is untouched (so beat 2
-          // still holds the foot at −217px), and the next open is a real state
+          // renders identically, the board's height is untouched (so beat 2's
+          // foot hold does not move), and the next open is a real state
           // change that loads the card and arrives back here inside the
           // visitor's gesture window — classified theirs by the same rule as
           // every other open, with no new signal invented for it.
@@ -260,13 +276,15 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
 
   // --- The window act's beats (choreographed mounts only) -------------------
 
-  /** Beat 1: the verdict lands. Committed through the same `commit` a drag
-   *  uses, so the layout animation that carries the row to the closed group
-   *  is the product's own — nothing marketing-specific moves it. Fired once;
-   *  skipped entirely if the visitor already moved the row themselves. The
-   *  750ms breath exists so the camera's pan (LandingBoard) settles before
-   *  the row travels — one event, read in sequence; reduced motion takes the
-   *  state change immediately. */
+  /** Beat 1: the offer lands. Committed through the same `commit` a drag
+   *  uses, so the layout animation that carries the row to the offered group
+   *  is the product's own — nothing marketing-specific moves it, and the
+   *  act's `travel` prop is what sets its tempo. Fired once; skipped
+   *  entirely if the visitor already moved the row themselves. The breath
+   *  (`VERDICT_BREATH_MS`) exists so the sequence reads in order: the
+   *  camera's pan settles, the receipt strip announces the verdict, and only
+   *  then does the row travel — one event per moment. Reduced motion takes
+   *  the state change immediately. */
   const moved = useRef(false);
   const moveTimer = useRef<number | null>(null);
   useEffect(
@@ -278,29 +296,37 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
   useEffect(() => {
     if (!choreographed || (beat ?? 0) < 1 || moved.current) return;
     moved.current = true;
-    const row = appsRef.current.find((a) => a.company === VERDICT_EMAIL.company);
+    const row = appsRef.current.find((a) => a.company === OFFER_EMAIL.company);
     if (!row || row.status !== "applied") return; // the visitor got there first
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const rowId = row.id;
     moveTimer.current = window.setTimeout(
       () => {
+        // The landing time is declared BEFORE the commit, so the beat-2
+        // effect the commit triggers can never read a stale 0 and seed a
+        // pane onto a row that is still mid-glide.
+        landedAtRef.current =
+          performance.now() + (reduce ? 0 : VERDICT_TRAVEL.duration * 1000 + VERDICT_SETTLE_MS);
         commit((rows) =>
           rows.map((a) =>
             a.id === rowId && a.status === "applied"
-              ? { ...a, status: "rejected", notes: VERDICT_SIGNAL }
+              ? { ...a, status: "offered", notes: OFFER_SIGNAL }
               : a,
           ),
         );
       },
-      reduce ? 0 : 750,
+      reduce ? 0 : VERDICT_BREATH_MS,
     );
   }, [beat, choreographed, commit]);
 
-  /** Beat 2: the mail behind the row. Waits for the verdict to have actually
-   *  landed (the pane must never open on the pre-move snapshot), then hands
-   *  the id to the board's seeded open — docked-only, focus untouched. Skipped
-   *  entirely once the visitor has taken over, the same rule beat 1 follows for
-   *  a row they moved themselves. */
+  /** Beat 2: the mail behind the row. Waits for the offer to have actually
+   *  LANDED — the status committed AND the glide finished (`landedAtRef`) —
+   *  because the pane must never open on the pre-move snapshot, and "the row
+   *  opens on the mail that moved it" is false while the row is still
+   *  travelling. Then it hands the id to the board's seeded open —
+   *  docked-only, focus untouched. Skipped entirely once the visitor has
+   *  taken over, the same rule beat 1 follows for a row they moved
+   *  themselves. */
   const [openDetailId, setOpenDetailId] = useState<number | undefined>(undefined);
   useEffect(() => {
     // `tookOverRef` is read, never a dep: it is a latch, not a signal, and a
@@ -310,9 +336,13 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
     if (!choreographed || (beat ?? 0) < 2 || openDetailId !== undefined || tookOverRef.current) {
       return;
     }
-    const row = apps.find((a) => a.company === VERDICT_EMAIL.company);
-    if (!row || row.status !== "rejected") return;
-    // Deferred off the effect body — the house rule every board effect follows.
+    const row = apps.find((a) => a.company === OFFER_EMAIL.company);
+    if (!row || row.status !== "offered") return;
+    // Deferred off the effect body — the house rule every board effect
+    // follows — and by however long the row still has left in the air: the
+    // timer's delay is the remainder of the travel, zero once it has landed
+    // (and zero for a row the visitor moved, whose landing time never left
+    // 0). The cleanup cancels it like any other seed.
     const rowId = row.id;
     const id = window.setTimeout(() => {
       // The authoritative takeover read, and it has to be here rather than
@@ -377,6 +407,10 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
         pulse={{ needsReview: 0 }}
         search={false}
         openDetailId={openDetailId}
+        // The act's tempo, choreographed mounts only: the one move the page
+        // performs has to be watchable by a visitor who does not know which
+        // row is about to travel. Resting mounts keep the product's own 220ms.
+        travel={choreographed ? VERDICT_TRAVEL.duration : undefined}
       />
     </div>
   );

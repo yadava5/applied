@@ -99,19 +99,26 @@ export const BOARD = {
  * State, event, consequence — the act's whole argument in three lines.
  */
 export const ACT = {
+  /**
+   * The middle line names the OFFER, deliberately: the headline's first
+   * sentence is "You don't lose the offer", and this is the beat where the
+   * page proves it — the act's moving row is a win, never a rejection (the
+   * owner's call, 2026-08-16: the flagship demonstration must not turn the
+   * visitor down).
+   */
   captions: [
     "The board, nineteen days after you stopped updating it.",
-    "The reply lands, and the row moves without you.",
+    "The offer lands, and the row moves without you.",
     "The row opens on the mail that moved it.",
   ],
   /**
    * Scene 0, revisited. The camera returns when the reader scrolls back up but
-   * the verdict does not un-happen (see MarketingBoard), so the opening line
+   * the offer does not un-happen (see MarketingBoard), so the opening line
    * would be sitting over a board whose detail pane is showing Larkspur
-   * already rejected — the one place the narration could contradict the thing
+   * already offered — the one place the narration could contradict the thing
    * it narrates. This is what scene 0 says the second time.
    */
-  settled: "The same board, with the verdict already filed.",
+  settled: "The same board, with the offer already filed.",
 } as const;
 
 export const DECISION = {
@@ -220,13 +227,33 @@ export const CLAIMS = {
   verdict: {
     eyebrow: "What it reads",
     headline: "The preview ends before the verdict. Applied reads past it.",
-    /** Micro-beat one: the mail as Gmail hands it over. */
+    /**
+     * Micro-beat one: the mail as Gmail hands it over. The exhibit is an
+     * INTERVIEW INVITATION, not a rejection — the owner's call (2026-08-16):
+     * the landing carries no rejection anywhere, and the invitation is the
+     * larger loss anyway, because what the preview hides here is the
+     * opportunity itself. The split is computed live and was verified to
+     * reproduce against the post-#356 rules before this copy was written:
+     * preview → applied, whole body → interview.
+     */
     raw:
-      "A rejection spends its first two hundred characters being polite. Gmail's preview — all most tools ever see — ends before the sentence that matters.",
+      "An interview invitation spends its first two hundred characters being polite. Gmail's preview — all most tools ever see — ends right where the inviting begins.",
     /** Micro-beat two: the same body, run twice. "So" carries the cause across
      *  the screen break, because this paragraph has no headline of its own. */
     split:
-      "So the shipped rules layer runs on it twice, live in your tab: once on the preview alone, once on the whole body. The preview reads as a confirmation. The body tells the truth.",
+      "So the shipped rules layer runs on it twice, live in your tab: once on the preview alone, once on the whole body. The preview reads as a routine acknowledgment. The body holds the invitation.",
+    /**
+     * The words around `VerdictTally` — the figure that fills micro-beat two's
+     * claim column with the arithmetic behind the two chips beside it. Words
+     * only: every number in the figure is a score the engine computed in the
+     * visitor's tab, from the same two calls the chips print, so nothing here
+     * may state one.
+     */
+    tallyLabel: "The tally behind each verdict",
+    tallyPreview: "preview only",
+    tallyBody: "whole body",
+    tallyNote:
+      "Same engine, same weights, both runs — only the text differs. A pattern can only score on text its run can see, and the winner's score with its margin over the runner-up sets the confidence.",
   },
 } as const;
 

@@ -34,14 +34,17 @@ const ROWS: { company: string; role: string; stage: string; signal: string; tone
     signal: "Interview availability — technical round",
   },
   {
-    company: "Meridian Grid",
-    role: "Software Engineer, Energy",
-    stage: "offered",
-    signal: "Congratulations — offer details inside",
-  },
-  {
+    // The act's own payoff row, so the still and the live board tell the same
+    // story: Larkspur is the offer the classifier filed.
     company: "Larkspur Systems",
     role: "Staff Software Engineer",
+    stage: "offered",
+    signal: "Your offer from Larkspur Systems",
+  },
+  {
+    // One honest verdict; a board with no closed rows is a brochure.
+    company: "Atlas Freight",
+    role: "Software Engineer II",
     stage: "rejected",
     signal: "Moving forward with other candidates",
     tone: "reject",

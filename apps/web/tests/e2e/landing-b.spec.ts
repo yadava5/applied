@@ -236,14 +236,15 @@ async function driveToBeatOne(page: Page): Promise<void> {
   await expect(page.getByTestId("pipeline-board")).toBeVisible();
 
   await centreOn(page, "[data-beat='1']");
-  await expect(activeCaption(page)).toHaveText("The reply lands, and the row moves without you.");
-  // The verdict itself: the row leaves `applied` for the closed group. Read
-  // off the row's own stage control, NOT off its text — the control is a
-  // native <select> carrying every status as an option, so `toHaveText(
-  // /rejected/)` matched a row that was still `applied`. Measured: with the
-  // act's beat-1 effect disabled the text form stayed green and this form
-  // goes red.
-  await expect(page.getByLabel("Change stage for Larkspur Systems")).toHaveValue("rejected");
+  await expect(activeCaption(page)).toHaveText("The offer lands, and the row moves without you.");
+  // The verdict itself: the row leaves `applied` for the offered group (the
+  // act's payoff is a WIN as of 2026-08-16 — the moving row is the offer the
+  // headline names, never a rejection). Read off the row's own stage control,
+  // NOT off its text — the control is a native <select> carrying every status
+  // as an option, so a text match would pass on a row that had not moved.
+  // The beat-1 breath plus the slowed glide is ~3.4s (tempo.ts); toHaveValue
+  // retries within its own timeout, so no explicit wait belongs here.
+  await expect(page.getByLabel("Change stage for Larkspur Systems")).toHaveValue("offered");
 }
 
 /**
@@ -274,7 +275,7 @@ async function driveToBeatTwo(page: Page): Promise<void> {
  * it is what lets `activeCaption` be a single-element locator inside a section
  * that also contains the whole board's prose.
  */
-const NARRATION = /^(The board, nineteen days|The reply lands|The row opens on|The same board, with)/;
+const NARRATION = /^(The board, nineteen days|The offer lands|The row opens on|The same board, with)/;
 
 /** The narration line for the scene currently on screen. Every line is in the
  *  DOM at once, stacked in one grid cell; the inactive ones are `aria-hidden`

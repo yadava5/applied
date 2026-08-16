@@ -45,8 +45,14 @@ const MarketingBoard = dynamic(
 
 const LG = "(min-width: 1024px)";
 
-/** The strip beat 1 clears below the board's foot for the receipt card. */
-const OVERLAY_ROOM = 152;
+/**
+ * The strip the camera clears below the board's foot for the docked receipt
+ * (`ReceiptStrip`): the bar covers the stage's last ~25px once it extends
+ * into the frame's padding, plus a breath so it never sits on a row. It
+ * replaces a 152px clearing for a floating card, which left the card adrift
+ * in a black band that read as debris at every mid-scroll offset.
+ */
+const OVERLAY_ROOM = 44;
 
 export function LandingBoard({
   height = "min(72vh, 680px)",
@@ -109,12 +115,12 @@ export function LandingBoard({
   // The camera. Nothing here runs for beat-less callers.
   //
   // Beats 1 AND 2 sit at the board's foot; only the head rests at the top.
-  // Beat 1 pans PAST the foot by `OVERLAY_ROOM`: the board's last rows clear
-  // the stage's lower band entirely, and the receipt card (`overlay`) lands
-  // in the emptied strip instead of on top of the very rows it documents —
-  // measured, a bottom-corner float covered either the moved row's identity
-  // or its neighbours' controls at every corner. Beat 2 drops that strip,
-  // because the card stands down and the docked pane wants the room.
+  // Both pan PAST the foot by `OVERLAY_ROOM`: the receipt strip (`overlay`)
+  // docks over the frame's foot, so the room is what keeps it off the last
+  // row it would otherwise cover — measured, a floating card in a larger
+  // cleared band covered either rows or nothing, and "nothing" read as
+  // debris. The strip stays through beat 2 because it covers no rows and its
+  // "the email that did it ↓" is the hand-off line into the descent.
   //
   // The trade at beat 2 is deliberate: holding the foot crops the pane's own
   // head — the `9 of 10` nav row, the title, and the pane's × — in exchange
@@ -126,13 +132,16 @@ export function LandingBoard({
   // visitor reached for is a broken control, not a composition.
   //
   // Beat 2 used to return to the head, and measurement caught what that cost:
-  // the moved row lands in the CLOSED group at the board's foot (679–735 of a
-  // 783px board), while the head-anchored stage shows only 0–552 at a 768-tall
-  // viewport and 0–384 at 600. So the scene captioned "the row opens on the
-  // mail that moved it" was arguing about a row that was off-stage at every
-  // height. Holding at the foot puts the row and the mail behind it in one
-  // frame, and turns beat 2 from a cut back to the head into a 112px settle —
-  // the row the visitor watched arrive is never out of sight.
+  // the moved row lands near the board's foot (the offered group, one group
+  // above closed — measured at 679–735 of a 783px board when the destination
+  // was the closed group itself), while a head-anchored stage shows only
+  // 0–552 at a 768-tall viewport and 0–384 at 600. So the scene captioned
+  // "the row opens on the mail that moved it" was arguing about a row that
+  // was off-stage at every height. Holding at the foot puts the row and the
+  // mail behind it in one frame, and turns beat 2 from a cut back to the
+  // head into a small settle — the pane docking is what grows the board, and
+  // that growth is the whole move now that both beats share one `room`. The
+  // row the visitor watched arrive is never out of sight.
   //
   // Measured through a ResizeObserver rather than once per beat: the board
   // GROWS when the pane docks open (743 → 783), and a measurement taken at
@@ -142,7 +151,7 @@ export function LandingBoard({
     const stage = stageRef.current;
     const pan = panRef.current;
     if (!stage || !pan) return;
-    const room = beat === 1 ? OVERLAY_ROOM : 0;
+    const room = beat >= 1 ? OVERLAY_ROOM : 0;
     // `released` resolves to 0 INSIDE the measure rather than skipping the
     // effect: the pane docking open grows the board (743 → 783), the observer
     // fires on that growth, and a skipped effect would leave the last panned
@@ -232,13 +241,29 @@ export function LandingBoard({
             (beat ?? 0) >= 1 && !released && "opacity-0",
           )}
         />
-        {/* The act's receipt card, in the strip beat 1 cleared below the
-            board's foot — beside nothing, covering nothing. It stands down
-            with the camera: the strip only exists while the camera is panned
-            past the foot, so a released frame would drop the card straight
-            onto the rows it was moved off in the first place. */}
+        {/* The other crop edge. While the camera holds the foot the board —
+            and, at beat 2, the docked pane's head — continues ABOVE the
+            frame, and without a signal the top edge read as content cut
+            mid-element (the pane "starting mid-content" was the reported
+            defect). Same instrument as the bottom fade, mirrored: it shows
+            only while the camera is panned, and a released or resting frame
+            has the board's own head at the top, where a fade would be a lie. */}
+        <div
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-background to-transparent transition-opacity duration-500 motion-reduce:transition-none",
+            ((beat ?? 0) < 1 || released) && "opacity-0",
+          )}
+        />
+        {/* The act's receipt, docked over the frame's foot — window chrome,
+            not a float: the negative offsets carry it across the stage's
+            padding to the frame's own edges, mirroring the provenance bar at
+            the head. `OVERLAY_ROOM` is what keeps the last row clear of it.
+            It stands down with the camera: a released frame is back at the
+            head, where a receipt bar would cover rows it has nothing to say
+            about. */}
         {overlay && !released ? (
-          <div className="absolute bottom-2 left-1 z-10 w-full max-w-[26rem]">{overlay}</div>
+          <div className="absolute -bottom-5 -left-5 -right-5 z-10">{overlay}</div>
         ) : null}
       </div>
       <div

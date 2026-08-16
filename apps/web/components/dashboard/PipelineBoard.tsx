@@ -301,10 +301,15 @@ function StaticApplicationRow({
 function BoardCell({
   layoutKey,
   entering,
+  travel,
   children,
 }: {
   layoutKey: string;
   entering: boolean;
+  /** Seconds for the shared-layout glide (`travel` on the board). Only the
+   *  LAYOUT transition slows — the opacity settle keeps the default tempo,
+   *  so entering rows never fade in slow motion. */
+  travel?: number;
   children: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
@@ -327,7 +332,15 @@ function BoardCell({
       layoutId={layoutKey}
       initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      transition={
+        reduceMotion
+          ? { duration: 0 }
+          : {
+              duration: 0.22,
+              ease: [0.22, 1, 0.36, 1],
+              layout: { duration: travel ?? 0.22, ease: [0.22, 1, 0.36, 1] },
+            }
+      }
     >
       {children}
     </motion.li>
@@ -366,6 +379,7 @@ export function PipelineBoard({
   afterList,
   search = true,
   openDetailId,
+  travel,
 }: {
   applications: Application[];
   interactive?: boolean;
@@ -402,6 +416,14 @@ export function PipelineBoard({
    * Product surfaces never pass this; their detail opens by click alone.
    */
   openDetailId?: number;
+  /**
+   * Seconds for a row's shared-layout glide between stage groups. Product
+   * surfaces omit it and keep the board's own 220ms tempo; the marketing
+   * embed slows the one move it choreographs to a watchable speed
+   * (`components/marketing/tempo.ts`), because a sales page's visitor has no
+   * idea which row is about to travel and a 220ms cut reads as a teleport.
+   */
+  travel?: number;
 } & BoardScope) {
   const router = useRouter();
   /**
@@ -739,7 +761,7 @@ export function PipelineBoard({
   const rowCell = (app: Application, column: BoardColumn, inSet = false) => {
     const chip = inSet || !grouping ? null : crossStageChip(app.company, column.key, columns);
     return (
-      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated}>
+      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated} travel={travel}>
         {interactive ? (
           <ApplicationRow
             app={app}
@@ -1187,6 +1209,7 @@ export function PipelineBoard({
                             key={`set-${entry.company}`}
                             layoutKey={`set-${column.key}-${entry.company}`}
                             entering={hydrated}
+                            travel={travel}
                           >
                             <EmployerSetRow
                               company={entry.company}

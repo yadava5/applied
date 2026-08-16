@@ -5,17 +5,18 @@ import { classifyWithRules } from "@/lib/demo/rulesLayer";
 import { PREVIEW_CHARS, VERDICT_EMAIL } from "./verdictEmailData";
 
 /**
- * Variant C's travelling artifact: one synthetic rejection, classified LIVE.
+ * The descent's travelling artifact: one synthetic interview invitation,
+ * classified LIVE.
  *
  * The email is invented (no real person's mail is ever read) but nothing else
  * is: both verdicts below are computed in the visitor's tab by
  * `classifyWithRules` — the browser port of the shipped rules engine — once
  * on the first ~200 characters (what Gmail's `snippet` gives) and once on the
- * whole body. The text was tuned so the two calls disagree the way the
- * production mailbox actually did (the memory behind #320): a rejection's
- * polite opening reads as a confirmation, and the sentence that matters falls
- * past the preview. If `rules.json` ever changes, this page changes with it —
- * the verdicts are read from the engine, never hardcoded.
+ * whole body. The text was tuned so the two calls disagree the way production
+ * truncation actually bites (see verdictEmailData.ts): the invitation's
+ * polite opening reads as a routine acknowledgment, and the sentence that
+ * invites you falls past the preview. If `rules.json` ever changes, this page
+ * changes with it — the verdicts are read from the engine, never hardcoded.
  *
  * Pure and date-free, so it is prerender-safe: same inputs on the server pass
  * and in the browser, no hydration risk. Transitions between stages are CSS
@@ -122,13 +123,13 @@ export function VerdictEmail({ stage }: { stage: VerdictStage }) {
               source="preview only"
               category={fromPreview.category}
               confidence={fromPreview.confidence}
-              note="reads as a confirmation — wrong"
+              note="reads as a routine acknowledgment — wrong"
             />
             <Chip
               source="whole body"
               category={fromBody.category}
               confidence={fromBody.confidence}
-              note="the real outcome"
+              note="the invitation, found"
               fired
             />
           </div>

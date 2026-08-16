@@ -8,6 +8,7 @@ import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, PRIVACY } from "./copy";
 import { CLIPS, ProductClip } from "./ProductClip";
 import { VerdictEmail, type VerdictStage } from "./VerdictEmail";
+import { VerdictTally } from "./VerdictTally";
 
 /**
  * The descent: one claim per screen, with the email riding alongside. The SAME
@@ -138,9 +139,25 @@ export function ClaimsDescent() {
             <Claim
               continued
               label={ARTIFACT.labels[1]}
-              inline={<VerdictEmail stage="split" />}
+              inline={
+                <>
+                  <VerdictEmail stage="split" />
+                  {/* Chips first, arithmetic second — inline, the reader has
+                      to see the disagreement before its tally means anything.
+                      At `lg` the chips live in the sticky column, so the
+                      tally is what the claim side holds (below). */}
+                  <VerdictTally className="mt-6" />
+                </>
+              }
             >
               <p>{CLAIMS.verdict.split}</p>
+              {/* The claim side of micro-beat two. One paragraph used to
+                  float alone in this column for a whole screen while the
+                  exhibit disagreed with itself across the gutter; the tally
+                  is the claim's own evidence — the same two calls, one level
+                  deeper — not a filler figure. `lg`+ only: below `lg` it
+                  renders inline after the chips it explains. */}
+              <VerdictTally className="hidden lg:block" />
             </Claim>
           </div>
 
