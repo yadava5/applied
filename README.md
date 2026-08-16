@@ -252,9 +252,12 @@ They can no longer. The measurement stands — it was taken on 2026-08-03 and is
 way wherever it is cited.
 
 **Getting the demo back.** `ml/browser/export_onnx.py` is unchanged and still produces the artifact
-from a local checkpoint. The route back to a *publishable* demo is a checkpoint trained on
-synthetic data only — the 400-case corpus at `backend/tests/corpus/` is the intended source. No
-such retrain has been run, and no number in this README has been re-recorded against one.
+from a local checkpoint — it writes to `ml/browser/artifacts/`, so running `ml/browser/site/` again
+also needs `head.json` and `examples.json` copied into that directory and `model_quantized.onnx`
+copied to `ml/browser/site/model/onnx/model.onnx`. The route back to a *publishable* demo is a
+checkpoint trained on synthetic data only — the 400-case corpus at `backend/tests/corpus/` is the
+intended source. No such retrain has been run, and no number in this README has been re-recorded
+against one.
 
 ---
 

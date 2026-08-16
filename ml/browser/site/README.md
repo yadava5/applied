@@ -18,9 +18,11 @@ output-identical to the Python pipeline.
 > restricted `gmail.readonly` scope; Google's Workspace API user-data
 > policy forbids training on that data and reaches derived data too, so
 > the artifact may not be redistributed. What remains here is the loader,
-> the 201 rules and the tokenizer — no weights. Re-export a model locally
-> with `ml/browser/export_onnx.py` to run it again. Restoring this as a
-> public demo needs a checkpoint trained on synthetic data only.
+> the 201 rules and the tokenizer — no weights. To run it again:
+> `ml/browser/export_onnx.py` writes to `ml/browser/artifacts/`, so copy
+> `head.json` and `examples.json` into this directory and
+> `model_quantized.onnx` to `model/onnx/model.onnx`. Restoring this as a
+> *public* demo needs a checkpoint trained on synthetic data only.
 
 On the 96-email v3 held-out set the full cascade scores **0.958** macro-F1
 and the rules stage alone scores **0.979** — which is why the hosted app
