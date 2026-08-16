@@ -39,7 +39,7 @@ LAYER_BLURB = {
     "rules": "Regex rules answered instantly — the pattern is unambiguous.",
     "embeddings": "e5-small-v2 similarity matched a labeled example.",
     # Keep this label free of "trained on corrections". The shipped checkpoint
-    # was fitted partly on mail read under Gmail's restricted scope and was
+    # was fitted partly on a real mailbox (iCloud IMAP, not Gmail) and was
     # withdrawn on 2026-08-15; a public label advertising it as
     # correction-trained is the claim a CASA reviewer reads. "Offline, on a
     # fixed corpus" is the accurate framing -- there is no live retrain loop.

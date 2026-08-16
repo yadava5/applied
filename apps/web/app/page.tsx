@@ -41,9 +41,10 @@ import { Logo } from "@/components/brand/Logo";
  */
 
 // The Hugging Face Space that used to live here was made private on 2026-08-15:
-// it served the int8 ONNX weights of a checkpoint fitted partly on mail read
-// under Gmail's restricted `gmail.readonly` scope, which may not be published.
-// Every door that pointed at it now points at /import, which classifies in the
+// it served the int8 ONNX weights of a checkpoint fitted partly on a real
+// mailbox (iCloud IMAP, not Gmail — see docs/ML_PROMOTION_POLICY.md), and
+// published weights trained on real mail should not be redistributed. Every
+// door that pointed at it now points at /import, which classifies in the
 // browser with the rules layer and ships no weights at all.
 const IMPORT_URL = "/import";
 const SYSTEM_CARD = "/system-card";

@@ -1135,7 +1135,7 @@ FACTS: dict[str, dict] = {
     #
     # These three used to be `file_bytes(...)` over ml/browser/artifacts/. The
     # weights were withdrawn on 2026-08-15 (a model fitted partly on
-    # restricted-scope Gmail may not be published; see README "The published
+    # a real mailbox should not be published; see README "The published
     # checkpoint was withdrawn" and docs/ML_PROMOTION_POLICY.md), so there is
     # no file left to stat and `file_bytes` would raise.
     #

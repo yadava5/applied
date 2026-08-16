@@ -212,35 +212,38 @@ prominent, user-facing feature the data serves; there is no other use.
   data. In the hosted application no model is trained at all — there is nothing
   installed to train one with, and no retrain runs in production.
 
-  **An earlier checkpoint, and its withdrawal — disclosed rather than left to
-  be found.** Before Applied was a hosted application it was a single-user
+  **An earlier checkpoint, disclosed for completeness — and it contains no
+  Gmail data.** Before Applied was a hosted application it was a single-user
   macOS program over local SQLite, and at that stage it fine-tuned a SetFit
-  classifier offline. **39 of that checkpoint's 192 training examples were user
-  corrections**, recorded in its own `training_metadata.json`. They were the
-  operator's own mail and no one else's: it was trained on **2026-03-06**, and
-  the two authentication accounts this project has ever had were created on
-  2026-07-17 (a seed account) and 2026-07-19 (the operator's) — **four months
-  later**. There was no hosted deployment then and no path by which another
-  person's mail could have reached the corpus.
+  classifier offline on 2026-03-06. Its `training_metadata.json` records 39 of
+  192 training examples as user corrections. **Those corrections came from an
+  iCloud IMAP mailbox, not from the Gmail API**, and the desktop store that
+  produced them still exists and can be checked:
 
-  On that reading the training sat inside the clause quoted above: one user's
-  own mail, a model serving only that user, on that user's own machine. What
-  went beyond it was **distribution** — the checkpoint was pushed to a public
-  Hugging Face model repository and committed to the public source repository,
-  at which point it was no longer that user's personalized model. It never ran
-  in the hosted application, which has classified with rules throughout.
+  | Check | Result |
+  | --- | --- |
+  | `SELECT source_account, COUNT(*) FROM emails GROUP BY 1` | `ICLOUD` — 856 rows, one value |
+  | `thread_id` populated (a Gmail-only column) | 0 of 856 |
+  | `sync_state` | one row: `icloud`, `aesh_1055@icloud.com`, `gmail_history_id` NULL |
+  | `user_corrected` messages | 81, all `ICLOUD` |
 
-  On **2026-08-15** it was withdrawn. The weights and every artifact derived
-  from them — the ONNX exports, the fitted classifier head, and the embedding
-  bank computed with the fine-tuned encoder — were deleted from the source tree
-  and blocked from re-entering it, and both Hugging Face surfaces were made
-  private. Two limits are recorded rather than glossed: the blobs remain
-  reachable through the public repository's **git history**, and the model
-  repository had been downloaded 13 times before it was closed; those copies
-  cannot be recalled. Training is now default-deny in code — a retrain is
-  refused unless the corpus is entirely synthetic or its single owner is
-  explicitly allowlisted — and any future checkpoint will use the synthetic
-  corpus at `backend/tests/corpus/` only. Full provenance is recorded in
+  A Gmail client shipped in that build and the interface exposed it, but it was
+  never authenticated or run on that machine. **No Google user data has ever
+  entered a training corpus for this project**, and the Workspace API user-data
+  policy did not govern that checkpoint. It is recorded here because a reviewer
+  reading the repository's history will find a published model trained on mail,
+  and should have the provenance rather than have to infer it.
+
+  The checkpoint was nonetheless withdrawn on **2026-08-15** — published weights
+  trained on anyone's real mailbox are a poor practice regardless of which
+  provider it came from. The artifacts were deleted from the source tree,
+  blocked from returning, and both Hugging Face surfaces were made private;
+  the weights remain reachable through the public repository's git history, and
+  the model repository had been downloaded 13 times before it was closed.
+  Training is now default-deny in code — refused unless the corpus is entirely
+  synthetic or its single owner is explicitly allowlisted. Full provenance,
+  including which of two same-day checkpoints was the published one, is in
+  `docs/ML_PROMOTION_POLICY.md`. Full provenance is recorded in
   `docs/ML_PROMOTION_POLICY.md`.
 - **No permanent copies.** The policy's Terms of Service note prohibits
   *"scraping, building databases … or otherwise creating permanent copies of

@@ -14,10 +14,9 @@ in the browser. No server; nothing pasted leaves the page. Verified
 output-identical to the Python pipeline.
 
 > **The model weights were withdrawn on 2026-08-15 and this Space is
-> private.** The checkpoint was fitted partly on mail read under Gmail's
-> restricted `gmail.readonly` scope; Google's Workspace API user-data
-> policy forbids training on that data and reaches derived data too, so
-> the artifact may not be redistributed. What remains here is the loader,
+> private.** The checkpoint was fitted partly on a real mailbox — iCloud
+> IMAP, not Gmail — and published weights trained on anyone's real mail
+> should not be redistributed. What remains here is the loader,
 > the 201 rules and the tokenizer — no weights. To run it again:
 > `ml/browser/export_onnx.py` writes to `ml/browser/artifacts/`, so copy
 > `head.json` and `examples.json` into this directory and

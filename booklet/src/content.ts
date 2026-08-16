@@ -38,9 +38,10 @@ export const BRAND = {
   liveUrl: "getapplied.vercel.app",
   qrTarget: "https://getapplied.vercel.app",
   // Was the Hugging Face Space. Made private 2026-08-15: it served the int8
-  // ONNX weights of a checkpoint fitted partly on restricted-scope Gmail, which
-  // may not be published. /import runs the rules layer in the tab and ships no
-  // weights, so it is the honest "run it yourself" destination now.
+  // ONNX weights of a checkpoint fitted partly on a real mailbox (iCloud IMAP,
+  // not Gmail), which should not be redistributed. /import runs the rules layer
+  // in the tab and ships no weights, so it is the honest "run it yourself"
+  // destination now.
   spaceUrl: "getapplied.vercel.app/import",
 } as const;
 

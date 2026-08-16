@@ -5,7 +5,8 @@
  * classifier: `backend/jobtracker/classifier/rules.py` and its in-browser
  * twin `ml/browser/site/app.js`. That twin used to be published as a Hugging
  * Face Space; the Space was made private on 2026-08-15 because it served the
- * weights of a checkpoint fitted partly on restricted-scope Gmail. This port is
+ * weights of a checkpoint fitted partly on a real mailbox (iCloud IMAP, not
+ * Gmail). This port is
  * unaffected — it carries no weights and never did.
  * Same 219 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
  * negative −5), same veto cap, same margin→confidence tiers, same ATS-domain

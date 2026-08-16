@@ -228,26 +228,36 @@ every public surface. What was published, and is no longer:
 | Surface | Held | Now |
 | --- | --- | --- |
 | This repository | `model.onnx` (90.4 MB fp32), `model_quantized.onnx` and the `ml/browser/site/` copy (22.8 MB int8 each), `head.json` (the fitted head), `examples.json` (vectors from the fine-tuned body) | Deleted at `HEAD` and `.gitignore`d. **Still reachable in git history** — see below |
-| `huggingface.co/yadava5/jobtracker-setfit-classifier` | `model.safetensors`, `model_head.pkl`, and `training_metadata.json` | Private |
+| `huggingface.co/yadava5/jobtracker-setfit-classifier` | `model.safetensors`, `model_head.pkl`, `training_metadata.json`, and a 723-byte hand-written model card | Private |
 | `huggingface.co/spaces/yadava5/jobtracker-classifier` | its own int8 copy, `head.json`, `examples.json` | Private |
 
-**Why — and precisely what was wrong.** Applied reads Gmail under the restricted `gmail.readonly`
-scope. Google's Workspace API user-data policy prohibits using that mail to train a model *"beyond
-that specific user's personalized model for the appropriate use case"*. The training itself is not
-what that sentence forbids here: the 39 corrections were the maintainer's own mail, fed to a model
-that served only him, on a single-mailbox desktop setup. **Publishing the result is what the carve-out
-does not cover.** A checkpoint distributed on a public model repository is no longer "that specific
-user's personalized model", and the prohibition reaches derived and aggregated artifacts, not just
-raw messages — which is why the fitted head and the embedding bank went with the weights.
+**Why — and precisely what was wrong.** The checkpoint (`setfit_model_20260306_175404`) recorded
+`user_correction: 39` of `total_examples: 192` in its own `training_metadata.json`, so a published
+artifact stated in machine-readable form that it had been fitted partly on a real mailbox.
 
-The checkpoint's own `training_metadata.json` recorded `user_correction: 39` of
-`total_examples: 192`, so a published artifact stated the fact in machine-readable form. The
-provenance is set out in full in [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) —
-what was trained, when, on whose mail, and on what evidence.
+That mailbox was **iCloud IMAP, not Gmail** — measured against the desktop-era store, which still
+exists: every one of its 856 messages is `source_account = ICLOUD`, the Gmail-only `thread_id`
+column is populated on none of them, and `sync_state` holds a single `icloud` row. A Gmail client
+shipped in that build but was never authenticated on that machine. **No Google user data has ever
+entered a training corpus here**, so Google's restricted-scope policy did not govern this
+checkpoint, and any argument starting from "Applied reads Gmail" is about today's architecture
+rather than the March tree that produced these weights.
+
+What was wrong is simpler and survives the correction: **publishing weights trained on someone's
+real mailbox**, which is poor practice whatever the provider. The fitted head and the embedding
+bank went with the weights because both derive from the same fine-tuned encoder. Full provenance —
+which of two same-day checkpoints, on what evidence, and what was *not* published — is in
+[`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md).
 
 **What this does not claim.** The blobs remain retrievable from this repository's git history and
 from any existing clone or fork. Removing them at `HEAD` stops redistribution going forward; it is
 not erasure, and this README does not pretend otherwise.
+
+**One thing that was never published, stated because it is the obvious worry.** The checkpoint
+directory carries an auto-generated model card of 166,204 bytes that is 94.6% verbatim
+training-example text — real mailbox content. It never left the maintainer's machine: the Hugging
+Face repository has two commits, both 2026-07-17, and its card is 723 bytes throughout. The
+downloads obtained weights and metadata, not message text. The local card is not to be uploaded.
 
 **The 90.4 MB → 22.8 MB claim loses its public receipt.** That compression figure is cited on the
 résumé and portfolio, and until now anyone could check it by running `stat` on two committed files.
