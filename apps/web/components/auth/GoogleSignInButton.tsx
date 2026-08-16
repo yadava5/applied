@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { safeRedirectPath } from "@/lib/auth/redirect";
 import { armBoot } from "@/lib/boot/flag";
 import { createClient } from "@/lib/supabase/client";
 
@@ -84,8 +85,10 @@ export function GoogleSignInButton({
     setError(null);
     setIsRedirecting(true);
 
-    // Refuse open redirects: only ever return to a same-origin path.
-    const safeRedirect = redirectTo.startsWith("/") ? redirectTo : "/dashboard";
+    // Refuse open redirects: only ever return to a same-origin path. The check
+    // is `lib/auth/redirect.ts` — `startsWith("/")` used to stand here and let
+    // a protocol-relative `//evil.com` straight through to `/callback`.
+    const safeRedirect = safeRedirectPath(redirectTo);
     const callbackUrl = new URL("/callback", window.location.origin);
     callbackUrl.searchParams.set("redirect", safeRedirect);
 
