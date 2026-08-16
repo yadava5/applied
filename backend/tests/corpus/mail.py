@@ -203,15 +203,9 @@ def header_only() -> Payload:
     return {"mimeType": "text/plain", "body": {"size": 0}}
 
 
-def derived_text(payload: Payload, snippet: str) -> str:
-    """Reproduce production's own expression, without importing the pipeline.
-
-    Kept as a thin re-export in :mod:`mail_report`; defined there rather than
-    here so the generator has no dependency on the code under measurement.
-    """
-
-    raise NotImplementedError  # see mail_report.derive
-
+# The expression that turns a payload into the string the classifier sees lives
+# in :func:`mail_report.derive`, not here: this module invents the mail and must
+# not import the code under measurement.
 
 GMAIL_SNIPPET_CHARS = 186  # the measured average, cloud/gmail_client.py
 

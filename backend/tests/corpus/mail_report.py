@@ -24,6 +24,17 @@ that must stay visible, so abstention is reported per class and never folded
 into error. ``no_positive_evidence`` is recorded per case as well, so anyone
 who dislikes the fold above can recompute from the raw rows.
 
+TWO VOCABULARIES, AND THE ASYMMETRY BETWEEN THEM. Gold labels use six classes
+(applied, interview, offer, rejection, assessment, other); ``EmailCategory``
+has nine. ``follow_up``, ``pending_application`` and ``needs_review`` can
+therefore only ever appear as an ACTUAL, never as an expectation, so they show
+up in the confusion matrix exclusively on the error side. That is a property of
+the gold vocabulary and not a measured defect of those three categories — with
+one exception worth stating: ``pending_application`` is inside
+``JOB_LIFECYCLE_CATEGORIES``, which pipeline.py persists to the applications
+table, so a message routed there does mint a row. A marketing nudge landing on
+``pending_application`` is a real error, not a labelling artefact.
+
 Separately: how many cases would AUTO-FILE (confidence >= ``AUTO_FILE_GATE``),
 and how many of those auto-file WRONGLY. A confident wrong answer is far worse
 than an abstention and must not average away into an accuracy figure.
