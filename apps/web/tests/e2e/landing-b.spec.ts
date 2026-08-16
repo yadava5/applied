@@ -363,7 +363,7 @@ test.describe("landing B (/landing-b)", () => {
 
     // 1 — the promise.
     await expect(
-      page.getByRole("heading", { name: /Never update a job tracker again/i }),
+      page.getByRole("heading", { name: /You lose the email/i }),
     ).toBeVisible();
     // 2 — the window, with the REAL board mounted in it (not the skeleton).
     await expect(page.locator("section[aria-label='The board, live']")).toBeVisible();
@@ -967,7 +967,7 @@ test.describe("landing B (/landing-b)", () => {
       await page.setViewportSize(viewport);
       await page.goto("/landing-b");
       await expect(
-        page.getByRole("heading", { name: /Never update a job tracker again/i }),
+        page.getByRole("heading", { name: /You lose the email/i }),
       ).toBeVisible();
       await expectNoHorizontalOverflow(page);
 

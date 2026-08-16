@@ -21,11 +21,31 @@
  *     copy names. See app/(app)/privacy/page.tsx for the full sourced version.
  */
 
+/**
+ * The register here is deliberate and it is NOT convenience. The previous
+ * headline ("Never update a job tracker again.") sold tidiness to someone who
+ * has not yet decided they have a problem. The person this page is for has
+ * sent two hundred applications and is afraid of exactly one thing: that a
+ * reply already landed and they missed it. Name that, or the page is a
+ * to-do-list ad.
+ *
+ * The urgency has to come from the mechanism, never from a statistic. There is
+ * no sourced number for "how many candidates miss a reply", so none appears
+ * here — a fabricated one would fail the same honesty bar the DECISION block
+ * is held to.
+ *
+ * Both privacy sentences are load-bearing and both are auditable:
+ *   · "No AI reads your mail" — classification is the deterministic rules
+ *     stage; no message content reaches a language model.
+ *   · "the text is never stored" — RETENTION, not request. Bodies are fetched
+ *     in flight and discarded; test_body_is_never_persisted.py is the gate.
+ *     "Your emails are never stored" would be FALSE — metadata is stored.
+ */
 export const HERO = {
-  /** 6 words — the reference set's median. The reader is the subject. */
-  headline: "Never update a job tracker again.",
+  /** 7 words. The loss, not the chore, is the subject. */
+  headline: "You don't lose the offer. You lose the email.",
   subhead:
-    "Every application answers by email. Applied reads the verdict — interview, offer, rejection — and moves the board for you.",
+    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied reads the verdict, moves the row, and tells you who is waiting on you — without an AI reading your mail, and without ever storing its text.",
 } as const;
 
 /** The board embed's provenance line — shown with every live mount. */
