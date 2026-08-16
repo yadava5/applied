@@ -5,6 +5,17 @@ import type { NextConfig } from "next";
  * (no embedding, no third-party scripts), so the policy is strict: no
  * framing, no MIME sniffing, minimal referrer leakage, and no powerful
  * browser APIs granted.
+ *
+ * `Content-Security-Policy` is deliberately NOT in this list any more. It is
+ * built per request in `lib/security/csp.ts` and set by `proxy.ts`, because it
+ * now carries a per-request nonce and a constant cannot. Do not add one back
+ * here: on a production build an entry in this array OVERRIDES a header set
+ * elsewhere for the same key — measured, and documented on `noStoreHeaders`
+ * below for `Cache-Control`. A CSP re-added here would win over the nonced one
+ * and the app would serve nonced HTML behind a policy that never mentions the
+ * nonce, which fails closed (every script blocked) or, if someone "fixed" it
+ * by restoring `'unsafe-inline'`, fails open and silently. `scripts/csp-gate.mjs`
+ * catches both by comparing the served header against the served body.
  */
 const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
@@ -12,43 +23,6 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      // Next.js inline runtime + styled-jsx need these two relaxations.
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "font-src 'self'",
-      // Supabase auth is the only remote origin the BROWSER reaches from here.
-      //
-      // https://jobtracker-api-seven.vercel.app was listed too, and removing it
-      // changed nothing a visitor can do — because connect-src only ever
-      // constrained fetches the browser makes, and the browser never makes that
-      // one. The backend is reached exclusively from the Next route handlers
-      // under app/api/**, server-side, where the caller's Supabase JWT is
-      // attached (lib/api/server.ts, lib/applications/server.ts,
-      // lib/gmail/server.ts). CSP does not apply to a fetch that originates in
-      // the Node runtime, so the grant was doing no work.
-      //
-      // It is NOT dead infrastructure, and an earlier version of this comment
-      // said it was. That claim came from grepping apps/web for the literal
-      // host, which returns this line and nothing else — the host reaches the
-      // code through BACKEND_API_URL, an env var, so a literal grep can never
-      // see it. Proved live instead: GET https://getapplied.vercel.app/api/
-      // applications answers 401 with {"detail":{"detail":"Missing
-      // Authorization header"}}, and that inner body is the FastAPI backend's,
-      // verbatim — the string exists only in backend/jobtracker/auth/
-      // supabase_jwt.py and nowhere in this tree. Deleting that project takes
-      // down the export, the pipeline board writes, Gmail connect/inbox and
-      // account deletion.
-      "connect-src 'self' https://jbyvatoodyqqvkqbsrju.supabase.co",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join("; "),
-  },
 ];
 
 /**
@@ -119,6 +93,36 @@ const noStoreHeaders = [
  * this config ships, rather than restating it and pinning nothing.
  */
 export const API_NO_STORE_SOURCE = "/api/:path*";
+
+/**
+ * The System Card is a self-contained Vite bundle under `public/system-card/`,
+ * not an app route. It is excluded from the proxy matcher, so it never gets a
+ * nonce — and under the app's `'strict-dynamic'` policy `'self'` is IGNORED,
+ * which would block its one external module script outright. Measured, not
+ * assumed: the CSP gate reported `un-nonced=1` on `/system-card` against
+ * `<script type="module" crossorigin src="/system-card/assets/index-*.js">`.
+ * It therefore carries its own classic `'self'` policy. No inline script
+ * exists in that bundle (verified: zero `<script>…</script>` bodies in
+ * `public/system-card/index.html`), so it needs no inline grant.
+ */
+export const SYSTEM_CARD_SOURCE = "/system-card/:path*";
+
+const systemCardHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; "),
+  },
+];
 
 const nextConfig: NextConfig = {
   /**
@@ -196,6 +200,7 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/(.*)", headers: securityHeaders },
+      { source: SYSTEM_CARD_SOURCE, headers: systemCardHeaders },
       { source: API_NO_STORE_SOURCE, headers: noStoreHeaders },
     ];
   },
