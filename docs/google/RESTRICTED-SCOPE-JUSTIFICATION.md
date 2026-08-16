@@ -207,9 +207,44 @@ prominent, user-facing feature the data serves; there is no other use.
   create, train, or improve a machine learning or artificial intelligence model
   beyond that specific user's personalized model for the appropriate use case
   or user-facing feature."* Applied's classifier is **rules-based**. A user's
-  correction is recorded and affects only that user's own future
-  classifications; corrections are never pooled across accounts and no shared
-  or generalized model is trained on user data.
+  correction is recorded against that user's own account; corrections are never
+  pooled across accounts, and no shared or generalized model is trained on user
+  data. In the hosted application no model is trained at all — there is nothing
+  installed to train one with, and no retrain runs in production.
+
+  **An earlier checkpoint, disclosed for completeness — and it contains no
+  Gmail data.** Before Applied was a hosted application it was a single-user
+  macOS program over local SQLite, and at that stage it fine-tuned a SetFit
+  classifier offline on 2026-03-06. Its `training_metadata.json` records 39 of
+  192 training examples as user corrections. **Those corrections came from an
+  iCloud IMAP mailbox, not from the Gmail API**, and the desktop store that
+  produced them still exists and can be checked:
+
+  | Check | Result |
+  | --- | --- |
+  | `SELECT source_account, COUNT(*) FROM emails GROUP BY 1` | `ICLOUD` — 856 rows, one value |
+  | `thread_id` populated (a Gmail-only column) | 0 of 856 |
+  | `sync_state` | one row: `icloud`, `aesh_1055@icloud.com`, `gmail_history_id` NULL |
+  | `user_corrected` messages | 81, all `ICLOUD` |
+
+  A Gmail client shipped in that build and the interface exposed it, but it was
+  never authenticated or run on that machine. **No Google user data has ever
+  entered a training corpus for this project**, and the Workspace API user-data
+  policy did not govern that checkpoint. It is recorded here because a reviewer
+  reading the repository's history will find a published model trained on mail,
+  and should have the provenance rather than have to infer it.
+
+  The checkpoint was nonetheless withdrawn on **2026-08-15** — published weights
+  trained on anyone's real mailbox are a poor practice regardless of which
+  provider it came from. The artifacts were deleted from the source tree,
+  blocked from returning, and both Hugging Face surfaces were made private;
+  the weights remain reachable through the public repository's git history, and
+  the model repository had been downloaded 13 times before it was closed.
+  Training is now default-deny in code — refused unless the corpus is entirely
+  synthetic or its single owner is explicitly allowlisted. Full provenance,
+  including which of two same-day checkpoints was the published one, is in
+  `docs/ML_PROMOTION_POLICY.md`. Full provenance is recorded in
+  `docs/ML_PROMOTION_POLICY.md`.
 - **No permanent copies.** The policy's Terms of Service note prohibits
   *"scraping, building databases … or otherwise creating permanent copies of
   Google User data."* Applied does not archive mail. The message body is never

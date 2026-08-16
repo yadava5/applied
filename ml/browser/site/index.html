@@ -102,8 +102,13 @@ footer a{color:var(--muted)}
 
   <footer>
     Same rules, same fine-tuned embeddings, same SetFit head as production — exported, quantized, and verified
-    output-identical (6/6 agreement suite). Model card: <a href="https://huggingface.co/yadava5/jobtracker-setfit-classifier">yadava5/jobtracker-setfit-classifier</a>.
-    Part of JobTracker by Ayush Yadav · no inbox is read, nothing leaves your browser.
+    output-identical (6/6 agreement suite). <strong>The weights are no longer published:</strong> the checkpoint
+    was fitted partly on a real mailbox (iCloud IMAP, not Gmail), and published weights trained on real mail
+    should not be redistributed — so this page ships the loader, the rules and the tokenizer and expects a
+    locally-exported model. To run it again: <code>python ml/browser/export_onnx.py</code> writes to
+    <code>ml/browser/artifacts/</code>, so copy <code>head.json</code> and <code>examples.json</code> here and
+    <code>model_quantized.onnx</code> to <code>model/onnx/model.onnx</code>.
+    Part of Applied by Ayush Yadav · no inbox is read, nothing leaves your browser.
   </footer>
 </div>
 <script type="module" src="./app.js"></script>
