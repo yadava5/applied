@@ -26,7 +26,11 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * run in the hosted app.
  *
  * Mechanics, all house idiom: one IntersectionObserver sentinel fires the
- * ~1.5s sequence once, it plays out and HOLDS — nothing is scrubbed. The
+ * ~3s sequence once, it plays out and HOLDS — nothing is scrubbed. The
+ * sentinel demands two thirds of the band in view (threshold 0.65, and the
+ * band fits every verified viewport, so the threshold is always reachable):
+ * at the old 0.3 the sequence had finished before the wordmark's half of the
+ * band cleared the fold, so the ending played to nobody. The
  * scene is a button; click / Enter / Space remounts it (`key={run}`) and
  * replays. Reduced motion renders the fully composed end state. Every
  * stroke carries `pathLength={1}` so drawing is dashoffset 1 → 0 with no
@@ -39,7 +43,7 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * READING ORDER — decided, not incidental (2026-08-15). The composed order
  * is thesis → ask → scene, so the ask sits ABOVE the visual climax. The
  * original brief asked for the reverse (dot lands, line holds, then the
- * ask), and it is honored in TIME — the ask rises at 1.3s, alongside the
+ * ask), and it is honored in TIME — the ask rises at ~2.45s, alongside the
  * dot's landing — but it cannot be honored in SPACE: the wordmark's
  * descenders bleed off the page's bottom edge, sliced by the footer's
  * hairline, so the scene must be the band's last element. Nothing can sit
@@ -152,7 +156,7 @@ function Scene() {
       <g className="act__rules">
         <line
           className="act__draw act__rail"
-          style={at("0.02s")}
+          style={at("0.05s")}
           x1="360"
           y1="24"
           x2="360"
@@ -173,38 +177,41 @@ function Scene() {
           strokeLinejoin="miter"
           transform="translate(0,10.5)"
         >
-          <g className="act__draw" style={at("0.04s")} transform="translate(64,0)">
+          {/* Letter delays pace the drawing to the envelope's slowed journey
+              (globals.css): ~150ms steps, so the word completes as the mail
+              nears the sentence it is about to punctuate. */}
+          <g className="act__draw" style={at("0.1s")} transform="translate(64,0)">
             <path pathLength={1} d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
             <path pathLength={1} d="M10.85,7 L10.85,20" />
           </g>
-          <g className="act__draw" style={at("0.12s")} transform="translate(79,0)">
+          <g className="act__draw" style={at("0.25s")} transform="translate(79,0)">
             <path pathLength={1} d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
             <path pathLength={1} d="M0.15,7 L0.15,26" />
           </g>
-          <g className="act__draw" style={at("0.2s")} transform="translate(94,0)">
+          <g className="act__draw" style={at("0.4s")} transform="translate(94,0)">
             <path pathLength={1} d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
             <path pathLength={1} d="M0.15,7 L0.15,26" />
           </g>
-          <g className="act__draw" style={at("0.28s")} transform="translate(111.8,0)">
+          <g className="act__draw" style={at("0.55s")} transform="translate(111.8,0)">
             <path pathLength={1} d="M1.8,0 L1.8,16.4 A3.6,3.6 0 0 0 5.4,20" />
           </g>
-          <g className="act__draw" style={at("0.34s")} transform="translate(127.9,0)">
+          <g className="act__draw" style={at("0.7s")} transform="translate(127.9,0)">
             <path pathLength={1} d="M1.6,7 L1.6,20" />
           </g>
           {/* the i-dot is a fill — dashoffset cannot draw it, so it pops */}
           <circle
             className="act__pop"
-            style={at("0.42s")}
+            style={at("0.85s")}
             cx="129.5"
             cy="2.7"
             r="1.4"
             fill="currentColor"
             stroke="none"
           />
-          <g className="act__draw" style={at("0.42s")} transform="translate(139,0)">
+          <g className="act__draw" style={at("0.85s")} transform="translate(139,0)">
             <path pathLength={1} d="M0.28,12.1 L10.72,12.1 A5.35,6.5 0 1 0 8.57,18.82" />
           </g>
-          <g className="act__draw" style={at("0.5s")} transform="translate(154,0)">
+          <g className="act__draw" style={at("1s")} transform="translate(154,0)">
             <path pathLength={1} d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
             <path pathLength={1} d="M10.85,0 L10.85,20" />
           </g>
@@ -315,7 +322,8 @@ export function ClosingAct() {
           }
         }
       },
-      { threshold: 0.3 },
+      // Two thirds of the band, not a toe in the door — see the docblock.
+      { threshold: 0.65 },
     );
     io.observe(el);
     return () => {

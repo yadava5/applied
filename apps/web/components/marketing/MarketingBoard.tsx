@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
+import { PipelineBoard, type BoardTravel } from "@/components/dashboard/PipelineBoard";
 import { todayISO } from "@/lib/dashboard/age";
 import { buildSubtitle } from "@/lib/dashboard/boardPrefs";
 import { isApplicationStatus } from "@/lib/dashboard/status";
@@ -11,6 +11,7 @@ import type { BoardTransport } from "@/lib/dashboard/transport";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { VERDICT_EMAIL } from "./verdictEmailData";
 import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./showcase";
+import { VERDICT_BREATH_MS, VERDICT_TRAVEL, VERDICT_TRAVEL_HOLD_MS } from "./tempo";
 
 /**
  * How long after a visitor's own gesture a card load still belongs to that
@@ -65,9 +66,14 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    *      docked only, no focus theft), which is the composition the owner
    *      approved: worklist beside the open pane, trail and gate meter shown.
    *
-   * Beats only ever ADVANCE state (a verdict does not un-happen when the
-   * visitor scrolls back up), each fires once, and none of them touches a
-   * row the visitor has meanwhile moved themselves.
+   * The verdict (beat 1) only ever ADVANCES and fires once — it does not
+   * un-happen when the visitor scrolls back up — and never touches a row the
+   * visitor has meanwhile moved themselves. Beat 2's pane is COMPOSITION,
+   * not state, so it follows the camera in both directions: the page closes
+   * the pane it opened when the scroll leaves the scene, and composes it
+   * again on a return. Before that withdrawal existed, the first scroll past
+   * zone 2 parked a pane over the board for the rest of the visit, occluding
+   * the very layout scenes 0 and 1 argue with.
    */
   beat?: number;
   /**
@@ -264,14 +270,25 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    *  uses, so the layout animation that carries the row to the closed group
    *  is the product's own — nothing marketing-specific moves it. Fired once;
    *  skipped entirely if the visitor already moved the row themselves. The
-   *  750ms breath exists so the camera's pan (LandingBoard) settles before
-   *  the row travels — one event, read in sequence; reduced motion takes the
-   *  state change immediately. */
+   *  breath (`tempo.ts`) exists so the camera's pan (LandingBoard) settles
+   *  before the row travels — one event, read in sequence; reduced motion
+   *  takes the state change immediately.
+   *
+   *  The move runs at the NARRATED tempo, not the product's: this is the one
+   *  move on the page a visitor is asked to watch rather than perform, and
+   *  the 220ms product glide completes before an eye that did not cause it
+   *  can follow it. The slow tempo is set in the same batch as the commit —
+   *  so the layout animation it triggers is the one it times — and handed
+   *  back once the glide has landed, so a drag the visitor makes a moment
+   *  later answers at the product's own speed. */
+  const [travel, setTravel] = useState<BoardTravel | undefined>(undefined);
   const moved = useRef(false);
   const moveTimer = useRef<number | null>(null);
+  const settleTimer = useRef<number | null>(null);
   useEffect(
     () => () => {
       if (moveTimer.current !== null) window.clearTimeout(moveTimer.current);
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current);
     },
     [],
   );
@@ -284,6 +301,13 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
     const rowId = row.id;
     moveTimer.current = window.setTimeout(
       () => {
+        if (!reduce) {
+          setTravel({ ...VERDICT_TRAVEL, ease: [...VERDICT_TRAVEL.ease] });
+          settleTimer.current = window.setTimeout(
+            () => setTravel(undefined),
+            VERDICT_TRAVEL.duration * 1000 + VERDICT_TRAVEL_HOLD_MS,
+          );
+        }
         commit((rows) =>
           rows.map((a) =>
             a.id === rowId && a.status === "applied"
@@ -292,7 +316,7 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
           ),
         );
       },
-      reduce ? 0 : 750,
+      reduce ? 0 : VERDICT_BREATH_MS,
     );
   }, [beat, choreographed, commit]);
 
@@ -300,14 +324,38 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    *  landed (the pane must never open on the pre-move snapshot), then hands
    *  the id to the board's seeded open — docked-only, focus untouched. Skipped
    *  entirely once the visitor has taken over, the same rule beat 1 follows for
-   *  a row they moved themselves. */
+   *  a row they moved themselves.
+   *
+   *  The seed follows the camera BOTH ways now: leaving zone 2 withdraws it
+   *  (PipelineBoard closes only the pane the page opened and re-arms the id),
+   *  so scrolling back up returns the board's own composition instead of the
+   *  pane parked over it for the rest of the visit — and a later return to
+   *  the zone composes the scene again, which is what keeps its caption true
+   *  for a reader arriving the second time. A visitor's pane never withdraws:
+   *  a different card latched the takeover (no seed exists after that), and a
+   *  re-open of the seeded row set the board's `detailUserOpened` back to
+   *  true, which is the flag the withdrawal path honours. */
   const [openDetailId, setOpenDetailId] = useState<number | undefined>(undefined);
   useEffect(() => {
+    if (!choreographed) return;
+    if ((beat ?? 0) < 2) {
+      if (openDetailId === undefined) return;
+      const withdrawn = openDetailId;
+      // Deferred off the effect body, the house rule — and the disarm rides
+      // in the same task: a claim the pane never spent (a fast scroll out
+      // before its load arrived) must not survive to classify some later
+      // load as the page's.
+      const id = window.setTimeout(() => {
+        if (pendingSeedRef.current === withdrawn) pendingSeedRef.current = undefined;
+        setOpenDetailId(undefined);
+      }, 0);
+      return () => window.clearTimeout(id);
+    }
     // `tookOverRef` is read, never a dep: it is a latch, not a signal, and a
     // re-render is not what should notice it. This read is the cheap one — a
     // visitor who took over in an earlier zone never even schedules a timer.
     // The authoritative read is inside the timer.
-    if (!choreographed || (beat ?? 0) < 2 || openDetailId !== undefined || tookOverRef.current) {
+    if (openDetailId !== undefined || tookOverRef.current) {
       return;
     }
     const row = apps.find((a) => a.company === VERDICT_EMAIL.company);
@@ -377,6 +425,7 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
         pulse={{ needsReview: 0 }}
         search={false}
         openDetailId={openDetailId}
+        travel={travel}
       />
     </div>
   );

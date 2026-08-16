@@ -291,6 +291,16 @@ function StaticApplicationRow({
 }
 
 /**
+ * The tempo a cell's layout glide runs at. The default is the product's own
+ * hand — quick, because a drag is the user acting and the board answering.
+ * A caller that NARRATES a move (the marketing embeds' verdict beat, where
+ * the visitor is being asked to watch rather than perform) may hand in a
+ * slower one for the page-caused commit; see `travel` on the board's props.
+ */
+export type BoardTravel = { duration: number; ease: [number, number, number, number] };
+const PRODUCT_TRAVEL: BoardTravel = { duration: 0.22, ease: [0.22, 1, 0.36, 1] };
+
+/**
  * One list cell: the layout-animated `li` around a row. `layoutId` is what
  * lets a row travel between stage groups as one continuous element —
  * `app-{id}` for an application (stable across grouping, so a member leaving
@@ -301,10 +311,12 @@ function StaticApplicationRow({
 function BoardCell({
   layoutKey,
   entering,
+  travel = PRODUCT_TRAVEL,
   children,
 }: {
   layoutKey: string;
   entering: boolean;
+  travel?: BoardTravel;
   children: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
@@ -327,7 +339,7 @@ function BoardCell({
       layoutId={layoutKey}
       initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      transition={reduceMotion ? { duration: 0 } : { duration: travel.duration, ease: travel.ease }}
     >
       {children}
     </motion.li>
@@ -366,6 +378,7 @@ export function PipelineBoard({
   afterList,
   search = true,
   openDetailId,
+  travel,
 }: {
   applications: Application[];
   interactive?: boolean;
@@ -399,9 +412,19 @@ export function PipelineBoard({
    * card the visitor opened themselves. Unlike a user's own open it does NOT
    * move focus into the pane — no gesture happened, so stealing focus (and
    * the scroll `focus()` drags with it) would be the page acting on its own.
+   *
+   * A seed handed back as `undefined` is WITHDRAWN: the pane the page opened
+   * closes with it (a visitor's own pane never does — `detailUserOpened`
+   * carries whose it is), and the id becomes honourable again, so the caller
+   * can compose the scene afresh on a later visit to it.
+   *
    * Product surfaces never pass this; their detail opens by click alone.
    */
   openDetailId?: number;
+  /** The layout glide for row travel — the marketing embeds' narrated tempo
+   *  for the one commit the page performs. Product surfaces leave it unset
+   *  and get the board's own hand. */
+  travel?: BoardTravel;
 } & BoardScope) {
   const router = useRouter();
   /**
@@ -455,7 +478,21 @@ export function PipelineBoard({
    *  it — and never over a card the visitor chose themselves. */
   const consumedDetailSeed = useRef<number | null>(null);
   useEffect(() => {
-    if (openDetailId === undefined || !detailDocked) return;
+    if (openDetailId === undefined) {
+      // The seed was WITHDRAWN — the act scrolled back out of the scene that
+      // opened it. Only a pane the page itself opened goes with it:
+      // `detailUserOpened` is false for exactly those, so a visitor's card —
+      // including the seeded row re-opened by their own click — never closes
+      // under them. Resetting the consumed ref is what lets a later return
+      // to the scene compose it again. Product surfaces never seed, so their
+      // ref is always null and this branch is inert for them.
+      if (consumedDetailSeed.current === null) return;
+      consumedDetailSeed.current = null;
+      if (detailUserOpened || detailApp === null) return;
+      const id = window.setTimeout(() => setDetailApp(null), 0);
+      return () => window.clearTimeout(id);
+    }
+    if (!detailDocked) return;
     if (consumedDetailSeed.current === openDetailId) return;
     consumedDetailSeed.current = openDetailId;
     if (detailApp !== null) return; // the visitor's own open wins
@@ -469,8 +506,9 @@ export function PipelineBoard({
     }, 0);
     return () => window.clearTimeout(id);
     // `detailApp` is read, not reacted to: the consumed ref means a later
-    // detail change can never replay the seed, so the extra dep is inert.
-  }, [openDetailId, detailDocked, applications, detailApp]);
+    // detail change can never replay the seed, so the extra dep is inert —
+    // and the withdrawal branch bails on a null ref before either is read.
+  }, [openDetailId, detailDocked, applications, detailApp, detailUserOpened]);
 
   /** One clock read per render — every row's age tag and deadline state
    *  derives from it. UTC for the server pass, the reader's own day once
@@ -739,7 +777,7 @@ export function PipelineBoard({
   const rowCell = (app: Application, column: BoardColumn, inSet = false) => {
     const chip = inSet || !grouping ? null : crossStageChip(app.company, column.key, columns);
     return (
-      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated}>
+      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated} travel={travel}>
         {interactive ? (
           <ApplicationRow
             app={app}
@@ -1187,6 +1225,7 @@ export function PipelineBoard({
                             key={`set-${entry.company}`}
                             layoutKey={`set-${column.key}-${entry.company}`}
                             entering={hydrated}
+                            travel={travel}
                           >
                             <EmployerSetRow
                               company={entry.company}

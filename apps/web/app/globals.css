@@ -1418,46 +1418,61 @@ body {
   transform-origin: center;
 }
 
-/* the play — fires once, runs ~1.5s, holds on `forwards` */
+/* the play — fires once, runs ~3s, holds on `forwards`.
+ *
+ * The tempo was doubled on the owner's read (2026-08-15): at ~1.5s the whole
+ * sequence had finished before a reader who triggered it had settled, so the
+ * page's closing image was over "by the time the user gets to the full view".
+ * The trigger moved with it (ClosingAct: threshold 0.3 → 0.65), and the beats
+ * are STAGED, not just stretched — the journey now reads in causal order:
+ * envelope crosses the rules rail (~0.75s, the flare), the rail's figure
+ * labels itself, the envelope passes the ghosts and THEIR figure labels
+ * itself, then the collapse, the fall, and only after the full stop seats
+ * does the ask rise. */
 .act--play .act__guide {
-  animation: act-fade 0.4s ease 0s forwards;
+  animation: act-fade 0.5s ease 0s forwards;
 }
 /* the ghost group fades in whole; its dashes carry their own quiet (above) */
 .act--play .act__ghosts {
-  animation: act-fade 0.4s ease 0.05s forwards;
+  animation: act-fade 0.5s ease 0.1s forwards;
 }
 .act--play .act__draw {
-  animation: act-draw 0.4s ease var(--d, 0s) forwards;
+  animation: act-draw 0.55s ease var(--d, 0s) forwards;
 }
-.act--play .act__tag {
-  animation: act-fade 0.35s ease 0.1s forwards;
+/* the key enters row by row, each AFTER the envelope has crossed the rail it
+ * names — the comparison arrives in the order the journey makes it true */
+.act--play .act__tag--rules {
+  animation: act-fade 0.5s ease 1s forwards;
 }
-/* the rail flares as the envelope passes it (~0.26s into the travel) */
+.act--play .act__tag--ghost {
+  animation: act-fade 0.5s ease 1.3s forwards;
+}
+/* the rail flares as the envelope passes it (~0.75s into the travel) */
 .act--play .act__rail {
   animation:
-    act-draw 0.3s ease var(--d, 0s) forwards,
-    act-flare 0.45s ease 0.24s;
+    act-draw 0.4s ease var(--d, 0s) forwards,
+    act-flare 0.55s ease 0.6s;
 }
 .act--play .act__pop {
   animation: act-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--d, 0s) forwards;
 }
 .act--play .act__travel {
-  animation: act-travel 0.85s cubic-bezier(0.45, 0, 0.3, 1) forwards;
+  animation: act-travel 1.7s cubic-bezier(0.45, 0, 0.3, 1) forwards;
 }
 .act--play .act__envelope {
-  animation: act-consume 0.16s ease-in 0.72s forwards;
+  animation: act-consume 0.2s ease-in 1.44s forwards;
 }
 .act--play .act__dot {
-  animation: act-dot 0.6s 0.8s both;
+  animation: act-dot 1.2s 1.5s both;
 }
 .act--play .act__ripple {
-  animation: act-ripple 0.55s ease-out 1.2s forwards;
+  animation: act-ripple 0.6s ease-out 2.35s forwards;
 }
 .act--play .act__ask {
-  animation: act-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) 1.3s forwards;
+  animation: act-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) 2.45s forwards;
 }
 .act--play .act__hint {
-  animation: act-fade 0.5s ease 1.55s forwards;
+  animation: act-fade 0.5s ease 2.9s forwards;
 }
 
 @keyframes act-fade {

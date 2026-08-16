@@ -46,12 +46,21 @@ export default function LandingB() {
     <main className="flex flex-col bg-background text-foreground">
       <MarketingNav />
 
-      {/* ---- hero: the headline at display scale ------------------------- */}
-      <section className="mx-auto w-full max-w-6xl px-6 pt-20 pb-12 sm:pt-24">
-        <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl lg:text-7xl">
+      {/* ---- hero: the headline at display scale -------------------------
+          Spacing and scale here are FOLD BUDGET, not taste: at 1024×600 the
+          board's top sat at 579.5px (production build, 2026-08-15) — 20.5px
+          of board, no summary strip, no row. The page's whole argument is the
+          board doing the thing, so the hero pays: pt-24→pt-9, pb-12→pb-6 and
+          the 1024 headline steps 7xl→6xl (72→60px; it re-earns 7xl at `xl`,
+          where the fold is not the constraint). Measured after: board top
+          459.5px, first row bottom 593.25px — the summary strip AND one full
+          application row inside a 600px fold. Re-measure on `next build && next start` if you touch
+          any of these; `next dev` cannot. */}
+      <section className="mx-auto w-full max-w-6xl px-6 pt-9 pb-6 xl:pt-16 xl:pb-10">
+        <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl xl:text-7xl">
           {HERO.headline}
         </h1>
-        <p className="mt-6 max-w-xl text-balance text-lg text-muted">{HERO.subhead}</p>
+        <p className="mt-5 max-w-xl text-balance text-lg text-muted">{HERO.subhead}</p>
       </section>
 
       {/* ---- the window act: the app proves it before the page explains -- */}

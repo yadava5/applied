@@ -8,6 +8,7 @@ import { ChangedRow } from "./ChangedRow";
 import { LandingBoard } from "./LandingBoard";
 import { NEW_TAB } from "./chrome";
 import { ACT, BOARD } from "./copy";
+import { RECEIPT_DELAY_MS } from "./tempo";
 
 /**
  * The merged landing's first act: B's specimen window, driven by C's scroll.
@@ -93,7 +94,27 @@ export function WindowAct() {
   // when the reader scrolls up; the board's state does not, so scene 0's
   // opening line stops being true the moment beat 1 has fired once.
   const [settled, setSettled] = useState(false);
+  // Whether the receipt card is due on stage. The receipt is beat 1's
+  // EXPLANATION, and an explanation that arrives before the event narrates
+  // nothing — so on the first pass it waits out the breath and the row's
+  // whole transit (`tempo.ts`) and floats in only once the row has landed.
+  // One-way, like `settled`: on a return to beat 1 the verdict is old news
+  // and the receipt is simply part of the scene.
+  const [receiptDue, setReceiptDue] = useState(false);
   const sentinelsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // `>= 1`, not `=== 1`: a reader who scrolls through to beat 2 mid-wait
+    // keeps the countdown running, so on their way back up the receipt is
+    // already part of the scene rather than starting its wait over a verdict
+    // that landed a while ago.
+    if (beat < 1 || receiptDue) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Reduced motion lands the verdict immediately (MarketingBoard), so the
+    // receipt has nothing to wait for.
+    const id = window.setTimeout(() => setReceiptDue(true), reduce ? 0 : RECEIPT_DELAY_MS);
+    return () => window.clearTimeout(id);
+  }, [beat, receiptDue]);
 
   useEffect(() => {
     const root = sentinelsRef.current;
@@ -145,7 +166,9 @@ export function WindowAct() {
         </div>
         <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
           <div className="overflow-clip rounded-2xl border border-line bg-surface shadow-[0_24px_60px_-30px_rgb(0_0_0/0.55)]">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2.5 sm:px-5">
+            {/* py-2 / p-4, not py-2.5 / lg:p-5 — 12px of frame chrome traded
+                back to the fold (see page.tsx's hero note). */}
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2 sm:px-5">
               <span className="label-caps flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
                 {BOARD.live}
@@ -158,13 +181,15 @@ export function WindowAct() {
                 {BOARD.open} →
               </a>
             </div>
-            <div className="bg-background p-4 lg:p-5">
+            <div className="bg-background p-4">
               <LandingBoard
-                // 13.5rem, not 11.5: nav + pin offset + frame chrome, plus the
-                // 2rem the caption strip above now takes. The frame still
-                // clears the shortest viewport this act is verified at (600px)
-                // by the same ~29px it always did.
-                height="calc(100dvh - 13.5rem)"
+                // 12.75rem = the old 13.5rem ledger (nav + pin offset + frame
+                // chrome + the caption strip's 2rem) minus the 12px the
+                // slimmed chrome above gave back — the board grows by exactly
+                // what the frame shed, and the frame still clears the
+                // shortest viewport this act is verified at (600px) by the
+                // same ~29px it always did.
+                height="calc(100dvh - 12.75rem)"
                 caption={false}
                 beat={beat}
                 // Beat 1 only: that scene pans PAST the board's foot and
@@ -173,7 +198,7 @@ export function WindowAct() {
                 // land on the very rows the docked pane is explaining — it
                 // stands down and the pane carries the story.
                 overlay={
-                  beat === 1 ? (
+                  beat === 1 && receiptDue ? (
                     <Reveal>
                       <ChangedRow />
                     </Reveal>

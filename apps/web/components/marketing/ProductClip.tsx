@@ -22,6 +22,18 @@ import { FOOTAGE } from "./copy";
  * clip holds its last frame when it ends, and resuming mid-way from a frozen
  * end state is how a recording reads as broken.
  *
+ * TEMPO AND THE LOOP. The clip plays at {@link PLAYBACK_RATE}: the sandbox
+ * was driven at script speed when it was captured, and at 1× the body has
+ * finished arriving before a visitor has found the verdict line — the whole
+ * exhibit is watching the verdict change AS the text arrives, so the text
+ * has to arrive at a watchable pace. And while the clip is the thing being
+ * read it LOOPS, holding its final frame for {@link LOOP_HOLD_MS} first —
+ * the verdict is the conclusion and needs dwell, and a reader who looked up
+ * mid-play gets the whole argument again without hunting for Replay. The
+ * loop is autoplay's companion only: it re-checks reduced motion at each
+ * restart, so a visitor who pressed Play themselves under reduced motion
+ * gets one play and a held final frame.
+ *
  * WHAT A VISITOR GETS ON THE WORST PATH. `preload="none"`, so a slow
  * connection spends nothing until the clip is actually on screen; until then
  * the poster is the whole exhibit, and the posters were chosen as frames that
@@ -40,10 +52,16 @@ export const CLIPS = {
 
 type Clip = (typeof CLIPS)[keyof typeof CLIPS];
 
+/** See TEMPO AND THE LOOP above. Chosen by watching the typing, not by
+ *  arithmetic — at 1× the 5s capture reads as a paste. */
+const PLAYBACK_RATE = 0.55;
+const LOOP_HOLD_MS = 2600;
+
 /** Always from the top: see the docblock. Rejection is silent — the poster is
  *  still on screen and the control still works. */
 function start(video: HTMLVideoElement, onPlaying: () => void) {
   video.muted = true; // belt and braces: an audible clip is refused autoplay
+  video.playbackRate = PLAYBACK_RATE;
   video.currentTime = 0;
   video.play().then(onPlaying, () => {});
 }
@@ -66,10 +84,29 @@ export function ProductClip({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || typeof IntersectionObserver === "undefined") return;
+    // The loop's two pieces of state, both plain refs: whether the clip is
+    // still the thing being read (the centre band), and the hold timer that
+    // separates one pass from the next.
+    let inBand = false;
+    let holdTimer: number | null = null;
+    const clearHold = () => {
+      if (holdTimer !== null) window.clearTimeout(holdTimer);
+      holdTimer = null;
+    };
+    const onEnded = () => {
+      // Re-checked at the moment of the decision, same as autoplay: a manual
+      // Play under reduced motion ends here, on the held final frame.
+      if (!inBand || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      clearHold();
+      holdTimer = window.setTimeout(() => start(video, () => setPlayed(true)), LOOP_HOLD_MS);
+    };
+    video.addEventListener("ended", onEnded);
     const io = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
+          inBand = entry.isIntersecting;
           if (!entry.isIntersecting) {
+            clearHold();
             video.pause();
             continue;
           }
@@ -80,7 +117,11 @@ export function ProductClip({
       { rootMargin: "-25% 0px -25% 0px", threshold: 0 },
     );
     io.observe(video);
-    return () => io.disconnect();
+    return () => {
+      clearHold();
+      video.removeEventListener("ended", onEnded);
+      io.disconnect();
+    };
   }, []);
 
   return (

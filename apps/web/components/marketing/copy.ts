@@ -73,6 +73,13 @@ export const HERO = {
    * one full row another 113.3px — the latter is not reachable by trimming
    * this subhead, so it is a layout change, not a copy change. Re-measure on
    * `next build && next start` if you touch this; `next dev` cannot measure it.
+   *
+   * 2026-08-15, after the variant choice: that layout change happened. The
+   * hero's spacing and 1024 headline scale were cut for the fold (see
+   * app/landing-b/page.tsx), which moved board top from 579.5px to inside
+   * the one-full-row target. The length constraint on THIS string still
+   * stands — the reclaim was layout, and one more subhead line would hand
+   * 28px of it straight back.
    */
   subhead:
     "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied moves the row for you — no AI reads your mail, and the message body is never stored.",

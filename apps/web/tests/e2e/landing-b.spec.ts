@@ -882,6 +882,58 @@ test.describe("landing B (/landing-b)", () => {
   });
 
   /**
+   * SEED 6. The pane the page opens leaves the scene with the camera.
+   *
+   * Before the withdrawal existed (`MarketingBoard`'s beat-2 effect), the
+   * seeded pane was a one-way latch: the first scroll past zone 2 parked it
+   * over the board for the rest of the visit, occluding the very layout
+   * scenes 0 and 1 argue with — the owner's words were "once the right pane
+   * opens with scroll it never closes". The fix is symmetric composition:
+   * the page closes what it opened when the scroll leaves zone 2, and
+   * composes it again on a return, so the beat-2 caption is true however
+   * many times a reader arrives. A visitor's own pane must never close this
+   * way — that path is `detailUserOpened` in PipelineBoard, and SEED 3/4/5
+   * hold the visitor's side.
+   *
+   * Both directions are asserted with the caption as the arrival gate, the
+   * same discipline as every scene test here. The close is a deferred timer
+   * chain (zone exit → withdraw → PipelineBoard's own deferred close), so
+   * the pane-count reads rely on Playwright's auto-retry, not a sleep.
+   *
+   * NOT MUTATION-VERIFIED AT INTRODUCTION — written in a session that could
+   * not run Playwright; no run of this test has been watched go red or
+   * green. The mutation to run first, before trusting a green: delete the
+   * `(beat ?? 0) < 2` withdrawal branch from `MarketingBoard`'s beat-2
+   * effect. The pane then persists on the scroll back to zone 1 and this
+   * test should go red on its first `toHaveCount(0)` while SEED 2–5 stay
+   * green; a red anywhere else means this is measuring the act in general
+   * rather than the withdrawal. The re-entry half should also be watched
+   * red once, with the seed's re-arm disabled instead (`consumedDetailSeed`
+   * left set in PipelineBoard's withdrawal branch).
+   */
+  test("the pane the page opened leaves the scene with the camera", async ({ page }) => {
+    await page.setViewportSize(DESKTOP_1024);
+    await page.goto("/landing-b");
+
+    await driveToBeatTwo(page);
+
+    // Back up to the scene whose argument the pane occludes.
+    await centreOn(page, "[data-beat='1']");
+    await expect(activeCaption(page)).toHaveText(
+      "The reply lands, and the row moves without you.",
+    );
+    await expect(page.getByTestId("application-detail")).toHaveCount(0);
+    await expect(movedRow(page)).not.toHaveAttribute("data-detail-open", "true");
+
+    // And a return to the scene composes it again — the caption stays true
+    // for a reader arriving the second time.
+    await centreOn(page, "[data-beat='2']");
+    await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
+    await expect(page.getByTestId("application-detail")).toBeVisible();
+    await expect(movedRow(page)).toHaveAttribute("data-detail-open", "true");
+  });
+
+  /**
    * The closing act plays once on scroll-into-view and HOLDS. "Holds" is the
    * load-bearing half: the sequence is CSS with `forwards` fill and its
    * observer disconnects, so a reader who scrolls past and comes back finds
@@ -927,9 +979,10 @@ test.describe("landing B (/landing-b)", () => {
     expect((await compose()).playing, "the closing act played before it was seen").toBe(false);
 
     await page.locator("section.act").scrollIntoViewIfNeeded();
-    // The sequence is ~1.5s of CSS with a 1.55s tail; poll rather than sleep.
+    // The sequence is ~3s of CSS (the ask rises at 2.45s over 0.6s); poll
+    // rather than sleep.
     await expect
-      .poll(async () => (await compose()).askOpacity, { timeout: 6_000 })
+      .poll(async () => (await compose()).askOpacity, { timeout: 8_000 })
       .toBe(1);
 
     const played = await compose();
