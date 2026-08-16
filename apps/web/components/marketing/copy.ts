@@ -61,9 +61,18 @@ export const HERO = {
    * Length is a LAYOUT constraint here, not a taste one. Measured on a
    * production build: at 1024×600 the rewritten hero pushed `pipeline-board`
    * to 607.5px, 7.5px under the fold — zero board pixels visible, which kills
-   * the page's whole argument. Subhead line-height is 28px, so one line back
-   * is ~20px inside the fold. Keep this at two lines at 1024. Re-measure if
-   * you touch it; do not eyeball it.
+   * the page's whole argument. Subhead line-height is 28px; cutting one line
+   * moved board top to 579.5px, i.e. 20.5px inside a 600px viewport.
+   *
+   * This string renders at THREE lines / 84px at 1024, measured on the
+   * production build — not two, as an earlier version of this note claimed.
+   * Do not budget headroom from that wrong number.
+   *
+   * 20.5px is a sliver: the summary strip's labels are clipped and NO
+   * application row renders. Reaching the whole strip needs another 34px, and
+   * one full row another 113.3px — the latter is not reachable by trimming
+   * this subhead, so it is a layout change, not a copy change. Re-measure on
+   * `next build && next start` if you touch this; `next dev` cannot measure it.
    */
   subhead:
     "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied moves the row for you — no AI reads your mail, and the message body is never stored.",
