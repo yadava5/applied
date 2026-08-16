@@ -193,7 +193,12 @@ prominent, user-facing feature the data serves; there is no other use.
 - **No transfer.** Gmail data is never sold, rented or transferred to anyone.
   There are no advertising, analytics or data-broker integrations, and no third
   party receives message content. Message content is not sent to any external
-  API, including any hosted language model.
+  API, including any hosted language model. The application-level claim is
+  backed by a platform-level setting: the Supabase organisation's **Supabase
+  Assistant Opt-in Level is set to `Disabled`** — confirmed in the dashboard on
+  2026-08-15 — so no database schema, logs or data are shared with third-party
+  AI providers by the database platform either. The "no AI touches user mail"
+  claim therefore holds at both layers, not only in Applied's own code.
 - **No human reads mail.** No employee, contractor or operator reads user
   messages. There are no contractors; the project has one operator, who has no
   route to another user's message content — see the tenant-isolation evidence
