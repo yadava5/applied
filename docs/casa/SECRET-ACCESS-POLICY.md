@@ -226,19 +226,74 @@ dependency this project has decided against.
 2. **The key never leaves the process.** It is not logged, not returned, not
    written to disk, and not included in error messages — §2.3 rule 3 covers
    the mechanism that keeps it out of error output.
-3. **Human access to the value would be logged by the platform, not by us —
-   and this limb is UNVERIFIED.** A human reading the secret out of the Vercel
-   dashboard or CLI is the threat this control is actually about; a compromised
-   runtime would not honestly log its own read anyway. Vercel offers an account
-   audit log, and GitHub records access to Actions secrets. **But Vercel's audit
-   log is a plan-gated feature and it has not been confirmed as available or
-   enabled on this account.** It is listed as the intended compensating control,
-   not as one that has been observed working. **The owner must check the Vercel
-   dashboard for audit-log availability and retention before this control is
-   filed, and this bullet must be corrected to match what is found.** Claiming a
-   platform log that turns out not to exist would be worse than claiming
-   nothing.
-4. **Use of the key is logged even though reads of it are not** (§3.1). Every
+3. **Operator access to the value is recorded in Vercel's Activity Log — a
+   vendor event feed, not an audit log.** A human reading the secret out of the
+   Vercel dashboard or CLI is the threat this control is actually about; a
+   compromised runtime would not honestly log its own read anyway.
+
+   **Vercel Audit Logs are an Enterprise feature and this account does not have
+   them.** Vercel's documentation scopes audit logs to customers on enterprise
+   plans; the plan comparison lists Audit Logs as "Not available" for both Hobby
+   and Pro; and the owner's own dashboard, read 2026-08-15, says "Audit Logs are
+   available on the Enterprise Plan" beside an upgrade button, and "SIEM
+   Integration — Audit log streaming isn't available on your plan." This account
+   is on Pro. Audit Logs are therefore **not** a control this deployment holds,
+   and are not claimed as one. An earlier draft of this document named them as
+   the intended compensating control; that claim was wrong and has been removed
+   rather than softened.
+
+   What this account does have is Vercel's **Activity Log** — a different
+   product, available on Pro — and it records reads of environment variables.
+   That was established by positive control rather than read off a
+   documentation page: running `vercel env ls production` produced, within
+   seconds, an event of type `env-variable-read:cli:env:ls` reading *"You used
+   vc env ls to view all Production environment variables in Project
+   jobtracker-web (via Vercel CLI)"*. Observed **2026-08-16T02:31:55Z** via
+   `vercel activity ls --all --since 30d --format json`.
+
+   The distinction between what was observed and what is merely documented is
+   load-bearing here, so it is drawn explicitly:
+
+   | Event | State |
+   | --- | --- |
+   | `env-variable-read:cli:env:ls` — listing production environment variables from the CLI | **Observed** — the event above |
+   | `env-variable-read` for a plaintext *value* read, and its other per-source variants | **Documented by Vercel; not observed here.** The dashboard reveal-value path was not exercised during this evidence pass |
+   | `env-variable-add` / `-edit` / `-delete` for modification | **Documented by Vercel; not observed here** — no operator secret was modified during this evidence pass |
+
+   **Read row 1 precisely.** The command that produced it, `vercel env ls`,
+   lists variable *names* and their environments; it does not reveal values. So
+   what was observed is that the `env-variable-read` family fires, and that this
+   account's plan receives those events — not that a plaintext value read was
+   witnessed. Vercel documents the family as covering the reading of an
+   encrypted variable's plaintext value, and the variant that does so was not
+   exercised. The honest reading of the whole table is: **the mechanism is real
+   and reaches this account; the specific value-revealing event is documented
+   rather than demonstrated.**
+
+   Four qualifiers must travel with any citation of this feed:
+
+   - **No documented retention period.** Vercel publishes none for the Activity
+     Log and no number is asserted here. The 90 days the dashboard offers is an
+     *export range*, not a retention guarantee.
+   - **No CSV export and no SIEM streaming at this tier.** The feed can be read;
+     it cannot be shipped anywhere that would survive the account.
+   - **Owner-readable only** — by the same single principal who holds the
+     secrets. Nobody else can read it and nobody is alerted by it.
+   - **Vendor-held.** It is Vercel's record of actions taken on Vercel,
+     retained by Vercel. It is not an independent tamper-evident archive, and
+     it is offered as a vendor event feed rather than as an audit log.
+4. **GitHub provides no equivalent for `DIRECT_URL`, and none is claimed.**
+   GitHub's audit log is an organisation and enterprise feature. This
+   repository is owned by a personal account, which belongs to no organisation:
+   `GET /users/yadava5/audit-log` returns `404 Not Found` and `GET /user/orgs`
+   returns an empty list, both checked 2026-08-16. Separately, even where an
+   audit log does exist it records the *management* of Actions secrets rather
+   than a workflow's reads of them. So the CI limb of this control has no
+   platform log behind it. What constrains it instead is scope: `DIRECT_URL` is
+   injected only into the `migrate` job, which is pinned to the `production`
+   environment (`.github/workflows/db-migrate.yml:170-172`) and reads the
+   secret at one place (`:187`).
+5. **Use of the key is logged even though reads of it are not** (§3.1). Every
    *effect* the key has — every credential decrypt — produces a record. That is
    the closer proxy to "was this secret used, and for whom".
 
@@ -248,7 +303,7 @@ dependency this project has decided against.
 | --- | --- |
 | Secrets stored in a managed secret store, not in code | **Met** |
 | Documented secret access policy | **Met** — this document |
-| Access to secrets is logged | **Partially met.** User credentials: logged (§3.1). The Fernet key: not logged, with stated compensating controls (§3.2) |
+| Access to secrets is logged | **Partially met.** User credentials: logged by the application (§3.1). The Fernet key: reads are not logged by the application, and operator access to the variable is recorded only in Vercel's Activity Log — a vendor event feed with no retention guarantee and no export at this tier (§3.2) |
 
 ---
 
@@ -256,7 +311,12 @@ dependency this project has decided against.
 
 - **The Fernet key's use is instrumented; its reading is not.** A compromise of
   the Vercel environment would not be visible in any log this application
-  writes. Detection depends on Vercel's own account audit trail.
+  writes. Detection would depend on a human reading Vercel's Activity Log
+  (§3.2) — a vendor event feed with no documented retention, no export at this
+  tier, no alerting, and nobody currently watching it. **There is no
+  independent, tamper-evident archive of secret access anywhere in this
+  system**, and no audit-log product is available at this plan tier. Stated
+  without softening: this limb is detective in principle only.
 - **Single operator, no separation of duties.** One person holds every secret
   and can deploy. There is no second approver on a rotation, and no four-eyes
   control is possible at this size. This is a structural property of a
@@ -269,5 +329,6 @@ dependency this project has decided against.
 
 ---
 
-*Prepared 2026-08-15. No secret value is reproduced. Where a secret is
+*Prepared 2026-08-15; §3.2 corrected 2026-08-16 against the platform's own
+records. No secret value is reproduced. Where a secret is
 referenced it is named by environment variable only.*
