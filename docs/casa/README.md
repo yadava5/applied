@@ -45,6 +45,6 @@ throughout:
 | Supabase Auth log retention is plan-dependent and must be confirmed | `AUTHENTICATION-LOGGING.md` §4 |
 | **Vercel audit-log availability is UNVERIFIED** — it is plan-gated and is named as a compensating control without having been observed. Must be checked and the bullet corrected before filing | `SECRET-ACCESS-POLICY.md` §3.2 |
 | `HttpOnly` cannot be set on the auth cookie without re-architecting authentication | `SESSION-COOKIES.md` §3 |
-| The CSP allows `script-src 'unsafe-inline'`, weakening the main compensating control for the above | `SESSION-COOKIES.md` §3.1 |
+| `style-src` still allows `'unsafe-inline'` — structural, and it does not affect script execution | `SESSION-COOKIES.md` §3.1 |
 | No seeded test account, so no CI test ever exercises a signed-in session | `SESSION-COOKIES.md` §5 |
 | `ml/demo/space/jobtracker/credentials/cloud.py` is a vendored copy of the credential module and does not carry the access logging | `SECRET-ACCESS-POLICY.md` §3.1 |
