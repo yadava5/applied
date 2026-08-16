@@ -57,6 +57,49 @@ KIND_ICLOUD = "icloud_mail"
 ACTIVE_KEY_ID = "v1"
 
 
+# -----------------------------------------------------------------------------
+# Secret access log (CASA AL1, control 6.7.1 — "access to secrets is logged")
+# -----------------------------------------------------------------------------
+#
+# One line shape for every touch of a stored credential, so an assessor reads a
+# single format rather than eight ad-hoc sentences. The fields are the whole
+# record an audit asks for: WHO (user_id), WHICH SECRET (kind), WHICH KEY
+# VERSION (key_id), WHAT WAS DONE (op) and WHAT HAPPENED (outcome).
+#
+# What is deliberately NOT here is the point of the control. The line carries no
+# ciphertext, no plaintext and no key material, and it cannot: the arguments are
+# an id, two short enum-ish strings and a key *name*. ``row.ciphertext``, the
+# decrypted ``plaintext`` and ``settings.secret_encryption_key`` are never passed
+# to a logging call in this module. `tests/test_secret_access_logging.py` holds
+# that line — it drives a real save/read/delete round trip and asserts none of
+# the three appears in any emitted record.
+#
+# ``op`` is one of: read, write, delete, clear.
+# ``outcome`` is one of: hit, miss, decrypt_failed, written, write_failed,
+# deleted.
+_ACCESS_LOG_FORMAT = "secret_access user_id=%s kind=%s key_id=%s op=%s outcome=%s"
+
+
+def _log_secret_access(
+    *,
+    user_id: uuid.UUID,
+    kind: str,
+    key_id: Optional[str],
+    op: str,
+    outcome: str,
+) -> None:
+    """Record one access attempt against a stored secret.
+
+    ``key_id`` is ``None`` on the delete/clear paths on purpose: those issue a
+    DELETE and never read a row, so there is no key version to name and adding
+    a SELECT purely to fill this field would buy a round trip (~216 ms under the
+    cloud engine's NullPool, issue #203) for a log field. ``None`` is the honest
+    value — do not "fix" it with a lookup.
+    """
+
+    logger.info(_ACCESS_LOG_FORMAT, user_id, kind, key_id, op, outcome)
+
+
 class CredentialEncryptionError(RuntimeError):
     """Raised when encryption/decryption fails or the key is missing."""
 
@@ -249,9 +292,22 @@ async def save_gmail_credentials(
             )
             await _enroll_gmail(session, user_id=user_id)
             await session.commit()
-        logger.info("Gmail credentials saved for user_id=%s", user_id)
+        _log_secret_access(
+            user_id=user_id,
+            kind=KIND_GMAIL,
+            key_id=ACTIVE_KEY_ID,
+            op="write",
+            outcome="written",
+        )
         return True
     except Exception as exc:  # noqa: BLE001 — DB + crypto errors
+        _log_secret_access(
+            user_id=user_id,
+            kind=KIND_GMAIL,
+            key_id=ACTIVE_KEY_ID,
+            op="write",
+            outcome="write_failed",
+        )
         logger.exception("Failed to save Gmail credentials: %s", exc)
         return False
 
@@ -279,17 +335,41 @@ async def get_gmail_credentials(
         async with get_session() as own_session:
             row = await _fetch_credential(own_session, user_id=user_id, kind=KIND_GMAIL)
     if row is None:
-        logger.debug("No Gmail credentials stored for user_id=%s", user_id)
+        _log_secret_access(
+            user_id=user_id, kind=KIND_GMAIL, key_id=None, op="read", outcome="miss"
+        )
         return None
     try:
         plaintext = fernet.decrypt(row.ciphertext).decode("utf-8")
-    except InvalidToken as exc:
+    except InvalidToken:
+        # Kept at ERROR (a failed decrypt of a live credential is an incident,
+        # not a warning) and extended in place rather than duplicated, so the
+        # failure carries the same five fields as every other access line.
+        #
+        # The exception object used to be interpolated here and no longer is.
+        # `cryptography.fernet.InvalidToken` is `class InvalidToken(Exception):
+        # pass` with no `__str__`, and every one of the twelve raise sites in
+        # fernet.py is a bare `raise InvalidToken` with no arguments — so `%s`
+        # rendered the empty string and the old line ended in a dangling ": ".
+        # Nothing is lost by dropping it, and a log line about a secret should
+        # not interpolate an object a future release could start attaching the
+        # offending token to.
         logger.error(
-            "Fernet decrypt failed for Gmail credentials user_id=%s: %s",
+            _ACCESS_LOG_FORMAT + " error=InvalidToken",
             user_id,
-            exc,
+            KIND_GMAIL,
+            row.key_id,
+            "read",
+            "decrypt_failed",
         )
         return None
+    _log_secret_access(
+        user_id=user_id,
+        kind=KIND_GMAIL,
+        key_id=row.key_id,
+        op="read",
+        outcome="hit",
+    )
     return GmailCredentials.from_json(plaintext)
 
 
@@ -310,7 +390,9 @@ async def delete_gmail_credentials(user_id: uuid.UUID) -> bool:
         )
         await _unenroll_gmail(session, user_id=user_id)
         await session.commit()
-    logger.info("Gmail credentials deleted for user_id=%s", user_id)
+    _log_secret_access(
+        user_id=user_id, kind=KIND_GMAIL, key_id=None, op="delete", outcome="deleted"
+    )
     return True
 
 
@@ -353,9 +435,22 @@ async def save_icloud_credentials(
                 session, user_id=user_id, kind=KIND_ICLOUD, ciphertext=ciphertext
             )
             await session.commit()
-        logger.info("iCloud credentials saved for user_id=%s", user_id)
+        _log_secret_access(
+            user_id=user_id,
+            kind=KIND_ICLOUD,
+            key_id=ACTIVE_KEY_ID,
+            op="write",
+            outcome="written",
+        )
         return True
     except Exception as exc:  # noqa: BLE001
+        _log_secret_access(
+            user_id=user_id,
+            kind=KIND_ICLOUD,
+            key_id=ACTIVE_KEY_ID,
+            op="write",
+            outcome="write_failed",
+        )
         logger.exception("Failed to save iCloud credentials: %s", exc)
         return False
 
@@ -367,16 +462,30 @@ async def get_icloud_credentials(
     async with get_session() as session:
         row = await _fetch_credential(session, user_id=user_id, kind=KIND_ICLOUD)
     if row is None:
+        _log_secret_access(
+            user_id=user_id, kind=KIND_ICLOUD, key_id=None, op="read", outcome="miss"
+        )
         return None
     try:
         plaintext = fernet.decrypt(row.ciphertext).decode("utf-8")
-    except InvalidToken as exc:
+    except InvalidToken:
+        # See the Gmail decrypt site for why `exc` is no longer interpolated.
         logger.error(
-            "Fernet decrypt failed for iCloud credentials user_id=%s: %s",
+            _ACCESS_LOG_FORMAT + " error=InvalidToken",
             user_id,
-            exc,
+            KIND_ICLOUD,
+            row.key_id,
+            "read",
+            "decrypt_failed",
         )
         return None
+    _log_secret_access(
+        user_id=user_id,
+        kind=KIND_ICLOUD,
+        key_id=row.key_id,
+        op="read",
+        outcome="hit",
+    )
     return ICloudCredentials.from_json(plaintext)
 
 
@@ -389,6 +498,9 @@ async def delete_icloud_credentials(user_id: uuid.UUID) -> bool:
             )
         )
         await session.commit()
+    _log_secret_access(
+        user_id=user_id, kind=KIND_ICLOUD, key_id=None, op="delete", outcome="deleted"
+    )
     return True
 
 
@@ -415,5 +527,9 @@ async def clear_all_credentials(user_id: uuid.UUID) -> bool:
         )
         await _unenroll_gmail(session, user_id=user_id)
         await session.commit()
-    logger.info("All cloud credentials cleared for user_id=%s", user_id)
+    # kind="all": one DELETE removes every row this user owns, so naming a
+    # single `kind` here would be a narrower claim than what happened.
+    _log_secret_access(
+        user_id=user_id, kind="all", key_id=None, op="clear", outcome="deleted"
+    )
     return True
