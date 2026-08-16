@@ -104,8 +104,12 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * since been fixed in `MarketingBoard` (the page's claim on a card load is
  * armed in the same task that hands the seed to the board, so a visitor's load
  * is always scheduled first; the row's identity no longer decides anything).
- * The race is why this file's own coverage of the moved row stops at the
- * camera — see `visitorRow` for what still gates pointing it at Larkspur.
+ * The race is why this file's own coverage of the moved row used to stop at the
+ * camera. It no longer does: `visitorRow` has been pointed at Larkspur on the
+ * evidence its docblock demanded, because clicking any other row made SEED 3
+ * unable to fail at all — the guarded branch is reachable only on the one id the
+ * page's claim ever holds. What that gate needs to stay honest is a run shape
+ * `--retries=2` cannot give it; see `landing-b-race.yml`.
  *
  * TWO ASSERTIONS IN THE FIRST DRAFT COULD NOT FAIL, and both were caught by
  * running the mutation rather than by reading the code. `toHaveText(/rejected/)`
@@ -288,12 +292,19 @@ const activeCaption = (page: Page) =>
  *  Playwright locator cannot go. */
 const CLOSE_CONTROL = 'button[aria-label="Close detail"]';
 
+/** The one company the act ever touches: the row it moves at beat 1 and the id
+ *  it seeds at beat 2. ONE literal, read by every locator below that means this
+ *  row — see `visitorRow` for what two independent literals cost. */
+const MOVED_COMPANY = "Larkspur Systems";
+
 /** The Larkspur row inside the live board — the one the act moves. */
 const movedRow = (page: Page) =>
-  page.locator(".board-row").filter({ hasText: "Larkspur Systems" });
+  page.locator(".board-row").filter({ hasText: MOVED_COMPANY });
 
 /**
- * The row the VISITOR opens, and deliberately NOT the one the act moves.
+ * The row the VISITOR opens. It is now the SAME row the act moves, and that is
+ * the point — the history is worth keeping because it is why this gate spent a
+ * while unable to fail.
  *
  * `MarketingBoard` used to tell a visitor's open from the page's own by id —
  * the beat-2 seed being the one id the page ever opens — with both sides of
@@ -303,20 +314,43 @@ const movedRow = (page: Page) =>
  * `transport.detail` call landed after that, the visitor's open was read as
  * the page's and the camera never released. Measured on a production build:
  * about four full-file runs in ten went red that way at both heights, with the
- * camera resting un-released at −279.5px and −263.5px. Atlas Freight is the
- * last row of the closed group, in frame at beat 1 by the same camera, and it
- * is never seeded: the act stayed at beat 1 in every run at both heights.
+ * camera resting un-released at −279.5px and −263.5px. So this pointed at Atlas
+ * Freight — the last row of the closed group, in frame at beat 1 by the same
+ * camera, and never seeded — and the act stayed at beat 1 in every run.
  *
- * The race is fixed — the page's claim is armed in the same task that hands
- * the seed to the board, so a visitor's load always runs first, and the id is
- * no longer what decides. This locator should MOVE to `movedRow`, because the
- * row that was flaky is the one worth pinning, and it should move on evidence:
- * `--repeat-each=10` at 1024×768 and 1024×600 with the click retargeted, ten
- * of ten at both. Until that run exists, retargeting would trade a documented
- * choice for an unproven one, so it stands.
+ * THAT CHOICE MADE SEED 3 UNABLE TO FAIL, which is the reason it has moved.
+ * The misclassification the test guards is reachable only through
+ * `pendingSeedRef.current === id`, and `pendingSeedRef` only ever holds
+ * Larkspur's id. Pointed at Atlas Freight the comparison is deterministically
+ * false, so the guarded branch was unreachable and the compound mutant below
+ * could not redden this test at all — 0%, structurally, not improbably.
+ *
+ * IT MOVED ON THE EVIDENCE THIS DOCBLOCK USED TO DEMAND. The precondition was
+ * `--repeat-each=10` at 1024×768 and 1024×600 with the click retargeted, ten of
+ * ten at both. Run on a frozen tree at `59c2bcc` against `next build && next
+ * start`: 20/20 with the click retargeted, and 20/20 again on the restored
+ * tree — twice, so the green is the page's and not one lucky pass.
+ *
+ * `visitorRow` and `movedRow` now name the same row by design. Both are kept:
+ * they are read by different tests asking different questions (SEED 4 clicks
+ * the row the PAGE opened; SEED 3 clicks it as a visitor at beat 1), and
+ * collapsing them would lose which gesture each test is about. Do not "clean up"
+ * one into the other.
  */
-const visitorRow = (page: Page) =>
-  page.locator(".board-row").filter({ hasText: "Atlas Freight" });
+const visitorRow = movedRow;
+
+/**
+ * The board's own "open the mail behind this row" control for `MOVED_COMPANY`'s
+ * row — the gesture SEED 3 and SEED 4 both perform, at different beats.
+ *
+ * Derived from the SAME constant the locators filter on, and that is not
+ * tidiness. The locator and the click used to be two independent literals; when
+ * only one of them was reasoned about, the test clicked one row and asserted
+ * against another's premise, which is exactly how the gate above became
+ * unreachable. One constant, so they cannot drift apart again.
+ */
+const visitorOpener = (page: Page) =>
+  page.getByRole("button", { name: new RegExp(`^Open ${MOVED_COMPANY}`) });
 
 /**
  * The docked pane's × measured against the box that actually CROPS the board.
@@ -511,9 +545,13 @@ test.describe("landing B (/landing-b)", () => {
    * Both heights, because they are different amounts of room (552px of stage
    * at 768, 384px at 600) and the original defect was found across both.
    *
-   * The row clicked is `visitorRow`, NOT the row the act moves. That choice is
-   * load-bearing and its reason is a defect — read the locator's docblock
-   * before changing it.
+   * The row clicked is `visitorRow`, which IS the row the act moves. It used to
+   * be Atlas Freight, and that is what made this test structurally unable to
+   * fail: the misclassification is only reachable through
+   * `pendingSeedRef.current === id`, and the page's claim only ever holds the
+   * moved row's id, so on any other row the guarded branch was dead. Read the
+   * locator's docblock before changing it — including the evidence that had to
+   * exist before it could move.
    */
   for (const viewport of [DESKTOP_1024_768, DESKTOP_1024]) {
     const size = `${viewport.width}x${viewport.height}`;
@@ -527,8 +565,10 @@ test.describe("landing B (/landing-b)", () => {
 
       // The visitor takes the wheel: a click on the row's own identity button,
       // the gesture the board exposes for "open the mail behind this row".
-      // NOT the moved row — see `visitorRow`, where the reason is a defect.
-      await page.getByRole("button", { name: /^Open Atlas Freight/ }).click();
+      // THE MOVED ROW, and that is the whole point — it is the only id the
+      // page's claim ever holds, so it is the only click that can reach the
+      // misclassification this test guards. See `visitorRow`.
+      await visitorOpener(page).click();
       // The arrival gate is the PANE ON THAT ROW, not the beat: a visitor open
       // moves focus into the pane (`ApplicationDetail`'s `focusOnOpen`, true
       // for every open a person performed) and `focus()` scrolls the viewport
@@ -620,12 +660,16 @@ test.describe("landing B (/landing-b)", () => {
    * `commit(...)` from the seed-consuming branch of `MarketingBoard`'s
    * `transport.detail`. The click then bails on the identical reference exactly
    * as before, and this test should go red on the `above` reading at both
-   * heights while SEED 3 stays GREEN — it clicks a different row, which is a
-   * real reference change. A red on both would mean this is measuring the
+   * heights while SEED 3 stays GREEN. The reason SEED 3 survives is NOT that it
+   * clicks a different row — since the retarget it clicks the same one — but
+   * that it clicks at beat 1, before the page has seeded anything: `detailApp`
+   * is still null there, so the visitor's open is a real state change whatever
+   * the identity-refresh does. A red on both would mean this is measuring the
    * camera in general rather than this specific hole.
    *
-   * It does NOT retarget `visitorRow` — read that locator's docblock. This is a
-   * different gesture at a different beat, not the retarget it describes.
+   * SEED 3 has since BEEN retargeted onto this same row — read `visitorRow`'s
+   * docblock for the evidence that allowed it. The two tests are still distinct:
+   * this is a different gesture at a different beat, on a pane the PAGE opened.
    */
   for (const viewport of [DESKTOP_1024_768, DESKTOP_1024]) {
     const size = `${viewport.width}x${viewport.height}`;
@@ -649,7 +693,7 @@ test.describe("landing B (/landing-b)", () => {
       // The gesture: the row that is already open, clicked by its own identity
       // button — the same control SEED 3 uses, pointed at the one card whose
       // re-open the board cannot tell from no gesture at all.
-      await page.getByRole("button", { name: /^Open Larkspur Systems/ }).click();
+      await visitorOpener(page).click();
       await expect(page.getByTestId("application-detail")).toBeVisible();
       await expect(movedRow(page)).toHaveAttribute("data-detail-open", "true");
 
@@ -726,9 +770,9 @@ test.describe("landing B (/landing-b)", () => {
    * scroll a clipped box into view), and which rows are in frame at beat 0 is a
    * fact about the fixture and the camera, not a constant worth hard-coding. It
    * takes the first row whose opener lies inside the clip and is not Larkspur.
-   * This does NOT retarget `visitorRow` — read that locator's docblock; this is
-   * a different gesture at a different beat, and Larkspur is excluded precisely
-   * because clicking it would ask SEED 4's question with these words.
+   * Larkspur is excluded here even though `visitorRow` now points AT it: this is
+   * a different gesture at a different beat, and clicking Larkspur would ask
+   * SEED 4's question with these words.
    *
    * One viewport, deliberately, and it is not the geometric argument the other
    * seeds make — a count does not change at 768 vs 600.
