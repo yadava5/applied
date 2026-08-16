@@ -334,7 +334,7 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # ITINERARY. An onsite day lists times and names and may never use
             # the word "interview"; what it always says is who you will meet.
             # `meet (the )?(hiring )?team` wants the literal noun "team".
-            r"\b(you|we) ('ll|will) meet with\b",
+            r"\b(you|we)('ll| will) meet with\b",
             # The request itself, with the medium left out.
             r"\b(would|'d) like to (speak|talk|chat|meet) with you\b",
         ],
