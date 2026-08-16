@@ -108,7 +108,21 @@ export type GmailSyncResult =
   | { kind: "not_connected" }
   | GmailFailure;
 
-export type GmailAuthorizeResult = { kind: "ok"; url: string } | GmailFailure;
+export type GmailAuthorizeResult =
+  | { kind: "ok"; url: string }
+  /**
+   * The beta is full: the backend refused to mint a consent URL because the
+   * Google project's user allowance is finite and non-renewable (409). Not an
+   * auth problem and not a deploy problem — the reader's next step is to ask
+   * for a place, so it must never collapse into `auth` or `unavailable`.
+   *
+   * Deliberately NOT a member of `GmailFailure`: this is the only endpoint
+   * where 409 carries this meaning, and widening the shared union would put
+   * the label on the not-connected 409s that `/gmail/inbox`, `/gmail/sync` and
+   * `/gmail/pipeline` return.
+   */
+  | { kind: "at_capacity" }
+  | GmailFailure;
 
 async function sessionToken(): Promise<string | null> {
   // Request-memoized (lib/supabase/auth) so the Settings page's user read and
@@ -121,6 +135,14 @@ async function sessionToken(): Promise<string | null> {
  * problems (the JWT was rejected); 503 is the honest "not configured on this
  * deploy" signal the routers emit; everything else is a transient backend
  * error the user can retry.
+ *
+ * 409 IS DELIBERATELY NOT HANDLED HERE, because it does not mean one thing
+ * across these endpoints: `/gmail/inbox` and `/gmail/sync` answer 409 for "this
+ * user has no Gmail connected", and `/auth/gmail/authorize` answers it for
+ * "the beta is at capacity". Each caller that cares reads it before falling
+ * back to this function — see `fetchGmailInboxPage` and
+ * `getGmailAuthorizeUrl`. A 409 branch in here would have quietly relabelled a
+ * not-connected pipeline read as "the beta is full".
  */
 function classifyBadResponse(status: number): GmailFailure {
   if (status === 401 || status === 403) return { kind: "auth", status };
@@ -184,6 +206,11 @@ export async function getGmailAuthorizeUrl(
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       cache: "no-store",
     });
+    // Read before the generic classifier, the same way the inbox reads its own
+    // 409: on THIS endpoint the code means the beta's connection cap refused to
+    // mint a consent URL. Status only — never the body — so editing the
+    // backend's message cannot change what the UI does.
+    if (res.status === 409) return { kind: "at_capacity" };
     if (!res.ok) return classifyBadResponse(res.status);
     const data = (await res.json()) as { authorization_url?: string };
     if (!data.authorization_url) {
