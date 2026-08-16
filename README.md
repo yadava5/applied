@@ -231,14 +231,19 @@ every public surface. What was published, and is no longer:
 | `huggingface.co/yadava5/jobtracker-setfit-classifier` | `model.safetensors`, `model_head.pkl`, and `training_metadata.json` | Private |
 | `huggingface.co/spaces/yadava5/jobtracker-classifier` | its own int8 copy, `head.json`, `examples.json` | Private |
 
-**Why.** Applied reads Gmail under the restricted `gmail.readonly` scope. Google's Workspace API
-user-data policy forbids using that mail to train AI/ML models, and the prohibition reaches
-aggregated, anonymised and derived data — not just raw messages. The checkpoint's own
-`training_metadata.json` recorded `user_correction: 39` of `total_examples: 192`, so a published
-artifact stated, in machine-readable form, that it had been fitted partly on restricted-scope mail.
-That the 39 corrections were the maintainer's own mailbox (the only mailbox that had ever been
-connected when the checkpoint was trained on 2026-03-06) does not change the analysis: the policy
-turns on the data's origin, not its owner.
+**Why — and precisely what was wrong.** Applied reads Gmail under the restricted `gmail.readonly`
+scope. Google's Workspace API user-data policy prohibits using that mail to train a model *"beyond
+that specific user's personalized model for the appropriate use case"*. The training itself is not
+what that sentence forbids here: the 39 corrections were the maintainer's own mail, fed to a model
+that served only him, on a single-mailbox desktop setup. **Publishing the result is what the carve-out
+does not cover.** A checkpoint distributed on a public model repository is no longer "that specific
+user's personalized model", and the prohibition reaches derived and aggregated artifacts, not just
+raw messages — which is why the fitted head and the embedding bank went with the weights.
+
+The checkpoint's own `training_metadata.json` recorded `user_correction: 39` of
+`total_examples: 192`, so a published artifact stated the fact in machine-readable form. The
+provenance is set out in full in [`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md) —
+what was trained, when, on whose mail, and on what evidence.
 
 **What this does not claim.** The blobs remain retrievable from this repository's git history and
 from any existing clone or fork. Removing them at `HEAD` stops redistribution going forward; it is

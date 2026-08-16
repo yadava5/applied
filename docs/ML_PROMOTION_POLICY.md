@@ -157,20 +157,72 @@ That hosted-CI failure is the honest state of things, not an oversight. Making
 it green means publishing a checkpoint the workflow can download — and that
 decision has now been made, in the negative.
 
-**Settled 2026-08-15: no checkpoint gets published.** The checkpoint trained on
-2026-03-06 recorded 39 of its 192 training examples as user corrections, which
-makes it a model fitted partly on mail read under Gmail's restricted
-`gmail.readonly` scope. Google's Workspace API user-data policy forbids
-training on that data and reaches derived and aggregated data as well, so the
-artifact was withdrawn from this repository and from both Hugging Face
-surfaces rather than published to satisfy a CI job. The corrections were the
-maintainer's own; the policy turns on where the data came from, not who owned
-it.
+**Settled 2026-08-15: no checkpoint gets published.**
 
 The consequence for this gate is that it stays red on hosted CI, permanently,
 and that is now the intended state rather than a gap waiting to be closed. The
 only thing that would change it is a checkpoint trained on synthetic data only
 — `backend/tests/corpus/` is the intended source — which has not been run.
+
+## Provenance of the withdrawn checkpoint
+
+Written for a reader with no context and no reason to trust the author. Every
+claim below is checkable from this repository or from the commit timeline.
+
+**What was trained.** A SetFit few-shot classifier, fine-tuned offline on
+`sentence-transformers/paraphrase-MiniLM-L6-v2`. Its own provenance artifact,
+`training_metadata.json`, recorded `total_examples: 192` with
+`source_counts.user_correction: 39` — the rest synthetic seed data
+(`mock_seed*`, 103) and an external dataset (50). `trained_at` was
+**2026-03-06T22:54:04**.
+
+**Whose mail the 39 were.** The developer-owner's own mailbox, and no one
+else's. The evidence, rather than the assertion:
+
+- The project has ever had **two** authentication accounts: a seed account
+  `demo@jobtracker.dev` created **2026-07-17**, and the owner's, created
+  **2026-07-19**. Both postdate the checkpoint by **four months**.
+- At the time of training, Applied was a single-user macOS desktop application
+  over local SQLite. There was no hosted deployment and no mechanism by which a
+  third party's mail could reach a training corpus.
+- Every training row that exists today belongs to the owner and is sourced
+  `user_correction`.
+
+The original 39 rows are **not** recoverable — they lived in the desktop-era
+SQLite store, and this is stated rather than papered over. The commit timeline
+is therefore the durable record, which is one reason this history is not being
+rewritten.
+
+**What was actually wrong.** Not the training. Google's Workspace API user-data
+policy prohibits training *"beyond that specific user's personalized model for
+the appropriate use case"* — and a model trained on one person's own mail, for
+that same person, on his own machine, is the case the carve-out describes.
+**Publication is what fell outside it.** The checkpoint was pushed to a public
+Hugging Face model repository and committed to a public source repository, at
+which point it stopped being that user's personalized model and became a
+distributed artifact. The prohibition reaches derived and aggregated data too,
+which is why the fitted head (`head.json`) and the embedding bank
+(`examples.json`) were withdrawn alongside the weights.
+
+**Where the artifacts are now.** Deleted from the tracked tree, blocked from
+returning by `.gitignore`, and both Hugging Face surfaces set private. The
+originals are retained offline by the owner at
+`~/Documents/Projects/applied-ml-weights-archive/` with recorded SHA-256 sums;
+nothing was destroyed. Two limits are on the record: the blobs remain reachable
+through this repository's git history, and the model repository had been
+downloaded 13 times before it was closed. Those copies cannot be recalled,
+which is precisely why this note exists.
+
+**What runs in production.** Deterministic regex rules, and nothing else. The
+hosted classifier has no model installed, no retrain path, and no checkpoint to
+load. A user correction is recorded against that user's own account and flags
+the message `user_corrected`; it does not train anything.
+
+**What training is permitted now.** Default-deny, enforced in code rather than
+by convention (`backend/jobtracker/classifier/setfit_model.py`). A retrain is
+refused unless the corpus is **entirely synthetic** or the single user it
+belongs to is on an **explicit owner allowlist**; a corpus spanning two users
+raises instead of training, and an empty corpus is refused as well.
 
 ## Provenance a verdict needs
 

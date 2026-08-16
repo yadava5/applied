@@ -51,11 +51,13 @@ backend/checkpoints/
 
 ## Trained model weights, and anything derived from them, are never committed.
 ## The checkpoint these were exported from was fitted partly on real mailbox
-## corrections, and Google's restricted-scope terms reach derived and
-## aggregated data as well as the raw messages — so a published checkpoint is
-## a compliance problem regardless of whose mail it was. Re-adding any of these
-## puts the weights back in a public bundle. Regenerate them locally with
-## `ml/browser/export_onnx.py`; do not commit the output.
+## corrections. Training on them was defensible — one user's own mail, a model
+## serving only that user — but PUBLISHING the result is not: a distributed
+## checkpoint is no longer "that specific user's personalized model", and
+## Google's restricted-scope terms reach derived and aggregated data as well as
+## raw messages. Committing here is publishing, because this repository is
+## public. Regenerate locally with `ml/browser/export_onnx.py`; do not commit
+## the output. Provenance: docs/ML_PROMOTION_POLICY.md.
 *.onnx
 *.safetensors
 *.pkl

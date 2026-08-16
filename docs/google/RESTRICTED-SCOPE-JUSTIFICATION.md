@@ -207,26 +207,36 @@ prominent, user-facing feature the data serves; there is no other use.
   data. In the hosted application no model is trained at all — there is nothing
   installed to train one with, and no retrain runs in production.
 
-  **A checkpoint that was trained on corrections, and its withdrawal.** Stated
-  here rather than left for a reviewer to find in the repository's history. An
-  earlier, experimental stage of this project fine-tuned a SetFit classifier
-  offline, and **39 of that checkpoint's 192 training examples were user
-  corrections**. They were the operator's own mail: the checkpoint was trained
-  on 2026-03-06, four months before any second account existed, and the project
-  has never had another user whose mail could have entered it. That checkpoint
-  never ran in the hosted application, which has classified with rules
-  throughout — but it *was* published, both to a public Hugging Face model
-  repository and as committed weights in the public source repository.
+  **An earlier checkpoint, and its withdrawal — disclosed rather than left to
+  be found.** Before Applied was a hosted application it was a single-user
+  macOS program over local SQLite, and at that stage it fine-tuned a SetFit
+  classifier offline. **39 of that checkpoint's 192 training examples were user
+  corrections**, recorded in its own `training_metadata.json`. They were the
+  operator's own mail and no one else's: it was trained on **2026-03-06**, and
+  the two authentication accounts this project has ever had were created on
+  2026-07-17 (a seed account) and 2026-07-19 (the operator's) — **four months
+  later**. There was no hosted deployment then and no path by which another
+  person's mail could have reached the corpus.
+
+  On that reading the training sat inside the clause quoted above: one user's
+  own mail, a model serving only that user, on that user's own machine. What
+  went beyond it was **distribution** — the checkpoint was pushed to a public
+  Hugging Face model repository and committed to the public source repository,
+  at which point it was no longer that user's personalized model. It never ran
+  in the hosted application, which has classified with rules throughout.
 
   On **2026-08-15** it was withdrawn. The weights and every artifact derived
   from them — the ONNX exports, the fitted classifier head, and the embedding
   bank computed with the fine-tuned encoder — were deleted from the source tree
   and blocked from re-entering it, and both Hugging Face surfaces were made
   private. Two limits are recorded rather than glossed: the blobs remain
-  reachable through the public repository's **git history**, which cannot be
-  undone without rewriting that history, and the model repository had been
-  downloaded 13 times before it was closed. Any future checkpoint will be
-  trained on the synthetic corpus at `backend/tests/corpus/` only.
+  reachable through the public repository's **git history**, and the model
+  repository had been downloaded 13 times before it was closed; those copies
+  cannot be recalled. Training is now default-deny in code — a retrain is
+  refused unless the corpus is entirely synthetic or its single owner is
+  explicitly allowlisted — and any future checkpoint will use the synthetic
+  corpus at `backend/tests/corpus/` only. Full provenance is recorded in
+  `docs/ML_PROMOTION_POLICY.md`.
 - **No permanent copies.** The policy's Terms of Service note prohibits
   *"scraping, building databases … or otherwise creating permanent copies of
   Google User data."* Applied does not archive mail. The message body is never
