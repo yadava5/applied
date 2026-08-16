@@ -118,6 +118,28 @@ def _block_real_training(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(SetFitClassifier, "_train_sync", _never)
 
 
+@pytest.fixture
+def allowlisted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put every user this file trains on onto the training allowlist.
+
+    Since the owner-only gate landed, a corpus of ``user_correction`` rows is
+    refused unless its user is named in
+    ``JOBTRACKER_TRAINING_ALLOWED_USER_IDS`` — default-deny. These tests are
+    about the *scoping* guards, so they hand themselves the permission and
+    leave the allowlist's own behaviour to
+    ``test_training_is_owner_only.py``. Requesting this fixture in a test that
+    expects a refusal would mask it, so the refusal tests below do not.
+    """
+
+    from jobtracker.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "training_allowed_user_ids",
+        [USER_A, USER_B, LOCAL_USER_ID],
+    )
+
+
 def _row(user_id: uuid.UUID, label: str, i: int = 0) -> TrainingData:
     return TrainingData(
         user_id=user_id,
@@ -133,7 +155,9 @@ def _row(user_id: uuid.UUID, label: str, i: int = 0) -> TrainingData:
 # =============================================================================
 
 
-async def test_get_training_data_reads_only_the_requested_user(training_db) -> None:
+async def test_get_training_data_reads_only_the_requested_user(
+    training_db, allowlisted
+) -> None:
     """Two users in the table; a training run sees exactly one of them.
 
     This is the test that turns red (with ``CrossUserTrainingError``) if the
@@ -152,7 +176,7 @@ async def test_get_training_data_reads_only_the_requested_user(training_db) -> N
     assert all(USER_B.hex[:4] not in text for text in texts)
 
 
-async def test_desktop_single_user_corpus_is_unchanged(training_db) -> None:
+async def test_desktop_single_user_corpus_is_unchanged(training_db, allowlisted) -> None:
     """Desktop is single-user (the ``LOCAL_USER_ID`` sentinel) and keeps working."""
 
     for label in ("applied", "rejection", "interview"):

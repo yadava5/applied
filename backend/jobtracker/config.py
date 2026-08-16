@@ -59,6 +59,24 @@ class CronSyncUserIdsError(RuntimeError):
     """
 
 
+class TrainingAllowedUserIdsError(RuntimeError):
+    """``JOBTRACKER_TRAINING_ALLOWED_USER_IDS`` holds something that is not a UUID.
+
+    Not a ``ValueError``, for the reason spelled out on
+    :class:`CronSyncUserIdsError` — pydantic re-renders a ``ValueError`` out of
+    a validator with ``input_value=<the entire env var string>`` appended, so
+    a validator that withholds the value while raising ``ValueError`` does not
+    actually withhold it.
+
+    Failing at config load is the required behaviour and not merely tidy. A
+    malformed entry that survived parsing would be a ``str`` in a list of
+    ``uuid.UUID``, would compare equal to no user id, and the training gate
+    would then refuse *everyone* — silently, and identically to the "you
+    forgot to set it" case. Default-deny is supposed to be a decision, not an
+    accident nobody can tell apart from a typo.
+    """
+
+
 class Settings(BaseSettings):
     """
     Application settings with environment variable support.
@@ -318,6 +336,22 @@ class Settings(BaseSettings):
     setfit_min_examples_per_class: int = Field(
         default=5,
         description="Minimum examples per class required for SetFit training",
+    )
+    training_allowed_user_ids: Annotated[list[uuid.UUID], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "The ONLY user ids whose `training_data` rows SetFit may train on "
+            "(JOBTRACKER_TRAINING_ALLOWED_USER_IDS='<uuid>,<uuid>'). Empty — "
+            "the default, and what the hosted app sets — means training is "
+            "refused for every user, which is the intended production state: "
+            "no deployed path retrains, and a misconfiguration must fail "
+            "closed. Single-user is not owner-only; the corpus read is already "
+            "pinned to one user_id, but without this list any user_id could be "
+            "the one. A corpus every row of which is synthetic (see "
+            "`classifier.setfit_model.SYNTHETIC_TRAINING_SOURCES`) trains "
+            "without being listed, so fixtures and the local dev loop still "
+            "work. Enforced in `classifier.setfit_model`, not here."
+        ),
     )
     lite_mode: bool = Field(
         default=False,
@@ -678,6 +712,53 @@ class Settings(BaseSettings):
                 # ``invalid literal for int() with base 16: '<the entry, minus
                 # its dashes>'``, so the chained traceback would quote most of
                 # the value straight back out. Measured, not assumed.
+                ) from None
+        return parsed
+
+    @field_validator("training_allowed_user_ids", mode="before")
+    @classmethod
+    def _parse_training_allowed_user_ids(cls, value: Any) -> Any:
+        """Split the comma-separated env var into real ``uuid.UUID`` objects.
+
+        The parse must be loud for the same reason the cron one is, with the
+        polarity that matters here spelled out: the gate this feeds compares
+        ``user_id in settings.training_allowed_user_ids``, and a ``str`` that
+        slipped through would equal no ``uuid.UUID``. The list would silently
+        become empty-in-effect and every training run would be refused — the
+        safe direction, but indistinguishable from an unset variable, so an
+        operator would be told "not allowlisted" for a user they had in fact
+        listed. Stop at load instead.
+
+        The failing **index** is named, never the offending value: an operator
+        can paste anything into a Vercel env box and this message reaches
+        logs. That is why this raises :class:`TrainingAllowedUserIdsError` and
+        not ``ValueError`` — see that class, and ``CronSyncUserIdsError`` for
+        the measurement behind it.
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            items = list(value)
+
+        parsed: list[uuid.UUID] = []
+        for index, item in enumerate(items):
+            if isinstance(item, uuid.UUID):
+                parsed.append(item)
+                continue
+            try:
+                parsed.append(uuid.UUID(str(item)))
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise TrainingAllowedUserIdsError(
+                    f"JOBTRACKER_TRAINING_ALLOWED_USER_IDS entry #{index + 1} "
+                    f"of {len(items)} is not a valid UUID "
+                    f"({type(exc).__name__}). The value is withheld from this "
+                    "message because it reaches the logs. Expected a "
+                    "comma-separated list of user UUIDs."
+                # ``from None`` for the reason given on the cron validator:
+                # a near-miss UUID's own message quotes most of the value.
                 ) from None
         return parsed
 

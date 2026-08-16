@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { safeRedirectPath } from "@/lib/auth/redirect";
 import { expireSpentPkceVerifierCookies } from "@/lib/supabase/pkceVerifierCookies";
 import { createClientWithSessionHeaders } from "@/lib/supabase/server";
 
@@ -44,10 +45,12 @@ import { createClientWithSessionHeaders } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const redirectParam = searchParams.get("redirect") ?? "/dashboard";
-
-  // Refuse open redirects: only allow same-origin paths.
-  const nextPath = redirectParam.startsWith("/") ? redirectParam : "/dashboard";
+  // Refuse open redirects: only allow same-origin paths. `startsWith("/")`
+  // used to be the whole check and did not do that — `?redirect=//evil.com`
+  // starts with a slash, and `new URL("//evil.com", origin)` below resolves to
+  // `https://evil.com`, so this handler answered with a 302 off-origin. See
+  // `lib/auth/redirect.ts`.
+  const nextPath = safeRedirectPath(searchParams.get("redirect"));
 
   // A provider (OAuth) that fails or is cancelled redirects here with an
   // `error` / `error_description` instead of a `code`. Surface it on /login,

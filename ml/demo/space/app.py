@@ -28,14 +28,25 @@ print("warming classifier…", flush=True)
 get_service().classify("warmup", "warmup body")
 print("classifier ready", flush=True)
 
+# "fine-tuned offline on a fixed corpus", NOT "trained on corrections".
+# Nothing retrains on anybody's mail: the deployed classifier is rules-only,
+# no hosted path reaches the training machinery, and since the owner-only gate
+# (backend/jobtracker/classifier/setfit_model.py) a training run refuses any
+# user who is not explicitly allowlisted. The model shipped here was fit once,
+# offline, on synthetic seeds and public-dataset rows. Applied reads mail under
+# Gmail's restricted gmail.readonly scope, and a published claim that user
+# corrections train a model is read by a restricted-scope reviewer as intent
+# to train generally — see PR #354, which removed the same claim from the
+# README. Do not reintroduce it here.
 LAYER_BLURB = {
     "rules": "Regex rules answered instantly — the pattern is unambiguous.",
     "embeddings": "e5-small-v2 similarity matched a labeled example.",
-    # NOT "trained on corrections": the shipped checkpoint was fitted partly on
-    # mail read under Gmail's restricted scope, was withdrawn on 2026-08-15, and
-    # a public label advertising it as correction-trained is the claim a CASA
-    # reviewer reads. It is a few-shot head; say that and nothing more.
-    "setfit": "SetFit (few-shot ML head) decided.",
+    # Keep this label free of "trained on corrections". The shipped checkpoint
+    # was fitted partly on mail read under Gmail's restricted scope and was
+    # withdrawn on 2026-08-15; a public label advertising it as
+    # correction-trained is the claim a CASA reviewer reads. "Offline, on a
+    # fixed corpus" is the accurate framing -- there is no live retrain loop.
+    "setfit": "SetFit (few-shot ML, fine-tuned offline on a fixed corpus) decided.",
     "fallback": "No layer was confident — routed to human review.",
 }
 
