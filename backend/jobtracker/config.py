@@ -527,6 +527,33 @@ class Settings(BaseSettings):
             "differentiator. Env: JOBTRACKER_GMAIL_FOLLOWUP_STALE_DAYS."
         ),
     )
+    gmail_connection_cap: int = Field(
+        default=25,
+        description=(
+            "How many DISTINCT users may hold a connected Gmail mailbox on this "
+            "deployment. Not a rate limit and not a quota that refills — it "
+            "rations a resource that cannot be bought back. The Google Cloud "
+            "project this app publishes under has a lifetime ceiling of 100 "
+            "users for its restricted `gmail.readonly` scope, and Google's own "
+            "wording is that the number 'cannot be reset or changed': a slot is "
+            "spent the moment a person REACHES the consent screen, and no "
+            "disconnect, deletion or refund gives it back. So the enforcement "
+            "point is `/auth/gmail/authorize` (see "
+            "`cloud.gmail_oauth._enforce_connection_cap`), which runs before a "
+            "consent URL exists; a check at the callback would run after the "
+            "slot was already gone. "
+            "The default is 25, deliberately far below 100, because this "
+            "deployment can only count what it RECORDS — a user who opens the "
+            "consent screen and walks away spends a Google slot and leaves no "
+            "row anywhere, and a user who disconnects frees a row here that "
+            "Google does not give back. The headroom absorbs both. "
+            "There is no 'off' value and no unlimited sentinel: raise it to the "
+            "number you actually mean, on purpose, one edit at a time. Zero or "
+            "negative means no NEW mailbox may connect (already-connected users "
+            "are still let through — reconnecting spends no Google slot). "
+            "Env: JOBTRACKER_GMAIL_CONNECTION_CAP."
+        ),
+    )
 
     # Every setting the Gmail web OAuth flow needs before it can offer a
     # connect button. Each maps to an env var ``JOBTRACKER_<UPPER>``.

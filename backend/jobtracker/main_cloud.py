@@ -493,6 +493,101 @@ async def schema_version_check() -> SchemaVersionResponse:
     )
 
 
+class GmailCapacityResponse(BaseModel):
+    """How much of the beta's Gmail-connection allowance is spent. Counts only."""
+
+    connected: int | None = Field(
+        default=None,
+        description=(
+            "Distinct users who currently hold a connected Gmail mailbox, read "
+            "from `gmail_sync_enrollment`. Null means the question could not be "
+            "answered — never 'zero'. A null here is the same state that makes "
+            "`/auth/gmail/authorize` refuse: an uncountable cap is treated as a "
+            "full one."
+        ),
+    )
+    ceiling: int = Field(
+        description=(
+            "The configured maximum (`JOBTRACKER_GMAIL_CONNECTION_CAP`). Always "
+            "known — it is configuration, not a measurement."
+        )
+    )
+    remaining: int | None = Field(
+        default=None,
+        description=(
+            "`ceiling - connected`, floored at 0, or null when `connected` is. "
+            "This is what the operator actually watches; it is NOT the number of "
+            "Google slots left, which is smaller — see `at_capacity`."
+        ),
+    )
+    at_capacity: bool | None = Field(
+        default=None,
+        description=(
+            "True when no new user may connect a mailbox. Null when the count "
+            "could not be read, in which case connect refuses anyway. Remember "
+            "what the underlying number is and is not: Google spends one of "
+            "this project's LIFETIME user slots the moment somebody reaches the "
+            "consent screen, and an abandoned consent leaves no row here, so the "
+            "count below is a floor on what Google has charged, never a ceiling."
+        ),
+    )
+
+
+@app.get(
+    "/health/gmail-capacity",
+    response_model=GmailCapacityResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Gmail Connection Capacity (cloud)",
+    tags=["System"],
+)
+async def gmail_capacity_check() -> GmailCapacityResponse:
+    """Report how many of the beta's Gmail connections are spent.
+
+    **Why this is not a field on ``/health``.** That probe is deliberately
+    credential-free and does NO database work, so a Supabase project paused by
+    the free tier's seven-day idle rule cannot turn a liveness check red. This
+    question needs a row count, so it lives on its own path — the same split,
+    for the same reason, as ``/health/schema``.
+
+    **Always 200,** and for the same reason as that endpoint: the status code
+    says whether the check ran, not what it found. A full beta is a normal
+    operating state, not an outage.
+
+    **The read differs from ``/health/schema``'s in one way worth stating.**
+    ``alembic_version`` carries no RLS; ``gmail_sync_enrollment`` does, and this
+    count works only because that table publishes a permissive ``SELECT`` policy
+    for the runtime role and the read binds no identity
+    (``gmail_oauth.gmail_connection_census``). It is the same query the cron
+    already makes.
+
+    **No identities, by construction.** Aggregates and a configured number,
+    never a user id or an address — the enrollment table holds no email anyway,
+    and the count is the whole answer to "how many slots are left?". It is
+    unauthenticated because it is an aggregate and because this codebase has no
+    admin role to scope it to; inventing one to guard a single integer would add
+    auth surface, which is a worse trade than publishing the integer.
+    """
+
+    from jobtracker.cloud.gmail_oauth import gmail_connection_census
+
+    ceiling = settings.gmail_connection_cap
+    try:
+        connected, _ = await gmail_connection_census()
+    except Exception as exc:  # noqa: BLE001 — the count is the fallible part
+        logger.warning(
+            "Gmail capacity could not be counted (%s); reporting null.",
+            type(exc).__name__,
+        )
+        return GmailCapacityResponse(ceiling=ceiling)
+
+    return GmailCapacityResponse(
+        connected=connected,
+        ceiling=ceiling,
+        remaining=max(0, ceiling - connected),
+        at_capacity=connected >= ceiling,
+    )
+
+
 @app.get(
     "/",
     summary="Cloud API Root",
