@@ -105,6 +105,11 @@ export async function updateSession(request: NextRequest) {
     publicEnv.NEXT_PUBLIC_SUPABASE_URL,
     publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
+      // The library ships no `secure` in `DEFAULT_COOKIE_OPTIONS`, so the
+      // refreshed session cookies this proxy writes on EVERY request went out
+      // without it. Same gate and same reasoning as `lib/supabase/server.ts`,
+      // which spells it out — including why `httpOnly` stays `false`.
+      cookieOptions: { secure: process.env.NODE_ENV === "production" },
       cookies: {
         getAll() {
           return request.cookies.getAll();

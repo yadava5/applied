@@ -15,13 +15,27 @@
 #
 # Heavy-ML moves to a separate inference service in a follow-up; cloud
 # rules-only classifier lands in C6.
+#
+# BEING DIFFERENT IS NOT LICENCE TO BE LOWER.
+# The exclusions above are about SIZE. For every package the two files share,
+# this one is the file that deploys, so a security floor is only worth
+# anything here — a floor raised in backend/requirements.txt protects the
+# laptop and the test runner and nothing a user can reach. On 2026-08-15 five
+# shared packages had drifted below their backend counterparts, two of them
+# (pyjwt, pydantic-settings) below a published advisory. Every constraint in
+# this file is `>=` with no upper bound, so pip had been resolving to the
+# patched releases anyway; that is luck, not a floor, and it stops being true
+# the day a transitive cap pulls one of them back down.
+#
+# Nothing checks this mechanically. When you raise a floor in
+# backend/requirements.txt for a shared package, raise it here too.
 
 # -----------------------------------------------------------------------------
 # Web Framework
 # -----------------------------------------------------------------------------
-fastapi>=0.109.0
+fastapi>=0.141.1
 pydantic>=2.13.4
-pydantic-settings>=2.1.0
+pydantic-settings>=2.14.2     # GHSA-4xgf-cpjx-pc3j
 email-validator>=2.3.0
 
 # -----------------------------------------------------------------------------
@@ -34,7 +48,7 @@ asyncpg>=0.31.0
 # -----------------------------------------------------------------------------
 # Auth (Supabase JWT verification, wired in C3)
 # -----------------------------------------------------------------------------
-pyjwt[crypto]>=2.8.0
+pyjwt[crypto]>=2.13.0         # PYSEC-2026-175..179
 cryptography>=50.0.0
 
 # -----------------------------------------------------------------------------
@@ -54,8 +68,8 @@ aioimaplib>=2.0.1
 # -----------------------------------------------------------------------------
 # Email Parsing
 # -----------------------------------------------------------------------------
-beautifulsoup4>=4.12.0
-lxml>=6.1.0                   # >=6.1.0: PYSEC-2026-87, matching backend/requirements.txt
+beautifulsoup4>=4.15.0
+lxml>=6.1.1                   # PYSEC-2026-87 (fixed in 6.1.0)
 python-dateutil>=2.9.0.post0
 
 # -----------------------------------------------------------------------------

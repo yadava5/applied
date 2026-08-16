@@ -45,8 +45,9 @@ export const MASTHEAD = {
   kicker: "A 3-layer email classifier, its confidence gate, and the model that runs in your browser.",
   colophonLines: [
     "© 2026 · Ayush Yadav",
-    "3-layer email classifier · macOS + web",
-    "Model: MIT · runs in-browser via ONNX",
+    "3-layer email classifier · web",
+    "Applied is proprietary · all rights reserved",
+    "Model runs in-browser via ONNX",
   ],
 } as const;
 
@@ -118,7 +119,10 @@ export const TOC = {
   colophon: [
     "© 2026 · Ayush Yadav",
     "Applied · System Card Vol. 01",
-    "Model licensed MIT",
+    // Kept on two lines: the right-aligned mono column is ~29ch wide, and the
+    // single-line form wrapped with "RESERVED" orphaned on a fourth line.
+    "Applied is proprietary",
+    "All rights reserved",
   ],
   teaser:
     "A printed walkthrough of a live classifier — the why, the cascade, and the receipts. Read it with the demo open.",
@@ -386,7 +390,7 @@ export const INSIDE = {
     headline: "It runs in your browser.",
     body: [
       "The quantized model is loaded by Transformers.js (3.5.2) over onnxruntime-web, executing in WebAssembly on the client. allowRemoteModels is false and the model path is local — the tab fetches the weights once and never phones home.",
-      "There is no inference server, no per-request cost, and no data leaving the page. The classifier the desktop app runs in Python, the web app runs on your own CPU.",
+      "There is no inference server, no per-request cost, and no data leaving the page. The classifier the backend runs in Python, the web app runs on your own CPU.",
     ],
     facts: [
       { k: "RUNTIME", v: "Transformers.js 3.5.2 · onnxruntime-web (WASM)" },
@@ -620,7 +624,7 @@ export const BUILD = {
       { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 201 regex", note: "the 3-layer hybrid cascade" },
       { area: "TRAINING", tech: "MLflow registry · CI-gated ≥ 0.95", note: "log, register, promote to production" },
       { area: "BACKEND", tech: "FastAPI · SQLModel · SQLite", note: "sync, classify, review queue" },
-      { area: "DESKTOP", tech: "SwiftUI macOS app", note: "the original native client" },
+      { area: "DESKTOP", tech: "SwiftUI macOS app", note: "the original native client — de-scoped 2026-08-12" },
     ],
     source: "source · ml/browser/site/app.js:15 · ml/track_run.py · pyproject.toml",
   },
@@ -656,5 +660,9 @@ export const BACK_COVER = {
   coda: "Now it reads itself.",
   edgeNote: "end · vol. 01",
   signature: "System Card · Vol. 01",
-  colophon: ["Applied · System Card · Vol. 01", "Ayush Yadav · 2026", "Model licensed MIT · runs in-browser via ONNX"],
+  colophon: [
+    "Applied · System Card · Vol. 01",
+    "Ayush Yadav · 2026 · all rights reserved",
+    "Applied is proprietary · model runs in-browser via ONNX",
+  ],
 } as const;

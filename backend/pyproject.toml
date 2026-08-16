@@ -7,7 +7,11 @@ name = "jobtracker"
 version = "0.1.0"
 description = "Email-powered job application tracker with ML classification"
 readme = "README.md"
-license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+# Proprietary, all rights reserved -- see the repository-root LICENSE. Written
+# as a PEP 639 `LicenseRef-` expression because no SPDX identifier describes
+# "no licence granted to anyone"; `license-files` is not set because the LICENSE
+# file lives at the repository root, outside this project directory.
+license = "LicenseRef-Proprietary"
 requires-python = ">=3.11"
 authors = [
     { name = "Ayush Yadav" }
@@ -23,10 +27,17 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business",
+    # PyPI rejects any distribution carrying a `Private ::` classifier, which is
+    # the conventional way to say "this package must never be published". It
+    # applies here: `jobtracker` is proprietary, is only ever installed from this
+    # tree, and the name is generic enough to be uploaded by accident. Hatchling
+    # skips trove validation for classifiers starting `Private ::`, so this does
+    # not break a local build.
+    "Private :: Do Not Upload",
 ]
 
 dependencies = [
-    "fastapi>=0.109.0",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.1.0",
@@ -59,7 +70,7 @@ dependencies = [
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
-    "httpx>=0.26.0",
+    "httpx>=0.28.1",
     "ruff>=0.16.2",
     "mypy>=1.8.0",
 ]

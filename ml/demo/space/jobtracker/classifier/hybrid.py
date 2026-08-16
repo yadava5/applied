@@ -5,7 +5,8 @@ Hybrid Email Classifier
 Combines all 3 classification layers:
 1. Rules (regex patterns) - instant, catches obvious patterns
 2. Embeddings (similarity) - catches variations of labeled examples
-3. SetFit (few-shot ML) - trained on user corrections
+3. SetFit (few-shot ML) - fit offline on a labelled corpus, NOT on user
+   corrections; see setfit_model.py's module header for the gate
 
 Decision flow:
 - High-confidence rule match (≥0.9) → accept immediately
@@ -21,6 +22,7 @@ Confidence thresholds:
 
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -272,6 +274,13 @@ class HybridClassifier:
         # heavy submodules). User-corrected labels still persist to
         # ``TrainingData`` and sync back to macOS where full SetFit
         # remains canonical.
+        #
+        # THIS RETURN IS ALSO WHAT MAKES THE ``OTHER`` -> ``NEEDS_REVIEW``
+        # SAFETY NET AT THE BOTTOM OF THIS METHOD DEAD IN PRODUCTION. Removing
+        # or narrowing this branch does not just re-enable the semantic layers,
+        # it switches that net on for every message in a scan. Read #253 and
+        # the note at the fallback block first; ``tests/test_safety_net_is_dead_253.py``
+        # will stop you.
         if self._cloud_rules_only:
             # ``rules.py`` returns ``OTHER`` + 0.5 confidence when no
             # category scored above zero. Distinguish that "miss" case by
@@ -416,6 +425,43 @@ class HybridClassifier:
         # =====================================================================
         # For job tracking, we must be conservative about marking as OTHER
         # If there's a reasonable chance it's job-related, mark as NEEDS_REVIEW
+        #
+        # UNREACHABLE FROM THE CLOUD ENTRYPOINT, AND THE NET BELOW NEVER FIRES
+        # ANYWHERE. Read this before trusting the block that follows — it looks
+        # like a guarantee and it is not one. See #253 for the measurement.
+        #
+        # 1. Deployment. ``self._cloud_rules_only`` returns ~130 lines above, so
+        #    on Vercel — the only place production mail is classified — nothing
+        #    below this line runs at all.
+        # 2. The guard is unsatisfiable, on every deployment. ``rules.py``
+        #    seeds ``scores`` with an entry per ``EmailCategory``, so
+        #    ``scores["other"]`` is always exactly 0 and the winning score is
+        #    therefore never negative. Rules returns OTHER on exactly one
+        #    branch — ``if winner_score <= 0`` — which given that floor means
+        #    ``winner_score == 0``, i.e. EVERY category scored <= 0. So
+        #    ``final_category == OTHER`` already implies ``max_job_score <= 0``,
+        #    and ``max_job_score >= 2`` cannot hold. ``rules_result`` is never
+        #    rebound between there and here, so this holds on the desktop
+        #    fallback path too.
+        #
+        # What the net was reaching for does exist — a message whose job
+        # patterns matched and were then erased by ``negative`` (-5) or ``veto``
+        # (clamp to 0) arithmetic lands OTHER with real evidence behind it. But
+        # that evidence survives only in ``matched_patterns``; ``scores`` records
+        # the post-arithmetic total, which for such a message is NEGATIVE, not
+        # >= 2. The net reads the wrong side of the subtraction.
+        #
+        # Measured before being left alone (#253): over the committed evaluation
+        # corpus (200 messages) plus production ``emails`` metadata replayed
+        # read-only (51), the net fires on 0. That 0 is a proof, not a sample —
+        # but note the corpus is also thin here, holding 26 OTHER verdicts of
+        # which 13 are content-guard forces. Do not read it as evidence the
+        # THRESHOLD is well chosen; it is evidence the guard cannot be met.
+        #
+        # Pinned by ``tests/test_safety_net_is_dead_253.py``. If you rewire the
+        # cloud short-circuit or relax the OTHER branch in ``rules.py``, that
+        # file goes red on purpose: you have switched this net on, and #253 is
+        # the argument about whether it should be.
 
         final_category = rules_result.category
         final_confidence = rules_result.confidence
@@ -438,7 +484,7 @@ class HybridClassifier:
 
             # Only mark for review if there are meaningful job signals
             # (score >= 2 means at least some job-related patterns matched)
-            if max_job_score >= 2:
+            if max_job_score >= 2:  # unreachable — see the note above
                 final_category = EmailCategory.NEEDS_REVIEW
                 needs_review = True
                 logger.debug(
@@ -446,6 +492,14 @@ class HybridClassifier:
                 )
 
         # Final protection: job-alert/newsletter/promotional content should stay OTHER.
+        #
+        # Also dead, and for a third reason worth writing down (#253 asks): this
+        # is the SAME call, with the same arguments, as the one at the top of
+        # ``classify()``. If it returned a reason, that earlier call already
+        # returned OTHER at 0.96 and we never got here. Kept as belt-and-braces
+        # in case a future path reaches this block without the entry guard —
+        # but it is not the reason the net above is safe, so do not cite it as
+        # one when arguing about #253.
         if final_category != EmailCategory.OTHER:
             late_other_reason = self._forced_other_reason(subject, body, sender_email)
             if late_other_reason:
@@ -545,13 +599,26 @@ class HybridClassifier:
         # Store in training_data for SetFit
         await self._store_training_data(email_id, subject, body, correct_category)
 
-        # Check if we should retrain SetFit
-        if await self._setfit.should_retrain():
+        # Check if we should retrain SetFit.
+        #
+        # SCOPE: this auto-retrain reads ``training_data`` directly. Applied's
+        # Gmail access is the restricted ``gmail.readonly`` scope, and Google's
+        # Workspace API user-data policy only permits training a model
+        # personalized to a single end user — no co-mingling across users. So
+        # the corpus is scoped to one ``user_id``, never "everything in the
+        # table". On desktop that resolves to the ``LOCAL_USER_ID`` sentinel
+        # every local row carries, which is why the desktop loop is unchanged.
+        # Do not "simplify" this back to an unscoped call: see
+        # ``setfit_model.CrossUserTrainingError``.
+        from .setfit_model import resolve_training_user_id
+
+        training_user_id = resolve_training_user_id()
+        if await self._setfit.should_retrain(user_id=training_user_id):
             logger.info("Triggering SetFit retraining...")
             # Run in background (non-blocking)
             import asyncio
 
-            asyncio.create_task(self._setfit.train())
+            asyncio.create_task(self._setfit.train(user_id=training_user_id))
 
     async def _store_training_data(
         self,
@@ -641,12 +708,23 @@ class HybridClassifier:
             },
         }
 
-    async def retrain_setfit(self):
-        """Manually trigger SetFit retraining."""
+    async def retrain_setfit(self, *, user_id: uuid.UUID):
+        """Manually trigger SetFit retraining for exactly one user.
+
+        Args:
+            user_id: Whose corrections to train on. Required and undefaulted on
+                purpose — this is the entry point reached by
+                ``POST /classify/retrain`` and ``scripts/ml_cycle.sh --retrain``,
+                i.e. the one an operator could point at a production database.
+                Gmail's restricted ``gmail.readonly`` scope permits only a
+                per-user personalized model, so there is no "all users" option
+                to default to. Callers without an authenticated identity pass
+                ``setfit_model.resolve_training_user_id()``.
+        """
         if self._setfit.is_training():
             raise RuntimeError("Training already in progress")
 
-        await self._setfit.train()
+        await self._setfit.train(user_id=user_id)
 
 
 # =============================================================================

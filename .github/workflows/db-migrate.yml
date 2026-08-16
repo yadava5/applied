@@ -53,6 +53,17 @@ on:
       # Off the list, a change that breaks URL resolution would never reach
       # either — which is how the bare-`postgresql://` failure survived.
       - 'backend/jobtracker/database/migration_url.py'
+      # The ROOT requirements.txt. Both jobs below run
+      # `pip install -r requirements.txt -r backend/requirements-migrate.txt`:
+      # alembic/env.py imports jobtracker.config and the model layer to resolve
+      # target_metadata, so this manifest IS the migration environment. A floor
+      # raised here can make that environment unresolvable or change what
+      # env.py imports, and off this list nothing would notice until a merge
+      # tried to migrate production. Consequence, stated rather than absorbed:
+      # a dependency bump to this file now starts a real `alembic upgrade head`
+      # on main. That is a no-op at head, but it does exercise the credential,
+      # so a stale DB secret will now show up as a red on a deps merge.
+      - 'requirements.txt'
       - '.github/workflows/db-migrate.yml'
   # Shows the exact SQL a merge would run, on the PR, with no credentials.
   pull_request:
@@ -64,6 +75,10 @@ on:
       # Off the list, a change that breaks URL resolution would never reach
       # either — which is how the bare-`postgresql://` failure survived.
       - 'backend/jobtracker/database/migration_url.py'
+      # The other half of the pair — see the note in the push block. On a PR
+      # this is the credential-free dry run, which is where a root-manifest
+      # change that breaks the migration environment should surface.
+      - 'requirements.txt'
       - '.github/workflows/db-migrate.yml'
   # Manual retry. Needed because the push trigger is path-filtered: if a
   # revision merges while the secret is missing or the database is paused, no
@@ -92,12 +107,12 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # Needs main to know which revision production is expected to be at.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -158,9 +173,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 

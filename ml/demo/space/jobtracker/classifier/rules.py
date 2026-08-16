@@ -92,52 +92,123 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not to (move|proceed|go) forward",
             r"not to (move|proceed|go) forward.{0,30}(application|candidacy)",
             r"not (be )?(moving|proceeding) forward",
-            # The verb that takes "with" instead of "forward" — Lever's standard
-            # rejection wording ("we will not be proceeding with your candidacy
-            # for this role at this time"), which matched nothing above. Paired
-            # general + noun-anchored so a BODY alone reaches +6, because a
-            # rejection's subject line reads "Thank you from <Company>" and one
-            # +3 body match can never clear the 0.85 gate. See the backend copy
-            # for the full note.
+            # The verb that takes "with" instead of "forward". Every pattern
+            # above wants the word "forward" somewhere, and the nearest of them
+            # — `not (be )?(moving|proceeding) forward` — misses "we will not be
+            # proceeding with your candidacy for this role at this time"
+            # outright. That is Lever's standard rejection wording and it is
+            # what the owner's real Palantir rejection says, so the sentence
+            # stating the decision scored ZERO: `regret to inform` carried the
+            # whole message alone at +3, which is the 0.70 rung, which is under
+            # AUTO_FILE_GATE. The verdict was right and the mail was held for
+            # review anyway.
+            #
+            # Paired general + noun-anchored, exactly like the infinitive above,
+            # and for a structural reason rather than a stylistic one: a strong
+            # SUBJECT match is +6 and a strong BODY match is +3, but rejections
+            # state their verdict in the body while their subject reads "Thank
+            # you from Palantir Technologies". One body match can never reach
+            # 0.90. Two can — which is the only way this category clears a gate
+            # that acknowledgements clear from their subject line alone.
+            #
+            # The contraction arm is not decoration either. Supernova's real
+            # rejection says "it is unfortunate that we won't be proceeding
+            # with your application" — and with only the literal "not" spelling
+            # here, reading the whole body still classified it `applied`. That
+            # is the same defect `(won't|will not) be advancing` below already
+            # records, in the mirror direction: whichever spelling gets written
+            # first, the other one scores zero. Both inflections, always.
             r"(won't|will not|not) (be )?(proceeding|continuing) with",
             r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
-            # SIX PAIRS FOLLOW. Eight of the sixteen canonical rejection
-            # sentences matched exactly ONE pattern here, which is +3 from a
-            # body — the 0.70 rung, the review queue — while AUTO_FILE_GATE is
-            # 0.85. Each twin below is strictly narrower than its partner and
-            # exists to be the second +3 so a body with no subject support
-            # reaches 0.90. NOT a reweighting of body matches, which would move
-            # every verdict in the corpus at once. See the backend copy for the
-            # full note and the before/after replay.
+            # SIX PAIRS FOLLOW, and the twins are not decoration.
+            #
+            # Eight of the sixteen sentences in
+            # ``tests/test_rules_classifier_rejection.py`` matched exactly ONE
+            # pattern here. One strong BODY match is +3, which is the 0.70 rung
+            # — the review queue. ``pipeline.AUTO_FILE_GATE`` is 0.85, so the
+            # classifier could recognise those eight and never act on one of
+            # them, and the gate over them asserted 0.70 and was green about it.
+            # An acknowledgement states its verdict in the SUBJECT, where a
+            # strong match is +6 and clears the gate alone; a rejection states
+            # its verdict in the body under "Thank you from <Company>". That is
+            # a structural bias against this one category, not a gap in any
+            # single pattern.
+            #
+            # The fix is the same mechanical one the infinitive and
+            # ``(proceeding|continuing) with`` already carry above: pair a
+            # general form with a narrower anchored one, so a body with no
+            # subject support reaches +6 and clears the gate. It is deliberately
+            # NOT a reweighting of body matches — that would move every verdict
+            # in the corpus at once and risk misfiling the acknowledgements,
+            # which is the failure mode #10 is about. Each twin below is
+            # strictly narrower than its partner and can only fire where the
+            # partner already did.
+            #
+            # Measured, not assumed. Replayed over all 200 rows of the committed
+            # evaluation corpora (``data/evaluation/classifier_eval_v{1,2,3}
+            # .jsonl``) before and after: NO row changed category, and exactly
+            # four moved confidence — every one of them gold-labelled
+            # ``rejection``, and every one upward.
+            #
+            #   v2:027  "You were not selected at this time…"          0.70 → 0.90
+            #   v2:029  "We will not be advancing your candidacy."     0.90 → 0.95
+            #   v3:039  "We will not be advancing your candidacy…"     0.90 → 0.95
+            #   v3:045  "…unable to proceed with your candidacy."      0.70 → 0.90
+            #
+            # Two of those four crossed ``AUTO_FILE_GATE``, which is the whole
+            # point. Not one acknowledgement moved in any direction.
             #
             # Replaces `move(d)? forward with other candidates` and
             # `chosen to move forward with another candidate`: neither had the
             # participle, so "we will be moving forward with other candidates
             # whose qualifications more closely match" scored 0.
-            r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
-            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (other|another) (candidate|applicant)",
+            #
+            # `different` joins `other|another` (#348). English has three ways
+            # to say "not you" in this slot and the alternation carried two:
+            # "we have chosen to move forward with a DIFFERENT candidate" is
+            # Workable's published rejection template, the most-reproduced
+            # rejection copy on the web, and it scored literally ZERO. The
+            # optional article is what lets the singular "a different
+            # candidate" reach the same pattern as the bare plural.
+            r"(move|moved|moving) forward with (a |an |the )?(other|another|different) (candidate|applicant)",
+            # Anchored on the decision verb, which is what makes "we have decided
+            # to move forward with other candidates" and "we will be moving
+            # forward with other candidates" reach the gate rather than the queue.
+            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (a |an |the )?(other|another|different) (candidate|applicant)",
             # Replaces `decided to pursue other candidates`, which required both
             # the lead-in and the noun "candidates"; "pursue other applicants"
             # scored 0.
             r"pursu(e|ing) other (candidates|applicants)",
+            # The lead-in the general form dropped, restored as the twin.
             r"(decided|chosen|elected|opted) to pursue other (candidates|applicants)",
             r"not (been )?selected.{0,30}(position|role|interview)",
             # "You have not been selected." — a complete rejection with no
             # trailing noun for the pattern above to anchor on.
             r"\bnot been selected\b",
+            # Subject-anchored rather than object-anchored, which is what lets it
+            # be the SECOND match for both spellings: "You have not been
+            # selected" (the bare form) and "You were not selected for this
+            # position" (the trailing-noun form). Neither reached +6 alone.
             r"\byou (have|were)\b.{0,10}not (been )?selected\b",
             r"not (be )?able to offer.{0,20}(position|role|interview)",
             # "unable" is not "not able", and it is the form ATS templates use:
             # "we are unable to offer you a position at this time".
             r"unable to (offer|extend).{0,25}(position|role|offer|interview|opportunity)",
+            # The pronoun rather than the noun. It cannot reach an actual offer:
+            # `(pleased|delighted|…) to offer` and `offer (letter|of employment)`
+            # are rejection NEGATIVES below, and an offer letter does not open
+            # with "unable to".
             r"unable to (offer|extend) you\b",
             r"unable to (proceed|continue|move forward) with",
             r"unable to (proceed|continue|move forward) with.{0,25}(application|candidacy|process)",
             # Was `won't be advancing…` — contraction only, so "we will not be
             # advancing your candidacy" missed.
             r"(won't|will not) be advancing.{0,20}(application|candidacy)",
+            # Drops the modal entirely, so it is the second match for the
+            # "will not" spelling AND covers "we are not advancing your
+            # application", which neither form above reaches.
             r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
@@ -146,7 +217,14 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"(role|position).{0,20}(closed|filled)",
             r"decision on (your |my )?candidacy",
             r"after careful (consideration|review).{0,30}(not|decided|unfortunately)",
-            r"wish you (the best|well|success) in your (job )?search",
+            # The sign-off, and it broke on an intensifier (#348). "we wish you
+            # ALL the best in your job search" is the other half of the Workable
+            # template above, and the literal `(the best|well|success)` could not
+            # see past the word "all". The trailing noun is dropped with it:
+            # "in your job search", "in your search", "in your future endeavors"
+            # and "in your career" are the same sentence, and requiring one
+            # spelling of it was the same over-narrowness one alternation up.
+            r"wish you (all |only |nothing but )?(the (very )?best|well|success|luck) in your",
             r"encourage you to apply (for )?future.{0,20}(position|role|opening)",
             r"keep your (resume|application) on file",
             r"not a (good )?fit.{0,20}(at this time|for this role)",
@@ -185,7 +263,13 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"schedule.{0,20}interview",
             r"interview invitation",
             r"interview.{0,20}(scheduling|schedule|request|invitation)",
-            r"(would |)like to (schedule|set up|arrange).{0,20}(call|meeting|interview|chat).{0,30}(with you|discuss)",
+            # The trailing purpose clause was mandatory, and real mail does not
+            # oblige (#348). "I'd like to set up a 45 minute call to walk
+            # through your background" has the whole invitation in it and
+            # matched nothing, because `.{0,30}` ran out before "with you" or
+            # "discuss". Asking to arrange a call IS the evidence; what the call
+            # is for is a detail this category does not need.
+            r"(would |'d |)like to (schedule|set up|arrange|book).{0,25}(call|meeting|interview|chat|conversation)",
             r"meet (the )?(hiring )?team",
             r"phone screen.{0,20}(schedule|availability|available|call)",
             r"video (call|interview).{0,20}(schedule|discuss|talk)",
@@ -199,8 +283,60 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"recruiter.{0,20}(call|chat|speak).{0,20}(with you|to discuss)",
             r"(your |)availability.{0,30}(for an?|to) (meeting|call|interview)",
             r"please.{0,20}(book|schedule|pick).{0,20}time.{0,20}(interview|call|meet)",
-            r"invite you to.{0,20}interview",
+            # The preposition varies and only one spelling was here (#348):
+            # "invite you TO interview" was covered, "invite you FOR an
+            # interview" — Workable's published invitation, and the single
+            # most-reproduced invite copy there is — was not.
+            r"invite you (to|for).{0,20}interview",
             r"interviewing.{0,20}candidates",
+            # --- THE SCHEDULING FRAME, not the word ---------------------------
+            # Every pattern above demands a specific verb+noun collocation, and
+            # 92 of the 110 authentic invitations in tests/corpus/mail.py scored
+            # ZERO against the whole list — not out-voted, not vetoed: no match
+            # at all. That is the same defect EmailCategory.ASSESSMENT records
+            # in its bare-noun block ("Everything above requires a verb or a
+            # qualifier. Real mail does not oblige"), in the one category where
+            # it costs the most: production has never auto-detected an interview.
+            #
+            # These name the four things an invitation actually DOES — offer a
+            # slot, ask for availability, state the state of a booking, name
+            # who you will meet — rather than any one template's wording. Each
+            # is a frame with a tense, which is what keeps them off the two
+            # shapes that talk about interviews without being one: a
+            # confirmation promising that "a recruiter WILL reach out to
+            # schedule an interview" (future, third party) and an offer opening
+            # "thank you for taking the time to interview" (past). A bare
+            # `interview (with|is|has been)` was tried first and failed exactly
+            # there — it read nine offer letters as interview invitations.
+            #
+            # Completing the interview-type nouns already begun by `technical
+            # interview` / `onsite (interview|visit)` / `panel interview`.
+            r"\b(phone|video|final|first|second|initial|intro(ductory)?) (interview|round)\b",
+            # SELF-SCHEDULE. `please.{0,20}(book|schedule|pick).{0,20}time.
+            # {0,20}(interview|call|meet)` wanted a trailing noun that
+            # "please book a time that works for you using the link below"
+            # never supplies, and the lead-in "please" that half of them drop.
+            r"\b(book|pick|choose|select|schedule|reserve|grab)\s+(a|your|another)\s+(time|slot)\b",
+            # AVAILABILITY, asked for. The existing
+            # `availability.{0,30}(for an?|to) (meeting|call|interview)` needs
+            # the noun; "please share your availability for the coming week"
+            # and "would you be available on Tuesday between 2pm and 5pm" are
+            # the request with the noun left implicit, which is the normal way
+            # to write it. The trailing preposition on the second keeps it off
+            # the bare predicative "the link is available".
+            r"\b(share|send|provide|confirm|know)\s+your\s+availability\b",
+            r"\b(would|are) you (be )?available (on|for|at|any|next|this|to)\b",
+            # THE STATE OF A BOOKING — confirmations and reschedules, which are
+            # the two commonest interview mails after the invitation itself and
+            # had no pattern of their own at all.
+            r"interview.{0,40}\b(is|has been|was|will be) (confirmed|scheduled|booked|set|arranged|moved|rescheduled)\b",
+            r"\b(moved|rescheduled|changed) your.{0,40}interview\b",
+            # ITINERARY. An onsite day lists times and names and may never use
+            # the word "interview"; what it always says is who you will meet.
+            # `meet (the )?(hiring )?team` wants the literal noun "team".
+            r"\b(you|we)('ll| will) meet with\b",
+            # The request itself, with the medium left out.
+            r"\b(would|'d) like to (speak|talk|chat|meet) with you\b",
         ],
         weak=[
             r"looking forward to (speaking|meeting|connecting) with you",
@@ -209,22 +345,45 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"next step.{0,20}interview",
         ],
         negative=[
-            r"unfortunately",
+            # SEVEN NEGATIVES WERE REMOVED HERE (#348), and the argument is the
+            # same one for all of them: they were EmailCategory.APPLIED's own
+            # positives, copied in to stop an acknowledgement reading as an
+            # invitation, and a real invitation opens with them.
+            #
+            #   thank you for applying · application.{0,20}received ·
+            #   application was sent · next steps.{0,20}hear from us ·
+            #   your application (for|to) \s+.+\s+at\s+[A-Z]
+            #
+            # "Thank you for applying to <Company>. Your application for the
+            # <Role> position stood out to us and we would like to invite you
+            # for an interview" is one sentence that scores applied +6 and,
+            # before this, interview −10. Note where the −5s could ever matter:
+            # only on a message that ALREADY had positive interview evidence,
+            # because a category at 0 is not competing for the win either way.
+            # So the subtraction was reachable exactly in the case where it was
+            # wrong. That is why deletion is the fix and not a softer weight.
+            # The acknowledgements are unharmed — they still win on their own
+            # +6, and `applied` measured 45/50 unchanged across the change.
+            #
+            # `unfortunately` goes for a different reason: it is a hedge, not a
+            # decision. "Unfortunately our hiring manager is travelling this
+            # week, so we have moved your interview to Tuesday" is a
+            # rescheduling apology. REJECTION does not lean on the bare word
+            # either — its pattern is `unfortunately.{0,50}(not|won't|will
+            # not|unable)`, the word plus an actual negation — so a real
+            # rejection still outscores a stray "unfortunately" here.
+            # Deliberately NOT removed from the other four categories that
+            # carry it: measured, that moved no verdict and added a wrong
+            # auto-file.
             r"regret to inform",
             r"not (be )?(moving|proceeding) forward",
             r"decided not to",
             r"position (has been )?filled",
-            r"application was sent",
-            r"application.{0,20}received",
-            r"thank you for applying",
             r"congratulations on completing",
             r"your course",
             r"trial.{0,20}(ended|ends|started)",
             r"free trial",
             r"premium features",
-            r"next steps.{0,20}hear from us",
-            r"your application for\s+.+\s+at\s+[A-Z]",
-            r"your application to\s+.+\s+at\s+[A-Z]",
         ],
     ),
     EmailCategory.OFFER: CategoryPatterns(
@@ -256,7 +415,13 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"unfortunately",
             r"regret to inform",
             r"not (at this time|selected)",
-            r"interview",
+            # BARE `interview` WAS HERE (#348). Every real offer letter opens
+            # "thank you for taking the time to interview with the team", so
+            # this −5 fired on the offers it was meant to protect: measured, it
+            # was the whole reason 9 of the 12 verbal-confirmation offers in
+            # tests/corpus/mail.py abstained. It was reaching for the
+            # scheduling sense of the word, which `schedule.{0,20}call` below
+            # already expresses without catching the past tense.
             r"schedule.{0,20}call",
             r"thank you for applying",
             r"application.{0,20}received",
@@ -285,11 +450,24 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"applied.{0,20}(for|to).{0,40}(position|role|job)",
             r"thank you for your interest.{0,40}(position|role|career)",
             r"application was sent to",
-            r"your application for\s+.+\s+at\s+[A-Z]",
-            r"your application to\s+.+\s+at\s+[A-Z]",
             r"application.{0,20}is in",
         ],
         weak=[
+            # DEMOTED FROM `strong` (#348). "Your application for <Role> at
+            # <Company>" is a THREAD SUBJECT, not a verdict: it says which
+            # application the mail concerns, and every reply in the thread
+            # inherits it. As a strong SUBJECT match it was worth +6 — double
+            # weight, the highest score any single pattern can earn — so a
+            # recruiter replying "Re: Your application for Backend Engineer at
+            # Blackmoor Analytics" to invite the candidate to an interview was
+            # scored as an acknowledgement, at 0.95, and auto-filed as one.
+            # Weak is the honest weight for "this thread is about an
+            # application". Genuine acknowledgements are untouched: they carry
+            # `application.{0,20}received`, `thank(s| you) for applying` and
+            # `successfully submitted` of their own, and `applied` measured
+            # 45/50 both before and after this move.
+            r"your application for\s+.+\s+at\s+[A-Z]",
+            r"your application to\s+.+\s+at\s+[A-Z]",
             r"thank you for your interest",
             r"interested in.{0,30}(position|role|opportunity)",
             r"review your (application|resume|qualifications)",
@@ -299,7 +477,19 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
         negative=[
             r"unfortunately",
             r"pleased to offer",
-            r"schedule.{0,20}interview",
+            # `schedule.{0,20}interview` WAS HERE (#348), and it is the same
+            # cross-class disambiguator, in the same direction, as the six this
+            # change removed from INTERVIEW.negative. An acknowledgement that
+            # says what happens next legitimately contains it — "if your
+            # background matches what we are looking for, a recruiter will
+            # reach out to schedule an interview" — and that sentence is a
+            # promise, by a third party, in the future tense. It arranges
+            # nothing. The −5 could only ever subtract from a message that
+            # already had acknowledgement evidence, which is precisely where
+            # subtracting is wrong; measured, it was the whole of `applied`'s
+            # error on the 400-case corpus, 45/50 → 50/50, with no other class
+            # moving. The scheduling sense it was reaching for still belongs to
+            # INTERVIEW, which scores it as a positive.
             r"regret",
             r"not (moving|proceeding)",
             r"move(d)? forward with other",
@@ -477,8 +667,8 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"(won't|will not|not) (be )?(proceeding|continuing) with.{0,30}(application|candidacy)",
             r"will not be moving forward.{0,30}(application|candidacy)",
             r"not.{0,20}moving forward.{0,20}(application|your candidacy)",
-            r"(move|moved|moving) forward with (other|another) (candidate|applicant)",
-            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (other|another) (candidate|applicant)",
+            r"(move|moved|moving) forward with (a |an |the )?(other|another|different) (candidate|applicant)",
+            r"(decided|chosen|elected|will be|are)\b.{0,20}(move|moving) forward with (a |an |the )?(other|another|different) (candidate|applicant)",
             r"pursu(e|ing) other (candidates|applicants)",
             r"(decided|chosen|elected|opted) to pursue other (candidates|applicants)",
             r"not (been )?selected.{0,30}(position|role|interview)",
@@ -493,6 +683,31 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"not (be )?advancing (your|the) (application|candidacy)",
             r"position has been filled",
             r"we('ve| have) decided to go in (a )?different direction",
+            # --- end of the block copied from REJECTION.strong ---------------
+            #
+            # A SECOND GROUP, not part of that copy, and it must not be mirrored
+            # back into REJECTION (#348). Same argument, other direction: a
+            # message that ARRANGES something is not a nudge either. A recruiter
+            # replying on the application thread — subject "Following up on your
+            # application - <Company>", body "please share your availability" —
+            # is a genuine strong subject match for this category at +6, which
+            # beat the interview evidence in the body and filed the mail as
+            # `follow_up` at 0.90.
+            #
+            # That is the worst place in the system to lose a message: unlike a
+            # wrong lifecycle verdict, `follow_up` reaches neither
+            # `pipeline._qualifies_for_hard_row` nor `pipeline.collect_review_items`,
+            # so the mail is not misfiled — it is never persisted at all and the
+            # user never sees it. The header comment on this file records the
+            # same disappearance happening to a real rejection.
+            #
+            # These are INTERVIEW.strong scheduling frames, and only the ones
+            # that state an arrangement rather than describe one.
+            r"invite you (to|for).{0,20}interview",
+            r"\b(book|pick|choose|select|schedule|reserve|grab)\s+(a|your|another)\s+(time|slot)\b",
+            r"\b(share|send|provide|confirm|know)\s+your\s+availability\b",
+            r"\b(would|are) you (be )?available (on|for|at|any|next|this|to)\b",
+            r"(would |'d |)like to (schedule|set up|arrange|book).{0,25}(call|meeting|interview|chat|conversation)",
         ],
     ),
 }
@@ -505,7 +720,9 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
 # entry used to buy a harmless nudge; it now puts messages in front of the user.
 # And the match is an unanchored substring, so it is easy to be loose by
 # accident: ``"hire.com" in "newhire.company.com"`` is True. Keep entries
-# specific enough that only the relay can match them.
+# specific enough that only the relay can match them. That example is written in
+# the past tense on purpose — ``hire.com`` was on this list until #348 and is
+# the reason the sentence exists; see the note where it used to sit.
 #
 # Matched as a SUBSTRING of the sender's domain, so an entry has to be the part
 # the relay actually shares. That is what made ``greenhouse.io`` useless for two
@@ -537,7 +754,15 @@ ATS_DOMAINS = [
     "breezy.hr",
     "ashbyhq.com",
     "applytojob.com",
-    "hire.com",
+    # ``hire.com`` WAS HERE and is gone (#348). It was the shortest entry on the
+    # list and the one the comment above holds up as the example of being loose
+    # by accident: it is what made ``sohire.comcast.net`` read as an ATS relay
+    # under the old containment match. No ATS was found that sends from it, and
+    # the domain it was presumably reaching for — Lever's ``hire.lever.co`` — is
+    # already covered by ``lever.co``, both before and after anchoring. Nothing
+    # in the tree depended on it: the only senders that matched through it are
+    # ``…@hire.lever.co``, which still match, and the one lookalike in
+    # ``tests/test_ingestion_hole_166.py`` that is asserted NOT to be an ATS.
     "recruitee.com",
     "ats.rippling.com",
 ]
@@ -552,12 +777,37 @@ def is_ats_sender(sender_email: Optional[str]) -> bool:
     about which senders are ATS relays — a floor that fires on a sender the
     classifier does not recognise, or the reverse, is a bug nobody could read off
     either call site.
+
+    The match is ANCHORED: a sender qualifies only when its domain IS a listed
+    domain or is a proper subdomain of one (#260). Do not "simplify" this back
+    to ``ats in domain`` — unanchored containment matched an ATS name anywhere
+    in the host, so ``greenhouse.io.mailgun.net``, ``notlever.co.example.com``
+    and (through the shortest entry, ``hire.com``, which #348 has since removed
+    from the list entirely) ``sohire.comcast.net`` all
+    read as ATS relays. Since #252 that answer decides ROUTING and not just a
+    score, so a domain anyone can register was enough to reach the owner's
+    review queue — and on the 0.80 rung the +0.05 bonus lands exactly on
+    ``AUTO_FILE_GATE`` (0.85), the threshold at which the pipeline MAY assert a
+    hard status. (Filing also needs a named employer, so the gate is necessary
+    and not sufficient; the queue entry needed nothing else.)
+
+    The argument is a bare address, never a raw ``From`` header: every ingestion
+    path parses one first (``cloud/gmail_client.py``, ``email_clients/gmail.py``
+    and ``email_clients/icloud.py`` all go through ``email.utils.parseaddr``).
+    That matters here because containment tolerated the trailing ``>`` of
+    ``… <no-reply@us.greenhouse-mail.io>`` and anchoring does not.
+
+    Anchoring makes two list entries load-bearing that containment had made
+    redundant: ``myworkday.com`` does not end with ``.workday.com`` and
+    ``greenhouse-mail.io`` is not a suffix of ``greenhouse.io``. Both are real
+    relays; neither may be deduplicated away. ``ats.rippling.com`` stays listed
+    as the full host on purpose — bare ``rippling.com`` is payroll mail.
     """
 
     if not sender_email or "@" not in sender_email:
         return False
     domain = sender_email.lower().rsplit("@", 1)[-1]
-    return any(ats in domain for ats in ATS_DOMAINS)
+    return any(domain == ats or domain.endswith(f".{ats}") for ats in ATS_DOMAINS)
 
 
 # =============================================================================

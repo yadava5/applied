@@ -17,6 +17,15 @@ on:
       # indistinguishable from a job that did not exist. Edit BOTH blocks.
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
+      # The ROOT requirements.txt — the manifest Vercel installs for the
+      # deployed function, and the one `expand-only` pip-installs below. It is
+      # not under backend/, so until 2026-08-15 a PR that changed only this
+      # file ran NO backend job at all: #300, #302 and #305 each touched
+      # nothing else and show only CodeQL, gitleaks and README facts. Five
+      # dependency merges landed on the deploy manifest unexercised, and the
+      # first thing to notice would have been production. Same shape as the
+      # dead `scripts/install.sh` filter above — a check that cannot fire.
+      - "requirements.txt"
       - ".github/workflows/backend-ci.yml"
   push:
     branches:
@@ -33,6 +42,8 @@ on:
       - "backend/**"
       - "scripts/check_expand_only.py"
       - "scripts/schema_fingerprint.sql"
+      # The other half of the pair — see the note in the pull_request block.
+      - "requirements.txt"
       - ".github/workflows/backend-ci.yml"
   workflow_dispatch:
 

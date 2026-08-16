@@ -5,7 +5,8 @@ Hybrid Email Classifier
 Combines all 3 classification layers:
 1. Rules (regex patterns) - instant, catches obvious patterns
 2. Embeddings (similarity) - catches variations of labeled examples
-3. SetFit (few-shot ML) - trained on user corrections
+3. SetFit (few-shot ML) - fit offline on a labelled corpus, NOT on user
+   corrections; see setfit_model.py's module header for the gate
 
 Decision flow:
 - High-confidence rule match (≥0.9) → accept immediately

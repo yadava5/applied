@@ -17,6 +17,7 @@ import { getGmailAuthorizeUrl } from "@/lib/gmail/server";
  *   - no session      → `/login?redirect=/settings` (sign in, then retry)
  *   - JWT rejected    → `/settings?gmail=auth`       (session/auth problem)
  *   - not configured  → `/settings?gmail=unavailable`(Gmail off on this deploy)
+ *   - beta full       → `/settings?gmail=capacity`   (ask for a place)
  *   - backend error   → `/settings?gmail=error`      (transient — try again)
  *
  * This is the fix for the "Can't connect Gmail" dead end: a signed-in tester
@@ -46,8 +47,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(login);
   }
 
+  // `at_capacity` gets its own flag rather than folding into `error`: the
+  // backend refused on purpose and the user has something to do about it
+  // (write to the address in the banner). "Please try again" would be a lie
+  // that costs us the person who wanted the product most.
   const flag =
-    result.kind === "auth" ? "auth" : result.kind === "unavailable" ? "unavailable" : "error";
+    result.kind === "auth"
+      ? "auth"
+      : result.kind === "unavailable"
+        ? "unavailable"
+        : result.kind === "at_capacity"
+          ? "capacity"
+          : "error";
   const back = new URL("/settings", origin);
   back.searchParams.set("gmail", flag);
   return NextResponse.redirect(back);
