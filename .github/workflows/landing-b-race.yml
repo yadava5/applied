@@ -7,21 +7,22 @@ name: Landing B race gate
 # visitor's own card open as the page's. A race is not a property you can assert
 # once. The main e2e jobs run `retries: 2`, `workers: 1`, no `--repeat-each` —
 # which is the correct shape for a deterministic assertion and the WORST possible
-# shape for this one. Two retries turn any per-attempt failure rate p into a job
-# failure rate of p^3: at the rate measured below (16%) that is 0.4%, i.e. a gate
-# that reports green essentially always, on a build that is broken.
+# shape for this one. Two retries turn a per-attempt failure rate p into a
+# per-test failure rate of p^3: at the rate measured on this runner below (0.8%)
+# that is one in two million, i.e. a gate that reports green always, forever, on
+# a build that is broken.
 #
 # So the race test runs here instead, under a shape derived from measurement:
-# no retries, many repeats, and deliberate CPU contention.
+# no retries, many repeats, and concurrency.
 #
 # ---------------------------------------------------------------------------
-# THE ARITHMETIC, AND THE PREMISE IT REPLACED.
+# THE PREMISE THAT WAS FALSIFIED.
 #
 # The shape originally proposed for this job was "--repeat-each=10 against a
 # COLD server", on the belief that server warmth dominates: ~20% per attempt
-# cold, ~0% once warm. That premise was tested and it does not hold. Measured on
-# a production build (`next build && next start`, `--retries=0`), with the
-# compound mutant applied (the beat-2 arm moved back into the effect body AND
+# cold, ~0% once warm. That premise was tested and it does not hold. Measured
+# LOCALLY on a production build (`next build && next start`, `--retries=0`), with
+# the compound mutant applied (the beat-2 arm moved back into the effect body AND
 # `OPEN_GESTURE_MS = 0`) so the race is genuinely present:
 #
 #   · 20 attempts, each against a FRESHLY BOOTED server, one attempt per boot:
@@ -31,49 +32,73 @@ name: Landing B race gate
 #   · the same warm server with `--workers=4`:
 #        13 red of 80 test instances  (16.25%).
 #
-# Cold did not help; contention did, by roughly 6x. That is not a surprise once
-# the mechanism is read rather than guessed at. The visitor's card load is a
-# `setTimeout(0)` scheduled from the click's commit (`ApplicationDetail`, the
-# `app` effect); the page's claim is armed from an IntersectionObserver-driven
-# commit that the pane's own `focus()` scroll triggers. Red requires the 0ms
-# timer to slip PAST a rendering frame, which is a main-thread-busyness event.
-# A cold server delays the first navigation — which is over long before the
-# click. Nothing about it widens the window that matters.
+# Cold did not help; concurrency did. That follows from the mechanism, which was
+# read rather than guessed at: the visitor's card load is a `setTimeout(0)`
+# scheduled from the click's commit (`ApplicationDetail`, the `app` effect),
+# racing a claim armed from an IntersectionObserver-driven commit that the pane's
+# own `focus()` scroll triggers. Red needs that 0ms timer to slip PAST a
+# rendering frame — a main-thread-busyness event. A cold server delays the first
+# navigation, which is over long before the click. It cannot widen this window.
 #
-# Hence `--workers=4`: four browsers and the Next server contending for the
-# runner's cores is the condition that reproduces. It is a knob on the
-# INSTRUMENT, not on the assertion — the spec is untouched and asserts the same
-# geometry it always did.
+# `--workers=4` is therefore a knob on the INSTRUMENT, not on the assertion. The
+# spec is untouched and asserts exactly the geometry it always did.
 #
-# Sizing, at p = 0.1625 per test instance and n instances, detection = 1 − (1−p)^n:
+# ---------------------------------------------------------------------------
+# THE NUMBER THAT ACTUALLY SIZES THIS JOB IS THE RUNNER'S, NOT THE LAPTOP'S.
 #
-#   n = 20  →  1 − 0.8375^20 = 97.1%
-#   n = 30  →  1 − 0.8375^30 = 99.5%
-#   n = 50  →  1 − 0.8375^50 = 99.99%
+# The local 16.25% is NOT the rate here, and sizing from it would have shipped a
+# gate that cannot fire on the machine it runs on — the same defect this job
+# exists to remove, relocated. Measured by pushing the compound mutant to a
+# throwaway branch and reading this job's own runs on `ubuntu-latest`:
 #
-# 13/80 has a Wilson 95% interval of roughly [9.8%, 26.0%], so the honest sizing
-# uses the LOWER bound rather than the point estimate:
+#   --workers=4, n = 50   →   0 red   (run 31917611991)
+#   --workers=4, n = 200  →   2 red   (run 31917933537)
+#   --workers=8, n = 200  →   0 red   (run 31918227687)
 #
-#   at p = 0.098,  n = 50  →  1 − 0.902^50 = 99.4%
+# So `ubuntu-latest` is roughly 16x LESS sensitive than the laptop: 2 of 250 at
+# `--workers=4`, p = 0.8%. Oversubscribing to 8 workers did not help (0 of 200;
+# not distinguishable from 2/200, but certainly not an improvement), so more
+# contention is not the lever here and `--workers` stays at 4.
 #
-# `--repeat-each=25` × 2 viewports = 50 instances. That is the number below.
+# Sizing at p = 0.008, detection = 1 − (1−p)^n:
 #
-# For contrast, sized against the shapes that were falsified: at the serial warm
-# rate (2.5%) fifty instances would give only 1 − 0.975^50 = 72%, and against a
-# cold server the measured rate was 0/40 — no n makes that a gate.
+#   n =  50  →  1 − 0.992^50  =  33%     ← what this job was first sized at
+#   n = 200  →  1 − 0.992^200 =  80%
+#   n = 400  →  1 − 0.992^400 =  96%
+#
+# `--repeat-each=200` × 2 viewports = 400 instances. That is the number below,
+# and it costs ~10 minutes of test time. That cost is the honest price of a race
+# gate that can fire on this hardware.
+#
+# STATE THE WEAKNESS RATHER THAN ROUND IT AWAY: 2/250 has a Wilson 95% interval
+# of about [0.22%, 2.9%]. At the pessimistic end, 400 instances is only 58%
+# detection. So a single green run here is NOT proof a build is clean, and this
+# comment should not be read as claiming it is. What changed is that the gate
+# went from 0% — structurally impossible, because the test clicked a row the
+# guarded branch could never see — to something that demonstrably fires on a real
+# defect. If the runner rate is ever re-measured with more data, re-derive n here
+# rather than leaving this arithmetic to rot.
+#
+# THE BETTER INSTRUMENT, NAMED AND NOT BUILT. A 400-instance lottery is a poor
+# substitute for forcing the interleaving deterministically — a test-only seam
+# that holds the pane's load past the IntersectionObserver commit would turn this
+# into a 2-instance gate that fails 100% of the time. That is a change to the
+# product/test seam and a judgement call about harness knobs, so it was not made
+# unilaterally here.
 #
 # ---------------------------------------------------------------------------
 # THE FALSE-RED QUESTION, STATED RATHER THAN ASSUMED.
 #
-# Contention is a knob that can produce reds for reasons other than the defect,
-# so it was controlled: the identical command (`--repeat-each=25 --workers=4`)
-# was run on the RESTORED build and passed 50 of 50. That control was run on a
-# 10-core machine, which contends LESS than a 4-core GitHub runner. The
-# false-red rate on `ubuntu-latest` at `--workers=4` is therefore UNMEASURED,
-# and the first runs of this job are that measurement. Do not add this to branch
-# protection until it has several green runs here; if it proves noisy, the fix
-# is to lower `--workers` and raise `--repeat-each` to keep n, NOT to re-add
-# retries — retries are what made the gate unable to fail in the first place.
+# Concurrency is a knob that can produce reds for reasons other than the defect,
+# so it was controlled on both machines with the mutant REVERTED: locally the
+# identical command passed 50 of 50, and on `ubuntu-latest` this job's own runs
+# on the clean build are the standing control. Watch them. If false reds appear,
+# raise `--repeat-each` and LOWER `--workers` to keep n — do NOT re-add retries.
+# Retries are what made this gate unable to fail in the first place.
+#
+# DO NOT ADD THIS TO BRANCH PROTECTION YET. At 58%–96% detection it is worth
+# running and worth reading, but it needs a run history before a red from it
+# should block a merge.
 #
 # ---------------------------------------------------------------------------
 # PATH FILTERS ARE DELIBERATELY IDENTICAL TO e2e-ci.yml.
@@ -116,9 +141,9 @@ concurrency:
 
 jobs:
   race:
-    name: landing-b race (50 unretried attempts)
+    name: landing-b race (400 unretried attempts)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
@@ -132,7 +157,7 @@ jobs:
       # census step below is what makes that impossible to ship unnoticed.
       PLAYWRIGHT_PROD_BUILD: "1"
       # How many instances this job must observe. Two viewports × --repeat-each.
-      EXPECTED_INSTANCES: "50"
+      EXPECTED_INSTANCES: "400"
 
     steps:
       - name: Checkout
@@ -188,14 +213,14 @@ jobs:
       # that reproduces. `--project=chromium` because the two timezone projects
       # only match demo/shell specs and would contribute nothing but a filter
       # that silently matches zero tests.
-      - name: Run the race test, 50 unretried attempts under contention
+      - name: Run the race test, 400 unretried attempts under contention
         working-directory: apps/web
         run: |
           pnpm exec playwright test tests/e2e/landing-b.spec.ts \
             --project=chromium \
             --retries=0 \
             --workers=4 \
-            --repeat-each=25 \
+            --repeat-each=200 \
             -g "keeps its close control in frame"
 
       # -----------------------------------------------------------------------
@@ -216,7 +241,7 @@ jobs:
       # this step can only ADD a failure; the step above already failed the job
       # if the gate went red.
       # -----------------------------------------------------------------------
-      - name: Census — the gate actually executed 50 instances
+      - name: Census — the gate actually executed 400 instances
         if: always()
         working-directory: apps/web
         run: |
