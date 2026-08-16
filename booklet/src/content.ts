@@ -390,7 +390,7 @@ export const INSIDE = {
     headline: "It runs in your browser.",
     body: [
       "The quantized model is loaded by Transformers.js (3.5.2) over onnxruntime-web, executing in WebAssembly on the client. allowRemoteModels is false and the model path is local — the tab fetches the weights once and never phones home.",
-      "There is no inference server, no per-request cost, and no data leaving the page. The classifier the desktop app runs in Python, the web app runs on your own CPU.",
+      "There is no inference server, no per-request cost, and no data leaving the page. The classifier the backend runs in Python, the web app runs on your own CPU.",
     ],
     facts: [
       { k: "RUNTIME", v: "Transformers.js 3.5.2 · onnxruntime-web (WASM)" },
