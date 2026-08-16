@@ -48,10 +48,10 @@ honest record of where they applied.
 - **Inbox sync** — Gmail (OAuth, `gmail.readonly` scope only) or iCloud (IMAP); incremental or full sync, with polled status. The live WebSocket stream belonged to the deleted desktop client; Vercel's Python runtime does not support WebSockets
 - **Automatic classification** into the nine `EmailCategory` enum values — `applied`, `pending_application`, `interview`, `rejection`, `offer`, `assessment`, `follow_up`, `other`, plus `needs_review` for anything under the gate. Eight of the nine are predicted labels; `needs_review` is the routing outcome.
 - **Application linking** — related messages are grouped into one tracked application and relinked when new signals arrive
-- **Human-in-the-loop review** — anything below `CONFIDENCE_AUTO = 0.85` (`classifier/hybrid.py`) lands in a review queue; corrections persist to `training_data` and feed the next retrain
+- **Human-in-the-loop review** — anything below `CONFIDENCE_AUTO = 0.85` (`classifier/hybrid.py`) lands in a review queue; corrections persist to `training_data` and flag the email `user_corrected`, so a later sync leaves your answer alone. Nothing retrains on them — the deployed classifier is rules-only. The training machinery ships in the repository, but no hosted path reaches it
 - **Pipeline views** — Feature Cards, Compact Rows, or a Status Board, filterable by unreviewed and unlinked
 - **Fixture demo** — the full UI on synthetic data at [`/demo`](https://getapplied.vercel.app/demo), no login. Layer 1 recomputes **live in the browser** there via `apps/web/lib/demo/rulesLayer.ts`, a port of the same 220 patterns; layers 2 and 3 are precomputed, because the app's CSP forbids the WASM eval and CDN fetch Transformers.js needs.
-- **Weekly ML operations** — candidate mining for sparse labels, drift and confidence monitoring, and an alert-issue path, all scripted (`scripts/weekly_labeling_cycle.sh`, `scripts/monitoring_cycle.sh`)
+- **Weekly ML operations** — candidate mining for sparse labels, drift and confidence monitoring, and an alert-issue path, all scripted (`scripts/weekly_labeling_cycle.sh`, `scripts/monitoring_cycle.sh`). These are operator commands run by hand against a local backend; neither runs in CI, and the hosted app does not run them
 
 ### The three-layer cascade
 
@@ -140,8 +140,13 @@ checker can no longer find it fails too. Where each number terminates is in [Ver
   every API response, with a positive control that fails if the body was never fetched — because
   an absence test passes trivially when nothing was there to find.
 - **Nothing is filed for you below the confidence gate.** A prediction under the gate goes to a
-  human review queue instead of being written as a decision, and your correction is what the next
-  retrain learns from.
+  human review queue instead of being written as a decision, and your correction is recorded as
+  yours — stored in `training_data`, flagged `user_corrected`, and never overwritten by a later
+  sync. No model trains on it. Applied reads mail under Gmail's restricted `gmail.readonly`
+  scope, and Google's Workspace API user-data policy permits training only a model personalized
+  to a single end user, with no co-mingling; the deployed classifier is rules-only, and
+  `backend/tests/test_training_is_single_user.py` pins the corpus read to one `user_id` and
+  raises on a corpus that spans two.
 - **A metric that names its stage.** The **rules layer** — 220 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
 - **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
 - **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. 21 tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
