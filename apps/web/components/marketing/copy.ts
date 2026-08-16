@@ -37,15 +37,28 @@
  * Both privacy sentences are load-bearing and both are auditable:
  *   · "No AI reads your mail" — classification is the deterministic rules
  *     stage; no message content reaches a language model.
- *   · "the text is never stored" — RETENTION, not request. Bodies are fetched
- *     in flight and discarded; test_body_is_never_persisted.py is the gate.
- *     "Your emails are never stored" would be FALSE — metadata is stored.
+ *   · "never storing the message body" — RETENTION, not request. Bodies are
+ *     fetched in flight and discarded; test_body_is_never_persisted.py is the
+ *     gate, and production carries 0 populated `body_text`/`body_html` columns.
+ *
+ * Two weaker phrasings are FALSE and must not come back. Both were shipped
+ * here once, so this note exists to stop the third derivation:
+ *   · "Your emails are never stored" — metadata is stored.
+ *   · "without ever storing its text" — a ~200-char excerpt IS stored.
+ *     `emails.body_snippet` is Gmail's own snippet (`ref.snippet`, capped at
+ *     500 in applications.py:1182/1205/2569; observed max 201, avg 189 over 54
+ *     production rows), and a user correction copies it into
+ *     `training_data.body_text` (11 of 11 populated). The word that carries the
+ *     claim is BODY. "Text" silently widens it into a lie.
+ * The honest long form is the privacy page's, and it is the house vocabulary:
+ * "sender, subject, date, snippet and the classification" (lib/applications/
+ * export.ts:211). Say body, never text.
  */
 export const HERO = {
   /** 7 words. The loss, not the chore, is the subject. */
   headline: "You don't lose the offer. You lose the email.",
   subhead:
-    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied reads the verdict, moves the row, and tells you who is waiting on you — without an AI reading your mail, and without ever storing its text.",
+    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied reads the verdict, moves the row, and tells you who is waiting on you — without an AI reading your mail, and without ever storing the message body.",
 } as const;
 
 /** The board embed's provenance line — shown with every live mount. */
