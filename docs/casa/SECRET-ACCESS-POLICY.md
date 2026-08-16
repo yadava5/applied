@@ -140,17 +140,65 @@ the access surface is small and closed: reads go through
 `delete_*` and `clear_all_credentials` — all in
 `backend/jobtracker/credentials/cloud.py`.
 
-Each access emits a structured record carrying the **`user_id`**, the
-credential **`kind`**, the **`key_id`** of the row, and the **outcome**
-(`hit` / `miss` / `decrypt_failed` for reads; the operation for writes and
-deletes). Records go to the application logger and are collected by Vercel's
-runtime logs.
+All eight access sites emit a single fixed-shape record at `logger.info`:
+
+```
+secret_access user_id=%s kind=%s key_id=%s op=%s outcome=%s
+```
+
+| `op` | `outcome` values |
+| --- | --- |
+| `read` | `hit`, `miss`, `decrypt_failed` |
+| `write` | `written`, `write_failed` |
+| `delete` | `deleted`, `absent` |
+| `clear` | `kind=all` for the account-deletion purge |
+
+`key_id` is `None` on the delete and clear paths, deliberately: those issue a
+`DELETE` and never read a row, and adding a `SELECT` purely to populate the
+field would buy a database round trip for a log field. Records go to the
+application logger and are collected by Vercel's runtime logs.
 
 The record deliberately carries **no plaintext, no ciphertext and no key**.
 `backend/tests/test_secret_access_logging.py` enforces that: it drives a real
-credential round-trip with a sentinel token value and asserts the sentinel
-appears in no emitted log record. That test is a negative gate — it was proven
-to fail against a logger that emits the plaintext before being accepted.
+credential round-trip with a sentinel token value and sweeps every emitted
+record — both the formatted message and `record.args` — asserting the sentinel,
+both ciphertext renderings and the Fernet key appear in none of them. It also
+carries positive controls, so that an absence assertion cannot pass by nothing
+having been logged at all: the decrypt is asserted to have genuinely returned
+the sentinel, and at least one record from
+`jobtracker.credentials.cloud` must be present.
+
+That test is a negative gate and was **proven able to fail** before being
+accepted: with the plaintext interpolated as a lazy `%s` argument, it reddens
+with `the plaintext reached a log record`, and only that test reddens.
+
+Two related findings from implementing this, recorded because both are the kind
+of thing an assessor asks about:
+
+- **`cryptography`'s `InvalidToken` cannot echo the ciphertext.** It is a bare
+  `class InvalidToken(Exception): pass` and all twelve `raise` sites in
+  `fernet.py` are argument-less, so `str(exc)` is empty. The pre-existing
+  `logger.error` on the decrypt-failure path was therefore not leaking. The
+  exception interpolation was replaced with a fixed `error=InvalidToken` token
+  anyway — hardening against a future release that might attach the offending
+  token, not a fix for a live leak.
+- **The Gmail credential *miss* was previously `logger.debug`**, which is off in
+  production — so the single most common access attempt emitted nothing at all.
+  It is now `info`. The iCloud miss had no log line whatsoever. This is a real
+  increase in log volume: `/auth/gmail/status` calls `get_gmail_credentials`
+  directly, so every status poll now emits one line per user.
+
+**Scope of the logging, stated exactly.** It covers the deployed application —
+`backend/jobtracker/credentials/cloud.py`, which is what `api/index.py` imports.
+A **vendored copy** of the same module exists at
+`ml/demo/space/jobtracker/credentials/cloud.py`, swept into a public Gradio
+classifier demonstration Space by a `copytree`, and it does **not** carry the
+access logging. That Space demonstrates the classifier; it is not the
+deployment and is not the path any real credential travels. The copy is named
+here so that "every access is logged" is read as every access *in the
+deployment*, which is what the control is about, and so that the drift is
+recorded rather than discovered. **Open item** — the vendored tree should be
+re-synced or the module dropped from it.
 
 ### 3.2 Access to the *Fernet key itself* — not logged, and why
 
