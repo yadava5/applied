@@ -156,10 +156,25 @@ export function expireSpentPkceVerifierCookies<T extends NextResponse>(
     // response, while these are written ON the response and are therefore what
     // gets parsed and re-serialized. Same branch, same request, opposite
     // outcomes — which is why the library needs no `expires` here and we do.
+    //
+    // `secure` and `sameSite` are here so this deletion carries the same
+    // attributes the cookie was WRITTEN with — `DEFAULT_COOKIE_OPTIONS`'
+    // `sameSite: "lax"`, plus the `secure` the clients now add (see
+    // `lib/supabase/server.ts` for the gate and why it follows `NODE_ENV`).
+    // Not because they affect which cookie is overwritten — identity is
+    // (name, domain, path), and `path` above is what carries that. Because a
+    // deletion is a `Set-Cookie` like any other: it is graded by the same
+    // rules as the write it undoes, and a cookie that was only ever sent over
+    // TLS should be cleared by a write that is too. Under
+    // `next dev` the `secure: false` is falsy and `compact()` strips it — the
+    // same mechanism the paragraph above is about — which is correct there:
+    // the cookie it is deleting was written without `Secure` too.
     response.cookies.set(name, "", {
       expires: new Date(0),
       maxAge: 0,
       path: "/",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
     });
   }
 
