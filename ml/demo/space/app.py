@@ -31,7 +31,11 @@ print("classifier ready", flush=True)
 LAYER_BLURB = {
     "rules": "Regex rules answered instantly — the pattern is unambiguous.",
     "embeddings": "e5-small-v2 similarity matched a labeled example.",
-    "setfit": "SetFit (few-shot ML, trained on corrections) decided.",
+    # NOT "trained on corrections": the shipped checkpoint was fitted partly on
+    # mail read under Gmail's restricted scope, was withdrawn on 2026-08-15, and
+    # a public label advertising it as correction-trained is the claim a CASA
+    # reviewer reads. It is a few-shot head; say that and nothing more.
+    "setfit": "SetFit (few-shot ML head) decided.",
     "fallback": "No layer was confident — routed to human review.",
 }
 

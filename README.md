@@ -244,6 +244,13 @@ turns on the data's origin, not its owner.
 from any existing clone or fork. Removing them at `HEAD` stops redistribution going forward; it is
 not erasure, and this README does not pretend otherwise.
 
+**The 90.4 MB → 22.8 MB claim loses its public receipt.** That compression figure is cited on the
+résumé and portfolio, and until now anyone could check it by running `stat` on two committed files.
+They can no longer. The measurement stands — it was taken on 2026-08-03 and is pinned in
+`scripts/readme_facts.py`, which still fails the build if any of the four places quoting it drifts
+— but it is now an attested number rather than a reproducible one, and it should be described that
+way wherever it is cited.
+
 **Getting the demo back.** `ml/browser/export_onnx.py` is unchanged and still produces the artifact
 from a local checkpoint. The route back to a *publishable* demo is a checkpoint trained on
 synthetic data only — the 400-case corpus at `backend/tests/corpus/` is the intended source. No
