@@ -60,6 +60,7 @@ export function LandingBoard({
   caption = true,
   beat,
   overlay,
+  onPaneSeeded,
 }: {
   /** The stage's fixed height — the reservation that keeps CLS at zero. */
   height?: string;
@@ -78,6 +79,9 @@ export function LandingBoard({
   beat?: number;
   /** A figure floated over the stage's foot (the act's receipt card). */
   overlay?: ReactNode;
+  /** Forwarded to MarketingBoard: the page's beat-2 pane is actually open
+   *  (the act's narration keys its third caption off this — see WindowAct). */
+  onPaneSeeded?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<HTMLDivElement>(null);
@@ -222,7 +226,11 @@ export function LandingBoard({
             style={{ transform: `translateY(${panY}px)` }}
           >
             {live ? (
-              <MarketingBoard beat={beat} onVisitorOpen={() => setReleased(true)} />
+              <MarketingBoard
+                beat={beat}
+                onVisitorOpen={() => setReleased(true)}
+                onPaneSeeded={onPaneSeeded}
+              />
             ) : (
               <StageSkeleton />
             )}

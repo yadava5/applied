@@ -103,6 +103,15 @@ export function WindowAct() {
   // when the reader scrolls up; the board's state does not, so scene 0's
   // opening line stops being true the moment beat 1 has fired once.
   const [settled, setSettled] = useState(false);
+  // Whether the page's own pane is actually open (MarketingBoard's beat-2
+  // seed). Scene 2's caption is a claim about a composition — "the row opens
+  // on the mail that moved it" — and a fast scroller reaches zone 2 seconds
+  // before the row has landed and the pane docks. Until it has, the strip
+  // keeps scene 1's line, which stays true for exactly that interval (the
+  // offer is landing, the row is moving). A visitor who took the wheel never
+  // gets a seeded pane, so their zone 2 keeps scene 1's line too — the page
+  // must not caption a pane it never opened.
+  const [paneSeeded, setPaneSeeded] = useState(false);
   const sentinelsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -137,7 +146,11 @@ export function WindowAct() {
         <div className="mx-auto w-full max-w-6xl px-4 pb-1.5 sm:px-6">
           <div className="grid min-h-6 items-start">
             {LINES.map((line, index) => {
-              const active = index === (beat === 0 && settled ? SETTLED : beat);
+              // Scene 0 revisited reads the settled line; scene 2 reads its
+              // own line only once the pane it names is open (`paneSeeded`).
+              const shown =
+                beat === 0 && settled ? SETTLED : beat === 2 && !paneSeeded ? 1 : beat;
+              const active = index === shown;
               return (
                 <p
                   key={line}
@@ -177,6 +190,7 @@ export function WindowAct() {
                 height="calc(100dvh - 13.5rem)"
                 caption={false}
                 beat={beat}
+                onPaneSeeded={() => setPaneSeeded(true)}
                 // Beats 1 and 2: the receipt docks over the frame's foot as a
                 // strip of window chrome (see LandingBoard), and the camera's
                 // `room` keeps the last row clear of it. It rides through

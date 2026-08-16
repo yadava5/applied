@@ -336,9 +336,21 @@ function BoardCell({
         reduceMotion
           ? { duration: 0 }
           : {
+              // The enter fade keeps the board's own tempo whatever `travel`
+              // says — measured: a fade sharing the slow glide's duration put
+              // the row below half opacity for ~47% of its journey, a ghost
+              // that was only legible once it had stopped moving.
               duration: 0.22,
               ease: [0.22, 1, 0.36, 1],
-              layout: { duration: travel ?? 0.22, ease: [0.22, 1, 0.36, 1] },
+              layout: {
+                duration: travel ?? 0.22,
+                // A `travel` glide is WATCHED — announced before it starts —
+                // so it takes a sustained in-out; the ease-out that is right
+                // for a 220ms settle covers ~82% of a slow glide's distance
+                // in the first third and then crawls (measured), which reads
+                // as a lunge, not a move.
+                ease: travel !== undefined ? [0.65, 0, 0.35, 1] : [0.22, 1, 0.36, 1],
+              },
             }
       }
     >
@@ -441,6 +453,10 @@ export function PipelineBoard({
   const { inShell, rail } = useShellSlots();
   const railStages = inShell && interactive;
   const detailDocked = useDetailDocked();
+  // Read here for the group headings' travel glide (below); expressed through
+  // animation PROPS on an always-rendered motion element, never a branch in
+  // the tree — BoardCell's docblock records what a differing tree shape cost.
+  const reduceMotion = useReducedMotion();
   const [query, setQuery] = useState("");
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   /** The pulse detail panel's click-through (#156/#158/#159): a day, the
@@ -1173,7 +1189,18 @@ export function PipelineBoard({
                   {...dropHandlers(column)}
                   className="board-col rounded-xl transition-colors"
                 >
-                  <div
+                  {/* Under a `travel` glide the heading moves WITH the rows:
+                      plain headings snapped 48px the instant a row left a
+                      group above, while every row took the slow glide — for
+                      the whole transit the labels and the rows disagreed and
+                      rows in flight painted over them (measured). `position`
+                      only, so nothing scales; product surfaces (`travel`
+                      unset) keep exactly the static heading they had, and the
+                      locked variant's sticky headings are never animated
+                      because `locked` callers never pass `travel`. */}
+                  <motion.div
+                    layout={travel !== undefined && !reduceMotion ? "position" : false}
+                    transition={{ duration: travel ?? 0.22, ease: [0.65, 0, 0.35, 1] }}
                     className={cn(
                       "mb-2 flex items-baseline gap-2 px-1",
                       locked && "lg:sticky lg:top-0 lg:z-10 lg:bg-background lg:py-1",
@@ -1189,7 +1216,7 @@ export function PipelineBoard({
                     </span>
                     <span className="tabular font-mono text-xs text-muted">{items.length}</span>
                     <span className="h-px flex-1 bg-line-soft" aria-hidden="true" />
-                  </div>
+                  </motion.div>
                   <ul className="space-y-1.5">
                     {items.length === 0 ? (
                       <li className="rounded-lg border border-dashed border-line-soft p-4 text-center text-xs text-dim">

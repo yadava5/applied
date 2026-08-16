@@ -91,6 +91,15 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    * components/dashboard changes.
    */
   onVisitorOpen?: () => void;
+  /**
+   * The page's own beat-2 pane has actually been handed to the board. The
+   * act's narration reads this (WindowAct): the third caption says "The row
+   * opens on the mail that moved it", and a fast scroller reaches zone 2
+   * seconds before the row has landed and the seed fires — the caption must
+   * not narrate a pane that is not open. Never fired for a visitor's own
+   * opens, and never fired at all once the visitor has taken over.
+   */
+  onPaneSeeded?: () => void;
 }) {
   const choreographed = beat !== undefined;
   // One clock read per mount, resolved in render (never module load) — the
@@ -141,6 +150,10 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
   useEffect(() => {
     visitorOpenRef.current = onVisitorOpen;
   }, [onVisitorOpen]);
+  const paneSeededRef = useRef(onPaneSeeded);
+  useEffect(() => {
+    paneSeededRef.current = onPaneSeeded;
+  }, [onPaneSeeded]);
 
   /** The visitor's hand, recorded synchronously in the capture phase — before
    *  the click's own commit, and so before anything that commit schedules. */
@@ -371,7 +384,10 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
       // behind for some later load to spend.
       pendingSeedRef.current = rowId;
       setOpenDetailId(rowId);
-    }, 0);
+      // The narration may now say the pane is open — same task as the seed
+      // itself, so the caption can never lead the composition.
+      paneSeededRef.current?.();
+    }, Math.max(0, landedAtRef.current - performance.now()));
     return () => window.clearTimeout(id);
   }, [beat, choreographed, apps, openDetailId]);
 

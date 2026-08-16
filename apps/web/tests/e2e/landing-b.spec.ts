@@ -260,6 +260,11 @@ async function driveToBeatTwo(page: Page): Promise<void> {
   await driveToBeatOne(page);
 
   await centreOn(page, "[data-beat='2']");
+  // The third caption is gated on the pane actually being open (WindowAct's
+  // `paneSeeded`), and the seed itself waits out the row's travel — so this
+  // single expectation is an arrival gate for the whole composition: caption,
+  // landing and pane, in the order the visitor gets them. The retry window
+  // has to cover the remainder of the ~1.4s glide.
   await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
   // The pane docks open ON that row — `data-detail-open` is set by
   // `PipelineBoard` for the row the detail is showing, so this is the scene
@@ -739,12 +744,14 @@ test.describe("landing B (/landing-b)", () => {
    * pane would arrive in frame and be closeable. It would simply be a pane
    * nobody asked for, appearing under a caption that says the page opened it.
    *
-   * So this asserts a COUNT, not a rectangle: the beat-2 caption is on screen
-   * (the arrival gate — without it a mis-scroll gives a green about a scene
-   * that never composed) and no detail pane exists. It samples for 1.5s rather
-   * than reading once, because the seed the takeover suppresses is itself a
-   * deferred timer: a single read taken too early passes on a page that is
-   * about to open one.
+   * So this asserts a COUNT, not a rectangle: zone 2 owns the centre band
+   * (the arrival gate is GEOMETRIC now — the third caption is gated on the
+   * pane being open, so on a correctly-suppressing build it can never show
+   * here and could no longer prove arrival) and no detail pane exists. The
+   * caption HOLDING scene 1's line is asserted as part of the promise. It
+   * samples for 1.5s rather than reading once, because the seed the takeover
+   * suppresses is itself a deferred timer: a single read taken too early
+   * passes on a page that is about to open one.
    *
    * THE TAKEOVER HAPPENS AT BEAT 0, AND THAT IS THE WHOLE DESIGN OF THIS TEST.
    * The obvious staging — take over at beat 1, the way SEED 3 does — cannot
@@ -845,11 +852,23 @@ test.describe("landing B (/landing-b)", () => {
 
     // The premise: that gesture has not carried the act into zone 2 behind our
     // backs. If it had, a broken build would already have spent its one seed
-    // here and the reading below would be green for the wrong reason.
-    await expect(
-      activeCaption(page),
+    // here and the reading below would be green for the wrong reason. Read
+    // GEOMETRICALLY, not off the caption: the third caption is now gated on
+    // the pane actually being open (WindowAct's `paneSeeded`), so on a build
+    // that suppresses the seed correctly the caption can never say it — a
+    // caption read here would be an assertion that cannot fail.
+    const zoneTwoOwnsTheBand = () =>
+      page.evaluate(() => {
+        const el = document.querySelector("[data-beat='2']");
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        const centre = window.innerHeight / 2;
+        return r.top <= centre && r.bottom >= centre;
+      });
+    expect(
+      await zoneTwoOwnsTheBand(),
       "the visitor's open at beat 0 scrolled the act all the way into zone 2 — this test's arrival at zone 2 is no longer the first one, so its green would prove nothing",
-    ).not.toHaveText("The row opens on the mail that moved it.");
+    ).toBe(false);
 
     // Then they keep reading. Beat 1 is passed through the way a real reader
     // passes it, and it is load-bearing here rather than scenery: the seed is
@@ -857,9 +876,19 @@ test.describe("landing B (/landing-b)", () => {
     // nothing to seed and goes green on an empty premise.
     await driveToBeatOne(page);
 
-    // On into the zone whose whole job is to open a pane.
+    // On into the zone whose whole job is to open a pane. Arrival is the
+    // zone owning the centre band (geometric — see the premise above for why
+    // the caption cannot be the gate here), and the caption HOLDING scene
+    // 1's line is itself part of the promise: the page must not caption a
+    // pane it never opened.
     await centreOn(page, "[data-beat='2']");
-    await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
+    expect(
+      await zoneTwoOwnsTheBand(),
+      "the centre-on scroll did not put zone 2 in the band — the scene never composed",
+    ).toBe(true);
+    await expect(activeCaption(page)).toHaveText(
+      "The offer lands, and the row moves without you.",
+    );
 
     // The scene is composing and the page has opened nothing — held over a
     // window wide enough that a deferred seed cannot land after the reading.
