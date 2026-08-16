@@ -26,7 +26,7 @@ import { showcaseApplications, showcasePendingVerdict, VERDICT_SIGNAL } from "./
  * measured: no run has timed a click to its load on this page, at either
  * viewport or under any load. Treat 400 as a bound nobody has instrumented.
  */
-const OPEN_GESTURE_MS = 400;
+const OPEN_GESTURE_MS = 0;
 
 /** The keys that open or traverse a card: Enter and Space activate a row's
  *  opener, ↑/↓ load the next card while a pane is up. Anything else the board
@@ -314,6 +314,7 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
     if (!row || row.status !== "rejected") return;
     // Deferred off the effect body — the house rule every board effect follows.
     const rowId = row.id;
+    pendingSeedRef.current = rowId; // MUTANT: the pre-fix arm site
     const id = window.setTimeout(() => {
       // The authoritative takeover read, and it has to be here rather than
       // only in the effect body: the visitor's own click at beat 1 is what
@@ -339,7 +340,6 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
       //
       // It also means a seed this effect's cleanup cancels leaves no claim
       // behind for some later load to spend.
-      pendingSeedRef.current = rowId;
       setOpenDetailId(rowId);
     }, 0);
     return () => window.clearTimeout(id);
