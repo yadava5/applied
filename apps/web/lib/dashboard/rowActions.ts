@@ -35,7 +35,7 @@ export interface ProxyRequest {
  * never overwrites it); also restores a dismissed row.
  *
  * It trains nothing and labels no mail — `record_status_correction`
- * (`backend/jobtracker/cloud/applications.py:2253`) deliberately writes no
+ * (`backend/jobtracker/cloud/applications.py:2251`) deliberately writes no
  * `training_data` example, because "what stage is this APPLICATION at?" is not
  * an answer to "what is this MESSAGE?".
  */

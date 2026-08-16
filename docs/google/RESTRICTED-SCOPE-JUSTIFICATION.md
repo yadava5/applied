@@ -210,8 +210,10 @@ prominent, user-facing feature the data serves; there is no other use.
   limit, because the hosted deployment trains **nothing** — not a pooled model,
   and not a per-user one either.
 
-  The classifier that runs in production is **rules-based**: 220 regex patterns
-  and a weighted score. `HybridClassifier.classify` short-circuits to the rules
+  The classifier that runs in production is **rules-based**: hand-written regex
+  patterns over the category vocabulary, scored and weighted, in
+  `backend/jobtracker/classifier/rules.py` — no model weights and nothing
+  learned. `HybridClassifier.classify` short-circuits to the rules
   layer on the first line of work when `settings.deployment == "cloud"`
   (`backend/jobtracker/classifier/hybrid.py:284`), which is every hosted
   request, so the embedding and SetFit layers are never constructed and their
