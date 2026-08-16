@@ -256,9 +256,19 @@ dependency this project has decided against.
 
    | Event | State |
    | --- | --- |
-   | Read of production environment variables from the CLI | **Observed** — the event above |
-   | `env-variable-read` for a plaintext *value* read, and its per-source variants | **Documented by Vercel; not observed here.** The dashboard reveal-value path was not exercised during this evidence pass |
+   | `env-variable-read:cli:env:ls` — listing production environment variables from the CLI | **Observed** — the event above |
+   | `env-variable-read` for a plaintext *value* read, and its other per-source variants | **Documented by Vercel; not observed here.** The dashboard reveal-value path was not exercised during this evidence pass |
    | `env-variable-add` / `-edit` / `-delete` for modification | **Documented by Vercel; not observed here** — no operator secret was modified during this evidence pass |
+
+   **Read row 1 precisely.** The command that produced it, `vercel env ls`,
+   lists variable *names* and their environments; it does not reveal values. So
+   what was observed is that the `env-variable-read` family fires, and that this
+   account's plan receives those events — not that a plaintext value read was
+   witnessed. Vercel documents the family as covering the reading of an
+   encrypted variable's plaintext value, and the variant that does so was not
+   exercised. The honest reading of the whole table is: **the mechanism is real
+   and reaches this account; the specific value-revealing event is documented
+   rather than demonstrated.**
 
    Four qualifiers must travel with any citation of this feed:
 
@@ -319,5 +329,6 @@ dependency this project has decided against.
 
 ---
 
-*Prepared 2026-08-15. No secret value is reproduced. Where a secret is
+*Prepared 2026-08-15; §3.2 corrected 2026-08-16 against the platform's own
+records. No secret value is reproduced. Where a secret is
 referenced it is named by environment variable only.*

@@ -254,5 +254,6 @@ access is through the dashboard's interface rather than a general export.
 
 ---
 
-*Prepared 2026-08-15. Sample rows are real; direct identifiers were redacted in
+*Prepared 2026-08-15; §2.1, §3.1 and §4 corrected 2026-08-16 after the audit
+event stream was found to be live. Samples are real; direct identifiers were redacted in
 the query and the redaction is enumerated in §3.3.*
