@@ -134,7 +134,7 @@ not implemented** — is in [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md).
 | # | Boundary | Crossed by | Control |
 | --- | --- | --- | --- |
 | 1 | Browser → Next.js | HTTPS | Supabase session cookie; `proxy.ts` → `updateSession` gates protected paths |
-| 2 | Next.js → FastAPI | HTTPS, `Authorization: Bearer <JWT>` | Signature verified per request, ES256 against the project JWKS |
+| 2 | Next.js → FastAPI | HTTPS, `Authorization: Bearer <JWT>` | Signature verified per request, ES256 against the project JWKS. Two exceptions with their own mechanisms — see §4.3 |
 | 3 | FastAPI → Postgres | TLS, pooled | Connects as `jobtracker_app`, which is **`NOBYPASSRLS`**; per-transaction identity GUC |
 | 4 | FastAPI → Google | HTTPS | `gmail.readonly` only; token decrypted per request, never logged |
 
@@ -297,17 +297,43 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
   stays unset, so RLS **fails closed** and reads zero rows rather than reading
   everything.
 
-`backend/tests/test_rls_postgres.py` exercises this against a real Postgres
-rather than SQLite.
+`backend/tests/test_rls_postgres.py` exercises this against a **real Postgres**,
+not SQLite — SQLite has no row-level security, so a test that ran there would
+prove nothing. It runs in CI against a Postgres service container
+(`.github/workflows/backend-ci.yml:208`), and the workflow explicitly guards
+against the skip-is-green failure mode: if `JOBTRACKER_TEST_PG_ADMIN_URL` were
+unset the tests would skip silently and the job would still pass, so the
+workflow fails the step when they skip (`:214`).
 
 ### 4.3 Layer 3 — explicit `user_id` scoping in the application
 
-Every router under `backend/jobtracker/cloud/` is mounted with a router-level
-`require_user()` dependency and filters on `user_id` in its own SQL. This
+The user-facing routers under `backend/jobtracker/cloud/` — `applications.py`
+and `account.py` — are mounted with a **router-level** `require_user()`
+dependency and additionally filter on `user_id` in their own SQL. This
 duplicates what RLS already enforces, deliberately: the repo has previously
 found DDL it assumed was applied to be absent in production, and a belt-and-
 braces filter is what keeps a purge interrupted half-way from leaving orphans
 that RLS then makes permanently unreachable.
+
+**Two routers are authenticated differently, and this document names them
+rather than claiming a uniformity that does not hold** (`docs/ARCHITECTURE.md`
+states the blanket version; it is imprecise):
+
+- **`gmail_oauth.py`** carries no router-level dependency. Its user-facing
+  endpoints take `Depends(current_user)` individually (`:1028`, `:1072`,
+  `:1254`, `:1411`, `:1585`, `:2041`). The **OAuth callback** deliberately has
+  none — the request arrives from Google's redirect and cannot carry the user's
+  JWT, so identity comes from the HS256-signed `state` parameter instead, which
+  the handler verifies before binding the RLS identity (`:1242`).
+- **`cron.py`** is not user-authenticated at all. It is invoked by Vercel's
+  scheduler and authenticates with the shared `JOBTRACKER_VERCEL_CRON_SECRET`
+  bearer token (`:265`, `:286`). It then binds each user's identity
+  individually for that user's own sync, so the per-user RLS context still
+  applies to every query it makes.
+
+Both are legitimate — neither can have a user JWT at the point it is called —
+but they are the two places where "every endpoint requires a user token" is not
+literally true, and an assessor reading the router table will find them.
 
 Account deletion is the clearest instance. `backend/jobtracker/cloud/account.py`
 purges children before parents across all nine user-bearing tables —
