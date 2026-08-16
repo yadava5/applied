@@ -202,6 +202,37 @@ carried by the ML demo (`ml/demo`, Hugging Face Spaces) and the web `/demo`
 fixture. Until an owner completes Path C's Google setup, the deployed
 `/settings` page honestly reports Gmail as "not enabled on this deployment."
 
+### `JOBTRACKER_TRAINING_ALLOWED_USER_IDS` — leave it unset
+
+| Variable | API project (repo root) | Web project (`apps/web`) |
+|---|---|---|
+| `JOBTRACKER_TRAINING_ALLOWED_USER_IDS` | **deliberately unset** — comma-separated UUIDs when a local run needs it | — |
+
+SetFit training refuses to read anybody's `training_data` rows unless their
+user id is named in this variable, or the corpus it loaded is entirely
+synthetic (`mock_seed*`, `external_dataset`). **Empty is the default and the
+correct production value**: nothing hosted retrains, so the deployed API
+should be structurally unable to train on a user — including on the owner.
+Enforced in `backend/jobtracker/classifier/setfit_model.py`
+(`_assert_training_allowed`), pinned by
+`backend/tests/test_training_is_owner_only.py`.
+
+Two things about it that are load-bearing rather than fussy:
+
+- **It fails closed.** Unset, misspelt, or dropped from the environment, the
+  answer is "refused", never "allowed". Setting it in the hosted deployment is
+  a policy change, not a fix for a failing retrain.
+- **A malformed entry stops config load** with a
+  `TrainingAllowedUserIdsError` that names the failing **index** and withholds
+  the value, because it reaches build logs. Same treatment, and the same
+  reason, as `JOBTRACKER_CRON_SYNC_USER_IDS`.
+
+Why the gate exists on top of the single-user scoping that was already there:
+scoping only buys *single-user*, which a run aimed at one stranger's mailbox
+satisfies perfectly. Gmail's restricted `gmail.readonly` scope permits
+training only a model personalized to one end user, so whose mail a model may
+see has to be a configured fact rather than a caller's argument.
+
 ## Which commits deploy
 
 Both Vercel projects build from this one repo, so every commit used to trigger

@@ -104,9 +104,20 @@ async def import_jsonl(
         await session.commit()
 
     if trigger_retrain and stats["inserted"] > 0:
+        # SCOPE: training reads ``training_data`` for ONE user. Applied's Gmail
+        # access is the restricted ``gmail.readonly`` scope, whose user-data
+        # policy permits training only a model personalized to a single end
+        # user, with no co-mingling across users. This is a local script, so it
+        # resolves to the ``LOCAL_USER_ID`` sentinel — which is also what makes
+        # it harmless if someone aims it at a production DATABASE_URL: it
+        # matches no rows there instead of pooling every tenant's mail.
+        # See ``setfit_model.CrossUserTrainingError``.
+        from jobtracker.classifier.setfit_model import resolve_training_user_id
+
         classifier = get_classifier()
-        if await classifier._setfit.should_retrain():
-            await classifier.retrain_setfit()
+        training_user_id = resolve_training_user_id()
+        if await classifier._setfit.should_retrain(user_id=training_user_id):
+            await classifier.retrain_setfit(user_id=training_user_id)
             stats["retrain_triggered"] = True
 
     return stats
