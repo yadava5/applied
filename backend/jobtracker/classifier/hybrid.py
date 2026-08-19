@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Optional
 from jobtracker.config import settings
 from jobtracker.database.models import EmailCategory
 
-from .rules import get_rules_classifier
+from .rules import domain_matches, get_rules_classifier, sender_domain
 
 if TYPE_CHECKING:  # pragma: no cover - types only, never imported at runtime
     from .embeddings import EmbeddingsClassifier
@@ -78,6 +78,10 @@ NON_APPLICATION_PATTERNS = [
     r"\btalent community\b",
 ]
 
+# MAILBOX names, not domains — read them with ``_is_digest_mailbox`` below and
+# not with ``rules.domain_matches``, which is for domains. Adding an entry here
+# widens what gets forced to OTHER, so keep them the names a bulk sender
+# actually puts in front of the ``@`` or uses as a mail subdomain.
 NON_APPLICATION_SENDERS = [
     "jobalerts",
     "jobs-noreply",
@@ -86,6 +90,44 @@ NON_APPLICATION_SENDERS = [
     "marketing",
     "promotions",
 ]
+
+#: LinkedIn's own mail. Matched as a domain (``linkedin.com`` or any subdomain
+#: of it), never as a substring of the address.
+LINKEDIN_DOMAIN = "linkedin.com"
+
+def _is_digest_mailbox(sender_email: Optional[str]) -> bool:
+    """Does this address NAME one of the digest/marketing mailboxes?
+
+    Anchored, and anchored differently from ``rules.domain_matches`` on
+    purpose: ``NON_APPLICATION_SENDERS`` holds mailbox names, so a token counts
+    when it is part of the local part (``jobalerts-noreply@acme.com``) or IS a
+    whole label of the domain (``no-reply@marketing.acme.com``). It is not a
+    domain list and parsing it as one would drop the first of those.
+
+    It used to be ``token in sender_email`` — an arbitrary substring of the
+    whole address, so any registrable domain could carry a token past the
+    guard: ``hello@acme-newsletterhub.example`` read as a newsletter mailbox.
+    Same defect class as the LinkedIn check below it, which is the one CodeQL
+    ``py/incomplete-url-substring-sanitization`` noticed (alert 50); this one it
+    did not. The stake is a classification, not an authorisation: the reachable
+    harm is a crafted sender steering mail into or out of the digest bucket.
+
+    Measured over the 185 distinct addresses in ``backend/`` and every sender
+    the adversarial corpus generates, this answers identically to the old
+    containment on all of them.
+    """
+
+    if not sender_email:
+        return False
+    lowered = sender_email.lower()
+    local, _, domain = lowered.rpartition("@")
+    if not local:  # no "@" at all: the whole value is the mailbox name
+        local, domain = lowered, ""
+    labels = [label for label in domain.split(".") if label]
+    return any(
+        token in local or token in labels for token in NON_APPLICATION_SENDERS
+    )
+
 
 LIFECYCLE_PATTERNS = [
     r"\bthank(?:s| you) for applying\b",
@@ -556,16 +598,13 @@ class HybridClassifier:
             1 for pattern in self._non_application_patterns if pattern.search(text)
         )
 
-        sender_hit = False
-        if sender_email:
-            sender_lower = sender_email.lower()
-            sender_hit = any(token in sender_lower for token in NON_APPLICATION_SENDERS)
+        sender_hit = _is_digest_mailbox(sender_email)
 
         if content_hits >= 2:
             return "digest_or_promotional_content"
         if sender_hit and content_hits >= 1:
             return "sender_plus_digest_content"
-        if "linkedin.com" in (sender_email or "").lower() and content_hits >= 1:
+        if domain_matches(sender_domain(sender_email), LINKEDIN_DOMAIN) and content_hits >= 1:
             return "linkedin_job_alert_content"
         return None
 

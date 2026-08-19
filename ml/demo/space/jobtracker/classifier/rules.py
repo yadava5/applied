@@ -810,6 +810,39 @@ def is_ats_sender(sender_email: Optional[str]) -> bool:
     return any(domain == ats or domain.endswith(f".{ats}") for ats in ATS_DOMAINS)
 
 
+def sender_domain(sender_email: Optional[str]) -> str:
+    """The lowercased domain of an address, or ``""`` when there is not one.
+
+    The argument is a bare address, never a raw ``From`` header — every
+    ingestion path parses one with ``email.utils.parseaddr`` first. A value
+    with no ``@`` has no domain and gets ``""``, which every predicate below
+    reads as "no match" rather than as a wildcard.
+    """
+
+    if not sender_email or "@" not in sender_email:
+        return ""
+    return sender_email.lower().rsplit("@", 1)[-1].strip()
+
+
+def domain_matches(domain: str, listed: str) -> bool:
+    """Is ``domain`` the listed domain, or a PROPER subdomain of it?
+
+    THE BOUNDARY IS A DOT, and that is the whole point. Containment
+    (``listed in domain``) matches the name anywhere in the host, so
+    ``evil-linkedin.com.attacker.io`` reads as LinkedIn — the shape CodeQL
+    ``py/incomplete-url-substring-sanitization`` flags. The obvious repair,
+    ``domain.endswith(listed)``, is the same bug one step in: it still accepts
+    ``evil-linkedin.com``. Only ``==`` or a leading ``.`` is a real boundary.
+
+    ``is_ats_sender`` above applies this same rule inline against
+    ``ATS_DOMAINS``; it is deliberately left spelled out there, because its
+    body is pinned by #166 / #252 / #260 routing behaviour and rewriting it is
+    a separate change from fixing the guard that had no anchoring at all.
+    """
+
+    return bool(domain) and (domain == listed or domain.endswith(f".{listed}"))
+
+
 # =============================================================================
 # Rule-Based Classifier
 # =============================================================================
