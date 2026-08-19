@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
+import { ACT_DEADBAND, ACT_MARKS } from "../../components/marketing/tempo";
 
 /**
  * E2E for the merged landing candidate (`/landing-b`) — the page that is
@@ -59,10 +60,17 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  *   `ClaimsDescent` `py-6`→`py-16` ......... provenance 37.1px below the fold
  *   the provenance <p> deleted ............. its `toHaveCount(1)`
  *   `[data-claim=1]`→`[data-claim=3]` ...... the split-stage arrival gate
+ *      (retargeted 2026-08-19 onto the micro-beat's own copy — see
+ *      `centreOnText`; the sentinel it named is gone with the observers)
  *   `LandingBoard` `beat < 1`→`beat !== 1` . row 315.6px BELOW the clip
+ *      (the camera is a continuous mapping now; the equivalent break is
+ *      inverting `engaged`)
  *   `room` 0→400 at beat 2 ................. row 117.5px ABOVE the clip
  *   `LG` 1024px→1200px ..................... the live-board guard (2 tests)
  *   `[data-beat=2]`→`[data-beat=0]` ........ the beat-2 caption gate
+ *      (retargeted 2026-08-19 onto `ACT_MARKS.docked` — see `driveAct`. The
+ *      equivalent break is now `past()`→`before()`, and the mark itself is
+ *      imported, so moving it in tempo.ts moves the drive with it)
  *   `MarketingBoard` beat-1 gate disabled .. the verdict/docked-pane gates
  *   the row locator → the board ............ the row-size guard (746.5px)
  *   the clip walk → the row's parent ....... the clip-is-the-stage guard
@@ -149,30 +157,57 @@ const PROVENANCE = /A synthetic email .* computed live in this tab/;
 const STICKY_EXHIBIT = "div.sticky.top-20";
 
 /**
- * Scroll the page so `selector`'s midpoint sits at the viewport's midpoint —
- * which is where both components' centre bands live. Derived from the
- * element, so it survives any change to the runway's height or the sentinel
- * shares; a hard-coded scroll offset would not.
+ * Put the act at a given share of its PINNED RUNWAY — the same quantity
+ * `WindowAct` derives (`useScroll`, `start start` → `end end`), computed the
+ * same way: `(scrollY - top) / (height - innerHeight)`.
+ *
+ * This replaces centring on `[data-beat='N']` sentinels, which no longer
+ * exist. That is not a downgrade in what is asserted: the sentinels were a
+ * proxy for "the reader is at the point where this scene owns the window",
+ * and the runway share IS that point now, read off the same constants the
+ * component reads (`ACT_MARKS`, imported rather than restated — a mark that
+ * moves moves here too).
  */
-async function centreOn(page: Page, selector: string): Promise<void> {
-  await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    if (!el) throw new Error(`nothing matches ${sel} — the scene's sentinel is gone`);
+async function driveAct(page: Page, progress: number): Promise<void> {
+  await page.evaluate((p) => {
+    const act = document.querySelector('section[aria-label="The board, live"]');
+    if (!act) throw new Error("the act's section is gone — nothing to drive");
+    const rect = act.getBoundingClientRect();
+    const top = window.scrollY + rect.top;
+    const runway = rect.height - window.innerHeight;
+    if (runway <= 0) throw new Error("the act has no pinned runway at this viewport");
+    window.scrollTo({ top: Math.round(top + p * runway), behavior: "instant" });
+  }, progress);
+  // One frame for the rAF-throttled read to land. Every assertion after this
+  // retries on its own, so this is only about not racing the first paint.
+  await page.waitForTimeout(150);
+}
+
+/** Clear of a mark on the far side of its deadband — where the latch has
+ *  definitely flipped, rather than inside the band where it is ambiguous by
+ *  construction. `latch` is unit-tested for the band itself. */
+const past = (mark: number) => Math.min(1, mark + ACT_DEADBAND + 0.02);
+/** Clear of a mark on the near side: the latch has definitely flipped BACK. */
+const before = (mark: number) => Math.max(0, mark - ACT_DEADBAND - 0.02);
+
+/**
+ * Scroll so a run of COPY sits at the viewport's midpoint, which is where the
+ * descent's own boundary lives. Derived from the element, so it survives any
+ * change to the claims' heights — and addressed by the words the reader sees
+ * rather than by a hook, because the sentinels the observers needed are gone
+ * and a test-only attribute would be a knob rather than a measurement.
+ */
+async function centreOnText(page: Page, text: RegExp): Promise<void> {
+  const target = page.getByText(text).first();
+  await expect(target).toBeAttached();
+  await target.evaluate((el) => {
     const rect = el.getBoundingClientRect();
     const midpoint = window.scrollY + rect.top + rect.height / 2;
     window.scrollTo({ top: Math.max(0, midpoint - window.innerHeight / 2), behavior: "instant" });
-  }, selector);
+  });
+  await page.waitForTimeout(150);
 }
 
-/**
- * Wait for an element's height to stop changing, then return it.
- *
- * The exhibit's three regions transition `grid-template-rows` over 500ms, and
- * the seed-1 margin is single-digit pixels — measuring mid-transition reads a
- * height that is wrong in either direction. Two consecutive equal readings
- * after the transition has had time to start is the settle; a bare
- * `waitForTimeout` would be a guess that gets worse under load.
- */
 async function settledHeight(page: Page, selector: string): Promise<number> {
   const read = () =>
     page.evaluate(
@@ -235,7 +270,7 @@ async function driveToBeatOne(page: Page): Promise<void> {
   // before it exists would measure `StageSkeleton` — a test that cannot fail.
   await expect(page.getByTestId("pipeline-board")).toBeVisible();
 
-  await centreOn(page, "[data-beat='1']");
+  await driveAct(page, past(ACT_MARKS.verdict));
   await expect(activeCaption(page)).toHaveText("The offer lands, and the row moves without you.");
   // The verdict itself: the row leaves `applied` for the offered group (the
   // act's payoff is a WIN as of 2026-08-16 — the moving row is the offer the
@@ -259,7 +294,7 @@ async function driveToBeatOne(page: Page): Promise<void> {
 async function driveToBeatTwo(page: Page): Promise<void> {
   await driveToBeatOne(page);
 
-  await centreOn(page, "[data-beat='2']");
+  await driveAct(page, past(ACT_MARKS.docked));
   await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
   // The pane docks open ON that row — `data-detail-open` is set by
   // `PipelineBoard` for the row the detail is showing, so this is the scene
@@ -269,13 +304,15 @@ async function driveToBeatTwo(page: Page): Promise<void> {
 }
 
 /**
- * The act's four narration lines (three scenes plus scene 0 revisited), by
- * their opening words. Matching on the lines themselves rather than on the
+ * The act's three narration lines, by their opening words. There used to be a
+ * fourth — scene 0 revisited — and it is gone on purpose: the act reverses
+ * now, so scene 0 revisited IS scene 0 and a line about a permanently settled
+ * board would be the one caption that could contradict its own board. Matching on the lines themselves rather than on the
  * strip's layout classes keeps this readable when the strip is restyled — and
  * it is what lets `activeCaption` be a single-element locator inside a section
  * that also contains the whole board's prose.
  */
-const NARRATION = /^(The board, nineteen days|The offer lands|The row opens on|The same board, with)/;
+const NARRATION = /^(The board, nineteen days|The offer lands|The row opens on)/;
 
 /** The narration line for the scene currently on screen. Every line is in the
  *  DOM at once, stacked in one grid cell; the inactive ones are `aria-hidden`
@@ -287,6 +324,21 @@ const activeCaption = (page: Page) =>
   page
     .locator("section[aria-label='The board, live'] p[aria-hidden='false']")
     .filter({ hasText: NARRATION });
+
+/**
+ * The closing sequence's playhead, in seconds. `ClosingAct` writes `--act-t`
+ * on the band from its scroll progress and globals.css freezes every animation
+ * at that time, so this one number is the whole state of the scene — and it is
+ * the only thing that can distinguish "composed because the reader scrolled
+ * there" from "composed because it ran on a timer".
+ */
+async function playhead(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const band = document.querySelector(".act-band");
+    if (!band) return -1;
+    return parseFloat(getComputedStyle(band).getPropertyValue("--act-t")) || 0;
+  });
+}
 
 /** The detail pane's own close control, by the label `ApplicationDetail`
  *  gives it — used as a raw selector inside `page.evaluate`, where a
@@ -432,7 +484,12 @@ test.describe("landing B (/landing-b)", () => {
     await page.setViewportSize(DESKTOP_1024);
     await page.goto("/landing-b");
 
-    await centreOn(page, "[data-claim='1']");
+    // The descent's boundary is the position of the second micro-beat within
+    // the paired claims (`ClaimsDescent` measures it, rather than assuming a
+    // half). So drive to that micro-beat's own paragraph — the thing the
+    // boundary is derived from — instead of to a `[data-claim]` sentinel,
+    // which the scroll-progress rewrite removed.
+    await centreOnText(page, /^So the shipped rules layer runs on it twice/);
 
     // Arrived at the SPLIT stage: the wall label names it and both live
     // verdict chips have actually expanded (collapsed `grid-rows-[0fr]` gives
@@ -858,7 +915,7 @@ test.describe("landing B (/landing-b)", () => {
     await driveToBeatOne(page);
 
     // On into the zone whose whole job is to open a pane.
-    await centreOn(page, "[data-beat='2']");
+    await driveAct(page, past(ACT_MARKS.docked));
     await expect(activeCaption(page)).toHaveText("The row opens on the mail that moved it.");
 
     // The scene is composing and the page has opened nothing — held over a
@@ -893,7 +950,24 @@ test.describe("landing B (/landing-b)", () => {
    * so this is not a golden pixel: it says "the dot ends where the scene says
    * the full stop goes".
    */
-  test("the closing act composes on scroll-into-view and holds", async ({ page }) => {
+  /**
+   * REWRITTEN 2026-08-19, and both halves of the old test had died rather than
+   * broken:
+   *
+   *  · its premise grepped the section for `act--play` to prove "nothing has
+   *    played yet". The band now ships `act--play act--scrub` from the SERVER
+   *    (so a reader without JS gets the composed image instead of an empty
+   *    band), which made that read meaningless — the class is there before
+   *    anything can have happened. The honest premise is the PLAYHEAD:
+   *    `--act-t` has not advanced.
+   *  · its "and HOLDS" half asserted that scrolling away and back leaves the
+   *    scene composed. Against a scroll-bound sequence that is vacuous in one
+   *    direction and wrong in the other: away-and-back must return it to
+   *    exactly where the scroll says, which is the stronger property and the
+   *    one this now measures, together with the fact that it genuinely
+   *    UN-draws partway up.
+   */
+  test("the closing act's playhead is the reader's scroll position", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024);
     await page.goto("/landing-b");
 
@@ -919,16 +993,18 @@ test.describe("landing B (/landing-b)", () => {
 
     // Nothing has played yet: the band is below the fold at load. Read AFTER
     // proof that the client tree is live — the board only mounts from an
-    // effect, so waiting on it means the closing act's own observer has had
-    // its chance to fire. Without that wait this assertion passes on a page
-    // that simply has not hydrated, which is a check that cannot fail: a
-    // mutation firing the sequence at load was measured green until the wait
-    // was added.
+    // effect, so waiting on it means the closing act's own scroll binding has
+    // had its chance to fire. Without that wait this assertion passes on a
+    // page that simply has not hydrated, which is a check that cannot fail.
+    //
+    // The playhead, not the class: `act--play` is server-rendered now, so it
+    // says nothing about whether anything has happened.
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
-    expect((await compose()).playing, "the closing act played before it was seen").toBe(false);
+    expect(await playhead(page), "the closing sequence advanced before it was seen").toBe(0);
 
-    await page.locator("section.act").scrollIntoViewIfNeeded();
-    // The sequence is ~1.5s of CSS with a 1.55s tail; poll rather than sleep.
+    await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
+    // Scroll-bound, so the end state arrives with the scroll rather than after
+    // a timer; poll anyway because the write is rAF-throttled.
     await expect
       .poll(async () => (await compose()).askOpacity, { timeout: 6_000 })
       .toBe(1);
@@ -951,19 +1027,138 @@ test.describe("landing B (/landing-b)", () => {
     // The sentence itself finished drawing.
     expect(played.dashoffset).toBe("0px");
 
-    // …and it HOLDS. Scroll the whole way back up and return.
+    // The playhead reached the end of the sequence rather than merely "far
+    // enough" — the band is the last thing before the footer, so a binding
+    // whose upper bound is unreachable would leave the page's closing image
+    // permanently a few frames short and nothing above would notice.
+    expect(await playhead(page), "the sequence never reached its own end").toBeCloseTo(2.05, 2);
+
+    // It REVERSES. Back to the top and the playhead is home, with the sentence
+    // un-drawn — the property the scroll binding exists to give, and the one
+    // the old "and HOLDS" assertion contradicted.
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.waitForTimeout(300);
-    await page.locator("section.act").scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
-
-    const held = await compose();
-    expect(held.askOpacity, "the ask fell back out of view after the reader scrolled away").toBe(1);
-    expect(held.dashoffset, "the drawn sentence un-drew itself").toBe("0px");
+    expect(await playhead(page), "the closing sequence did not rewind").toBe(0);
     expect(
-      Math.abs(held.dot!.y - held.seat!.y),
-      "the verdict left its seat after the reader scrolled away and came back",
+      (await compose()).dashoffset,
+      "the wordmark stayed drawn after the reader scrolled away — the scrub is one-way",
+    ).not.toBe("0px");
+
+    // …and coming back lands on exactly the same frame, not merely a composed
+    // one. Same scroll position, same playhead: that is what "a function of
+    // position" means.
+    await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
+    await page.waitForTimeout(300);
+    const returned = await compose();
+    expect(await playhead(page)).toBeCloseTo(2.05, 2);
+    expect(returned.dashoffset, "the drawn sentence did not re-draw").toBe("0px");
+    expect(
+      Math.abs(returned.dot!.y - returned.seat!.y),
+      "the verdict did not return to its seat",
     ).toBeLessThanOrEqual(2);
+  });
+
+  /**
+   * THE REASON THE ACT WAS REBUILT, and it had never had a gate.
+   *
+   * The board's state used to be a one-way latch: the scene index came back
+   * down when the reader scrolled up, the verdict and the docked pane did not.
+   * The owner reported it twice ("once the right pane opens with scroll it
+   * never closes"), and no assertion anywhere could see it, because every
+   * existing test drives DOWN.
+   *
+   * The mark and its deadband are imported, so this measures the component's
+   * own boundary rather than a number copied next to it.
+   */
+  test("the act reverses: scrolling back up closes the pane and un-does the verdict", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP_1024_768);
+    await page.goto("/landing-b");
+
+    await driveToBeatTwo(page);
+
+    // Back past the dock mark: the pane the PAGE opened is withdrawn.
+    await driveAct(page, before(ACT_MARKS.docked));
+    await expect(page.getByTestId("application-detail")).toBeHidden();
+    await expect(activeCaption(page)).toHaveText("The offer lands, and the row moves without you.");
+
+    // Back past the verdict mark: the row goes home, by the board's own layout
+    // animation. Read off the stage control, not the row's text — the control
+    // is a native <select> carrying every status as an option.
+    await driveAct(page, before(ACT_MARKS.verdict));
+    await expect(page.getByLabel("Change stage for Larkspur Systems")).toHaveValue("applied");
+    await expect(activeCaption(page)).toHaveText("The offer lands, and the row moves without you.");
+
+    // And all the way home.
+    await driveAct(page, before(ACT_MARKS.scene));
+    await expect(activeCaption(page)).toHaveText(
+      "The board, nineteen days after you stopped updating it.",
+    );
+
+    // Then forward again — the act replays rather than being spent. A reader
+    // who missed the move scrubs back and watches it.
+    await driveAct(page, past(ACT_MARKS.verdict));
+    await expect(page.getByLabel("Change stage for Larkspur Systems")).toHaveValue("offered");
+  });
+
+  /**
+   * "A pure function of scroll position" is the claim the whole rework rests
+   * on, so it gets measured rather than asserted in a docblock: leave a
+   * position, go somewhere else, come back, and the frame is the same frame.
+   *
+   * The camera is read to three decimals because it is INTERPOLATED — it is
+   * the part of the act that a stale measurement could silently corrupt
+   * (`panDistance` did exactly that until 2026-08-19, and stayed corrupt for
+   * the rest of the visit including the forward path). The latched state is
+   * compared exactly.
+   */
+  test("the act is a function of position: leaving and returning is identical", async ({ page }) => {
+    await page.setViewportSize(DESKTOP_1024_768);
+    await page.goto("/landing-b");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    const frame = () =>
+      page.evaluate(() => {
+        const act = document.querySelector('section[aria-label="The board, live"]');
+        if (!act) return null;
+        const dolly = act.querySelector(".absolute.inset-0.overflow-clip")?.firstElementChild;
+        const caption = act.querySelector("p[aria-hidden='false']");
+        const select = document.querySelector<HTMLSelectElement>(
+          "select[aria-label='Change stage for Larkspur Systems']",
+        );
+        return {
+          camera: dolly
+            ? Number((new DOMMatrixReadOnly(getComputedStyle(dolly).transform).m42).toFixed(3))
+            : null,
+          caption: caption?.textContent ?? null,
+          stage: select?.value ?? null,
+          pane: !!document.querySelector('[data-testid="application-detail"]'),
+        };
+      });
+
+    // Sampled clear of every mark: inside a deadband the state is ambiguous by
+    // construction, which is what a deadband IS, and asserting there would be
+    // asserting against hysteresis rather than against the binding.
+    const samples = [0.1, past(ACT_MARKS.scene), 0.5, past(ACT_MARKS.verdict), 0.85];
+
+    const outward = [];
+    for (const at of samples) {
+      await driveAct(page, at);
+      await page.waitForTimeout(1800); // let the glide and the seed settle
+      outward.push(await frame());
+    }
+
+    // Away — past the act entirely, into the descent — and back, in reverse.
+    for (let i = samples.length - 1; i >= 0; i -= 1) {
+      await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
+      await page.waitForTimeout(200);
+      await driveAct(page, samples[i]);
+      await page.waitForTimeout(1800);
+      expect(await frame(), `returning to p=${samples[i]} did not restore the frame`).toEqual(
+        outward[i],
+      );
+    }
   });
 
   /**

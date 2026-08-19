@@ -145,6 +145,44 @@ const isLandingModule = (file) =>
 const marketing = (name) => join(webRoot, "components", "marketing", name);
 const copyPath = marketing("copy.ts");
 const actPath = marketing("WindowAct.tsx");
+const tempoPath = marketing("tempo.ts");
+
+/**
+ * The act's marks, read out of tempo.ts rather than restated here.
+ *
+ * By text, because this suite is a source gate and cannot import TypeScript —
+ * and because restating the numbers would make the gate agree with itself
+ * instead of with the component. Comments are stripped first: every mark in
+ * that file carries a paragraph above it, and several of those paragraphs
+ * contain numbers.
+ */
+function readMarks() {
+  const src = (graph.get(tempoPath) ?? "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const block = /export const ACT_MARKS\s*=\s*\{([\s\S]*?)\}\s*as const;/.exec(src);
+  assert.ok(block, "ACT_MARKS is gone from tempo.ts — the act has no marks to be in order");
+  const scalar = (key) => {
+    const m = new RegExp(`${key}:\\s*(-?[\\d.]+)`).exec(block[1]);
+    assert.ok(m, `ACT_MARKS.${key} is gone`);
+    return Number(m[1]);
+  };
+  const pair = (key) => {
+    const m = new RegExp(`${key}:\\s*\\[\\s*(-?[\\d.]+)\\s*,\\s*(-?[\\d.]+)`).exec(block[1]);
+    assert.ok(m, `ACT_MARKS.${key} is no longer a pair`);
+    return [Number(m[1]), Number(m[2])];
+  };
+  const band = /export const ACT_DEADBAND\s*=\s*([\d.]+)/.exec(src);
+  assert.ok(band, "ACT_DEADBAND is gone — the latches would chatter at every mark");
+  return {
+    ACT_MARKS: {
+      scene: scalar("scene"),
+      pan: pair("pan"),
+      receipt: pair("receipt"),
+      verdict: scalar("verdict"),
+      docked: scalar("docked"),
+    },
+    ACT_DEADBAND: Number(band[1]),
+  };
+}
 const descentPath = marketing("ClaimsDescent.tsx");
 const closingPath = marketing("ClosingAct.tsx");
 const clipPath = marketing("ProductClip.tsx");
@@ -319,85 +357,183 @@ test("the privacy claim is about RETENTION, not about what is requested", () => 
   );
 });
 
-test("the window act captions every beat — beat 0 is never wordless", () => {
+test("the window act captions every scene — and no scene is wordless", () => {
   const act = graph.get(actPath);
   assert.ok(act, "WindowAct.tsx is not in the landing graph");
   const block = /captions:\s*\[([\s\S]*?)\]/.exec(graph.get(copyPath));
   assert.ok(block, "ACT.captions is gone — the act's scenes have no words");
   const captions = [...block[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]);
-  const beats = [...act.matchAll(/data-beat=\{(\d+)\}/g)].map((m) => Number(m[1]));
-  assert.deepEqual(beats, [0, 1, 2], "the act's sentinel beats changed");
+
+  // The count FIRST. It used to sit after a `deepEqual` on the sentinel
+  // indices, so the moment those changed this property stopped being reachable
+  // at all — the assertion was there, and could not run.
   assert.equal(
     captions.length,
-    beats.length,
-    "every beat needs its own caption — an uncaptioned beat is the dead dwell this fixed",
+    3,
+    "the act has three scenes (rest, the verdict, the mail) — a scene without a caption is the dead dwell this fixed",
   );
   for (const [i, line] of captions.entries()) {
     assert.ok(line.trim().length > 0, `caption ${i} is empty`);
   }
   assert.ok(act.includes("ACT.captions"), "WindowAct stopped rendering the captions");
-  // Scene 0 revisited: the camera comes back when the reader scrolls up, the
-  // verdict does not, and the opening line would then be describing a board
-  // that has already moved.
-  assert.match(
-    graph.get(copyPath),
-    /settled:\s*"[^"]+"/,
-    "ACT.settled is gone — scene 0's opening line would sit over a moved board",
-  );
-  assert.ok(act.includes("ACT.settled"), "WindowAct stopped using scene 0's revisited line");
-  // The revisit line has to be addressed by the scene COUNT. Indexed off the
-  // rendered array's length instead, a fourth scene would silently retarget
-  // the revisit at that scene's caption and this whole test would stay green.
-  assert.match(
-    act,
-    /SETTLED\s*=\s*ACT\.captions\.length/,
-    "the revisited line is no longer addressed by the scene count — a fourth scene would hide it",
-  );
-});
 
-test("beat 0's zone outlasts the pin", () => {
-  // Derived in WindowAct's docblock: beat 1 fires when the sentinel band
-  // (rootMargin -45%/-45%, so at 0.55vh) reaches zone 1's top, and the window
-  // pins at 4.5rem. If h0·H is not greater than 0.55vh − 4.5rem, the verdict
-  // lands while the window is still travelling. 4.5rem is smallest as a share
-  // of the tallest viewport this is designed for (72/900 ≈ 0.08), so 47vh is
-  // the floor that holds everywhere.
-  const act = graph.get(actPath);
-  const runway = Number(/lg:h-\[(\d+)vh\]/.exec(act)?.[1]);
-  assert.ok(Number.isFinite(runway), "the act's runway height is no longer a literal vh");
-  const shares = [...act.matchAll(/data-beat=\{\d+\}\s+className="h-\[(\d+)%\]"/g)].map((m) =>
-    Number(m[1]),
-  );
-  assert.equal(shares.length, 3, "the act no longer has three percentage sentinel zones");
-  assert.equal(
-    shares.reduce((a, b) => a + b, 0),
-    100,
-    "the sentinel zones no longer tile the runway",
+  // Scene 0 revisited is RETIRED, and this asserts the retirement rather than
+  // the old line. The act is a function of scroll position now, so scrolling
+  // back up un-does the verdict and closes the pane: scene 0 revisited IS
+  // scene 0. A caption describing a permanently settled board would be the one
+  // line on the page that could contradict the board it captions — so if a
+  // latch ever comes back and brings that line with it, this goes red.
+  assert.doesNotMatch(
+    graph.get(copyPath),
+    /^\s*settled:\s*"/m,
+    "ACT.settled is back — a caption for a settled board means the act stopped reversing",
   );
   assert.ok(
-    (shares[0] * runway) / 100 > 47,
-    `beat 0 owns ${(shares[0] * runway) / 100}vh — under 47vh the verdict lands on an unpinned window`,
+    !act.includes("ACT.settled"),
+    "WindowAct references a revisited-scene caption again — the act is meant to reverse instead",
   );
 });
 
-test("beat 2 keeps the moved row in frame", () => {
-  // Measured: the verdict row lands in the CLOSED group at 679-735 of a 783px
+test("the act's marks keep the choreography in order", () => {
+  // These used to be three `h-[N%]` sentinel zones and an inequality about a
+  // -45% IntersectionObserver band. There are no sentinels now: the act reads
+  // one scroll progress and the marks are shares of it (tempo.ts). What has to
+  // hold is the ORDER, because the order is the product's honesty — the camera
+  // arrives before the receipt announces, the receipt announces before the row
+  // moves, and the pane never opens on a row that has not arrived.
+  const { ACT_MARKS, ACT_DEADBAND } = readMarks();
+  const [panFrom, panTo] = ACT_MARKS.pan;
+  const [receiptFrom, receiptTo] = ACT_MARKS.receipt;
+
+  for (const [name, value] of [
+    ["scene", ACT_MARKS.scene],
+    ["pan start", panFrom],
+    ["pan end", panTo],
+    ["receipt start", receiptFrom],
+    ["receipt end", receiptTo],
+    ["verdict", ACT_MARKS.verdict],
+    ["docked", ACT_MARKS.docked],
+  ]) {
+    assert.ok(value > 0 && value < 1, `${name} (${value}) is outside the runway`);
+  }
+
+  assert.equal(ACT_MARKS.scene, panFrom, "the caption changes at a different point from the camera");
+  assert.ok(panFrom < panTo, "the camera's pan does not advance");
+  assert.ok(receiptFrom < receiptTo, "the receipt's rise does not advance");
+
+  // The camera reaches the foot before the row commits, or the verdict lands
+  // in a frame that is still moving. Deadbands on both sides, because the
+  // latch fires at mark + deadband at the earliest.
+  assert.ok(
+    panTo < ACT_MARKS.verdict - ACT_DEADBAND,
+    `the pan ends at ${panTo} but the row can commit from ${ACT_MARKS.verdict - ACT_DEADBAND}`,
+  );
+  // The receipt announces before the row moves — "announce, then move", the
+  // whole reason there is something to watch — and the gap between them is the
+  // BREATH that replaced VERDICT_BREATH_MS. A zero breath is the defect.
+  const breath = ACT_MARKS.verdict - ACT_DEADBAND - receiptTo;
+  assert.ok(
+    breath > 0.05,
+    `the announced breath is ${breath.toFixed(3)} of the runway — the receipt no longer lands before the row moves`,
+  );
+  // The pane docks after the row has committed, with room between them.
+  assert.ok(
+    ACT_MARKS.verdict + ACT_DEADBAND < ACT_MARKS.docked - ACT_DEADBAND,
+    "the verdict and the pane's dock overlap — the pane can open on a row that has not moved",
+  );
+
+  // And the runway is long enough that those shares are worth real pixels. The
+  // act failed at 270vh: 1723px of pinned scroll for three scenes, ~574px each
+  // against a 3s choreography. The gate is the SHORTEST supported viewport
+  // (600px), where the runway is (H - 1) * 600.
+  const runway = Number(/lg:h-\[(\d+)vh\]/.exec(graph.get(actPath))?.[1]);
+  assert.ok(Number.isFinite(runway), "the act's runway height is no longer a literal vh");
+  const shortest = ((runway - 100) / 100) * 600;
+  const breathPx = breath * shortest;
+  assert.ok(
+    breathPx > 120,
+    `the breath is ${Math.round(breathPx)}px at a 600-tall viewport — under ~120 nobody crosses it slowly enough to read the announcement`,
+  );
+});
+
+test("the latch has hysteresis, and it is symmetric about the mark", () => {
+  // `latch` is the one pure function the whole rework rests on: every piece of
+  // board state is `latch(progress, mark, current, deadband)`, so a latch that
+  // flips on the mark itself would chatter at the boundary and re-target a
+  // layout animation on every frame of trackpad momentum. It had no test.
+  //
+  // Reimplemented from source rather than imported, for the same reason
+  // `readMarks` parses: this suite cannot import TypeScript. The gate is that
+  // the SOURCE still says this — if the implementation changes shape, this
+  // goes red and someone has to look.
+  const src = graph.get(marketing("scrub.ts")) ?? "";
+  assert.match(
+    src,
+    /return current \? progress > mark - deadband : progress >= mark \+ deadband;/,
+    "latch's hysteresis changed shape — the property below no longer describes it",
+  );
+  const latch = (progress, mark, current, deadband) =>
+    current ? progress > mark - deadband : progress >= mark + deadband;
+
+  const mark = 0.5;
+  const band = 0.025;
+  // Rising: nothing happens until the far side of the band.
+  assert.equal(latch(0.49, mark, false, band), false);
+  assert.equal(latch(0.5, mark, false, band), false, "the latch flips ON the mark — that chatters");
+  assert.equal(latch(0.524, mark, false, band), false);
+  assert.equal(latch(0.525, mark, false, band), true);
+  // Falling: it stays on until the near side.
+  assert.equal(latch(0.5, mark, true, band), true, "the latch flips back ON the mark");
+  assert.equal(latch(0.476, mark, true, band), true);
+  assert.equal(latch(0.475, mark, true, band), false);
+  // Inside the band it is whatever it already was — that IS the hysteresis,
+  // and it is why the e2e drives sample clear of every mark.
+  for (const p of [0.48, 0.49, 0.5, 0.51, 0.52]) {
+    assert.equal(latch(p, mark, true, band), true, `held state lost at ${p}`);
+    assert.equal(latch(p, mark, false, band), false, `state gained early at ${p}`);
+  }
+});
+
+test("the camera holds the foot, and re-measures it from the board's box", () => {
+  // Measured: the verdict row lands in the offered group at 679-735 of a 783px
   // board, while a head-anchored stage shows 0-552 at a 768-tall viewport and
-  // 0-384 at 600. A camera that returns to the head at beat 2 argues "the row
-  // opens on the mail that moved it" with the row off-stage at every height,
-  // so only beat 0 rests at the head.
+  // 0-384 at 600. A camera that returns to the head once the pane docks argues
+  // "the row opens on the mail that moved it" with the row off-stage at every
+  // height, so only the resting scene sits at the head.
   const board = graph.get(marketing("LandingBoard.tsx"));
   assert.ok(board, "LandingBoard.tsx is not in the landing graph");
+
+  // The camera is a continuous mapping now, not a per-beat branch: `engaged`
+  // is the scrubbed progress folded with the release latch, and it is what
+  // both crop fades and the pan all read. One source, so they cannot disagree.
   assert.match(
     board,
-    /beat < 1 \? 0 :/,
-    "the camera no longer holds the foot for every beat past the first — beat 2's row goes off-stage",
+    /const engaged = useTransform\(/,
+    "the camera is no longer one continuous value — the pan and the crop fades can now disagree",
   );
-  // And it must re-measure: the board GROWS when the pane docks open (743 to
-  // 783), so a height read once per beat pans to a foot that has since moved.
+
+  // It must re-measure: the board GROWS when the pane docks open (743 to 769),
+  // so a height read once would pan to a foot that has since moved.
   assert.ok(
     board.includes("new ResizeObserver"),
-    "the camera measures the board once per beat again — the docked pane moves the foot under it",
+    "the camera measures the board once again — the docked pane moves the foot under it",
+  );
+
+  // REGRESSION GATE (2026-08-19). It measured `scrollHeight`, and inside the
+  // ResizeObserver callback that fires when the pane un-docks the box already
+  // reads 743 while the overflow extent still reads 768 — the departing pane
+  // is laid out but no longer in the box. The box then stops changing, so
+  // nothing ever corrected it: the camera stayed 25px low for the rest of the
+  // visit, forward path included, clipping the row the caption points at. At
+  // 1512x949 the whole pan is 54px, so that is a 48% error.
+  assert.ok(
+    !/pan\.scrollHeight/.test(board),
+    "the camera measures `scrollHeight` again — that reads the departing pane and goes stale permanently",
+  );
+  assert.match(
+    board,
+    /pan\.getBoundingClientRect\(\)\.height/,
+    "the camera's reach is no longer measured from the board's own box",
   );
 });
 
@@ -407,10 +543,22 @@ test("the split verdict stays TWO micro-beats under ONE headline", () => {
   // The exhibit is sequential or it is nothing: raw first, so the reader feels
   // the preview end, and only then the two verdicts disagreeing. A single
   // `split` screen would turn the page's best moment into an illustration.
+  // The exhibit advances raw → split, and it is driven by a LATCH over scroll
+  // progress rather than by the enter-only observer this replaced (which could
+  // never revert, because `if (!entry.isIntersecting) continue` has no exit
+  // branch). Both stages have to be reachable from that one boolean.
   assert.match(
     descent,
-    /const STAGES[^=]*=\s*\[\s*"raw",\s*"split",/,
-    "the descent's first two sentinels no longer run raw → split",
+    /stage=\{split \? "split" : "raw"\}/,
+    "the descent's exhibit no longer advances raw → split under one headline",
+  );
+  assert.ok(
+    descent.includes("latch(") && descent.includes("STAGE_DEADBAND"),
+    "the descent's exhibit is no longer driven by a hysteretic latch over scroll progress",
+  );
+  assert.ok(
+    !/isIntersecting\) continue/.test(descent),
+    "the enter-only observer is back — it cannot revert, so the last stage would persist forever",
   );
   assert.ok(
     descent.includes("CLAIMS.verdict.raw") && descent.includes("CLAIMS.verdict.split"),
