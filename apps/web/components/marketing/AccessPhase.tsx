@@ -21,6 +21,21 @@ import { ProductClip } from "./ProductClip";
  * the nav's "Get access" anchor (`ACCESS_ANCHOR`) has exactly one target per
  * page, whichever staging renders it. `scroll-mt` clears the sticky nav, the
  * same offset the shared section uses.
+ *
+ * THE FLOW COLUMN IS THE RAIL'S RUNWAY. Sticky can only travel inside its
+ * containing block, so the pin exists exactly to the extent the flowing side
+ * outruns the rail — and a first cut of this phase paced the copy as one
+ * `75vh` screen, which left the section the rail's own height and the pin
+ * with zero range: the clip translated 1:1 with scroll and at 768 its chrome
+ * strip (with the play/pause control) cropped above the fold while the body
+ * was still on screen. The same crop the board rework existed to kill. So
+ * the copy is paced like every phase before it — the descent's claim /
+ * micro-beat grammar, `80vh` then `60vh`, `lg`-only because below `lg` there
+ * is no rail to pace against and the stacked twin already reads right. The
+ * two beats are the two beats the copy actually has: the constraint
+ * (`ACCESS.cap` — one hundred seats, invited one at a time) and the path
+ * that needs no seat (`ACCESS.noSeat` + the CTA), so the ask arrives as its
+ * own moment with the recording of exactly that path still pinned beside it.
  */
 export function AccessPhase() {
   return (
@@ -36,32 +51,38 @@ export function AccessPhase() {
             />
           </div>
         </div>
-        <div className="flex min-h-[75vh] flex-col justify-center py-16">
-          <p className="label-caps mb-4">{ACCESS.eyebrow}</p>
-          <h2 className="max-w-xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-            {ACCESS.headline}
-          </h2>
-          <div className="mt-5 max-w-xl space-y-4 text-muted">
-            <p>{ACCESS.cap}</p>
-            <p>{ACCESS.noSeat}</p>
+        <div className="flex min-h-[75vh] flex-col justify-center py-16 lg:block lg:min-h-0 lg:py-0">
+          {/* Beat one: the constraint. */}
+          <div className="flex flex-col justify-center lg:min-h-[80vh] lg:py-16">
+            <p className="label-caps mb-4">{ACCESS.eyebrow}</p>
+            <h2 className="max-w-xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+              {ACCESS.headline}
+            </h2>
+            <p className="mt-5 max-w-xl text-muted">{ACCESS.cap}</p>
           </div>
-          <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
-            <a
-              href="/import"
-              {...NEW_TAB}
-              className="inline-flex min-h-11 items-center rounded-lg bg-strong px-5 py-2.5 font-medium text-background transition-opacity hover:opacity-90"
-            >
-              {ACCESS.cta} <span aria-hidden className="ml-2">→</span>
-            </a>
-            <span className="text-sm text-dim">
-              {ACCESS.aside}{" "}
+          {/* Beat two: the path that needs no seat, and the ask. `mt-4`
+              below `lg` keeps the paragraph rhythm the single-screen staging
+              had (the old `space-y-4`); at `lg` the beat box owns the gap. */}
+          <div className="flex flex-col justify-center lg:min-h-[60vh] lg:py-16">
+            <p className="mt-4 max-w-xl text-muted lg:mt-0">{ACCESS.noSeat}</p>
+            <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
               <a
-                href={`mailto:${ACCESS.contact}`}
-                className="text-muted underline-offset-4 hover:text-strong hover:underline"
+                href="/import"
+                {...NEW_TAB}
+                className="inline-flex min-h-11 items-center rounded-lg bg-strong px-5 py-2.5 font-medium text-background transition-opacity hover:opacity-90"
               >
-                {ACCESS.contact}
+                {ACCESS.cta} <span aria-hidden className="ml-2">→</span>
               </a>
-            </span>
+              <span className="text-sm text-dim">
+                {ACCESS.aside}{" "}
+                <a
+                  href={`mailto:${ACCESS.contact}`}
+                  className="text-muted underline-offset-4 hover:text-strong hover:underline"
+                >
+                  {ACCESS.contact}
+                </a>
+              </span>
+            </div>
           </div>
           <div className="mt-10 lg:hidden">
             <ProductClip
