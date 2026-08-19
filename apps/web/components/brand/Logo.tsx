@@ -20,6 +20,16 @@ import { cn } from "@/lib/utils";
  * `sig-pulse` choreography and the `beta-dot` ping, and the lockup lifts on the
  * same spring curve the app's buttons use. All of it collapses to a static logo
  * under `prefers-reduced-motion` (see globals.css).
+ *
+ * Entrance: inside an `.auth-hero` (the auth pages' front door,
+ * components/auth/AuthHeader.tsx) the lockup ASSEMBLES once on arrival — the
+ * closing act's stroke-draw device (`pathLength={1}`, dashoffset 1 → 0)
+ * applied to the brand asset itself rather than a copy. The hooks here are
+ * inert everywhere else: `--dw` is each element's ABSOLUTE delay into that
+ * sequence (never chained — an inner relative delay is how an animated SVG
+ * quietly de-syncs), and `pathLength` changes nothing until a dash is set.
+ * The composed lockup is the base state in CSS, so reduced motion and every
+ * non-auth mount render it finished (globals.css, "Auth front door").
  */
 
 type LogoProps = {
@@ -30,13 +40,19 @@ type LogoProps = {
   title?: string;
 };
 
-const node = (d: string): CSSProperties => ({ ["--d" as string]: d });
+const node = (d: string, dw: string): CSSProperties => ({
+  ["--d" as string]: d,
+  ["--dw" as string]: dw,
+});
+/** Absolute entrance delay for a drawn / faded element (`.auth-hero` only). */
+const draw = (dw: string): CSSProperties => ({ ["--dw" as string]: dw });
 
 /** The pipeline tile: two cyan process rings ascending to an emerald verdict. */
 function Mark() {
   return (
     <>
       <rect
+        className="brand-logo__tile"
         x="0.75"
         y="0.75"
         width="46.5"
@@ -47,11 +63,25 @@ function Mark() {
         strokeWidth="1.5"
       />
       <g strokeLinecap="round">
-        <path d="M17.2,30.2 L20.3,27.4" stroke="#F7F8F8" strokeOpacity="0.65" strokeWidth="2" />
-        <path d="M27.7,20.7 L30.6,18.1" stroke="#F7F8F8" strokeOpacity="0.65" strokeWidth="2" />
+        <path
+          className="brand-logo__edge"
+          style={draw("0.18s")}
+          d="M17.2,30.2 L20.3,27.4"
+          stroke="#F7F8F8"
+          strokeOpacity="0.65"
+          strokeWidth="2"
+        />
+        <path
+          className="brand-logo__edge"
+          style={draw("0.34s")}
+          d="M27.7,20.7 L30.6,18.1"
+          stroke="#F7F8F8"
+          strokeOpacity="0.65"
+          strokeWidth="2"
+        />
         <circle
           className="brand-logo__node brand-logo__proc"
-          style={node("0ms")}
+          style={node("0ms", "0.1s")}
           cx="13.5"
           cy="33.5"
           r="3"
@@ -60,7 +90,7 @@ function Mark() {
         />
         <circle
           className="brand-logo__node brand-logo__proc"
-          style={node("80ms")}
+          style={node("80ms", "0.26s")}
           cx="24"
           cy="24"
           r="3"
@@ -69,7 +99,7 @@ function Mark() {
         />
         <circle
           className="brand-logo__node brand-logo__verdict"
-          style={node("160ms")}
+          style={node("160ms", "0.44s")}
           cx="34.5"
           cy="14.5"
           r="4.1"
@@ -92,37 +122,91 @@ function Wordmark() {
         strokeLinejoin="miter"
         transform="translate(0,10.5)"
       >
-        <g transform="translate(64,0)">
-          <path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
-          <path d="M10.85,7 L10.85,20" />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.04s")}
+          transform="translate(64,0)"
+        >
+          <path
+            pathLength={1}
+            d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"
+          />
+          <path pathLength={1} d="M10.85,7 L10.85,20" />
         </g>
-        <g transform="translate(79,0)">
-          <path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
-          <path d="M0.15,7 L0.15,26" />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.12s")}
+          transform="translate(79,0)"
+        >
+          <path
+            pathLength={1}
+            d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"
+          />
+          <path pathLength={1} d="M0.15,7 L0.15,26" />
         </g>
-        <g transform="translate(94,0)">
-          <path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
-          <path d="M0.15,7 L0.15,26" />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.2s")}
+          transform="translate(94,0)"
+        >
+          <path
+            pathLength={1}
+            d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"
+          />
+          <path pathLength={1} d="M0.15,7 L0.15,26" />
         </g>
-        <g transform="translate(111.8,0)">
-          <path d="M1.8,0 L1.8,16.4 A3.6,3.6 0 0 0 5.4,20" />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.28s")}
+          transform="translate(111.8,0)"
+        >
+          <path pathLength={1} d="M1.8,0 L1.8,16.4 A3.6,3.6 0 0 0 5.4,20" />
         </g>
-        <g transform="translate(127.9,0)">
-          <path d="M1.6,7 L1.6,20" />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.34s")}
+          transform="translate(127.9,0)"
+        >
+          <path pathLength={1} d="M1.6,7 L1.6,20" />
         </g>
-        <circle cx="129.5" cy="2.7" r="2" fill="currentColor" stroke="none" />
-        <g transform="translate(139,0)">
-          <path d="M0.28,12.1 L10.72,12.1 A5.35,6.5 0 1 0 8.57,18.82" />
+        {/* the i-dot is a fill — dashoffset cannot draw it, so it pops */}
+        <circle
+          className="brand-logo__pop"
+          style={draw("0.42s")}
+          cx="129.5"
+          cy="2.7"
+          r="2"
+          fill="currentColor"
+          stroke="none"
+        />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.42s")}
+          transform="translate(139,0)"
+        >
+          <path
+            pathLength={1}
+            d="M0.28,12.1 L10.72,12.1 A5.35,6.5 0 1 0 8.57,18.82"
+          />
         </g>
-        <g transform="translate(154,0)">
-          <path d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5" />
-          <path d="M10.85,0 L10.85,20" />
+        <g
+          className="brand-logo__stroke"
+          style={draw("0.5s")}
+          transform="translate(154,0)"
+        >
+          <path
+            pathLength={1}
+            d="M10.85,13.5 A5.35,6.5 0 1 0 0.15,13.5 A5.35,6.5 0 1 0 10.85,13.5"
+          />
+          <path pathLength={1} d="M10.85,0 L10.85,20" />
         </g>
       </g>
-      {/* the emerald verdict — the sentence-ending full stop */}
+      {/* the emerald verdict — the sentence-ending full stop. Its entrance
+          delay waits out the last letter's draw: the mark lands only once the
+          sentence it punctuates exists. */}
       <circle
         className="brand-logo__node brand-logo__verdict"
-        style={node("240ms")}
+        style={node("240ms", "0.9s")}
         cx="172"
         cy="31"
         r="2.8"
@@ -132,7 +216,11 @@ function Wordmark() {
   );
 }
 
-export function Logo({ variant = "full", className, title = "Applied" }: LogoProps) {
+export function Logo({
+  variant = "full",
+  className,
+  title = "Applied",
+}: LogoProps) {
   const mark = variant === "mark";
   return (
     <svg

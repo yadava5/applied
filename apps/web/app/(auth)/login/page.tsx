@@ -4,11 +4,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useId, useRef, useState, type FormEvent } from "react";
 
+import { AuthHeader } from "@/components/auth/AuthHeader";
 import {
   AuthOrDivider,
   GoogleSignInButton,
 } from "@/components/auth/GoogleSignInButton";
-import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
 import { armBoot } from "@/lib/boot/flag";
 import {
@@ -42,37 +42,30 @@ function humaniseAuthError(raw: string | null): string | null {
  */
 export default function LoginPage() {
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-12">
-      <div className="space-y-6">
-        <header className="space-y-2">
-          <Link href="/" aria-label="Applied — home" className="brand-logo-link mb-4 text-strong">
-            <Logo className="h-7 w-auto" />
-          </Link>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Sign in to Applied
-          </h1>
-          <p className="text-sm text-muted">
-            Enter your email and password to continue.
-          </p>
-        </header>
+    <div className="space-y-6">
+      <AuthHeader
+        title="Welcome back."
+        intro="Sign in to pick up where you left off."
+      />
 
-        <Suspense fallback={<LoginFormSkeleton />}>
-          <LoginForm />
-        </Suspense>
+      <Suspense fallback={<LoginFormSkeleton />}>
+        <LoginForm />
+      </Suspense>
 
-        <p className="text-sm text-muted">
-          Don&apos;t have an account?{" "}
-          <Link
-            href="/signup"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-strong underline underline-offset-4 hover:text-foreground"
-          >
-            Sign up
-          </Link>
-        </p>
-      </div>
-    </main>
+      <p className="text-sm text-muted">
+        Don&apos;t have an account?{" "}
+        {/*
+          No target="_blank": this is the login <-> signup cross-link, and
+          opening it in a new tab strands the abandoned login form behind it.
+        */}
+        <Link
+          href="/signup"
+          className="text-strong underline underline-offset-4 hover:text-foreground"
+        >
+          Sign up
+        </Link>
+      </p>
+    </div>
   );
 }
 
@@ -106,7 +99,9 @@ function LoginForm() {
    */
   const justReset = searchParams.get("reset") === "success";
   /** Which field the current error is about — null for a server-side one. */
-  const [invalidField, setInvalidField] = useState<CredentialField | null>(null);
+  const [invalidField, setInvalidField] = useState<CredentialField | null>(
+    null,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const errorId = useId();
   const emailRef = useRef<HTMLInputElement>(null);
