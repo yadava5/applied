@@ -316,16 +316,28 @@ const ACT_SECONDS = 2.05;
  * kind of thing and starts another, and `ACT_STOPS` is the share of the
  * runway each of those spans is given.
  *
- *   0.00 → 0.30s   the scene arrives: the lane, the two ghost rails, the
- *                  cyan rail, the key. Nothing is being DRAWN yet, so this
- *                  wants very little scroll — but it cannot have none, or
- *                  the pinned frame opens on a black screen.
- *   0.30 → 0.90s   the wordmark draws. Eight staggered strokes, the last
+ *   0.00 → 0.32s   the scene arrives: the lane, the two ghost rails, the
+ *                  cyan rail, the key. The boundary is the rail's own
+ *                  completed draw — its 0.02s start plus its 0.3s duration —
+ *                  the moment the comparison stands. This span wants very
+ *                  little scroll, but it cannot have none, or the pinned
+ *                  frame opens on a black screen.
+ *   0.32 → 0.90s   the wordmark draws. Eight staggered strokes, the last
  *                  starting at 0.5s and taking 0.4s, and the envelope
  *                  crossing the full width underneath them. THIS IS THE
  *                  SHOT, and it gets the majority of the runway.
  *   0.90 → 2.05s   the verdict falls and seats, the ripple, the ask, the
  *                  replay hint. Single gestures; they read at speed.
+ *
+ * EVERY BEAT IS DERIVED, NOT TRANSCRIBED (2026-08-19; the middle beat moved
+ * 0.3 → 0.32 to make that literally true — 20ms of playhead map, invisible
+ * at any scroll position). Beat 1 is the rail's `--d` plus its draw duration;
+ * beat 2 is the last stroke's `--d` plus the shared draw duration (0.5 + 0.4);
+ * `ACT_SECONDS` is the replay hint's delay plus its duration (1.55 + 0.5).
+ * `tests/unit/closing-act-tempo.test.mjs` recomputes all three from
+ * globals.css and this file's `at(...)` delays and fails on any drift, either
+ * direction — retiming the CSS without moving these constants no longer
+ * silently unmaps the playhead.
  *
  * WHY THIS REPLACED `t = total · p²`. The square curve was written to buy the
  * drawing more runway than a linear scrub gave it, and it did — but it buys
@@ -342,7 +354,7 @@ const ACT_SECONDS = 2.05;
  * which is the one thing a scrub is allowed to own. If a delay or duration in
  * globals.css moves, the boundaries here move with it.
  */
-const ACT_BEATS = [0, 0.3, 0.9] as const;
+const ACT_BEATS = [0, 0.32, 0.9] as const;
 const ACT_STOPS = [0, 0.1, 0.68] as const;
 
 /**
