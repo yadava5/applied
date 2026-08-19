@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/shell/AppShell";
+import { publicEnv } from "@/lib/env";
+import { resolveAvatar } from "@/lib/profile/avatar";
 import { readAmbientPref } from "@/lib/settings/ambient";
 import { loadRailData } from "@/lib/shell/rail";
 import { getCurrentUser, userDisplayName } from "@/lib/supabase/auth";
@@ -87,6 +89,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       rail={rail}
       userEmail={user.email ?? null}
       userName={userDisplayName(user)}
+      // The rail's tile. Resolved from the user this layout already
+      // verified — no extra read, and no network call: an upload's URL is
+      // built from metadata, and Google's arrives on the identity. The
+      // bytes are fetched by the image optimizer, server-side, which is
+      // the whole point (`lib/profile/avatar.ts`).
+      userAvatar={resolveAvatar(user, publicEnv.NEXT_PUBLIC_SUPABASE_URL).src}
       // Rides on the user the layout already verified — no extra read. The
       // Appearance toggle's router.refresh() re-runs this layout, which is
       // how a saved change reaches the rail server-side.

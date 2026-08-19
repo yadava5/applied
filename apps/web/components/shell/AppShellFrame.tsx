@@ -12,6 +12,9 @@ type AppShellFrameProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
+  /** The account's profile photo, resolved server-side (`lib/profile/avatar`).
+   *  `null` is the monogram, which is the majority state. */
+  userAvatar?: string | null;
   /** Fixture mode (/demo, /demo/shell): the top bar trades sign-out for a demo
    *  pill, the nav resolves to the public twins, and the rail footer carries
    *  the anonymous visitor's session edge — a signup invitation. */
@@ -55,6 +58,7 @@ export function AppShellFrame({
   rail,
   userEmail,
   userName = null,
+  userAvatar = null,
   demo = false,
   ambient = true,
 }: AppShellFrameProps) {
@@ -69,7 +73,13 @@ export function AppShellFrame({
     <ShellSlotProvider>
       <DemoModeProvider demo={demo}>
         <div className="flex h-dvh w-full overflow-hidden">
-          <Sidebar rail={rail} userEmail={userEmail} userName={userName} ambient={ambient} />
+          <Sidebar
+            rail={rail}
+            userEmail={userEmail}
+            userName={userName}
+            userAvatar={userAvatar}
+            ambient={ambient}
+          />
           <div className="flex min-w-0 flex-1 flex-col">
             <TopBar userEmail={userEmail} userName={userName} demo={demo} />
             {/* ONE page geometry for every authed surface: a shared centred column

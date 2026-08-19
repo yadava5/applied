@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient, deletionEnabled } from "@/lib/supabase/admin";
 import { runAccountDeletion } from "@/lib/account/deletion";
 import { serverEnv } from "@/lib/env.server";
+import { AVATAR_BUCKET, isBucketMissing } from "@/lib/profile/avatar";
 
 /**
  * Delete the caller's own account. This is the server side of the Settings
@@ -65,6 +66,25 @@ export async function POST() {
           });
         }
       : null,
+    // Supabase Storage is a store the backend's purge cannot see — it is not in
+    // Postgres, and `auth.admin.deleteUser` does not cascade into it. Without
+    // this step, closing an account would leave the user's profile photo in a
+    // bucket forever, which is the orphaning shape of #214 with a photograph of
+    // their face as the artifact. Run on the CALLER's client, so the bucket's
+    // RLS policies scope the delete to their own folder rather than this
+    // handler being trusted to.
+    purgeAvatars: async () => {
+      const folder = supabase.storage.from(AVATAR_BUCKET);
+      const { data, error } = await folder.list(user.id);
+      // No bucket means no photos — a real state until the SQL in
+      // `docs/avatars-bucket-2026-08-19.sql` is applied, and one that must not
+      // block a user from closing their account.
+      if (error) return { ok: isBucketMissing(error) };
+      const paths = (data ?? []).map((object) => `${user.id}/${object.name}`);
+      if (paths.length === 0) return { ok: true };
+      const { error: removeError } = await folder.remove(paths);
+      return { ok: !removeError };
+    },
     deleteAuthUser: admin ? () => admin.auth.admin.deleteUser(user.id) : null,
   });
 

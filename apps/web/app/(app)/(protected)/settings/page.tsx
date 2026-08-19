@@ -10,7 +10,9 @@ import { NotificationsSection } from "@/components/settings/NotificationsSection
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { publicEnv } from "@/lib/env";
 import { getGmailStatus } from "@/lib/gmail/server";
+import { googleAvatarUrl, resolveAvatar } from "@/lib/profile/avatar";
 import { readAmbientPref } from "@/lib/settings/ambient";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { deletionEnabled } from "@/lib/supabase/admin";
@@ -185,6 +187,7 @@ export default async function SettingsPage({
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
   const email = user?.email ?? "";
   const displayName = typeof meta.display_name === "string" ? meta.display_name : "";
+  const avatar = resolveAvatar(user, publicEnv.NEXT_PUBLIC_SUPABASE_URL);
   const memberSince = user?.created_at
     ? new Date(user.created_at).toLocaleDateString("en-US", {
         month: "long",
@@ -229,6 +232,15 @@ export default async function SettingsPage({
             email={email}
             memberSince={memberSince}
             signIn={summarizeSignIn(user)}
+            // Resolved from the SAME user read the rail's tile resolves from,
+            // one render earlier in `app/(app)/layout.tsx` — one precedence
+            // rule, two surfaces, no chance of Settings claiming a photo the
+            // sidebar is not drawing. `googleAvatarSrc` rides alongside so the
+            // card can say what removing an upload will fall back to (and show
+            // it) without waiting for the server to answer.
+            avatarSource={avatar.source}
+            avatarSrc={avatar.src}
+            googleAvatarSrc={googleAvatarUrl(user)}
           />
           <AppearanceSection initialAmbient={readAmbientPref(meta)} />
           <Suspense fallback={<GmailCardFallback />}>

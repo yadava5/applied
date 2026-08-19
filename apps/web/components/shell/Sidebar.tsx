@@ -59,13 +59,21 @@ type SidebarProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
+  /** The account's profile photo for the footer tile; `null` is the monogram. */
+  userAvatar?: string | null;
   /** The ambient-mail pref (Settings → Appearance): whether the middle run
    *  carries its drifting-envelope background. Server-read, so an opted-out
    *  account never mounts the field at all. */
   ambient?: boolean;
 };
 
-export function Sidebar({ rail, userEmail, userName = null, ambient = true }: SidebarProps) {
+export function Sidebar({
+  rail,
+  userEmail,
+  userName = null,
+  userAvatar = null,
+  ambient = true,
+}: SidebarProps) {
   const pathname = usePathname();
   const { setRail } = useShellSlots();
   // Fixture mode: the lockup's home is the board twin, not the auth bounce.
@@ -145,7 +153,12 @@ export function Sidebar({ rail, userEmail, userName = null, ambient = true }: Si
       </div>
 
       <div className="shrink-0 border-t border-line-soft px-3 py-3">
-        <RailFooter gmail={rail.gmail} userName={userName} userEmail={userEmail} />
+        <RailFooter
+          gmail={rail.gmail}
+          userName={userName}
+          userEmail={userEmail}
+          userAvatar={userAvatar}
+        />
       </div>
     </aside>
   );

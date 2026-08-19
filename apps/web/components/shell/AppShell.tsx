@@ -15,6 +15,8 @@ type AppShellProps = {
   userEmail: string | null;
   /** Display name for the identity block; `null` falls back to the email. */
   userName?: string | null;
+  /** The account's profile photo, resolved by the layout. */
+  userAvatar?: string | null;
   /** The ambient-mail pref, read from user metadata by the layout. */
   ambient?: boolean;
 };
@@ -52,12 +54,19 @@ export async function AppShell({
   rail,
   userEmail,
   userName = null,
+  userAvatar = null,
   ambient = true,
 }: AppShellProps) {
   return (
     <>
       <ReturnRefresh />
-      <AppShellFrame rail={await rail} userEmail={userEmail} userName={userName} ambient={ambient}>
+      <AppShellFrame
+        rail={await rail}
+        userEmail={userEmail}
+        userName={userName}
+        userAvatar={userAvatar}
+        ambient={ambient}
+      >
         {children}
       </AppShellFrame>
     </>
