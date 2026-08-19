@@ -2347,7 +2347,7 @@ async def gmail_sync(
     logger.info(
         "Gmail sync for user_id=%s: mode=%s incremental=%s created=%s updated=%s "
         "purged=%s needs_review=%s total=%s scanned=%s unreadable=%s stopped_by=%s "
-        "estimate=%s removed=%s",
+        "estimate=%s removed_application_id=%s",
         user_id,
         mode,
         incremental,
@@ -2360,7 +2360,11 @@ async def gmail_sync(
         unreadable,
         stopped_by,
         result_size_estimate,
-        [r.company for r in merged.removed] or None,
+        # Ids, not company names: this record already carries ``user_id``, and
+        # a company name beside it says where the user applied (see
+        # ``_warn_if_capped`` in cloud/applications.py). The ids name the same
+        # rows and answer the same question against the database.
+        [r.id for r in merged.removed] or None,
     )
     return SyncResponse(
         created=created,

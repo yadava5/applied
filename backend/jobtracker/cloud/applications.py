@@ -747,18 +747,36 @@ def _warn_if_capped(
     beside them. At 65 rows this can never fire, which is exactly why it has to
     be audible if it ever does — a cap that truncates in silence is the shape
     this codebase keeps finding under "checks that cannot fail".
+
+    The token itself is NOT written to the record. It is a company name lifted
+    out of a mail subject, and printing it beside ``user_id`` at WARNING is what
+    turns an aggregated log into a statement about where this person applied —
+    the single fact the product's privacy page promises to keep. CodeQL reads
+    the line as clear-text logging of sensitive data (alert 178) because the
+    variable is called ``token``; the NAME is a false positive (it is not a
+    credential) and the SUBSTANCE is not.
+
+    What replaces it has to stay actionable, because a warning nobody can act on
+    is worse than none. Two facts do that without copying mail text: the token's
+    LENGTH, which says whether the cap was hit by a plausible name or by
+    something pathological, and one ``application_id`` out of the truncated set.
+    The id is opaque, is already logged all over this module, and points at the
+    row whose ``company`` column answers "which employer?" — in the database,
+    under the user's own RLS policy, rather than in a log with no such scope.
     """
 
     if len(rows) < _COMPANY_ROWS_CAP:
         return
     logger.warning(
-        "Company lookup (%s half) hit its %s-row cap for user_id=%s token=%r. "
-        "The resolver is now reasoning about a TRUNCATED set and may file a "
-        "duplicate application; raise _COMPANY_ROWS_CAP.",
+        "Company lookup (%s half) hit its %s-row cap for user_id=%s "
+        "(token length %s, e.g. application_id=%s). The resolver is now "
+        "reasoning about a TRUNCATED set and may file a duplicate application; "
+        "raise _COMPANY_ROWS_CAP.",
         half,
         _COMPANY_ROWS_CAP,
         user_id,
-        token,
+        len(token),
+        rows[0].id,
     )
 
 
@@ -1336,12 +1354,14 @@ async def _dismiss_rows_left_without_mail(
 
     if removed:
         await session.flush()
+        # Ids, not company names — the ids identify the rows exactly and carry
+        # no mail-derived text (see :func:`_warn_if_capped`).
         logger.info(
             "Sync left %s auto row(s) with no linked mail for user_id=%s and "
-            "dismissed them (restorable): %s",
+            "dismissed them (restorable): application_id=%s",
             len(removed),
             user_id,
-            ", ".join(f"{r.company} (id={r.id})" for r in removed),
+            ", ".join(str(r.id) for r in removed),
         )
     return removed
 
@@ -1526,11 +1546,11 @@ async def upsert_applications_for_user(
                 reopen = await _reopening_evidence(session, user_id, existing, r)
                 if reopen is not None:
                     rejected_at, applied_signal_at = reopen
+                    # The id, not the company name (see :func:`_warn_if_capped`).
                     logger.info(
-                        "Reopened application id=%s (%s) for user_id=%s: rejected at "
+                        "Reopened application id=%s for user_id=%s: rejected at "
                         "%s, applied again at %s → status %s",
                         existing.id,
-                        existing.company,
                         user_id,
                         rejected_at,
                         applied_signal_at,
@@ -2151,12 +2171,13 @@ async def purge_and_rebuild_gmail_pipeline(
 
     await session.commit()
     if removed:
+        # Ids, not company names (see :func:`_warn_if_capped`).
         logger.info(
-            "Re-sync removed %s auto row(s) for user_id=%s: %s "
+            "Re-sync removed %s auto row(s) for user_id=%s: application_id=%s "
             "(dismissed, not deleted — restorable)",
             len(removed),
             user_id,
-            ", ".join(r.company for r in removed),
+            ", ".join(str(r.id) for r in removed),
         )
     return MergeResult(
         created=created,
@@ -2678,14 +2699,21 @@ async def classify_review_item(
         # queue, and tell the caller what is missing.
         await _add_training_example(session, user_id, email, category)
         await session.commit()
+        # Neither the subject nor the correspondent's address goes in. This
+        # line named both, which is strictly more mail text than the company
+        # token CodeQL flagged in :func:`_warn_if_capped` — and it is redundant
+        # as well as unsafe: the message was just persisted above, so its
+        # subject and sender are on file under this very ``message_id``. The
+        # subject's LENGTH is the one thing the row cannot tell you cheaply
+        # (a truncated subject is a common reason resolution finds nothing).
         logger.warning(
             "Review classify for user_id=%s message_id=%s needs an employer: "
-            "category=%s sender=%s subject=%r",
+            "category=%s subject_len=%s. Subject and sender are on the stored "
+            "message under that id.",
             user_id,
             message_id,
             category.value,
-            email.sender_email,
-            email.subject,
+            len(email.subject or ""),
         )
         return {
             "classified_as": category.value,
