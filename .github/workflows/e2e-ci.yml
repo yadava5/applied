@@ -10,6 +10,9 @@ on:
       # change under apps/web or backend would otherwise never be exercised.
       - "scripts/generate_api_schema.sh"
       - ".github/workflows/e2e-ci.yml"
+      # The browser-install action these jobs depend on. Without this, an edit
+      # to it alone would ship untested by the only jobs that run it.
+      - ".github/actions/playwright-browsers/**"
   push:
     branches:
       - main
@@ -22,6 +25,9 @@ on:
       # change under apps/web or backend would otherwise never be exercised.
       - "scripts/generate_api_schema.sh"
       - ".github/workflows/e2e-ci.yml"
+      # The browser-install action these jobs depend on. Without this, an edit
+      # to it alone would ship untested by the only jobs that run it.
+      - ".github/actions/playwright-browsers/**"
   workflow_dispatch:
 
 permissions:
@@ -127,9 +133,25 @@ jobs:
             exit 1
           fi
 
+      # Browsers come from the ~/.cache/ms-playwright cache, keyed on the
+      # version `apps/web/pnpm-lock.yaml` resolves; nothing here runs apt-get.
+      # That is the fix for the two 2026-08-19 stalls in which `--with-deps` sat
+      # on a silent archive.ubuntu.com until `timeout-minutes` killed the job
+      # with zero tests run — see
+      # `.github/actions/playwright-browsers/action.yml` for the full story.
+      #
+      # The BOUND is the action's own per-attempt `timeout(1)` — 3 x 120 s plus
+      # backoff, ~6.5 min worst case — which fails the step red. The
+      # `timeout-minutes: 8` here is only a cap above that worst case, and
+      # whether GitHub enforces it on a step that `uses:` a COMPOSITE action is
+      # not something we have seen fire; do not rely on it, and do not raise it.
+      # A cap kill would report `cancelled`, i.e. UNSTABLE rather than red —
+      # which is precisely why the script's own timeout must be the one to fire.
       - name: Install Playwright browsers
-        working-directory: apps/web
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-browsers
+        timeout-minutes: 8
+        with:
+          working-directory: apps/web
 
       # -----------------------------------------------------------------------
       # NO BACKEND IS BOOTED HERE ANY MORE.
@@ -308,9 +330,14 @@ jobs:
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
+      # Cached, apt-free browser install. The bound is the action's own
+      # per-attempt `timeout(1)`; the 8-minute cap merely sits above it. See
+      # `.github/actions/playwright-browsers/action.yml`.
       - name: Install Playwright browsers
-        working-directory: apps/web
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-browsers
+        timeout-minutes: 8
+        with:
+          working-directory: apps/web
 
       - name: Build (production)
         working-directory: apps/web
