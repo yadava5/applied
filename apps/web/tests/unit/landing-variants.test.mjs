@@ -494,6 +494,81 @@ test("the latch has hysteresis, and it is symmetric about the mark", () => {
   }
 });
 
+test("the deadband absorbs a real oscillation, and cannot outlast the act", () => {
+  // THE CONSTANT HAD NO GATE. `ACT_DEADBAND` could be set to 0 and every unit
+  // test and every e2e stayed green: the latch test above hardcodes its own
+  // band, the marks test only ever subtracts the deadband from a bound (so
+  // zeroing it LOOSENS every assertion), and `landing-b.spec.ts` derives its
+  // sample points from the constant, which makes the probes move with it.
+  // A zero deadband is a real defect — tempo.ts says why — and it would have
+  // shipped with everything passing.
+  //
+  // So this tests the BEHAVIOUR hysteresis exists for, driven by the constant
+  // the product actually uses: cross a mark once, then wobble around it, and
+  // the latch must flip exactly once.
+  const { ACT_MARKS, ACT_DEADBAND } = readMarks();
+  const latch = (progress, mark, current, deadband) =>
+    current ? progress > mark - deadband : progress >= mark + deadband;
+
+  const runway = Number(/lg:h-\[(\d+)vh\]/.exec(graph.get(actPath))?.[1]);
+  assert.ok(Number.isFinite(runway), "the act's runway height is no longer a literal vh");
+  /** The pinned runway in px at a given viewport height. */
+  const runwayPx = (viewport) => ((runway - 100) / 100) * viewport;
+
+  /**
+   * The jitter this exists to absorb, in px. Scroll anchoring, a trackpad's
+   * momentum settling and a resize each move the reported position by tens of
+   * pixels; 24 is the small end of that, so a deadband that cannot hold it
+   * cannot hold any of them. Every toggle it fails to absorb re-targets a
+   * shared-layout animation.
+   */
+  const JITTER_PX = 24;
+
+  for (const [name, mark] of [
+    ["the caption", ACT_MARKS.scene],
+    ["the verdict", ACT_MARKS.verdict],
+    ["the pane's dock", ACT_MARKS.docked],
+  ]) {
+    // Both ends of the supported range: the band is a share of the runway, so
+    // the px it is worth changes with the viewport and the short one is where
+    // it is thinnest.
+    for (const viewport of [600, 949]) {
+      const jitter = JITTER_PX / runwayPx(viewport);
+      // Approach, cross well clear of the band, then wobble on the spot.
+      const walk = [mark - 4 * jitter, mark + 4 * jitter];
+      for (let i = 0; i < 8; i++) walk.push(mark + (i % 2 ? jitter : -jitter));
+
+      let state = false;
+      let flips = 0;
+      for (const progress of walk) {
+        const next = latch(progress, mark, state, ACT_DEADBAND);
+        if (next !== state) flips += 1;
+        state = next;
+      }
+      assert.equal(
+        flips,
+        1,
+        `${name} latched ${flips} times across one crossing and ${JITTER_PX}px of jitter at a ${viewport}-tall viewport — ` +
+          `ACT_DEADBAND (${ACT_DEADBAND}) is worth ${Math.round(ACT_DEADBAND * runwayPx(viewport))}px there, and the state chatters`,
+      );
+      assert.equal(state, true, `${name} did not stay latched after the reader crossed it`);
+    }
+  }
+
+  // And the other way. The band is deliberately NOT wide enough to outlast the
+  // row's travel (tempo.ts: 1.4s at a slow 400px/s is 560px of scroll), because
+  // a reader who scrolls a screen-tenth back up SHOULD see the row go home —
+  // that reversibility is what the act was rebuilt for. Measured at the tall
+  // end, where the band is worth the most px.
+  const TRAVEL_PX = 560;
+  const widest = ACT_DEADBAND * runwayPx(1080);
+  assert.ok(
+    widest < TRAVEL_PX,
+    `ACT_DEADBAND is worth ${Math.round(widest)}px at a 1080-tall viewport, past the ${TRAVEL_PX}px the row's own travel covers — ` +
+      "the act stops reversing and the move can no longer be replayed",
+  );
+});
+
 test("the camera holds the foot, and re-measures it from the board's box", () => {
   // Measured: the verdict row lands in the offered group at 679-735 of a 783px
   // board, while a head-anchored stage shows 0-552 at a 768-tall viewport and

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-15T06:35:40.781Z",
+  "generated": "2026-08-19T18:51:52.650Z",
   "clips": [
     {
       "id": "gmail-connects",
@@ -12,21 +12,30 @@
     },
     {
       "id": "board-syncs",
-      "width": 832,
-      "height": 224,
+      "width": 1152,
+      "height": 310,
       "seconds": 4.9,
-      "webm": 59810,
-      "mp4": 234962,
-      "poster": 19694
+      "webm": 76417,
+      "mp4": 242427,
+      "poster": 28540
     },
     {
       "id": "rules-read-the-body",
-      "width": 832,
-      "height": 454,
+      "width": 1152,
+      "height": 630,
       "seconds": 5,
-      "webm": 120087,
-      "mp4": 257493,
-      "poster": 21878
+      "webm": 153474,
+      "mp4": 269266,
+      "poster": 60921
+    },
+    {
+      "id": "import-classifies",
+      "width": 1152,
+      "height": 840,
+      "seconds": 4.07,
+      "webm": 87353,
+      "mp4": 237723,
+      "poster": 58972
     }
   ]
 }
