@@ -102,10 +102,14 @@ async function captureScene(browser, scene) {
 
   await scene.prepare?.(page);
 
+  // The ceiling is per-scene, defaulting to the shared one: it is a function of
+  // the display width a clip is placed at, and the placements are no longer all
+  // the same width (see MAX_CROP_W). A scene that raises it says why.
+  const ceiling = scene.maxCropW ?? MAX_CROP_W;
   const raw = await scene.crop(page);
-  const crop = { ...raw, width: Math.min(raw.width, MAX_CROP_W) };
-  if (raw.width > MAX_CROP_W) {
-    console.log(`  ${scene.id}: crop trimmed ${raw.width} -> ${MAX_CROP_W} CSS px (legibility ceiling)`);
+  const crop = { ...raw, width: Math.min(raw.width, ceiling) };
+  if (raw.width > ceiling) {
+    console.log(`  ${scene.id}: crop trimmed ${raw.width} -> ${ceiling} CSS px (legibility ceiling)`);
   }
 
   const dir = path.join(OUT, scene.id);
@@ -149,9 +153,9 @@ async function captureScene(browser, scene) {
   await ctx.close();
 
   const dur = meta.frames.at(-1)?.t ?? 0;
-  const down = (crop.width / 416).toFixed(2);
+  const down = (crop.width / 768).toFixed(2);
   console.log(
-    `  ${scene.id}: ${frames.length} frames / ${dur.toFixed(2)}s · crop ${crop.width}x${crop.height} CSS · ${down}x downscale in a 416px card`,
+    `  ${scene.id}: ${frames.length} frames / ${dur.toFixed(2)}s · crop ${crop.width}x${crop.height} CSS · ${down}x downscale at the 768px placement`,
   );
   return meta;
 }

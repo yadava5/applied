@@ -76,12 +76,36 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
   // A shorter hold in, because the opening frame is an empty field and there is
   // nothing to read in it.
   "rules-read-the-body": { window: { from: 0, to: 3.8 }, holdIn: 0.3, holdOut: 0.6, fade: 0.3 },
+  // The press of "Try a sample export" lands at ~0.75s of the take and the
+  // counters are there in the next paint — `ingest()` is synchronous, because
+  // nothing leaves the tab. So the cut is: a beat on the un-run page, the
+  // arrival, then a long hold on the arithmetic, which is what there is to
+  // read. `scenes.mjs` argues why an instantaneous change is the honest shape
+  // for this claim rather than a shortcoming to hide.
+  "import-classifies": { window: { from: 0.1, to: 2.6 }, holdIn: 0.4, holdOut: 0.8, fade: 0.35 },
 };
 
-/** Display width the landing's artifact column gives a clip, in CSS px
- *  (`minmax(0,26rem)` in ClaimsDescent.tsx), times two for a 2x screen. The
- *  encode is sized for where it is shown, not for where it was captured. */
-const OUT_WIDTH = 832;
+/**
+ * Encoded width, in px. The encode is sized for where it is SHOWN, not for
+ * where it was captured — and where these are shown moved.
+ *
+ * It was 832: twice the 26rem artifact column the clips were first placed in.
+ * That column is gone; the placements are 768 CSS px wide, so on the 2x screen
+ * this page is designed on, an 832px encode was covering 1536 device px — 54%
+ * of native, which is exactly the softness that reads as "not premium" and
+ * cannot be fixed anywhere downstream of here.
+ *
+ * 1152 is the ceiling the CAPTURE supports rather than a round number: the
+ * scenes crop at or under 576 CSS px and record at `--force-device-scale-factor=2`,
+ * so 1152 is their native device-pixel width and `Clip.tsx`'s
+ * `k = width / scene.crop.width` lands on exactly 2.0 — one downscale of 1.0,
+ * i.e. none. Nothing here scales a frame UP, and raising this further would.
+ * At 768 CSS on a 2x screen that is 75% of native instead of 54%.
+ *
+ * The one scene that crops wider (`import-classifies`, 720 CSS px for the
+ * stats row's four cells) is still a genuine downscale at 1152: 0.8x.
+ */
+const OUT_WIDTH = 1152;
 
 const FPS = 30;
 

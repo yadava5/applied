@@ -32,14 +32,21 @@
  * screenshot behind it, which is the thing the brief rules out.
  */
 
-/** Crop width ceiling, in CSS px.
+/** Crop width ceiling, in CSS px — the DEFAULT; a scene may raise its own.
  *
- *  The artifact column is `minmax(0,26rem)` — 416 px (ClaimsDescent.tsx). A
- *  crop wider than this gets downscaled past the point where 11–14px product
- *  type survives: the first pass cropped the board at 1180 CSS px, which is
- *  2.8x down, and every label in it turned to grey mush. At 580 the downscale
- *  is 1.4x, and captured at 2x that still leaves 1.43 device px per display px.
- *  Enforced in `capture.mjs`, not remembered. */
+ *  The artifact column was `minmax(0,26rem)` — 416 px. A crop wider than that
+ *  gets downscaled past the point where 11–14px product type survives: the
+ *  first pass cropped the board at 1180 CSS px, which is 2.8x down, and every
+ *  label in it turned to grey mush. At 580 the downscale is 1.4x, and captured
+ *  at 2x that still leaves 1.43 device px per display px.
+ *
+ *  The ceiling is a function of WHERE A CLIP IS SHOWN, which is why it is a
+ *  default now rather than a law: the placements this footage actually has are
+ *  wider than the column it was sized for (768 CSS px in `ClaimsDescent`), and
+ *  a scene placed there can carry a wider crop without losing a pixel of
+ *  legibility — at 720 into 768 the product type renders very near its
+ *  authored size. A scene that raises it has to say what display width it is
+ *  raising it FOR. Enforced in `capture.mjs`, not remembered. */
 export const MAX_CROP_W = 580;
 
 /** Padding around a derived crop, in CSS px. */
@@ -227,6 +234,104 @@ export const SCENES = [
       // Hold on the landed verdict — the frame the clip ends on, and the state
       // it loops back out of.
       await page.waitForTimeout(2000);
+    },
+  },
+
+  {
+    id: "import-classifies",
+    title: "A mail export, classified in the tab",
+    /**
+     * The page's second CTA, which had no evidence anywhere on it. `ACCESS`
+     * says "drop it in: it is parsed and classified in your browser. Nothing
+     * uploads", and `DECISION` says the neural layers "run where they cost you
+     * nothing — in your own browser, on the demo and the import page". Both
+     * sentences describe something a visitor can watch happen, and neither had
+     * ever been shown.
+     *
+     * WHY A HARD CUT IS THE HONEST SHAPE HERE, and why that does not make it
+     * the rejected "trace expanding" clip above. `ingest()` is synchronous —
+     * `parseMailFile` then `classify`, both pure, both in the tab — so the
+     * counters land in ONE paint. That is not a limitation being papered over;
+     * it is the claim. There is no request, no spinner and no round trip
+     * because nothing leaves the device, and a clip that showed a progress bar
+     * here would be inventing latency to look busy. The rejected trace clip had
+     * nothing to read in either of its two states; this frame carries the
+     * on-device promise the whole time and the arithmetic arrives beneath it.
+     *
+     * The results LIST is deliberately out of frame — see `forbid`.
+     */
+    url: "/import",
+    /**
+     * 780, not 600 and not 1440. `/import` signed out is `max-w-3xl px-6`, so
+     * the column is 720 CSS px at any viewport at or above 768 — and 720 is
+     * what the stats row needs to lay out as one row of four cells rather than
+     * two rows of two (`sm:grid-cols-4`, and the grid's own width is what
+     * decides). Below 768 the column shrinks with the viewport and the four
+     * counters stack; that is the mobile layout, and it is not the one this
+     * clip is placed in.
+     */
+    viewport: { width: 780, height: 900 },
+    /** Raised from 580 for THIS scene: it is placed at 768 CSS px in the
+     *  access claim, not in the 416px artifact column the shared ceiling was
+     *  derived for. At 720 into 768 the product's own type renders at 1.07x —
+     *  nearer its authored size than any other clip on the page. */
+    maxCropW: 720,
+    /**
+     * The sample export's four senders. They are synthetic (`SAMPLE_MBOX` in
+     * components/import/ImportMail.tsx) so nothing here is protecting a real
+     * company — this is a FRAMING gate: the crop must stop above the message
+     * list, because the per-message verdicts are not this clip's claim and one
+     * of the four is a rejection. The landing carries exactly one rejection,
+     * deliberately, and it is not this one.
+     */
+    forbid: ["Cedar Labs", "Juniper Cloud", "Atlas Freight", "Maya Chen"],
+    /**
+     * The results block does not exist until the sample has been ingested, so
+     * its geometry is measured by ingesting once and then reloading — the crop
+     * stays DERIVED from real elements rather than typed in, which is the rule
+     * the rest of this file follows. Two numbers survive the reload: how tall
+     * the stats row is, and how far it sits below the note. The crop is then
+     * built from the live note plus those, so a layout change moves the frame
+     * with it.
+     */
+    async prepare(page) {
+      await page.getByTestId("import-sample").click();
+      await page.getByTestId("import-results").waitFor();
+      this.measured = await page.evaluate(() => {
+        const noteEl = document.querySelector('[role="note"]');
+        const dl = document.querySelector('[data-testid="import-results"] dl');
+        const found = document.querySelector('[data-testid="import-results"] p');
+        if (!noteEl || !dl) throw new Error("import: nothing to measure the crop from");
+        // Down to the file line ("sample.mbox · 4 messages found"), which names
+        // what was read; the message list below it is out of frame by design.
+        const bottom = (found ?? dl).getBoundingClientRect().bottom;
+        return { run: bottom - noteEl.getBoundingClientRect().bottom };
+      });
+      // Back to the un-ingested page: the take has to OPEN on an empty result
+      // with nothing computed yet, or there is no arrival to record. The whole
+      // crop fits the viewport at scroll 0, so nothing is scrolled and the
+      // frame is a stationary window by construction.
+      await page.reload({ waitUntil: "networkidle" });
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForTimeout(600);
+    },
+    async crop(page) {
+      // The whole action, top to bottom: the drop target and its two buttons
+      // (so the counters below have a visible cause — the take's one event is
+      // a press of "Try a sample export"), then the on-device promise, then the
+      // ground the counters land on. The bottom edge is the only derived-then-
+      // remembered number on the page, because the thing it measures does not
+      // exist yet when the frame is chosen.
+      const dropZone = page.getByTestId("import-sample").locator("xpath=../..");
+      const box = await boxOf(page, [dropZone, page.getByRole("note").first()]);
+      return { ...box, height: Math.round(box.height + this.measured.run) };
+    },
+    async run(page) {
+      await page.getByTestId("import-sample").click();
+      await page.getByTestId("import-results").waitFor();
+      // Hold on the landed counters — the frame the clip ends on, and the one
+      // the poster is taken from.
+      await page.waitForTimeout(2200);
     },
   },
 ];
