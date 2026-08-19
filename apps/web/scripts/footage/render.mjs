@@ -41,8 +41,11 @@ for (const id of scenes) {
 // skipped LOUDLY rather than silently: an absent 11 MB .mov is the normal state
 // of a fresh checkout, and a run that quietly shipped two clips where three were
 // expected is how a page ends up with a hole in it.
+// It must ALSO be in CLIPS — while it is held out (clips.mjs says why and what
+// re-recording takes), encoding it would write files the manifest merge below
+// immediately disowns.
 const hasOauth = await access(path.join(FRAMES, HAND_CAPTURED.source)).then(() => true, () => false);
-if (!ONLY || ONLY.includes(HAND_CAPTURED.id)) {
+if (CLIPS.includes(HAND_CAPTURED.id) && (!ONLY || ONLY.includes(HAND_CAPTURED.id))) {
   if (hasOauth) scenes.unshift(HAND_CAPTURED.id);
   else
     console.warn(

@@ -22,7 +22,7 @@ like that.**
 
 | file | what it shows | length | webm | mp4 |
 | --- | --- | ---: | ---: | ---: |
-| `gmail-connects` | The Gmail card at "Not connected", the one permission Google is asked for, and the same card at "Connected". | 6.7s | 83.5 KB | 325.0 KB |
+| `gmail-connects` | The Gmail card at "Not connected", the one permission Google is asked for, and the same card at "Connected". **Held back — not in `CLIPS`, not under `public/footage/` (2026-08-19); see the hand-recorded section below.** | 6.7s | 83.5 KB | 325.0 KB |
 | `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 74.6 KB | 236.7 KB |
 | `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through 174 characters of preamble, flips to an amber `REJECTION 70%` (measured: 2.25s–2.45s in the encoded clip, so the middle beat is a readable 250ms, not a single frame), and lands green at `90%` — over the bar where layer 1 answers alone. | 5.0s | 149.9 KB | 263.0 KB |
 | `import-classifies` | One press of "Try a sample export" on the public `/import` page: under the on-device notice the counters arrive — scanned, auto-filed and its share, held for review, and the format. | 4.1s | 85.3 KB | 232.2 KB |
@@ -100,6 +100,14 @@ real Gmail account to the deployed app. `pnpm footage` cannot re-derive it: it
 needs a human with a Google account, and Google's consent screen is not ours to
 redraw. Reproducing it in DOM would be inventing an artifact and attributing it
 to a real company.
+
+**And it is currently held back entirely** (2026-08-19): Google's consent
+screen in the recording names `jobtracker-api-seven.vercel.app`, the host from
+before the JobTracker → Applied rename, so no page places it — and since no
+page placed it, its ~430 KB of encodes stopped shipping too. `clips.mjs` keeps
+the definition and records the return path: rename the Google Cloud OAuth
+client, re-record (below), then put `HAND_CAPTURED.id` back at the head of
+`CLIPS` and re-run the pipeline.
 
 Without the source, the step is **skipped loudly** and the other two clips
 rebuild normally. To include it:

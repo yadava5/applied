@@ -316,16 +316,41 @@ const ACT_SECONDS = 2.05;
  * kind of thing and starts another, and `ACT_STOPS` is the share of the
  * runway each of those spans is given.
  *
- *   0.00 → 0.30s   the scene arrives: the lane, the two ghost rails, the
- *                  cyan rail, the key. Nothing is being DRAWN yet, so this
- *                  wants very little scroll — but it cannot have none, or
- *                  the pinned frame opens on a black screen.
- *   0.30 → 0.90s   the wordmark draws. Eight staggered strokes, the last
+ *   0.00 → 0.32s   the scene arrives: the lane, the two ghost rails, the
+ *                  cyan rail, the key. The boundary is the rail's own
+ *                  completed draw — its 0.02s start plus its 0.3s duration —
+ *                  the moment the comparison stands. This span wants very
+ *                  little scroll, but it cannot have none, or the pinned
+ *                  frame opens on a black screen.
+ *   0.32 → 0.90s   the wordmark draws. Eight staggered strokes, the last
  *                  starting at 0.5s and taking 0.4s, and the envelope
  *                  crossing the full width underneath them. THIS IS THE
  *                  SHOT, and it gets the majority of the runway.
  *   0.90 → 2.05s   the verdict falls and seats, the ripple, the ask, the
  *                  replay hint. Single gestures; they read at speed.
+ *
+ * EVERY BEAT IS DERIVED, NOT TRANSCRIBED (2026-08-19; the middle beat moved
+ * 0.3 → 0.32 to make that literally true, so the rail's draw now completes
+ * exactly at its stop instead of sitting at 93.3% of it).
+ *
+ * That move is sub-perceptual in motion, NOT invisible — an earlier draft of
+ * this comment claimed the latter and it is measurably false. It changes only
+ * the playhead map (`ACT_STOPS`, `ACT_SECONDS` and every CSS delay and
+ * duration are unchanged), and the endpoints are identical: p ≥ 0.68 and p = 1
+ * render the same frame under both maps. Strictly inside, it does not: the
+ * deviation peaks at exactly 20ms at p = 0.1, which at 1024×768 is up to 52px
+ * of drawn length on the longest letter. That is a 6.7% tempo change over the
+ * first 150px of a 1500px runway and no reader sees the counterfactual, but a
+ * golden-screenshot gate keyed to a fixed scroll offset on this act WOULD go
+ * red on it. Say sub-perceptual, not invisible.
+ *
+ * Beat 1 is the rail's `--d` plus its draw duration;
+ * beat 2 is the last stroke's `--d` plus the shared draw duration (0.5 + 0.4);
+ * `ACT_SECONDS` is the replay hint's delay plus its duration (1.55 + 0.5).
+ * `tests/unit/closing-act-tempo.test.mjs` recomputes all three from
+ * globals.css and this file's `at(...)` delays and fails on any drift, either
+ * direction — retiming the CSS without moving these constants no longer
+ * silently unmaps the playhead.
  *
  * WHY THIS REPLACED `t = total · p²`. The square curve was written to buy the
  * drawing more runway than a linear scrub gave it, and it did — but it buys
@@ -342,7 +367,7 @@ const ACT_SECONDS = 2.05;
  * which is the one thing a scrub is allowed to own. If a delay or duration in
  * globals.css moves, the boundaries here move with it.
  */
-const ACT_BEATS = [0, 0.3, 0.9] as const;
+const ACT_BEATS = [0, 0.32, 0.9] as const;
 const ACT_STOPS = [0, 0.1, 0.68] as const;
 
 /**
@@ -484,12 +509,31 @@ export function ClosingAct() {
       <div className="act__stage">
       {/* the ask — rises once the full stop lands, then holds. Outside the
           keyed scene so a replay never yanks a link out from under a click. */}
-      {/* pt is deliberately shallow: the section above already carries py-24,
-          and this band answers it directly — a deep top pad here read as a
-          dead gap in front of the page's closing image. */}
-      <div className="mx-auto w-full max-w-6xl px-6 pt-8 sm:pt-10">
+      {/* `my-auto` is the pinned frame's composition, not a convenience. The
+          stage is a full viewport and the ask + scene fill only part of it —
+          at 1024×768, measured on the built page, 316px of surplus — and
+          with everything bottom-stacked that surplus pooled ABOVE the ask as
+          one unbroken void, while the key sat wedged directly under the CTA
+          and read as debris. Auto margins on a flex item absorb free space
+          before justify-content does, so they split the surplus around the
+          ask instead: held space, the thesis, held space, the scene — a title
+          card over the closing image, at every viewport height. It also buys
+          the key its air: the gap between the CTA and the rails it annotates
+          is now the lower half of that surplus — 158px, not ~20px. (Read
+          the surplus off the resolved margins, which is what auto margins in
+          a flex column mean: 2 × 158.1 = 316.3. An earlier draft said ~630,
+          which is that figure double-counted.)
+          In the static band (no JS, reduced motion, pre-hydration) the stage
+          is a plain block at content height, vertical auto margins resolve to
+          zero, and the shallow pt is the composed image's own spacing — the
+          section above already carries py-24. */}
+      <div className="my-auto mx-auto w-full max-w-6xl px-6 pt-8 sm:pt-10">
         <div className="act__ask">
-          <p className="text-base font-medium text-strong sm:text-lg">{CLOSING.thesis}</p>
+          {/* steps up at `lg` because that is where the frame gets a 1500px
+              runway and the thesis becomes a held title card in open space —
+              18px medium reads as a caption at that scale, not a closing
+              line. Below `lg` the band is denser and the smaller cut holds. */}
+          <p className="text-base font-medium text-strong sm:text-lg lg:text-2xl">{CLOSING.thesis}</p>
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
             <a
               href={`mailto:${ACCESS.contact}`}
