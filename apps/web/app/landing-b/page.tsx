@@ -3,7 +3,9 @@ import type { Metadata } from "next";
 import { ClaimsDescent } from "@/components/marketing/ClaimsDescent";
 import { MarketingFooter, MarketingNav } from "@/components/marketing/chrome";
 import { ClosingAct } from "@/components/marketing/ClosingAct";
-import { HERO } from "@/components/marketing/copy";
+import { FOOTAGE, HERO } from "@/components/marketing/copy";
+import { CLIPS } from "@/components/marketing/footage";
+import { ProductClip } from "@/components/marketing/ProductClip";
 import { AccessSection } from "@/components/marketing/sections";
 import { WindowAct } from "@/components/marketing/WindowAct";
 
@@ -72,7 +74,19 @@ export default function LandingB() {
       {/* ---- the descent: the email behind the act, one claim per screen - */}
       <ClaimsDescent />
 
-      <AccessSection />
+      {/* The CTA's own evidence, beside the CTA. `ACCESS.noSeat` promises the
+          fallback path is "parsed and classified in your browser", and until
+          now that was the one sentence on the page with nothing behind it.
+          Landing B only: A and C pass no exhibit and are unchanged. */}
+      <AccessSection
+        exhibit={
+          <ProductClip
+            clip={CLIPS.importClassifies}
+            name={FOOTAGE.import.name}
+            caption={FOOTAGE.import.caption}
+          />
+        }
+      />
       <ClosingAct />
       <MarketingFooter />
     </main>

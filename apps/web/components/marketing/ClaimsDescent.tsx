@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, PRIVACY } from "./copy";
-import { CLIPS, ProductClip } from "./ProductClip";
+import { CLIPS } from "./footage";
+import { ProductClip } from "./ProductClip";
 import { latch, trackProgress } from "./scrub";
 import { VerdictEmail } from "./VerdictEmail";
 import { VerdictTally } from "./VerdictTally";
@@ -78,6 +79,35 @@ const STAGE_DEADBAND = 0.03;
  */
 const DESCENT_WINDOW = { from: 0.5, to: 0.5 };
 
+/**
+ * The benchmark ladder's own window: 0 as the figure's top enters from the
+ * foot of the viewport, 1 once its bottom is comfortably above the middle. The
+ * bars draw across that, so the decision claim's exhibit arrives WITH the
+ * reader instead of sitting there already finished — the back half of this
+ * page had nothing left in it that answered a scroll, and this is the cheapest
+ * honest thing that does. See `BenchmarkFigure` for why both bars run on one
+ * clock and why the default is the composed figure.
+ */
+const BENCH_WINDOW = { from: 0.95, to: 0.55 };
+
+/**
+ * The retention exhibit's window and mark. The claim is "read in flight, never
+ * kept", and this is the one exhibit on the page that can ENACT it rather than
+ * assert it: the email arrives whole, and as the reader crosses the paragraph
+ * that says the body is discarded, the body is discarded — `VerdictEmail`
+ * already animates `raw` → `retained`, and what was missing was anyone to
+ * drive it. It used to be hardcoded `retained`, so the page showed the
+ * aftermath of an event it never let anyone watch.
+ *
+ * Measured against the EXHIBIT rather than the claim block, so the collapse
+ * cannot happen while the thing collapsing is off screen. `from` above `to` is
+ * legal and deliberate: `trackProgress`'s span is `height + (from − to)·vh`,
+ * which stays positive, and it puts both endpoints inside the exhibit's own
+ * visible traversal.
+ */
+const RETENTION_WINDOW = { from: 0.8, to: 0.35 };
+const RETENTION_MARK = 0.5;
+
 function Claim({
   eyebrow,
   headline,
@@ -135,6 +165,50 @@ function Claim({
   );
 }
 
+/**
+ * The benchmark ladder, drawn under the reader's own descent.
+ *
+ * The figure itself is untouched and still server-renders complete: what this
+ * adds is a `--bench` on its wrapper, which `BenchmarkFigure`'s bars read as
+ * `scaleX(var(--bench, 1))`. Nobody driving means the composed figure, so
+ * reduced motion, no JS and every other consumer of the figure get exactly
+ * what they got before.
+ *
+ * Linear, not eased: what is growing is a length on a measured axis, and the
+ * numeral beside each bar is static text stating the true value the whole
+ * time. A reveal that accelerates would be the page performing at the reader
+ * rather than answering them.
+ *
+ * It refuses to take apart a figure that is already on screen at load, the
+ * same rule the closing act follows — pulling a finished bar back to nothing
+ * under someone's eyes is worse than never animating it.
+ */
+function DrawnBenchmark() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let stop: (() => void) | undefined;
+    const raf = requestAnimationFrame(() => {
+      if (el.getBoundingClientRect().top < window.innerHeight) return;
+      el.style.setProperty("--bench", "0");
+      stop = trackProgress(el, BENCH_WINDOW, (progress) => {
+        el.style.setProperty("--bench", progress.toFixed(4));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      stop?.();
+    };
+  }, []);
+  return (
+    <div ref={ref}>
+      <BenchmarkFigure />
+    </div>
+  );
+}
+
 export function ClaimsDescent() {
   const pairRef = useRef<HTMLDivElement>(null);
   const secondBeatRef = useRef<HTMLDivElement>(null);
@@ -176,6 +250,33 @@ export function ClaimsDescent() {
     return trackProgress(pair, DESCENT_WINDOW, (progress) => {
       setSplit((prev) => latch(progress, splitAtRef.current, prev, STAGE_DEADBAND));
     });
+  }, []);
+
+  /**
+   * The retention exhibit's stage. `true` — the record — is the SSR default and
+   * where reduced motion stays, so a visitor who is never going to see the
+   * collapse gets its result rather than its setup. The scrub only takes the
+   * exhibit apart if the reader has not already seen it, the same rule the
+   * closing act follows.
+   */
+  const keptRef = useRef<HTMLDivElement>(null);
+  const [kept, setKept] = useState(true);
+  useEffect(() => {
+    const el = keptRef.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let stop: (() => void) | undefined;
+    const raf = requestAnimationFrame(() => {
+      if (el.getBoundingClientRect().top < window.innerHeight) return;
+      setKept(false);
+      stop = trackProgress(el, RETENTION_WINDOW, (progress) => {
+        setKept((prev) => latch(progress, RETENTION_MARK, prev, STAGE_DEADBAND));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      stop?.();
+    };
   }, []);
 
   return (
@@ -261,23 +362,20 @@ export function ClaimsDescent() {
         </Claim>
         <div className="space-y-10 pb-20">
           <div className="max-w-2xl space-y-4">
-            <BenchmarkFigure />
+            <DrawnBenchmark />
             <p className="text-sm text-dim">{DECISION.gate}</p>
           </div>
           {/* The recording goes last because the argument is claim, evidence,
               gate, and only then the thing running: the rules answering a body
               on their own, and deferring to the neural layers before they can
               — on the surface the paragraph names ("in your own browser, on
-              the demo"). `max-w-3xl` overrides the clip's own `max-w-xl`
-              (twMerge): the footage is 832×454 and was being shown at 576 in
-              a prose column. Stacked rather than columned for the same
-              reason — a two-up split of this container is 464px a side, which
-              is narrower than what it replaced. */}
+              the demo"). Width and the caption's column are `ProductClip`'s
+              own, and argued there. */}
           <ProductClip
             clip={CLIPS.rulesReadTheBody}
             name={FOOTAGE.rules.name}
             caption={FOOTAGE.rules.caption}
-            className="max-w-3xl"
+
           />
         </div>
       </div>
@@ -285,9 +383,34 @@ export function ClaimsDescent() {
       {/* ---- retention: the record beside the paragraph that describes it.
               A pairing in flow — no rail, nothing pinned — so the exhibit
               arrives with its claim and leaves with it. ------------------ */}
-      <div className="mx-auto w-full max-w-6xl px-6">
-        <div className="grid gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start">
-          <Claim paced={false} eyebrow={PRIVACY.eyebrow} headline={PRIVACY.headline}>
+      <div className="mx-auto w-full max-w-6xl px-6 pb-20 pt-20">
+        {/* The claim's head is lifted OUT of the grid so the recording can sit
+            under it: a reader who met an unlabelled board recording and only
+            then the word PRIVACY was being shown evidence before the thing it
+            is evidence for. Everything below is the same block it was — the
+            same paragraphs in the same measure, the same record in the same
+            column. */}
+        <p className="label-caps mb-4">{PRIVACY.eyebrow}</p>
+        <h2 className="max-w-xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+          {PRIVACY.headline}
+        </h2>
+
+        {/* The reading, before the record. `PRIVACY.retention` opens "the
+            classifier reads a message's body to decide, then discards it" —
+            two events, and the page could only ever show the second one. This
+            is the first: a pass of mail going in, counted by the strip that
+            counts it. The exhibit below is what comes out. They never run at
+            once — the clip pauses itself the moment it leaves the reading band,
+            which is before the record's collapse is anywhere near its mark. */}
+        <ProductClip
+          clip={CLIPS.boardSyncs}
+          name={FOOTAGE.sync.name}
+          caption={FOOTAGE.sync.caption}
+          className="mt-8"
+        />
+
+        <div className="mt-14 grid gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start">
+          <div className="max-w-xl space-y-4 text-muted">
             <p>{PRIVACY.scope}</p>
             <p>{PRIVACY.retention}</p>
             <p>
@@ -315,10 +438,22 @@ export function ClaimsDescent() {
               </a>
               .
             </p>
-          </Claim>
-          <div className="pb-20 lg:pt-20">
-            <p className="label-caps mb-2">{ARTIFACT.labels[3]}</p>
-            <VerdictEmail stage="retained" />
+          </div>
+          {/* The record — and the one exhibit on the page that ENACTS its claim
+              instead of asserting it. It arrives as the email and, as the
+              reader crosses the paragraph that says the body is discarded, the
+              body is discarded. The wall label moves with it, so nobody is
+              ever looking at a state the page has not named. `min-h` holds the
+              taller of the two states so the collapse does not pull the page
+              up under the reader — MEASURED at 1024, where the column is its
+              narrowest 26rem and the body wraps most: raw is 349px and the
+              record 344px, so 23rem clears both with room and does not leave
+              a hole under either. */}
+          <div ref={keptRef}>
+            <p className="label-caps mb-2 h-4">{ARTIFACT.labels[kept ? 3 : 0]}</p>
+            <div className="min-h-[23rem]">
+              <VerdictEmail stage={kept ? "retained" : "raw"} />
+            </div>
           </div>
         </div>
       </div>

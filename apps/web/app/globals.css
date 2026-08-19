@@ -1294,14 +1294,64 @@ body {
  * is the fully composed end state: wordmark drawn, verdict seated, ask
  * visible, no travel.
  * ------------------------------------------------------------------------- */
-.act-band {
+.act__stage {
   /* the one piece of atmosphere: a faint emerald bloom under the landing
-   * corner of the full stop. No canvas, no ambient field. */
+   * corner of the full stop. No canvas, no ambient field.
+   *
+   * It lives on the STAGE rather than the band, because the band is a runway
+   * now and the bloom belongs to the frame the reader is looking at, not to
+   * the screen and a half of scroll that drives it. */
   background: radial-gradient(
     90% 70% at 82% 100%,
     color-mix(in oklab, var(--viz-setfit) 7%, transparent),
     transparent 62%
   );
+}
+
+/* ---- the runway ----------------------------------------------------------
+ * What "still too fast to see" actually was. The band shipped 596px tall and
+ * UNPINNED, scrubbed across its own entrance — 596px of scroll for a 2.050s
+ * sequence, which is 0.4s at a 1500px/s flick, while the window act at the top
+ * of the page spends 3572px on a comparable timeline. Binding the ending to
+ * the scroll was necessary and it was not sufficient: the runway was six times
+ * too short, so the reader owned the playhead and still could not slow it down.
+ *
+ * So the band pins and the page spends real scroll on it. The height is
+ * `viewport + runway`, which makes `trackProgress`'s divisor (`height − vh`,
+ * for the `{ from: 0, to: 1 }` window ClosingAct uses) EXACTLY the runway at
+ * every viewport height — no residue, nothing to re-measure when the viewport
+ * changes.
+ *
+ * 1500px at `lg`, where the sequence is the page's payoff shot and a reader on
+ * a trackpad crosses it in about a second and a half of deliberate scrolling;
+ * 1000px below it, where a thumb-flick covers more ground per gesture and the
+ * page is already long. The wordmark's drawing — the first 0.6s of the 2.05s,
+ * and the shot itself — gets 59.6% of whichever it is (894px / 596px) through
+ * the playhead's p² curve. It got 377px.
+ *
+ * `.act--runway` is written by the component and only when it has decided to
+ * scrub, so the server, a visitor without JS and a visitor with reduced motion
+ * all get the composed band at content height. Do not move this to the base
+ * `.act-band` rule: it would strand every one of them in a screen and a half
+ * of empty scroll with nothing in it that can ever change. */
+.act--runway {
+  --closing-runway: 1000px;
+  height: calc(100vh + var(--closing-runway));
+}
+@media (min-width: 1024px) {
+  .act--runway {
+    --closing-runway: 1500px;
+  }
+}
+.act--runway .act__stage {
+  position: sticky;
+  top: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  /* bottom-aligned: the descenders' crop is the ending, and it only reads as
+   * a crop if the scene's bottom edge IS the frame's bottom edge. */
+  justify-content: flex-end;
 }
 .act__scene:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -1391,10 +1441,21 @@ body {
 }
 
 /* pre-play: everything waits. The travel group idles off-canvas (the svg
- * clips it), so the band is quiet until the sentinel fires. */
+ * clips it), so the band is quiet until the sentinel fires.
+ *
+ * 1.05 AND NOT 1, and this is a measured bug fix rather than a preference.
+ * With `pathLength="1"` a dasharray of exactly 1 makes the dash and the gap
+ * exactly the path's own length, and the undrawn state sits on the seam
+ * between them: Chrome leaves a hairline of ink at the end of several strokes,
+ * which the wordmark's 10.4x scale-up turns into visible fragments. That is
+ * the "five unreadable white fragments" in the original diagnosis of this
+ * band, and it survived the scroll binding because nobody could hold the
+ * sequence at t=0 long enough to see it. The pinned runway holds it there for
+ * 180px, so it had to go. A 5% longer dash puts the whole path inside the gap
+ * with margin, and drawing to offset 0 still covers it. */
 .act .act__draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
+  stroke-dasharray: 1.05;
+  stroke-dashoffset: 1.05;
 }
 .act .act__guide,
 .act .act__ghosts,

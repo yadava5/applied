@@ -23,21 +23,32 @@ like that.**
 | file | what it shows | length | webm | mp4 |
 | --- | --- | ---: | ---: | ---: |
 | `gmail-connects` | The Gmail card at "Not connected", the one permission Google is asked for, and the same card at "Connected". | 6.7s | 83.5 KB | 325.0 KB |
-| `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 58.4 KB | 229.5 KB |
-| `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through 174 characters of preamble, flips to an amber `REJECTION 70%` (measured: 2.25s–2.45s in the encoded clip, so the middle beat is a readable 250ms, not a single frame), and lands green at `90%` — over the bar where layer 1 answers alone. | 5.0s | 117.3 KB | 251.5 KB |
+| `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 74.6 KB | 236.7 KB |
+| `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through 174 characters of preamble, flips to an amber `REJECTION 70%` (measured: 2.25s–2.45s in the encoded clip, so the middle beat is a readable 250ms, not a single frame), and lands green at `90%` — over the bar where layer 1 answers alone. | 5.0s | 149.9 KB | 263.0 KB |
+| `import-classifies` | One press of "Try a sample export" on the public `/import` page: under the on-device notice the counters arrive — scanned, auto-filed and its share, held for review, and the format. | 4.1s | 85.3 KB | 232.2 KB |
 
-Each ships with a `.jpg` poster (its first frame, which is also the frame it
-loops back to) and is listed in `manifest.json` with its real byte count.
+Each ships with a `.jpg` poster and is listed in `manifest.json` with its real
+byte count.
 
-**The poster is the BEFORE state, and whoever places these has to decide whether
-that is what they want.** First frame was the brief, and a loop's first frame is
-its "before" by construction — so `gmail-connects.jpg` reads *Gmail · Not
-connected*, `board-syncs.jpg` shows the pre-sync counters, and
-`rules-read-the-body.jpg` is an empty field. If the poster is used as a
-`<video poster>` or as the reduced-motion/data-saver still, that is the single
-image those visitors see, and it shows the product not having done the thing.
-Re-render a poster from a later frame if that is wrong for the placement:
-`renderStill` in `render.mjs` takes `frame`.
+**The poster is the LANDED END STATE, not the first frame** — changed
+2026-08-19, and `clips.mjs`'s `POSTER_AT` is where the frame is chosen. First
+frame was the original brief, and a loop's first frame is its "before" by
+construction, so `rules-read-the-body.jpg` was an empty BODY field under
+`OTHER 50%` and the line "below 0.90 — the full pipeline would defer to e5 /
+SetFit": the product not having done the thing, stated twice. The poster is
+what a reduced-motion visitor, a data-saver visitor and anyone who scrolls past
+without playing sees INSTEAD of the recording, so it has to carry the argument
+on its own. `gmail-connects` is the exception and still shows its first frame,
+because it is not re-rendered by this pipeline.
+
+**The encode is 1152px wide** (`OUT_WIDTH` in `remotion/Root.tsx`), which is
+the capture's own native device-pixel width: the scenes crop at or under 576
+CSS px and record at `--force-device-scale-factor=2`, so `Clip.tsx`'s
+`k = width / scene.crop.width` lands on exactly 2.0 and nothing is scaled up.
+It was 832 — twice the 26rem artifact column the clips were first placed in —
+and that column no longer exists. At the 640-768 CSS px the landing shows them
+at, 832 covered 54% of a 2x screen's native pixels; 1152 covers 90% at 640.
+Raising it further would upscale.
 
 **Both encodes ship.** VP9/WebM is 2.1–3.9x smaller than the H.264 fallback on
 this material — flat UI with large unchanging areas is exactly what VP9 is good
@@ -67,7 +78,17 @@ belong in it.)
 | --- | --- |
 | `board-syncs` | `/demo` at a 1040x900 viewport |
 | `rules-read-the-body` | `/demo/inbox` at a 600x900 viewport |
+| `import-classifies` | `/import` at a 780x900 viewport, signed out |
 | `gmail-connects` | hand-recorded, see below |
+
+`import-classifies` is the one scene whose payoff is a HARD CUT, and that is
+deliberate rather than a limitation being papered over: `ingest()` is
+synchronous — parse then classify, both pure, both in the tab — so the counters
+land in one paint. There is no request, no spinner and no round trip because
+nothing leaves the device, and a clip that showed a progress bar here would be
+inventing latency to look busy. It is also the one scene that raises the crop
+ceiling (`maxCropW`), because it is placed at 768 CSS px rather than in the
+416px column the shared ceiling was derived for.
 
 The viewports are not arbitrary — `scenes.mjs` says why each one, and changing
 them changes what fits in the frame.

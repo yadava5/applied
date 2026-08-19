@@ -311,40 +311,85 @@ function Key() {
 const ACT_SECONDS = 2.05;
 
 /**
- * How far into the band's entrance the assembly starts, as a share of the
- * scrubbed range. The band rises from the fold; the first third of that is
- * approach, and the drawing runs over the rest so the wordmark is completing
- * as the band settles into frame rather than while it is still a sliver.
- */
-const ACT_HOLD_OFF = 0.2;
-
-/**
- * The band's entrance: 0 when its top reaches the fold, 1 when its bottom
- * does. That upper bound is the one that is GUARANTEED reachable — the band is
- * followed by the footer, so its bottom clears the viewport's bottom before
- * the page runs out of scroll — which the alternatives are not: a band shorter
- * than the viewport can never bring its own top to the viewport's top, and the
- * sequence would then never finish.
- */
-const CLOSING_WINDOW = { from: 1, to: 1 };
-
-/**
- * The playhead's curve. NOT linear, and this was measured rather than chosen:
- * the sequence is front-loaded — every stroke of the wordmark is drawn in its
- * first 0.6s, 29% of the 2.05s — so a linear scrub spent 71% of the band's
- * entrance on the dot, the ripple and two fades, and gave the drawing itself
- * 82px of scroll at a 768-tall viewport. The wordmark assembling IS the shot.
+ * The playhead's map, and it is now derived from the sequence rather than
+ * guessed at: `ACT_BEATS` are the seconds at which globals.css finishes one
+ * kind of thing and starts another, and `ACT_STOPS` is the share of the
+ * runway each of those spans is given.
  *
- * `t = total · p²` puts the drawing in the first 55% of the runway (~199px at
- * 768 tall, more than double), and the dot's seating and the ask's rise in the
- * rest, where they read fine because they are single gestures rather than
- * eight staggered ones. Nothing about the sequence changes — this is how fast
- * the playhead moves, which is the one thing a scrub is allowed to own.
+ *   0.00 → 0.30s   the scene arrives: the lane, the two ghost rails, the
+ *                  cyan rail, the key. Nothing is being DRAWN yet, so this
+ *                  wants very little scroll — but it cannot have none, or
+ *                  the pinned frame opens on a black screen.
+ *   0.30 → 0.90s   the wordmark draws. Eight staggered strokes, the last
+ *                  starting at 0.5s and taking 0.4s, and the envelope
+ *                  crossing the full width underneath them. THIS IS THE
+ *                  SHOT, and it gets the majority of the runway.
+ *   0.90 → 2.05s   the verdict falls and seats, the ripple, the ask, the
+ *                  replay hint. Single gestures; they read at speed.
+ *
+ * WHY THIS REPLACED `t = total · p²`. The square curve was written to buy the
+ * drawing more runway than a linear scrub gave it, and it did — but it buys
+ * that at the START of the range, which is where the scene's own entrance
+ * lives. Measured on the pinned band at 1024×768: it put t = 0.15s (the first
+ * frame with anything legible in it) 537px into the runway, so the pin
+ * engaged on a full viewport of black and stayed that way for two thirds of a
+ * screen. That is the defect the whole rebuild exists to remove, reintroduced
+ * at a different scroll position. A piecewise map spends the runway on the
+ * events instead of on the clock: the scene is up by 150px and the drawing
+ * owns 870 of the 1500.
+ *
+ * Nothing about the sequence changes — this is how fast the playhead moves,
+ * which is the one thing a scrub is allowed to own. If a delay or duration in
+ * globals.css moves, the boundaries here move with it.
  */
+const ACT_BEATS = [0, 0.3, 0.9] as const;
+const ACT_STOPS = [0, 0.1, 0.68] as const;
+
+/**
+ * The band's own traversal, which for a pinned section IS the pinned runway:
+ * 0 when its top reaches the viewport's top (the pin engages), 1 when its
+ * bottom reaches the viewport's bottom (the pin releases). The same window
+ * the act uses, and for the same reason.
+ *
+ * THE RUNWAY IS THE FIX, and the arithmetic is exact rather than approximate.
+ * `trackProgress` divides by `height − to·vh + from·vh`, which with this
+ * window is `height − vh`; the band's height is `calc(100vh + --closing-runway)`
+ * (globals.css), so the divisor is the runway EXACTLY, at every viewport
+ * height, with no residue to argue about.
+ *
+ * What it buys, measured against what shipped. The band used to be 596px tall
+ * and unpinned, scrubbed over `{ from: 1, to: 1 }` — 596px of scroll for a
+ * 2.050s sequence, which is 0.4s at a 1500px/s flick, against the window
+ * act's 3572px for a comparable timeline. That ratio is why the ending was
+ * still "too fast to see" after it was bound to the scroll: binding was
+ * necessary and not sufficient, because the runway was six times too short.
+ * At the `lg` runway the same sequence spends 1500px, and the wordmark's
+ * drawing — the payoff shot, 0.30s to 0.90s of the 2.05s — spends 870 of them
+ * (see `ACT_STOPS`). It was 258px.
+ *
+ * Upper bound reachable, which is the property that actually has to hold: the
+ * band is followed by the footer, so its bottom clears the viewport's bottom
+ * with the footer's own height to spare and the progress CLAMPS at 1 rather
+ * than asymptoting to it. `landing-b.spec.ts` reads the playhead at max scroll
+ * and expects 2.05.
+ */
+const CLOSING_WINDOW = { from: 0, to: 1 };
+
+/** Walk `ACT_STOPS` → `ACT_BEATS`, linearly inside each span. */
 function position(el: HTMLElement | null, progress: number) {
   if (!el) return;
-  const played = Math.min(1, Math.max(0, (progress - ACT_HOLD_OFF) / (1 - ACT_HOLD_OFF)));
-  el.style.setProperty("--act-t", `${(played * played * ACT_SECONDS).toFixed(3)}s`);
+  const p = Math.min(1, Math.max(0, progress));
+  let t = ACT_SECONDS;
+  for (let i = 1; i <= ACT_STOPS.length; i += 1) {
+    const from = ACT_STOPS[i - 1];
+    const to = ACT_STOPS[i] ?? 1;
+    if (p > to) continue;
+    const beatFrom = ACT_BEATS[i - 1];
+    const beatTo = ACT_BEATS[i] ?? ACT_SECONDS;
+    t = beatFrom + ((p - from) / (to - from)) * (beatTo - beatFrom);
+    break;
+  }
+  el.style.setProperty("--act-t", `${t.toFixed(3)}s`);
 }
 
 export function ClosingAct() {
@@ -359,6 +404,23 @@ export function ClosingAct() {
    * `play`   — the authored 2.05s sequence, running. Only a click gets here.
    */
   const [mode, setMode] = useState<"static" | "scrub" | "play">("static");
+
+  /**
+   * Whether the band has grown its runway. Set ONCE, alongside the decision to
+   * scrub, and never cleared — the height is what the pin and the scrub
+   * arithmetic are both defined against, and a replay click (`mode: "play"`)
+   * must not collapse 1500px of section out from under a reader who is looking
+   * straight at it.
+   *
+   * It is a client-only growth, and deliberately so: the server ships the band
+   * at content height, so a visitor with no JS, or with reduced motion, gets
+   * the composed image in a band the size of its own contents rather than a
+   * screen and a half of empty runway they can never spend. The growth is
+   * invisible when it happens — the effect only takes this branch if the whole
+   * band is still below the fold — and nothing above it moves, so it costs no
+   * layout shift a visitor could see.
+   */
+  const [runway, setRunway] = useState(false);
 
   /** False the moment the reader takes the wheel: a click plays the authored
    *  sequence at its authored tempo and the scrub stands down for the visit. */
@@ -381,6 +443,7 @@ export function ClosingAct() {
     const raf = requestAnimationFrame(() => {
       if (el.getBoundingClientRect().top < window.innerHeight) return;
       scrubbing.current = true;
+      setRunway(true);
       setMode("scrub");
       stop = trackProgress(el, CLOSING_WINDOW, (progress) => {
         if (scrubbing.current) position(el, progress);
@@ -407,7 +470,18 @@ export function ClosingAct() {
     mode === "static" ? "act--static" : mode === "scrub" ? "act--play act--scrub" : "act--play";
 
   return (
-    <section ref={ref} className={`act act-band relative border-t border-line-soft ${state}`}>
+    <section
+      ref={ref}
+      className={`act act-band relative border-t border-line-soft ${runway ? "act--runway" : ""} ${state}`}
+    >
+      {/* The stage: the frame the reader watches while the runway above and
+          below it scrolls past. It pins (globals.css) only once the band has a
+          runway to pin through, and its contents are BOTTOM-aligned, because
+          the ending's whole crop is the wordmark's descenders being sliced by
+          the band's own bottom edge — that edge has to be the viewport's while
+          the scene is on screen, and the footer's hairline the moment the pin
+          lets go. */}
+      <div className="act__stage">
       {/* the ask — rises once the full stop lands, then holds. Outside the
           keyed scene so a replay never yanks a link out from under a click. */}
       {/* pt is deliberately shallow: the section above already carries py-24,
@@ -452,6 +526,7 @@ export function ClosingAct() {
           {/* keyed so a replay cleanly restarts every CSS animation in the scene */}
           <Scene key={run} />
         </button>
+      </div>
       </div>
     </section>
   );
