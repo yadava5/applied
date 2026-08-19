@@ -13,13 +13,18 @@ import { expect, test } from "@playwright/test";
  *
  * Assertions are kept narrow — heading + submit button + both inputs —
  * so copy tweaks don't cause red CI, but a truly broken page does.
+ *
+ * The heading is asserted by ROLE AND LEVEL, never by its words. Pinning the
+ * copy here is what turned a deliberate rewrite of the greetings into four
+ * red specs across three files, which is precisely what this docblock says
+ * it is avoiding. A level-1 heading with text in it proves the page composed;
+ * which sentence it holds is a product decision, not a contract.
  */
 test("login page renders sign-in form", async ({ page }) => {
   await page.goto("/login");
 
-  await expect(
-    page.getByRole("heading", { name: /sign in to applied/i }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).not.toBeEmpty();
 
   await expect(page.getByLabel(/email/i)).toBeVisible();
   await expect(page.getByLabel(/password/i)).toBeVisible();
@@ -29,9 +34,8 @@ test("login page renders sign-in form", async ({ page }) => {
 test("signup page renders the create-account form", async ({ page }) => {
   await page.goto("/signup");
 
-  await expect(
-    page.getByRole("heading", { name: /create your applied account/i }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).not.toBeEmpty();
   await expect(page.getByLabel(/email/i)).toBeVisible();
   await expect(page.getByLabel(/password/i)).toBeVisible();
   await expect(page.getByRole("button", { name: /create account/i })).toBeVisible();
