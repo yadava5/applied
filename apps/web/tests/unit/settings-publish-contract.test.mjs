@@ -13,12 +13,21 @@
  * only sound while this gate stands: if this test is deleted, the pin's
  * argument comes back.
  *
- * WHAT IT ASSERTS. Every source under `components/settings/` that calls
- * `saveMetadata(` also contains `router.refresh()`. Source-level and crude on
+ * WHAT IT ASSERTS. Every source under `components/settings/` that writes
+ * account state also contains `router.refresh()`. Source-level and crude on
  * purpose — the alternative (executing each section) needs a DOM none of
  * these unit tests have. A false positive (refresh present but unreachable)
- * is possible; a false NEGATIVE — a metadata write with no refresh anywhere
- * in the file — is not.
+ * is possible; a false NEGATIVE — a write with no refresh anywhere in the
+ * file — is not.
+ *
+ * THE WRITE LIST GREW. It was `saveMetadata(` alone. The profile photo
+ * (`ProfilePhotoField`) writes through its own transport calls — the bytes go
+ * to a route handler, not to `updateUser` in the browser — so the original
+ * predicate would have waved it straight through while it fed exactly the same
+ * defect: the tile is server-rendered into the shell's rail, so a photo saved
+ * without publishing sits behind the 300 s router cache and the sidebar keeps
+ * showing the old one. Any future transport call that changes what a server
+ * render prints belongs in this list.
  *
  * The predicate itself is exercised against a synthetic offender below, so
  * the gate is proven able to fail before it is trusted on the real tree
@@ -37,19 +46,29 @@ const SETTINGS_DIR = join(
   "../../components/settings",
 );
 
-/** Does this source write metadata without publishing the write? */
+/** The transport calls that change what a server render of the shell or the
+ *  settings page will print. */
+const WRITE_CALL = /\b(saveMetadata|uploadAvatar|removeAvatar)\(/;
+
+/** Does this source write account state without publishing the write? */
 function violatesPublishContract(source) {
-  return source.includes("saveMetadata(") && !source.includes("router.refresh()");
+  return WRITE_CALL.test(source) && !source.includes("router.refresh()");
 }
 
 test("the predicate can fail: a write without a refresh is flagged", () => {
-  const offender = `
-    const { ok } = await transport.saveMetadata({ theme_accent: accent });
-    setState(ok ? "saved" : "error");
-  `;
-  assert.equal(violatesPublishContract(offender), true);
-  const publisher = `${offender}\n    if (ok) router.refresh();`;
-  assert.equal(violatesPublishContract(publisher), false);
+  for (const call of [
+    'transport.saveMetadata({ theme_accent: accent })',
+    "transport.uploadAvatar(prepared.blob)",
+    "transport.removeAvatar()",
+  ]) {
+    const offender = `
+      const { ok } = await ${call};
+      setState(ok ? "saved" : "error");
+    `;
+    assert.equal(violatesPublishContract(offender), true, `${call} was not seen as a write`);
+    const publisher = `${offender}\n      if (ok) router.refresh();`;
+    assert.equal(violatesPublishContract(publisher), false);
+  }
 });
 
 test("every settings section that calls saveMetadata also calls router.refresh", () => {
@@ -57,10 +76,12 @@ test("every settings section that calls saveMetadata also calls router.refresh",
   // The contract must actually be examining the known writers — an empty or
   // wrongly-pointed scan would pass vacuously (zero-match = failure).
   const writers = files.filter((f) =>
-    readFileSync(join(SETTINGS_DIR, f), "utf8").includes("saveMetadata("),
+    WRITE_CALL.test(readFileSync(join(SETTINGS_DIR, f), "utf8")),
   );
   assert.ok(
-    writers.includes("ProfileSection.tsx") && writers.includes("NotificationsSection.tsx"),
+    writers.includes("ProfileSection.tsx") &&
+      writers.includes("NotificationsSection.tsx") &&
+      writers.includes("ProfilePhotoField.tsx"),
     `scan is not seeing the known metadata writers — found: ${writers.join(", ") || "none"}`,
   );
 

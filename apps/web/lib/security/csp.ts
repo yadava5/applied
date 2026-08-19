@@ -100,6 +100,16 @@ export function buildNonceCsp(nonce: string): string {
     // for browsers without 'strict-dynamic' support.
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
     STYLE_SRC,
+    // `img-src` STAYS same-origin, and that survived the arrival of profile
+    // photos rather than predating it. The two hosts a photo can come from —
+    // Google's avatar CDN and this project's Supabase Storage bucket — are
+    // named in `next.config.ts`'s `images.remotePatterns` instead, so
+    // `next/image` fetches them server-side and the browser requests
+    // `/_next/image?url=…` from this origin. `data:` covers the upload preview,
+    // which is a canvas re-encode already sitting in the page; a `blob:` URL
+    // would have widened this line for a thumbnail. If an image ever appears
+    // blank, check that it is going through `components/ui/AvatarTile` before
+    // reaching for this directive.
     "img-src 'self' data:",
     "font-src 'self'",
     CONNECT_SRC,

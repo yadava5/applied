@@ -115,6 +115,15 @@ export default async function DemoSettingsPage() {
                 // measured shape of the demo account, and the case that shows
                 // (and e2e-exercises) the change-password control.
                 signIn={summarizeSignIn({ identities: [{ provider: "email" }] })}
+                // The fixture account has no photo and no Google identity, so
+                // the twin opens on the state worth exercising: the invitation.
+                // Uploading here runs the REAL crop and re-encode in the browser
+                // and shows the actual result in the tile — only the storing is
+                // simulated — so the whole control, including remove-and-revert,
+                // is reviewable and e2e-drivable without a session.
+                avatarSource="none"
+                avatarSrc={null}
+                googleAvatarSrc={null}
               />
               {/* Appearance is device-local by design, so the demo IS the
                   product here — but this page is pinned dark with the rest of

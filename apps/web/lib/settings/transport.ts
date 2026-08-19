@@ -36,12 +36,47 @@ export interface SettingsTransport {
    *  a reauthentication demand — because that sentence is the actionable
    *  part. */
   updatePassword(password: string): Promise<{ ok: boolean; message?: string }>;
+  /**
+   * Store a profile photo. The blob is a square re-encode produced in the
+   * browser by `lib/profile/prepareAvatarFile` — never the file the user
+   * picked — so nothing here has to think about EXIF or megapixels.
+   *
+   * `message` carries the SERVER's own refusal, the same way `updatePassword`
+   * does: "Photo uploads aren’t enabled on this deployment yet" and "That
+   * image is too large to store" are different problems with different
+   * answers, and a generic failure line would erase both.
+   */
+  uploadAvatar(photo: Blob): Promise<{ ok: boolean; message?: string }>;
+  /** Drop the uploaded photo. What the tile falls back to — the Google photo
+   *  or the monogram — is the caller's to render; this only clears. */
+  removeAvatar(): Promise<{ ok: boolean; message?: string }>;
   /** Fetch everything the export downloads. The section owns the blob/anchor
    *  dance — that part is the browser's either way. */
   exportApplications(): Promise<{ ok: boolean; data?: unknown }>;
   /** End the session. The section owns the navigation that follows. */
   signOut(): Promise<void>;
   deleteAccount(): Promise<{ ok: boolean; detail?: string }>;
+}
+
+/**
+ * Both avatar calls hit one route with one error contract, so they share one
+ * reader. The server's `detail` is preferred over anything invented here; the
+ * two fallbacks cover a response that is not JSON and a network that is not
+ * there, which are the only two cases the server cannot speak for.
+ */
+async function avatarRequest(init: RequestInit): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const res = await fetch("/api/profile/avatar", init);
+    if (res.ok) return { ok: true };
+    const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    return {
+      ok: false,
+      message:
+        typeof body.detail === "string" ? body.detail : "Couldn’t save the photo. Try again.",
+    };
+  } catch {
+    return { ok: false, message: "Couldn’t reach the server. Try again shortly." };
+  }
 }
 
 const live: SettingsTransport = {
@@ -68,6 +103,16 @@ const live: SettingsTransport = {
         ? "For security, changing your password needs a fresh sign-in. Sign out, sign back in, then try again."
         : error.message,
     };
+  },
+  async uploadAvatar(photo) {
+    const body = new FormData();
+    // Named because a multipart part without a filename is a plain field in
+    // some parsers, and the handler asks for a Blob.
+    body.append("photo", photo, "avatar");
+    return avatarRequest({ method: "POST", body });
+  },
+  async removeAvatar() {
+    return avatarRequest({ method: "DELETE" });
   },
   async exportApplications() {
     try {
@@ -136,6 +181,19 @@ const demo: SettingsTransport = {
     // The fixture account is email-identity-shaped, so the control renders
     // and the whole machine runs; nothing persists, like every demo write.
     await delay(300);
+    return { ok: true };
+  },
+  async uploadAvatar() {
+    // The crop, the re-encode and the preview are all real on the twin — they
+    // happen in the browser. Only the storing is simulated, and the section
+    // keeps the prepared image in state so the tile shows the actual result
+    // rather than a stock face. Nothing survives the tab, like every demo
+    // write.
+    await delay(300);
+    return { ok: true };
+  },
+  async removeAvatar() {
+    await delay(200);
     return { ok: true };
   },
   async exportApplications() {
