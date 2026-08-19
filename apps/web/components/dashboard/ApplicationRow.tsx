@@ -195,6 +195,7 @@ export function ApplicationRow({
   onDragEnd,
   folded = false,
   detailOpen = false,
+  revealOnOpen = true,
   transport = liveBoardTransport,
 }: {
   app: Application;
@@ -244,6 +245,10 @@ export function ApplicationRow({
    *  here" mark (border steps to `line-strong`, the same delta as hover),
    *  and the scroll target while ↑/↓ traverse the list. */
   detailOpen?: boolean;
+  /** Whether becoming the open card may move the reader's viewport. True for
+   *  an open the reader asked for; false for one the PAGE seeded (see the
+   *  effect below — `nearest` reaches the document, not just the worklist). */
+  revealOnOpen?: boolean;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
 }) {
@@ -267,12 +272,25 @@ export function ApplicationRow({
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   // The highlight follows ↑/↓: when this row becomes the open card, keep it
-  // on screen. `nearest` scrolls the worklist the minimum distance and leaves
-  // every other scroll context alone; instant on purpose — rapid traversal
-  // must not queue smooth scrolls, and instant needs no reduced-motion fork.
+  // on screen. `nearest` scrolls the minimum distance; instant on purpose —
+  // rapid traversal must not queue smooth scrolls, and instant needs no
+  // reduced-motion fork.
+  //
+  // ONLY FOR AN OPEN THE READER ASKED FOR (`revealOnOpen`). The comment here
+  // used to claim `nearest` "leaves every other scroll context alone", and it
+  // does not: it walks every scroll container up to the document. In the app
+  // the worklist is its own scroller so the page barely moves. On the landing
+  // the board sits in an `overflow-clip` stage — not a scroller — so the
+  // document is the only container, and a pane the PAGE seeded yanked the
+  // reader back into the act from wherever they had scrolled to. Measured on
+  // a production build: a jump to y=5800 came back to 3219 about 1.6s later,
+  // which is the seed waiting out the row's travel and then scrolling.
+  //
+  // It is the same rule the seed already follows for focus — docked only, no
+  // focus theft. A viewport is not the page's to move either.
   useEffect(() => {
-    if (detailOpen) rowRef.current?.scrollIntoView({ block: "nearest" });
-  }, [detailOpen]);
+    if (detailOpen && revealOnOpen) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [detailOpen, revealOnOpen]);
 
   // Server data caught up (to our value or to a different one): drop the
   // overlay and show the truth. Both arms matter — without the second, a

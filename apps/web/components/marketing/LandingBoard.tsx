@@ -149,6 +149,11 @@ export function LandingBoard({
    *  more things the reader's scroll now moves continuously. */
   const headFade = useTransform(engaged, (progress) => 1 - progress);
   const footFade = engaged;
+  /** The receipt stands down WITH the camera. A released camera is back at the
+   *  head, where a receipt bar would cover rows it has nothing to say about —
+   *  the same rule the crop fades follow, and the reason this multiplies the
+   *  caller's own scrubbed opacity rather than replacing it. */
+  const receiptFade = useTransform(released, (letGo) => 1 - letGo);
 
   // The pan target, measured through a ResizeObserver rather than once per
   // scene: the board GROWS when the pane docks open (743 → 783), and a
@@ -246,8 +251,21 @@ export function LandingBoard({
             not a float: the negative offsets carry it across the stage's
             padding to the frame's own edges, mirroring the provenance bar at
             the head. `OVERLAY_ROOM` is what keeps the last row clear of it.
-            Its own entrance is scrubbed by the caller. */}
-        {overlay ? <div className="absolute -bottom-5 -left-5 -right-5 z-10">{overlay}</div> : null}
+            Its arrival is scrubbed by the caller; its stand-down is `released`.
+
+            Inert to the pointer, and on the WRAPPER rather than the figure
+            inside it: the bar is mounted for the whole act now (it has to be,
+            to scrub) so it lies over the frame's foot even at rest, where it
+            is invisible and must not be swallowing hits on the last row. The
+            figure has nothing to click. */}
+        {overlay ? (
+          <motion.div
+            className="pointer-events-none absolute -bottom-5 -left-5 -right-5 z-10"
+            style={{ opacity: receiptFade }}
+          >
+            {overlay}
+          </motion.div>
+        ) : null}
       </div>
       <div
         className={cn(

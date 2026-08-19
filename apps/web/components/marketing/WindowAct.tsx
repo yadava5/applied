@@ -228,15 +228,12 @@ export function WindowAct() {
                 // mid-scroll between the composed frames — so its own opacity
                 // is what says whether it has arrived.
                 //
-                // Inert to the pointer: it is a figure, it has nothing to
-                // click, and it lies over the frame's foot at every scene now
-                // — including scene 0, where it is invisible and must not be
-                // swallowing hits on the last row.
+                // This is only the ARRIVAL. Standing the bar down when the
+                // visitor takes the frame back is LandingBoard's `released`,
+                // which multiplies this opacity — the same fold the camera and
+                // the crop fades use, and the reason it is not a branch here.
                 overlay={
-                  <motion.div
-                    className="pointer-events-none"
-                    style={{ opacity: receiptOpacity, y: receiptY }}
-                  >
+                  <motion.div style={{ opacity: receiptOpacity, y: receiptY }}>
                     <ReceiptStrip />
                   </motion.div>
                 }

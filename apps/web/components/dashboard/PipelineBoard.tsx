@@ -791,6 +791,7 @@ export function PipelineBoard({
             onOpenDetail={openDetail}
             folded={detailPaneOpen}
             detailOpen={detailApp !== null && detailApp.id === app.id}
+            revealOnOpen={detailUserOpened}
             inSet={inSet}
             sameCompanyCount={inSet ? 0 : sameCompanyCount(app)}
             sameCompanyLabel={chip?.label ?? null}
