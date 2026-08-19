@@ -73,12 +73,21 @@ export function ProductClip({
   name,
   caption,
   className,
+  stack = false,
 }: {
   clip: Clip;
   /** What the recording shows, for anyone who cannot see it. */
   name: string;
   caption: string;
   className?: string;
+  /**
+   * Caption under the frame instead of beside it. The side-caption grid below
+   * assumes the clip owns a full-width row; a clip mounted in one of the
+   * page's pinned rails owns a ~30rem column, where a second column would
+   * squeeze the caption to nothing. Same frame, same words, one arrangement
+   * per placement.
+   */
+  stack?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLSpanElement>(null);
@@ -202,7 +211,8 @@ export function ProductClip({
         // the width this is worked at: 640 + 32 + 304 fits there exactly.
         // Below `lg` there is no room for a second column and the caption sits
         // under the frame, which is where a caption goes.
-        "grid gap-x-8 gap-y-3 lg:grid-cols-[minmax(0,40rem)_minmax(0,1fr)] lg:items-start",
+        "grid gap-x-8 gap-y-3",
+        !stack && "lg:grid-cols-[minmax(0,40rem)_minmax(0,1fr)] lg:items-start",
         className,
       )}
     >

@@ -19,26 +19,31 @@ import { VerdictTally } from "./VerdictTally";
  * (`CLAIMS.verdict`), because it is demonstrated by the artifact rather than
  * asserted.
  *
- * THE SECTION IS TWO MOVEMENTS, NOT ONE COLUMN AND ONE RAIL. It used to be a
- * single 3152px two-column grid whose right column held a 421px sticky panel:
- * measured, that left ~320px of empty ground under the panel and kept it
- * empty for the remaining ~2.5 viewports, which is the black space the owner
- * screenshotted. The panel was earning its keep for exactly one of the four
- * claims — the merged verdict claim, where the exhibit ADVANCING from `raw`
- * to `split` under one headline IS the argument. For the other two the file's
- * own note already admitted the column "repeats the previous screen's
- * artifact". So:
+ * THE SECTION IS THE PAGE'S SPINE, AND THE SPINE ALTERNATES. The owner chose
+ * this landing FOR the pinned-scroll language and rejected the build where it
+ * happened on one phase and evaporated: the verdict claim had a pinned rail,
+ * the decision claim went full width, retention was a plain in-flow pairing,
+ * and the page read as one trick that happens once. The direction he set is
+ * the architecture now: every phase is one column pinned while the other
+ * flows past it, and the pinned SIDE switches at every major phase — that
+ * switch is what marks a phase change, and it is why each handoff has a
+ * reason to exist. With the window act and the closing act (both full-stage
+ * pins) as bookends, the page runs:
  *
- *   · the merged claim keeps the pairing, and the exhibit is CENTRED in the
- *     free viewport rather than pinned to its top, so its slack reads as
- *     margin on both sides instead of a hole beneath it;
- *   · the decision claim goes full width, which is a gain rather than a loss:
- *     its two real exhibits (the benchmark ladder and the recording of the
- *     rules layer answering a body) were boxed into a 576px prose measure
- *     beside a repeat of the previous screen's email;
- *   · the retention claim keeps a pairing, but a plain one in flow — the
- *     record the database keeps beside the paragraph that describes it, with
- *     no rail and nothing pinned.
+ *   window act (full frame) → verdict (RIGHT rail: the email, raw → split)
+ *   → decision (LEFT rail: the rules recording, looping) → retention (RIGHT
+ *   rail: the sync recording; the record enacts its collapse in the flow)
+ *   → access (LEFT rail: the import recording — `AccessPhase`) → closing act
+ *   (full frame, plays itself).
+ *
+ * Which exhibit rides which rail is decided by what the exhibit DOES: the
+ * two artifacts that change state under the reader (the split verdict, the
+ * kept record) sit where their claims can drive them — the verdict on its
+ * rail, the record in the flow beside the sentence it enacts — and the
+ * recordings, which loop and need no driving, take the rail on the phases
+ * whose claims they evidence. An earlier full-width staging of the decision
+ * claim is deliberately superseded here: it measured fine, and it broke the
+ * language the page was chosen for.
  *
  * The exhibit's stage follows SCROLL PROGRESS, not an observer. The previous
  * mechanism was an enter-only IntersectionObserver (`if (!isIntersecting)
@@ -350,109 +355,127 @@ export function ClaimsDescent() {
         </div>
       </div>
 
-      {/* ---- the decision: full width. The only claim of the three that is
-              about a layer the reader cannot see working, and the only one
-              whose exhibits are its own — the benchmark ladder and the
-              recording of the rules answering a body. They were boxed into
-              the prose measure beside a repeat of the email above; the
-              paragraph keeps that measure, the exhibits do not. --------- */}
-      <div className="mx-auto w-full max-w-6xl px-6">
-        <Claim paced={false} eyebrow={DECISION.eyebrow} headline={DECISION.headline}>
-          <p>{DECISION.body}</p>
-        </Claim>
-        <div className="space-y-10 pb-20">
-          <div className="max-w-2xl space-y-4">
-            <DrawnBenchmark />
-            <p className="text-sm text-dim">{DECISION.gate}</p>
+      {/* ---- the decision: the spine's first handoff — the pinned side
+              SWITCHES. The recording of the rules layer answering a body
+              rides the LEFT rail, looping, while the claim that explains it
+              flows past on the right: the reader is watching the layer that
+              ships work for the whole time they are reading why it ships.
+              The benchmark ladder stays in the flow as the claim's second
+              beat — it is the argument's own figure, and it still draws
+              under the reader's descent. ------------------------------- */}
+      <div className="border-t border-line-soft">
+        <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+          <div className="hidden lg:block">
+            <div className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+              <ProductClip
+                stack
+                clip={CLIPS.rulesReadTheBody}
+                name={FOOTAGE.rules.name}
+                caption={FOOTAGE.rules.caption}
+              />
+            </div>
           </div>
-          {/* The recording goes last because the argument is claim, evidence,
-              gate, and only then the thing running: the rules answering a body
-              on their own, and deferring to the neural layers before they can
-              — on the surface the paragraph names ("in your own browser, on
-              the demo"). Width and the caption's column are `ProductClip`'s
-              own, and argued there. */}
-          <ProductClip
-            clip={CLIPS.rulesReadTheBody}
-            name={FOOTAGE.rules.name}
-            caption={FOOTAGE.rules.caption}
-
-          />
+          <div>
+            <Claim
+              eyebrow={DECISION.eyebrow}
+              headline={DECISION.headline}
+              inline={
+                <ProductClip
+                  stack
+                  clip={CLIPS.rulesReadTheBody}
+                  name={FOOTAGE.rules.name}
+                  caption={FOOTAGE.rules.caption}
+                />
+              }
+            >
+              <p>{DECISION.body}</p>
+            </Claim>
+            <Claim continued>
+              <DrawnBenchmark />
+              <p className="text-sm text-dim">{DECISION.gate}</p>
+            </Claim>
+          </div>
         </div>
       </div>
 
-      {/* ---- retention: the record beside the paragraph that describes it.
-              A pairing in flow — no rail, nothing pinned — so the exhibit
-              arrives with its claim and leaves with it. ------------------ */}
-      <div className="mx-auto w-full max-w-6xl px-6 pb-20 pt-20">
-        {/* The claim's head is lifted OUT of the grid so the recording can sit
-            under it: a reader who met an unlabelled board recording and only
-            then the word PRIVACY was being shown evidence before the thing it
-            is evidence for. Everything below is the same block it was — the
-            same paragraphs in the same measure, the same record in the same
-            column. */}
-        <p className="label-caps mb-4">{PRIVACY.eyebrow}</p>
-        <h2 className="max-w-xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-          {PRIVACY.headline}
-        </h2>
-
-        {/* The reading, before the record. `PRIVACY.retention` opens "the
-            classifier reads a message's body to decide, then discards it" —
-            two events, and the page could only ever show the second one. This
-            is the first: a pass of mail going in, counted by the strip that
-            counts it. The exhibit below is what comes out. They never run at
-            once — the clip pauses itself the moment it leaves the reading band,
-            which is before the record's collapse is anywhere near its mark. */}
-        <ProductClip
-          clip={CLIPS.boardSyncs}
-          name={FOOTAGE.sync.name}
-          caption={FOOTAGE.sync.caption}
-          className="mt-8"
-        />
-
-        <div className="mt-14 grid gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start">
-          <div className="max-w-xl space-y-4 text-muted">
-            <p>{PRIVACY.scope}</p>
-            <p>{PRIVACY.retention}</p>
-            <p>
-              {PRIVACY.mechanism}{" "}
-              <span className="break-all font-mono text-[0.8125rem] text-strong">
-                {PRIVACY.testPath}
-              </span>
-            </p>
-            <p className="text-sm text-dim">
-              {PRIVACY.systemCardLead}{" "}
-              <a
-                href="/system-card"
-                {...NEW_TAB}
-                className="text-muted underline underline-offset-4 transition-colors hover:text-strong"
-              >
-                {PRIVACY.systemCardLink}
-              </a>{" "}
-              — {PRIVACY.policyLead}{" "}
-              <a
-                href="/privacy"
-                {...NEW_TAB}
-                className="text-muted underline underline-offset-4 transition-colors hover:text-strong"
-              >
-                {PRIVACY.policyLink}
-              </a>
-              .
-            </p>
+      {/* ---- retention: the spine hands back to the RIGHT. The pinned
+              exhibit is the READING — a pass of mail going in, counted by the
+              strip that counts it (`PRIVACY.retention` opens "the classifier
+              reads a message's body to decide, then discards it", and this is
+              the first of those two events). What a read message leaves
+              behind — the record — stays IN THE FLOW beside the paragraph it
+              enacts: it arrives as the email and, as the reader crosses the
+              sentence that says the body is discarded, the body is
+              discarded. An exhibit that changes state under the reader stays
+              with its claim; the one that loops rides the rail. --------- */}
+      <div className="border-t border-line-soft">
+        <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+          <div>
+            <Claim
+              eyebrow={PRIVACY.eyebrow}
+              headline={PRIVACY.headline}
+              inline={
+                <ProductClip
+                  stack
+                  clip={CLIPS.boardSyncs}
+                  name={FOOTAGE.sync.name}
+                  caption={FOOTAGE.sync.caption}
+                />
+              }
+            >
+              <p>{PRIVACY.scope}</p>
+            </Claim>
+            <Claim continued>
+              <p>{PRIVACY.retention}</p>
+              {/* The record. `min-h` holds the taller of the two states so
+                  the collapse does not pull the page up under the reader —
+                  MEASURED at a 26rem measure, where the body wraps most: raw
+                  is 349px and the record 344px, so 23rem clears both. The
+                  width is capped at that measure so the measurement stays
+                  true now that the column around it is wider. */}
+              <div ref={keptRef} className="pt-4">
+                <p className="label-caps mb-2 h-4">{ARTIFACT.labels[kept ? 3 : 0]}</p>
+                <div className="min-h-[23rem] max-w-[26rem]">
+                  <VerdictEmail stage={kept ? "retained" : "raw"} />
+                </div>
+              </div>
+            </Claim>
+            <Claim continued paced={false}>
+              <p>
+                {PRIVACY.mechanism}{" "}
+                <span className="break-all font-mono text-[0.8125rem] text-strong">
+                  {PRIVACY.testPath}
+                </span>
+              </p>
+              <p className="text-sm text-dim">
+                {PRIVACY.systemCardLead}{" "}
+                <a
+                  href="/system-card"
+                  {...NEW_TAB}
+                  className="text-muted underline underline-offset-4 transition-colors hover:text-strong"
+                >
+                  {PRIVACY.systemCardLink}
+                </a>{" "}
+                — {PRIVACY.policyLead}{" "}
+                <a
+                  href="/privacy"
+                  {...NEW_TAB}
+                  className="text-muted underline underline-offset-4 transition-colors hover:text-strong"
+                >
+                  {PRIVACY.policyLink}
+                </a>
+                .
+              </p>
+            </Claim>
           </div>
-          {/* The record — and the one exhibit on the page that ENACTS its claim
-              instead of asserting it. It arrives as the email and, as the
-              reader crosses the paragraph that says the body is discarded, the
-              body is discarded. The wall label moves with it, so nobody is
-              ever looking at a state the page has not named. `min-h` holds the
-              taller of the two states so the collapse does not pull the page
-              up under the reader — MEASURED at 1024, where the column is its
-              narrowest 26rem and the body wraps most: raw is 349px and the
-              record 344px, so 23rem clears both with room and does not leave
-              a hole under either. */}
-          <div ref={keptRef}>
-            <p className="label-caps mb-2 h-4">{ARTIFACT.labels[kept ? 3 : 0]}</p>
-            <div className="min-h-[23rem]">
-              <VerdictEmail stage={kept ? "retained" : "raw"} />
+          <div className="hidden lg:block">
+            <div className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+              <ProductClip
+                stack
+                clip={CLIPS.boardSyncs}
+                name={FOOTAGE.sync.name}
+                caption={FOOTAGE.sync.caption}
+              />
             </div>
           </div>
         </div>
