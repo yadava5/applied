@@ -52,13 +52,13 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
  * → `null`. Callers fall back to the email on `null` — the rail must never
  * render a blank identity row.
  *
- * What Google actually writes, read off this project's `auth.identities` row
- * for the google provider: `full_name`, `name` (the same string), `email`,
- * `avatar_url`, `picture`, `provider_id`, `sub`, `iss`, `email_verified`,
- * `phone_verified`. Supabase merges that into `user_metadata`, so `full_name`
- * is genuinely populated for a Google account and this chain needs no
- * provider-specific branch. `avatar_url`/`picture` are present too and
- * nothing in the app reads them — there is no avatar anywhere yet.
+ * What Google actually writes, read off the one `auth.identities` row this
+ * project has for the google provider (linked onto an email-primary account,
+ * so this is an observation and not a spec): `full_name`, `name` (the same
+ * string), `email`, `avatar_url`, `picture`, `provider_id`, `sub`, `iss`,
+ * `email_verified`, `phone_verified`. Supabase merges that into
+ * `user_metadata`, so `full_name` is populated there and this chain needs no
+ * provider-specific branch.
  */
 export function userDisplayName(user: User | null): string | null {
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;

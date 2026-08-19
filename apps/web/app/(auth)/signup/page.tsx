@@ -142,9 +142,6 @@ export default function SignupPage() {
                 onChange={(event) => setName(event.target.value)}
                 className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
               />
-              <p className="text-xs text-dim">
-                What Applied calls you. You can change it later in Settings.
-              </p>
             </div>
 
             <div className="space-y-1">
