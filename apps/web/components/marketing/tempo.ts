@@ -48,6 +48,26 @@
  * for like: every pixel here produces a visible change, which is the thing
  * the previous runway did not have and the reason it read as dead scroll.
  */
+/**
+ * The act's progress window: the section's own traversal, which for a section
+ * this much taller than the viewport IS the pinned runway. Progress 0 is the
+ * section's top at the viewport's top, progress 1 its bottom at the viewport's
+ * bottom — within 72px and 33px respectively of the sticky window's own pin
+ * and release, at every viewport height (see WindowAct's docblock).
+ */
+export const ACT_WINDOW = { from: 0, to: 1 } as const;
+
+/**
+ * The share of the receipt's rise over which it reaches full opacity.
+ *
+ * The announcement has to be LEGIBLE long before it stops moving. Fading it
+ * linearly across its own travel is the defect the owner reported as "it can
+ * hardly be seen what just happened": an earlier cut animated the moved row's
+ * opacity across the same 1.4s as its journey, so it sat at 0.44 opacity at
+ * 44% of the way there and only resolved once stopped. Fade fast, then travel.
+ */
+export const RECEIPT_FADE = 0.25;
+
 export const ACT_MARKS = {
   /** Caption 2, and the camera leaves the board's head. */
   scene: 0.2,

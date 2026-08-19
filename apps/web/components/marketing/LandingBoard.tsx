@@ -1,14 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { motion, useMotionValue, useTransform, type MotionValue } from "motion/react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { cn } from "@/lib/utils";
 import { BoardStill } from "./BoardStill";
 import { NEW_TAB } from "./chrome";
 import { BOARD } from "./copy";
-import { useWideViewport } from "./scrub";
+import { useWideViewport, type Signal } from "./scrub";
 
 /**
  * The landing's board embed: the REAL product, mounted the only safe way.
@@ -53,10 +52,28 @@ const MarketingBoard = dynamic(
  * in a black band that read as debris at every mid-scroll offset.
  *
  * It is reserved for the WHOLE act rather than from the scene the receipt
- * arrives in. The pan is scrubbed off one motion value now, and a `room` that
+ * arrives in. The pan is scrubbed off one continuous value now, and a `room` that
  * appeared partway through would move the pan's target under it.
  */
 const OVERLAY_ROOM = 44;
+
+/** How far the receipt strip travels up into the frame's foot, in px. */
+const RECEIPT_RISE = 18;
+
+/**
+ * The act's camera channel: three scrubbed inputs the window act publishes and
+ * this component paints. Signals rather than props because they change on
+ * every scroll frame and none of them is a reason to render.
+ */
+export interface ActCamera {
+  /** 0 the board's head, 1 its foot. */
+  pan: Signal;
+  /** The receipt's opacity and its rise, kept apart because the announcement
+   *  has to be legible long before it stops moving — the caller resolves the
+   *  opacity early (`RECEIPT_FADE` in tempo.ts) and this only paints it. */
+  receiptFade: Signal;
+  receiptRise: Signal;
+}
 
 export function LandingBoard({
   height = "min(72vh, 680px)",
@@ -81,8 +98,12 @@ export function LandingBoard({
    * A transform inside the clip, so the page's own scroll geometry never
    * moves: CLS stays zero by construction. Supplying it is what marks this
    * mount as CHOREOGRAPHED — every other caller gets the resting board.
+   *
+   * Signals rather than props, because none of these is a reason to render:
+   * they change on every scroll frame and all they do is move a transform and
+   * two opacities.
    */
-  camera?: MotionValue<number>;
+  camera?: ActCamera;
   /** The offer has landed: the row is committed to `offered` and travels
    *  there by the board's own layout animation. Reverses. */
   verdict?: boolean;
@@ -123,37 +144,72 @@ export function LandingBoard({
    * composition still plays in full, in both directions, for every reader who
    * lets it.
    *
-   * It is a MOTION VALUE rather than React state because the camera is no
-   * longer a rendered branch: `panY` is written straight to the element, and
-   * a React `? :` around it could not reach the transform at all. It folds
-   * into the mapping instead — a released camera multiplies the pan and both
-   * crop fades to zero, which is exactly "back at the head".
+   * It is a REF rather than React state because the camera is no longer a
+   * rendered branch: the pan is written straight to the element, and a React
+   * `? :` around it could not reach the transform at all. It folds into the
+   * mapping instead — a released camera multiplies the pan, both crop fades
+   * and the receipt to zero, which is exactly "back at the head".
    */
-  const released = useMotionValue(0);
+  const released = useRef(false);
 
-  // The camera's mapping. Nothing here does anything for callers without a
-  // `camera`: `engaged` is pinned at 0 and every derived value with it.
-  const restingCamera = useMotionValue(0);
-  const engaged = useTransform(
-    [camera ?? restingCamera, released] as MotionValue<number>[],
-    ([progress, letGo]: number[]) => progress * (1 - letGo),
-  );
-  /** The measured full-pan distance, negative, written by the observer below
-   *  rather than held in state — the pan is a value, not a render. */
-  const panDistance = useMotionValue(0);
-  const panY = useTransform(
-    [engaged, panDistance] as MotionValue<number>[],
-    ([progress, distance]: number[]) => progress * distance,
-  );
-  /** The crop edges. They used to switch at a scene boundary; they are two
-   *  more things the reader's scroll now moves continuously. */
-  const headFade = useTransform(engaged, (progress) => 1 - progress);
-  const footFade = engaged;
-  /** The receipt stands down WITH the camera. A released camera is back at the
-   *  head, where a receipt bar would cover rows it has nothing to say about —
-   *  the same rule the crop fades follow, and the reason this multiplies the
-   *  caller's own scrubbed opacity rather than replacing it. */
-  const receiptFade = useTransform(released, (letGo) => 1 - letGo);
+  /** The act's three scrubbed inputs, mirrored where `paint` can read them
+   *  without a render, plus the measured full-pan distance (negative). */
+  const pan = useRef(0);
+  const receiptFade = useRef(0);
+  const receiptRise = useRef(0);
+  const panDistance = useRef(0);
+
+  const bottomFadeRef = useRef<HTMLDivElement>(null);
+  const topFadeRef = useRef<HTMLDivElement>(null);
+  const receiptRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * The whole camera, as one write per frame.
+   *
+   * Everything the act moves is derived from `engaged` — the scrubbed pan
+   * folded with the release latch — so the pan and the two crop edges cannot
+   * disagree about where the camera is. That was the point of the single
+   * `useTransform` chain this replaces, and it is why it stays one expression
+   * rather than three listeners each doing their own arithmetic.
+   */
+  const paint = useCallback(() => {
+    const engaged = released.current ? 0 : pan.current;
+    if (panRef.current) {
+      panRef.current.style.transform = `translateY(${(engaged * panDistance.current).toFixed(2)}px)`;
+    }
+    // The crop edges. They used to switch at a scene boundary; they are two
+    // more things the reader's scroll now moves continuously.
+    if (bottomFadeRef.current) bottomFadeRef.current.style.opacity = String(1 - engaged);
+    if (topFadeRef.current) topFadeRef.current.style.opacity = String(engaged);
+    // The receipt stands down WITH the camera. A released camera is back at
+    // the head, where a receipt bar would cover rows it has nothing to say
+    // about — the same rule the crop fades follow.
+    if (receiptRef.current) {
+      receiptRef.current.style.opacity = String(released.current ? 0 : receiptFade.current);
+      receiptRef.current.style.transform = `translateY(${((1 - receiptRise.current) * RECEIPT_RISE).toFixed(2)}px)`;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!camera) return;
+    const stop = [
+      camera.pan.subscribe((value) => {
+        pan.current = value;
+        paint();
+      }),
+      camera.receiptFade.subscribe((value) => {
+        receiptFade.current = value;
+        paint();
+      }),
+      camera.receiptRise.subscribe((value) => {
+        receiptRise.current = value;
+        paint();
+      }),
+    ];
+    return () => {
+      for (const unsubscribe of stop) unsubscribe();
+    };
+  }, [camera, paint]);
 
   // The pan target, measured through a ResizeObserver rather than once per
   // scene: the board GROWS when the pane docks open (743 → 783), and a
@@ -208,12 +264,15 @@ export function LandingBoard({
   useEffect(() => {
     if (!choreographed) return;
     const stage = stageRef.current;
-    const pan = panRef.current;
-    if (!stage || !pan) return;
-    const measure = () =>
-      panDistance.set(
-        -Math.max(0, pan.getBoundingClientRect().height - stage.clientHeight + OVERLAY_ROOM),
+    const dolly = panRef.current;
+    if (!stage || !dolly) return;
+    const measure = () => {
+      panDistance.current = -Math.max(
+        0,
+        dolly.getBoundingClientRect().height - stage.clientHeight + OVERLAY_ROOM,
       );
+      paint();
+    };
     if (typeof ResizeObserver === "undefined") {
       measure();
       return;
@@ -227,13 +286,13 @@ export function LandingBoard({
     // Both sides of the subtraction: the board's own height changes when the
     // pane docks, and the stage's is `calc(100dvh - 13.5rem)`, so resizing the
     // window mid-act moves the divisor without touching the dividend.
-    ro.observe(pan);
+    ro.observe(dolly);
     ro.observe(stage);
     return () => {
       cancelAnimationFrame(settle);
       ro.disconnect();
     };
-  }, [choreographed, panDistance]);
+  }, [choreographed, paint]);
 
   const live = near && wide;
 
@@ -245,17 +304,20 @@ export function LandingBoard({
           {/* The camera's dolly. Scrubbed, so there is no transition to
               collapse under reduced motion — the value itself steps there
               (WindowAct). Static at 0 for callers without a camera. */}
-          <motion.div ref={panRef} style={{ y: panY }}>
+          <div ref={panRef} style={{ transform: "translateY(0px)" }}>
             {live ? (
               <MarketingBoard
                 verdict={verdict}
                 docked={docked}
-                onVisitorOpen={() => released.set(1)}
+                onVisitorOpen={() => {
+                  released.current = true;
+                  paint();
+                }}
               />
             ) : (
               <StageSkeleton />
             )}
-          </motion.div>
+          </div>
         </div>
         {/* The crop edge: the board continues below this line, and the fade
             says so. Decoration only — it must never intercept the board —
@@ -263,20 +325,24 @@ export function LandingBoard({
             continues" would be false and the closed rows are the scene's
             whole point. A released camera is back at the head, so the board
             continues below the line again and the fade says so. */}
-        <motion.div
+        <div
+          ref={bottomFadeRef}
           aria-hidden
           className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background"
-          style={{ opacity: headFade }}
         />
         {/* The other crop edge. While the camera holds the foot the board —
             and, once docked, the pane's head — continues ABOVE the frame, and
             without a signal the top edge read as content cut mid-element (the
             pane "starting mid-content" was the reported defect). Same
             instrument as the bottom fade, mirrored. */}
-        <motion.div
+        <div
+          ref={topFadeRef}
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-background to-transparent"
-          style={{ opacity: footFade }}
+          // The camera rests at the head, so this edge starts invisible — an
+          // inline default rather than a paint, because the server renders it
+          // too and a flash of the wrong crop edge is a flash of a lie.
+          style={{ opacity: 0 }}
         />
         {/* The act's receipt, docked over the frame's foot — window chrome,
             not a float: the negative offsets carry it across the stage's
@@ -290,12 +356,13 @@ export function LandingBoard({
             is invisible and must not be swallowing hits on the last row. The
             figure has nothing to click. */}
         {overlay ? (
-          <motion.div
+          <div
+            ref={receiptRef}
             className="pointer-events-none absolute -bottom-5 -left-5 -right-5 z-10"
-            style={{ opacity: receiptFade }}
+            style={{ opacity: 0 }}
           >
             {overlay}
-          </motion.div>
+          </div>
         ) : null}
       </div>
       <div

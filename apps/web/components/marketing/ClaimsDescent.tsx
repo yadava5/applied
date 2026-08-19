@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useMotionValueEvent, useScroll } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, PRIVACY } from "./copy";
 import { CLIPS, ProductClip } from "./ProductClip";
-import { latch } from "./scrub";
+import { latch, trackProgress } from "./scrub";
 import { VerdictEmail } from "./VerdictEmail";
 import { VerdictTally } from "./VerdictTally";
 
@@ -69,6 +68,15 @@ import { VerdictTally } from "./VerdictTally";
  * but would still look nervous.
  */
 const STAGE_DEADBAND = 0.03;
+
+/**
+ * Progress through the paired claims: 0 when their top crosses the viewport's
+ * middle, 1 when their bottom does — so the boundary the reader feels (a claim
+ * "becomes the claim" as it crosses the centre) is the one the arithmetic
+ * uses. The same centre band the IntersectionObserver used, without the
+ * enter-only trap.
+ */
+const DESCENT_WINDOW = { from: 0.5, to: 0.5 };
 
 function Claim({
   eyebrow,
@@ -132,15 +140,6 @@ export function ClaimsDescent() {
   const secondBeatRef = useRef<HTMLDivElement>(null);
   const [split, setSplit] = useState(false);
 
-  // Progress through the paired claims: 0 when their top crosses the
-  // viewport's middle, 1 when their bottom does — so the boundary the reader
-  // feels (a claim "becomes the claim" as it crosses the centre) is the one
-  // the arithmetic uses.
-  const { scrollYProgress } = useScroll({
-    target: pairRef,
-    offset: ["start center", "end center"],
-  });
-
   /**
    * Where the second micro-beat starts, as a share of the pair's own height —
    * MEASURED, because the claims are `min-h` boxes over live copy and their
@@ -171,9 +170,13 @@ export function ClaimsDescent() {
     return () => ro.disconnect();
   }, []);
 
-  useMotionValueEvent(scrollYProgress, "change", (progress) => {
-    setSplit((prev) => latch(progress, splitAtRef.current, prev, STAGE_DEADBAND));
-  });
+  useEffect(() => {
+    const pair = pairRef.current;
+    if (!pair) return;
+    return trackProgress(pair, DESCENT_WINDOW, (progress) => {
+      setSplit((prev) => latch(progress, splitAtRef.current, prev, STAGE_DEADBAND));
+    });
+  }, []);
 
   return (
     <section className="border-t border-line-soft">

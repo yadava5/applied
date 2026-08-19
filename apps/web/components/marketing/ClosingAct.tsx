@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useMotionValueEvent, useScroll } from "motion/react";
 
 import { NEW_TAB } from "./chrome";
+import { trackProgress } from "./scrub";
 import { ACCESS, CLOSING, DECISION } from "./copy";
 
 /**
@@ -36,7 +36,7 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * whole payoff shot.
  *
  * It is bound to the scroll now, exactly as the window act is: `--act-t` is
- * the sequence's own clock in seconds, written from `scrollYProgress` across
+ * the sequence's own clock in seconds, written from the band's scroll progress across
  * the band's entrance, and globals.css freezes every animation and shifts its
  * delay by it. NOT ONE KEYFRAME, DURATION OR DELAY CHANGED — the composed
  * frame is the approved one, and so is every frame on the way to it; what
@@ -319,6 +319,16 @@ const ACT_SECONDS = 2.05;
 const ACT_HOLD_OFF = 0.2;
 
 /**
+ * The band's entrance: 0 when its top reaches the fold, 1 when its bottom
+ * does. That upper bound is the one that is GUARANTEED reachable — the band is
+ * followed by the footer, so its bottom clears the viewport's bottom before
+ * the page runs out of scroll — which the alternatives are not: a band shorter
+ * than the viewport can never bring its own top to the viewport's top, and the
+ * sequence would then never finish.
+ */
+const CLOSING_WINDOW = { from: 1, to: 1 };
+
+/**
  * The playhead's curve. NOT linear, and this was measured rather than chosen:
  * the sequence is front-loaded — every stroke of the wordmark is drawn in its
  * first 0.6s, 29% of the 2.05s — so a linear scrub spent 71% of the band's
@@ -350,19 +360,9 @@ export function ClosingAct() {
    */
   const [mode, setMode] = useState<"static" | "scrub" | "play">("static");
 
-  /**
-   * The band's entrance: 0 when its top reaches the fold, 1 when its bottom
-   * does. That upper bound is the one that is GUARANTEED reachable — the band
-   * is followed by the footer, so its bottom clears the viewport's bottom
-   * before the page runs out of scroll — which the alternatives are not: a
-   * band shorter than the viewport can never bring its own top to the
-   * viewport's top, and the sequence would never finish.
-   */
-  const { scrollYProgress } = useScroll({ target: ref, offset: ["start end", "end end"] });
-
-  useMotionValueEvent(scrollYProgress, "change", (progress) => {
-    if (mode === "scrub") position(ref.current, progress);
-  });
+  /** False the moment the reader takes the wheel: a click plays the authored
+   *  sequence at its authored tempo and the scrub stands down for the visit. */
+  const scrubbing = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -377,19 +377,27 @@ export function ClosingAct() {
     // one that is already on screen at load would yank a finished image back
     // to nothing under their eyes, which no amount of scroll binding excuses.
     // Deferred a frame so the effect body never sets state synchronously.
+    let stop: (() => void) | undefined;
     const raf = requestAnimationFrame(() => {
       if (el.getBoundingClientRect().top < window.innerHeight) return;
-      position(el, scrollYProgress.get());
+      scrubbing.current = true;
       setMode("scrub");
+      stop = trackProgress(el, CLOSING_WINDOW, (progress) => {
+        if (scrubbing.current) position(el, progress);
+      });
     });
-    return () => cancelAnimationFrame(raf);
-  }, [scrollYProgress]);
+    return () => {
+      cancelAnimationFrame(raf);
+      stop?.();
+    };
+  }, []);
 
   /** The reader takes the wheel. A click plays the authored sequence at its
    *  authored tempo and leaves it composed — the scrub stands down for the
    *  rest of the visit, the same rule the window act's camera follows once a
    *  visitor opens a card themselves. */
   const replay = () => {
+    scrubbing.current = false;
     ref.current?.style.removeProperty("--act-t");
     setMode("play");
     setRun((r) => r + 1);

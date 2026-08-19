@@ -504,12 +504,18 @@ test("the camera holds the foot, and re-measures it from the board's box", () =>
   assert.ok(board, "LandingBoard.tsx is not in the landing graph");
 
   // The camera is a continuous mapping now, not a per-beat branch: `engaged`
-  // is the scrubbed progress folded with the release latch, and it is what
-  // both crop fades and the pan all read. One source, so they cannot disagree.
+  // is the scrubbed progress folded with the release latch, computed ONCE and
+  // read by the pan, both crop edges and the receipt. One source, so they
+  // cannot disagree about where the camera is.
   assert.match(
     board,
-    /const engaged = useTransform\(/,
+    /const engaged = released\.current \? 0 : pan\.current;/,
     "the camera is no longer one continuous value — the pan and the crop fades can now disagree",
+  );
+  assert.equal(
+    (board.match(/const engaged\b/g) ?? []).length,
+    1,
+    "the camera's fold is computed in more than one place — they will drift",
   );
 
   // It must re-measure: the board GROWS when the pane docks open (743 to 769),
@@ -527,12 +533,12 @@ test("the camera holds the foot, and re-measures it from the board's box", () =>
   // visit, forward path included, clipping the row the caption points at. At
   // 1512x949 the whole pan is 54px, so that is a 48% error.
   assert.ok(
-    !/pan\.scrollHeight/.test(board),
+    !/\.scrollHeight/.test(board),
     "the camera measures `scrollHeight` again — that reads the departing pane and goes stale permanently",
   );
   assert.match(
     board,
-    /pan\.getBoundingClientRect\(\)\.height/,
+    /dolly\.getBoundingClientRect\(\)\.height - stage\.clientHeight \+ OVERLAY_ROOM/,
     "the camera's reach is no longer measured from the board's own box",
   );
 });

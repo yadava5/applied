@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, useMotionValueEvent, useReducedMotion, useScroll, useTransform } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { ChangedRow, ReceiptStrip } from "./ChangedRow";
 import { OFFER_EMAIL } from "./verdictEmailData";
 import { LandingBoard } from "./LandingBoard";
 import { NEW_TAB } from "./chrome";
-import { latch, useWideViewport } from "./scrub";
-import { ACT_DEADBAND, ACT_MARKS } from "./tempo";
+import { createSignal, latch, trackProgress, useWideViewport } from "./scrub";
+import { ACT_DEADBAND, ACT_MARKS, ACT_WINDOW, RECEIPT_FADE } from "./tempo";
+import type { ActCamera } from "./LandingBoard";
 import { ACT, BOARD } from "./copy";
 
 /**
@@ -38,7 +38,7 @@ import { ACT, BOARD } from "./copy";
  * IntersectionObserver sentinel firing a ~3s timeline that then ran on its
  * own clock, which is why it could finish while the reader was still
  * arriving, or still be running once they had gone. There is ONE signal now:
- * `scrollYProgress` across the runway. The camera's pan and the receipt's
+ * one scroll progress across the runway. The camera's pan and the receipt's
  * rise are interpolated straight off it — scrubbed, so they move exactly as
  * far as the reader scrolls — and the two state changes are latched at a
  * mark and UNLATCHED on the way back up. Every piece of what the visitor
@@ -101,36 +101,14 @@ import { ACT, BOARD } from "./copy";
 export function WindowAct() {
   const runwayRef = useRef<HTMLElement>(null);
   const wide = useWideViewport();
-  const reduce = useReducedMotion() === true;
 
-  // ONE signal. `start start` → `end end` is the section's own traversal,
-  // which the block comment above shows lands inside the pinned window at
-  // every viewport height.
-  const { scrollYProgress } = useScroll({
-    target: runwayRef,
-    offset: ["start start", "end end"],
-  });
-
-  /** The camera, 0 (board's head) → 1 (board's foot), and the receipt's rise,
-   *  0 (below the frame) → 1 (docked). A degenerate input range under reduced
-   *  motion turns each scrub into a step at its own mark. */
-  const camera = useTransform(
-    scrollYProgress,
-    reduce ? [ACT_MARKS.pan[1], ACT_MARKS.pan[1] + 0.001] : [...ACT_MARKS.pan],
-    [0, 1],
-    { clamp: true },
+  /** What the frame paints, published once and never re-created: three
+   *  scrubbed values the reader's scroll moves directly (see LandingBoard's
+   *  `ActCamera`). None of them is a reason to render. */
+  const camera = useMemo<ActCamera>(
+    () => ({ pan: createSignal(0), receiptFade: createSignal(0), receiptRise: createSignal(0) }),
+    [],
   );
-  const receipt = useTransform(
-    scrollYProgress,
-    reduce ? [ACT_MARKS.receipt[1], ACT_MARKS.receipt[1] + 0.001] : [...ACT_MARKS.receipt],
-    [0, 1],
-    { clamp: true },
-  );
-  // The announcement's own entrance, decoupled from anything it announces: it
-  // is legible for the last three quarters of its rise rather than reaching
-  // full opacity only once it has stopped.
-  const receiptOpacity = useTransform(receipt, [0, 0.25], [0, 1], { clamp: true });
-  const receiptY = useTransform(receipt, [0, 1], [18, 0]);
 
   // --- the latched state: which caption, and what the board is doing -------
   //
@@ -154,21 +132,48 @@ export function WindowAct() {
     setDocked((prev) => latch(progress, ACT_MARKS.docked, prev, ACT_DEADBAND));
   }, []);
 
-  useMotionValueEvent(scrollYProgress, "change", (progress) => {
-    if (wide) readProgress(progress);
-  });
-
-  // The mount read, and the narrowing read. `useMotionValueEvent` only fires
-  // on CHANGE, so a reader who reloads mid-runway — or who was below `lg` and
-  // widened the window — would otherwise sit on scene 0 over a board the
-  // scroll position says is three scenes in. Deferred a frame so the effect
-  // body never sets state synchronously (react-hooks/set-state-in-effect).
+  // ONE signal, and everything the act does is a function of it. `ACT_WINDOW`
+  // is the section's own traversal, which the block comment above shows lands
+  // inside the pinned window at every viewport height.
+  //
+  // Gated on `wide` because below `lg` the section has no runway at all
+  // (`lg:h-[400vh]`) and the board is `BoardStill`: progress against a section
+  // of content height is a number, but it is not this act's number, and it
+  // would caption a still with scenes it is not playing.
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      readProgress(wide ? scrollYProgress.get() : 0);
+    const runway = runwayRef.current;
+    if (!runway) return;
+    if (!wide) {
+      // Deferred a frame so the effect body never sets state synchronously
+      // (react-hooks/set-state-in-effect).
+      const raf = requestAnimationFrame(() => {
+        camera.pan.set(0);
+        camera.receiptFade.set(0);
+        camera.receiptRise.set(0);
+        readProgress(0);
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+    // Reduced motion keeps the SCROLL binding — every position still composes
+    // fully, which is the guarantee — and drops only the interpolation: each
+    // scrub becomes a step at its own mark. `PipelineBoard` neutralises the
+    // row's own glide separately.
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const span = ([from, to]: readonly [number, number], progress: number) =>
+      reduce
+        ? progress >= to
+          ? 1
+          : 0
+        : Math.min(1, Math.max(0, (progress - from) / (to - from)));
+
+    return trackProgress(runway, ACT_WINDOW, (progress) => {
+      const rise = span(ACT_MARKS.receipt, progress);
+      camera.pan.set(span(ACT_MARKS.pan, progress));
+      camera.receiptRise.set(rise);
+      camera.receiptFade.set(Math.min(1, rise / RECEIPT_FADE));
+      readProgress(progress);
     });
-    return () => cancelAnimationFrame(raf);
-  }, [wide, readProgress, scrollYProgress]);
+  }, [wide, camera, readProgress]);
 
   return (
     <section ref={runwayRef} aria-label="The board, live" className="relative lg:h-[400vh]">
@@ -228,14 +233,12 @@ export function WindowAct() {
                 // mid-scroll between the composed frames — so its own opacity
                 // is what says whether it has arrived.
                 //
-                // This is only the ARRIVAL. Standing the bar down when the
-                // visitor takes the frame back is LandingBoard's `released`,
-                // which multiplies this opacity — the same fold the camera and
-                // the crop fades use, and the reason it is not a branch here.
+                // Its arrival AND its stand-down are painted by LandingBoard,
+                // off the `camera` channel above: the receipt's opacity is its
+                // scrubbed rise folded with the release latch, the same fold
+                // the pan and both crop edges use. Nothing here is a branch.
                 overlay={
-                  <motion.div style={{ opacity: receiptOpacity, y: receiptY }}>
-                    <ReceiptStrip />
-                  </motion.div>
+                  <ReceiptStrip />
                 }
               />
             </div>
