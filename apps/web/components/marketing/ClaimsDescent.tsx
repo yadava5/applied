@@ -445,10 +445,13 @@ export function ClaimsDescent() {
               body is discarded. The wall label moves with it, so nobody is
               ever looking at a state the page has not named. `min-h` holds the
               taller of the two states so the collapse does not pull the page
-              up under the reader. */}
+              up under the reader — MEASURED at 1024, where the column is its
+              narrowest 26rem and the body wraps most: raw is 349px and the
+              record 344px, so 23rem clears both with room and does not leave
+              a hole under either. */}
           <div ref={keptRef}>
             <p className="label-caps mb-2 h-4">{ARTIFACT.labels[kept ? 3 : 0]}</p>
-            <div className="min-h-[27rem]">
+            <div className="min-h-[23rem]">
               <VerdictEmail stage={kept ? "retained" : "raw"} />
             </div>
           </div>
