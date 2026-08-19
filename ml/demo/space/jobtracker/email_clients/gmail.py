@@ -41,6 +41,7 @@ from jobtracker.credentials import (
     save_gmail_credentials,
     update_gmail_access_token,
 )
+from jobtracker.email_clients.html_text import SCRIPT_OR_STYLE, TAG, WHITESPACE
 
 logger = logging.getLogger(__name__)
 
@@ -608,15 +609,13 @@ class GmailClient:
 
     def _strip_html(self, html: str) -> str:
         """Strip HTML tags and return plain text."""
-        import re
-
-        # Remove script and style elements
-        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.I)
-        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.I)
+        # Remove script and style elements first, or their contents survive
+        # tag stripping and read to the classifier as prose.
+        html = SCRIPT_OR_STYLE.sub("", html)
         # Remove HTML tags
-        html = re.sub(r"<[^>]+>", " ", html)
+        html = TAG.sub(" ", html)
         # Normalize whitespace
-        html = re.sub(r"\s+", " ", html)
+        html = WHITESPACE.sub(" ", html)
         return html.strip()
 
     def _parse_date(self, date_str: str) -> datetime:

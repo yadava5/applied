@@ -168,8 +168,22 @@ _MAX_BODY_CHARS = 4000
 # about how much arrives at once.
 _FULL_BATCH_SIZE = 25
 
+# The end tag is NOT the literal ``</script>``. HTML5 leaves the
+# script-data-end-tag-name state on whitespace, ``/`` or ``>``, so a browser
+# closes the element on ``</script >``, ``</style\n>``, ``</script/>`` and
+# ``</script foo>`` — and the literal spelling matched none of them, leaving the
+# element body to survive tag stripping and reach the classifier as prose
+# (CodeQL ``py/bad-tag-filter``, fixed in step with the three copies in
+# ``email_clients/``). ``\b`` so ``<scripture>`` is not a script element.
+#
+# ``email_clients/html_text.py`` holds the same pattern and carries the full
+# note, including why ``html.parser`` was weighed and not taken. It is spelled
+# out again here rather than imported because ``cloud/`` deliberately does not
+# depend on ``email_clients/`` — the deployed bundle is the desktop package's
+# twin, not its consumer. ``tests/test_html_end_tag_whitespace.py`` pins both
+# against the same payloads, which is what keeps them honest.
 _SCRIPT_OR_STYLE = re.compile(
-    r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+    r"<(script|style)\b[^>]*>.*?</\1(?:[\s/][^>]*)?>", re.DOTALL | re.IGNORECASE
 )
 _TAG = re.compile(r"<[^>]+>")
 _WHITESPACE = re.compile(r"\s+")
@@ -185,6 +199,8 @@ def _html_to_text(html: str) -> str:
 
     Script and style bodies are removed BEFORE tags are stripped, or their
     contents survive as text and a CSS block reads to the classifier as prose.
+    An element whose end tag carries whitespace used to survive anyway; see the
+    note on ``_SCRIPT_OR_STYLE``.
     """
 
     html = _SCRIPT_OR_STYLE.sub(" ", html)

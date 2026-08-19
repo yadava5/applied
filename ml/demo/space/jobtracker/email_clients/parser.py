@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Optional
 
 from jobtracker.email_clients.gmail import GmailMessage
+from jobtracker.email_clients.html_text import SCRIPT_OR_STYLE, TAG, WHITESPACE
 from jobtracker.email_clients.icloud import IMAPMessage
 
 logger = logging.getLogger(__name__)
@@ -285,11 +286,12 @@ class EmailParser:
 
     def _html_to_text(self, html: str) -> str:
         """Convert HTML to rough plain text for snippets/classification fallback."""
-        # Remove script/style blocks before stripping all tags.
-        html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.I)
-        html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.I)
-        html = re.sub(r"<[^>]+>", " ", html)
-        return re.sub(r"\s+", " ", html).strip()
+        # Remove script/style blocks before stripping all tags, or their
+        # contents survive as text. The pattern lives in ``html_text`` so this
+        # module, ``gmail`` and ``icloud`` cannot drift apart again.
+        html = SCRIPT_OR_STYLE.sub(" ", html)
+        html = TAG.sub(" ", html)
+        return WHITESPACE.sub(" ", html).strip()
 
     def _generate_snippet(
         self,
