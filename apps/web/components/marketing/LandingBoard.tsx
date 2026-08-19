@@ -184,24 +184,55 @@ export function LandingBoard({
   // arguing about a row that was off-stage at every height. Holding at the
   // foot puts the row and the mail behind it in one frame. The row the
   // visitor watched arrive is never out of sight.
+  //
+  // THE DIVIDEND IS THE BOX, NOT `scrollHeight` — measured, and the difference
+  // is a real defect this component shipped. Instrumenting ResizeObserver
+  // before hydration on a production build at 1024x768:
+  //
+  //   forward, pane closed   box 743  scrollHeight 743   pan -235
+  //   pane docks             box 769  scrollHeight 769   pan -261   RO fired
+  //   pane un-docks          box 743  scrollHeight 768   pan -260   RO fired
+  //
+  // The observer is not the problem: it fires on the un-dock, because the box
+  // genuinely changes. `scrollHeight` is. In that callback the box has already
+  // settled to 743 while the departing pane is still laid out, so the overflow
+  // extent reads 768 — and since the box then stops changing, no later
+  // callback ever corrects it. The camera stayed 25px too low for the REST OF
+  // THE VISIT, forward path included, clipping the very row the caption points
+  // at; at 1512 x 949, where the whole pan is only 54px, that is a 48% error.
+  //
+  // So: read the box, which was correct at every instant sampled, and take a
+  // second read on the following frame in case the one the observer hands us
+  // is itself a transient. Resizes are rare; a spare rAF is free insurance
+  // against a value that used to be wrong permanently.
   useEffect(() => {
     if (!choreographed) return;
     const stage = stageRef.current;
     const pan = panRef.current;
     if (!stage || !pan) return;
     const measure = () =>
-      panDistance.set(-Math.max(0, pan.scrollHeight - stage.clientHeight + OVERLAY_ROOM));
+      panDistance.set(
+        -Math.max(0, pan.getBoundingClientRect().height - stage.clientHeight + OVERLAY_ROOM),
+      );
     if (typeof ResizeObserver === "undefined") {
       measure();
       return;
     }
-    const ro = new ResizeObserver(measure);
+    let settle = 0;
+    const ro = new ResizeObserver(() => {
+      measure();
+      cancelAnimationFrame(settle);
+      settle = requestAnimationFrame(measure);
+    });
     // Both sides of the subtraction: the board's own height changes when the
     // pane docks, and the stage's is `calc(100dvh - 13.5rem)`, so resizing the
     // window mid-act moves the divisor without touching the dividend.
     ro.observe(pan);
     ro.observe(stage);
-    return () => ro.disconnect();
+    return () => {
+      cancelAnimationFrame(settle);
+      ro.disconnect();
+    };
   }, [choreographed, panDistance]);
 
   const live = near && wide;

@@ -77,17 +77,19 @@ export const ACT_MARKS = {
 
 /**
  * Half-width of the deadband around every latched mark, as a share of the
- * runway — 142px at a 949-tall viewport, 115px at 768.
+ * runway: 71px either side of a mark at a 949-tall viewport, 58px at 768, so
+ * the ambiguous band is 142px / 115px wide. (An earlier comment called those
+ * full-band figures the half-width. They are not.)
  *
  * Board state is a function of position, so it has to be a function that does
  * not chatter: scroll anchoring, trackpad momentum settling and a resize all
  * move `scrollYProgress` by a few pixels' worth, and each toggle would
  * re-target a layout animation. Tens of pixels is the jitter this has to
- * clear; 142 clears it with room.
+ * clear; a 71px half-band clears it with room.
  *
- * It is deliberately NOT wide enough to outlast the travel (1.4s ≈ 560px at a
- * slow 400px/s). A reader who scrolls a screen-tenth back up SHOULD see the
- * row go home — that is the reversibility the act was rebuilt for, and it is
+ * It is deliberately NOT wide enough to outlast the travel (1.4s at a slow
+ * 400px/s is 560px of scroll). A reader who scrolls a screen-tenth back up
+ * SHOULD see the row go home — that is the reversibility the act was rebuilt for, and it is
  * how the move gets replayed by anyone who missed it. An interrupted
  * shared-layout glide is not a glitch: `motion` re-targets from the row's
  * current position, so scrubbing across the mark shuttles the row by hand.
