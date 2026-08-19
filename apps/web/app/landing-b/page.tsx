@@ -4,7 +4,8 @@ import { ClaimsDescent } from "@/components/marketing/ClaimsDescent";
 import { MarketingFooter, MarketingNav } from "@/components/marketing/chrome";
 import { ClosingAct } from "@/components/marketing/ClosingAct";
 import { FOOTAGE, HERO } from "@/components/marketing/copy";
-import { CLIPS, ProductClip } from "@/components/marketing/ProductClip";
+import { CLIPS } from "@/components/marketing/footage";
+import { ProductClip } from "@/components/marketing/ProductClip";
 import { AccessSection } from "@/components/marketing/sections";
 import { WindowAct } from "@/components/marketing/WindowAct";
 
@@ -76,17 +77,13 @@ export default function LandingB() {
       {/* The CTA's own evidence, beside the CTA. `ACCESS.noSeat` promises the
           fallback path is "parsed and classified in your browser", and until
           now that was the one sentence on the page with nothing behind it.
-          Landing B only: A and C pass no exhibit and are unchanged. The clip
-          keeps its caption beneath it here rather than beside it — this
-          section's shell is `max-w-5xl`, which has no room for a second
-          column at any width. */}
+          Landing B only: A and C pass no exhibit and are unchanged. */}
       <AccessSection
         exhibit={
           <ProductClip
             clip={CLIPS.importClassifies}
             name={FOOTAGE.import.name}
             caption={FOOTAGE.import.caption}
-            className="max-w-3xl xl:grid-cols-1"
           />
         }
       />

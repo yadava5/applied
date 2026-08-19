@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, PRIVACY } from "./copy";
-import { CLIPS, ProductClip } from "./ProductClip";
+import { CLIPS } from "./footage";
+import { ProductClip } from "./ProductClip";
 import { latch, trackProgress } from "./scrub";
 import { VerdictEmail } from "./VerdictEmail";
 import { VerdictTally } from "./VerdictTally";
@@ -368,16 +369,13 @@ export function ClaimsDescent() {
               gate, and only then the thing running: the rules answering a body
               on their own, and deferring to the neural layers before they can
               — on the surface the paragraph names ("in your own browser, on
-              the demo"). The frame is capped at 48rem by `ProductClip`'s own
-              grid, which is the width the encode is sharp at; the caption
-              takes the rest of the container from `xl`, so there is no dead
-              column beside it. Below `xl` the block is capped at 56rem, where
-              768 of frame reads as a measure rather than as a hole. */}
+              the demo"). Width and the caption's column are `ProductClip`'s
+              own, and argued there. */}
           <ProductClip
             clip={CLIPS.rulesReadTheBody}
             name={FOOTAGE.rules.name}
             caption={FOOTAGE.rules.caption}
-            className="max-w-4xl xl:max-w-none"
+
           />
         </div>
       </div>
@@ -385,7 +383,18 @@ export function ClaimsDescent() {
       {/* ---- retention: the record beside the paragraph that describes it.
               A pairing in flow — no rail, nothing pinned — so the exhibit
               arrives with its claim and leaves with it. ------------------ */}
-      <div className="mx-auto w-full max-w-6xl px-6">
+      <div className="mx-auto w-full max-w-6xl px-6 pb-20 pt-20">
+        {/* The claim's head is lifted OUT of the grid so the recording can sit
+            under it: a reader who met an unlabelled board recording and only
+            then the word PRIVACY was being shown evidence before the thing it
+            is evidence for. Everything below is the same block it was — the
+            same paragraphs in the same measure, the same record in the same
+            column. */}
+        <p className="label-caps mb-4">{PRIVACY.eyebrow}</p>
+        <h2 className="max-w-xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
+          {PRIVACY.headline}
+        </h2>
+
         {/* The reading, before the record. `PRIVACY.retention` opens "the
             classifier reads a message's body to decide, then discards it" —
             two events, and the page could only ever show the second one. This
@@ -397,10 +406,11 @@ export function ClaimsDescent() {
           clip={CLIPS.boardSyncs}
           name={FOOTAGE.sync.name}
           caption={FOOTAGE.sync.caption}
-          className="max-w-4xl pt-16 xl:max-w-none"
+          className="mt-8"
         />
-        <div className="grid gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start">
-          <Claim paced={false} eyebrow={PRIVACY.eyebrow} headline={PRIVACY.headline}>
+
+        <div className="mt-14 grid gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start">
+          <div className="max-w-xl space-y-4 text-muted">
             <p>{PRIVACY.scope}</p>
             <p>{PRIVACY.retention}</p>
             <p>
@@ -428,7 +438,7 @@ export function ClaimsDescent() {
               </a>
               .
             </p>
-          </Claim>
+          </div>
           {/* The record — and the one exhibit on the page that ENACTS its claim
               instead of asserting it. It arrives as the email and, as the
               reader crosses the paragraph that says the body is discarded, the
@@ -436,7 +446,7 @@ export function ClaimsDescent() {
               ever looking at a state the page has not named. `min-h` holds the
               taller of the two states so the collapse does not pull the page
               up under the reader. */}
-          <div ref={keptRef} className="pb-20 lg:pt-20">
+          <div ref={keptRef}>
             <p className="label-caps mb-2 h-4">{ARTIFACT.labels[kept ? 3 : 0]}</p>
             <div className="min-h-[27rem]">
               <VerdictEmail stage={kept ? "retained" : "raw"} />
