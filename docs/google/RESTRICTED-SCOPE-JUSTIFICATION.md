@@ -203,14 +203,47 @@ prominent, user-facing feature the data serves; there is no other use.
   messages. There are no contractors; the project has one operator, who has no
   route to another user's message content — see the tenant-isolation evidence
   linked in §7.
-- **No generalized model training.** The policy prohibits *"using user data to
-  create, train, or improve a machine learning or artificial intelligence model
-  beyond that specific user's personalized model for the appropriate use case
-  or user-facing feature."* Applied's classifier is **rules-based**. A user's
-  correction is recorded against that user's own account; corrections are never
-  pooled across accounts, and no shared or generalized model is trained on user
-  data. In the hosted application no model is trained at all — there is nothing
+- **No model training on user data at all.** The policy prohibits *"using user
+  data to create, train, or improve a machine learning or artificial
+  intelligence model beyond that specific user's personalized model for the
+  appropriate use case or user-facing feature."* Applied does not reach that
+  limit, because the hosted deployment trains **nothing** — not a pooled model,
+  and not a per-user one either. A user's correction is recorded against that
+  user's own account; corrections are never pooled across accounts, and no
+  shared or generalized model is trained on user data. There is nothing
   installed to train one with, and no retrain runs in production.
+
+  The classifier that runs in production is **rules-based**: hand-written regex
+  patterns over the category vocabulary, scored and weighted, in
+  `backend/jobtracker/classifier/rules.py` — no model weights and nothing
+  learned. `HybridClassifier.classify` short-circuits to the rules layer on the
+  first line of work when `settings.deployment == "cloud"`
+  (`backend/jobtracker/classifier/hybrid.py:284`), which is every hosted
+  request, so the embedding and SetFit layers are never constructed. Their
+  dependencies — torch, sentence-transformers, setfit — are absent from the
+  deployment's dependency set (`requirements.txt`, which documents the
+  exclusion explicitly), which is what "nothing installed to train one with"
+  means concretely.
+
+  What a user's correction does, precisely: it is written to `training_data`
+  and the email is flagged reviewed, so the answer is durable and a later sync
+  will not overwrite it. It does **not** change any future classification.
+  There is no per-user model and no per-user classifier state of any kind —
+  `get_rules_classifier()` (`backend/jobtracker/classifier/rules.py:984`) is a
+  process-wide singleton that takes no user argument, so the same message
+  classifies identically before and after any correction, for every account.
+
+  The training machinery ships in the repository (it is what the single-user
+  desktop build described below used) and is deliberately named here rather
+  than deleted, so a reviewer reading the tree finds it described rather than
+  hidden. No hosted path reaches it: no route defines `POST /classify/retrain`
+  — the four routers the production app registers are applications, Gmail,
+  account and cron (`backend/jobtracker/main_cloud.py:667-684`) — and the
+  retraining entry points are refused by default in any case. Training requires
+  the corpus to be either wholly synthetic or owned by a user on an explicit
+  allowlist that is **empty by default and set by nothing in the hosted
+  deployment**, so production refuses every user, including the operator
+  (`backend/jobtracker/classifier/setfit_model.py:38-75`).
 
   **An earlier checkpoint, disclosed for completeness — and it contains no
   Gmail data.** Before Applied was a hosted application it was a single-user
@@ -243,7 +276,6 @@ prominent, user-facing feature the data serves; there is no other use.
   Training is now default-deny in code — refused unless the corpus is entirely
   synthetic or its single owner is explicitly allowlisted. Full provenance,
   including which of two same-day checkpoints was the published one, is in
-  `docs/ML_PROMOTION_POLICY.md`. Full provenance is recorded in
   `docs/ML_PROMOTION_POLICY.md`.
 - **No permanent copies.** The policy's Terms of Service note prohibits
   *"scraping, building databases … or otherwise creating permanent copies of
@@ -292,6 +324,12 @@ prominent, user-facing feature the data serves; there is no other use.
 | Body is never persisted | `backend/tests/test_body_is_never_persisted.py` (whole file) |
 | Stored snippet equals Gmail's own | `backend/tests/test_body_is_never_persisted.py:714` |
 | Body truncation | `backend/jobtracker/cloud/gmail_client.py:163` |
+| The hosted classifier is rules-only (the short-circuit itself) | `backend/jobtracker/classifier/hybrid.py:284` |
+| No per-user classifier state — a process-wide singleton, no user argument | `backend/jobtracker/classifier/rules.py:984` |
+| Training is default-deny: allowlist empty, nothing in the deployment sets it | `backend/jobtracker/classifier/setfit_model.py:38-75` |
+| A training corpus spanning two users raises rather than trains | `backend/tests/test_training_is_single_user.py` |
+| One user's corpus still refuses unless that user is allowlisted | `backend/tests/test_training_is_owner_only.py` |
+| No `POST /classify/retrain` route exists — the four routers the app registers | `backend/jobtracker/main_cloud.py:667-684` |
 | Account deletion revokes at Google, then purges | `backend/jobtracker/cloud/account.py` |
 | Encryption, key management | [`../casa/CRYPTOGRAPHY.md`](../casa/CRYPTOGRAPHY.md) |
 | Architecture, data flow, tenant isolation | [`../casa/ARCHITECTURE-AND-TENANT-ISOLATION.md`](../casa/ARCHITECTURE-AND-TENANT-ISOLATION.md) |

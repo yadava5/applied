@@ -3,6 +3,26 @@
 Updated: **March 5, 2026**
 Scope: monitoring triage for classifier confidence/drift alerts
 
+> **Scope, added 2026-08-15 — this runbook is a local operator procedure. None of
+> it runs in the hosted deployment.**
+>
+> The "Updated" stamp above is an edit date, not a claim that this triage loop is
+> being run. The inputs are artifacts produced by `scripts/monitoring_cycle.sh`
+> and `scripts/weekly_labeling_cycle.sh`, both invoked by hand against a local
+> backend; neither runs in CI or on Vercel. The deployed classifier is
+> **rules-only** — `HybridClassifier.classify` short-circuits to the rules layer
+> whenever `settings.deployment == "cloud"`
+> (`backend/jobtracker/classifier/hybrid.py:284`).
+>
+> Every "retrain" remediation below is therefore a local action, and default-deny
+> even there: training refuses unless the corpus is wholly synthetic or its single
+> owner is allowlisted, and the allowlist is empty unless configured
+> (`backend/jobtracker/classifier/setfit_model.py:38-75`). Applied reads mail
+> under Gmail's restricted `gmail.readonly` scope; Google's Workspace API
+> user-data policy permits training only a model personalized to one end user with
+> no co-mingling, so an unconfigured deployment training on nobody is the intended
+> state. No user correction collected here changes a hosted classification.
+
 ## Purpose
 
 Convert weekly monitoring artifacts into consistent triage and remediation actions,

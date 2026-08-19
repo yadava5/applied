@@ -372,8 +372,11 @@ function ReviewRow({
  * The needs-review queue — what needs the user, so it leads the page (or, when
  * the Settings "Needs review alerts" toggle is off, waits under the board).
  * Each uncertain verdict (the 0.70–0.85 band, or a confident one whose
- * employer couldn't be named) gets a category decision that both persists and
- * trains the model. Choosing "not job related" removes it from the queue.
+ * employer couldn't be named) gets a category decision that persists — the email
+ * is flagged reviewed and a later sync leaves the answer alone. It does NOT train
+ * the model: the decision is written to `training_data`, but no deployed path
+ * reads that table back, so nothing about the next classification changes.
+ * Choosing "not job related" removes it from the queue.
  *
  * Naming: this one queue was called "needs classification", "need review" and
  * "held for your review" on one screen. It is the review family everywhere
