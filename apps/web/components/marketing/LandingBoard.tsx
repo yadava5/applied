@@ -1,12 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { motion, useMotionValue, useTransform, type MotionValue } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { BoardStill } from "./BoardStill";
 import { NEW_TAB } from "./chrome";
 import { BOARD } from "./copy";
+import { useWideViewport } from "./scrub";
 
 /**
  * The landing's board embed: the REAL product, mounted the only safe way.
@@ -43,14 +45,16 @@ const MarketingBoard = dynamic(
   { ssr: false },
 );
 
-const LG = "(min-width: 1024px)";
-
 /**
  * The strip the camera clears below the board's foot for the docked receipt
  * (`ReceiptStrip`): the bar covers the stage's last ~25px once it extends
  * into the frame's padding, plus a breath so it never sits on a row. It
  * replaces a 152px clearing for a floating card, which left the card adrift
  * in a black band that read as debris at every mid-scroll offset.
+ *
+ * It is reserved for the WHOLE act rather than from the scene the receipt
+ * arrives in. The pan is scrubbed off one motion value now, and a `room` that
+ * appeared partway through would move the pan's target under it.
  */
 const OVERLAY_ROOM = 44;
 
@@ -58,7 +62,9 @@ export function LandingBoard({
   height = "min(72vh, 680px)",
   className,
   caption = true,
-  beat,
+  camera,
+  verdict,
+  docked,
   overlay,
 }: {
   /** The stage's fixed height — the reservation that keeps CLS at zero. */
@@ -67,104 +73,122 @@ export function LandingBoard({
   /** Off when the caller's frame carries the provenance line itself (B). */
   caption?: boolean;
   /**
-   * The window act's scene index (WindowAct → MarketingBoard). Here it also
-   * drives the CAMERA: the board is taller than the stage, so beat 0 rests at
-   * the head (the pulse band and the still-quiet rows) and beats 1 and 2 hold
-   * at the foot, where the verdict row lands and the pane docks open beside
-   * it. A transform inside the clip, so the page's own scroll geometry never
-   * moves: CLS stays zero by construction. Reduced motion pans by cut, not by
-   * glide.
+   * The window act's camera, 0 (the board's head) → 1 (its foot), scrubbed
+   * off the act's scroll progress (`WindowAct`). The board is taller than the
+   * stage, so the head shows the pulse band and the still-quiet rows and the
+   * foot is where the verdict row lands and the pane docks open beside it.
+   *
+   * A transform inside the clip, so the page's own scroll geometry never
+   * moves: CLS stays zero by construction. Supplying it is what marks this
+   * mount as CHOREOGRAPHED — every other caller gets the resting board.
    */
-  beat?: number;
-  /** A figure floated over the stage's foot (the act's receipt card). */
+  camera?: MotionValue<number>;
+  /** The offer has landed: the row is committed to `offered` and travels
+   *  there by the board's own layout animation. Reverses. */
+  verdict?: boolean;
+  /** The detail pane is docked open on that row. Reverses. */
+  docked?: boolean;
+  /** A figure floated over the stage's foot (the act's receipt strip). */
   overlay?: ReactNode;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<HTMLDivElement>(null);
-  const [panY, setPanY] = useState(0);
-  const [near, setNear] = useState(false);
-  const [wide, setWide] = useState(false);
+  const wide = useWideViewport();
+  const near = useNearViewport(stageRef);
+  const choreographed = camera !== undefined;
+
   /**
    * The camera has handed the frame back to the visitor.
    *
    * The window CROPS a live product, so every control the crop pushes
    * off-stage becomes unreachable — and the detail pane's own close × is one
-   * of them at beats 1 and 2 (measured at a 768-tall viewport: the × sits
-   * 304px above the stage at beat 1, 97px above it at beat 2, with only
+   * of them at the foot (measured at a 768-tall viewport: the × sits 304px
+   * above the stage mid-act, 97px above it once the pane is docked, with only
    * Escape left to close a pane the visitor opened themselves). Rather than
    * layer a marketing-owned close over another component's chrome, the frame
    * gives the board back: an open card returns the camera to the head, which
-   * is beat 0's frame — known good, and where the pane renders its whole
+   * is the resting frame — known good, and where the pane renders its whole
    * header, title and ×.
    *
    * Traversal counts as taking the wheel, deliberately: ↑/↓ loads another
    * card through the same call, and the position row it renumbers (`3 of
    * 10`) lives in the head the crop removes — so a reader who starts
-   * browsing the trail at beat 2 gets the frame back too, without having
+   * browsing the trail at the foot gets the frame back too, without having
    * clicked anything.
    *
-   * It does not re-engage. The camera is narration, and a visitor who has
-   * opened a card has stopped watching and started using; the same rule the
-   * beats already follow for state (MarketingBoard skips the verdict move on
-   * a row the visitor moved, and the board's seeded open stands down for a
-   * card the visitor chose). The authored beat-2 composition still plays in
-   * full for every reader who lets it.
+   * It does not re-engage, and it is the ONE piece of this act that does not
+   * reverse with the scroll. The camera is narration, and a visitor who has
+   * opened a card has stopped watching and started using; the same rule
+   * MarketingBoard follows for state it must not overwrite. The authored
+   * composition still plays in full, in both directions, for every reader who
+   * lets it.
+   *
+   * It is a MOTION VALUE rather than React state because the camera is no
+   * longer a rendered branch: `panY` is written straight to the element, and
+   * a React `? :` around it could not reach the transform at all. It folds
+   * into the mapping instead — a released camera multiplies the pan and both
+   * crop fades to zero, which is exactly "back at the head".
    */
-  const [released, setReleased] = useState(false);
+  const released = useMotionValue(0);
 
-  // The camera. Nothing here runs for beat-less callers.
+  // The camera's mapping. Nothing here does anything for callers without a
+  // `camera`: `engaged` is pinned at 0 and every derived value with it.
+  const restingCamera = useMotionValue(0);
+  const engaged = useTransform(
+    [camera ?? restingCamera, released] as MotionValue<number>[],
+    ([progress, letGo]: number[]) => progress * (1 - letGo),
+  );
+  /** The measured full-pan distance, negative, written by the observer below
+   *  rather than held in state — the pan is a value, not a render. */
+  const panDistance = useMotionValue(0);
+  const panY = useTransform(
+    [engaged, panDistance] as MotionValue<number>[],
+    ([progress, distance]: number[]) => progress * distance,
+  );
+  /** The crop edges. They used to switch at a scene boundary; they are two
+   *  more things the reader's scroll now moves continuously. */
+  const headFade = useTransform(engaged, (progress) => 1 - progress);
+  const footFade = engaged;
+
+  // The pan target, measured through a ResizeObserver rather than once per
+  // scene: the board GROWS when the pane docks open (743 → 783), and a
+  // measurement taken at scene time would pan to a foot that has since moved.
   //
-  // Beats 1 AND 2 sit at the board's foot; only the head rests at the top.
-  // Both pan PAST the foot by `OVERLAY_ROOM`: the receipt strip (`overlay`)
-  // docks over the frame's foot, so the room is what keeps it off the last
-  // row it would otherwise cover — measured, a floating card in a larger
-  // cleared band covered either rows or nothing, and "nothing" read as
-  // debris. The strip stays through beat 2 because it covers no rows and its
-  // "the email that did it ↓" is the hand-off line into the descent.
+  // Both beats of the act sit at the board's foot; only the head rests at the
+  // top. The pan goes PAST the foot by `OVERLAY_ROOM`: the receipt strip
+  // (`overlay`) docks over the frame's foot, so the room is what keeps it off
+  // the last row it would otherwise cover — measured, a floating card in a
+  // larger cleared band covered either rows or nothing, and "nothing" read as
+  // debris.
   //
-  // The trade at beat 2 is deliberate: holding the foot crops the pane's own
-  // head — the `9 of 10` nav row, the title, and the pane's × — in exchange
-  // for the row and the whole trail. The row beside it carries the identity
-  // the title was carrying. That trade covers the pane the PAGE opens, and
-  // only for as long as the page is the one driving: the moment the visitor
-  // opens a card themselves the camera releases (see `released`) and the
-  // pane's own × comes back into frame, because a cropped control the
-  // visitor reached for is a broken control, not a composition.
+  // The trade at the foot is deliberate: holding it crops the pane's own head
+  // — the `9 of 10` nav row, the title, and the pane's × — in exchange for
+  // the row and the whole trail. The row beside it carries the identity the
+  // title was carrying. That trade covers the pane the PAGE opens, and only
+  // for as long as the page is the one driving: the moment the visitor opens
+  // a card themselves the camera releases and the pane's × comes back into
+  // frame, because a cropped control the visitor reached for is a broken
+  // control, not a composition.
   //
-  // Beat 2 used to return to the head, and measurement caught what that cost:
-  // the moved row lands near the board's foot (the offered group, one group
-  // above closed — measured at 679–735 of a 783px board when the destination
-  // was the closed group itself), while a head-anchored stage shows only
-  // 0–552 at a 768-tall viewport and 0–384 at 600. So the scene captioned
-  // "the row opens on the mail that moved it" was arguing about a row that
-  // was off-stage at every height. Holding at the foot puts the row and the
-  // mail behind it in one frame, and turns beat 2 from a cut back to the
-  // head into a small settle — the pane docking is what grows the board, and
-  // that growth is the whole move now that both beats share one `room`. The
-  // row the visitor watched arrive is never out of sight.
-  //
-  // Measured through a ResizeObserver rather than once per beat: the board
-  // GROWS when the pane docks open (743 → 783), and a measurement taken at
-  // beat time would pan to a foot that has since moved.
+  // The scene that docks the pane used to return to the head, and measurement
+  // caught what that cost: the moved row lands near the board's foot (the
+  // offered group, one group above closed — measured at 679–735 of a 783px
+  // board when the destination was the closed group itself), while a
+  // head-anchored stage shows only 0–552 at a 768-tall viewport and 0–384 at
+  // 600. So the scene captioned "the row opens on the mail that moved it" was
+  // arguing about a row that was off-stage at every height. Holding at the
+  // foot puts the row and the mail behind it in one frame. The row the
+  // visitor watched arrive is never out of sight.
   useEffect(() => {
-    if (beat === undefined) return;
+    if (!choreographed) return;
     const stage = stageRef.current;
     const pan = panRef.current;
     if (!stage || !pan) return;
-    const room = beat >= 1 ? OVERLAY_ROOM : 0;
-    // `released` resolves to 0 INSIDE the measure rather than skipping the
-    // effect: the pane docking open grows the board (743 → 783), the observer
-    // fires on that growth, and a skipped effect would leave the last panned
-    // value behind exactly when the visitor needs the frame back.
     const measure = () =>
-      setPanY(
-        released || beat < 1 ? 0 : -Math.max(0, pan.scrollHeight - stage.clientHeight + room),
-      );
-    // The observer's own first callback is the initial measurement, so the
-    // effect body never sets state synchronously (react-hooks/set-state-in-effect).
+      panDistance.set(-Math.max(0, pan.scrollHeight - stage.clientHeight + OVERLAY_ROOM));
     if (typeof ResizeObserver === "undefined") {
-      const id = window.setTimeout(measure, 0);
-      return () => window.clearTimeout(id);
+      measure();
+      return;
     }
     const ro = new ResizeObserver(measure);
     // Both sides of the subtraction: the board's own height changes when the
@@ -173,40 +197,7 @@ export function LandingBoard({
     ro.observe(pan);
     ro.observe(stage);
     return () => ro.disconnect();
-  }, [beat, released]);
-
-  // `lg`+ is a mount condition, not just a display one: a phone should never
-  // download the dashboard bundle for a board it will not show. Tracked live
-  // so rotating a tablet mounts the board when it becomes usable.
-  useEffect(() => {
-    const mq = window.matchMedia(LG);
-    const apply = () => setWide(mq.matches);
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, []);
-
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      const id = setTimeout(() => setNear(true), 0);
-      return () => clearTimeout(id);
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setNear(true);
-          io.disconnect();
-        }
-      },
-      // Mount well before arrival so the product is running by the time the
-      // visitor's eyes get there — the hero embeds are in view at load.
-      { rootMargin: "600px 0px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
+  }, [choreographed, panDistance]);
 
   const live = near && wide;
 
@@ -215,56 +206,48 @@ export function LandingBoard({
       {/* ---- the stage (`lg`+) ------------------------------------------- */}
       <div ref={stageRef} className="relative hidden lg:block" style={{ height }}>
         <div className="absolute inset-0 overflow-clip">
-          {/* The camera's dolly — static (translate 0) for beat-less callers. */}
-          <div
-            ref={panRef}
-            className="transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
-            style={{ transform: `translateY(${panY}px)` }}
-          >
+          {/* The camera's dolly. Scrubbed, so there is no transition to
+              collapse under reduced motion — the value itself steps there
+              (WindowAct). Static at 0 for callers without a camera. */}
+          <motion.div ref={panRef} style={{ y: panY }}>
             {live ? (
-              <MarketingBoard beat={beat} onVisitorOpen={() => setReleased(true)} />
+              <MarketingBoard
+                verdict={verdict}
+                docked={docked}
+                onVisitorOpen={() => released.set(1)}
+              />
             ) : (
               <StageSkeleton />
             )}
-          </div>
+          </motion.div>
         </div>
         {/* The crop edge: the board continues below this line, and the fade
             says so. Decoration only — it must never intercept the board —
-            and it stands down while the camera is AT the foot (beats 1 and
-            2), where "this continues" would be false and the closed rows are
-            the scene's whole point. A released camera is back at the head, so
-            the board continues below the line again and the fade says so. */}
-        <div
+            and it fades out as the camera reaches the foot, where "this
+            continues" would be false and the closed rows are the scene's
+            whole point. A released camera is back at the head, so the board
+            continues below the line again and the fade says so. */}
+        <motion.div
           aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background transition-opacity duration-500 motion-reduce:transition-none",
-            (beat ?? 0) >= 1 && !released && "opacity-0",
-          )}
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background"
+          style={{ opacity: headFade }}
         />
         {/* The other crop edge. While the camera holds the foot the board —
-            and, at beat 2, the docked pane's head — continues ABOVE the
-            frame, and without a signal the top edge read as content cut
-            mid-element (the pane "starting mid-content" was the reported
-            defect). Same instrument as the bottom fade, mirrored: it shows
-            only while the camera is panned, and a released or resting frame
-            has the board's own head at the top, where a fade would be a lie. */}
-        <div
+            and, once docked, the pane's head — continues ABOVE the frame, and
+            without a signal the top edge read as content cut mid-element (the
+            pane "starting mid-content" was the reported defect). Same
+            instrument as the bottom fade, mirrored. */}
+        <motion.div
           aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-background to-transparent transition-opacity duration-500 motion-reduce:transition-none",
-            ((beat ?? 0) < 1 || released) && "opacity-0",
-          )}
+          className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-background to-transparent"
+          style={{ opacity: footFade }}
         />
         {/* The act's receipt, docked over the frame's foot — window chrome,
             not a float: the negative offsets carry it across the stage's
             padding to the frame's own edges, mirroring the provenance bar at
             the head. `OVERLAY_ROOM` is what keeps the last row clear of it.
-            It stands down with the camera: a released frame is back at the
-            head, where a receipt bar would cover rows it has nothing to say
-            about. */}
-        {overlay && !released ? (
-          <div className="absolute -bottom-5 -left-5 -right-5 z-10">{overlay}</div>
-        ) : null}
+            Its own entrance is scrubbed by the caller. */}
+        {overlay ? <div className="absolute -bottom-5 -left-5 -right-5 z-10">{overlay}</div> : null}
       </div>
       <div
         className={cn(
@@ -291,6 +274,38 @@ export function LandingBoard({
       </div>
     </div>
   );
+}
+
+/**
+ * Whether the stage has come within 600px of the viewport — the mount signal,
+ * fired early so the product is running by the time the visitor's eyes get
+ * there (the hero embeds are in view at load). One-way: once the board is
+ * mounted it stays mounted, so a visitor's drags survive scrolling away.
+ */
+function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
+  const [near, setNear] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      const id = setTimeout(() => setNear(true), 0);
+      return () => clearTimeout(id);
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+
+  return near;
 }
 
 /**

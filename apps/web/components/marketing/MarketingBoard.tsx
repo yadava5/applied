@@ -11,7 +11,7 @@ import type { BoardTransport } from "@/lib/dashboard/transport";
 import { demoDetailBody } from "@/lib/demo/demoDetail";
 import { OFFER_EMAIL } from "./verdictEmailData";
 import { showcaseApplications, showcasePendingVerdict, OFFER_SIGNAL } from "./showcase";
-import { VERDICT_BREATH_MS, VERDICT_SETTLE_MS, VERDICT_TRAVEL } from "./tempo";
+import { VERDICT_SETTLE_MS, VERDICT_TRAVEL } from "./tempo";
 
 /**
  * How long after a visitor's own gesture a card load still belongs to that
@@ -19,10 +19,13 @@ import { VERDICT_BREATH_MS, VERDICT_SETTLE_MS, VERDICT_TRAVEL } from "./tempo";
  * and runs on the next macrotask, so this only has to span click → passive
  * flush → `setTimeout(0)` → the transport's own await — far less than this,
  * even on a first paint under load. It is also far short of the earliest the
- * page can seed: beat 1's breath (`VERDICT_BREATH_MS`) has to elapse before
- * the row is even committed, and the seed then waits out the row's travel on
- * top of that (`landedAtRef`) — so a gesture that opened nothing — a drag,
- * the stage lens — has expired long before the seed's load arrives.
+ * page can seed: the reader has to scroll 0.18 of the act's runway (~512px)
+ * between the row committing and the pane's mark, and the seed then waits out
+ * whatever is left of the row's travel (`landedAtRef`) — so a gesture that
+ * opened nothing — a drag, the stage lens — has expired long before the
+ * seed's load arrives. That margin used to be `VERDICT_BREATH_MS`, a fixed
+ * 1800ms; it is distance now, and the fastest plausible flick still spends
+ * ~340ms crossing it.
  *
  * The margin in the first paragraph is REASONED FROM THE SCHEDULING, not
  * measured: no run has timed a click to its load on this page, at either
@@ -53,34 +56,46 @@ const OPENING_KEYS = new Set(["Enter", " ", "ArrowUp", "ArrowDown"]);
  * mount no longer shows. It never touches the network — the unit gate
  * (`landing-variants.test.mjs`) walks the import graph and holds that line.
  */
-export function MarketingBoard({ beat, onVisitorOpen }: {
+export function MarketingBoard({ verdict, docked, onVisitorOpen }: {
   /**
-   * The merged landing's window act (see WindowAct): which scene of the
-   * choreography the visitor's scroll has reached. `undefined` — every other
-   * caller — is the resting board, exactly as before. With a beat:
+   * The merged landing's window act (see WindowAct), as two booleans the
+   * reader's SCROLL POSITION defines. `undefined` — every other caller — is
+   * the resting board, exactly as before.
    *
-   *   0  the board one verdict early: Larkspur still in `applied`, 19 days
-   *      quiet (the pulse's amber share and the age tag foreshadow a reply);
-   *   1+ the offer lands — the row is committed to `offered` and the board's
-   *      own layout animation carries it to the offered group, at the act's
-   *      `VERDICT_TRAVEL` tempo;
-   *   2+ the detail opens on that row (the board's `openDetailId` seed —
-   *      docked only, no focus theft), which is the composition the owner
-   *      approved: worklist beside the open pane, trail and gate meter shown.
-   *      The seed waits for the row to have LANDED, not merely for its
-   *      status to have flipped — see `landedAtRef`.
+   *   `verdict`  the offer has landed: the row is committed to `offered` and
+   *              the board's own layout animation carries it to the offered
+   *              group, at the act's `VERDICT_TRAVEL` tempo;
+   *   `docked`   the detail opens on that row (the board's `openDetailId`
+   *              seed — docked only, no focus theft), which is the
+   *              composition the owner approved: worklist beside the open
+   *              pane, trail and gate meter shown. The seed waits for the row
+   *              to have LANDED, not merely for its status to have flipped —
+   *              see `landedAtRef`.
    *
-   * Beats only ever ADVANCE state (a verdict does not un-happen when the
-   * visitor scrolls back up), each fires once, and none of them touches a
-   * row the visitor has meanwhile moved themselves.
+   * BOTH REVERSE. They used to be an advancing beat index whose mutations
+   * fired once and persisted ("a verdict does not un-happen"), which was a
+   * considered call and which the owner has now rejected twice: scrolling
+   * back up replayed the captions over a board that stayed settled with the
+   * pane open, and the pane in particular read as stuck. State is a function
+   * of position now, so the act plays in both directions and the move can be
+   * replayed by anyone who missed it.
+   *
+   * What does NOT reverse is the visitor's own hand. A row they moved
+   * themselves stands the page down permanently (`pageRow.standDown`), and a
+   * card they opened themselves stands the seed down for the visit
+   * (`tookOverRef`) — the same one-way rules as before, for the same reason:
+   * the page is narrating, and a visitor who has started using has stopped
+   * being narrated to.
    */
-  beat?: number;
+  verdict?: boolean;
+  /** The detail pane is docked open on the moved row. See `verdict`. */
+  docked?: boolean;
   /**
    * The visitor opened a card themselves (a click, Enter on a row, or ↑/↓
-   * traversal once a pane is up) — as opposed to the beat-2 open the page
-   * seeds. Fired on every such open, and it is how the camera learns to let
-   * go (see LandingBoard): the framed window crops the board, so a pane the
-   * page did not open would otherwise show none of its own chrome.
+   * traversal once a pane is up) — as opposed to the open the page seeds.
+   * Fired on every such open, and it is how the camera learns to let go (see
+   * LandingBoard): the framed window crops the board, so a pane the page did
+   * not open would otherwise show none of its own chrome.
    *
    * The signal is `transport.detail(id)`, which ApplicationDetail calls for
    * every card it loads — a prop this component already owns. Which of the
@@ -92,7 +107,7 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
    */
   onVisitorOpen?: () => void;
 }) {
-  const choreographed = beat !== undefined;
+  const choreographed = verdict !== undefined;
   // One clock read per mount, resolved in render (never module load) — the
   // same hydration rule every fixture family follows. This component only
   // ever mounts client-side (see LandingBoard), so the day is the visitor's.
@@ -115,7 +130,11 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
   // reason).
   //
   // `pendingSeedRef` is the page's claim on ONE card load — armed when the seed
-  // is handed to the board (beat 2 below), consumed by the load it causes.
+  // is handed to the board (the dock effect below), consumed by the load it
+  // causes. It is armed once per ENTRY into the docked state now, not once per
+  // visit, because the act reverses — and it is still armed INSIDE the seed's
+  // own timer, so a scrub back across the mark cancels the timer and leaves
+  // nothing armed for a later load to spend.
   // `gestureAtRef` is when the visitor last touched the board in a way that can
   // open a card, recorded at the input event itself.
   // `tookOverRef` is the one-way latch: the visitor has opened a card, so the
@@ -125,12 +144,19 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
   /**
    * When the moved row will have finished TRAVELLING — commit time plus the
    * glide plus its settle — set in the same timer that commits the move,
-   * before the commit itself. The beat-2 seed waits this out: gating on the
+   * before the commit itself. The dock seed waits this out: gating on the
    * status value alone docked the pane ~1.4s before the row it names entered
    * the frame (measured: −227px relative to the stage clip at +40ms after
    * the commit), which made the scene's caption false while the move it
    * narrates was still happening. Starts at 0, not ∞: a row the VISITOR
    * dragged to `offered` has no travel of the page's to wait for.
+   *
+   * IT WAS NEVER ACTUALLY READ. The seed effect below deferred by a flat 0ms
+   * while this comment claimed the remainder of the travel, so the measured
+   * defect it describes was still shipping. The wait is real now — the timer
+   * takes `landedAtRef − now` — which matters more than it did: the scroll
+   * marks put ~512px between the commit and the dock, and a reader crossing
+   * both in one flick would otherwise dock the pane on a row still in the air.
    */
   const landedAtRef = useRef(0);
   // −∞, not 0: `performance.now()` counts from navigation start, so a zero
@@ -274,75 +300,110 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
     [commit],
   );
 
-  // --- The window act's beats (choreographed mounts only) -------------------
+  // --- The window act, as a function of position (choreographed mounts only) -
 
-  /** Beat 1: the offer lands. Committed through the same `commit` a drag
-   *  uses, so the layout animation that carries the row to the offered group
-   *  is the product's own — nothing marketing-specific moves it, and the
-   *  act's `travel` prop is what sets its tempo. Fired once; skipped
-   *  entirely if the visitor already moved the row themselves. The breath
-   *  (`VERDICT_BREATH_MS`) exists so the sequence reads in order: the
-   *  camera's pan settles, the receipt strip announces the verdict, and only
-   *  then does the row travel — one event per moment. Reduced motion takes
-   *  the state change immediately. */
-  const moved = useRef(false);
-  const moveTimer = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (moveTimer.current !== null) window.clearTimeout(moveTimer.current);
-    },
-    [],
-  );
+  /**
+   * The page's claim on the verdict row.
+   *
+   *   `held`      the page currently has the row in `offered`;
+   *   `restore`   what the row looked like before, so the way back up is
+   *               exact rather than a second set of literals to keep in sync
+   *               with `showcasePendingVerdict`;
+   *   `standDown` the row is not where the page left it, so the VISITOR moved
+   *               it — one-way, and the page never touches this row again in
+   *               either direction.
+   *
+   * Held in one ref rather than three because they are only ever read and
+   * written together, inside the timer that commits.
+   */
+  const pageRow = useRef<{
+    held: boolean;
+    restore: Pick<Application, "status" | "notes"> | null;
+    standDown: boolean;
+  }>({ held: false, restore: null, standDown: false });
+
+  /**
+   * The offer lands — and un-lands. Committed through the same `commit` a
+   * drag uses, so the layout animation that carries the row to the offered
+   * group is the product's own; nothing marketing-specific moves it, and the
+   * act's `travel` prop is what sets its tempo.
+   *
+   * There is no breath here any more. `VERDICT_BREATH_MS` was 1800ms between
+   * the scene starting and the row committing, so that the receipt could
+   * announce first — and it ran on its own clock, which is how the move came
+   * to happen while nobody was looking. The breath is 0.10 of the runway now
+   * (tempo.ts): the reader passes through it whatever their speed, and the
+   * row commits exactly where they are.
+   */
   useEffect(() => {
-    if (!choreographed || (beat ?? 0) < 1 || moved.current) return;
-    moved.current = true;
-    const row = appsRef.current.find((a) => a.company === OFFER_EMAIL.company);
-    if (!row || row.status !== "applied") return; // the visitor got there first
+    if (verdict === undefined) return;
+    const claim = pageRow.current;
+    if (claim.standDown || claim.held === verdict) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const rowId = row.id;
-    moveTimer.current = window.setTimeout(
-      () => {
-        // The landing time is declared BEFORE the commit, so the beat-2
-        // effect the commit triggers can never read a stale 0 and seed a
-        // pane onto a row that is still mid-glide.
-        landedAtRef.current =
-          performance.now() + (reduce ? 0 : VERDICT_TRAVEL.duration * 1000 + VERDICT_SETTLE_MS);
-        commit((rows) =>
-          rows.map((a) =>
-            a.id === rowId && a.status === "applied"
-              ? { ...a, status: "offered", notes: OFFER_SIGNAL }
-              : a,
-          ),
-        );
-      },
-      reduce ? 0 : VERDICT_BREATH_MS,
-    );
-  }, [beat, choreographed, commit]);
+    // Deferred off the effect body — the house rule every board effect
+    // follows (react-hooks/set-state-in-effect). A macrotask, not a beat:
+    // every check is re-taken inside it, so a reader scrubbing back and forth
+    // across the mark cancels the pending commit rather than racing it.
+    const timer = window.setTimeout(() => {
+      const row = appsRef.current.find((a) => a.company === OFFER_EMAIL.company);
+      if (!row) return;
+      // The visitor's hand wins, permanently: the row is not where the page
+      // left it, so there is nothing of the page's to move or to put back.
+      if (row.status !== (claim.held ? "offered" : "applied")) {
+        claim.standDown = true;
+        return;
+      }
+      const next: Pick<Application, "status" | "notes"> = verdict
+        ? { status: "offered", notes: OFFER_SIGNAL }
+        : (claim.restore ?? { status: "applied", notes: row.notes });
+      if (verdict) claim.restore = { status: row.status, notes: row.notes };
+      claim.held = verdict;
+      // Declared BEFORE the commit, so the dock effect the commit triggers
+      // can never read a stale 0 and seed a pane onto a row still mid-glide.
+      // Zero on the way back: the pane is already withdrawn by then, and a
+      // row travelling home is not a row anything is waiting to open.
+      landedAtRef.current =
+        verdict && !reduce
+          ? performance.now() + VERDICT_TRAVEL.duration * 1000 + VERDICT_SETTLE_MS
+          : 0;
+      commit((rows) => rows.map((a) => (a.id === row.id ? { ...a, ...next } : a)));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [verdict, commit]);
 
-  /** Beat 2: the mail behind the row. Waits for the offer to have actually
-   *  LANDED — the status committed AND the glide finished (`landedAtRef`) —
-   *  because the pane must never open on the pre-move snapshot, and "the row
-   *  opens on the mail that moved it" is false while the row is still
-   *  travelling. Then it hands the id to the board's seeded open —
-   *  docked-only, focus untouched. Skipped entirely once the visitor has
-   *  taken over, the same rule beat 1 follows for a row they moved
-   *  themselves. */
+  /** The mail behind the row — and its withdrawal. Waits for the offer to
+   *  have actually LANDED — the status committed AND the glide finished
+   *  (`landedAtRef`) — because the pane must never open on the pre-move
+   *  snapshot, and "the row opens on the mail that moved it" is false while
+   *  the row is still travelling. Then it hands the id to the board's seeded
+   *  open — docked-only, focus untouched. Skipped entirely once the visitor
+   *  has taken over, the same rule the verdict follows for a row they moved
+   *  themselves.
+   *
+   *  When `docked` goes false the seed is WITHDRAWN, which closes the pane
+   *  the page opened (and only that one — see PipelineBoard's seed effect).
+   *  That is the whole of "once the right pane opens with scroll it never
+   *  closes". */
   const [openDetailId, setOpenDetailId] = useState<number | undefined>(undefined);
   useEffect(() => {
+    if (!choreographed) return;
+    if (!docked) {
+      if (openDetailId === undefined) return;
+      const withdraw = window.setTimeout(() => setOpenDetailId(undefined), 0);
+      return () => window.clearTimeout(withdraw);
+    }
     // `tookOverRef` is read, never a dep: it is a latch, not a signal, and a
     // re-render is not what should notice it. This read is the cheap one — a
-    // visitor who took over in an earlier zone never even schedules a timer.
-    // The authoritative read is inside the timer.
-    if (!choreographed || (beat ?? 0) < 2 || openDetailId !== undefined || tookOverRef.current) {
-      return;
-    }
+    // visitor who took over earlier never even schedules a timer. The
+    // authoritative read is inside the timer.
+    if (openDetailId !== undefined || tookOverRef.current) return;
     const row = apps.find((a) => a.company === OFFER_EMAIL.company);
     if (!row || row.status !== "offered") return;
     // Deferred off the effect body — the house rule every board effect
     // follows — and by however long the row still has left in the air: the
-    // timer's delay is the remainder of the travel, zero once it has landed
-    // (and zero for a row the visitor moved, whose landing time never left
-    // 0). The cleanup cancels it like any other seed.
+    // delay is the remainder of the travel, zero once it has landed (and zero
+    // for a row the visitor moved, whose landing time never left 0). The
+    // cleanup cancels it like any other seed.
     const rowId = row.id;
     const id = window.setTimeout(() => {
       // The authoritative takeover read, and it has to be here rather than
@@ -371,9 +432,9 @@ export function MarketingBoard({ beat, onVisitorOpen }: {
       // behind for some later load to spend.
       pendingSeedRef.current = rowId;
       setOpenDetailId(rowId);
-    }, 0);
+    }, Math.max(0, landedAtRef.current - performance.now()));
     return () => window.clearTimeout(id);
-  }, [beat, choreographed, apps, openDetailId]);
+  }, [docked, choreographed, apps, openDetailId]);
 
   return (
     <div

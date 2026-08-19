@@ -330,7 +330,14 @@ function BoardCell({
     <motion.li
       layout={!reduceMotion}
       layoutId={layoutKey}
-      initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
+      // `travel` marks a CHOREOGRAPHED mount (the landing's window act), where
+      // no row ever enters: the fixture is fixed and the only thing that moves
+      // is the one row the act carries between groups. Changing group remounts
+      // the cell under a different `<ul>`, so `initial` would fade that row in
+      // over its first 220ms of travel — a flicker on the exact element the
+      // scene exists to make visible. A row that already existed should move,
+      // not arrive.
+      initial={entering && !reduceMotion && travel === undefined ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={
         reduceMotion
@@ -477,7 +484,18 @@ export function PipelineBoard({
    *  it — and never over a card the visitor chose themselves. */
   const consumedDetailSeed = useRef<number | null>(null);
   useEffect(() => {
-    if (openDetailId === undefined || !detailDocked) return;
+    if (openDetailId === undefined) {
+      // The seed is WITHDRAWN. The landing's window act is a function of
+      // scroll position now, so scrolling back up un-docks the pane the page
+      // docked — and only that one: a card the visitor opened themselves is
+      // theirs (`detailUserOpened`), and so is a re-open of the seeded row.
+      const seeded = consumedDetailSeed.current;
+      consumedDetailSeed.current = null;
+      if (seeded === null || detailUserOpened || detailApp?.id !== seeded) return;
+      const id = window.setTimeout(() => setDetailApp(null), 0);
+      return () => window.clearTimeout(id);
+    }
+    if (!detailDocked) return;
     if (consumedDetailSeed.current === openDetailId) return;
     consumedDetailSeed.current = openDetailId;
     if (detailApp !== null) return; // the visitor's own open wins
@@ -490,9 +508,11 @@ export function PipelineBoard({
       setDetailApp(app);
     }, 0);
     return () => window.clearTimeout(id);
-    // `detailApp` is read, not reacted to: the consumed ref means a later
-    // detail change can never replay the seed, so the extra dep is inert.
-  }, [openDetailId, detailDocked, applications, detailApp]);
+    // `detailApp` is read, not reacted to on the seeding path: the consumed
+    // ref means a later detail change can never replay the seed. The
+    // withdrawal path above genuinely needs both it and `detailUserOpened`,
+    // to know whose pane is open.
+  }, [openDetailId, detailDocked, applications, detailApp, detailUserOpened]);
 
   /** One clock read per render — every row's age tag and deadline state
    *  derives from it. UTC for the server pass, the reader's own day once

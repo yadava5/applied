@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useMotionValueEvent, useScroll } from "motion/react";
 
 import { NEW_TAB } from "./chrome";
 import { ACCESS, CLOSING, DECISION } from "./copy";
@@ -25,10 +26,28 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * pipeline this page's own argument says lost the benchmark and does not
  * run in the hosted app.
  *
- * Mechanics, all house idiom: one IntersectionObserver sentinel fires the
- * ~1.5s sequence once, it plays out and HOLDS — nothing is scrubbed. The
- * scene is a button; click / Enter / Space remounts it (`key={run}`) and
- * replays. Reduced motion renders the fully composed end state. Every
+ * MECHANICS — rebuilt 2026-08-19, and this is the part that changed. The
+ * sequence used to be fired once by an IntersectionObserver at threshold 0.3
+ * and then ran on its own clock for 2.05s. Measured on the deployed preview
+ * at the page's bottom: ~700px of black with five unreadable white fragments
+ * in it, composing into the finished frame four seconds later. Scroll past
+ * slowly and it had already finished; scroll past quickly and it was
+ * fragments. The wordmark never assembled for anyone, which is the page's
+ * whole payoff shot.
+ *
+ * It is bound to the scroll now, exactly as the window act is: `--act-t` is
+ * the sequence's own clock in seconds, written from `scrollYProgress` across
+ * the band's entrance, and globals.css freezes every animation and shifts its
+ * delay by it. NOT ONE KEYFRAME, DURATION OR DELAY CHANGED — the composed
+ * frame is the approved one, and so is every frame on the way to it; what
+ * changed is who owns the playhead. Scrolling back up un-draws it.
+ *
+ * The scene is still a button; click / Enter / Space remounts it (`key={run}`)
+ * and plays the authored 2.05s sequence at its authored tempo, after which
+ * the scrub stands down for the visit — the reader has taken the wheel, the
+ * same rule the window act's camera follows. Reduced motion renders the fully
+ * composed end state, and so does the server, so a visitor without JS gets
+ * the finished image rather than the empty band the pre-play CSS holds. Every
  * stroke carries `pathLength={1}` so drawing is dashoffset 1 → 0 with no
  * runtime getTotalLength(). The wordmark geometry is copied from
  * `components/brand/Logo.tsx` (keep in sync) and scaled uniformly — never
@@ -283,48 +302,91 @@ function Key() {
   );
 }
 
+/**
+ * The sequence's own length, in seconds — the last animation's delay (the
+ * replay hint, 1.55s) plus its duration (0.5s). It is the only number the
+ * scrub needs: `--act-t` walks from 0 to this, and every keyframe, duration
+ * and delay in globals.css stays exactly as authored.
+ */
+const ACT_SECONDS = 2.05;
+
+/**
+ * How far into the band's entrance the assembly starts, as a share of the
+ * scrubbed range. The band rises from the fold; the first third of that is
+ * approach, and the drawing runs over the rest so the wordmark is completing
+ * as the band settles into frame rather than while it is still a sliver.
+ */
+const ACT_HOLD_OFF = 0.35;
+
+/** Puts the sequence's playhead where the reader's descent says it is. Written
+ *  straight to the element, because a playhead is a value the browser reads,
+ *  not a reason for React to render. */
+function position(el: HTMLElement | null, progress: number) {
+  if (!el) return;
+  const played = Math.min(1, Math.max(0, (progress - ACT_HOLD_OFF) / (1 - ACT_HOLD_OFF)));
+  el.style.setProperty("--act-t", `${(played * ACT_SECONDS).toFixed(3)}s`);
+}
+
 export function ClosingAct() {
   const ref = useRef<HTMLElement>(null);
   const [run, setRun] = useState(0);
-  const [reduced, setReduced] = useState(false);
+  /**
+   * `static` — the composed end state. The SSR default, so a visitor without
+   * JS (or before hydration) gets the finished frame rather than the empty
+   * band the pre-play CSS renders; also where reduced motion stays.
+   * `scrub`  — the same play, frozen, positioned by `--act-t` from the
+   *            reader's own descent.
+   * `play`   — the authored 2.05s sequence, running. Only a click gets here.
+   */
+  const [mode, setMode] = useState<"static" | "scrub" | "play">("static");
+
+  /**
+   * The band's entrance: 0 when its top reaches the fold, 1 when its bottom
+   * does. That upper bound is the one that is GUARANTEED reachable — the band
+   * is followed by the footer, so its bottom clears the viewport's bottom
+   * before the page runs out of scroll — which the alternatives are not: a
+   * band shorter than the viewport can never bring its own top to the
+   * viewport's top, and the sequence would never finish.
+   */
+  const { scrollYProgress } = useScroll({ target: ref, offset: ["start end", "end end"] });
+
+  useMotionValueEvent(scrollYProgress, "change", (progress) => {
+    if (mode === "scrub") position(ref.current, progress);
+  });
 
   useEffect(() => {
     const el = ref.current;
-    const isReduced =
+    if (!el) return;
+    if (
       typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // Deferred a frame so it's never a synchronous effect setState.
-    const raf = requestAnimationFrame(() => setReduced(isReduced));
-    if (isReduced || !el) return () => cancelAnimationFrame(raf);
-    if (typeof IntersectionObserver === "undefined") {
-      // No observer, no sentinel — play on load rather than hold a blank band.
-      const fallback = requestAnimationFrame(() => setRun((r) => (r === 0 ? 1 : r)));
-      return () => {
-        cancelAnimationFrame(raf);
-        cancelAnimationFrame(fallback);
-      };
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return; // composed, and it stays composed
     }
+    // Only take a composed band apart if the reader has not seen it. Scrubbing
+    // one that is already on screen at load would yank a finished image back
+    // to nothing under their eyes, which no amount of scroll binding excuses.
+    // Deferred a frame so the effect body never sets state synchronously.
+    const raf = requestAnimationFrame(() => {
+      if (el.getBoundingClientRect().top < window.innerHeight) return;
+      position(el, scrollYProgress.get());
+      setMode("scrub");
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [scrollYProgress]);
 
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            setRun((r) => (r === 0 ? 1 : r));
-            io.disconnect();
-            break;
-          }
-        }
-      },
-      { threshold: 0.3 },
-    );
-    io.observe(el);
-    return () => {
-      cancelAnimationFrame(raf);
-      io.disconnect();
-    };
-  }, []);
+  /** The reader takes the wheel. A click plays the authored sequence at its
+   *  authored tempo and leaves it composed — the scrub stands down for the
+   *  rest of the visit, the same rule the window act's camera follows once a
+   *  visitor opens a card themselves. */
+  const replay = () => {
+    ref.current?.style.removeProperty("--act-t");
+    setMode("play");
+    setRun((r) => r + 1);
+  };
 
-  const state = reduced ? "act--static" : run > 0 ? "act--play" : "";
+  const state =
+    mode === "static" ? "act--static" : mode === "scrub" ? "act--play act--scrub" : "act--play";
 
   return (
     <section ref={ref} className={`act act-band relative border-t border-line-soft ${state}`}>
@@ -362,7 +424,7 @@ export function ClosingAct() {
         <Key />
         <button
           type="button"
-          onClick={() => setRun((r) => r + 1)}
+          onClick={replay}
           className="act__scene relative block w-full cursor-pointer border-0 bg-transparent p-0"
           aria-label="Replay the closing sequence: one email crosses the rules layer — the one that ships — and lands as the emerald full stop after the applied wordmark."
         >

@@ -1460,6 +1460,79 @@ body {
   animation: act-fade 0.5s ease 1.55s forwards;
 }
 
+/* ---- the scrub -----------------------------------------------------------
+ * The SAME play, frozen and positioned by the reader's descent. Every
+ * keyframe, duration and delay above is untouched — this block only pauses
+ * the animations and shifts each one's delay by `--act-t`, the seconds
+ * `ClosingAct` writes from `scrollYProgress` across the band's entrance.
+ *
+ * A paused animation's current time stays at 0, so a delay of `d − t` renders
+ * the frame the animation would show at time t: positive means "not started"
+ * (the pre-play styles above), negative means t into the run, and past the
+ * end `forwards` holds the composed state. Scrolling back up therefore
+ * un-draws the wordmark exactly as it drew.
+ *
+ * Why it exists: the sequence used to be fired once by an IO sentinel at
+ * threshold 0.3 and then ran on its own clock for 2.05s. Measured on the
+ * deployed preview, a reader arriving at the page's bottom saw ~700px of
+ * black with five unreadable white fragments in it; four seconds later it was
+ * the finished frame. Scroll past slowly and it had already finished; scroll
+ * past quickly and it was fragments. Either way the wordmark never assembled
+ * for anyone. It is the page's payoff shot, so it is bound to the scroll like
+ * the window act.
+ *
+ * `.act--play` is still present alongside this class — the animations have to
+ * exist to be paused — and a click removes `--act-t` and this class together,
+ * which is what plays the authored sequence at its authored tempo.
+ * ------------------------------------------------------------------------- */
+.act--scrub .act__guide,
+.act--scrub .act__ghosts,
+.act--scrub .act__draw,
+.act--scrub .act__tag,
+.act--scrub .act__rail,
+.act--scrub .act__pop,
+.act--scrub .act__travel,
+.act--scrub .act__envelope,
+.act--scrub .act__dot,
+.act--scrub .act__ripple,
+.act--scrub .act__ask,
+.act--scrub .act__hint {
+  animation-play-state: paused;
+}
+.act--scrub .act__guide,
+.act--scrub .act__travel {
+  animation-delay: calc(0s - var(--act-t, 0s));
+}
+.act--scrub .act__ghosts {
+  animation-delay: calc(0.05s - var(--act-t, 0s));
+}
+.act--scrub .act__draw,
+.act--scrub .act__pop {
+  animation-delay: calc(var(--d, 0s) - var(--act-t, 0s));
+}
+.act--scrub .act__tag {
+  animation-delay: calc(0.1s - var(--act-t, 0s));
+}
+/* two animations, so two delays — the draw on `--d`, the flare on 0.24s */
+.act--scrub .act__rail {
+  animation-delay: calc(var(--d, 0s) - var(--act-t, 0s)), calc(0.24s - var(--act-t, 0s));
+}
+.act--scrub .act__envelope {
+  animation-delay: calc(0.72s - var(--act-t, 0s));
+}
+.act--scrub .act__dot {
+  animation-delay: calc(0.8s - var(--act-t, 0s));
+}
+.act--scrub .act__ripple {
+  animation-delay: calc(1.2s - var(--act-t, 0s));
+}
+.act--scrub .act__ask {
+  animation-delay: calc(1.3s - var(--act-t, 0s));
+}
+.act--scrub .act__hint {
+  animation-delay: calc(1.55s - var(--act-t, 0s));
+}
+
 @keyframes act-fade {
   to {
     opacity: 1;

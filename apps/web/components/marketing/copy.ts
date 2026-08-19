@@ -111,14 +111,17 @@ export const ACT = {
     "The offer lands, and the row moves without you.",
     "The row opens on the mail that moved it.",
   ],
-  /**
-   * Scene 0, revisited. The camera returns when the reader scrolls back up but
-   * the offer does not un-happen (see MarketingBoard), so the opening line
-   * would be sitting over a board whose detail pane is showing Larkspur
-   * already offered — the one place the narration could contradict the thing
-   * it narrates. This is what scene 0 says the second time.
+  /*
+   * There used to be a fourth line here — "The same board, with the offer
+   * already filed." — for scene 0 REVISITED, because the camera came back
+   * down when the reader scrolled up but the offer did not un-happen. It has
+   * been removed rather than reworded: the act is a function of scroll
+   * position now (WindowAct), so scrolling back up un-does the verdict and
+   * closes the pane, and scene 0 revisited IS scene 0. A line that narrated a
+   * permanently settled board was describing a latch that no longer exists,
+   * and keeping it would have been the one caption on the page that could
+   * contradict the board it captions.
    */
-  settled: "The same board, with the offer already filed.",
 } as const;
 
 export const DECISION = {
@@ -305,6 +308,11 @@ export const FOOTAGE = {
  * under the reader deserves to say what state it is in.
  */
 export const ARTIFACT = {
+  /** Index 2 is currently unrendered: the decision claim used to repeat the
+   *  previous screen's `split` exhibit in a sticky column, and that column is
+   *  gone (see `ClaimsDescent` — it was the measured dead space). The label is
+   *  kept rather than deleted because the copy is right and the staging is
+   *  what changed; nothing else in this file is indexed against it. */
   labels: [
     "The email, as Gmail hands it over",
     "The same body, classified twice",
