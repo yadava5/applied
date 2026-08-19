@@ -1034,6 +1034,94 @@ body {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Auth front door (`app/(auth)`, components/auth/AuthHeader.tsx). On arrival
+ * the lockup ASSEMBLES once: the tile fades up, the pipeline runs node by
+ * node, the wordmark draws stroke by stroke — the closing act's own device
+ * (ClosingAct.tsx) applied to the brand asset itself — and the emerald
+ * verdict seats itself as the full stop while the greeting rises under it.
+ *
+ * Scoped to `.auth-hero`, so every other mount of the Logo stays put; and
+ * the WHOLE choreography sits inside the no-preference query with the
+ * COMPOSED lockup as the base state. The animation is how the mark arrives,
+ * never how it becomes visible: reduced motion, the SSR frame and engines
+ * that skip the block all render it finished. Delays are absolute (`--dw`,
+ * Logo.tsx), never chained. The form below the header carries none of this —
+ * it is interactive at first paint.
+ *
+ * The three-class node selectors out-cascade `.brand-logo-link:hover
+ * .brand-logo__node` above ON PURPOSE (equal specificity, later source
+ * order): letting the hover pulse replace the entrance animation would
+ * restart the entrance from nothing on every un-hover. On these pages the
+ * entrance is the pipeline run; the link still lifts.
+ * ------------------------------------------------------------------------- */
+.auth-scene {
+  /* the closing act's atmosphere (`.act-band`) restated for the front door:
+   * one faint emerald bloom behind the lockup's verdict, no other ornament. */
+  background: radial-gradient(
+    48rem 30rem at 50% 8%,
+    color-mix(in oklab, var(--viz-setfit) 6%, transparent),
+    transparent 62%
+  );
+}
+@media (prefers-reduced-motion: no-preference) {
+  .auth-hero .brand-logo__tile,
+  .auth-hero .brand-logo__edge {
+    opacity: 0;
+    animation: act-fade 0.3s ease var(--dw, 0s) both;
+  }
+  .auth-hero .brand-logo__stroke {
+    stroke-dasharray: 1;
+    animation: auth-stroke-draw 0.4s ease var(--dw, 0s) both;
+  }
+  .auth-hero .brand-logo__pop {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .auth-hero .brand-logo-link .brand-logo__node,
+  .auth-hero .brand-logo-link .brand-logo__pop {
+    animation: auth-node-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--dw, 0s) both;
+  }
+  .auth-hero__title,
+  .auth-hero__intro {
+    animation: auth-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .auth-hero__title {
+    animation-delay: 0.5s;
+  }
+  .auth-hero__intro {
+    animation-delay: 0.6s;
+  }
+}
+@keyframes auth-stroke-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes auth-node-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reveal,
   .reveal-stagger > *,

@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
 
+import { AuthHeader } from "@/components/auth/AuthHeader";
 import { SetNewPasswordForm } from "@/components/auth/SetNewPasswordForm";
-import { Logo } from "@/components/brand/Logo";
 import {
   RECOVERY_MARKER_COOKIE,
   hasRecoveryMarker,
@@ -47,45 +47,38 @@ export default async function ResetPasswordPage() {
   const canSetPassword = inRecovery && (await getCurrentUser()) !== null;
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-12">
-      <div className="space-y-6">
-        <header className="space-y-2">
-          <Link href="/" aria-label="Applied — home" className="brand-logo-link mb-4 text-strong">
-            <Logo className="h-7 w-auto" />
-          </Link>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {canSetPassword ? "Set a new password" : "This link has expired"}
-          </h1>
-          <p className="text-sm text-muted">
-            {canSetPassword
-              ? "Choose a new password for your Applied account. You’ll sign in with it straight away."
-              : "Password reset links can only be used once, they expire, and they have to be opened in the browser that asked for them."}
-          </p>
-        </header>
+    <div className="space-y-6">
+      <AuthHeader
+        title={canSetPassword ? "Set a new password" : "This link has expired"}
+        intro={
+          canSetPassword
+            ? "Choose a new password for your Applied account. You’ll sign in with it straight away."
+            : "Password reset links can only be used once, they expire, and they have to be opened in the browser that asked for them."
+        }
+      />
 
-        {canSetPassword ? (
-          <SetNewPasswordForm />
-        ) : (
-          <p className="text-sm text-muted">
-            <Link
-              href="/forgot-password"
-              className="text-strong underline underline-offset-4 hover:text-foreground"
-            >
-              Request a new link
-            </Link>{" "}
-            and we’ll email you another one.
-          </p>
-        )}
-
+      {canSetPassword ? (
+        <SetNewPasswordForm />
+      ) : (
         <p className="text-sm text-muted">
           <Link
-            href="/login"
+            href="/forgot-password"
             className="text-strong underline underline-offset-4 hover:text-foreground"
           >
-            Back to sign in
-          </Link>
+            Request a new link
+          </Link>{" "}
+          and we’ll email you another one.
         </p>
-      </div>
-    </main>
+      )}
+
+      <p className="text-sm text-muted">
+        <Link
+          href="/login"
+          className="text-strong underline underline-offset-4 hover:text-foreground"
+        >
+          Back to sign in
+        </Link>
+      </p>
+    </div>
   );
 }
