@@ -97,8 +97,14 @@ Any non-zero exit fails the job. `--frozen-lockfile` ensures
 
 1. Installs backend + frontend dependencies (same caches as the other
    jobs).
-2. `pnpm exec playwright install --with-deps chromium` fetches the
-   browser and its Linux system libs.
+2. `.github/actions/playwright-browsers` restores the chromium binary from
+   the `~/.cache/ms-playwright` cache, keyed on the Playwright version
+   `apps/web/pnpm-lock.yaml` resolves, and downloads it under a bounded retry
+   only on a miss. It never runs `apt-get`: `--with-deps` is what stalled two
+   jobs against `archive.ubuntu.com` on 2026-08-19, and the `ubuntu-latest`
+   image already ships Chrome and Chromium, so chromium's system libs are
+   present. If one ever is not, Playwright fails at browser launch naming the
+   missing libs — loud, not silent.
 3. Regenerates `apps/web/lib/api/schema.d.ts` from `jobtracker.main_cloud` and
    fails on any diff — the API schema drift gate. **No backend server is
    booted.** This step used to boot `uvicorn jobtracker.main:app` on

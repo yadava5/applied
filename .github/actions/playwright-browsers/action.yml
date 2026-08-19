@@ -1,0 +1,168 @@
+name: Install Playwright browsers
+description: >-
+  Restore — or, on a cache miss, download — the Playwright browser binaries,
+  keyed on the exact version the lockfile resolves. Runs no apt-get, ever, and
+  bounds every network attempt so a slow mirror cannot eat the job's budget.
+  MUST run after `pnpm install --frozen-lockfile`: it shells out to
+  `pnpm exec playwright --version` to prove the cache key matches what is
+  actually installed.
+
+# -----------------------------------------------------------------------------
+# WHY THIS EXISTS
+#
+# Every Playwright job used to run `pnpm exec playwright install --with-deps
+# chromium` directly. `--with-deps` shells out to `apt-get update`, and on
+# 2026-08-19 archive.ubuntu.com went silent twice in one day: run 32275383954
+# (both jobs, 25m23s and 20m20s) and run 32294081307 (1190s of a 1200s budget).
+# The step never returned, `timeout-minutes` killed the whole job, and ZERO
+# tests ran. Worse, a timeout kill reports `conclusion: cancelled`, which the UI
+# renders as UNSTABLE rather than failed — so the failure reads as "still
+# running" and gets re-run instead of fixed.
+#
+# The fix is three things, none of them a bigger timeout:
+#
+#   1. The browser binaries are cached under ~/.cache/ms-playwright, keyed on
+#      the lockfile's resolved playwright-core version. The common path does no
+#      network work at all.
+#   2. `--with-deps` is gone. It is the only part that touches apt. The
+#      GitHub-hosted ubuntu-latest image ships Chrome and Chromium, so
+#      chromium's shared libraries (libnss3, libnspr4, libgbm, libasound2, …)
+#      are already present; Playwright launches against them. If one ever is
+#      missing, Playwright fails at browser launch with an explicit "Host system
+#      is missing dependencies" message naming the libs — a loud red, not a
+#      silent skip. That is the trade: a legible failure we would fix, in place
+#      of an unbounded apt stall we cannot.
+#   3. The download itself is retried a few times under `timeout(1)`, so a
+#      transient stall costs seconds. Composite-action steps do not honour
+#      `timeout-minutes` (actions/runner#1979), which is why the bound is
+#      `timeout(1)` in the script rather than a step key. Call sites also set a
+#      `timeout-minutes` above that worst case, but nobody here has watched it
+#      fire on a composite step — treat the script's timeout as the real bound.
+# -----------------------------------------------------------------------------
+
+inputs:
+  working-directory:
+    description: The package that owns the Playwright dependency and its pnpm-lock.yaml.
+    required: false
+    default: apps/web
+  browser:
+    description: >-
+      Which Playwright browser to install. chromium only, today: the cache key
+      carries `runner.os` (always "Linux"), which is enough for chromium's
+      generic linux build but NOT for firefox or webkit, whose builds are
+      distro-specific. Adding either means putting the runner image version in
+      the key first.
+    required: false
+    default: chromium
+  attempts:
+    description: How many times to try the download before failing the step.
+    required: false
+    default: "3"
+  attempt-timeout-seconds:
+    description: >-
+      Hard ceiling on ONE download attempt. Chromium is ~170 MB and lands in
+      seconds on a healthy runner; anything past this is a stalled mirror, not
+      a slow one.
+    required: false
+    default: "120"
+
+runs:
+  using: composite
+  steps:
+    # The cache key must name the version that is actually installed. A key that
+    # drifts from the installed version is worse than no cache at all: it
+    # restores browser binaries Playwright will not use, the download silently
+    # happens anyway, and the cache never converges. So resolve it from the
+    # lockfile and then MAKE the two agree — a mismatch fails here, loudly,
+    # instead of being discovered as a mystery download every run.
+    - name: Resolve the Playwright version from the lockfile
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -uo pipefail
+
+        lockfile="pnpm-lock.yaml"
+        if [ ! -f "$lockfile" ]; then
+          echo "::error::No $lockfile in ${{ inputs.working-directory }}; this action resolves the Playwright version from the lockfile."
+          exit 1
+        fi
+
+        # `playwright-core` is the package that pins the browser revisions, so
+        # it — not `@playwright/test` — is what the cache key must follow. Two
+        # entries would mean two versions resolved in one tree and no single
+        # correct key, hence the count check rather than a `head -1`.
+        versions="$(grep -oE '^  playwright-core@[^:]+' "$lockfile" | cut -d@ -f2 | sort -u)"
+        count="$(printf '%s\n' "$versions" | grep -c . || true)"
+        if [ "$count" -ne 1 ]; then
+          # One line: a workflow annotation keeps only the first line of the message.
+          joined="$(printf '%s' "$versions" | tr '\n' ' ')"
+          echo "::error::Expected exactly one playwright-core version in $lockfile, found $count: ${joined:-<none>}"
+          exit 1
+        fi
+
+        installed="$(pnpm exec playwright --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+        if [ "$installed" != "$versions" ]; then
+          echo "::error::Cache key would drift: $lockfile resolves playwright-core@$versions but the installed CLI reports ${installed:-<none>}. Did this step run before 'pnpm install --frozen-lockfile'?"
+          exit 1
+        fi
+
+        echo "version=$versions" >> "$GITHUB_OUTPUT"
+        echo "Playwright $versions (from $lockfile, confirmed against the installed CLI)"
+
+    # No `restore-keys`. A prefix-matched restore would hand us some OTHER
+    # version's browsers, which is the drift this action exists to prevent; a
+    # clean miss and a fresh download is the correct outcome. `save-always` is
+    # likewise off (and deprecated upstream) — a job that failed mid-download
+    # must not publish a half-written browser tree under a valid key.
+    - name: Restore the Playwright browser cache
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-browsers-${{ runner.os }}-${{ inputs.browser }}-${{ steps.resolve.outputs.version }}
+
+    # Deliberately NOT gated on `cache-hit`. With the browsers already present
+    # this is a local no-op that touches no network, and running it
+    # unconditionally means a partial or corrupted restore heals itself here
+    # instead of surfacing as an unexplained browser-launch failure later.
+    - name: Install the Playwright browser binary
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PW_BROWSER: ${{ inputs.browser }}
+        PW_ATTEMPTS: ${{ inputs.attempts }}
+        PW_ATTEMPT_TIMEOUT: ${{ inputs.attempt-timeout-seconds }}
+        PW_CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        set -uo pipefail
+
+        if [ "$PW_CACHE_HIT" = "true" ]; then
+          echo "Cache hit for $PW_BROWSER; expecting a local no-op."
+        else
+          echo "Cache miss for $PW_BROWSER; downloading."
+        fi
+
+        for attempt in $(seq 1 "$PW_ATTEMPTS"); do
+          echo "::group::playwright install $PW_BROWSER (attempt $attempt/$PW_ATTEMPTS)"
+          timeout --kill-after=10s "${PW_ATTEMPT_TIMEOUT}s" pnpm exec playwright install "$PW_BROWSER"
+          status=$?
+          echo "::endgroup::"
+
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "::warning::Attempt $attempt hit the ${PW_ATTEMPT_TIMEOUT}s ceiling — the browser CDN is stalling, not just slow."
+          else
+            echo "::warning::Attempt $attempt failed with exit code $status."
+          fi
+          # No backoff after the last attempt — it would be dead time before
+          # the failure we already know is coming.
+          if [ "$attempt" -lt "$PW_ATTEMPTS" ]; then
+            sleep $((attempt * 5))
+          fi
+        done
+
+        echo "::error::Could not install the $PW_BROWSER browser in $PW_ATTEMPTS attempts of ${PW_ATTEMPT_TIMEOUT}s. This is a download failure, not a test failure — no test has run yet."
+        exit 1

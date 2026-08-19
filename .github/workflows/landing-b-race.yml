@@ -118,6 +118,9 @@ on:
       - "api/**"
       - "scripts/generate_api_schema.sh"
       - ".github/workflows/landing-b-race.yml"
+      # The browser-install action these jobs depend on. Without this, an edit
+      # to it alone would ship untested by the only jobs that run it.
+      - ".github/actions/playwright-browsers/**"
   push:
     branches:
       - main
@@ -128,6 +131,9 @@ on:
       - "api/**"
       - "scripts/generate_api_schema.sh"
       - ".github/workflows/landing-b-race.yml"
+      # The browser-install action these jobs depend on. Without this, an edit
+      # to it alone would ship untested by the only jobs that run it.
+      - ".github/actions/playwright-browsers/**"
   workflow_dispatch:
 
 permissions:
@@ -179,9 +185,14 @@ jobs:
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
+      # Cached, apt-free browser install. The bound is the action's own
+      # per-attempt `timeout(1)`; the 8-minute cap merely sits above it. See
+      # `.github/actions/playwright-browsers/action.yml`.
       - name: Install Playwright browsers
-        working-directory: apps/web
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright-browsers
+        timeout-minutes: 8
+        with:
+          working-directory: apps/web
 
       # `next dev` CANNOT measure this page. A local dev run produced 11 false
       # reds on a commit that was clean in production; the spec's own header
