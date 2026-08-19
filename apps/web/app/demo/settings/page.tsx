@@ -119,8 +119,16 @@ export default async function DemoSettingsPage() {
                 // the twin opens on the state worth exercising: the invitation.
                 // Uploading here runs the REAL crop and re-encode in the browser
                 // and shows the actual result in the tile — only the storing is
-                // simulated — so the whole control, including remove-and-revert,
-                // is reviewable and e2e-drivable without a session.
+                // simulated — so upload, replace and remove are all reviewable
+                // and e2e-drivable without a session.
+                //
+                // WHAT THIS TWIN CANNOT SHOW, said plainly rather than left to
+                // be assumed: with no Google photo to fall back to, removing an
+                // upload here reverts to the initial. The revert-to-GOOGLE
+                // branch needs an account that has both, so it is verified in
+                // the signed-in app or not at all. Giving the fixture a Google
+                // photo would trade one uncovered branch for another (the
+                // invitation state is the one every new account starts in).
                 avatarSource="none"
                 avatarSrc={null}
                 googleAvatarSrc={null}

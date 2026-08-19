@@ -219,7 +219,13 @@ test("the matcher can fail: a host outside the pattern is not covered", () => {
   const patterns = [{ protocol: "https", hostname: "*.googleusercontent.com" }];
   assert.equal(covers(patterns, "https://lh3.googleusercontent.com/a/x"), true);
   assert.equal(covers(patterns, "https://evil.example/a/x"), false);
-  // `*` is ONE label: a nested host must not slip through.
+  // `*` is ONE label HERE. Next's own matcher was observed to be more
+  // permissive on this input (the dev optimizer answered 500 — a DNS failure,
+  // i.e. it accepted the pattern and tried to fetch — rather than "url
+  // parameter is not allowed"). That divergence is harmless: every host it
+  // admits is still under Google's registrable domain. It is recorded because
+  // this predicate is a reimplementation, and a reimplementation that quietly
+  // disagrees with the thing it stands in for is worth nothing.
   assert.equal(covers(patterns, "https://a.b.googleusercontent.com/x"), false);
   assert.equal(covers([], "https://lh3.googleusercontent.com/a/x"), false);
 });
