@@ -496,12 +496,28 @@ export function ClosingAct() {
       <div className="act__stage">
       {/* the ask — rises once the full stop lands, then holds. Outside the
           keyed scene so a replay never yanks a link out from under a click. */}
-      {/* pt is deliberately shallow: the section above already carries py-24,
-          and this band answers it directly — a deep top pad here read as a
-          dead gap in front of the page's closing image. */}
-      <div className="mx-auto w-full max-w-6xl px-6 pt-8 sm:pt-10">
+      {/* `my-auto` is the pinned frame's composition, not a convenience. The
+          stage is a full viewport and the ask + scene fill only part of it —
+          at 1024×768, measured on the built page, ~630px of surplus — and
+          with everything bottom-stacked that surplus pooled ABOVE the ask as
+          one unbroken void, while the key sat wedged directly under the CTA
+          and read as debris. Auto margins on a flex item absorb free space
+          before justify-content does, so they split the surplus around the
+          ask instead: held space, the thesis, held space, the scene — a title
+          card over the closing image, at every viewport height. It also buys
+          the key its air: the gap between the CTA and the rails it annotates
+          is now the lower half of that surplus, not ~20px.
+          In the static band (no JS, reduced motion, pre-hydration) the stage
+          is a plain block at content height, vertical auto margins resolve to
+          zero, and the shallow pt is the composed image's own spacing — the
+          section above already carries py-24. */}
+      <div className="my-auto mx-auto w-full max-w-6xl px-6 pt-8 sm:pt-10">
         <div className="act__ask">
-          <p className="text-base font-medium text-strong sm:text-lg">{CLOSING.thesis}</p>
+          {/* steps up at `lg` because that is where the frame gets a 1500px
+              runway and the thesis becomes a held title card in open space —
+              18px medium reads as a caption at that scale, not a closing
+              line. Below `lg` the band is denser and the smaller cut holds. */}
+          <p className="text-base font-medium text-strong sm:text-lg lg:text-2xl">{CLOSING.thesis}</p>
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
             <a
               href={`mailto:${ACCESS.contact}`}
