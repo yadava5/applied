@@ -103,11 +103,49 @@ test("no upload: Google's photo, from the identity rather than the metadata copy
   assert.equal(resolved.src, GOOGLE_PHOTO);
 });
 
-test("identities absent from the payload: the metadata copy still answers", () => {
-  // Whether `identities` is populated is a property of the API RESPONSE, not of
-  // the auth table. The fallback keeps a Google user's photo working either way.
+test("a photo URL that exists only in user_metadata is NOT rendered", () => {
+  // The metadata fallback was removed deliberately, and this is the gate on it.
+  // `user_metadata` is writable by the account holder straight through the anon
+  // key -- `updateUser({data})` reaches `raw_user_meta_data` with no allowlist,
+  // and no Settings screen is needed to call it. The value ends up as the `url`
+  // of a /_next/image request, which Applied's own server then fetches, so a
+  // writable source here is a server-side fetch the user chooses.
+  //
+  // `identity_data` cannot be reached by any client-facing parameter, and
+  // `GET /auth/v1/user` always eager-loads identities, so nothing legitimate
+  // depends on the fallback. Re-adding it must turn this red.
   const resolved = resolveAvatar(
-    { id: UID, user_metadata: { picture: GOOGLE_PHOTO } },
+    { id: UID, user_metadata: { picture: GOOGLE_PHOTO, avatar_url: GOOGLE_PHOTO } },
+    SUPABASE_URL,
+  );
+  assert.deepEqual(resolved, { source: "none", src: null, googleAvailable: false });
+  assert.equal(googleAvatarUrl({ id: UID, user_metadata: { picture: GOOGLE_PHOTO } }), null);
+});
+
+test("an identity that is not Google does not supply the photo either", () => {
+  // Select by provider, never identities[0] -- the array is in link order and an
+  // account can carry more than one identity.
+  const resolved = resolveAvatar(
+    {
+      id: UID,
+      identities: [{ provider: "github", identity_data: { avatar_url: GOOGLE_PHOTO } }],
+      user_metadata: {},
+    },
+    SUPABASE_URL,
+  );
+  assert.equal(resolved.source, "none");
+});
+
+test("the Google photo is read from identity_data, behind other identities", () => {
+  const resolved = resolveAvatar(
+    {
+      id: UID,
+      identities: [
+        { provider: "email", identity_data: { email: "a@b.c" } },
+        { provider: "google", identity_data: { picture: GOOGLE_PHOTO } },
+      ],
+      user_metadata: {},
+    },
     SUPABASE_URL,
   );
   assert.equal(resolved.source, "google");
@@ -128,8 +166,14 @@ test("a photo URL off the Google host family is refused, however it arrived", ()
     "javascript:alert(1)",
     "/relative/path.png",
   ]) {
+    // Through `identity_data`, not `user_metadata`: metadata is no longer read,
+    // so feeding these in there would pass for the wrong reason and stop
+    // exercising the host predicate at all.
     assert.equal(
-      googleAvatarUrl({ id: UID, user_metadata: { avatar_url: hostile } }),
+      googleAvatarUrl({
+        id: UID,
+        identities: [{ provider: "google", identity_data: { picture: hostile } }],
+      }),
       null,
       `${hostile} must not reach the image optimizer`,
     );

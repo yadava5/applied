@@ -102,11 +102,16 @@ export const STORED_AVATAR_TYPES = ["image/webp", "image/png"] as const;
 export type StoredAvatarType = (typeof STORED_AVATAR_TYPES)[number];
 
 /**
- * The host family Google serves profile photos from — `lh3` today, with `lh4`
- * … `lh6` in circulation historically. Anything else in `avatar_url` is
- * refused: `user_metadata` is user-writable (`supabase.auth.updateUser`), so
- * this predicate is what stops an account pointing the shell's optimizer at an
- * arbitrary origin.
+ * The host family Google serves profile photos from. `lh1` … `lh7` all resolve
+ * to the same `googlehosted.l.googleusercontent.com` and serve byte-identical
+ * responses, so the numeric prefix is an interchangeable load-balancer label
+ * rather than a distinct service — pinning `lh3` alone would be a silent
+ * monogram the day Google hands out `lh4`.
+ *
+ * This is defence in depth, not the primary control. Since the candidate is
+ * read from `identity_data` only, the string already comes from Google's
+ * verified ID token; this predicate is what keeps that true if the source is
+ * ever widened again.
  *
  * `next.config.ts` must allow the same family in `images.remotePatterns` or the
  * optimizer refuses what this permits and the tile silently falls back to the
@@ -138,19 +143,45 @@ export interface ResolvedAvatar {
   googleAvailable: boolean;
 }
 
-/** `identity_data` first (provider-written, not user-writable), then the
- *  metadata copy GoTrue merges from it. Same value on a healthy account; the
- *  fallback exists because whether `identities` is populated in a given
- *  `getUser()` payload is a property of the API response, not of the table. */
+/**
+ * `identity_data` on the `google` identity, and NOTHING ELSE.
+ *
+ * This value is handed to `next/image`, whose optimizer makes the fetch
+ * server-side, so where it comes from is a security question rather than a
+ * convenience one. `identity_data` is written by GoTrue from the verified ID
+ * token and is unreachable from any client-facing parameter: `updateUser`
+ * routes `data` to `UpdateUserMetaData`, which writes only
+ * `raw_user_meta_data`, and neither the user nor the admin API exposes a field
+ * that reaches `identity_data`.
+ *
+ * THERE IS DELIBERATELY NO `user_metadata` FALLBACK. An earlier revision had
+ * one, reasoning that whether `identities` is populated is a property of the
+ * API response rather than the table. It is not: `GET /auth/v1/user` resolves
+ * the user through `findUser`, which eager-loads the `has_many:"identities"`
+ * association, and the struct field carries no `omitempty`, so the key is
+ * always present. `getUser()` in auth-js always makes that request -- there is
+ * no local-JWT-decode path -- so a server component and the browser see the
+ * same object.
+ *
+ * The fallback was therefore never load-bearing, and it was the whole attack
+ * surface: `user_metadata` IS user-writable, directly through the anon key,
+ * with or without this app's Settings screen. GoTrue does overwrite
+ * `avatar_url` from the provider on each interactive OAuth sign-in, but that
+ * merges rather than clears, does not fire on refresh-token rotation, and is
+ * skipped entirely when Google omits the `picture` claim -- so an injected
+ * value could outlive the session that set it.
+ *
+ * Select by provider, never `identities[0]`: the array is in link order, and
+ * an account can carry more than one identity.
+ */
 function googleAvatarCandidate(user: AvatarBearer | null): unknown {
   for (const identity of user?.identities ?? []) {
     if (identity.provider !== "google") continue;
     const data = identity.identity_data ?? {};
-    if (data.avatar_url != null) return data.avatar_url;
     if (data.picture != null) return data.picture;
+    if (data.avatar_url != null) return data.avatar_url;
   }
-  const meta = user?.user_metadata ?? {};
-  return meta.avatar_url ?? meta.picture ?? null;
+  return null;
 }
 
 /**

@@ -248,11 +248,12 @@ const nextConfig: NextConfig = {
    */
   images: {
     remotePatterns: [
-      { protocol: "https", hostname: "*.googleusercontent.com" },
+      { protocol: "https", hostname: "*.googleusercontent.com", search: "" },
       {
         protocol: "https",
         hostname: "jbyvatoodyqqvkqbsrju.supabase.co",
         pathname: "/storage/v1/object/public/avatars/**",
+        search: "",
       },
     ],
     minimumCacheTTL: 60 * 60 * 24 * 30,
