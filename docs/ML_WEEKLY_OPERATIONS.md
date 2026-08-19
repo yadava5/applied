@@ -3,6 +3,30 @@
 Updated: **March 4, 2026**
 Owner: ML maintainer on weekly rotation
 
+> **Scope, added 2026-08-15 — this SOP is a local operator procedure. None of it
+> runs in the hosted deployment.**
+>
+> The "Updated" stamp above is an edit date, not a claim that this cycle is being
+> run. Every command here is a shell script invoked by hand against a backend on
+> the operator's own machine (`scripts/weekly_labeling_cycle.sh`,
+> `scripts/monitoring_cycle.sh`); none appears in a GitHub Actions workflow and
+> none is reachable from the deployed app, which is **rules-only** —
+> `HybridClassifier.classify` short-circuits to the rules layer whenever
+> `settings.deployment == "cloud"` (`backend/jobtracker/classifier/hybrid.py:284`).
+>
+> Where the steps below say "retrain": training is default-deny since #357. It
+> refuses unless the corpus is wholly synthetic or its single owner is on an
+> explicit allowlist that is empty unless configured, and nothing in the hosted
+> deployment configures it
+> (`backend/jobtracker/classifier/setfit_model.py:38-75`). Applied reads mail
+> under Gmail's restricted `gmail.readonly` scope, and Google's Workspace API
+> user-data policy permits training only a model personalized to one end user
+> with no co-mingling; production therefore trains on nobody, by design.
+>
+> A user correction collected by this cycle is written to `training_data` and
+> flagged reviewed. It does not change any future classification in the hosted
+> app, because no deployed path reads that table back.
+
 This runbook defines the weekly sparse-label review cycle for real-signal growth,
 with a repeatable command bundle, review rubric, and verification checklist.
 

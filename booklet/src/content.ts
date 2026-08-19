@@ -37,7 +37,12 @@ export const BRAND = {
   year: "2026",
   liveUrl: "getapplied.vercel.app",
   qrTarget: "https://getapplied.vercel.app",
-  spaceUrl: "huggingface.co/spaces/yadava5/jobtracker-classifier",
+  // Was the Hugging Face Space. Made private 2026-08-15: it served the int8
+  // ONNX weights of a checkpoint fitted partly on a real mailbox (iCloud IMAP,
+  // not Gmail), which should not be redistributed. /import runs the rules layer
+  // in the tab and ships no weights, so it is the honest "run it yourself"
+  // destination now.
+  spaceUrl: "getapplied.vercel.app/import",
 } as const;
 
 export const MASTHEAD = {
@@ -343,7 +348,7 @@ export const HOW = {
       { range: "< 0.70", verb: "FALL BACK", tone: "danger", detail: "no confident layer — needs_review." },
     ],
     recordNote:
-      "Every correction is stored in training_data — every category, other included — and flags the email user_corrected, so a later sync leaves the human’s answer alone. Nothing retrains on it: the deployed classifier is rules-only.",
+      "Every correction is stored in training_data — every category, other included — and flags the email user_corrected, so a later sync leaves the human’s answer alone. Nothing retrains on it: the deployed classifier is rules-only, the row is scoped to the one account that made it, and it is never pooled with another user’s.",
     source: "source · cloud/pipeline.py · _qualifies_for_hard_row + unplaceable_message_ids · cloud/applications.py · _add_training_example",
   },
 } as const;
@@ -359,7 +364,7 @@ export const INSIDE = {
     eyebrow: "§03 · ARCHITECTURE",
     headline: "One pipeline, and what it records.",
     body:
-      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. Nothing retrains on them automatically — retraining is an operator command, not a loop.",
+      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. Nothing retrains on them automatically — retraining is an operator command, not a loop, and it is default-deny: refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted. Your mail is never pooled with anyone else's. Every training entry point requires a user id, the corpus is filtered by it, and the loaded rows are re-checked, so a corpus spanning two users raises instead of training.",
     flow: [
       { stage: "guard", detail: "force non-job → other" },
       { stage: "rules", detail: "201 regex · ≥ 0.90" },
@@ -640,8 +645,8 @@ export const BUILD = {
     liveLabel: "LIVE WEB APP",
     liveUrl: "getapplied.vercel.app",
     spaceLabel: "IN-BROWSER CLASSIFIER",
-    spaceUrl: "hf.co/spaces/yadava5/jobtracker-classifier",
-    spaceNote: "int8 ONNX · zero servers · runs entirely in the tab",
+    spaceUrl: "getapplied.vercel.app/import",
+    spaceNote: "201 rules · zero servers · runs entirely in the tab",
     leftArrowLabel: "open it",
     rightArrowLabel: "classify",
     microNote: "three layers · one gate · zero servers",

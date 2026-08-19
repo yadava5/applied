@@ -35,7 +35,7 @@
 
 ## What it does
 
-Job hunting generates a flood of email — confirmations, rejections, interview invites, take-home assessments, recruiter follow-ups — and keeping a spreadsheet in sync with it by hand is tedious and wrong within a week. Applied connects to Gmail or iCloud, classifies each message into a job-search category, links related messages into a single tracked application, and shows where every opportunity actually stands. Predictions below a 0.85 confidence gate go to a human review queue instead of being silently accepted, and each correction is written back as training data.
+Job hunting generates a flood of email — confirmations, rejections, interview invites, take-home assessments, recruiter follow-ups — and keeping a spreadsheet in sync with it by hand is tedious and wrong within a week. Applied connects to Gmail or iCloud, classifies each message into a job-search category, links related messages into a single tracked application, and shows where every opportunity actually stands. Predictions below a 0.85 confidence gate go to a human review queue instead of being silently accepted, and each correction is recorded against your own account. No model trains on it.
 
 It is single-user by construction. Every table is scoped to one account and Postgres enforces
 that scoping itself, so there is no shared workspace, no recruiter view and no way for one
@@ -150,7 +150,7 @@ checker can no longer find it fails too. Where each number terminates is in [Ver
 - **A metric that names its stage.** The **rules layer** — 219 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
 - **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
 - **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. 21 tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
-- **The trained model exports to something a browser can run.** The SetFit head quantizes from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file (`ml/browser/artifacts/`). Transformers.js executes it on the CPU in the Hugging Face Space with `allowRemoteModels = false`. Which surfaces actually run it, and which do not, is stated in [Implemented vs delegated vs planned](#implemented-vs-delegated-vs-planned).
+- **The trained model exports to something a browser can run.** The SetFit head quantized from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file, measured on the export produced by `ml/browser/export_onnx.py` on 2026-08-03. **Those weights are no longer published, and this repository no longer carries them** — see [The published checkpoint was withdrawn](#the-published-checkpoint-was-withdrawn). The export pipeline still ships; the artifact it produces stays local.
 
 ---
 
@@ -216,7 +216,63 @@ python -m jobtracker.scripts.benchmark_classifier_latency --require-semantic --o
 
 `--require-semantic` fails a run in which no model answered. The cascade degrades to rules when SetFit will not import, and a degraded run reports flatteringly low latency for a classifier that is not actually running.
 
-**Model size.** The SetFit head exports to ONNX at **90,362,391 bytes** float32 and quantizes to **22,843,695 bytes** int8 — measured on `ml/browser/artifacts/model.onnx` and `model_quantized.onnx`, both committed.
+**Model size.** The SetFit head exported to ONNX at **90,362,391 bytes** float32 and quantized to **22,843,695 bytes** int8 — measured on 2026-08-03 on the `ml/browser/artifacts/` export. Neither file is committed any more, so these two numbers are pinned in `scripts/readme_facts.py` rather than read off disk: they record an artifact that was withdrawn, not one you can `stat`.
+
+---
+
+## The published checkpoint was withdrawn
+
+On **2026-08-15** the trained SetFit checkpoint and everything derived from it were pulled from
+every public surface. What was published, and is no longer:
+
+| Surface | Held | Now |
+| --- | --- | --- |
+| This repository | `model.onnx` (90.4 MB fp32), `model_quantized.onnx` and the `ml/browser/site/` copy (22.8 MB int8 each), `head.json` (the fitted head), `examples.json` (vectors from the fine-tuned body) | Deleted at `HEAD` and `.gitignore`d. **Still reachable in git history** — see below |
+| `huggingface.co/yadava5/jobtracker-setfit-classifier` | `model.safetensors`, `model_head.pkl`, `training_metadata.json`, and a 723-byte hand-written model card | Private |
+| `huggingface.co/spaces/yadava5/jobtracker-classifier` | its own int8 copy, `head.json`, `examples.json` | Private |
+
+**Why — and precisely what was wrong.** The checkpoint (`setfit_model_20260306_175404`) recorded
+`user_correction: 39` of `total_examples: 192` in its own `training_metadata.json`, so a published
+artifact stated in machine-readable form that it had been fitted partly on a real mailbox.
+
+That mailbox was **iCloud IMAP, not Gmail** — measured against the desktop-era store, which still
+exists: every one of its 856 messages is `source_account = ICLOUD`, the Gmail-only `thread_id`
+column is populated on none of them, and `sync_state` holds a single `icloud` row. A Gmail client
+shipped in that build but was never authenticated on that machine. **No Google user data has ever
+entered a training corpus here**, so Google's restricted-scope policy did not govern this
+checkpoint, and any argument starting from "Applied reads Gmail" is about today's architecture
+rather than the March tree that produced these weights.
+
+What was wrong is simpler and survives the correction: **publishing weights trained on someone's
+real mailbox**, which is poor practice whatever the provider. The fitted head and the embedding
+bank went with the weights because both derive from the same fine-tuned encoder. Full provenance —
+which of two same-day checkpoints, on what evidence, and what was *not* published — is in
+[`docs/ML_PROMOTION_POLICY.md`](docs/ML_PROMOTION_POLICY.md).
+
+**What this does not claim.** The blobs remain retrievable from this repository's git history and
+from any existing clone or fork. Removing them at `HEAD` stops redistribution going forward; it is
+not erasure, and this README does not pretend otherwise.
+
+**One thing that was never published, stated because it is the obvious worry.** The checkpoint
+directory carries an auto-generated model card of 166,204 bytes that is 94.6% verbatim
+training-example text — real mailbox content. It never left the maintainer's machine: the Hugging
+Face repository has two commits, both 2026-07-17, and its card is 723 bytes throughout. The
+downloads obtained weights and metadata, not message text. The local card is not to be uploaded.
+
+**The 90.4 MB → 22.8 MB claim loses its public receipt.** That compression figure is cited on the
+résumé and portfolio, and until now anyone could check it by running `stat` on two committed files.
+They can no longer. The measurement stands — it was taken on 2026-08-03 and is pinned in
+`scripts/readme_facts.py`, which still fails the build if any of the four places quoting it drifts
+— but it is now an attested number rather than a reproducible one, and it should be described that
+way wherever it is cited.
+
+**Getting the demo back.** `ml/browser/export_onnx.py` is unchanged and still produces the artifact
+from a local checkpoint — it writes to `ml/browser/artifacts/`, so running `ml/browser/site/` again
+also needs `head.json` and `examples.json` copied into that directory and `model_quantized.onnx`
+copied to `ml/browser/site/model/onnx/model.onnx`. The route back to a *publishable* demo is a
+checkpoint trained on synthetic data only — the 400-case corpus at `backend/tests/corpus/` is the
+intended source. No such retrain has been run, and no number in this README has been re-recorded
+against one.
 
 ---
 
@@ -227,7 +283,7 @@ Being precise about this is the point.
 ### Implemented — hand-written in this repo
 
 - **The rules engine.** 219 regex patterns across 7 categories (129 strong, 29 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 19 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
-- **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the correction-to-training-data loop.
+- **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the path that writes a correction into `training_data`. That path stops at the write: the row is recorded against its own user's account, and **nothing in the hosted app reads it back to train**. The retrain code exists in the repository and is reachable only as an operator command against a local backend — never on a request path, and default-deny since #357 (refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted).
 - **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
 - **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
 - **Multi-tenant isolation** — the `user_id` column and composite indexes, the 35 RLS policies, the per-transaction `request.jwt.claims` GUC with `search_path` pinning, and the Fernet credential envelope with a `key_id` column for rotation.
@@ -245,7 +301,7 @@ Being precise about this is the point.
 ### Planned — not in this build
 
 - **Semantic layers in the cloud.** The deployed Vercel product runs the **rules layer only**, and there is no embedding or SetFit inference on that path. Moving them behind an external inference service is a documented follow-up in `requirements.txt` and `docs/WEB_ARCHITECTURE.md`; nothing is wired.
-- **In-browser inference inside the Applied web app.** The 22.8 MB int8 ONNX build is real and runs in the Hugging Face Space and under `ml/browser/site/`. It does **not** run on `getapplied.vercel.app`: the app's strict CSP forbids the WASM eval and CDN fetch Transformers.js needs, so `/demo` runs layer 1 live in the browser and serves precomputed layer 2 and 3 verdicts.
+- **In-browser inference anywhere public.** The 22.8 MB int8 ONNX build was real and ran in the Hugging Face Space and under `ml/browser/site/`. Both were withdrawn on 2026-08-15: the Space is private and the weights are out of this repository. `ml/browser/site/` still holds the loader, the rules and the tokenizer, and will run again against a locally-exported checkpoint — it ships no weights. It never ran on `getapplied.vercel.app` in any case: the app's strict CSP forbids the WASM eval and CDN fetch Transformers.js needs, so `/demo` runs layer 1 live in the browser and serves precomputed layer 2 and 3 verdicts.
 - **WebSocket sync.** Vercel's Python runtime does not support it, so sync status is polled. The desktop path had a live `/ws/sync-status` stream; that router was deleted with the rest of the desktop surface, so there is no WebSocket anywhere in the tree now.
 - **Credential rotation.** `user_credentials.key_id` and a multi-key decrypt path are scaffolded. Only key `v1` is active and rotation is not wired.
 - **A mobile client.** `apps/mobile/` is a reserved directory. There is no app in it.
@@ -683,7 +739,7 @@ Every number above terminates in something you can open.
 - `baseline_cascade_v3.json` — the cascade with its models actually answering, with the checkpoint that produced it, the layer that answered each mismatch, and the delta to rules
 - `benchmark_history.{md,jsonl}` — every baseline, v1 through v3, with its profile
 - `ml_monitoring_report.{md,json}`, `ml_monitoring_history.jsonl`, `label_balance_report.md`
-- `ml/browser/artifacts/model_quantized.onnx` — 22,843,695 bytes; check it with `stat`
+- `ml/browser/artifacts/model_quantized.onnx` — was 22,843,695 bytes. **Withdrawn 2026-08-15 and no longer committed**, so this one cannot be checked with `stat`; the number is pinned in `scripts/readme_facts.py`. Re-export it locally with `ml/browser/export_onnx.py` if you need the artifact.
 
 **Third-party score.** [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/yadava5/applied) grades this repository against 18 supply-chain checks and publishes the result. It is computed by someone else, which is the entire value: a number this project calculates about itself is a claim. Several of the 18 grade repository *settings* that no file in the repo can turn on, so the score moving up over time is a better signal than wherever it starts.
 

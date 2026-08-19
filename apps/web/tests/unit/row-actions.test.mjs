@@ -29,7 +29,7 @@ import test from "node:test";
 
 import {
   REMOVE_HINT,
-  REMOVE_TRAINS_HINT,
+  REMOVE_STICKY_HINT,
   UNDO_WINDOW_SECONDS,
   createMenuRegistry,
   deletedMessage,
@@ -77,11 +77,39 @@ test("the menu hints state the undo window in seconds, never 'undoable'", () => 
   // "undoable" reads equally as "can be undone" and "cannot be done" — on a
   // removal action that is exactly the wrong word. The hint derives from the
   // constant so the copy can never drift from the timer.
-  for (const hint of [REMOVE_HINT, REMOVE_TRAINS_HINT]) {
+  for (const hint of [REMOVE_HINT, REMOVE_STICKY_HINT]) {
     assert.doesNotMatch(hint, /undoable/i);
     assert.match(hint, new RegExp(`${UNDO_WINDOW_SECONDS} s to undo`));
   }
-  assert.match(REMOVE_TRAINS_HINT, /trains the model/);
+});
+
+test("no row-action hint claims that removing a row teaches anything", () => {
+  // The synced-row hint used to end "· trains the model". That was false twice
+  // over: no deployed path trains on user data at all (the cloud classifier
+  // short-circuits to rules-only at hybrid.py:284), and this action does not
+  // even record a training example — dismiss_application deliberately writes
+  // none. The string was publicly reachable on /demo, where every fixture row
+  // carries source: "gmail".
+  //
+  // This assertion fails on the exact copy that shipped, which is what stops it
+  // being a tautology: "trains the model" matches /train/i.
+  for (const hint of [REMOVE_HINT, REMOVE_STICKY_HINT]) {
+    assert.doesNotMatch(hint, /train|learn|model/i, `hint claims learning: "${hint}"`);
+  }
+});
+
+test("the synced-row hint earns its separate existence", () => {
+  // ApplicationRow branches on `fromGmail` to choose between these two. If the
+  // Gmail variant stops saying something Gmail-specific and true, that branch is
+  // dead weight and should go rather than carry a decorative difference.
+  assert.notEqual(REMOVE_STICKY_HINT, REMOVE_HINT);
+  assert.ok(
+    REMOVE_STICKY_HINT.startsWith(REMOVE_HINT),
+    "the Gmail hint extends the plain one rather than contradicting it",
+  );
+  // The claim it makes: dismissed_reason = "user" survives the next rebuild
+  // (backend/jobtracker/cloud/applications.py:1521 skips such rows).
+  assert.match(REMOVE_STICKY_HINT, /sync/i);
 });
 
 test("the pending-removal message names the row, the undo and the time left", () => {

@@ -1,5 +1,41 @@
 # ML Strategy
 
+> **Scope, added 2026-08-15 — none of the training in this document runs in the
+> hosted deployment.**
+>
+> This file describes the full three-layer design and the local operator loop
+> around it. The deployed app is **rules-only**: `HybridClassifier.classify`
+> short-circuits to the rules layer whenever `settings.deployment == "cloud"`
+> (`backend/jobtracker/classifier/hybrid.py:284`), which is every hosted request,
+> so layers 2 and 3 never load and no hosted path retrains anything. A user
+> correction is written to `training_data` and flagged reviewed, and that is
+> where it stops — no deployed reader consumes the table, so a correction does
+> not change any future classification.
+>
+> Read the imperatives below as addressed to an operator running a backend on
+> their own machine, not as a description of production. Two specifics worth
+> knowing before following them:
+>
+> - **`POST /classify/retrain` and `POST /classify/import-training-data` are not
+>   routes in this tree.** No module defines them; the production app registers
+>   four routers — applications, Gmail, account, cron
+>   (`backend/jobtracker/main_cloud.py:667-684`). The desktop client that served
+>   them was de-scoped in August 2026. The shell scripts named here
+>   (`scripts/ml_cycle.sh`, `scripts/train_pipeline.sh`,
+>   `scripts/weekly_labeling_cycle.sh`, `scripts/monitoring_cycle.sh`) do still
+>   exist and are run by hand; none runs in CI or on Vercel.
+> - **Training is default-deny even locally.** Since #357 every training entry
+>   point refuses unless the corpus is wholly synthetic or its single owner is on
+>   an explicit allowlist, which is empty unless configured
+>   (`backend/jobtracker/classifier/setfit_model.py:38-75`). Applied reads mail
+>   under Gmail's restricted `gmail.readonly` scope, and Google's Workspace API
+>   user-data policy permits training only a model personalized to one end user,
+>   with no co-mingling — so an unconfigured deployment training on nobody is the
+>   intended state, not a gap.
+>
+> The machinery is documented rather than deleted because it exists and ships in
+> the repository; what it is not is reachable.
+
 ## Goal
 
 Classify synced emails into job-pipeline categories so they can be linked to applications and routed to the review queue when uncertain.
@@ -170,6 +206,16 @@ Backward compatibility note:
 
 ## Runtime Controls
 
+**None of these four routes is defined in this tree** (checked 2026-08-15). They
+belonged to the desktop FastAPI app that was de-scoped in August 2026; no module
+declares them and the production app registers four routers — applications,
+Gmail, account, cron (`backend/jobtracker/main_cloud.py:667-684`). The only
+classification route that exists is `POST
+/applications/review/{message_id}/classify` (`cloud/applications.py:3459`), which
+records a decision and does not train. Kept listed because the underlying
+capabilities still exist as Python (`HybridClassifier.get_status`, the
+`lite_mode` setting, `SetFitClassifier.train`); what is gone is the HTTP surface.
+
 - `GET /classify/status`
 - `GET /classify/lite-mode`
 - `PUT /classify/lite-mode`
@@ -271,7 +317,7 @@ For better accuracy:
 1. Correct misclassified emails in the app regularly
 2. Approve valid review-queue items instead of leaving them pending
 3. Keep labels consistent (especially `pending_application` vs `applied`)
-4. Trigger `POST /classify/retrain` after substantial new corrections if auto-train has not run yet
+4. ~~Trigger `POST /classify/retrain` after substantial new corrections if auto-train has not run yet~~ — **not available.** That route is not defined in this tree (see Runtime Controls), and no auto-train runs in the hosted app. Steps 1–3 still help: they make the board correct and the corrections durable. They do not make the classifier better, because nothing reads the corpus back.
 
 ## Monitoring and Drift
 
@@ -385,7 +431,7 @@ Three Python scripts in `backend/jobtracker/scripts/`:
 
 2. **`review_candidates.py`** — Terminal UI for manually reviewing ambiguous auto-labels. Shows subject + body preview, lets you press 1–8 to assign a label or Enter to accept.
 
-3. **`import_to_db.py`** — Inserts verified candidates into `training_data` table (tagged `source='external_dataset'`). Checks SetFit training gates and triggers retraining automatically if met.
+3. **`import_to_db.py`** — Inserts verified candidates into `training_data` table (tagged `source='external_dataset'`). Checks SetFit training gates and calls `SetFitClassifier.train` in-process if met. This is an operator command run by hand against a local backend; it is in no workflow and the hosted app never invokes it. The train call is itself default-deny — `external_dataset` counts as synthetic, so an import of public corpora proceeds, but a corpus holding any real `user_correction` row is refused unless that user is allowlisted.
 
 ### Bulk Import API
 
@@ -415,4 +461,7 @@ External training rows are tagged with `source='external_dataset'`. To remove:
 DELETE FROM training_data WHERE source = 'external_dataset';
 ```
 
-Then retrain: `POST /classify/retrain`.
+Then retrain — but note that `POST /classify/retrain` is not a route in this tree
+(see Runtime Controls). Retraining is reachable only in-process, by an operator
+calling `SetFitClassifier.train(user_id=…)` on a local backend, and it refuses
+unless the corpus is synthetic or the owner is allowlisted.

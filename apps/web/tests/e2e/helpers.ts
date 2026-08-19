@@ -6,7 +6,8 @@ import { expect, type Page } from "@playwright/test";
  * `startConsoleWatch` collects genuine console errors and uncaught page
  * exceptions so a spec can assert a page is clean. It deliberately filters
  * ONE class of noise: the dev-only `eval()` / `unsafe-eval` message React
- * emits because the app ships a strict CSP (`script-src 'self' 'unsafe-inline'`
+ * emits because the app ships a strict CSP (`script-src 'self' 'nonce-…'
+ * 'strict-dynamic'`
  * — no `unsafe-eval`; see `next.config.ts`). React itself prints
  * "React will never use eval() in production mode", i.e. this line cannot
  * appear in a production build; it only shows under `next dev`, which is how

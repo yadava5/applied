@@ -4,7 +4,12 @@
  * preference, like the beta-banner dismissal) and is applied to
  * `document.documentElement.dataset.theme` by a tiny blocking script injected
  * in the root layout BEFORE first paint, so there is no flash of the wrong
- * theme and pages stay statically renderable (no per-request cookie read).
+ * theme. `localStorage` rather than a cookie keeps the choice off the request,
+ * so the theme costs no per-request read. NOTE: that used to also mean "pages
+ * stay statically renderable"; it no longer does. Every route is dynamic now
+ * because the nonce-based CSP requires it (`lib/security/csp.ts`) — the theme
+ * is not what forces it, and reverting the theme to a cookie would not buy
+ * static rendering back.
  */
 export type Theme = "dark" | "light";
 
