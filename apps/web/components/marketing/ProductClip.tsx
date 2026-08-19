@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { FOOTAGE } from "./copy";
+import type { Clip } from "./footage";
 
 /**
  * A recording of the running product, played at the beat that argues for it.
@@ -59,16 +60,6 @@ import { FOOTAGE } from "./copy";
  * browser, or the tab can be backgrounded; both land in the same place, and
  * the control is what the reader does about it.
  */
-
-/** Intrinsic size, from public/footage/manifest.json — the box is reserved
- *  from these so the layout cannot move when the bytes land. */
-export const CLIPS = {
-  rulesReadTheBody: { id: "rules-read-the-body", width: 1152, height: 630 },
-  importClassifies: { id: "import-classifies", width: 1152, height: 840 },
-  boardSyncs: { id: "board-syncs", width: 1152, height: 310 },
-} as const;
-
-type Clip = (typeof CLIPS)[keyof typeof CLIPS];
 
 /** How far outside the viewport a clip starts fetching, as a share of it. One
  *  viewport is roughly one deliberate scroll gesture at these page lengths. */
@@ -193,13 +184,25 @@ export function ProductClip({
   return (
     <figure
       className={cn(
-        // The caption rides beside the frame from `xl`, where the container is
-        // wide enough to hold both: the frame is capped at the width its
-        // encode is sharp at, and a 768px frame alone in a 1152px container is
-        // the dead right-hand column this page has already had to fix twice.
-        // Below `xl` there is no room for a second column and it sits under
-        // the frame, which is where a caption goes.
-        "grid gap-x-10 gap-y-3 xl:grid-cols-[minmax(0,48rem)_minmax(0,1fr)] xl:items-start",
+        // TWO NUMBERS DECIDE THIS LAYOUT, and neither is taste.
+        //
+        // The frame is capped at 40rem because that is the width the encode is
+        // sharp at and the width the recorded UI reads at its own scale. The
+        // clips encode at 1152px, so 640 CSS is 90% of native on a 2x screen —
+        // against 54% when an 832px encode was shown at 768 — and the crops
+        // (534-744 CSS px of real product) land between 0.86x and 1.20x, which
+        // is a detail shot rather than a blow-up. Shown at 896 the same
+        // recordings magnified to 1.7x and read as a screenshot zoomed for
+        // someone who cannot see it.
+        //
+        // The caption then takes the rest of the row from `lg`, which is what
+        // removes the dead right-hand column — a frame alone in a 976px or
+        // 1152px container with nothing beside it is the defect this page has
+        // already had to fix twice, and `lg` rather than `xl` because 1024 is
+        // the width this is worked at: 640 + 32 + 304 fits there exactly.
+        // Below `lg` there is no room for a second column and the caption sits
+        // under the frame, which is where a caption goes.
+        "grid gap-x-8 gap-y-3 lg:grid-cols-[minmax(0,40rem)_minmax(0,1fr)] lg:items-start",
         className,
       )}
     >

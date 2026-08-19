@@ -1441,10 +1441,21 @@ body {
 }
 
 /* pre-play: everything waits. The travel group idles off-canvas (the svg
- * clips it), so the band is quiet until the sentinel fires. */
+ * clips it), so the band is quiet until the sentinel fires.
+ *
+ * 1.05 AND NOT 1, and this is a measured bug fix rather than a preference.
+ * With `pathLength="1"` a dasharray of exactly 1 makes the dash and the gap
+ * exactly the path's own length, and the undrawn state sits on the seam
+ * between them: Chrome leaves a hairline of ink at the end of several strokes,
+ * which the wordmark's 10.4x scale-up turns into visible fragments. That is
+ * the "five unreadable white fragments" in the original diagnosis of this
+ * band, and it survived the scroll binding because nobody could hold the
+ * sequence at t=0 long enough to see it. The pinned runway holds it there for
+ * 180px, so it had to go. A 5% longer dash puts the whole path inside the gap
+ * with margin, and drawing to offset 0 still covers it. */
 .act .act__draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
+  stroke-dasharray: 1.05;
+  stroke-dashoffset: 1.05;
 }
 .act .act__guide,
 .act .act__ghosts,

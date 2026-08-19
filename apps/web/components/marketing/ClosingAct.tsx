@@ -311,14 +311,39 @@ function Key() {
 const ACT_SECONDS = 2.05;
 
 /**
- * How far into the pinned runway the assembly waits before it starts, as a
- * share of it. The band arrives composed-and-empty and holds for a beat —
- * ~180px at the `lg` runway — so the reader lands on a still frame before
- * anything moves. It used to be 0.2 because the band was UNPINNED and its
- * first third was literally the approach; the pin is the approach now, and
- * this is a rest.
+ * The playhead's map, and it is now derived from the sequence rather than
+ * guessed at: `ACT_BEATS` are the seconds at which globals.css finishes one
+ * kind of thing and starts another, and `ACT_STOPS` is the share of the
+ * runway each of those spans is given.
+ *
+ *   0.00 → 0.30s   the scene arrives: the lane, the two ghost rails, the
+ *                  cyan rail, the key. Nothing is being DRAWN yet, so this
+ *                  wants very little scroll — but it cannot have none, or
+ *                  the pinned frame opens on a black screen.
+ *   0.30 → 0.90s   the wordmark draws. Eight staggered strokes, the last
+ *                  starting at 0.5s and taking 0.4s, and the envelope
+ *                  crossing the full width underneath them. THIS IS THE
+ *                  SHOT, and it gets the majority of the runway.
+ *   0.90 → 2.05s   the verdict falls and seats, the ripple, the ask, the
+ *                  replay hint. Single gestures; they read at speed.
+ *
+ * WHY THIS REPLACED `t = total · p²`. The square curve was written to buy the
+ * drawing more runway than a linear scrub gave it, and it did — but it buys
+ * that at the START of the range, which is where the scene's own entrance
+ * lives. Measured on the pinned band at 1024×768: it put t = 0.15s (the first
+ * frame with anything legible in it) 537px into the runway, so the pin
+ * engaged on a full viewport of black and stayed that way for two thirds of a
+ * screen. That is the defect the whole rebuild exists to remove, reintroduced
+ * at a different scroll position. A piecewise map spends the runway on the
+ * events instead of on the clock: the scene is up by 150px and the drawing
+ * owns 870 of the 1500.
+ *
+ * Nothing about the sequence changes — this is how fast the playhead moves,
+ * which is the one thing a scrub is allowed to own. If a delay or duration in
+ * globals.css moves, the boundaries here move with it.
  */
-const ACT_HOLD_OFF = 0.12;
+const ACT_BEATS = [0, 0.3, 0.9] as const;
+const ACT_STOPS = [0, 0.1, 0.68] as const;
 
 /**
  * The band's own traversal, which for a pinned section IS the pinned runway:
@@ -339,9 +364,8 @@ const ACT_HOLD_OFF = 0.12;
  * still "too fast to see" after it was bound to the scroll: binding was
  * necessary and not sufficient, because the runway was six times too short.
  * At the `lg` runway the same sequence spends 1500px, and the wordmark's
- * drawing — the payoff shot, the first 0.6s of the 2.05s — spends 894 of them
- * (see `position`, whose p² curve puts the drawing in the first 59.6%). It was
- * 377px.
+ * drawing — the payoff shot, 0.30s to 0.90s of the 2.05s — spends 870 of them
+ * (see `ACT_STOPS`). It was 258px.
  *
  * Upper bound reachable, which is the property that actually has to hold: the
  * band is followed by the footer, so its bottom clears the viewport's bottom
@@ -351,27 +375,21 @@ const ACT_HOLD_OFF = 0.12;
  */
 const CLOSING_WINDOW = { from: 0, to: 1 };
 
-/**
- * The playhead's curve. NOT linear, and this was measured rather than chosen:
- * the sequence is front-loaded — every stroke of the wordmark is drawn in its
- * first 0.6s, 29% of the 2.05s — so a linear scrub spent 71% of the band's
- * entrance on the dot, the ripple and two fades, and gave the drawing itself
- * 82px of scroll at a 768-tall viewport. The wordmark assembling IS the shot.
- *
- * `t = total · p²` puts the drawing in the first 59.6% of the runway, and the
- * dot's seating and the ask's rise in the rest, where they read fine because
- * they are single gestures rather than eight staggered ones. Nothing about the
- * sequence changes — this is how fast the playhead moves, which is the one
- * thing a scrub is allowed to own.
- *
- * Against the 1500px `lg` runway (CLOSING_WINDOW): the drawing owns 894px and
- * the tail 606px. Solve it if you move either constant —
- * `p = HOLD_OFF + (1 − HOLD_OFF)·√(0.6 / ACT_SECONDS)`.
- */
+/** Walk `ACT_STOPS` → `ACT_BEATS`, linearly inside each span. */
 function position(el: HTMLElement | null, progress: number) {
   if (!el) return;
-  const played = Math.min(1, Math.max(0, (progress - ACT_HOLD_OFF) / (1 - ACT_HOLD_OFF)));
-  el.style.setProperty("--act-t", `${(played * played * ACT_SECONDS).toFixed(3)}s`);
+  const p = Math.min(1, Math.max(0, progress));
+  let t = ACT_SECONDS;
+  for (let i = 1; i <= ACT_STOPS.length; i += 1) {
+    const from = ACT_STOPS[i - 1];
+    const to = ACT_STOPS[i] ?? 1;
+    if (p > to) continue;
+    const beatFrom = ACT_BEATS[i - 1];
+    const beatTo = ACT_BEATS[i] ?? ACT_SECONDS;
+    t = beatFrom + ((p - from) / (to - from)) * (beatTo - beatFrom);
+    break;
+  }
+  el.style.setProperty("--act-t", `${t.toFixed(3)}s`);
 }
 
 export function ClosingAct() {
