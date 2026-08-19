@@ -16,7 +16,7 @@ import { renderMedia, renderStill, selectComposition } from "@remotion/renderer"
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { CLIPS, HAND_CAPTURED } from "./clips.mjs";
+import { CLIPS, HAND_CAPTURED, POSTER_AT } from "./clips.mjs";
 import { SCENES } from "./scenes.mjs";
 
 const WEB = process.cwd();
@@ -68,14 +68,19 @@ for (const id of scenes) {
   const composition = await selectComposition({ serveUrl, id, inputProps: {} });
   const base = path.join(OUT, id);
 
-  // Poster: the clip's first frame, which is also the state it loops back to.
-  // A still is what the <video> shows before it is allowed to play and what a
-  // reduced-motion or data-saver visitor sees instead of the clip.
+  // Poster: the frame `POSTER_AT` names, clamped into the composition. A still
+  // is what the <video> shows before it is allowed to play and what a
+  // reduced-motion or data-saver visitor sees INSTEAD of the clip — so it is
+  // the clip's landed end state, not its first frame. clips.mjs argues it.
+  const posterFrame = Math.min(
+    composition.durationInFrames - 1,
+    Math.max(0, Math.round((POSTER_AT[id] ?? 0) * composition.fps)),
+  );
   await renderStill({
     composition,
     serveUrl,
     output: `${base}.jpg`,
-    frame: 0,
+    frame: posterFrame,
     imageFormat: "jpeg",
     jpegQuality: 82,
     inputProps: {},
@@ -117,7 +122,7 @@ for (const id of scenes) {
   });
   console.log(
     `  ${id}: ${composition.width}x${composition.height} · ${(composition.durationInFrames / composition.fps).toFixed(2)}s · ` +
-      `webm ${kb(encodes.webm)} · mp4 ${kb(encodes.mp4)} · poster ${kb(poster)}`,
+      `webm ${kb(encodes.webm)} · mp4 ${kb(encodes.mp4)} · poster ${kb(poster)} @ f${posterFrame}`,
   );
 }
 
