@@ -1,29 +1,42 @@
 /**
- * The closing act's playhead map agrees with the timeline it maps — measured
- * from the sources, never restated.
+ * The closing act PLAYS — once, slowed, while the pin holds the page — and
+ * this file is the contract for that tempo AND for the timeline it plays.
  *
- * WHAT THE CONTRACT IS. `ClosingAct` scrubs a CSS-authored sequence by
- * writing `--act-t`, and its map is three numbers that MEAN events in
- * globals.css: `ACT_BEATS[1]` is the rules rail's completed draw (its `--d`
- * plus its draw duration), `ACT_BEATS[2]` is the last stroke's completed draw
- * (max `--d` over the drawn strokes plus each one's duration), and
- * `ACT_SECONDS` is the whole timeline's end (max delay + duration over every
- * animation `.act--play` starts). Those correspondences used to be
- * transcription — `[0, 0.3, 0.9]` typed next to a comment promising "if a
- * delay or duration in globals.css moves, the boundaries here move with it" —
- * which is exactly the promise nothing kept. This test recomputes all three
- * from `globals.css` plus the component's own `at("…s")` delays and fails on
- * drift in either direction: retime the CSS and the constants go stale;
- * retype the constants and they stop matching the CSS.
+ * TWO LINEAGES, MERGED DELIBERATELY (2026-08-19). The scroll-scrubbed act
+ * shipped a gate that derived its playhead map (`ACT_BEATS` / `ACT_STOPS`)
+ * from globals.css; the owner then rejected the scrub itself — the close
+ * should play, not be operated — and the pin-and-play rebuild shipped a gate
+ * for the clock. The beats map retired WITH the scrub: a piecewise map
+ * existed to spend scroll runway on events, and a real-time clock spends
+ * time exactly as the CSS authors it, so there are no beat constants left to
+ * hold. What did NOT retire is everything the scrub gate protected that the
+ * play still relies on:
  *
- * IT ALSO HOLDS THE SCRUB MIRROR. `.act--scrub` restates every `.act--play`
- * delay inside a `calc(delay - var(--act-t))` — a second copy by construction,
- * because a paused animation can only be positioned through its delay. A delay
- * retimed in the play block but not the scrub block ships two different
- * sequences, one for the click and one for the scroll; this test zips the two
- * blocks per class and fails on any mismatch, and it checks every play-block
- * class is in the scrub's `animation-play-state: paused` list — an animated
- * element missing there would run on its own clock mid-scrub.
+ *   · `ACT_SECONDS` must be the timeline's own end — derived here as the
+ *     largest delay + duration over every animation `.act--play` starts,
+ *     resolving each `var(--d)` to the component's own `at("…s")` value.
+ *     Retime the CSS without moving the constant and the clock clips the
+ *     tail of every play; this fails on drift in either direction.
+ *   · THE SCRUB MIRROR STILL RUNS THE PLAY. The clock positions the frozen
+ *     sequence through `.act--scrub`'s `calc(delay - var(--act-t))` delays —
+ *     a second copy of every `.act--play` delay by construction, because a
+ *     paused animation can only be positioned through its delay. The zip
+ *     below fails on any mismatch, and on any animated class missing from
+ *     the pause list (it would run on its own clock mid-play).
+ *
+ * The ending has failed twice, in opposite directions, and each failure is a
+ * bound here:
+ *
+ *   · fired-and-forgotten in an unpinned 596px band, the fixed timeline
+ *     outran its runway — fragments for a fast reader, already-finished for
+ *     a slow one. The guard against that coming back is the GEOMETRY: the
+ *     band pins through a real runway and sits last on the page with only
+ *     the footer beyond it, so the scene cannot leave the viewport while the
+ *     clock runs. Both halves (the pin CSS, the page order) are asserted.
+ *   · scrubbed off the scroll, it demanded the reader operate the ending by
+ *     hand, and the owner rejected it. The guard against THAT coming back is
+ *     the clock itself: `--act-t` is written from elapsed time at AUTO_RATE,
+ *     clamped to the sequence's length, and no scroll listener drives it.
  *
  * WHY A SOURCE SCAN. Same boundary as landing-variants.test.mjs: a CSS
  * timeline and a TS constant meet nowhere this harness can render, and the
@@ -31,16 +44,12 @@
  * are stripped first on both sides — the docblocks around these values quote
  * the very numbers under test.
  *
- * MUTATION-TESTED AT INTRODUCTION (2026-08-19). Each watched go red, then
- * green again on a byte-identical restore (shasum-verified):
- *   · globals.css alone: the hint's play delay 1.55s → 1.7s (ACT_SECONDS
- *     stale AND the scrub mirror broken — two failures, as it should be);
- *   · ClosingAct.tsx alone: ACT_BEATS 0.9 → 0.8 (drawing-end stale);
- *   · globals.css alone: the draw duration 0.4s → 0.45s (both beats' spans
- *     move; drawing-end stale).
- * Companion bounds NOT independently reddened, and named as such: the
- * strictly-increasing checks on beats and stops, the pause-list membership,
- * and the ≥ 7 strokes floor.
+ * MUTATION-TESTED AT THE MERGE (2026-08-19): the hint's play delay in
+ * globals.css 1.55s → 1.7s went red twice (scrub mirror AND ACT_SECONDS),
+ * AUTO_RATE 0.55 → 1.2 went red, each restored byte-identical and the file
+ * ran green. Companion bounds not independently reddened, and named as
+ * such: the pause-list membership, the ≥ 7 strokes floor, the threshold and
+ * wall-time bands.
  *
  * Run:  pnpm test:unit
  */
@@ -51,13 +60,21 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const css = readFileSync(join(webRoot, "app", "globals.css"), "utf8").replace(
-  /\/\*[\s\S]*?\*\//g,
-  "",
-);
-const act = readFileSync(join(webRoot, "components", "marketing", "ClosingAct.tsx"), "utf8")
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+/** Comments out, code only. */
+function code(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
+
+const act = code(readFileSync(join(webRoot, "components", "marketing", "ClosingAct.tsx"), "utf8"));
+const css = code(readFileSync(join(webRoot, "app", "globals.css"), "utf8"));
+const page = code(readFileSync(join(webRoot, "app", "landing-b", "page.tsx"), "utf8"));
+
+const num = (name) => {
+  const m = new RegExp(`const ${name}\\s*=\\s*([\\d.]+)`).exec(act);
+  assert.ok(m, `${name} is gone from ClosingAct — the tempo contract has no number to hold`);
+  return Number(m[1]);
+};
 
 /** Milliseconds, so 0.02 + 0.3 has one representation on both sides. */
 const ms = (seconds) => Math.round(seconds * 1000);
@@ -133,18 +150,6 @@ function readElementDelays() {
   }));
 }
 
-function readConst(name) {
-  const m = new RegExp(`const ${name}\\s*=\\s*(\\[[^\\]]*\\]|[\\d.]+)`).exec(act);
-  assert.ok(m, `${name} is gone from ClosingAct.tsx`);
-  return m[1].startsWith("[")
-    ? m[1]
-        .slice(1, -1)
-        .split(",")
-        .map((s) => Number(s))
-        .filter((n) => !Number.isNaN(n))
-    : Number(m[1]);
-}
-
 const play = readPlayBlock();
 const elements = readElementDelays();
 
@@ -172,7 +177,7 @@ test("every .act--play delay is mirrored, verbatim, by the .act--scrub block", (
     assert.deepEqual(
       mirrored,
       animations.map((a) => a.delay),
-      `.${cls}: scrub delays ${JSON.stringify(mirrored)} != play delays — the click and the scroll now play different sequences`,
+      `.${cls}: scrub delays ${JSON.stringify(mirrored)} != play delays — the clock and the CSS now play different sequences`,
     );
   }
 });
@@ -202,42 +207,119 @@ function resolveTimeline() {
   return runs;
 }
 
-test("ACT_BEATS and ACT_SECONDS are the timeline's own numbers, not stale copies", () => {
-  const beats = readConst("ACT_BEATS").map(ms);
-  const stops = readConst("ACT_STOPS");
-  const total = ms(readConst("ACT_SECONDS"));
+test("ACT_SECONDS is the timeline's own end, not a stale copy", () => {
+  const total = ms(num("ACT_SECONDS"));
   const runs = resolveTimeline();
-
-  const railDraw = runs.find((r) => r.cls === "act__rail");
-  const drawingEnds = runs
-    .filter((r) => r.cls === "act__draw" || r === railDraw)
-    .map((r) => r.delay + r.duration);
   const timelineEnd = Math.max(...runs.map((r) => r.delay + r.duration));
-
-  assert.equal(beats.length, 3, "ACT_BEATS is no longer three beats — rederive this gate with the map");
-  assert.equal(beats[0], 0, "the map must start at t = 0");
-  assert.equal(
-    beats[1],
-    railDraw.delay + railDraw.duration,
-    "ACT_BEATS[1] must be the rules rail's completed draw (its --d + its draw duration)",
-  );
-  assert.equal(
-    beats[2],
-    Math.max(...drawingEnds),
-    "ACT_BEATS[2] must be the last stroke's completed draw",
-  );
   assert.equal(
     total,
     timelineEnd,
-    "ACT_SECONDS must be the timeline's end — the largest delay + duration .act--play starts",
+    `ACT_SECONDS (${total}ms) must be the timeline's end — the largest delay + duration .act--play starts (${timelineEnd}ms). The clock will stop early or run past the last animation.`,
   );
+});
 
-  // The map's own coherence: beats climb toward the end, and each beat has a
-  // runway share to spend, in order, strictly inside [0, 1).
-  for (let i = 1; i < beats.length; i += 1) assert.ok(beats[i] > beats[i - 1], "beats must climb");
-  assert.ok(beats[beats.length - 1] < total, "the last beat must precede the sequence's end");
-  assert.equal(stops.length, beats.length, "every beat needs a runway stop");
-  assert.equal(stops[0], 0, "the runway starts at 0");
-  for (let i = 1; i < stops.length; i += 1) assert.ok(stops[i] > stops[i - 1], "stops must climb");
-  assert.ok(stops[stops.length - 1] < 1, "the last span needs runway to spend");
+test("the play is slowed, and by a watchable amount", () => {
+  const rate = num("AUTO_RATE");
+  // Slower than authored — that is the owner's whole instruction — but not
+  // slow-motion: the authored choreography reads as narration down to about
+  // 0.4x and as a screensaver below it.
+  assert.ok(rate < 1, `AUTO_RATE (${rate}) is not a slowdown`);
+  assert.ok(rate >= 0.4, `AUTO_RATE (${rate}) is slow motion, not narration`);
+  const wall = num("ACT_SECONDS") / rate;
+  assert.ok(
+    wall > 2.5 && wall < 6,
+    `the slowed play takes ${wall.toFixed(2)}s — outside the 2.5–6s band a pinned reader will actually watch`,
+  );
+});
+
+test("the clock is elapsed time, clamped, and no scroll listener drives it", () => {
+  // The playhead walks min(ACT_SECONDS, elapsed · AUTO_RATE): the clamp is
+  // what holds the composed end frame instead of running the delays past
+  // every animation's tail.
+  assert.match(
+    act,
+    /Math\.min\(ACT_SECONDS,/,
+    "the clock no longer clamps at ACT_SECONDS — the playhead runs off the end of the sequence",
+  );
+  assert.ok(act.includes("requestAnimationFrame"), "the clock lost its frame loop");
+  assert.ok(
+    act.includes('setProperty("--act-t"'),
+    "the clock no longer writes --act-t — nothing positions the frozen animations",
+  );
+  // The scroll-driven playhead is retired: the ending plays, it is not
+  // operated. A scroll subscription here means someone rebuilt the rejected
+  // mechanism.
+  assert.ok(
+    !act.includes("trackProgress") && !/addEventListener\(\s*["']scroll/.test(act),
+    "ClosingAct reads the scroll again — the owner rejected the scrubbed ending; the play owns its own clock",
+  );
+});
+
+test("the trigger waits for the scene, and only for the scene", () => {
+  const threshold = num("PLAY_THRESHOLD");
+  assert.ok(
+    threshold >= 0.15 && threshold <= 0.6,
+    `PLAY_THRESHOLD (${threshold}) is outside [0.15, 0.6] — too low burns the opening under the fold, too high can leave a parked reader waiting forever`,
+  );
+  // The observer watches the SCENE's box. Observing the band would make the
+  // ratio meaningless once the runway grows it to a screen and a half.
+  assert.ok(
+    act.includes("io.observe(scene)"),
+    "the play trigger no longer watches the scene's own box",
+  );
+  assert.match(
+    act,
+    /intersectionRatio >= PLAY_THRESHOLD/,
+    "the trigger stopped comparing against PLAY_THRESHOLD",
+  );
+});
+
+test("the pin and the page order make the enter-only trigger safe", () => {
+  // Half one: the band still grows a runway and pins its stage through it.
+  // This is what was measured missing when the ending was "too fast to see"
+  // — without the pin, a fixed timeline in a short band IS the old defect.
+  assert.match(css, /\.act--runway\s*\{[^}]*--closing-runway:\s*1000px/, "the sub-lg runway is gone");
+  assert.match(
+    css,
+    /\.act--runway \.act__stage\s*\{[^}]*position:\s*sticky/,
+    "the stage no longer pins — the play can be scrolled off screen mid-run",
+  );
+  assert.match(
+    css,
+    /height:\s*calc\(100vh \+ var\(--closing-runway\)\)/,
+    "the band's height is no longer viewport + runway",
+  );
+  // Half two: the band is the page's last section, footer excepted — the
+  // geometry that guarantees the scene is still on screen at max scroll.
+  assert.match(
+    page,
+    /<ClosingAct \/>\s*<MarketingFooter \/>/,
+    "ClosingAct is no longer immediately before the footer — the cannot-escape-the-viewport argument no longer holds",
+  );
+  // And the component only grows the runway for a band still below the fold,
+  // so no-JS, reduced-motion and an on-screen band never strand anyone in
+  // empty scroll.
+  assert.ok(
+    act.includes("getBoundingClientRect().top < window.innerHeight"),
+    "the below-the-fold guard is gone — a composed band on screen at load can be yanked apart",
+  );
+});
+
+test("reduced motion, the server and no-JS all get the composed frame", () => {
+  assert.match(
+    act,
+    /useState<"static" \| "auto">\("static"\)/,
+    "the SSR default is no longer the composed static frame",
+  );
+  assert.ok(
+    act.includes('matchMedia("(prefers-reduced-motion: reduce)")'),
+    "the reduced-motion guard is gone from ClosingAct",
+  );
+  // The frozen-animation machinery the clock positions: paused, delays
+  // shifted by --act-t. Without these the clock writes a variable nothing
+  // reads.
+  assert.ok(
+    css.includes("calc(var(--d, 0s) - var(--act-t, 0s))"),
+    "the delay-shift arithmetic is gone — --act-t no longer positions the sequence",
+  );
 });

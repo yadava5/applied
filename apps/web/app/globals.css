@@ -1373,8 +1373,9 @@ body {
  * One envelope crosses the full width, clears the single rules rail, and
  * collapses into the emerald verdict, which falls and seats itself as the
  * full stop after the drawn `applied` wordmark; then the thesis and the
- * seat ask rise and everything holds. One IO sentinel fires it; the scene
- * button replays it (remounted per run, so these animations restart).
+ * seat ask rise and everything holds. ClosingAct's slowed clock plays it
+ * once the scene is in view; the scene button replays it (same clock,
+ * rewound).
  * Strokes carry `pathLength="1"`, so every draw is stroke-dashoffset 1 → 0;
  * the dashoffset is set on each letter <g> and inherits to its paths. The
  * filled circles (i-dot, verdict) cannot be dash-drawn, so they enter by
@@ -1397,28 +1398,24 @@ body {
 }
 
 /* ---- the runway ----------------------------------------------------------
- * What "still too fast to see" actually was. The band shipped 596px tall and
- * UNPINNED, scrubbed across its own entrance — 596px of scroll for a 2.050s
- * sequence, which is 0.4s at a 1500px/s flick, while the window act at the top
- * of the page spends 3572px on a comparable timeline. Binding the ending to
- * the scroll was necessary and it was not sufficient: the runway was six times
- * too short, so the reader owned the playhead and still could not slow it down.
+ * The pin is what lets the ending PLAY without being outrun. The band shipped
+ * 596px tall and unpinned with a fire-once timeline, and the sequence
+ * finished off-screen for everyone; the scrubbed rebuild pinned it and handed
+ * the playhead to the scroll, which the owner then rejected — the close
+ * should play itself, not advance in lockstep with a trackpad. What survives
+ * from the scrub is THIS: the band pins through `viewport + runway` of
+ * scroll, so while ClosingAct's own slowed clock walks `--act-t`, the frame
+ * holds still under the reader whatever their scroll speed — and past the
+ * pin's release there is only the footer, so the scene cannot leave the
+ * viewport before the play ends.
  *
- * So the band pins and the page spends real scroll on it. The height is
- * `viewport + runway`, which makes `trackProgress`'s divisor (`height − vh`,
- * for the `{ from: 0, to: 1 }` window ClosingAct uses) EXACTLY the runway at
- * every viewport height — no residue, nothing to re-measure when the viewport
- * changes.
- *
- * 1500px at `lg`, where the sequence is the page's payoff shot and a reader on
- * a trackpad crosses it in about a second and a half of deliberate scrolling;
- * 1000px below it, where a thumb-flick covers more ground per gesture and the
- * page is already long. The wordmark's drawing — the first 0.6s of the 2.05s,
- * and the shot itself — gets 59.6% of whichever it is (894px / 596px) through
- * the playhead's p² curve. It got 377px.
+ * 1500px at `lg`: at the ~3.7s the slowed sequence takes, that is a
+ * deliberate trackpad scroll's worth of held frame, and a reader who parks
+ * mid-runway simply watches it finish. 1000px below `lg`, where a thumb-flick
+ * covers more ground per gesture and the page is already long.
  *
  * `.act--runway` is written by the component and only when it has decided to
- * scrub, so the server, a visitor without JS and a visitor with reduced motion
+ * play, so the server, a visitor without JS and a visitor with reduced motion
  * all get the composed band at content height. Do not move this to the base
  * `.act-band` rule: it would strand every one of them in a screen and a half
  * of empty scroll with nothing in it that can ever change. */
@@ -1609,30 +1606,26 @@ body {
   animation: act-fade 0.5s ease 1.55s forwards;
 }
 
-/* ---- the scrub -----------------------------------------------------------
- * The SAME play, frozen and positioned by the reader's descent. Every
- * keyframe, duration and delay above is untouched — this block only pauses
- * the animations and shifts each one's delay by `--act-t`, the seconds
- * `ClosingAct` writes from `scrollYProgress` across the band's entrance.
+/* ---- the frozen play -----------------------------------------------------
+ * The SAME play, frozen and positioned by `--act-t`. Every keyframe,
+ * duration and delay above is untouched — this block only pauses the
+ * animations and shifts each one's delay by `--act-t`, the sequence's own
+ * seconds, which `ClosingAct` writes from its slowed clock (AUTO_RATE) once
+ * the scene is in view. The class kept its `act--scrub` name from the build
+ * where the scroll wrote that variable; the machinery is identical, only the
+ * writer changed, and renaming it would touch every rule below for nothing.
  *
  * A paused animation's current time stays at 0, so a delay of `d − t` renders
  * the frame the animation would show at time t: positive means "not started"
  * (the pre-play styles above), negative means t into the run, and past the
- * end `forwards` holds the composed state. Scrolling back up therefore
- * un-draws the wordmark exactly as it drew.
+ * end `forwards` holds the composed state — which is where a finished play
+ * rests, and what a reader who scrolls away and back finds.
  *
- * Why it exists: the sequence used to be fired once by an IO sentinel at
- * threshold 0.3 and then ran on its own clock for 2.05s. Measured on the
- * deployed preview, a reader arriving at the page's bottom saw ~700px of
- * black with five unreadable white fragments in it; four seconds later it was
- * the finished frame. Scroll past slowly and it had already finished; scroll
- * past quickly and it was fragments. Either way the wordmark never assembled
- * for anyone. It is the page's payoff shot, so it is bound to the scroll like
- * the window act.
- *
- * `.act--play` is still present alongside this class — the animations have to
- * exist to be paused — and a click removes `--act-t` and this class together,
- * which is what plays the authored sequence at its authored tempo.
+ * Why the indirection exists at all: driving the playhead through one custom
+ * property is what lets the tempo live in a single constant (and lets a
+ * replay rewind the clock) while the authored choreography above stays
+ * byte-identical. `.act--play` is still present alongside this class — the
+ * animations have to exist to be paused.
  * ------------------------------------------------------------------------- */
 .act--scrub .act__guide,
 .act--scrub .act__ghosts,

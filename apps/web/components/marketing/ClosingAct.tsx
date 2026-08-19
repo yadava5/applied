@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { NEW_TAB } from "./chrome";
-import { trackProgress } from "./scrub";
 import { ACCESS, CLOSING, DECISION } from "./copy";
 
 /**
@@ -26,30 +25,49 @@ import { ACCESS, CLOSING, DECISION } from "./copy";
  * pipeline this page's own argument says lost the benchmark and does not
  * run in the hosted app.
  *
- * MECHANICS — rebuilt 2026-08-19, and this is the part that changed. The
- * sequence used to be fired once by an IntersectionObserver at threshold 0.3
- * and then ran on its own clock for 2.05s. Measured on the deployed preview
- * at the page's bottom: ~700px of black with five unreadable white fragments
- * in it, composing into the finished frame four seconds later. Scroll past
- * slowly and it had already finished; scroll past quickly and it was
- * fragments. The wordmark never assembled for anyone, which is the page's
- * whole payoff shot.
+ * MECHANICS — PIN AND PLAY (2026-08-19, the owner's call, reversing the
+ * scrub built earlier the same day). The ending has now failed in both
+ * directions, and the history is the spec:
  *
- * It is bound to the scroll now, exactly as the window act is: `--act-t` is
- * the sequence's own clock in seconds, written from the band's scroll progress across
- * the band's entrance, and globals.css freezes every animation and shifts its
- * delay by it. NOT ONE KEYFRAME, DURATION OR DELAY CHANGED — the composed
- * frame is the approved one, and so is every frame on the way to it; what
- * changed is who owns the playhead. Scrolling back up un-draws it.
+ *   · fired-and-forgotten (an IO sentinel starting a fixed 2.05s timeline in
+ *     an unpinned 596px band) outran its runway — fragments for a fast
+ *     reader, already-finished for a slow one;
+ *   · scrubbed (the playhead written from scroll progress across a pinned
+ *     runway) made the ending an artifact the reader has to operate, and the
+ *     owner rejected it: the close should PLAY, smooth and flowing, once it
+ *     is in view — not advance in lockstep with a trackpad.
  *
- * The scene is still a button; click / Enter / Space remounts it (`key={run}`)
- * and plays the authored 2.05s sequence at its authored tempo, after which
- * the scrub stands down for the visit — the reader has taken the wheel, the
- * same rule the window act's camera follows. Reduced motion renders the fully
- * composed end state, and so does the server, so a visitor without JS gets
- * the finished image rather than the empty band the pre-play CSS holds. Every
- * stroke carries `pathLength={1}` so drawing is dashoffset 1 → 0 with no
- * runtime getTotalLength(). The wordmark geometry is copied from
+ * The reconciliation keeps each fix's half: the band still PINS through a
+ * runway (globals.css `.act--runway`), and once the scene is meaningfully on
+ * screen (`PLAY_THRESHOLD`) the sequence plays itself to completion on its
+ * own clock, slowed (`AUTO_RATE`) — while the pin holds the frame, so the
+ * timeline cannot be outrun the way the first build's was. The geometry is
+ * what makes the enter-only trigger safe THIS time, and it is worth stating
+ * because that trigger is exactly what failed before: the band is the page's
+ * last section, its stage releases the pin at the page's end, and only the
+ * footer's ~85px lies beyond — so even a reader who flicks straight to max
+ * scroll still has the whole scene on screen while it finishes. There is no
+ * scroll position from which the play can escape the viewport.
+ *
+ * The clock drives the SAME frozen-animation machinery the scrub used:
+ * `--act-t` is the sequence's own seconds, globals.css pauses every
+ * animation and shifts its delay by it. NOT ONE KEYFRAME, DURATION OR DELAY
+ * CHANGED — slowing happens in the mapping from real time to `--act-t`, so
+ * the authored choreography is untouched and a future retempo is one
+ * constant. Once played it stays composed (`forwards` on every fill): the
+ * ending is watched once, like the sentence it draws, and scrolling back up
+ * finds it finished rather than un-drawing — the reversal belonged to the
+ * scrub and left with it.
+ *
+ * The scene is still a button; click / Enter / Space restarts the clock and
+ * plays the same slowed sequence again — one tempo everywhere, rather than
+ * an authored-speed replay beside a slowed first play. Reduced motion
+ * renders the fully composed end state, and so does the server, so a visitor
+ * without JS gets the finished image rather than the empty band the pre-play
+ * CSS holds; for both, the runway never grows, so neither is stranded in a
+ * screen and a half of scroll with nothing in it. Every stroke carries
+ * `pathLength={1}` so drawing is dashoffset 1 → 0 with no runtime
+ * getTotalLength(). The wordmark geometry is copied from
  * `components/brand/Logo.tsx` (keep in sync) and scaled uniformly — never
  * stretched — with the stroke weight re-chosen for display size: optical
  * weight is a size decision, and the 24px lockup's stroke does not survive
@@ -132,8 +150,9 @@ const at = (d: string): CSSProperties => ({ ["--d" as string]: d });
 
 /**
  * Stateless on purpose: the whole choreography is CSS driven by the
- * section's `act--play` / `act--static` class, and the parent remounts this
- * per run (`key={run}`) so a replay restarts every animation cleanly.
+ * section's `act--play act--scrub` / `act--static` classes and positioned by
+ * `--act-t`, so playing, holding and replaying are all the parent's clock
+ * moving one custom property — nothing here ever needs to remount.
  */
 function Scene() {
   return (
@@ -305,137 +324,53 @@ function Key() {
 /**
  * The sequence's own length, in seconds — the last animation's delay (the
  * replay hint, 1.55s) plus its duration (0.5s). It is the only number the
- * scrub needs: `--act-t` walks from 0 to this, and every keyframe, duration
+ * clock needs: `--act-t` walks from 0 to this, and every keyframe, duration
  * and delay in globals.css stays exactly as authored.
  */
 const ACT_SECONDS = 2.05;
 
 /**
- * The playhead's map, and it is now derived from the sequence rather than
- * guessed at: `ACT_BEATS` are the seconds at which globals.css finishes one
- * kind of thing and starts another, and `ACT_STOPS` is the share of the
- * runway each of those spans is given.
- *
- *   0.00 → 0.32s   the scene arrives: the lane, the two ghost rails, the
- *                  cyan rail, the key. The boundary is the rail's own
- *                  completed draw — its 0.02s start plus its 0.3s duration —
- *                  the moment the comparison stands. This span wants very
- *                  little scroll, but it cannot have none, or the pinned
- *                  frame opens on a black screen.
- *   0.32 → 0.90s   the wordmark draws. Eight staggered strokes, the last
- *                  starting at 0.5s and taking 0.4s, and the envelope
- *                  crossing the full width underneath them. THIS IS THE
- *                  SHOT, and it gets the majority of the runway.
- *   0.90 → 2.05s   the verdict falls and seats, the ripple, the ask, the
- *                  replay hint. Single gestures; they read at speed.
- *
- * EVERY BEAT IS DERIVED, NOT TRANSCRIBED (2026-08-19; the middle beat moved
- * 0.3 → 0.32 to make that literally true, so the rail's draw now completes
- * exactly at its stop instead of sitting at 93.3% of it).
- *
- * That move is sub-perceptual in motion, NOT invisible — an earlier draft of
- * this comment claimed the latter and it is measurably false. It changes only
- * the playhead map (`ACT_STOPS`, `ACT_SECONDS` and every CSS delay and
- * duration are unchanged), and the endpoints are identical: p ≥ 0.68 and p = 1
- * render the same frame under both maps. Strictly inside, it does not: the
- * deviation peaks at exactly 20ms at p = 0.1, which at 1024×768 is up to 52px
- * of drawn length on the longest letter. That is a 6.7% tempo change over the
- * first 150px of a 1500px runway and no reader sees the counterfactual, but a
- * golden-screenshot gate keyed to a fixed scroll offset on this act WOULD go
- * red on it. Say sub-perceptual, not invisible.
- *
- * Beat 1 is the rail's `--d` plus its draw duration;
- * beat 2 is the last stroke's `--d` plus the shared draw duration (0.5 + 0.4);
- * `ACT_SECONDS` is the replay hint's delay plus its duration (1.55 + 0.5).
- * `tests/unit/closing-act-tempo.test.mjs` recomputes all three from
- * globals.css and this file's `at(...)` delays and fails on any drift, either
- * direction — retiming the CSS without moving these constants no longer
- * silently unmaps the playhead.
- *
- * WHY THIS REPLACED `t = total · p²`. The square curve was written to buy the
- * drawing more runway than a linear scrub gave it, and it did — but it buys
- * that at the START of the range, which is where the scene's own entrance
- * lives. Measured on the pinned band at 1024×768: it put t = 0.15s (the first
- * frame with anything legible in it) 537px into the runway, so the pin
- * engaged on a full viewport of black and stayed that way for two thirds of a
- * screen. That is the defect the whole rebuild exists to remove, reintroduced
- * at a different scroll position. A piecewise map spends the runway on the
- * events instead of on the clock: the scene is up by 150px and the drawing
- * owns 870 of the 1500.
- *
- * Nothing about the sequence changes — this is how fast the playhead moves,
- * which is the one thing a scrub is allowed to own. If a delay or duration in
- * globals.css moves, the boundaries here move with it.
+ * Authored seconds per real second — the whole of "a bit slower". At 0.55
+ * the 2.05s sequence takes ~3.7 real seconds: the wordmark's drawing (0.30
+ * to 0.90 authored) spends just over a second under the reader's eyes, and
+ * the verdict's fall-and-seat tail keeps enough pace not to read as slow
+ * motion. Chosen by watching renders at 0.4, 0.55 and 0.7, not by
+ * arithmetic. Slowing lives HERE, in the map from real time to `--act-t` —
+ * never in globals.css, whose durations are the authored choreography.
  */
-const ACT_BEATS = [0, 0.32, 0.9] as const;
-const ACT_STOPS = [0, 0.1, 0.68] as const;
+const AUTO_RATE = 0.55;
 
 /**
- * The band's own traversal, which for a pinned section IS the pinned runway:
- * 0 when its top reaches the viewport's top (the pin engages), 1 when its
- * bottom reaches the viewport's bottom (the pin releases). The same window
- * the act uses, and for the same reason.
- *
- * THE RUNWAY IS THE FIX, and the arithmetic is exact rather than approximate.
- * `trackProgress` divides by `height − to·vh + from·vh`, which with this
- * window is `height − vh`; the band's height is `calc(100vh + --closing-runway)`
- * (globals.css), so the divisor is the runway EXACTLY, at every viewport
- * height, with no residue to argue about.
- *
- * What it buys, measured against what shipped. The band used to be 596px tall
- * and unpinned, scrubbed over `{ from: 1, to: 1 }` — 596px of scroll for a
- * 2.050s sequence, which is 0.4s at a 1500px/s flick, against the window
- * act's 3572px for a comparable timeline. That ratio is why the ending was
- * still "too fast to see" after it was bound to the scroll: binding was
- * necessary and not sufficient, because the runway was six times too short.
- * At the `lg` runway the same sequence spends 1500px, and the wordmark's
- * drawing — the payoff shot, 0.30s to 0.90s of the 2.05s — spends 870 of them
- * (see `ACT_STOPS`). It was 258px.
- *
- * Upper bound reachable, which is the property that actually has to hold: the
- * band is followed by the footer, so its bottom clears the viewport's bottom
- * with the footer's own height to spare and the progress CLAMPS at 1 rather
- * than asymptoting to it. `landing-b.spec.ts` reads the playhead at max scroll
- * and expects 2.05.
+ * Share of the scene that must be on screen before the play begins. Low
+ * enough that a reader who parks with the band half-entered still gets the
+ * play (the scene is ~300px tall at 1024, so this is ~105px of it visible);
+ * high enough that the sequence cannot burn its opening frames while the
+ * scene is still a sliver under the fold.
  */
-const CLOSING_WINDOW = { from: 0, to: 1 };
-
-/** Walk `ACT_STOPS` → `ACT_BEATS`, linearly inside each span. */
-function position(el: HTMLElement | null, progress: number) {
-  if (!el) return;
-  const p = Math.min(1, Math.max(0, progress));
-  let t = ACT_SECONDS;
-  for (let i = 1; i <= ACT_STOPS.length; i += 1) {
-    const from = ACT_STOPS[i - 1];
-    const to = ACT_STOPS[i] ?? 1;
-    if (p > to) continue;
-    const beatFrom = ACT_BEATS[i - 1];
-    const beatTo = ACT_BEATS[i] ?? ACT_SECONDS;
-    t = beatFrom + ((p - from) / (to - from)) * (beatTo - beatFrom);
-    break;
-  }
-  el.style.setProperty("--act-t", `${t.toFixed(3)}s`);
-}
+const PLAY_THRESHOLD = 0.35;
 
 export function ClosingAct() {
   const ref = useRef<HTMLElement>(null);
-  const [run, setRun] = useState(0);
+  /** The scene's box — what the play trigger watches. The BAND is a screen
+   *  and a half of runway once grown, so its own intersection ratio says
+   *  nothing about whether the drawing is on screen. */
+  const sceneBoxRef = useRef<HTMLDivElement>(null);
   /**
    * `static` — the composed end state. The SSR default, so a visitor without
    * JS (or before hydration) gets the finished frame rather than the empty
    * band the pre-play CSS renders; also where reduced motion stays.
-   * `scrub`  — the same play, frozen, positioned by `--act-t` from the
-   *            reader's own descent.
-   * `play`   — the authored 2.05s sequence, running. Only a click gets here.
+   * `auto`   — the play, frozen by the scrub machinery and positioned by
+   *            `--act-t` from the component's own slowed clock: 0 while the
+   *            reader approaches, then 0 → ACT_SECONDS once the scene is in
+   *            view, then held at the end.
    */
-  const [mode, setMode] = useState<"static" | "scrub" | "play">("static");
+  const [mode, setMode] = useState<"static" | "auto">("static");
 
   /**
-   * Whether the band has grown its runway. Set ONCE, alongside the decision to
-   * scrub, and never cleared — the height is what the pin and the scrub
-   * arithmetic are both defined against, and a replay click (`mode: "play"`)
-   * must not collapse 1500px of section out from under a reader who is looking
-   * straight at it.
+   * Whether the band has grown its runway. Set ONCE, alongside the decision
+   * to play, and never cleared — the height is what the pin is defined
+   * against, and a replay click must not collapse 1500px of section out from
+   * under a reader who is looking straight at it.
    *
    * It is a client-only growth, and deliberately so: the server ships the band
    * at content height, so a visitor with no JS, or with reduced motion, gets
@@ -447,52 +382,79 @@ export function ClosingAct() {
    */
   const [runway, setRunway] = useState(false);
 
-  /** False the moment the reader takes the wheel: a click plays the authored
-   *  sequence at its authored tempo and the scrub stands down for the visit. */
-  const scrubbing = useRef(false);
+  /** The clock's pending frame, so a replay restarts it cleanly and unmount
+   *  cancels it. */
+  const frame = useRef(0);
+
+  /** Walk `--act-t` from 0 to ACT_SECONDS at AUTO_RATE, then stop. The
+   *  `forwards` fills hold the composed frame; nothing here needs to. */
+  const playFrom = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    cancelAnimationFrame(frame.current);
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(ACT_SECONDS, ((now - t0) / 1000) * AUTO_RATE);
+      el.style.setProperty("--act-t", `${t.toFixed(3)}s`);
+      if (t < ACT_SECONDS) frame.current = requestAnimationFrame(tick);
+    };
+    frame.current = requestAnimationFrame(tick);
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    const scene = sceneBoxRef.current;
+    if (!el || !scene) return;
     if (
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
       return; // composed, and it stays composed
     }
-    // Only take a composed band apart if the reader has not seen it. Scrubbing
-    // one that is already on screen at load would yank a finished image back
-    // to nothing under their eyes, which no amount of scroll binding excuses.
+    // Only take a composed band apart if the reader has not seen it. Winding
+    // one that is already on screen at load back to nothing would yank a
+    // finished image away under their eyes, which no trigger excuses.
     // Deferred a frame so the effect body never sets state synchronously.
-    let stop: (() => void) | undefined;
+    let io: IntersectionObserver | undefined;
     const raf = requestAnimationFrame(() => {
       if (el.getBoundingClientRect().top < window.innerHeight) return;
-      scrubbing.current = true;
       setRunway(true);
-      setMode("scrub");
-      stop = trackProgress(el, CLOSING_WINDOW, (progress) => {
-        if (scrubbing.current) position(el, progress);
-      });
+      setMode("auto");
+      el.style.setProperty("--act-t", "0s");
+      if (typeof IntersectionObserver === "undefined") {
+        playFrom();
+        return;
+      }
+      // Enter-only BY DESIGN, and safe only because of where the band sits —
+      // the docblock's geometry argument. It fires once: the play is watched
+      // once and then holds, so there is nothing for a leave branch to do.
+      io = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.intersectionRatio >= PLAY_THRESHOLD)) return;
+          io?.disconnect();
+          playFrom();
+        },
+        { threshold: PLAY_THRESHOLD },
+      );
+      io.observe(scene);
     });
     return () => {
       cancelAnimationFrame(raf);
-      stop?.();
+      cancelAnimationFrame(frame.current);
+      io?.disconnect();
     };
-  }, []);
+  }, [playFrom]);
 
-  /** The reader takes the wheel. A click plays the authored sequence at its
-   *  authored tempo and leaves it composed — the scrub stands down for the
-   *  rest of the visit, the same rule the window act's camera follows once a
-   *  visitor opens a card themselves. */
+  /** A click plays the same slowed sequence from the top — one tempo
+   *  everywhere, restarted by rewinding the clock rather than remounting the
+   *  scene (the animations are paused and positioned, so the playhead is the
+   *  only thing that has to move). */
   const replay = () => {
-    scrubbing.current = false;
-    ref.current?.style.removeProperty("--act-t");
-    setMode("play");
-    setRun((r) => r + 1);
+    setMode("auto");
+    playFrom();
   };
 
-  const state =
-    mode === "static" ? "act--static" : mode === "scrub" ? "act--play act--scrub" : "act--play";
+  const state = mode === "static" ? "act--static" : "act--play act--scrub";
 
   return (
     <section
@@ -556,7 +518,7 @@ export function ClosingAct() {
           own geometry defines: the button is the svg and nothing else, and
           the key's percentage placement lands on the rails it names. Below
           `lg` the key is in flow above the button and the box is both. */}
-      <div className="relative">
+      <div ref={sceneBoxRef} className="relative">
         <Key />
         <button
           type="button"
@@ -567,8 +529,7 @@ export function ClosingAct() {
           <span aria-hidden className="act__hint absolute right-6 top-1 text-[0.8125rem] text-dim sm:right-10">
             {CLOSING.replay}
           </span>
-          {/* keyed so a replay cleanly restarts every CSS animation in the scene */}
-          <Scene key={run} />
+          <Scene />
         </button>
       </div>
       </div>

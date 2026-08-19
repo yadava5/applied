@@ -179,6 +179,7 @@ function readMarks() {
       receipt: pair("receipt"),
       verdict: scalar("verdict"),
       docked: scalar("docked"),
+      dockPan: pair("dockPan"),
     },
     ACT_DEADBAND: Number(band[1]),
   };
@@ -440,6 +441,22 @@ test("the act's marks keep the choreography in order", () => {
   assert.ok(
     ACT_MARKS.verdict + ACT_DEADBAND < ACT_MARKS.docked - ACT_DEADBAND,
     "the verdict and the pane's dock overlap — the pane can open on a row that has not moved",
+  );
+  // The camera's tilt to the pane's head starts only past the dock latch's
+  // far edge — the pane has to EXIST before the camera moves toward it — and
+  // finishes inside the runway with dwell left on the full-chrome frame. The
+  // tilt is what put the pane's × back on screen (the owner's report:
+  // "i don't see the icons to close the right pane"); a tilt that starts
+  // before the dock would aim the camera at a pane that is not there.
+  const [dockPanFrom, dockPanTo] = ACT_MARKS.dockPan;
+  assert.ok(
+    dockPanFrom > ACT_MARKS.docked + ACT_DEADBAND,
+    `the dock tilt starts at ${dockPanFrom}, before the pane's latch can have fired (${ACT_MARKS.docked} + ${ACT_DEADBAND})`,
+  );
+  assert.ok(dockPanFrom < dockPanTo, "the dock tilt does not advance");
+  assert.ok(
+    dockPanTo < 0.95,
+    `the dock tilt ends at ${dockPanTo} — the full-chrome frame gets no dwell before the pin releases`,
   );
 
   // And the runway is long enough that those shares are worth real pixels. The
@@ -727,7 +744,24 @@ test("the page has a persistent path to its one conversion surface", () => {
   assert.match(
     sections,
     /<SectionShell id="access">/,
-    "AccessSection lost the id the nav anchors to — the anchor is dangling",
+    "AccessSection lost the id the nav anchors to — the anchor is dangling on A and C",
+  );
+
+  // B restages the same ACCESS copy in its spine language (`AccessPhase`),
+  // which therefore carries the id there — and must be the ONLY carrier on
+  // that page, or the anchor becomes ambiguous. The copy itself still comes
+  // from `ACCESS`, so the honesty scans above keep covering it.
+  const phase = graph.get(marketing("AccessPhase.tsx"));
+  assert.ok(phase, "AccessPhase.tsx is not in the landing graph — B's conversion surface is gone");
+  assert.match(phase, /id="access"/, "AccessPhase lost the id the nav anchors to");
+  for (const key of ["ACCESS.headline", "ACCESS.cap", "ACCESS.noSeat", "ACCESS.cta"]) {
+    assert.ok(phase.includes(key), `AccessPhase stopped rendering ${key} — the restaging rewrote copy`);
+  }
+  const pageB = graph.get(join(webRoot, "app", "landing-b", "page.tsx"));
+  assert.ok(pageB.includes("AccessPhase"), "landing-b no longer mounts AccessPhase");
+  assert.ok(
+    !pageB.includes("AccessSection"),
+    "landing-b mounts AccessSection alongside AccessPhase — two #access targets on one page",
   );
 });
 

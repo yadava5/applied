@@ -151,10 +151,16 @@ const TABLET_768 = { width: 768, height: 1024 };
  *  tweak that keeps the promise does not turn CI red. */
 const PROVENANCE = /A synthetic email .* computed live in this tab/;
 
-/** The descent's sticky artifact column (`lg`+ only). Below `lg` each screen
- *  carries its own inline snapshot, and those are the copies this must NOT
- *  measure. */
+/** A pinned rail (`lg`+ only) — the page's spine is four of them now, one
+ *  per phase, sides alternating (`ClaimsDescent`'s docblock). Below `lg` each
+ *  screen carries its own inline snapshot, and those are the copies this must
+ *  NOT measure. */
 const STICKY_EXHIBIT = "div.sticky.top-20";
+/** How many rails the spine runs at `lg`+: verdict (right), decision (left),
+ *  retention (right), access (left). A fifth means a phase forked its
+ *  staging; three means one dropped out of the language the page was chosen
+ *  for. */
+const RAIL_COUNT = 4;
 
 /**
  * Put the act at a given share of its PINNED RUNWAY — the same quantity
@@ -327,10 +333,10 @@ const activeCaption = (page: Page) =>
 
 /**
  * The closing sequence's playhead, in seconds. `ClosingAct` writes `--act-t`
- * on the band from its scroll progress and globals.css freezes every animation
- * at that time, so this one number is the whole state of the scene — and it is
- * the only thing that can distinguish "composed because the reader scrolled
- * there" from "composed because it ran on a timer".
+ * on the band from its own slowed clock once the scene is in view, and
+ * globals.css freezes every animation at that time — so this one number is
+ * the whole state of the scene: 0 before it has been seen, ACT_SECONDS once
+ * the play has genuinely finished, anything between mid-play.
  */
 async function playhead(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -455,11 +461,12 @@ test.describe("landing B (/landing-b)", () => {
     // 2 — the window, with the REAL board mounted in it (not the skeleton).
     await expect(page.locator("section[aria-label='The board, live']")).toBeVisible();
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
-    // 3 — the descent, and its sticky exhibit.
+    // 3 — the descent, and the spine's pinned rails: one per phase, no phase
+    // out of the language.
     await expect(
       page.getByRole("heading", { name: /The preview ends before the verdict/i }),
     ).toBeVisible();
-    await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(1);
+    await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(RAIL_COUNT);
     // 4 — the conversion surface and the closing act.
     await expect(page.getByRole("heading", { name: /One hundred seats/i })).toBeVisible();
     await expect(page.locator("section.act")).toHaveCount(1);
@@ -494,7 +501,13 @@ test.describe("landing B (/landing-b)", () => {
     // Arrived at the SPLIT stage: the wall label names it and both live
     // verdict chips have actually expanded (collapsed `grid-rows-[0fr]` gives
     // them a zero-height box, so `toBeVisible` discriminates).
-    const exhibit = page.locator(STICKY_EXHIBIT);
+    //
+    // The spine runs four rails now, so the verdict's is picked out by the
+    // one thing only it holds at `lg`+: the provenance line itself. (The
+    // retention record carries the same line, but in the FLOW column — the
+    // clip rails hold recordings, not emails.)
+    const exhibit = page.locator(STICKY_EXHIBIT).filter({ has: page.getByText(PROVENANCE) });
+    await expect(exhibit).toHaveCount(1);
     await expect(exhibit.locator("p").first()).toHaveText("The same body, classified twice");
     await expect(exhibit.getByText("preview only")).toBeVisible();
     await expect(exhibit.getByText("whole body")).toBeVisible();
@@ -575,6 +588,47 @@ test.describe("landing B (/landing-b)", () => {
       `the moved row is ${-below}px below the stage's bottom edge — it is clipped out of frame at beat 2`,
     ).toBeGreaterThanOrEqual(-1);
   });
+
+  /**
+   * SEED 2b — the dock tilt (2026-08-19, from the owner's report: "i don't
+   * see the icons to close the right pane"). The camera used to hold the
+   * board's foot for the whole docked beat, which crops the pane's header —
+   * its title, the `9 of 10` traversal row, its × — above the stage at every
+   * supported height, for the pane THE PAGE opened. `ACT_MARKS.dockPan` now
+   * tilts the camera up to the pane's measured head once the dock has
+   * latched, so the page never shows chrome the visitor cannot reach.
+   *
+   * Same property, same instrument as the visitor-opened case below: the
+   * close control's box inside the stage's clip rect — `toBeVisible` cannot
+   * see this, because a control panned out of an `overflow-clip` ancestor
+   * still reports real coordinates. Driven to the tilt's END mark plus the
+   * settle the measurement needs (the pane mounts after the dock latch, and
+   * LandingBoard re-measures it through a ResizeObserver).
+   */
+  for (const viewport of [DESKTOP_1024_768, DESKTOP_1024]) {
+    const size = `${viewport.width}x${viewport.height}`;
+    test(`the page-docked pane keeps its close control in frame at ${size}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/landing-b");
+
+      await driveToBeatTwo(page);
+      await driveAct(page, past(ACT_MARKS.dockPan[1]));
+      await page.waitForTimeout(1_200); // pane measure + the one-off glide
+
+      const frame = await closeControlFrame(page);
+      expect("error" in frame ? frame.error : "", "the docked scene did not compose").toBe("");
+      if ("error" in frame) return;
+      expect(frame.stageHoldsControl, "the close control is not inside the stage").toBe(true);
+      expect(
+        frame.control.top - frame.stage.top,
+        `the pane's close control sits ${frame.stage.top - frame.control.top}px above the stage's top edge — the dock tilt never revealed the pane's own chrome`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(
+        frame.stage.bottom - frame.control.bottom,
+        "the pane's close control is below the stage's bottom edge",
+      ).toBeGreaterThanOrEqual(0);
+    });
+  }
 
   /**
    * SEED 3, and the one defect on this page that SHIPPED. The window crops a
@@ -940,34 +994,27 @@ test.describe("landing B (/landing-b)", () => {
   });
 
   /**
-   * The closing act plays once on scroll-into-view and HOLDS. "Holds" is the
-   * load-bearing half: the sequence is CSS with `forwards` fill and its
-   * observer disconnects, so a reader who scrolls past and comes back finds
-   * the composed end state rather than a blank band or a replay.
+   * The closing act PLAYS ITSELF — once, slowed, to completion — and HOLDS.
+   * Retargeted 2026-08-19 (owner's call) off the scroll-scrub contract this
+   * test held for a few hours: the ending is narration, not an artifact the
+   * reader operates, so the playhead belongs to ClosingAct's own clock once
+   * the scene is in view, and scrolling back up finds it FINISHED rather
+   * than un-drawn. The rewind assertions left with the scrub.
+   *
+   * The drive is the case that has failed every prior build: a flick
+   * straight to max scroll. The pin plus the band's position (last section,
+   * footer excepted) is what guarantees the scene is still on screen there,
+   * so the poll below is asserting the whole reconciliation — the play
+   * cannot be outrun, and it genuinely reaches its own end (~3.7s at
+   * AUTO_RATE; the poll's timeout is comfortably past it, so a stalled clock
+   * fails rather than flakes).
    *
    * The verdict's landing is asserted against the page's OWN declared seat —
    * the `.act__ripple` circle is drawn at the baseline seat and never moves —
    * so this is not a golden pixel: it says "the dot ends where the scene says
    * the full stop goes".
    */
-  /**
-   * REWRITTEN 2026-08-19, and both halves of the old test had died rather than
-   * broken:
-   *
-   *  · its premise grepped the section for `act--play` to prove "nothing has
-   *    played yet". The band now ships `act--play act--scrub` from the SERVER
-   *    (so a reader without JS gets the composed image instead of an empty
-   *    band), which made that read meaningless — the class is there before
-   *    anything can have happened. The honest premise is the PLAYHEAD:
-   *    `--act-t` has not advanced.
-   *  · its "and HOLDS" half asserted that scrolling away and back leaves the
-   *    scene composed. Against a scroll-bound sequence that is vacuous in one
-   *    direction and wrong in the other: away-and-back must return it to
-   *    exactly where the scroll says, which is the stronger property and the
-   *    one this now measures, together with the fact that it genuinely
-   *    UN-draws partway up.
-   */
-  test("the closing act's playhead is the reader's scroll position", async ({ page }) => {
+  test("the closing act plays itself once in view, and holds composed", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024);
     await page.goto("/landing-b");
 
@@ -1003,10 +1050,10 @@ test.describe("landing B (/landing-b)", () => {
     expect(await playhead(page), "the closing sequence advanced before it was seen").toBe(0);
 
     await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
-    // Scroll-bound, so the end state arrives with the scroll rather than after
-    // a timer; poll anyway because the write is rAF-throttled.
+    // The play runs on its own clock now; the poll's window is sized to the
+    // slowed sequence, not to a scroll.
     await expect
-      .poll(async () => (await compose()).askOpacity, { timeout: 6_000 })
+      .poll(async () => (await compose()).askOpacity, { timeout: 10_000 })
       .toBe(1);
 
     const played = await compose();
@@ -1028,33 +1075,24 @@ test.describe("landing B (/landing-b)", () => {
     expect(played.dashoffset).toBe("0px");
 
     // The playhead reached the end of the sequence rather than merely "far
-    // enough" — the band is the last thing before the footer, so a binding
-    // whose upper bound is unreachable would leave the page's closing image
-    // permanently a few frames short and nothing above would notice.
+    // enough" — a clock that stalls short would leave the page's closing
+    // image permanently a few frames from finished and nothing above would
+    // notice.
     expect(await playhead(page), "the sequence never reached its own end").toBeCloseTo(2.05, 2);
 
-    // It REVERSES. Back to the top and the playhead is home, with the sentence
-    // un-drawn — the property the scroll binding exists to give, and the one
-    // the old "and HOLDS" assertion contradicted.
+    // It HOLDS. The ending is watched once, like the sentence it draws:
+    // leaving and returning finds the finished frame — no rewind (the scrub's
+    // contract, retired), no surprise replay (the fire-once build's defect).
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-    await page.waitForTimeout(300);
-    expect(await playhead(page), "the closing sequence did not rewind").toBe(0);
-    expect(
-      (await compose()).dashoffset,
-      "the wordmark stayed drawn after the reader scrolled away — the scrub is one-way",
-    ).not.toBe("0px");
-
-    // …and coming back lands on exactly the same frame, not merely a composed
-    // one. Same scroll position, same playhead: that is what "a function of
-    // position" means.
+    await page.waitForTimeout(400);
     await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     const returned = await compose();
-    expect(await playhead(page)).toBeCloseTo(2.05, 2);
-    expect(returned.dashoffset, "the drawn sentence did not re-draw").toBe("0px");
+    expect(await playhead(page), "the finished play did not hold").toBeCloseTo(2.05, 2);
+    expect(returned.dashoffset, "the drawn sentence came apart on return").toBe("0px");
     expect(
       Math.abs(returned.dot!.y - returned.seat!.y),
-      "the verdict did not return to its seat",
+      "the verdict did not stay seated",
     ).toBeLessThanOrEqual(2);
   });
 
