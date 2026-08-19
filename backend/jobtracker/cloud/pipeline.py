@@ -589,7 +589,25 @@ _CORP_TAIL = re.compile(
 )
 
 # "Acme via Lever" / "Acme (Greenhouse)" tails that name the relay, not the co.
-_VIA_TAIL = re.compile(r"\s*(?:\bvia\b|\bthrough\b|\bon\b|[(\[]).*$", re.IGNORECASE)
+#
+# Applied ONLY to whitespace-canonicalised text — both callers collapse runs to a
+# single space first, and that is a precondition, not a nicety. The pattern used
+# to open with ``\s*`` and close with ``.*$``, and both were quadratic under
+# ``re.sub``, which retries at every start position (CodeQL py/polynomial-redos,
+# alert 80). ``\s*`` re-scanned a whitespace run from every offset inside it, and
+# ``.*$`` re-scanned a line from every offset whenever ``$`` was out of reach —
+# 2.1 s and 0.33 s respectively on an 8,000-character name, both growing as n².
+# A caller-supplied company string is unbounded (``ReviewClassifyRequest.company``),
+# so that is reachable, not theoretical.
+#
+# The leading ``\s*`` is gone because both callers ``.strip()`` the result, which
+# removes exactly the whitespace it used to eat. ``.*$`` is ``.*\Z`` under DOTALL
+# because on single-line input the two are the same match and the second cannot
+# fail, so it never backtracks. Both rewrites are equivalence-checked against the
+# old pattern over the test corpus in ``test_company_name_regexes_are_linear.py``.
+_VIA_TAIL = re.compile(
+    r"(?:\bvia\b|\bthrough\b|\bon\b|[(\[]).*\Z", re.IGNORECASE | re.DOTALL
+)
 
 # A capitalized proper-noun-ish company token (leading capital, up to 3 words).
 _COMPANY_CAPTURE = r"[A-Z][A-Za-z0-9&.\-']*(?:\s+[A-Z0-9][A-Za-z0-9&.\-']*){0,3}"
@@ -634,7 +652,14 @@ _EMPLOYER_BARE_AT = re.compile(r"(?i:\bat\s+)(" + _COMPANY_CAPTURE + r")")
 # a person's mail is where they occur, and a person's mail is exactly what the
 # relay test excludes. Steps 3 and 4 of :func:`resolve_employer` are fenced off
 # the same way, for the same reason.
-_EMPLOYER_AT_SIGN = re.compile(r"@\s*(" + _COMPANY_CAPTURE + r")\s*[!?.]*\s*$")
+# The trailing run is POSSESSIVE. ``\s*[!?.]*\s*$`` holds two whitespace
+# quantifiers either side of a punctuation one, so a subject ending in a long
+# run of spaces made the engine try every way of splitting that run between them
+# — 0.45 s on an 8,000-character subject, quadratic. No successful match ever
+# needed those retries (giving a space back leaves ``[!?.]*`` facing whitespace,
+# which it cannot match), so committing is equivalence-preserving; it is proven
+# exhaustively over short strings rather than argued.
+_EMPLOYER_AT_SIGN = re.compile(r"@\s*(" + _COMPANY_CAPTURE + r")\s*+[!?.]*+\s*+$")
 
 # ...but an at-sign is also what an EMAIL ADDRESS is made of, so a capture whose
 # dot is followed by more letters is a hostname ("… @ Careers.Acme.com") and is
@@ -666,7 +691,13 @@ _NAME_ROLE_TAIL = re.compile(
 
 # A display name that is really an email address ("no-reply@ashbyhq.com"), which
 # names the relay, never the employer.
-_NAME_IS_ADDRESS = re.compile(r"^\S+@\S+\.\S+$")
+# Written as an unrolled loop rather than the obvious ``^\S+@\S+\.\S+$``: three
+# greedy ``\S+`` runs separated by the very characters they can also match is
+# quadratic (0.23 s on 8,000 at-signs). This form pins each run to the FIRST
+# delimiter after it, which is the same language — the earliest ``@`` past index 0
+# leaves the longest tail, so if any split satisfies the old pattern that one does
+# — with no ambiguity left to backtrack through.
+_NAME_IS_ADDRESS = re.compile(r"^\S[^\s@]*@[^\s][^\s.]*\.[^\s]+$")
 
 # Pure filler that is never itself a role title (kept SEPARATE from the company
 # stopwords, which reject legitimate title words like "Software"/"Engineer").
@@ -1258,9 +1289,26 @@ def _valid_company_token(token: str) -> bool:
 
 
 def _clean_company_display(raw: str) -> str:
-    """Trim a captured company string to a clean human display name."""
+    r"""Trim a captured company string to a clean human display name.
 
-    text = _VIA_TAIL.sub("", raw or "").strip()
+    Whitespace is canonicalised FIRST rather than last. Every regex below is
+    written for a one-line name, and until now nothing enforced that a name is
+    one line. Two ways in: the USER-typed path (:func:`employer_from_text`, fed
+    by the review-classify body, an unbounded JSON string), and — checked, not
+    assumed — the extraction patterns themselves, because
+    :data:`_COMPANY_CAPTURE`'s inter-word ``\s+`` matches a newline as happily
+    as a space. Only :data:`_SUBJECT_COMPANY`, whose class is ``[\w&.\- ]``,
+    cannot produce one.
+
+    Collapsing at the door makes every caller obey the assumption the rest of
+    the module already makes, and it is what keeps :data:`_VIA_TAIL` linear.
+    It is also a behaviour change on exactly those inputs, deliberately: see
+    ``test_company_name_regexes_are_linear.py``, which pins both the old and the
+    new answer for a newline-bearing name.
+    """
+
+    text = re.sub(r"\s+", " ", raw or "")
+    text = _VIA_TAIL.sub("", text).strip()
     text = _CORP_TAIL.sub("", text).strip(" ,.-&")
     text = re.sub(r"\s+", " ", text)
     return text
@@ -1331,7 +1379,8 @@ def _clean_sender_display_name(raw: str) -> str:
     contains one of those words keeps it.
     """
 
-    text = _VIA_TAIL.sub("", raw or "").strip()
+    text = re.sub(r"\s+", " ", raw or "")  # see _clean_company_display
+    text = _VIA_TAIL.sub("", text).strip()
     for _ in range(4):  # bounded: "Acme Talent Acquisition" needs two passes
         stripped = _NAME_ROLE_TAIL.sub("", text).strip(" ,.-&|")
         if stripped == text:
@@ -2210,15 +2259,19 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
             #
             # Reporting only. Nothing below this line changes what is returned.
             if item.confidence >= AUTO_FILE_GATE:
+                # Category, confidence and message id — the three facts the
+                # brief above asks for. The sender's ADDRESS used to ride along
+                # and no longer does: it is the user's correspondent, it is
+                # mail-derived, and the message id already names the message it
+                # came from (see ``_warn_if_capped`` in cloud/applications.py).
                 logger.warning(
                     "Pipeline dropped a confident verdict: category=%s "
-                    "confidence=%.2f message_id=%s sender=%s. It is neither a "
+                    "confidence=%.2f message_id=%s. It is neither a "
                     "lifecycle category that can be filed nor needs_review, so "
                     "it produced no application row and no review-queue entry.",
                     item.category,
                     item.confidence,
                     item.message_id,
-                    item.sender_email,
                 )
             continue
 

@@ -401,11 +401,16 @@ async def test_an_incremental_scan_that_never_saw_the_rejection_still_reopens(
     assert await _linked(test_session, row_id) == {"k1", "k2", "k3"}
 
     # The log line is the entire monitoring story for this transition, so it has
-    # to name the row and both instants that licensed it.
+    # to name the row and both instants that licensed it. It names the row by
+    # ID and no longer by company: a company name beside a user id says where
+    # this person applied, which is the disclosure CodeQL alert 178 was about
+    # (see ``_warn_if_capped``). The id answers the same question and the
+    # employer is one lookup away in the row it points at.
     reopened = [rec for rec in caplog.records if "Reopened" in rec.getMessage()]
     assert len(reopened) == 1
     message = reopened[0].getMessage()
-    assert str(row_id) in message and "Acme" in message
+    assert f"id={row_id}" in message
+    assert "Acme" not in message
     assert str(at(100)) in message and str(at(200)) in message
 
 
