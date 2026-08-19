@@ -7,14 +7,28 @@ import { SCENES } from "./scenes.mjs";
  * screen, so this one was recorded by hand off the deployed app. Its source is
  * `oauth/oauth-raw.mov` under the frames directory, it is 11 MB, and it is not
  * committed — see `scripts/footage/README.md` for what re-recording it takes.
+ *
+ * HELD OUT OF `CLIPS`, AND THEREFORE OUT OF `public/footage/`, since
+ * 2026-08-19. The recording is the best privacy exhibit in the repository —
+ * Google's own consent screen stating the single permission — and that same
+ * screen names `jobtracker-api-seven.vercel.app`, the host from before the
+ * JobTracker → Applied rename, so on a page selling Applied it reads as
+ * consent granted to a different product (copy.ts argues why cropping the
+ * host line out would be worse). Nothing referenced the encoded files —
+ * `components/marketing/footage.ts` never listed the id — so ~430 KB shipped
+ * on every deploy for no frame anyone could reach. The definition stays so
+ * the clip can come back the day it is honest: rename the Google Cloud OAuth
+ * client, re-record the consent flow by hand off the deployed app, then put
+ * `HAND_CAPTURED.id` back at the head of `CLIPS`.
  */
 export const HAND_CAPTURED = {
   id: "gmail-connects",
   source: "oauth/oauth-raw.mov",
 };
 
-/** Every clip under `public/footage/`, in the order the page argues them. */
-export const CLIPS = [HAND_CAPTURED.id, ...SCENES.map((s) => s.id)];
+/** Every clip under `public/footage/`, in the order the page argues them.
+ *  `HAND_CAPTURED.id` belongs at its head once re-recorded — see above. */
+export const CLIPS = [...SCENES.map((s) => s.id)];
 
 /**
  * Which frame each poster is taken from, in seconds into the COMPOSED clip.
