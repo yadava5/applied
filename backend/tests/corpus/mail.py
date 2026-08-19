@@ -76,6 +76,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from jobtracker.cloud.gmail_client import _html_to_text as _cloud_html_to_text
+
 from .generator import _POOL
 
 # ── the shape of one case ────────────────────────────────────────────────────
@@ -133,8 +135,6 @@ class MailCase:
 # ── payload construction: Gmail ``format=full`` shapes ───────────────────────
 
 _WS = re.compile(r"\s+")
-_SCRIPT_OR_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.I)
-_TAG = re.compile(r"<[^>]+>")
 
 
 def collapse(text: str) -> str:
@@ -217,9 +217,16 @@ def snippet_of(text: str) -> str:
 
 
 def html_to_text(markup: str) -> str:
-    """Mirror of ``gmail_client._html_to_text``, used only to build snippets."""
+    """``gmail_client._html_to_text`` itself, used only to build snippets.
 
-    return collapse(_TAG.sub(" ", _SCRIPT_OR_STYLE.sub(" ", markup)))
+    It used to be a hand-copied mirror, which is a fixture that can quietly
+    stop describing the thing it fixtures: the copy carried the same
+    ``</script>`` end-tag bug and would have kept carrying it after the
+    original was fixed. Calling the real function costs nothing here and
+    removes the drift.
+    """
+
+    return _cloud_html_to_text(markup)
 
 
 # ── the invented cast ────────────────────────────────────────────────────────

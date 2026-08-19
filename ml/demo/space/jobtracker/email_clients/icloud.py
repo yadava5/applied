@@ -33,6 +33,7 @@ from typing import Optional
 from aioimaplib import IMAP4_SSL
 
 from jobtracker.credentials import ICloudCredentials, get_icloud_credentials
+from jobtracker.email_clients.html_text import SCRIPT_OR_STYLE, TAG, WHITESPACE
 
 logger = logging.getLogger(__name__)
 
@@ -545,10 +546,10 @@ class ICloudClient:
 
     def _strip_html(self, html: str) -> str:
         """Convert HTML to plain text for snippet/search fallback."""
-        html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.I)
-        html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.I)
-        html = re.sub(r"<[^>]+>", " ", html)
-        html = re.sub(r"\s+", " ", html)
+        # Script/style bodies go first, or they survive tag stripping as text.
+        html = SCRIPT_OR_STYLE.sub(" ", html)
+        html = TAG.sub(" ", html)
+        html = WHITESPACE.sub(" ", html)
         return html.strip()
 
     def _replace_cid_sources(self, html: str, cid_attachments: dict[str, str]) -> str:
