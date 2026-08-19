@@ -1,14 +1,22 @@
--- Applied: the profile-photo bucket, 2026-08-19. Run in the Supabase SQL editor.
+-- Applied: the profile-photo bucket, 2026-08-19.
 --
--- NOT APPLIED BY ANYTHING AUTOMATIC, and that is deliberate. This creates the
--- project's FIRST storage bucket (`select id from storage.buckets` is empty
--- today) and its first storage RLS policies, in a product mid-way through a
--- Google restricted-scope review. New security surface of that kind gets read
--- before it gets run. Until it is run, the product degrades honestly rather
--- than breaking: a Google user's photo still appears (it never touches this
--- bucket -- see apps/web/lib/profile/avatar.ts), the upload control answers
--- "Photo uploads aren't enabled on this deployment yet", and closing an
--- account treats a missing bucket as "no photos to remove" instead of refusing.
+-- APPLIED TO PRODUCTION 2026-08-19, and recorded in Supabase's own migration
+-- table as `avatars_bucket_and_owner_scoped_policies`. `select * from
+-- supabase_migrations.schema_migrations` is the authority on whether a given
+-- environment has it; this file is the reviewable source of what was run.
+--
+-- This is DELIBERATELY NOT an alembic revision. CI runs `alembic upgrade head`
+-- against SQLite (tests/test_alembic.py), which has neither RLS machinery nor a
+-- `storage` schema, so such a revision would have to be gated on the dialect
+-- AND on the schema existing -- two guards that CI can never exercise. A
+-- migration that silently no-ops everywhere it is tested is not a migration,
+-- it is a check that cannot fail. Supabase's migration table is the record.
+--
+-- RE-RUNNABLE. The bucket upserts and each policy is dropped before it is
+-- created, so a partial application can be re-run without a manual cleanup.
+-- The original form of this file was not re-runnable: `create policy` has no
+-- `if not exists`, so a second run aborted the whole transaction.
+--
 --
 -- WHAT IT CREATES
 --
@@ -52,9 +60,19 @@ begin;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('avatars', 'avatars', true, 524288, array['image/webp', 'image/png'])
-on conflict (id) do nothing;
+on conflict (id) do update
+  set public             = excluded.public,
+      file_size_limit    = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
 
 -- storage.objects already has RLS enabled by Supabase; these are additive.
+-- Dropped first so the file is re-runnable; inside the transaction there is
+-- no instant where the bucket is readable without a predicate.
+
+drop policy if exists "avatars: read own folder"   on storage.objects;
+drop policy if exists "avatars: insert own folder" on storage.objects;
+drop policy if exists "avatars: update own folder" on storage.objects;
+drop policy if exists "avatars: delete own folder" on storage.objects;
 
 create policy "avatars: read own folder"
   on storage.objects for select
