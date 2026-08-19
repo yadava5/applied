@@ -472,6 +472,13 @@ export function MarketingBoard({ verdict, docked, onVisitorOpen }: {
         // performs has to be watchable by a visitor who does not know which
         // row is about to travel. Resting mounts keep the product's own 220ms.
         travel={choreographed ? VERDICT_TRAVEL.duration : undefined}
+        // A visitor's own open still takes focus; what it must not take is
+        // the page. The pane lives inside LandingBoard's camera crop on a
+        // pinned runway, and the browser's reveal-the-focused-element scroll
+        // moved the document 165px (measured, 1024×768, beat-0 row click) —
+        // which IS the act's clock, so the choreography moved with it. The
+        // camera's release is the frame's own way of revealing the pane.
+        focusScrollOnOpen={false}
       />
     </div>
   );

@@ -102,11 +102,16 @@ export function WindowAct() {
   const runwayRef = useRef<HTMLElement>(null);
   const wide = useWideViewport();
 
-  /** What the frame paints, published once and never re-created: three
+  /** What the frame paints, published once and never re-created: four
    *  scrubbed values the reader's scroll moves directly (see LandingBoard's
    *  `ActCamera`). None of them is a reason to render. */
   const camera = useMemo<ActCamera>(
-    () => ({ pan: createSignal(0), receiptFade: createSignal(0), receiptRise: createSignal(0) }),
+    () => ({
+      pan: createSignal(0),
+      dockPan: createSignal(0),
+      receiptFade: createSignal(0),
+      receiptRise: createSignal(0),
+    }),
     [],
   );
 
@@ -148,6 +153,7 @@ export function WindowAct() {
       // (react-hooks/set-state-in-effect).
       const raf = requestAnimationFrame(() => {
         camera.pan.set(0);
+        camera.dockPan.set(0);
         camera.receiptFade.set(0);
         camera.receiptRise.set(0);
         readProgress(0);
@@ -169,6 +175,7 @@ export function WindowAct() {
     return trackProgress(runway, ACT_WINDOW, (progress) => {
       const rise = span(ACT_MARKS.receipt, progress);
       camera.pan.set(span(ACT_MARKS.pan, progress));
+      camera.dockPan.set(span(ACT_MARKS.dockPan, progress));
       camera.receiptRise.set(rise);
       camera.receiptFade.set(Math.min(1, rise / RECEIPT_FADE));
       readProgress(progress);

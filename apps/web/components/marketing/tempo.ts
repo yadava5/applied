@@ -93,6 +93,21 @@ export const ACT_MARKS = {
    *  crosses both marks in one flick never sees the pane open on a row that
    *  is still in the air. */
   docked: 0.72,
+  /**
+   * The camera's TILT back up to the pane's own head, scrubbed. The dock used
+   * to hold at the board's foot, which crops the pane's header — its title,
+   * the `9 of 10` traversal row and its × — above the stage at every viewport
+   * height (measured at 1024×768: the pane starts 140px above the crop). The
+   * owner's verdict on that trade was final: a pane whose close control is
+   * off-screen is broken chrome, not a composition. So once the pane has
+   * docked the camera pans up until the pane's head clears the frame
+   * (`LandingBoard` measures the pane's own box), trading the moved row —
+   * which the reader has just watched arrive, and whose identity the pane's
+   * title now carries — for the mail's full chrome. Starts past the dock
+   * latch's far edge (0.72 + deadband) so the pane exists before the camera
+   * moves toward it, and reverses with the scroll like every other move.
+   */
+  dockPan: [0.76, 0.88],
 } as const;
 
 /**

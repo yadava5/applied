@@ -271,6 +271,7 @@ export function ApplicationDetail({
   onTraverse,
   transport = liveBoardTransport,
   focusOnOpen = true,
+  focusScrollOnOpen = true,
 }: {
   /** The card being inspected; `null` keeps the detail closed. */
   app: Application | null;
@@ -302,6 +303,17 @@ export function ApplicationDetail({
    * would be the page acting on its own.
    */
   focusOnOpen?: boolean;
+  /**
+   * Whether that focus may also SCROLL the page to reach the pane. True — the
+   * default, and every product surface — because focus that lands off-screen
+   * is focus lost. False only for the marketing embeds' framed window: the
+   * pane sits inside a camera crop on a pinned runway, so the browser's
+   * reveal-the-focused-element scroll yanks the whole page (measured: 165px
+   * at 1024×768 on a beat-0 row click) and, because the runway's scroll
+   * position IS the act's clock, drags the choreography with it. The frame
+   * has its own camera for revealing the pane (LandingBoard's release).
+   */
+  focusScrollOnOpen?: boolean;
 }) {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -445,6 +457,12 @@ export function ApplicationDetail({
   useEffect(() => {
     focusOnOpenRef.current = focusOnOpen;
   }, [focusOnOpen]);
+  // Same ref treatment, same reason: the open effect keys on `dockedOpen`
+  // alone, and this prop must never be what re-runs it.
+  const focusScrollRef = useRef(focusScrollOnOpen);
+  useEffect(() => {
+    focusScrollRef.current = focusScrollOnOpen;
+  }, [focusScrollOnOpen]);
   useEffect(() => {
     if (!dockedOpen) return;
     // A seeded open takes no focus and therefore owes no restore — the
@@ -455,7 +473,7 @@ export function ApplicationDetail({
     const pane = dockedRef.current;
     restoreFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    pane?.focus();
+    pane?.focus(focusScrollRef.current ? undefined : { preventScroll: true });
     return () => {
       const previous = restoreFocusRef.current;
       restoreFocusRef.current = null;
