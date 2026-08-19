@@ -84,8 +84,14 @@ export function PrivacySection() {
  * This is the page's ONE conversion surface, which is why it carries the id
  * the nav's "Get access" anchors to (`ACCESS_ANCHOR`). Every variant renders
  * it exactly once, so the anchor cannot become ambiguous.
+ *
+ * `exhibit` is optional and OPT-IN, so this stays one section shared by three
+ * variants rather than becoming three. Landing B passes a recording of the
+ * import page doing what the CTA promises — the button's own evidence, beside
+ * the button — because the fallback path was the one claim on the page with
+ * nothing behind it. A and C pass nothing and are unchanged.
  */
-export function AccessSection() {
+export function AccessSection({ exhibit }: { exhibit?: React.ReactNode }) {
   return (
     <SectionShell id="access">
       <Reveal className="max-w-2xl">
@@ -114,6 +120,7 @@ export function AccessSection() {
           </span>
         </div>
       </Reveal>
+      {exhibit && <div className="mt-12">{exhibit}</div>}
     </SectionShell>
   );
 }

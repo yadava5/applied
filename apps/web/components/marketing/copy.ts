@@ -261,14 +261,30 @@ export const CLAIMS = {
 } as const;
 
 /**
- * The words around the one product recording the descent plays
- * (`ProductClip`, wired into the decision claim).
+ * The words around the product recordings the page plays (`ProductClip`).
  *
- * Three clips were recorded; one is placed. `board-syncs` has no sentence in
- * the descent that describes what it shows — the test a clip has to pass here
- * is that the paragraph beside it already says what the frames say, without
- * the reader being told — and `gmail-connects` shows the consent screen for
- * the pre-rename host, which is not something a sales page can put on screen.
+ * THREE ARE PLACED, and the test each one had to pass is that the paragraph
+ * beside it already says what the frames say, without the reader being told:
+ *
+ *   · `rules-read-the-body` against the decision claim — the layer that ships,
+ *     answering a body on its own;
+ *   · `board-syncs` against the retention claim's first sentence, "the
+ *     classifier reads a message's body to decide, then discards it". The clip
+ *     is the READING — a pass of mail going in — and the exhibit beneath it is
+ *     what comes out. Two halves of one sentence, in two media;
+ *   · `import-classifies` against the access claim — the page's second CTA,
+ *     which promised "it is parsed and classified in your browser" and had no
+ *     evidence anywhere.
+ *
+ * A FOURTH EXISTS AND IS DELIBERATELY NOT ON THE PAGE. `gmail-connects` is the
+ * best privacy exhibit in the repository — Google's own consent screen stating
+ * the single permission — and Google's screen names `jobtracker-api-seven.vercel.app`,
+ * the host from before the JobTracker → Applied rename. On a page selling
+ * Applied that reads as consent being granted to a different product, and the
+ * only honest fixes are outside this file: rename the Google Cloud OAuth
+ * client, then re-record. Cropping the host line out would leave Google
+ * stating a permission with the grantee removed, which is worse than not
+ * showing it. Do not place it until it has been re-recorded.
  *
  * `label` is the wall label, the same device the travelling exhibit uses. It
  * is not decoration: the board embed on this same page advertises itself as
@@ -277,10 +293,12 @@ export const CLAIMS = {
  */
 export const FOOTAGE = {
   label: "Recorded in the app",
-  /** The clip's own control. It is the reduced-motion path — nothing autoplays
-   *  there — and the way anyone re-watches five seconds they scrolled past. */
+  /** The clip's own controls. Clips LOOP now, so the pair is play/pause — the
+   *  action a reader actually has — rather than the old "Replay", which is the
+   *  control for a recording that has stopped, and none of these stop. Pause is
+   *  also the whole of the reduced-motion path, where nothing autoplays. */
   play: "Play",
-  replay: "Replay ↺",
+  pause: "Pause",
   rules: {
     /**
      * The accessible name. A silent screen recording carries all of its
@@ -298,6 +316,32 @@ export const FOOTAGE = {
      */
     caption:
       "The classifier sandbox on the demo page, recorded there. The confidence beside the verdict is this one email's, scored live by the rules layer — not the benchmark above it.",
+  },
+  sync: {
+    name:
+      "Screen recording: one press of Sync on Applied's demo board. The counters at the head of the board rise as new mail is filed, the applied group's own count follows, and the status line beside them says how many messages the pass filed and how many it had already seen.",
+    /**
+     * Scoped, like the rules caption, and for the same reason: the counters in
+     * the frame are the demo's fixture mailbox, not a claim about anyone's real
+     * volume. What the clip is evidence FOR is the paragraph beside it — that a
+     * pass reads mail — and the exhibit below it is what a read message leaves
+     * behind. No number here: the frame states its own.
+     */
+    caption:
+      "The demo board's own Sync, recorded there. The strip counts the pass — what it filed, and what it had already seen.",
+  },
+  import: {
+    name:
+      "Screen recording: the sample export on Applied's import page is classified in the browser tab. Under the on-device notice the counters arrive together — how many messages were scanned, how many were filed automatically and at what share, how many are held for review, and the format the file was read as.",
+    /**
+     * The caption's job is the one thing a viewer might read as a fault: the
+     * numbers appear in a single frame. That is not a cut hiding a wait, it is
+     * the absence of one — the parsing and the classifying happen in the tab,
+     * so there is no request to watch. Saying so turns the clip's one oddity
+     * into its claim.
+     */
+    caption:
+      "The import page, recorded on its public route. Nothing is uploaded and nothing is waited on, which is why the counters arrive in a single frame.",
   },
 } as const;
 

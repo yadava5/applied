@@ -273,9 +273,14 @@ export const SCENES = [
     viewport: { width: 780, height: 900 },
     /** Raised from 580 for THIS scene: it is placed at 768 CSS px in the
      *  access claim, not in the 416px artifact column the shared ceiling was
-     *  derived for. At 720 into 768 the product's own type renders at 1.07x —
-     *  nearer its authored size than any other clip on the page. */
-    maxCropW: 720,
+     *  derived for. At 744 into 768 the product's own type renders at 1.03x —
+     *  nearer its authored size than any other clip on the page.
+     *
+     *  744 and not 720: the column is 720 CSS px and `boxOf` pads it by 12 a
+     *  side, so a 720 ceiling trimmed the pad off ONE side and sliced the
+     *  fourth stats cell — the one that names the format — in half. A ceiling
+     *  that cuts the frame it is supposed to protect is worse than no ceiling. */
+    maxCropW: 744,
     /**
      * The sample export's four senders. They are synthetic (`SAMPLE_MBOX` in
      * components/import/ImportMail.tsx) so nothing here is protecting a real
@@ -323,7 +328,13 @@ export const SCENES = [
       // remembered number on the page, because the thing it measures does not
       // exist yet when the frame is chosen.
       const dropZone = page.getByTestId("import-sample").locator("xpath=../..");
-      const box = await boxOf(page, [dropZone, page.getByRole("note").first()]);
+      // The drop target carries ~110px of its own top padding above the
+      // envelope glyph, which is right on a page and is dead frame in a clip.
+      // Trimmed, not re-styled: the recording shows the shipped layout, and
+      // the crop is where a frame gets chosen.
+      const box = await boxOf(page, [dropZone, page.getByRole("note").first()], {
+        trim: { top: 56 },
+      });
       return { ...box, height: Math.round(box.height + this.measured.run) };
     },
     async run(page) {
