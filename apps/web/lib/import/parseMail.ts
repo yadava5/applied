@@ -143,6 +143,7 @@ function decodeQuotedPrintable(input: string, isHeader = false): string {
   let s = input.replace(/=\r?\n/g, "");
   if (isHeader) s = s.replace(/_/g, " ");
   const bytes: number[] = [];
+  const encoder = new TextEncoder(); // hoisted: one per call, not one per char
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (ch === "=" && i + 2 < s.length && /[0-9A-Fa-f]{2}/.test(s.slice(i + 1, i + 3))) {
@@ -150,7 +151,7 @@ function decodeQuotedPrintable(input: string, isHeader = false): string {
       i += 2;
     } else {
       // Push the UTF-8 bytes of this character.
-      for (const b of new TextEncoder().encode(ch)) bytes.push(b);
+      for (const b of encoder.encode(ch)) bytes.push(b);
     }
   }
   return new TextDecoder("utf-8", { fatal: false }).decode(Uint8Array.from(bytes));
@@ -185,19 +186,164 @@ export function parseFrom(value: string): { name: string | null; email: string }
 // Body extraction
 // ---------------------------------------------------------------------------
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/\s+/g, " ")
-    .trim();
+/**
+ * Named character references we resolve. Deliberately short: the five HTML
+ * predefined names, the spaces, and the punctuation that actually turns up in
+ * recruiting mail. Everything else is reachable numerically, and an unknown
+ * `&name;` is left exactly as written rather than guessed at.
+ */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ensp: " ",
+  emsp: " ",
+  thinsp: " ",
+  shy: "",
+  ndash: "\u2013",
+  mdash: "\u2014",
+  hellip: "\u2026",
+  lsquo: "\u2018",
+  rsquo: "\u2019",
+  ldquo: "\u201c",
+  rdquo: "\u201d",
+  bull: "\u2022",
+  middot: "\u00b7",
+  copy: "\u00a9",
+  reg: "\u00ae",
+  trade: "\u2122",
+};
+
+const ENTITY = /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{0,30});/g;
+
+/**
+ * Decode character references in ONE pass.
+ *
+ * This is the whole point of the function: a chain of sequential replacements
+ * re-reads its own output, so `&amp;` → `&` first turns `&amp;lt;` into `&lt;`
+ * into `<` — text that was escaped precisely so it would NOT be markup comes
+ * out as markup (CodeQL `js/double-escaping`). One regex, each reference
+ * resolved once and never revisited, makes that unrepresentable.
+ */
+function decodeEntities(text: string): string {
+  return text.replace(ENTITY, (whole, ref: string) => {
+    if (ref[0] === "#") {
+      const hex = ref[1] === "x" || ref[1] === "X";
+      const cp = parseInt(hex ? ref.slice(2) : ref.slice(1), hex ? 16 : 10);
+      // Reject NUL, surrogates and out-of-range values rather than throwing.
+      if (!cp || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return whole;
+      return String.fromCodePoint(cp);
+    }
+    return NAMED_ENTITIES[ref.toLowerCase()] ?? whole;
+  });
+}
+
+/** Elements whose content is data, not text: dropped along with the element. */
+const RAW_TEXT_END: Record<string, RegExp> = {
+  // HTML ends a raw-text element at `</name` followed by whitespace, `/` or
+  // `>` — `</script >` and `</script foo=bar>` close it just as `</script>`
+  // does. Matching only the literal `</script>` is CodeQL `js/bad-tag-filter`,
+  // and it left the element's contents in the text we score.
+  script: /<\/script(?=[\s/>])/gi,
+  style: /<\/style(?=[\s/>])/gi,
+};
+
+/** `<` + a tag name at `lt`, or null when the `<` is just prose ("3 < 4"). */
+const TAG_OPEN = /<(\/?)([a-zA-Z][^\s/>]*)/y;
+
+/** Index just past the `>` that ends the tag opened at `from`, or -1. */
+function endOfTag(html: string, from: number): number {
+  let quote = "";
+  for (let i = from; i < html.length; i++) {
+    const ch = html[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Reduce an HTML body to the plain text the classifier scores.
+ *
+ * A hand-rolled scanner rather than a chain of regexes, and rather than
+ * `DOMParser`, on purpose. `DOMParser` would be the more correct parser, but
+ * it exists only on a window: not in a worker (where the file's own "keep the
+ * tab responsive" bound points), not under SSR, and not in `node --test` —
+ * which would leave the shipped path covered by nothing but a fallback. This
+ * module's contract is pure, dependency-free JavaScript that runs anywhere, so
+ * the scanner is what gets tested and what ships. It is immune to the tag
+ * shapes a regex misses: an attribute value holding `>`, a comment holding
+ * `>`, and every legal spelling of an end tag.
+ *
+ * Every removed construct becomes one space, so `a<br>b` stays two words.
+ * Entities are decoded only AFTER markup is gone, so a decoded `<` can never
+ * be re-read as a tag.
+ */
+export function stripHtml(html: string): string {
+  let out = "";
+  let i = 0;
+
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, lt);
+
+    if (html.startsWith("<!--", lt)) {
+      const end = html.indexOf("-->", lt + 4);
+      out += " ";
+      i = end === -1 ? html.length : end + 3;
+      continue;
+    }
+
+    TAG_OPEN.lastIndex = lt;
+    const open = TAG_OPEN.exec(html);
+    if (!open) {
+      // `<!doctype…>`, `<?…>`, `</ …>`: bogus comments, swallowed to the
+      // next `>`. Anything else is a literal `<` in prose.
+      const next = html[lt + 1];
+      if (next === "!" || next === "?" || next === "/") {
+        const end = html.indexOf(">", lt + 1);
+        out += " ";
+        i = end === -1 ? html.length : end + 1;
+      } else {
+        out += "<";
+        i = lt + 1;
+      }
+      continue;
+    }
+
+    const end = endOfTag(html, TAG_OPEN.lastIndex);
+    if (end === -1) {
+      // No closing `>` before EOF — not a tag at all; keep it as text.
+      out += html.slice(lt);
+      break;
+    }
+    out += " ";
+    i = end;
+
+    const rawEnd = open[1] ? undefined : RAW_TEXT_END[open[2].toLowerCase()];
+    if (rawEnd) {
+      rawEnd.lastIndex = end;
+      const close = rawEnd.exec(html);
+      // An unterminated <script>/<style> runs to EOF: its source is data, and
+      // spilling it into the body would be the bug this guards against.
+      const after = close ? endOfTag(html, close.index + close[0].length) : -1;
+      i = close ? (after === -1 ? html.length : after) : html.length;
+    }
+  }
+
+  return decodeEntities(out).replace(/\s+/g, " ").trim();
 }
 
 function decodeBody(body: string, encoding: string | undefined, isHtml: boolean): string {
