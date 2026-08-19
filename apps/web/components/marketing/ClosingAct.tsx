@@ -330,8 +330,21 @@ const ACT_SECONDS = 2.05;
  *                  replay hint. Single gestures; they read at speed.
  *
  * EVERY BEAT IS DERIVED, NOT TRANSCRIBED (2026-08-19; the middle beat moved
- * 0.3 → 0.32 to make that literally true — 20ms of playhead map, invisible
- * at any scroll position). Beat 1 is the rail's `--d` plus its draw duration;
+ * 0.3 → 0.32 to make that literally true, so the rail's draw now completes
+ * exactly at its stop instead of sitting at 93.3% of it).
+ *
+ * That move is sub-perceptual in motion, NOT invisible — an earlier draft of
+ * this comment claimed the latter and it is measurably false. It changes only
+ * the playhead map (`ACT_STOPS`, `ACT_SECONDS` and every CSS delay and
+ * duration are unchanged), and the endpoints are identical: p ≥ 0.68 and p = 1
+ * render the same frame under both maps. Strictly inside, it does not: the
+ * deviation peaks at exactly 20ms at p = 0.1, which at 1024×768 is up to 52px
+ * of drawn length on the longest letter. That is a 6.7% tempo change over the
+ * first 150px of a 1500px runway and no reader sees the counterfactual, but a
+ * golden-screenshot gate keyed to a fixed scroll offset on this act WOULD go
+ * red on it. Say sub-perceptual, not invisible.
+ *
+ * Beat 1 is the rail's `--d` plus its draw duration;
  * beat 2 is the last stroke's `--d` plus the shared draw duration (0.5 + 0.4);
  * `ACT_SECONDS` is the replay hint's delay plus its duration (1.55 + 0.5).
  * `tests/unit/closing-act-tempo.test.mjs` recomputes all three from
@@ -498,7 +511,7 @@ export function ClosingAct() {
           keyed scene so a replay never yanks a link out from under a click. */}
       {/* `my-auto` is the pinned frame's composition, not a convenience. The
           stage is a full viewport and the ask + scene fill only part of it —
-          at 1024×768, measured on the built page, ~630px of surplus — and
+          at 1024×768, measured on the built page, 316px of surplus — and
           with everything bottom-stacked that surplus pooled ABOVE the ask as
           one unbroken void, while the key sat wedged directly under the CTA
           and read as debris. Auto margins on a flex item absorb free space
@@ -506,7 +519,10 @@ export function ClosingAct() {
           ask instead: held space, the thesis, held space, the scene — a title
           card over the closing image, at every viewport height. It also buys
           the key its air: the gap between the CTA and the rails it annotates
-          is now the lower half of that surplus, not ~20px.
+          is now the lower half of that surplus — 158px, not ~20px. (Read
+          the surplus off the resolved margins, which is what auto margins in
+          a flex column mean: 2 × 158.1 = 316.3. An earlier draft said ~630,
+          which is that figure double-counted.)
           In the static band (no JS, reduced motion, pre-hydration) the stage
           is a plain block at content height, vertical auto margins resolve to
           zero, and the shallow pt is the composed image's own spacing — the
