@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 export default function SignupPage() {
   const router = useRouter();
 
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +57,12 @@ export default function SignupPage() {
     setInvalidField(null);
     setIsSubmitting(true);
 
+    // The name is OPTIONAL and therefore has no problem to report: it is not
+    // part of `credentialProblem`, has no `required`, and can never focus the
+    // alert region. Blank is a legitimate answer — `userDisplayName` falls
+    // through to the email.
+    const displayName = name.trim();
+
     const supabase = createClient();
     const { data, error: signUpError } = await supabase.auth.signUp({
       // The trimmed address, which is what was validated — and what a native
@@ -70,6 +77,13 @@ export default function SignupPage() {
           typeof window !== "undefined"
             ? `${window.location.origin}/callback`
             : undefined,
+        // `options.data` becomes the new user's `user_metadata`, which is the
+        // same store Settings → Profile writes and `userDisplayName` reads —
+        // no table, no migration, no API route. The key is OMITTED rather
+        // than written as "" when the field is blank: `userDisplayName`
+        // already treats "" as unset, so an empty string would only be a
+        // second spelling of absent sitting in the user's metadata.
+        ...(displayName ? { data: { display_name: displayName } } : {}),
       },
     });
 
@@ -111,6 +125,25 @@ export default function SignupPage() {
 
         <div className="space-y-4">
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div className="space-y-1">
+              <label htmlFor="name" className="block text-sm font-medium">
+                Name <span className="text-dim">(optional)</span>
+              </label>
+              {/* No `required`, no `aria-invalid`, no ref: this field has no
+                  error state to point at, so there is nothing for the alert
+                  region to say and nothing to focus. `maxLength` mirrors the
+                  cap Settings → Profile puts on the same value. */}
+              <input
+                id="name"
+                type="text"
+                autoComplete="name"
+                maxLength={80}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="block w-full rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-strong outline-none placeholder:text-dim focus:border-line-strong focus:ring-1 focus:ring-line-strong"
+              />
+            </div>
+
             <div className="space-y-1">
               <label htmlFor="email" className="block text-sm font-medium">
                 Email

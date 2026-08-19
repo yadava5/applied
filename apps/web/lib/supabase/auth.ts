@@ -45,11 +45,20 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
  * The user's display name for shell chrome (the rail footer, the mobile
  * menu). Pure — no request read; callers already hold the user.
  *
- * The chain: `display_name` (written by Settings → Profile, and "" until the
- * user sets it — an empty string is UNSET, not a name) → `full_name` (what a
- * Google sign-in would write; sign-in is email & password today, so this is
- * usually absent) → `null`. Callers fall back to the email on `null` — the
- * rail must never render a blank identity row.
+ * The chain: `display_name` (written by `/signup`'s optional Name field and by
+ * Settings → Profile; the signup form omits the key rather than storing "",
+ * and an empty string is UNSET here, not a name) → `full_name` (written by
+ * Google sign-in, which is live — `components/auth/GoogleSignInButton.tsx`)
+ * → `null`. Callers fall back to the email on `null` — the rail must never
+ * render a blank identity row.
+ *
+ * What Google actually writes, read off the one `auth.identities` row this
+ * project has for the google provider (linked onto an email-primary account,
+ * so this is an observation and not a spec): `full_name`, `name` (the same
+ * string), `email`, `avatar_url`, `picture`, `provider_id`, `sub`, `iss`,
+ * `email_verified`, `phone_verified`. Supabase merges that into
+ * `user_metadata`, so `full_name` is populated there and this chain needs no
+ * provider-specific branch.
  */
 export function userDisplayName(user: User | null): string | null {
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
