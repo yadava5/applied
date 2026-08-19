@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-19T23:02:38.298Z",
+  "generated": "2026-08-19T23:14:26.359Z",
   "clips": [
     {
       "id": "board-syncs",
@@ -17,7 +17,7 @@
       "seconds": 10.9,
       "webm": 324544,
       "mp4": 602422,
-      "poster": 44799
+      "poster": 61026
     },
     {
       "id": "import-classifies",
