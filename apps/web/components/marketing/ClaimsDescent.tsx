@@ -256,20 +256,25 @@ export function ClaimsDescent() {
         <Claim paced={false} eyebrow={DECISION.eyebrow} headline={DECISION.headline}>
           <p>{DECISION.body}</p>
         </Claim>
-        <div className="grid gap-8 pb-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
-          <div className="space-y-4">
+        <div className="space-y-10 pb-20">
+          <div className="max-w-2xl space-y-4">
             <BenchmarkFigure />
             <p className="text-sm text-dim">{DECISION.gate}</p>
           </div>
-          {/* The recording goes second because the argument is claim,
-              evidence, gate, and only then the thing running: the rules
-              answering a body on their own, and deferring to the neural
-              layers before they can — on the surface the paragraph names
-              ("in your own browser, on the demo"). */}
+          {/* The recording goes last because the argument is claim, evidence,
+              gate, and only then the thing running: the rules answering a body
+              on their own, and deferring to the neural layers before they can
+              — on the surface the paragraph names ("in your own browser, on
+              the demo"). `max-w-3xl` overrides the clip's own `max-w-xl`
+              (twMerge): the footage is 832×454 and was being shown at 576 in
+              a prose column. Stacked rather than columned for the same
+              reason — a two-up split of this container is 464px a side, which
+              is narrower than what it replaced. */}
           <ProductClip
             clip={CLIPS.rulesReadTheBody}
             name={FOOTAGE.rules.name}
             caption={FOOTAGE.rules.caption}
+            className="max-w-3xl"
           />
         </div>
       </div>

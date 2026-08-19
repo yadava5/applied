@@ -316,15 +316,25 @@ const ACT_SECONDS = 2.05;
  * approach, and the drawing runs over the rest so the wordmark is completing
  * as the band settles into frame rather than while it is still a sliver.
  */
-const ACT_HOLD_OFF = 0.35;
+const ACT_HOLD_OFF = 0.2;
 
-/** Puts the sequence's playhead where the reader's descent says it is. Written
- *  straight to the element, because a playhead is a value the browser reads,
- *  not a reason for React to render. */
+/**
+ * The playhead's curve. NOT linear, and this was measured rather than chosen:
+ * the sequence is front-loaded — every stroke of the wordmark is drawn in its
+ * first 0.6s, 29% of the 2.05s — so a linear scrub spent 71% of the band's
+ * entrance on the dot, the ripple and two fades, and gave the drawing itself
+ * 82px of scroll at a 768-tall viewport. The wordmark assembling IS the shot.
+ *
+ * `t = total · p²` puts the drawing in the first 55% of the runway (~199px at
+ * 768 tall, more than double), and the dot's seating and the ask's rise in the
+ * rest, where they read fine because they are single gestures rather than
+ * eight staggered ones. Nothing about the sequence changes — this is how fast
+ * the playhead moves, which is the one thing a scrub is allowed to own.
+ */
 function position(el: HTMLElement | null, progress: number) {
   if (!el) return;
   const played = Math.min(1, Math.max(0, (progress - ACT_HOLD_OFF) / (1 - ACT_HOLD_OFF)));
-  el.style.setProperty("--act-t", `${(played * ACT_SECONDS).toFixed(3)}s`);
+  el.style.setProperty("--act-t", `${(played * played * ACT_SECONDS).toFixed(3)}s`);
 }
 
 export function ClosingAct() {
