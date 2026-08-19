@@ -1,32 +1,32 @@
 {
-  "generated": "2026-08-19T21:08:41.360Z",
+  "generated": "2026-08-19T23:02:38.298Z",
   "clips": [
     {
       "id": "board-syncs",
       "width": 1152,
       "height": 310,
       "seconds": 4.9,
-      "webm": 76417,
-      "mp4": 242427,
+      "webm": 111229,
+      "mp4": 263744,
       "poster": 28540
     },
     {
       "id": "rules-read-the-body",
       "width": 1152,
       "height": 630,
-      "seconds": 5,
-      "webm": 153474,
-      "mp4": 269266,
-      "poster": 60921
+      "seconds": 10.9,
+      "webm": 324544,
+      "mp4": 602422,
+      "poster": 44799
     },
     {
       "id": "import-classifies",
       "width": 1152,
       "height": 840,
-      "seconds": 4.07,
-      "webm": 87353,
-      "mp4": 237723,
-      "poster": 58972
+      "seconds": 4.45,
+      "webm": 231070,
+      "mp4": 308683,
+      "poster": 58659
     }
   ]
 }

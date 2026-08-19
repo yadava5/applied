@@ -331,17 +331,22 @@ export const FOOTAGE = {
       "The demo board's own Sync, recorded there. The strip counts the pass — what it filed, and what it had already seen.",
   },
   import: {
+    /** Re-recorded 2026-08-19 (the owner's call: the button take showed no
+     *  process). The take is now the CTA's own sentence enacted — the export
+     *  arrives over the drop zone as a real file, the zone answers, it
+     *  lands, and the counters follow — so the words describe that arc. */
     name:
-      "Screen recording: the sample export on Applied's import page is classified in the browser tab. Under the on-device notice the counters arrive together — how many messages were scanned, how many were filed automatically and at what share, how many are held for review, and the format the file was read as.",
+      "Screen recording: a sample mail export is dragged onto Applied's import page. The drop zone answers as the file arrives, the file lands, and under the on-device notice the counters appear — how many messages were scanned, how many were filed automatically and at what share, how many are held for review, and the format the file was read as.",
     /**
-     * The caption's job is the one thing a viewer might read as a fault: the
-     * numbers appear in a single frame. That is not a cut hiding a wait, it is
-     * the absence of one — the parsing and the classifying happen in the tab,
-     * so there is no request to watch. Saying so turns the clip's one oddity
-     * into its claim.
+     * The caption's job is still the one thing a viewer might read as a
+     * fault — there is no progress bar between the drop and the counters —
+     * and it states that as the claim it is: the work happens in the tab the
+     * moment the file lands, so there is no wait to watch. The old caption
+     * apologised for a take that showed no arrival at all; the take shows
+     * the arrival now, and the caption scopes what happens after it.
      */
     caption:
-      "The import page, recorded on its public route. Nothing is uploaded and nothing is waited on, which is why the counters arrive in a single frame.",
+      "The import page, recorded on its public route. The export lands as a file and is read and classified the moment it arrives — in the tab, nothing uploaded, so there is no wait to watch.",
   },
 } as const;
 
