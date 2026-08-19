@@ -3,7 +3,7 @@
 import { Search } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { ApplicationRow, NO_ROLE_LABEL } from "@/components/dashboard/ApplicationRow";
@@ -301,10 +301,15 @@ function StaticApplicationRow({
 function BoardCell({
   layoutKey,
   entering,
+  travel,
   children,
 }: {
   layoutKey: string;
   entering: boolean;
+  /** Seconds for the shared-layout glide (`travel` on the board). Only the
+   *  LAYOUT transition slows — the opacity settle keeps the default tempo,
+   *  so entering rows never fade in slow motion. */
+  travel?: number;
   children: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
@@ -325,9 +330,24 @@ function BoardCell({
     <motion.li
       layout={!reduceMotion}
       layoutId={layoutKey}
-      initial={entering && !reduceMotion ? { opacity: 0, y: 6 } : false}
+      // `travel` marks a CHOREOGRAPHED mount (the landing's window act), where
+      // no row ever enters: the fixture is fixed and the only thing that moves
+      // is the one row the act carries between groups. Changing group remounts
+      // the cell under a different `<ul>`, so `initial` would fade that row in
+      // over its first 220ms of travel — a flicker on the exact element the
+      // scene exists to make visible. A row that already existed should move,
+      // not arrive.
+      initial={entering && !reduceMotion && travel === undefined ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      transition={
+        reduceMotion
+          ? { duration: 0 }
+          : {
+              duration: 0.22,
+              ease: [0.22, 1, 0.36, 1],
+              layout: { duration: travel ?? 0.22, ease: [0.22, 1, 0.36, 1] },
+            }
+      }
     >
       {children}
     </motion.li>
@@ -364,9 +384,17 @@ export function PipelineBoard({
   pulse,
   beforeList,
   afterList,
+  search = true,
+  openDetailId,
+  travel,
 }: {
   applications: Application[];
   interactive?: boolean;
+  /** Whether the board offers its search field (over `SEARCH_AFTER` rows).
+   *  Off on the marketing embeds (`components/marketing/MarketingBoard.tsx`):
+   *  a sales page shows what the product did, not its query tools. Every
+   *  product surface keeps the default. */
+  search?: boolean;
   /** `locked` fills the shell's viewport pane and scrolls only the list;
    *  `flow` renders natural height for pages that scroll themselves. */
   variant?: "locked" | "flow";
@@ -384,6 +412,25 @@ export function PipelineBoard({
   beforeList?: ReactNode;
   /** Rendered inside the list pane, below the rows (the quiet placement). */
   afterList?: ReactNode;
+  /**
+   * A card to open PROGRAMMATICALLY — the marketing embeds' composition seed
+   * (the merged landing opens the moved row's detail as the visitor arrives
+   * at that beat). Each id is honoured once, only while the pane geometry is
+   * docked (the modal sheet must never appear unbidden), and never over a
+   * card the visitor opened themselves. Unlike a user's own open it does NOT
+   * move focus into the pane — no gesture happened, so stealing focus (and
+   * the scroll `focus()` drags with it) would be the page acting on its own.
+   * Product surfaces never pass this; their detail opens by click alone.
+   */
+  openDetailId?: number;
+  /**
+   * Seconds for a row's shared-layout glide between stage groups. Product
+   * surfaces omit it and keep the board's own 220ms tempo; the marketing
+   * embed slows the one move it choreographs to a watchable speed
+   * (`components/marketing/tempo.ts`), because a sales page's visitor has no
+   * idea which row is about to travel and a 220ms cut reads as a teleport.
+   */
+  travel?: number;
 } & BoardScope) {
   const router = useRouter();
   /**
@@ -410,6 +457,14 @@ export function PipelineBoard({
   const [pulseFilter, setPulseFilter] = useState<PulseFilter | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [detailApp, setDetailApp] = useState<Application | null>(null);
+  /** Whether the open detail was the USER's act — the pane only takes focus
+   *  for a real gesture (see `openDetailId` above and ApplicationDetail's
+   *  `focusOnOpen`). */
+  const [detailUserOpened, setDetailUserOpened] = useState(true);
+  const openDetail = (app: Application) => {
+    setDetailUserOpened(true);
+    setDetailApp(app);
+  };
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dropStage, setDropStage] = useState<StageKey | null>(null);
   /** Optimistic overlay: id → the status a drop just chose, until the server confirms. */
@@ -423,6 +478,41 @@ export function PipelineBoard({
     const id = window.setTimeout(() => setHydrated(true), 0);
     return () => window.clearTimeout(id);
   }, []);
+
+  /** The programmatic open, honoured once per id and only while docked — so
+   *  the sub-`lg` modal sheet (scroll lock, focus trap) can never fire from
+   *  it — and never over a card the visitor chose themselves. */
+  const consumedDetailSeed = useRef<number | null>(null);
+  useEffect(() => {
+    if (openDetailId === undefined) {
+      // The seed is WITHDRAWN. The landing's window act is a function of
+      // scroll position now, so scrolling back up un-docks the pane the page
+      // docked — and only that one: a card the visitor opened themselves is
+      // theirs (`detailUserOpened`), and so is a re-open of the seeded row.
+      const seeded = consumedDetailSeed.current;
+      consumedDetailSeed.current = null;
+      if (seeded === null || detailUserOpened || detailApp?.id !== seeded) return;
+      const id = window.setTimeout(() => setDetailApp(null), 0);
+      return () => window.clearTimeout(id);
+    }
+    if (!detailDocked) return;
+    if (consumedDetailSeed.current === openDetailId) return;
+    consumedDetailSeed.current = openDetailId;
+    if (detailApp !== null) return; // the visitor's own open wins
+    const app = applications.find((a) => a.id === openDetailId);
+    if (!app) return;
+    // Deferred off the effect body (house rule — no synchronous setState in
+    // an effect), same as the board's own `hydrated`.
+    const id = window.setTimeout(() => {
+      setDetailUserOpened(false);
+      setDetailApp(app);
+    }, 0);
+    return () => window.clearTimeout(id);
+    // `detailApp` is read, not reacted to on the seeding path: the consumed
+    // ref means a later detail change can never replay the seed. The
+    // withdrawal path above genuinely needs both it and `detailUserOpened`,
+    // to know whose pane is open.
+  }, [openDetailId, detailDocked, applications, detailApp, detailUserOpened]);
 
   /** One clock read per render — every row's age tag and deadline state
    *  derives from it. UTC for the server pass, the reader's own day once
@@ -567,7 +657,7 @@ export function PipelineBoard({
   // `pointer-events-none`, where 14 fixtures cleared this threshold and put a
   // search box on a brand-new user's first dashboard that they could not type
   // into.
-  const showSearch = interactive && applications.length > SEARCH_AFTER;
+  const showSearch = interactive && search && applications.length > SEARCH_AFTER;
 
   const columns = boardColumns(STAGES);
   /**
@@ -670,7 +760,7 @@ export function PipelineBoard({
     if (setKey !== undefined && openSets[setKey] !== true) {
       setOpenSets((s) => ({ ...s, [setKey]: true }));
     }
-    setDetailApp(next);
+    openDetail(next);
   };
 
   /** The docked pane is open: rows fold their stage select + Gmail slot to
@@ -691,16 +781,17 @@ export function PipelineBoard({
   const rowCell = (app: Application, column: BoardColumn, inSet = false) => {
     const chip = inSet || !grouping ? null : crossStageChip(app.company, column.key, columns);
     return (
-      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated}>
+      <BoardCell key={`app-${app.id}`} layoutKey={`app-${app.id}`} entering={hydrated} travel={travel}>
         {interactive ? (
           <ApplicationRow
             app={app}
             columnLabel={column.label}
             today={today}
             transport={transport}
-            onOpenDetail={setDetailApp}
+            onOpenDetail={openDetail}
             folded={detailPaneOpen}
             detailOpen={detailApp !== null && detailApp.id === app.id}
+            revealOnOpen={detailUserOpened}
             inSet={inSet}
             sameCompanyCount={inSet ? 0 : sameCompanyCount(app)}
             sameCompanyLabel={chip?.label ?? null}
@@ -1139,6 +1230,7 @@ export function PipelineBoard({
                             key={`set-${entry.company}`}
                             layoutKey={`set-${column.key}-${entry.company}`}
                             entering={hydrated}
+                            travel={travel}
                           >
                             <EmployerSetRow
                               company={entry.company}
@@ -1193,6 +1285,7 @@ export function PipelineBoard({
             }
             onTraverse={traverseDetail}
             transport={transport}
+            focusOnOpen={detailUserOpened}
           />
         ) : null}
       </div>

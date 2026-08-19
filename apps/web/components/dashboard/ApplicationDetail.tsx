@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
+  ChevronDown,
   ExternalLink,
   Tag,
   Loader2,
@@ -269,6 +270,7 @@ export function ApplicationDetail({
   position = null,
   onTraverse,
   transport = liveBoardTransport,
+  focusOnOpen = true,
 }: {
   /** The card being inspected; `null` keeps the detail closed. */
   app: Application | null;
@@ -291,6 +293,15 @@ export function ApplicationDetail({
   onTraverse?: (delta: -1 | 1) => void;
   /** How reads/mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
+  /**
+   * Whether opening the docked pane moves focus into it. True for every open
+   * a person performed — the standing contract, so the traversal keys answer
+   * at once. False only for a PROGRAMMATIC open (the board's `openDetailId`
+   * seed on the marketing embeds): no gesture happened, so taking focus —
+   * and the viewport scroll `focus()` performs to reach an off-screen pane —
+   * would be the page acting on its own.
+   */
+  focusOnOpen?: boolean;
 }) {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -427,8 +438,18 @@ export function ApplicationDetail({
   // <body> because the pane under it unmounted.
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const dockedOpen = docked !== false && app !== null;
+  // Read through a ref so the prop flipping later (a user open after a seeded
+  // one) can never re-run the open effect — the effect keys on `dockedOpen`
+  // alone, exactly as before.
+  const focusOnOpenRef = useRef(focusOnOpen);
+  useEffect(() => {
+    focusOnOpenRef.current = focusOnOpen;
+  }, [focusOnOpen]);
   useEffect(() => {
     if (!dockedOpen) return;
+    // A seeded open takes no focus and therefore owes no restore — the
+    // visitor's focus was never disturbed.
+    if (!focusOnOpenRef.current) return;
     // Captured now: by cleanup time the ref has been detached (React clears
     // refs before running effect cleanups on unmount).
     const pane = dockedRef.current;
@@ -597,20 +618,32 @@ export function ApplicationDetail({
             <label className="sr-only" htmlFor={`detail-status-${active.id}`}>
               Change stage for {active.company}
             </label>
-            <select
-              id={`detail-status-${active.id}`}
-              value={statusSelectValue(shownStatus)}
-              disabled={stageBusy}
-              onChange={(e) => void onStageChange(e.target.value)}
-              className="rounded border border-line bg-surface-2 px-2 py-1 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
-              style={{ color: stage.color }}
-            >
-              {statusOptions(shownStatus).map((option) => (
-                <option key={option.value} value={option.value} disabled={option.disabled}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            {/* Same face as the row's control: a NATIVE select under the
+                app's own dress — `.select-control` (globals.css) removes the
+                OS widget, the chevron beside it is ours, and in engines that
+                support it the open picker is styled too. Still a real
+                <select>, so nothing about the a11y or controlled-value
+                contract moved. */}
+            <span className="relative inline-flex">
+              <select
+                id={`detail-status-${active.id}`}
+                value={statusSelectValue(shownStatus)}
+                disabled={stageBusy}
+                onChange={(e) => void onStageChange(e.target.value)}
+                className="select-control peer rounded border border-line bg-surface-2 py-1 pl-2 pr-6 text-xs outline-none transition-colors hover:border-line-strong focus:border-line-strong disabled:opacity-50"
+                style={{ color: stage.color }}
+              >
+                {statusOptions(shownStatus).map((option) => (
+                  <option key={option.value} value={option.value} disabled={option.disabled}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                aria-hidden
+                className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-disabled:opacity-50"
+              />
+            </span>
             {stageBusy ? (
               <Loader2
                 className="h-3.5 w-3.5 animate-spin text-dim motion-reduce:animate-none"

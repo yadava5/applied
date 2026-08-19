@@ -255,6 +255,86 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * The stage select's face — ApplicationRow + ApplicationDetail.
+ *
+ * The control STAYS a native <select>: the memo/controlled-value contract
+ * (ApplicationRow's StageSelect header), the sr-only label, `aria-busy` and
+ * the OS's own keyboard/AT semantics are all load-bearing, and a custom
+ * listbox would re-own every one of them for styling's sake. What was wrong
+ * was only the dress: the OS widget's chevron and platform chrome were the
+ * one element on the board (and on the landing page that embeds it) not
+ * drawn in the app's own hand. So:
+ *
+ *   - `appearance: none` strips the widget; the caller draws the chevron
+ *     (lucide, matching every other glyph) and pads the text clear of it.
+ *   - Where the engine can style the OPEN picker (`appearance: base-select`,
+ *     Chromium 135+), the popup adopts the app's surface, line and text
+ *     tokens instead of the OS sheet — token pairs already measured
+ *     elsewhere (options are `--foreground` on `--surface`, the app's body
+ *     pairing; the checked row uses `--text-strong`, disabled `--text-dim`).
+ *     Firefox/Safari ignore the block and keep their native picker, which
+ *     remains the accessible baseline, not a degraded one.
+ *   - The picker's entrance is a 120ms settle under `prefers-reduced-motion:
+ *     no-preference`; reduced motion opens it in place, fully drawn.
+ * ------------------------------------------------------------------------- */
+.select-control {
+  appearance: none;
+  text-overflow: ellipsis;
+}
+@supports (appearance: base-select) {
+  select.select-control,
+  select.select-control::picker(select) {
+    appearance: base-select;
+  }
+  /* The closed control draws its own lucide chevron — the UA's would double. */
+  select.select-control::picker-icon {
+    display: none;
+  }
+  select.select-control::picker(select) {
+    margin-top: 4px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.45);
+  }
+  select.select-control option {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: var(--foreground);
+  }
+  select.select-control option:hover,
+  select.select-control option:focus {
+    background: var(--surface-2);
+  }
+  select.select-control option:checked {
+    color: var(--text-strong);
+  }
+  /* The legacy-value entry (status.ts): shown so the control can state the
+   * row's real stage, disabled so it can never be submitted — dim, as it is
+   * in the classic picker. */
+  select.select-control option:disabled {
+    color: var(--text-dim);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    select.select-control::picker(select) {
+      transition:
+        opacity 0.12s ease,
+        transform 0.12s ease,
+        overlay 0.12s allow-discrete,
+        display 0.12s allow-discrete;
+    }
+    @starting-style {
+      select.select-control::picker(select) {
+        opacity: 0;
+        transform: translateY(-3px);
+      }
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Keyboard focus indicator — one definition for the whole app.
  *
  * It used to be a per-component decision: `focus-visible:outline-none` plus a
@@ -1199,6 +1279,422 @@ body {
  * sheet's slide (plus their exits) live in components/ui/Dialog.tsx via the
  * motion library now — one implementation for enter AND exit, collapsed to
  * instant under prefers-reduced-motion there (`useReducedMotion`). */
+
+/* ---------------------------------------------------------------------------
+ * Closing act (components/marketing/ClosingAct.tsx) — landing B's ending.
+ * One envelope crosses the full width, clears the single rules rail, and
+ * collapses into the emerald verdict, which falls and seats itself as the
+ * full stop after the drawn `applied` wordmark; then the thesis and the
+ * seat ask rise and everything holds. One IO sentinel fires it; the scene
+ * button replays it (remounted per run, so these animations restart).
+ * Strokes carry `pathLength="1"`, so every draw is stroke-dashoffset 1 → 0;
+ * the dashoffset is set on each letter <g> and inherits to its paths. The
+ * filled circles (i-dot, verdict) cannot be dash-drawn, so they enter by
+ * opacity/scale. `.act--static` — and the reduced-motion block at the end —
+ * is the fully composed end state: wordmark drawn, verdict seated, ask
+ * visible, no travel.
+ * ------------------------------------------------------------------------- */
+.act-band {
+  /* the one piece of atmosphere: a faint emerald bloom under the landing
+   * corner of the full stop. No canvas, no ambient field. */
+  background: radial-gradient(
+    90% 70% at 82% 100%,
+    color-mix(in oklab, var(--viz-setfit) 7%, transparent),
+    transparent 62%
+  );
+}
+.act__scene:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+.act__word {
+  color: var(--text-strong);
+}
+.act__rules {
+  color: var(--viz-rules);
+}
+/* The KEY (`.act__key`) is the scene's only text, and it is DOM text beside
+ * the svg rather than `<text>` inside it — a viewBox scales its contents, so
+ * the tags it used to hold measured 3.28px/3.05px at 375 and 8.96px/8.32px at
+ * 1024 (see ClosingAct for the measurement and why a size bump could not fix
+ * it). Each row is a MIXED run: the F1 figure is mono (a machine value, read
+ * out of the benchmark JSONs) and the words beside it are a caption in the
+ * product's voice — `.act__words` below, the `.label-caps` device restated
+ * for the key. Mono stops at the edge of the machine value.
+ *
+ * `.act__tag` still carries the choreography (the fade below), so the key
+ * enters with the scene it belongs to.
+ *
+ * Colour is unchanged from the drawn tags — only the size is. Measured on
+ * --background: dark rules #38bdf8 on #0a0a0b = 9.24:1 / APCA Lc 60.5, dark
+ * ghost #aeb4be = 9.49:1 / Lc 61.4. Light's --viz-rules (#0284c7) measures
+ * 3.92:1 on #fafafa — fine for the rail (non-text, 3:1 floor) but under AA
+ * for text, so the key alone steps down a shade to #0369a1 = 5.68:1 /
+ * Lc 76.1; light ghost #676b73 = 5.12:1 / Lc 73.7. */
+.act__tag--rules {
+  color: var(--viz-rules);
+}
+[data-theme="light"] .act__tag--rules {
+  color: #0369a1;
+}
+.act__tag--ghost {
+  color: var(--text-dim);
+}
+/* The stacked key's rail mark (below `lg`, where the rails themselves are
+ * 25px ticks): the same cut as the line it stands for, solid for the rules
+ * rail and dashed for the ghosts, inheriting the row's own colour. */
+/* Display is left to the utility (`inline-block lg:hidden` on the element):
+ * this file loads after Tailwind's utilities, so a `display` here would win
+ * the cascade and the mark would survive into the `lg` layout, where the
+ * real rail is right there behind it. */
+.act__key-mark {
+  width: 0;
+  height: 0.95em;
+  border-left: 1.5px solid currentColor;
+}
+.act__key-mark--ghost {
+  border-left-style: dashed;
+}
+/* Caps as a treatment, not as typed literals — the reason the old tags spelled
+ * them out (text-transform is uneven on SVG text) went away with the svg.
+ * Size steps down from the mono figure so the caps run's optical height sits
+ * just under the digits: the figure stays the loud half. */
+.act__words {
+  font-family: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.93em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.act__rail {
+  opacity: 0.8;
+}
+.act__ghosts {
+  color: var(--text-dim);
+}
+/* The ghost DASHES hold quiet while the ghost row of the key rides the full
+ * dim rank — quiet is a rank, not an opacity. An earlier build faded the
+ * whole group to 0.45, which composited the label to Lc 16.4 on dark
+ * (#54565c — a hair above invisible) and Lc 34.4 / 1.86:1 on light
+ * (#b8babd): the page's central comparison, unreadable in both themes. The
+ * key is outside this group now and cannot be dimmed by it at all. The
+ * dashes are furniture but MEANINGFUL furniture (they are the cascade), so
+ * they get
+ * WCAG 1.4.11's 3:1 floor, measured composited: dark 0.5 → #5c5f64, 3.09:1;
+ * light needs more ink on paper, 0.75 → #8c8f95, 3.11:1. A matched pair,
+ * deliberately at the quiet end of legal. */
+.act__ghosts line {
+  opacity: 0.5;
+}
+[data-theme="light"] .act__ghosts line {
+  opacity: 0.75;
+}
+
+/* pre-play: everything waits. The travel group idles off-canvas (the svg
+ * clips it), so the band is quiet until the sentinel fires. */
+.act .act__draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.act .act__guide,
+.act .act__ghosts,
+.act .act__tag,
+.act .act__pop,
+.act .act__dot,
+.act .act__ripple,
+.act .act__ask,
+.act .act__hint {
+  opacity: 0;
+}
+.act .act__travel {
+  transform: translateX(-70px);
+}
+.act .act__pop,
+.act .act__dot,
+.act .act__ripple,
+.act .act__envelope,
+.act .act__rail {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* the play — fires once, runs ~1.5s, holds on `forwards` */
+.act--play .act__guide {
+  animation: act-fade 0.4s ease 0s forwards;
+}
+/* the ghost group fades in whole; its dashes carry their own quiet (above) */
+.act--play .act__ghosts {
+  animation: act-fade 0.4s ease 0.05s forwards;
+}
+.act--play .act__draw {
+  animation: act-draw 0.4s ease var(--d, 0s) forwards;
+}
+.act--play .act__tag {
+  animation: act-fade 0.35s ease 0.1s forwards;
+}
+/* the rail flares as the envelope passes it (~0.26s into the travel) */
+.act--play .act__rail {
+  animation:
+    act-draw 0.3s ease var(--d, 0s) forwards,
+    act-flare 0.45s ease 0.24s;
+}
+.act--play .act__pop {
+  animation: act-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--d, 0s) forwards;
+}
+.act--play .act__travel {
+  animation: act-travel 0.85s cubic-bezier(0.45, 0, 0.3, 1) forwards;
+}
+.act--play .act__envelope {
+  animation: act-consume 0.16s ease-in 0.72s forwards;
+}
+.act--play .act__dot {
+  animation: act-dot 0.6s 0.8s both;
+}
+.act--play .act__ripple {
+  animation: act-ripple 0.55s ease-out 1.2s forwards;
+}
+.act--play .act__ask {
+  animation: act-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) 1.3s forwards;
+}
+.act--play .act__hint {
+  animation: act-fade 0.5s ease 1.55s forwards;
+}
+
+/* ---- the scrub -----------------------------------------------------------
+ * The SAME play, frozen and positioned by the reader's descent. Every
+ * keyframe, duration and delay above is untouched — this block only pauses
+ * the animations and shifts each one's delay by `--act-t`, the seconds
+ * `ClosingAct` writes from `scrollYProgress` across the band's entrance.
+ *
+ * A paused animation's current time stays at 0, so a delay of `d − t` renders
+ * the frame the animation would show at time t: positive means "not started"
+ * (the pre-play styles above), negative means t into the run, and past the
+ * end `forwards` holds the composed state. Scrolling back up therefore
+ * un-draws the wordmark exactly as it drew.
+ *
+ * Why it exists: the sequence used to be fired once by an IO sentinel at
+ * threshold 0.3 and then ran on its own clock for 2.05s. Measured on the
+ * deployed preview, a reader arriving at the page's bottom saw ~700px of
+ * black with five unreadable white fragments in it; four seconds later it was
+ * the finished frame. Scroll past slowly and it had already finished; scroll
+ * past quickly and it was fragments. Either way the wordmark never assembled
+ * for anyone. It is the page's payoff shot, so it is bound to the scroll like
+ * the window act.
+ *
+ * `.act--play` is still present alongside this class — the animations have to
+ * exist to be paused — and a click removes `--act-t` and this class together,
+ * which is what plays the authored sequence at its authored tempo.
+ * ------------------------------------------------------------------------- */
+.act--scrub .act__guide,
+.act--scrub .act__ghosts,
+.act--scrub .act__draw,
+.act--scrub .act__tag,
+.act--scrub .act__rail,
+.act--scrub .act__pop,
+.act--scrub .act__travel,
+.act--scrub .act__envelope,
+.act--scrub .act__dot,
+.act--scrub .act__ripple,
+.act--scrub .act__ask,
+.act--scrub .act__hint {
+  animation-play-state: paused;
+}
+.act--scrub .act__guide,
+.act--scrub .act__travel {
+  animation-delay: calc(0s - var(--act-t, 0s));
+}
+.act--scrub .act__ghosts {
+  animation-delay: calc(0.05s - var(--act-t, 0s));
+}
+.act--scrub .act__draw,
+.act--scrub .act__pop {
+  animation-delay: calc(var(--d, 0s) - var(--act-t, 0s));
+}
+.act--scrub .act__tag {
+  animation-delay: calc(0.1s - var(--act-t, 0s));
+}
+/* two animations, so two delays — the draw on `--d`, the flare on 0.24s */
+.act--scrub .act__rail {
+  animation-delay: calc(var(--d, 0s) - var(--act-t, 0s)), calc(0.24s - var(--act-t, 0s));
+}
+.act--scrub .act__envelope {
+  animation-delay: calc(0.72s - var(--act-t, 0s));
+}
+.act--scrub .act__dot {
+  animation-delay: calc(0.8s - var(--act-t, 0s));
+}
+.act--scrub .act__ripple {
+  animation-delay: calc(1.2s - var(--act-t, 0s));
+}
+.act--scrub .act__ask {
+  animation-delay: calc(1.3s - var(--act-t, 0s));
+}
+.act--scrub .act__hint {
+  animation-delay: calc(1.55s - var(--act-t, 0s));
+}
+
+@keyframes act-fade {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes act-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes act-flare {
+  0%,
+  100% {
+    filter: none;
+    opacity: 0.8;
+  }
+  45% {
+    filter: drop-shadow(0 0 6px currentColor);
+    opacity: 1;
+  }
+}
+@keyframes act-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes act-travel {
+  from {
+    transform: translateX(-70px);
+  }
+  to {
+    transform: translateX(1147px);
+  }
+}
+@keyframes act-consume {
+  to {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+/* pop in where the envelope collapses, fall, squash on impact, settle.
+ * translateY(271.2px) = lane y=64 → baseline seat y=335.2 (scene units). */
+@keyframes act-dot {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.4);
+    animation-timing-function: ease-out;
+  }
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(0.58);
+    animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.5);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(271.2px) scale(1.1, 0.84);
+    animation-timing-function: cubic-bezier(0.25, 0, 0.3, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(271.2px) scale(1);
+  }
+}
+@keyframes act-ripple {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+@keyframes act-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* the composed end state — what reduced motion (and a replayed page that has
+ * already played, via `forwards` above) shows: sentence drawn, verdict
+ * seated, ask standing. No envelope: it became the dot. */
+.act--static .act__draw,
+.act--static .act__rail {
+  stroke-dashoffset: 0;
+}
+.act--static .act__guide,
+.act--static .act__tag,
+.act--static .act__pop,
+.act--static .act__ask,
+.act--static .act__hint {
+  opacity: 1;
+}
+.act--static .act__ghosts {
+  opacity: 1;
+}
+.act--static .act__dot {
+  opacity: 1;
+  transform: translateY(271.2px) scale(1);
+}
+.act--static .act__travel {
+  display: none;
+}
+
+/* The close's ask, painted in the verdict emerald — the one accent button on
+ * the page. Ink is a fixed near-black so it holds in both themes; measured
+ * (WCAG 2, see ClosingAct): #06130d on #34d399 (dark theme) and on #059669
+ * (light theme) both clear 4.5:1 for text. */
+.act-cta {
+  background: var(--viz-setfit);
+  color: #06130d;
+  transition: filter 150ms ease;
+}
+.act-cta:hover {
+  filter: brightness(1.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .act .act__draw,
+  .act .act__rail {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+  .act .act__guide,
+  .act .act__tag,
+  .act .act__pop,
+  .act .act__ask,
+  .act .act__hint {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .act .act__ghosts {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .act .act__dot {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: translateY(271.2px) scale(1) !important;
+  }
+  .act .act__ripple {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+  .act .act__travel,
+  .act .act__envelope {
+    animation: none !important;
+  }
+  .act .act__travel {
+    display: none;
+  }
+}
 
 /* ---------------------------------------------------------------------------
  * The Triage boot (components/boot/BootOverlay + lib/boot/triage.ts) — the

@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ChevronDown, ExternalLink, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
@@ -92,28 +92,44 @@ const StageSelect = memo(function StageSelect({
       <label className="sr-only" htmlFor={`status-${id}`}>
         Change stage for {company}
       </label>
-      <select
-        id={`status-${id}`}
-        value={statusSelectValue(value)}
-        disabled={disabled}
-        aria-busy={busy}
-        onChange={(e) => onChange(e.target.value)}
-        // `w-[8.5rem]`, not max-w: an intrinsic-width select is as wide as its
-        // current value, so 17 rows put the board's main control on four
-        // different x positions (a 78px spread, measured). Fixed width + a
-        // fixed-width tail after it (see the meta cluster) is what makes the
-        // selects a column. `h-6` matches the cluster's other controls (the
-        // Gmail slot, the menu trigger), so a card with a select and a card
-        // without one — the employer set header — compute the same height;
-        // the select's intrinsic height was a measured 1px taller.
-        className="h-6 w-[8.5rem] rounded border border-line-soft bg-surface px-1.5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
-      >
-        {statusOptions(value).map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      {/* Still a NATIVE controlled <select> — the memo contract above, the
+          keyboard/AT semantics and the enum options are all unchanged. Only
+          the FACE moved off the OS widget: `.select-control` (globals.css)
+          strips `appearance`, the chevron is drawn here (ours, so it matches
+          the board's other glyphs and dims with `disabled` via `peer`), and
+          engines that support stylable pickers dress the open list too. The
+          wrapper now carries the geometry the old comment measured, and the
+          reasons hold verbatim: `w-[8.5rem]`, not max-w, because an
+          intrinsic-width select is as wide as its current value, and 17 rows
+          put the board's main control on four different x positions (a 78px
+          spread, measured) — fixed width + the fixed-width tail after it
+          (see the meta cluster) is what makes the selects a column; `h-6`
+          matches the cluster's other controls (the Gmail slot, the menu
+          trigger), so a card with a select and a card without one — the
+          employer set header — compute the same height (the OS-drawn
+          select's intrinsic height was a measured 1px taller). The select
+          itself fills the wrapper, so the box the cluster lays out is
+          byte-identical to before. */}
+      <span className="relative inline-flex h-6 w-[8.5rem]">
+        <select
+          id={`status-${id}`}
+          value={statusSelectValue(value)}
+          disabled={disabled}
+          aria-busy={busy}
+          onChange={(e) => onChange(e.target.value)}
+          className="select-control peer h-full w-full rounded border border-line-soft bg-surface pl-1.5 pr-5 text-[11px] text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
+        >
+          {statusOptions(value).map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          aria-hidden
+          className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-dim peer-disabled:opacity-50"
+        />
+      </span>
     </>
   );
 });
@@ -179,6 +195,7 @@ export function ApplicationRow({
   onDragEnd,
   folded = false,
   detailOpen = false,
+  revealOnOpen = true,
   transport = liveBoardTransport,
 }: {
   app: Application;
@@ -228,6 +245,10 @@ export function ApplicationRow({
    *  here" mark (border steps to `line-strong`, the same delta as hover),
    *  and the scroll target while ↑/↓ traverse the list. */
   detailOpen?: boolean;
+  /** Whether becoming the open card may move the reader's viewport. True for
+   *  an open the reader asked for; false for one the PAGE seeded (see the
+   *  effect below — `nearest` reaches the document, not just the worklist). */
+  revealOnOpen?: boolean;
   /** How mutations reach data — the live proxy by default, fixtures on /demo. */
   transport?: BoardTransport;
 }) {
@@ -251,12 +272,25 @@ export function ApplicationRow({
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   // The highlight follows ↑/↓: when this row becomes the open card, keep it
-  // on screen. `nearest` scrolls the worklist the minimum distance and leaves
-  // every other scroll context alone; instant on purpose — rapid traversal
-  // must not queue smooth scrolls, and instant needs no reduced-motion fork.
+  // on screen. `nearest` scrolls the minimum distance; instant on purpose —
+  // rapid traversal must not queue smooth scrolls, and instant needs no
+  // reduced-motion fork.
+  //
+  // ONLY FOR AN OPEN THE READER ASKED FOR (`revealOnOpen`). The comment here
+  // used to claim `nearest` "leaves every other scroll context alone", and it
+  // does not: it walks every scroll container up to the document. In the app
+  // the worklist is its own scroller so the page barely moves. On the landing
+  // the board sits in an `overflow-clip` stage — not a scroller — so the
+  // document is the only container, and a pane the PAGE seeded yanked the
+  // reader back into the act from wherever they had scrolled to. Measured on
+  // a production build: a jump to y=5800 came back to 3219 about 1.6s later,
+  // which is the seed waiting out the row's travel and then scrolling.
+  //
+  // It is the same rule the seed already follows for focus — docked only, no
+  // focus theft. A viewport is not the page's to move either.
   useEffect(() => {
-    if (detailOpen) rowRef.current?.scrollIntoView({ block: "nearest" });
-  }, [detailOpen]);
+    if (detailOpen && revealOnOpen) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [detailOpen, revealOnOpen]);
 
   // Server data caught up (to our value or to a different one): drop the
   // overlay and show the truth. Both arms matter — without the second, a
