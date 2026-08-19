@@ -12,6 +12,7 @@ from typing import Optional
 
 from sqlmodel import select
 
+from jobtracker.classifier.hybrid import _is_digest_mailbox
 from jobtracker.database import get_session
 from jobtracker.database.models import (
     Application,
@@ -301,15 +302,31 @@ class ApplicationLinker:
         return any(pattern.search(text) for pattern in self._lifecycle_patterns)
 
     def _looks_like_digest_or_promo(self, email: Email) -> bool:
+        """Digest/promotional mail that must not become an application.
+
+        The sender half is ``classifier.hybrid._is_digest_mailbox`` and not a
+        list written out here. It used to be a fourth copy of
+        ``NON_APPLICATION_SENDERS`` — four tokens of the canonical six, missing
+        ``alerts-noreply`` and ``promotions`` — matched with unanchored
+        containment. Both halves of that were wrong in opposite directions: the
+        two missing tokens let real job-alert digests through this guard and on
+        towards a card, and the containment let any registrable domain carrying
+        a token (``hello@acme-newsletterhub.example``) be skipped as one.
+
+        The classifier is where "what a digest IS" is decided; this file only
+        decides whether to skip one, so it asks rather than answers. Those two
+        must never disagree, for the same reason ``rules.is_ats_sender``'s
+        docstring gives: a guard that fires here and not there is a bug nobody
+        could read off either call site. Importing a leading-underscore name
+        across packages is not lovely and renaming it is a follow-up — it is
+        not a reason to keep a fifth copy of the list.
+        """
+
         text = self._email_text(email)
         content_hits = sum(
             1 for pattern in self._non_application_patterns if pattern.search(text)
         )
-        sender = (email.sender_email or "").lower()
-        sender_hit = any(
-            token in sender
-            for token in ("jobalerts", "jobs-noreply", "newsletter", "marketing")
-        )
+        sender_hit = _is_digest_mailbox(email.sender_email)
         return content_hits >= 2 or (sender_hit and content_hits >= 1)
 
     def _should_skip_email(self, email: Email) -> bool:
