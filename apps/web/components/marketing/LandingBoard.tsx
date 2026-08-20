@@ -61,13 +61,30 @@ const OVERLAY_ROOM = 44;
 const RECEIPT_RISE = 18;
 
 /**
- * The act's camera channel: three scrubbed inputs the window act publishes and
+ * Air between the stage's top edge and the docked pane's head once the dock
+ * tilt (`ActCamera.dockPan`) has finished: enough that the pane's rounded top
+ * and its × sit clear of the top crop fade's densest band, small enough that
+ * the tilt gives up as little of the board below as it can.
+ */
+const PANE_CLEARANCE = 16;
+
+/**
+ * The act's camera channel: four scrubbed inputs the window act publishes and
  * this component paints. Signals rather than props because they change on
  * every scroll frame and none of them is a reason to render.
  */
 export interface ActCamera {
   /** 0 the board's head, 1 its foot. */
   pan: Signal;
+  /**
+   * 0 holding the foot, 1 tilted back up to the docked pane's head — the
+   * scrubbed move that puts the pane's own chrome (title, traversal row, ×)
+   * inside the frame once the page has opened it. The foot hold cropped that
+   * chrome above the stage at every viewport height, and a pane whose close
+   * control is off-screen is broken, not composed. The tilt's target is
+   * measured from the pane's real box (`paneDistance` below).
+   */
+  dockPan: Signal;
   /** The receipt's opacity and its rise, kept apart because the announcement
    *  has to be legible long before it stops moving — the caller resolves the
    *  opacity early (`RECEIPT_FADE` in tempo.ts) and this only paints it. */
@@ -152,12 +169,17 @@ export function LandingBoard({
    */
   const released = useRef(false);
 
-  /** The act's three scrubbed inputs, mirrored where `paint` can read them
-   *  without a render, plus the measured full-pan distance (negative). */
+  /** The act's four scrubbed inputs, mirrored where `paint` can read them
+   *  without a render, plus the two measured camera targets (negative):
+   *  `panDistance` is the foot, `paneDistance` the dock tilt's own — the
+   *  translate that puts the docked pane's head `PANE_CLEARANCE` under the
+   *  stage's top edge. Null until the pane exists to be measured. */
   const pan = useRef(0);
+  const dockPan = useRef(0);
   const receiptFade = useRef(0);
   const receiptRise = useRef(0);
   const panDistance = useRef(0);
+  const paneDistance = useRef<number | null>(null);
 
   const bottomFadeRef = useRef<HTMLDivElement>(null);
   const topFadeRef = useRef<HTMLDivElement>(null);
@@ -174,27 +196,75 @@ export function LandingBoard({
    */
   const paint = useCallback(() => {
     const engaged = released.current ? 0 : pan.current;
+    const dock = released.current ? 0 : dockPan.current;
+    // The camera's position is one interpolation: the scrubbed pan toward the
+    // foot, then the scrubbed dock tilt from wherever it is toward the pane's
+    // head. Until the pane exists the tilt's target IS the foot, so an
+    // unmeasured pane means no move rather than a wrong one.
+    const foot = engaged * panDistance.current;
+    const target = paneDistance.current ?? panDistance.current;
+    const y = foot + dock * (target - foot);
     if (panRef.current) {
-      panRef.current.style.transform = `translateY(${(engaged * panDistance.current).toFixed(2)}px)`;
+      panRef.current.style.transform = `translateY(${y.toFixed(2)}px)`;
     }
-    // The crop edges. They used to switch at a scene boundary; they are two
-    // more things the reader's scroll now moves continuously.
-    if (bottomFadeRef.current) bottomFadeRef.current.style.opacity = String(1 - engaged);
-    if (topFadeRef.current) topFadeRef.current.style.opacity = String(engaged);
-    // The receipt stands down WITH the camera. A released camera is back at
-    // the head, where a receipt bar would cover rows it has nothing to say
-    // about — the same rule the crop fades follow.
+    // The crop edges follow the camera's DEPTH — where the frame actually is
+    // between head (0) and foot (1) — not the raw pan input, because the dock
+    // tilt moves the frame back up and the board genuinely continues below it
+    // again. They used to switch at a scene boundary; they are two more
+    // things the reader's scroll now moves continuously.
+    const depth = panDistance.current ? y / panDistance.current : 0;
+    if (bottomFadeRef.current) bottomFadeRef.current.style.opacity = String(1 - depth);
+    if (topFadeRef.current) topFadeRef.current.style.opacity = String(depth);
+    // The receipt stands down WITH the camera — on release (back at the head,
+    // where a bar would cover rows it has nothing to say about) and across
+    // the dock tilt, whose whole point is handing the frame to the pane's own
+    // chrome: a marketing strip lying over the trail it announced would be
+    // the crop defect restated as an overlay.
     if (receiptRef.current) {
-      receiptRef.current.style.opacity = String(released.current ? 0 : receiptFade.current);
+      receiptRef.current.style.opacity = String(
+        released.current ? 0 : receiptFade.current * (1 - dock),
+      );
       receiptRef.current.style.transform = `translateY(${((1 - receiptRise.current) * RECEIPT_RISE).toFixed(2)}px)`;
     }
   }, []);
+
+  /**
+   * Let the next camera write ANIMATE instead of cutting. The scrub writes
+   * per-frame with no transition — that is what a scrub is — but two moments
+   * are not scrubs and used to land as hard cuts, which is the "it resizes
+   * and goes up" the owner reported: the release (a click snapped the frame
+   * from the foot to the head, 235–275px in one paint) and a pane that
+   * finishes mounting under a tilt already in progress (the target jumps).
+   * A transition is armed for one move and removed on a timer, so the scroll
+   * scrub never runs through it. Reduced motion keeps the step — that is its
+   * grammar for this whole act.
+   */
+  const glideTimer = useRef(0);
+  const glide = useCallback((ms: number) => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const targets = [panRef, bottomFadeRef, topFadeRef, receiptRef];
+    if (panRef.current) {
+      panRef.current.style.transition = `transform ${ms}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+    }
+    for (const ref of [bottomFadeRef, topFadeRef, receiptRef]) {
+      if (ref.current) ref.current.style.transition = `opacity ${ms}ms ease`;
+    }
+    window.clearTimeout(glideTimer.current);
+    glideTimer.current = window.setTimeout(() => {
+      for (const ref of targets) ref.current?.style.removeProperty("transition");
+    }, ms + 60);
+  }, []);
+  useEffect(() => () => window.clearTimeout(glideTimer.current), []);
 
   useEffect(() => {
     if (!camera) return;
     const stop = [
       camera.pan.subscribe((value) => {
         pan.current = value;
+        paint();
+      }),
+      camera.dockPan.subscribe((value) => {
+        dockPan.current = value;
         paint();
       }),
       camera.receiptFade.subscribe((value) => {
@@ -222,14 +292,14 @@ export function LandingBoard({
   // larger cleared band covered either rows or nothing, and "nothing" read as
   // debris.
   //
-  // The trade at the foot is deliberate: holding it crops the pane's own head
-  // — the `9 of 10` nav row, the title, and the pane's × — in exchange for
-  // the row and the whole trail. The row beside it carries the identity the
-  // title was carrying. That trade covers the pane the PAGE opens, and only
-  // for as long as the page is the one driving: the moment the visitor opens
-  // a card themselves the camera releases and the pane's × comes back into
-  // frame, because a cropped control the visitor reached for is a broken
-  // control, not a composition.
+  // The foot hold no longer ends the story. It crops the pane's own head —
+  // the `9 of 10` nav row, the title, and the pane's × — and the owner's
+  // verdict on that trade was final: chrome the visitor can see but not
+  // reach is broken, whoever opened the pane. So the dock beat now TILTS the
+  // camera back up to the pane's measured head (`ACT_MARKS.dockPan`,
+  // `paneDistance`), trading the moved row — whose identity the pane's title
+  // carries by then — for the mail's full chrome. The release on a visitor's
+  // own open stays, and glides.
   //
   // The scene that docks the pane used to return to the head, and measurement
   // caught what that cost: the moved row lands near the board's foot (the
@@ -271,6 +341,22 @@ export function LandingBoard({
         0,
         dolly.getBoundingClientRect().height - stage.clientHeight + OVERLAY_ROOM,
       );
+      // The dock tilt's target: the docked pane's head, PANE_CLEARANCE under
+      // the stage's top. Measured as a rect difference against the dolly —
+      // both rects carry the same translate, so the offset is intrinsic. The
+      // pane mounts AFTER the dock latch (it waits out the row's travel), so
+      // on a slow scroll it can arrive while the tilt is already partway in;
+      // the target changing under a live scrub would snap, so that one
+      // correction glides (below).
+      const pane = dolly.querySelector('[data-testid="application-detail"]');
+      const hadPane = paneDistance.current !== null;
+      paneDistance.current = pane
+        ? -Math.max(
+            0,
+            pane.getBoundingClientRect().top - dolly.getBoundingClientRect().top - PANE_CLEARANCE,
+          )
+        : null;
+      if (!hadPane && paneDistance.current !== null && dockPan.current > 0) glide(350);
       paint();
     };
     if (typeof ResizeObserver === "undefined") {
@@ -292,7 +378,7 @@ export function LandingBoard({
       cancelAnimationFrame(settle);
       ro.disconnect();
     };
-  }, [choreographed, paint]);
+  }, [choreographed, paint, glide]);
 
   const live = near && wide;
 
@@ -310,6 +396,10 @@ export function LandingBoard({
                 verdict={verdict}
                 docked={docked}
                 onVisitorOpen={() => {
+                  // The camera gives the frame back with a glide, not a cut:
+                  // the release is the one camera move the reader's scroll
+                  // does not own, so it is the one that gets a duration.
+                  glide(650);
                   released.current = true;
                   paint();
                 }}

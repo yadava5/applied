@@ -26,8 +26,6 @@ export const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const
  */
 export const ACCESS_ANCHOR = "#access";
 
-const SYSTEM_CARD = "/system-card";
-const CONTACT = "aesh.03.23@gmail.com";
 
 export function MarketingNav() {
   return (
@@ -66,27 +64,38 @@ export function MarketingNav() {
   );
 }
 
+/**
+ * The footer is a PRODUCT's, not a project's — recut 2026-08-19 at the
+ * owner's direction ("this is for scaling purposes, and not a project
+ * anymore"). What left, and why:
+ *
+ *   · "built and run by Ayush Yadav" — the maker's byline is what marks a
+ *     page as a side project. The name still signs the work everywhere it
+ *     should (the repo, the System Card); the footer is the product's.
+ *   · the personal Gmail address — a raw mailto in a footer is a spam
+ *     magnet and does not scale past one inbox. Superseded 2026-08-19: the
+ *     seat ask no longer carries an address either. It resolves to
+ *     `ACCESS.seatHref` (/signup), because the account list is the queue the
+ *     cap sentence already describes. No landing surface renders a mailto.
+ *   · "Live demo" — already in the nav on every page of this family; a
+ *     footer that restates the nav is filler.
+ *
+ *   · the System Card link — cut 2026-08-19 at the owner's direction. It is
+ *     still a differentiator and it is still linked from the privacy phase's
+ *     own prose, which is where a reader meets it in context; a second copy
+ *     in the footer was the last piece of project-shaped furniture here.
+ *
+ * What stays: Privacy, and only Privacy. It is the homepage link Google's
+ * OAuth verification looks for — do not remove it.
+ */
 export function MarketingFooter() {
   return (
     <footer className="border-t border-line-soft">
       <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-3 px-6 py-8 sm:flex-row sm:items-center">
-        <span className="text-[0.8125rem] text-dim">
-          Applied · built and run by Ayush Yadav
-        </span>
+        <span className="text-[0.8125rem] text-dim">© 2026 Applied</span>
         <nav className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.8125rem] text-dim">
-          {/* Privacy stays here in every variant: it is the homepage link
-              Google's OAuth verification looks for. Do not remove it. */}
           <a href="/privacy" {...NEW_TAB} className="transition-colors hover:text-strong">
             Privacy
-          </a>
-          <a href={SYSTEM_CARD} {...NEW_TAB} className="transition-colors hover:text-strong">
-            System Card
-          </a>
-          <a href="/demo" {...NEW_TAB} className="transition-colors hover:text-strong">
-            Live demo
-          </a>
-          <a href={`mailto:${CONTACT}`} className="transition-colors hover:text-strong">
-            {CONTACT}
           </a>
         </nav>
       </div>

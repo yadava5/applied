@@ -387,6 +387,7 @@ export function PipelineBoard({
   search = true,
   openDetailId,
   travel,
+  focusScrollOnOpen = true,
 }: {
   applications: Application[];
   interactive?: boolean;
@@ -431,6 +432,14 @@ export function PipelineBoard({
    * idea which row is about to travel and a 220ms cut reads as a teleport.
    */
   travel?: number;
+  /**
+   * Whether a user-open's focus may scroll the page to reach the pane. Off
+   * only on the marketing embeds' framed window, where the pane lives inside
+   * a camera crop on a pinned runway and the browser's reveal scroll would
+   * move the act's own clock — see ApplicationDetail's prop of the same
+   * name. Every product surface keeps the default.
+   */
+  focusScrollOnOpen?: boolean;
 } & BoardScope) {
   const router = useRouter();
   /**
@@ -1286,6 +1295,7 @@ export function PipelineBoard({
             onTraverse={traverseDetail}
             transport={transport}
             focusOnOpen={detailUserOpened}
+            focusScrollOnOpen={focusScrollOnOpen}
           />
         ) : null}
       </div>

@@ -81,14 +81,17 @@ belong in it.)
 | `import-classifies` | `/import` at a 780x900 viewport, signed out |
 | `gmail-connects` | hand-recorded, see below |
 
-`import-classifies` is the one scene whose payoff is a HARD CUT, and that is
-deliberate rather than a limitation being papered over: `ingest()` is
-synchronous — parse then classify, both pure, both in the tab — so the counters
-land in one paint. There is no request, no spinner and no round trip because
-nothing leaves the device, and a clip that showed a progress bar here would be
-inventing latency to look busy. It is also the one scene that raises the crop
-ceiling (`maxCropW`), because it is placed at 768 CSS px rather than in the
-416px column the shared ceiling was derived for.
+`import-classifies` shows the WHOLE process now (re-staged 2026-08-19 at the
+owner's direction — the button-press take showed nothing arriving): the sample
+export comes in over the drop zone as a real `File`, the zone answers with its
+shipped dragover state, the file lands, and the file line and counters follow.
+The one thing that is still instantaneous is the beat between the drop and the
+counters: `ingest()` is synchronous — parse then classify, both pure, both in
+the tab — so they land in one paint, and a progress bar there would be
+inventing latency the product does not have. The caption states that as the
+claim instead of apologising for it. It is also the one scene that raises the
+crop ceiling (`maxCropW`), because it is placed at 768 CSS px rather than in
+the 416px column the shared ceiling was derived for.
 
 The viewports are not arbitrary — `scenes.mjs` says why each one, and changing
 them changes what fits in the frame.

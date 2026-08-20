@@ -49,6 +49,26 @@
  *  raising it FOR. Enforced in `capture.mjs`, not remembered. */
 export const MAX_CROP_W = 580;
 
+/**
+ * The sample export's own text, read out of the component that defines it
+ * (`SAMPLE_MBOX` in ImportMail.tsx) rather than duplicated here: the import
+ * scene drops it on the page as a REAL file, so the take's counters are the
+ * same ones a visitor gets from the "Try a sample export" button, and a
+ * change to the fixture moves the take with it. Loud on failure — a scene
+ * silently dropping an empty file would record an error state and call it
+ * the product.
+ */
+async function sampleMboxText() {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(
+    new URL("../../components/import/ImportMail.tsx", import.meta.url),
+    "utf8",
+  );
+  const m = /const SAMPLE_MBOX = `([\s\S]*?)`;/.exec(src);
+  if (!m) throw new Error("SAMPLE_MBOX not found in ImportMail.tsx — the import scene has no file to drop");
+  return m[1];
+}
+
 /** Padding around a derived crop, in CSS px. */
 const PAD = 12;
 
@@ -221,15 +241,19 @@ export const SCENES = [
     },
     async run(page) {
       const text = this.body;
-      // Typed in small irregular bursts rather than at a fixed metronome: a
-      // constant delay reads as a machine filling a form. The burst sizes are a
-      // fixed cycle, not random, so a re-render produces the same take.
-      const BURSTS = [3, 5, 2, 7, 4, 3, 6, 2, 5, 4];
-      let i = 0, b = 0;
-      while (i < text.length) {
-        i = Math.min(text.length, i + BURSTS[b++ % BURSTS.length]);
+      // ONE CHARACTER PER STEP, at an irregular cadence. The previous take
+      // typed in bursts of 2-7 characters every 26ms — the whole body landed
+      // in about a second, and the owner read it as pasting, which it
+      // visually was. A keystroke is the unit a reader's eye knows, so the
+      // take types like a fast, fluent typist: ~25 characters a second,
+      // small tempo wobble on a fixed cycle (not random, so a re-render
+      // produces the same take). The evaluate round-trip adds a few ms per
+      // step; the cadence below was tuned WITH that overhead against the
+      // recorded scene.json timestamps, not against arithmetic alone.
+      const DELAYS = [24, 38, 18, 46, 28, 22, 52, 30, 20, 36, 26, 44];
+      for (let i = 1; i <= text.length; i += 1) {
         await typeInto(page, "playground-body", text.slice(0, i));
-        await page.waitForTimeout(26);
+        await page.waitForTimeout(DELAYS[i % DELAYS.length]);
       }
       // Hold on the landed verdict — the frame the clip ends on, and the state
       // it loops back out of.
@@ -248,15 +272,22 @@ export const SCENES = [
      * sentences describe something a visitor can watch happen, and neither had
      * ever been shown.
      *
-     * WHY A HARD CUT IS THE HONEST SHAPE HERE, and why that does not make it
-     * the rejected "trace expanding" clip above. `ingest()` is synchronous —
-     * `parseMailFile` then `classify`, both pure, both in the tab — so the
-     * counters land in ONE paint. That is not a limitation being papered over;
-     * it is the claim. There is no request, no spinner and no round trip
-     * because nothing leaves the device, and a clip that showed a progress bar
-     * here would be inventing latency to look busy. The rejected trace clip had
-     * nothing to read in either of its two states; this frame carries the
-     * on-device promise the whole time and the arithmetic arrives beneath it.
+     * THE TAKE IS THE WHOLE PROCESS NOW (2026-08-19, the owner's rejection of
+     * the button take: "nothing is shown imported"). A previous cut pressed
+     * "Try a sample export" and the counters landed in the next paint, which
+     * the caption then had to apologise for. This take does what the CTA's own
+     * sentence says — DROP IT IN: the sample export arrives over the target as
+     * a real File, the drop zone answers (its border and glyph take the rules
+     * accent — the shipped dragover state, not a graphic), it lands, and the
+     * file line and counters arrive. Every state is the product's own; the
+     * only synthesis is the input events, exactly as a click is.
+     *
+     * What has NOT changed: `ingest()` is synchronous — parse then classify,
+     * both pure, both in the tab — so between the drop and the counters there
+     * is still no spinner and no progress bar, and inventing one would be
+     * staging latency the product does not have. The caption now states that
+     * as the claim it is ("read and classified the moment it lands") instead
+     * of apologising for the recording.
      *
      * The results LIST is deliberately out of frame — see `forbid`.
      */
@@ -300,6 +331,7 @@ export const SCENES = [
      * with it.
      */
     async prepare(page) {
+      this.mbox = await sampleMboxText();
       await page.getByTestId("import-sample").click();
       await page.getByTestId("import-results").waitFor();
       this.measured = await page.evaluate(() => {
@@ -338,7 +370,34 @@ export const SCENES = [
       return { ...box, height: Math.round(box.height + this.measured.run) };
     },
     async run(page) {
-      await page.getByTestId("import-sample").click();
+      // The file, over the target: a real dragover with a real File in its
+      // DataTransfer, dispatched to the shipped handlers. The zone's answer
+      // (border + glyph take the rules accent) is the product's own state.
+      const overTarget = (drop) =>
+        page.evaluate(
+          ({ text, drop }) => {
+            const zone = document
+              .querySelector('[data-testid="import-sample"]')
+              ?.closest("div.relative");
+            if (!zone) throw new Error("import: the drop zone is gone");
+            const dt = new DataTransfer();
+            dt.items.add(new File([text], "sample.mbox", { type: "application/mbox" }));
+            zone.dispatchEvent(
+              new DragEvent(drop ? "drop" : "dragover", {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: dt,
+              }),
+            );
+          },
+          { text: this.mbox, drop },
+        );
+
+      await overTarget(false);
+      // Held long enough to read as "a file is over the target" rather than a
+      // flicker — the beat that gives the landing below a visible cause.
+      await page.waitForTimeout(1100);
+      await overTarget(true);
       await page.getByTestId("import-results").waitFor();
       // Hold on the landed counters — the frame the clip ends on, and the one
       // the poster is taken from.

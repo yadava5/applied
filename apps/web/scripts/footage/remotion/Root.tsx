@@ -72,17 +72,19 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
   // 2.9s in the take is the same frame, so the take is cut there and the
   // stillness is bought back as a deliberate hold on the result.
   "board-syncs": { window: { from: 0, to: 2.9 }, holdIn: 0.5, holdOut: 1.1, fade: 0.4 },
-  // The body streams in over ~3.5s and the verdict lands at 90% at the end.
-  // A shorter hold in, because the opening frame is an empty field and there is
-  // nothing to read in it.
-  "rules-read-the-body": { window: { from: 0, to: 3.8 }, holdIn: 0.3, holdOut: 0.6, fade: 0.3 },
-  // The press of "Try a sample export" lands at ~0.75s of the take and the
-  // counters are there in the next paint — `ingest()` is synchronous, because
-  // nothing leaves the tab. So the cut is: a beat on the un-run page, the
-  // arrival, then a long hold on the arithmetic, which is what there is to
-  // read. `scenes.mjs` argues why an instantaneous change is the honest shape
-  // for this claim rather than a shortcoming to hide.
-  "import-classifies": { window: { from: 0.1, to: 2.6 }, holdIn: 0.4, holdOut: 0.8, fade: 0.35 },
+  // The body TYPES in now — one character per step at ~25cps (scenes.mjs,
+  // retimed 2026-08-19 after the burst take read as pasting) — so the window
+  // is most of the take: the keystrokes run to ~9s and the verdict's landed
+  // state closes it. Verify the tail against the fresh scene.json on a
+  // re-capture; the typing's real end moves with the evaluate overhead.
+  "rules-read-the-body": { window: { from: 0, to: 9.6 }, holdIn: 0.3, holdOut: 0.7, fade: 0.3 },
+  // The whole process, in order: the sample export arrives over the drop
+  // zone (~0.7s, the zone answering with the rules accent), holds there a
+  // readable beat, drops at ~1.85s, and the file line and counters land in
+  // the next paint — `ingest()` is synchronous, because nothing leaves the
+  // tab, and that instant landing is the claim, stated by the caption rather
+  // than apologised for. Then the hold on the arithmetic.
+  "import-classifies": { window: { from: 0.1, to: 2.9 }, holdIn: 0.4, holdOut: 0.9, fade: 0.35 },
 };
 
 /**
@@ -107,7 +109,16 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
  */
 const OUT_WIDTH = 1152;
 
-const FPS = 30;
+/**
+ * 60, raised from 30 (2026-08-19) for the typing take: at 30 every
+ * composition frame spans two keystrokes of the ~25cps cadence, so pairs of
+ * characters appeared together and the take read as bursts even when the
+ * capture was per-character. The screencast stamps real paint times, and 60
+ * lets `frameAt` land each keystroke on its own frame. The other clips
+ * re-time onto the same grid unchanged — their motion is sparser than either
+ * rate — and every encode stays under the byte budget `render.mjs` enforces.
+ */
+const FPS = 60;
 
 /** Even numbers only — H.264 will not encode odd dimensions. */
 const even = (n: number) => Math.round(n / 2) * 2;

@@ -66,8 +66,13 @@ name: Landing B race gate
 #   n = 200  →  1 − 0.992^200 =  80%
 #   n = 400  →  1 − 0.992^400 =  96%
 #
-# `--repeat-each=200` × 2 viewports = 400 instances. That is the number below,
-# and it costs ~10 minutes of test time. That cost is the honest price of a race
+# `--repeat-each=200` × 2 viewports = 400 instances PER MATCHED TEST. That is the
+# sizing above, and it is per test rather than per job: the `-g` filter matches
+# every test asserting the close control stays in frame, and each one gets its
+# own n. Two match today (the page-docked pane, and a pane the visitor opens),
+# so the census below expects 800. Adding a third close-control test is
+# expected to raise that number, not to be excluded from the gate.
+# It costs ~23 minutes of test time against a 40 minute budget. That cost is the honest price of a race
 # gate that can fire on this hardware.
 #
 # STATE THE WEAKNESS RATHER THAN ROUND IT AWAY: 2/250 has a Wilson 95% interval
@@ -147,7 +152,7 @@ concurrency:
 
 jobs:
   race:
-    name: landing-b race (400 unretried attempts)
+    name: landing-b race (800 unretried attempts)
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
@@ -162,8 +167,13 @@ jobs:
       # execute zero assertions — the exact defect it exists to remove. The
       # census step below is what makes that impossible to ship unnoticed.
       PLAYWRIGHT_PROD_BUILD: "1"
-      # How many instances this job must observe. Two viewports × --repeat-each.
-      EXPECTED_INSTANCES: "400"
+      # How many instances this job must observe:
+      #   matched tests × viewports × --repeat-each = 2 × 2 × 200 = 800.
+      # Raised from 400 when the visitor-opened-pane path got its own
+      # close-control test. The census is deliberately a hard equality, so a
+      # test entering or leaving the -g filter fails here rather than silently
+      # changing how much evidence a green run represents.
+      EXPECTED_INSTANCES: "800"
 
     steps:
       - name: Checkout
@@ -224,7 +234,7 @@ jobs:
       # that reproduces. `--project=chromium` because the two timezone projects
       # only match demo/shell specs and would contribute nothing but a filter
       # that silently matches zero tests.
-      - name: Run the race test, 400 unretried attempts under contention
+      - name: Run the race test, 800 unretried attempts under contention
         working-directory: apps/web
         run: |
           pnpm exec playwright test tests/e2e/landing-b.spec.ts \

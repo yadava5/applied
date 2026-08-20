@@ -52,6 +52,11 @@ export const CLIPS = [...SCENES.map((s) => s.id)];
  */
 export const POSTER_AT = {
   "board-syncs": 3.6,
-  "rules-read-the-body": 4.3,
+  // 10.2, moved from 4.3 when the take was retimed to per-keystroke typing
+  // (5.0s -> 10.9s, 2026-08-19): 4.3s of the NEW clip is mid-word under
+  // OTHER 50% — exactly the "before" frame this map exists to avoid. 10.2
+  // sits inside the held end state: full body, REJECTION 90%, the accept-bar
+  // line — after the landing at ~9.9 and before the loop dissolve at ~10.6.
+  "rules-read-the-body": 10.2,
   "import-classifies": 3.0,
 };

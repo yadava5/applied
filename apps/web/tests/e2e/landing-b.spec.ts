@@ -144,6 +144,26 @@ const DESKTOP_1024 = { width: 1024, height: 600 };
  *  552px tall here and 384px at 600 — two different amounts of room for a
  *  control the camera can push off the top. */
 const DESKTOP_1024_768 = { width: 1024, height: 768 };
+/** A tall desktop, and the reason the pin is measured at more than one height.
+ *  Rail geometry is `dvh`-paced on one axis and fixed on the other — the
+ *  exhibits are a fixed number of pixels tall in a fixed-width column — so the
+ *  ratio the pin gate watches MOVES with the viewport, and it does not move
+ *  monotonically: a short viewport squeezes the rail against its own exhibit,
+ *  a tall one against its phase's runway. #access read 0.262 at 1024x768 and
+ *  0.170 at this height on the same build, so a gate fixed at one height was
+ *  structurally unable to see the failure. */
+const DESKTOP_1512 = { width: 1512, height: 949 };
+/** WIDE AND SHORT, and the reason the pin is measured at more than one WIDTH.
+ *  This is where the tightest pin on the page lives — #access at 0.213, the
+ *  whole page's minimum (`MIN_PIN_SHARE` decomposes it) — and until 2026-08-19
+ *  no walk had ever visited it: width moves the rail by a different mechanism
+ *  than height does, so a set of heights at one width cannot see it. Widening
+ *  past 1024 wraps the flow column's prose shorter and takes 24px off #access's
+ *  band, and passing 1280 grows every clip exhibit by 4px
+ *  (`ProductClip`'s figcaption takes `xl:pt-1`), so the rail gains what the
+ *  band loses. 1512 is where the owner works; every width from 1280 up reads
+ *  the same, the container being capped at `max-w-6xl`. */
+const DESKTOP_1512_600 = { width: 1512, height: 600 };
 const TABLET_768 = { width: 768, height: 1024 };
 
 /** The exhibit's closing sentence — the honesty guarantee, matched on the
@@ -151,10 +171,268 @@ const TABLET_768 = { width: 768, height: 1024 };
  *  tweak that keeps the promise does not turn CI red. */
 const PROVENANCE = /A synthetic email .* computed live in this tab/;
 
-/** The descent's sticky artifact column (`lg`+ only). Below `lg` each screen
- *  carries its own inline snapshot, and those are the copies this must NOT
- *  measure. */
-const STICKY_EXHIBIT = "div.sticky.top-20";
+/** A pinned rail (`lg`+ only) — the page's spine is four of them now, one
+ *  per phase, sides alternating (`ClaimsDescent`'s docblock). Below `lg` each
+ *  screen carries its own inline snapshot, and those are the copies this must
+ *  NOT measure.
+ *
+ *  It used to be `div.sticky.top-20`, and that stopped being a description of
+ *  the spine: the three clip rails now resolve their sticky offset from the
+ *  viewport and their own exhibit's height (`top-[max(5rem,…)]`), because a
+ *  viewport-tall box left its phase no runway to pin across. A utility class
+ *  was never the right handle anyway — it made a rail's identity a styling
+ *  detail, so a rail could leave this count by being restyled rather than by
+ *  being unstaged. `data-rail` names the phase and is what a rail losing its
+ *  staging actually removes. */
+const STICKY_EXHIBIT = "[data-rail]";
+/** How many rails the spine runs at `lg`+: verdict (right), decision (left),
+ *  retention (right), access (left). A fifth means a phase forked its
+ *  staging; three means one dropped out of the language the page was chosen
+ *  for. */
+const RAIL_COUNT = 4;
+
+/** How close to the sticky offset a sample has to read to count as PINNED.
+ *  The plateau measured exactly 80px at 1024x768, but a 1px rounding drift
+ *  has shown up on another probe of the same rails, so this is a tolerance
+ *  and not an equality. It is deliberately far below `PIN_STEP`: a rail that
+ *  is translating 1:1 with the scroll moves a whole step between samples, so
+ *  two consecutive samples cannot both land inside this band by accident. */
+const PIN_TOLERANCE = 2;
+/** The walk's stride, in scrolled pixels. Small enough that the shortest real
+ *  plateau (387px of runway) is sampled a dozen times, large enough that the
+ *  whole spine is walked in one test. */
+const PIN_STEP = 24;
+/** How far outside the pin the walk starts and ends, so the approach and the
+ *  exit — the two stretches where a working rail DOES translate 1:1 — are in
+ *  every reading. It is what makes "the rail entered and left" assertable. */
+const PIN_LEAD = 120;
+/**
+ * The least share of its own band a rail may spend pinned — counting only the
+ * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
+ *
+ * MEASURED on `next build && next start`, verdict / decision / retention /
+ * #access, at each of the four viewports this walk runs:
+ *
+ *   1024x600   0.393  0.382  0.745  0.236
+ *   1024x768   0.357  0.476  0.774  0.355
+ *   1512x600   0.393  0.363  0.738  0.213
+ *   1512x949   0.343  0.527  0.782  0.427
+ *
+ * THE TIGHTEST READING IS #ACCESS AT 1512x600 — WIDE AND SHORT — at 0.213.
+ * The revision before this one named 1024x600's 0.236 and said 0.20 "sits 15%
+ * below the tightest of the twelve readings". That was false, and false in
+ * this file's characteristic way: 0.236 was the tightest reading the walk
+ * TOOK, not the tightest the page HAS. A sweep of 21 viewports puts the
+ * minimum at 0.213, at height 600 and every width from 1100 up — measured
+ * identically to three decimals at 1100, 1279, 1280, 1440, 1512 and 1920.
+ * Widening from 1024 wraps #access's prose shorter and drops its band 812 ->
+ * 788 while the rail grows 553 -> 557, so the pin loses at both ends.
+ *
+ * DECOMPOSED at 1512x600, because which ratio you name changes what the
+ * number means:
+ *
+ *   (band - rail)/band   231/788 = 0.293   what the flow column supplies
+ *   runway/band          175/788 = 0.222   after `mb-14` spends 56px landing
+ *                                          the exhibit on the closing line
+ *   share, i.e. the gate 168/788 = 0.213   after PIN_STEP granularity
+ *
+ * So the structural headroom over the floor is 2.2pp — 0.222 against 0.200 —
+ * and what the gate actually reads clears it by 1.3pp, 6.5% of the floor. Not
+ * 15% of anything, and not the 44% this floor was first set with. Between
+ * 1100 and 1279 the same 0.213 arrives by a different route: the exhibit is
+ * 4px shorter below `xl`, so runway/band is 179/788 = 0.227 there and the
+ * stride eats the extra. Same gate reading, so that stretch needs no walk of
+ * its own.
+ *
+ * `mb-14` COSTS 7.1pp OF THAT SHARE — 56px of a 788px band, three times the
+ * margin that is left over. It is a deliberate trade for the level close (the
+ * exhibit comes to rest on the phase's closing line, where the flow column's
+ * last beat ends too — `ClaimsDescent`), and it is written down here because
+ * its price never had been. If this floor is ever genuinely in the way, that
+ * margin is the term to argue about before the floor is.
+ *
+ * NOTHING INSIDE THE DESIGN RANGE (w >= 1024, h >= 600) IS UNDER THE FLOOR.
+ * Outside it the page does read red, and the crossing sits between 580 and
+ * 600px tall at 1100+ wide: #access reads 0.187 at 1152x580 and 0.190 at
+ * 1152x560, while 1024x560 is still 0.215. That is where the contract ends,
+ * not a defect — 600 is the shortest viewport this page is designed for.
+ *
+ * WHY THIS LIST OF VIEWPORTS, since it has now been wrong twice in the same
+ * shape. Both times the set was chosen AFTER the measurement that justified
+ * it, so the measurement could not see its own blind spot. dc1bdee walked
+ * 1024x768 alone, claimed 24% of headroom, and was NEGATIVE at 1512x949;
+ * a47d8e0 walked three viewports across two widths, claimed 15%, and reads
+ * 0.213 at 1512x600, which was not one of them. The blind spot moved from
+ * tall to wide-and-short: one corner over, same shape.
+ *
+ * So the list is not a sample of the range, it is the CORNERS of it —
+ * {1024, 1512} x {600, tall} — because width and height squeeze a rail by
+ * different mechanisms and neither predicts the other: a narrower column
+ * wraps the prose longer and lengthens the band, `xl:pt-1` on the caption
+ * grows the exhibit past 1280, and a short viewport floors the sticky offset
+ * at `5rem`. A minimum built from independent mechanisms lives at a corner,
+ * not along an edge. Adding a fifth point in the middle buys nothing; dropping
+ * a corner is what went wrong twice.
+ *
+ * The netting is currently INERT and deliberately kept. No rail on this page
+ * carries a negative bottom margin any more (the clip rails carry `mb-14`,
+ * positive), so `overhang` is 0 in all twelve readings and nets nothing. It
+ * exists because the staging that did carry one measured, un-netted, on a
+ * band collapsed to its rail's own height: 0.174 at 1024x768, 0.200 at
+ * 1280x800, 0.249 at 1512x949, 0.288 at 1728x1080 — i.e. a rail with NO
+ * runway sailing past this floor on nothing but its own margin, at every
+ * viewport from 1280x800 up. A term that costs one subtraction and closes
+ * that stays.
+ *
+ * The denominator is the BAND, not the runway: pin/runway is ~0.97 on the
+ * fixed page and would be ~1.00 on the broken one (a 1px runway is 1px
+ * "pinned"), so measuring against the runway is precisely the check that
+ * cannot fail.
+ */
+const MIN_PIN_SHARE = 0.2;
+
+/** One rail's traversal, as measured by `walkRails`. */
+type RailWalk = {
+  label: string;
+  offset: number;
+  bandHeight: number;
+  railHeight: number;
+  /** How far the rail's border box may pass its band's end, i.e. the negative
+   *  bottom margin the three clip rails carry to take their centring slack
+   *  back (`ClaimsDescent`). It is pin the MARGIN pays for rather than the
+   *  band, so the walk has to reach past it and the share has to net it off. */
+  overhang: number;
+  runway: number;
+  pinned: number;
+  approach: number;
+  exit: number;
+  trace: string;
+};
+
+/**
+ * Scroll each pinned rail through its own band and report how far it held at
+ * its sticky offset.
+ *
+ * THE BAND IS THE RAIL'S PARENT, and that is not a convenience: `position:
+ * sticky` travels inside its containing block, so the parent's box IS the
+ * runway. Reading it from the DOM rather than from a section selector means a
+ * phase restaged into a different wrapper is still measured.
+ *
+ * The runway is `bandHeight - railHeight` LESS the rail's bottom margin,
+ * signed, because what sticky keeps inside the band is the MARGIN box. The
+ * three clip rails carry `mb-14` so their exhibit comes to rest on the
+ * phase's closing line (`ClaimsDescent`), which ends the pin 56px early; an
+ * earlier staging carried a NEGATIVE margin instead, which ended it late, and
+ * the border-box arithmetic then stopped the walk 192px INSIDE the sync
+ * rail's pin, read `exit` at the sticky offset, and reddened "it never left
+ * its band" on a page that was working. Subtracting the signed margin is
+ * right for either sign and inert at zero, which is what the verdict rail and
+ * every rail before this staging read. Nothing else here moves.
+ *
+ * `pinned` counts only the scroll distance between two CONSECUTIVE samples
+ * that both read the offset. A single sample at the offset earns nothing —
+ * every rail passes through 80 on its way past, and the pre-fix defect passed
+ * through it too.
+ *
+ * The walk runs in one `page.evaluate` with a rAF between scrolls rather than
+ * as a Playwright scroll loop: the sticky position is layout, not script, so a
+ * frame is all it needs, and ~130 samples across four rails would otherwise be
+ * ~130 round trips.
+ */
+async function walkRails(page: Page): Promise<RailWalk[]> {
+  return page.evaluate(
+    async ({ sel, step, lead, tolerance }) => {
+      const frame = () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      const rails = Array.from(document.querySelectorAll<HTMLElement>(sel));
+      const walks = [];
+
+      for (let index = 0; index < rails.length; index += 1) {
+        const rail = rails[index];
+        const band = rail.parentElement;
+        if (!band) throw new Error(`rail ${index} has no containing block to pin inside`);
+
+        // Named by where a reader would look for it: the section's own id or
+        // label, plus the exhibit it carries. The three descent rails share one
+        // unnamed <section>, and two of them carry the same chrome strip, so
+        // the recording's own name (`ProductClip` puts it on the <video>) is
+        // what tells them apart in a failure message.
+        const section = rail.closest("section");
+        const where = section?.id
+          ? `#${section.id}`
+          : (section?.getAttribute("aria-label") ?? "an unnamed section");
+        const carried =
+          rail.querySelector("video[aria-label]")?.getAttribute("aria-label") ??
+          rail.querySelector(".label-caps, figcaption, p")?.textContent?.trim();
+        const named = rail.dataset.rail ? `the ${rail.dataset.rail} rail` : `rail ${index}`;
+        const label = `${named} in ${where}${carried ? ` (${carried.slice(0, 32)})` : ""}`;
+
+        // Park at the approach BEFORE measuring. The descent drives its
+        // exhibits off scroll progress, so a band's height read from the top
+        // of the document can be stale by the time the walk reaches it.
+        const rough = window.scrollY + band.getBoundingClientRect().top;
+        window.scrollTo({ top: Math.max(0, rough - lead), behavior: "instant" });
+        await frame();
+
+        // The offset is the browser's reading of the rail's own `top-20`, not
+        // a number restated here — and so is the overhang, off the same
+        // computed style, so a rail that stops reclaiming its slack is
+        // measured as it renders rather than as this file remembers it.
+        const railStyle = getComputedStyle(rail);
+        const offset = parseFloat(railStyle.top);
+        const margin = parseFloat(railStyle.marginBottom);
+        const overhang = Math.max(0, -margin);
+        const bandRect = band.getBoundingClientRect();
+        const bandTop = window.scrollY + bandRect.top;
+        const bandHeight = bandRect.height;
+        const railHeight = rail.getBoundingClientRect().height;
+        const runway = bandHeight - railHeight - margin;
+
+        const from = bandTop - offset - lead;
+        const to = bandTop + runway - offset + lead;
+        const samples: { y: number; top: number }[] = [];
+        for (let y = from; y <= to + 0.5; y += step) {
+          window.scrollTo({ top: Math.max(0, Math.round(y)), behavior: "instant" });
+          await frame();
+          samples.push({
+            y: window.scrollY,
+            top: Math.round(rail.getBoundingClientRect().top * 10) / 10,
+          });
+        }
+
+        const held = (s: { top: number }) => Math.abs(s.top - offset) <= tolerance;
+        let pinned = 0;
+        for (let i = 1; i < samples.length; i += 1) {
+          if (held(samples[i - 1]) && held(samples[i])) pinned += samples[i].y - samples[i - 1].y;
+        }
+
+        // A readable slice of the walk for the failure message — the pre-fix
+        // signature is a top that falls by a whole step at every sample.
+        const every = Math.max(1, Math.ceil(samples.length / 10));
+        walks.push({
+          label,
+          offset,
+          overhang: Math.round(overhang),
+          bandHeight: Math.round(bandHeight),
+          railHeight: Math.round(railHeight),
+          runway: Math.round(runway),
+          pinned: Math.round(pinned),
+          approach: samples.length ? samples[0].top : Number.NaN,
+          exit: samples.length ? samples[samples.length - 1].top : Number.NaN,
+          trace: samples
+            .filter((_, i) => i % every === 0)
+            .map((s) => s.top)
+            .join(" "),
+        });
+      }
+
+      return walks;
+    },
+    { sel: STICKY_EXHIBIT, step: PIN_STEP, lead: PIN_LEAD, tolerance: PIN_TOLERANCE },
+  );
+}
 
 /**
  * Put the act at a given share of its PINNED RUNWAY — the same quantity
@@ -327,10 +605,10 @@ const activeCaption = (page: Page) =>
 
 /**
  * The closing sequence's playhead, in seconds. `ClosingAct` writes `--act-t`
- * on the band from its scroll progress and globals.css freezes every animation
- * at that time, so this one number is the whole state of the scene — and it is
- * the only thing that can distinguish "composed because the reader scrolled
- * there" from "composed because it ran on a timer".
+ * on the band from its own slowed clock once the scene is in view, and
+ * globals.css freezes every animation at that time — so this one number is
+ * the whole state of the scene: 0 before it has been seen, ACT_SECONDS once
+ * the play has genuinely finished, anything between mid-play.
  */
 async function playhead(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -455,17 +733,159 @@ test.describe("landing B (/landing-b)", () => {
     // 2 — the window, with the REAL board mounted in it (not the skeleton).
     await expect(page.locator("section[aria-label='The board, live']")).toBeVisible();
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
-    // 3 — the descent, and its sticky exhibit.
+    // 3 — the descent, and the spine's pinned rails: one per phase, no phase
+    // out of the language.
     await expect(
       page.getByRole("heading", { name: /The preview ends before the verdict/i }),
     ).toBeVisible();
-    await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(1);
+    // A COUNT, and only a count: `div.sticky.top-20` says the class is
+    // declared, never that the rail travels. That difference shipped a defect
+    // (see the pin test below, which is the assertion this line cannot make).
+    await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(RAIL_COUNT);
     // 4 — the conversion surface and the closing act.
     await expect(page.getByRole("heading", { name: /One hundred seats/i })).toBeVisible();
     await expect(page.locator("section.act")).toHaveCount(1);
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
+
+  /**
+   * SEED 6, and it closes the gap the count above leaves open.
+   *
+   * `toHaveCount(RAIL_COUNT)` counts nodes carrying `sticky top-20`. It was
+   * green on the build where `#access` declared that class and the pin had
+   * ZERO RANGE: the phase paced its copy as one 75vh screen, the section
+   * collapsed to the rail's own height (sectionH 689 == railH 688), and a
+   * sticky box with no runway simply translates with the scroll. `5c91e80`
+   * fixed it, and nothing in either suite could have caught it — re-pacing
+   * that copy back to one screen restores the exact defect with every gate
+   * green. The visible cost was the import clip's chrome strip, play/pause
+   * included, cropping above the fold while its body was still on screen: the
+   * crop the whole board rework exists to kill, at the conversion surface.
+   *
+   * WHAT IS ASSERTED IS THE RELATION, NOT THE GEOMETRY. Each rail is walked
+   * through its own band and its `top` sampled; the reading is how much of the
+   * band it spent HELD at its sticky offset. The numbers in my table move with
+   * every copy edit and none of them are pinned here — only the share, against
+   * a threshold ~40% below the tightest real one (`MIN_PIN_SHARE`).
+   *
+   * The pre-fix signature is a `top` that falls by exactly the scroll delta at
+   * every sample (measured then, over six samples: 281 181 81 -19 -119 -219).
+   * That reading earns zero pinned distance here — the plateau is counted
+   * BETWEEN consecutive samples that both read the offset, and 1:1 translation
+   * cannot produce two of those in a row at a 24px stride.
+   *
+   * EVERY rail, not just the one that broke. The spine's four rails are the
+   * same construction repeated, so the defect is available to all four, and
+   * three of them had no coverage of it either.
+   *
+   * FOUR VIEWPORTS, AND THEY ARE THE CORNERS OF THE DESIGN RANGE rather than
+   * a sample of it. This ran at 1024x768 alone on the reasoning that the pin
+   * is a fact about the band and the rail and both are `vh`-paced — which is
+   * false: a rail's exhibit is a fixed number of pixels tall in a fixed-width
+   * column, so the ratio moves with the viewport and does NOT move
+   * monotonically. A short viewport squeezes a rail against its own exhibit; a
+   * tall one squeezes it against its phase's runway; and WIDTH moves both by a
+   * third mechanism, which is what the three-viewport version still could not
+   * see. 768 is where the original crop was found; 949 is where the
+   * viewport-tall staging's 0.170 hid (it read 0.262 at 768, under a gate that
+   * only ran there); 1024x600 is the shortest the page is designed for; and
+   * 1512x600 is where the page's real minimum lives, 0.213. `MIN_PIN_SHARE`
+   * carries the readings and the argument for why the corners, and not a
+   * midpoint, are the thing to walk.
+   *
+   * MUTATION-TESTED AT INTRODUCTION (2026-08-19, `next build && next start` in
+   * a detached worktree, headless Chromium, 1024x768). `AccessPhase` restored
+   * to its pre-`5c91e80` single-screen pacing — the defect itself put back,
+   * not a synthetic break — and this went RED naming the rail:
+   *
+   *   rail 3 in #access: band 688px, rail 688px, runway 0px, pinned 0px at an
+   *   offset of 80px. Rail top through the walk: 199.8 151.8 103.8 55.8 7.8
+   *   -40.2 — the rail holds at its sticky offset for 0.0% of its band
+   *
+   * — pure translation, every reading a whole stride below the last, which is
+   * the pre-fix signature exactly. Green again on the restored file (`shasum
+   * -a 256` identical before and after), 18/18 across this suite, and steady
+   * under `--repeat-each=3`.
+   *
+   * THE THREE DESCENT RAILS WERE MEASURED IN THAT SAME RUN AND PASSED, and
+   * that is named rather than claimed as coverage: `expect` fails fast, so
+   * their readings were evaluated but never watched go red. They run the one
+   * code path `#access` reddened, so the path is proven able to fail; the
+   * geometry of each of the three is not independently reddened.
+   *
+   * The mutation restored a 688px band on a 688px rail — a 0px runway, where
+   * the historical defect had 1px — and the reading is not sensitive only at
+   * that extreme. Two consecutive samples inside the tolerance need about 20px
+   * of real pin (a `PIN_STEP` stride, less `PIN_TOLERANCE` at each end), so
+   * EVERY collapsed-band variant, the 689-vs-688 one included, reads 0px.
+   *
+   * RE-MUTATED at every restaging of the rails since, because each one changed
+   * what a rail brings to its own pin and the guard has to be shown still able
+   * to fail. Under the negative-margin staging, each clip rail's band was
+   * collapsed in-page to its rail's own border height and each read RED on the
+   * share — the decision rail at -0.012, the sync rail and #access at -0.023,
+   * against 0.174 for the sync rail with the overhang left in, which is why
+   * the share nets the overhang off. Under the current staging, where the box
+   * is the exhibit and the margin is positive, the same collapse leaves a
+   * runway of -56px and all three read 0.000 RED, at 1024x768 and at
+   * 1512x949. RE-RUN 2026-08-19 with 1512x600 added and the rails' centring
+   * constants re-derived: one rail collapsed at a time, three rails x four
+   * walked viewports, 12/12 RED — each naming its own rail and a `top` that
+   * falls a whole 24px stride at every sample — and green again on the
+   * restored file (`shasum -a 256` identical before and after). The
+   * assertions have not changed through any of it.
+   */
+  for (const viewport of [DESKTOP_1024, DESKTOP_1024_768, DESKTOP_1512_600, DESKTOP_1512]) {
+    const size = `${viewport.width}x${viewport.height}`;
+    test(`every pinned rail holds at its sticky offset across its own band at ${size}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/landing-b");
+
+      // Arrival, before anything is measured: the rails exist only at `lg`+, and
+      // the client tree is live (the board mounts from an effect), so what is
+      // walked below is the pinned staging and not the stacked twin.
+      await expect(page.getByTestId("pipeline-board")).toBeVisible();
+      await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(RAIL_COUNT);
+
+      const walks = await walkRails(page);
+      expect(walks, "the walk did not reach every rail").toHaveLength(RAIL_COUNT);
+
+      for (const walk of walks) {
+        const detail =
+          `${walk.label}: band ${walk.bandHeight}px, rail ${walk.railHeight}px, ` +
+          `overhang ${walk.overhang}px, runway ${walk.runway}px, pinned ${walk.pinned}px ` +
+          `at an offset of ${walk.offset}px. Rail top through the walk: ${walk.trace}`;
+
+        expect(walk.offset, `${detail} — the rail resolves no sticky offset`).toBeGreaterThan(0);
+
+        // The walk genuinely traversed the band: the rail arrived below its
+        // offset and left above it. Without this pair a rail that never moved at
+        // all — one that had become `fixed`, or a band measured wrong — would
+        // read as a flawless plateau, which is the shape this test exists to
+        // stop shipping.
+        expect(
+          walk.approach,
+          `${detail} — the walk started with the rail already at or past its pin, so the plateau below is not a measurement`,
+        ).toBeGreaterThan(walk.offset + PIN_TOLERANCE);
+        expect(
+          walk.exit,
+          `${detail} — the walk ended with the rail still at its pin, so it never left its band`,
+        ).toBeLessThan(walk.offset - PIN_TOLERANCE);
+
+        // Net the margin overhang off: it is pin the rail brings with it, not
+        // pin the phase's flow column earned, and leaving it in would let a band
+        // collapsed to its rail's own height still read a fifth of itself pinned.
+        const share = (walk.pinned - walk.overhang) / walk.bandHeight;
+        expect(
+          share,
+          `${detail} — the rail holds at its sticky offset for ${(share * 100).toFixed(1)}% of its band, under the ${MIN_PIN_SHARE * 100}% floor. A sticky column whose band is no taller than the column has nowhere to pin, so it translates with the scroll and carries its exhibit's chrome off the top of the fold — the defect 5c91e80 fixed at #access.`,
+        ).toBeGreaterThanOrEqual(MIN_PIN_SHARE);
+      }
+    });
+  }
 
   /**
    * SEED 1. The provenance line is the exhibit's last line and the page's
@@ -494,7 +914,13 @@ test.describe("landing B (/landing-b)", () => {
     // Arrived at the SPLIT stage: the wall label names it and both live
     // verdict chips have actually expanded (collapsed `grid-rows-[0fr]` gives
     // them a zero-height box, so `toBeVisible` discriminates).
-    const exhibit = page.locator(STICKY_EXHIBIT);
+    //
+    // The spine runs four rails now, so the verdict's is picked out by the
+    // one thing only it holds at `lg`+: the provenance line itself. (The
+    // retention record carries the same line, but in the FLOW column — the
+    // clip rails hold recordings, not emails.)
+    const exhibit = page.locator(STICKY_EXHIBIT).filter({ has: page.getByText(PROVENANCE) });
+    await expect(exhibit).toHaveCount(1);
     await expect(exhibit.locator("p").first()).toHaveText("The same body, classified twice");
     await expect(exhibit.getByText("preview only")).toBeVisible();
     await expect(exhibit.getByText("whole body")).toBeVisible();
@@ -575,6 +1001,47 @@ test.describe("landing B (/landing-b)", () => {
       `the moved row is ${-below}px below the stage's bottom edge — it is clipped out of frame at beat 2`,
     ).toBeGreaterThanOrEqual(-1);
   });
+
+  /**
+   * SEED 2b — the dock tilt (2026-08-19, from the owner's report: "i don't
+   * see the icons to close the right pane"). The camera used to hold the
+   * board's foot for the whole docked beat, which crops the pane's header —
+   * its title, the `9 of 10` traversal row, its × — above the stage at every
+   * supported height, for the pane THE PAGE opened. `ACT_MARKS.dockPan` now
+   * tilts the camera up to the pane's measured head once the dock has
+   * latched, so the page never shows chrome the visitor cannot reach.
+   *
+   * Same property, same instrument as the visitor-opened case below: the
+   * close control's box inside the stage's clip rect — `toBeVisible` cannot
+   * see this, because a control panned out of an `overflow-clip` ancestor
+   * still reports real coordinates. Driven to the tilt's END mark plus the
+   * settle the measurement needs (the pane mounts after the dock latch, and
+   * LandingBoard re-measures it through a ResizeObserver).
+   */
+  for (const viewport of [DESKTOP_1024_768, DESKTOP_1024]) {
+    const size = `${viewport.width}x${viewport.height}`;
+    test(`the page-docked pane keeps its close control in frame at ${size}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto("/landing-b");
+
+      await driveToBeatTwo(page);
+      await driveAct(page, past(ACT_MARKS.dockPan[1]));
+      await page.waitForTimeout(1_200); // pane measure + the one-off glide
+
+      const frame = await closeControlFrame(page);
+      expect("error" in frame ? frame.error : "", "the docked scene did not compose").toBe("");
+      if ("error" in frame) return;
+      expect(frame.stageHoldsControl, "the close control is not inside the stage").toBe(true);
+      expect(
+        frame.control.top - frame.stage.top,
+        `the pane's close control sits ${frame.stage.top - frame.control.top}px above the stage's top edge — the dock tilt never revealed the pane's own chrome`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(
+        frame.stage.bottom - frame.control.bottom,
+        "the pane's close control is below the stage's bottom edge",
+      ).toBeGreaterThanOrEqual(0);
+    });
+  }
 
   /**
    * SEED 3, and the one defect on this page that SHIPPED. The window crops a
@@ -940,34 +1407,27 @@ test.describe("landing B (/landing-b)", () => {
   });
 
   /**
-   * The closing act plays once on scroll-into-view and HOLDS. "Holds" is the
-   * load-bearing half: the sequence is CSS with `forwards` fill and its
-   * observer disconnects, so a reader who scrolls past and comes back finds
-   * the composed end state rather than a blank band or a replay.
+   * The closing act PLAYS ITSELF — once, slowed, to completion — and HOLDS.
+   * Retargeted 2026-08-19 (owner's call) off the scroll-scrub contract this
+   * test held for a few hours: the ending is narration, not an artifact the
+   * reader operates, so the playhead belongs to ClosingAct's own clock once
+   * the scene is in view, and scrolling back up finds it FINISHED rather
+   * than un-drawn. The rewind assertions left with the scrub.
+   *
+   * The drive is the case that has failed every prior build: a flick
+   * straight to max scroll. The pin plus the band's position (last section,
+   * footer excepted) is what guarantees the scene is still on screen there,
+   * so the poll below is asserting the whole reconciliation — the play
+   * cannot be outrun, and it genuinely reaches its own end (~3.7s at
+   * AUTO_RATE; the poll's timeout is comfortably past it, so a stalled clock
+   * fails rather than flakes).
    *
    * The verdict's landing is asserted against the page's OWN declared seat —
    * the `.act__ripple` circle is drawn at the baseline seat and never moves —
    * so this is not a golden pixel: it says "the dot ends where the scene says
    * the full stop goes".
    */
-  /**
-   * REWRITTEN 2026-08-19, and both halves of the old test had died rather than
-   * broken:
-   *
-   *  · its premise grepped the section for `act--play` to prove "nothing has
-   *    played yet". The band now ships `act--play act--scrub` from the SERVER
-   *    (so a reader without JS gets the composed image instead of an empty
-   *    band), which made that read meaningless — the class is there before
-   *    anything can have happened. The honest premise is the PLAYHEAD:
-   *    `--act-t` has not advanced.
-   *  · its "and HOLDS" half asserted that scrolling away and back leaves the
-   *    scene composed. Against a scroll-bound sequence that is vacuous in one
-   *    direction and wrong in the other: away-and-back must return it to
-   *    exactly where the scroll says, which is the stronger property and the
-   *    one this now measures, together with the fact that it genuinely
-   *    UN-draws partway up.
-   */
-  test("the closing act's playhead is the reader's scroll position", async ({ page }) => {
+  test("the closing act plays itself once in view, and holds composed", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024);
     await page.goto("/landing-b");
 
@@ -1003,10 +1463,10 @@ test.describe("landing B (/landing-b)", () => {
     expect(await playhead(page), "the closing sequence advanced before it was seen").toBe(0);
 
     await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
-    // Scroll-bound, so the end state arrives with the scroll rather than after
-    // a timer; poll anyway because the write is rAF-throttled.
+    // The play runs on its own clock now; the poll's window is sized to the
+    // slowed sequence, not to a scroll.
     await expect
-      .poll(async () => (await compose()).askOpacity, { timeout: 6_000 })
+      .poll(async () => (await compose()).askOpacity, { timeout: 10_000 })
       .toBe(1);
 
     const played = await compose();
@@ -1028,33 +1488,24 @@ test.describe("landing B (/landing-b)", () => {
     expect(played.dashoffset).toBe("0px");
 
     // The playhead reached the end of the sequence rather than merely "far
-    // enough" — the band is the last thing before the footer, so a binding
-    // whose upper bound is unreachable would leave the page's closing image
-    // permanently a few frames short and nothing above would notice.
+    // enough" — a clock that stalls short would leave the page's closing
+    // image permanently a few frames from finished and nothing above would
+    // notice.
     expect(await playhead(page), "the sequence never reached its own end").toBeCloseTo(2.05, 2);
 
-    // It REVERSES. Back to the top and the playhead is home, with the sentence
-    // un-drawn — the property the scroll binding exists to give, and the one
-    // the old "and HOLDS" assertion contradicted.
+    // It HOLDS. The ending is watched once, like the sentence it draws:
+    // leaving and returning finds the finished frame — no rewind (the scrub's
+    // contract, retired), no surprise replay (the fire-once build's defect).
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-    await page.waitForTimeout(300);
-    expect(await playhead(page), "the closing sequence did not rewind").toBe(0);
-    expect(
-      (await compose()).dashoffset,
-      "the wordmark stayed drawn after the reader scrolled away — the scrub is one-way",
-    ).not.toBe("0px");
-
-    // …and coming back lands on exactly the same frame, not merely a composed
-    // one. Same scroll position, same playhead: that is what "a function of
-    // position" means.
+    await page.waitForTimeout(400);
     await page.evaluate(() => window.scrollTo({ top: 1e7, behavior: "instant" }));
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     const returned = await compose();
-    expect(await playhead(page)).toBeCloseTo(2.05, 2);
-    expect(returned.dashoffset, "the drawn sentence did not re-draw").toBe("0px");
+    expect(await playhead(page), "the finished play did not hold").toBeCloseTo(2.05, 2);
+    expect(returned.dashoffset, "the drawn sentence came apart on return").toBe("0px");
     expect(
       Math.abs(returned.dot!.y - returned.seat!.y),
-      "the verdict did not return to its seat",
+      "the verdict did not stay seated",
     ).toBeLessThanOrEqual(2);
   });
 

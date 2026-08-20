@@ -19,13 +19,32 @@ import type { Clip } from "./footage";
  * THE FRAME IS THE PAGE'S OWN. A clip used to sit on this page as a bare
  * rounded rectangle with a caption under it — a video dropped into a document.
  * It wears the window act's specimen frame now: the same `rounded-2xl border
- * border-line`, the same chrome strip with a mark on the left and one control
- * on the right, the same shadow. What differs is exactly one glyph, and it is
- * the honest one — the live board's mark is a filled dot, present tense, and
- * this one is a hollow ring: the same instrument, pointed at something that
- * already happened. The strip's own bottom rule doubles as the playback
- * track, so the clip's position in its loop is legible without adding a
- * control surface to read it off.
+ * border-line`, the same chrome strip carrying a mark and a label, the same
+ * shadow. What differs is exactly one glyph, and it is the honest one — the
+ * live board's mark is a filled dot, present tense, and this one is a hollow
+ * ring: the same instrument, pointed at something that already happened.
+ *
+ * AND THE FRAME HAS A FOOT, which is the other honest difference: a recording
+ * has a transport, and the live board — which is the running product — cannot.
+ * So the playback track and the Play/Pause control sit at the BOTTOM of the
+ * frame, under the picture, where a transport goes; the head strip keeps the
+ * wall label alone and the two strips carry one thing each, on opposite
+ * corners. The track is still a rule rather than a widget (2px, on the
+ * picture's own bottom edge, the mirror of the head strip's rule), so the
+ * clip's position in its loop stays legible without adding a control surface
+ * to read it off.
+ *
+ * THAT ARRANGEMENT IS ALSO WHAT KEEPS THE CONTROL REACHABLE. Each clip rides
+ * a pinned rail whose bottom is anchored to its phase's last screen, so the
+ * TOP of the frame is the first thing to leave the fold on the way out: with
+ * the control up there it went off the top with a third of the picture still
+ * on screen and the reader still inside the phase's copy (measured at 1024:
+ * 388px of scroll on the decision rail, 306 on retention, 389 on access, with
+ * the recording visible and unpausable throughout). That is the crop the
+ * board rework existed to kill, and it is structural rather than a tuning
+ * error — a control at the frame's head sits a whole exhibit-height above the
+ * point where the rail lets go. At the foot it is the LAST part of the frame
+ * to leave, so it cannot outlive the picture in either direction.
  *
  * IT LOOPS, and that is what the whole treatment turns on. A five-second
  * recording that plays once and freezes on its last frame is a thing the
@@ -73,12 +92,21 @@ export function ProductClip({
   name,
   caption,
   className,
+  stack = false,
 }: {
   clip: Clip;
   /** What the recording shows, for anyone who cannot see it. */
   name: string;
   caption: string;
   className?: string;
+  /**
+   * Caption under the frame instead of beside it. The side-caption grid below
+   * assumes the clip owns a full-width row; a clip mounted in one of the
+   * page's pinned rails owns a ~30rem column, where a second column would
+   * squeeze the caption to nothing. Same frame, same words, one arrangement
+   * per placement.
+   */
+  stack?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLSpanElement>(null);
@@ -202,12 +230,13 @@ export function ProductClip({
         // the width this is worked at: 640 + 32 + 304 fits there exactly.
         // Below `lg` there is no room for a second column and the caption sits
         // under the frame, which is where a caption goes.
-        "grid gap-x-8 gap-y-3 lg:grid-cols-[minmax(0,40rem)_minmax(0,1fr)] lg:items-start",
+        "grid gap-x-8 gap-y-3",
+        !stack && "lg:grid-cols-[minmax(0,40rem)_minmax(0,1fr)] lg:items-start",
         className,
       )}
     >
       <div className="overflow-clip rounded-2xl border border-line bg-surface shadow-[0_24px_60px_-30px_rgb(0_0_0/0.55)]">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2 sm:px-5">
+        <div className="flex items-center gap-x-4 border-b border-line-soft px-4 py-2 sm:px-5">
           <span className="label-caps flex items-center gap-2">
             {/* hollow, where the live board's is filled: same instrument,
                 pointed at something that already happened */}
@@ -217,21 +246,14 @@ export function ProductClip({
             />
             {FOOTAGE.label}
           </span>
-          <button
-            type="button"
-            onClick={playing ? pause : play}
-            // `py-1.5` is the target, not the look: the label is 11px of caps
-            // and a pointer needs more than that to land on.
-            className="label-caps shrink-0 py-1.5 transition-colors hover:text-strong"
-          >
-            {playing ? FOOTAGE.pause : FOOTAGE.play}
-          </button>
         </div>
         <div className="relative bg-background">
-          {/* The chrome strip's own rule, filling. It is the only thing on the
-              frame that is not the recording, and it says one true machine
-              thing: where this loop is. */}
-          <span aria-hidden className="absolute inset-x-0 top-0 z-10 h-[2px]">
+          {/* The transport's rule, filling — on the picture's own bottom edge,
+              so it reads against the recording rather than against the foot's
+              padding. It is the only thing on the frame that is not the
+              recording, and it says one true machine thing: where this loop
+              is. */}
+          <span aria-hidden className="absolute inset-x-0 bottom-0 z-10 h-[2px]">
             <span
               ref={trackRef}
               className="block h-full origin-left bg-viz-rules"
@@ -254,6 +276,19 @@ export function ProductClip({
             <source src={`/footage/${clip.id}.webm`} type="video/webm" />
             <source src={`/footage/${clip.id}.mp4`} type="video/mp4" />
           </video>
+        </div>
+        {/* The transport. One control, at the foot's right — diagonally
+            opposite the wall label, so each strip carries exactly one thing. */}
+        <div className="flex items-center justify-end border-t border-line-soft px-4 py-2 sm:px-5">
+          <button
+            type="button"
+            onClick={playing ? pause : play}
+            // `py-1.5` is the target, not the look: the label is 11px of caps
+            // and a pointer needs more than that to land on.
+            className="label-caps shrink-0 py-1.5 transition-colors hover:text-strong"
+          >
+            {playing ? FOOTAGE.pause : FOOTAGE.play}
+          </button>
         </div>
       </div>
       <figcaption className="text-[0.8125rem] leading-relaxed text-muted xl:pt-1">

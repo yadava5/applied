@@ -1,47 +1,41 @@
 import type { Metadata } from "next";
 
+import { AccessPhase } from "@/components/marketing/AccessPhase";
 import { ClaimsDescent } from "@/components/marketing/ClaimsDescent";
 import { MarketingFooter, MarketingNav } from "@/components/marketing/chrome";
 import { ClosingAct } from "@/components/marketing/ClosingAct";
-import { FOOTAGE, HERO } from "@/components/marketing/copy";
-import { CLIPS } from "@/components/marketing/footage";
-import { ProductClip } from "@/components/marketing/ProductClip";
-import { AccessSection } from "@/components/marketing/sections";
+import { HERO } from "@/components/marketing/copy";
 import { WindowAct } from "@/components/marketing/WindowAct";
 
 /**
- * Landing B — the MERGED candidate: B's framed window containing the whole
- * app, driven by C's scroll. (A and C stand unchanged for comparison.)
- *
- * The sequence is the argument, one idea per screen:
+ * Landing B — the pinned-scroll candidate, and the pin IS the page. The
+ * owner chose this variant for the fixed-scroll language and rejected the
+ * build where it carried one phase and lapsed into ordinary sections for the
+ * rest; the whole page speaks it now, as one alternating spine. (A and C
+ * stand unchanged for comparison.)
  *
  *   1  the promise (display headline);
- *   2  the board, live in the window — the product before any explanation,
- *      and captioned, because the scene the page bets on cannot be the one
- *      with nothing to read on it;
- *   3  the offer lands — the receipt strip announces it, then the window's
- *      row travels to offered, on its own (a WIN, deliberately: the page's
- *      flagship moment must never turn the visitor down);
- *   4  the mail behind it — the detail pane docks open (the approved
- *      composition) once the row has landed, and the strip's "not every
- *      reply says its verdict ↓" hands off to the harder case;
- *   5  the descent takes that harder case — the interview invitation whose
- *      preview reads as a routine acknowledgment — and makes ONE claim in
- *      two beats: first the mail as Gmail hands it over, the preview visibly
- *      ending where the inviting begins; then the SPLIT VERDICT — the same
- *      body classified live twice — the one artifact on the page nothing
- *      else can fake, placed after the act it explains;
- *   6  the benchmark that chose what ships;
- *   7  what is kept (retention), the email stripped to its record;
- *   8  the seats, and the one CTA — the page's single conversion surface,
- *      reachable from the nav at any depth ("Get access").
+ *   2  the WINDOW ACT — the framed app pins full-stage and the visitor's
+ *      scroll advances the scene inside it: the resting board, the offer
+ *      landing (a WIN, deliberately), the pane docking on the mail behind
+ *      it, the camera tilting up to the pane's own chrome;
+ *   3  the descent (`ClaimsDescent`) — three phases, each one column PINNED
+ *      while the other flows past, the pinned side switching at every phase
+ *      boundary: the email rides the RIGHT rail for the verdict claim, the
+ *      rules recording rides the LEFT rail for the decision claim, the sync
+ *      recording rides the RIGHT rail for retention while the kept record
+ *      collapses in the flow;
+ *   4  access (`AccessPhase`) — the same language, LEFT rail: the import
+ *      recording pinned beside the page's one conversion surface, which the
+ *      nav's "Get access" reaches at any depth;
+ *   5  the CLOSING ACT — full-stage pin again, and the one surface that
+ *      plays on its own clock: once the scene is in view it runs to
+ *      completion, slowed, while the pin holds the page (see ClosingAct for
+ *      why it cannot be outrun).
  *
- * Screens 2–4 are `WindowAct` (the window pins, scroll advances the scene);
- * 5–7 are `ClaimsDescent` — same copy, same staging as /landing-c. The act
- * and the descent are two cases from the same board on purpose: the offer is
- * the promise kept (Larkspur), and the invitation is why keeping it takes
- * reading past the preview (Northstar, sitting in the interviewing group of
- * the very board the act plays on).
+ * Full frame → right → left → right → left → full frame: the alternation is
+ * the page's rhythm, the side-switch is what a phase change looks like, and
+ * no section drops out of the language between the bookends.
  */
 export const metadata: Metadata = {
   title: "Landing B — the window, in motion",
@@ -74,19 +68,10 @@ export default function LandingB() {
       {/* ---- the descent: the email behind the act, one claim per screen - */}
       <ClaimsDescent />
 
-      {/* The CTA's own evidence, beside the CTA. `ACCESS.noSeat` promises the
-          fallback path is "parsed and classified in your browser", and until
-          now that was the one sentence on the page with nothing behind it.
-          Landing B only: A and C pass no exhibit and are unchanged. */}
-      <AccessSection
-        exhibit={
-          <ProductClip
-            clip={CLIPS.importClassifies}
-            name={FOOTAGE.import.name}
-            caption={FOOTAGE.import.caption}
-          />
-        }
-      />
+      {/* The CTA in the spine's own language — the import recording pinned
+          beside the promise it evidences. A and C keep the shared
+          `AccessSection` and are unchanged. */}
+      <AccessPhase />
       <ClosingAct />
       <MarketingFooter />
     </main>

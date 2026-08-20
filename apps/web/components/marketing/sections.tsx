@@ -82,16 +82,12 @@ export function PrivacySection() {
  * visitor's own exported mail: the cap becomes a privacy flex.
  *
  * This is the page's ONE conversion surface, which is why it carries the id
- * the nav's "Get access" anchors to (`ACCESS_ANCHOR`). Every variant renders
- * it exactly once, so the anchor cannot become ambiguous.
- *
- * `exhibit` is optional and OPT-IN, so this stays one section shared by three
- * variants rather than becoming three. Landing B passes a recording of the
- * import page doing what the CTA promises — the button's own evidence, beside
- * the button — because the fallback path was the one claim on the page with
- * nothing behind it. A and C pass nothing and are unchanged.
+ * the nav's "Get access" anchors to (`ACCESS_ANCHOR`). Every page renders
+ * exactly one `#access`, so the anchor cannot become ambiguous — A and C
+ * render this section; B restages the same copy in its spine language
+ * (`AccessPhase`, which carries the id there instead).
  */
-export function AccessSection({ exhibit }: { exhibit?: React.ReactNode }) {
+export function AccessSection() {
   return (
     <SectionShell id="access">
       <Reveal className="max-w-2xl">
@@ -112,15 +108,14 @@ export function AccessSection({ exhibit }: { exhibit?: React.ReactNode }) {
           <span className="text-sm text-dim">
             {ACCESS.aside}{" "}
             <a
-              href={`mailto:${ACCESS.contact}`}
+              href={ACCESS.seatHref}
               className="text-muted underline-offset-4 hover:text-strong hover:underline"
             >
-              {ACCESS.contact}
+              {ACCESS.seatLink}
             </a>
           </span>
         </div>
       </Reveal>
-      {exhibit && <div className="mt-12">{exhibit}</div>}
     </SectionShell>
   );
 }
