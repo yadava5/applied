@@ -1,205 +1,312 @@
-import { ArtifactF1, type DerivedF1 } from "./ArtifactF1";
-import { ClipScaleFix } from "./ClipScaleFix";
-import { CursorStoryboard } from "./CursorStoryboard";
-import { EstablishingZoom } from "./EstablishingZoom";
-import { HeldBeat } from "./HeldBeat";
+import { BoardDolly } from "./BoardDolly";
+import { FollowOneLetter } from "./FollowOneLetter";
+import { HeldBreath } from "./HeldBreath";
+import { Highlighter } from "./Highlighter";
 import { Plate, type PlateInfo } from "./Plate";
-import { ProvenanceReceipt } from "./ProvenanceReceipt";
-import { PulseExhibit } from "./PulseExhibit";
-import { RulesTraceExhibit } from "./RulesTraceExhibit";
-import { SpineDemo } from "./SpineDemo";
-import { SyncRailRefill } from "./SyncRailRefill";
+import { QuietCase } from "./QuietCase";
+import { ReverseCrane } from "./ReverseCrane";
+import { MasterShot, RoundTrip } from "./syncTakes";
+import { TwentySeconds } from "./TwentySeconds";
+import { WhatItKept } from "./WhatItKept";
+import { WhereItWaits } from "./WhereItWaits";
+import { WorkdayOner } from "./WorkdayOner";
 
 /**
- * The motion lab: ten candidate motion treatments for the landing, each on a
- * numbered plate, so the owner can look and reply with IDs instead of
- * commissioning builds he might not want. A selection surface, not a
- * landing — nothing here ships to `/`.
+ * The motion lab, round two: the owner picked treatments 01, 02, 03 and 08;
+ * everything else is gone. Each pick now stands as a FAMILY of two or three
+ * genuinely distinct cinematic variants — different camera logic, not the
+ * same move re-eased — on sub-ID plates, so a reply like "build 01b 03a 08c"
+ * commissions exact builds. Still a selection surface, not a landing;
+ * nothing here ships to `/`.
  *
- * Plate numbering follows the brief's own list 1:1, so a reply like
- * "build 02, 06, 09" is unambiguous against it.
+ * The round's standing rule, owner's words: nothing about how the code is
+ * written appears in an exhibit. The old plate 02's pattern/points column is
+ * gone, confidence decimals are gone from every exhibit, and what stands
+ * beside evidence is CONSEQUENCE — what the product did — never mechanism.
+ * (This metadata block below is reviewer scaffolding and may still talk
+ * engineering; the ban is about what the exhibits show.)
+ *
+ * Eleven of twelve plates are choreographed REAL DOM — the shipped
+ * components under a camera transform, a synthesized pointer dispatching
+ * real events, captions narrating — because real DOM cannot drift from the
+ * product. One (03c) is the storyboard for the single shot DOM cannot make.
  */
 
-const PLATES: PlateInfo[] = [
+interface Family {
+  id: string;
+  title: string;
+  note: string;
+}
+
+const FAMILIES: Family[] = [
   {
     id: "01",
-    anchor: "zoom",
-    title: "Establishing zoom on the opening act",
-    fidelity: "live",
-    argues: "Show the whole pipeline in one frame first, then arrive at product scale.",
-    costs: "Zero bytes of media, ~30 lines in WindowAct. No new risk — it rides the act's existing scrub.",
-    lie: "It can't, structurally: there is no recording to re-time or recompose.",
-    honest: "Real DOM at every frame — drag a card mid-zoom and it answers.",
+    title: "The opening act",
+    note: "Three cameras on the real board: a working session, a scroll-driven dolly, and a reverse crane out of one line of history. The claim never changes — pick the camera.",
   },
   {
     id: "02",
-    anchor: "trace",
-    title: "Rules-trace highlight on the verdict email",
-    fidelity: "live",
-    argues: "The differentiator itself: the spans that decided, lit by the engine that decided.",
-    costs: "Zero bytes. One engine change (a recorder on the shipped walk — done, see rulesLayer.ts). Risk: none found.",
-    lie: "A marketing component re-running its own regexes would drift from the verdict the moment rules.json moved.",
-    honest: "The offsets are recorded DURING scoring, in the same walk — the display cannot disagree with the verdict.",
+    title: "Why it decided",
+    note: "The lit email survives; the machinery column is gone. What stands beside the evidence now is consequence — the filing, the retention, the case — never the workshop.",
   },
   {
     id: "03",
-    anchor: "sync-rail",
-    title: "Refilling the sync rail",
-    fidelity: "live",
-    argues: "The one genuinely empty exhibit: give 1114px of pin the whole retention sentence — the reading, then the kept record.",
-    costs: "Zero bytes (both exhibits already ship). A tempo edit in ClaimsDescent. Risk: rail height at short viewports needs the usual 1024 measure.",
-    lie: "Captioning the sync clip as classification — the demo's Sync classifies nothing, it commits pre-labelled fixture rows.",
-    honest: "The caption stays scoped to the pass (\"what it filed\"); the classification evidence sits in the kept record beside it, computed live.",
-  },
-  {
-    id: "04",
-    anchor: "clip-scale",
-    title: "Fixing the import clip's scale",
-    fidelity: "live",
-    argues: "The page's worst-read exhibit at 0.64× product scale — see the fix at real size before paying for it.",
-    costs: "Option A: free, a width token. Option B: one footage run (~build + capture + encode). Risk: A is bounded by the encode; B re-stages a take the owner already approved once.",
-    lie: "\"Bigger\" past the 576 ceiling shows mush as detail — upscaling claims sharpness the encode doesn't hold.",
-    honest: "Every scale factor below is computed from the authored crop and the encode's real width; the ceiling is stated, not exceeded.",
-  },
-  {
-    id: "05",
-    anchor: "cursor",
-    title: "Cursor pane-walk",
-    fidelity: "storyboard",
-    argues: "The one thing no clip shows yet: the product being USED — a real pointer opening the row, the pane docking, the trail scrolling.",
-    costs: "One footage run + amending the footage README's cursor rule + @remotion/mac-cursors (free tier covers this repo). Risk: the amendment itself — see the frame.",
-    lie: "A cursor drawn over frames in post, or a 4-second operation quietly played at 1s — compression that changes the claim.",
-    honest: "Cursor synthesized at capture time from the real events that drove the take, disclosed in the README; dead time cut in whole segments and disclosed, never re-timed.",
-  },
-  {
-    id: "06",
-    anchor: "receipts",
-    title: "Provenance receipts under every clip",
-    fidelity: "live",
-    argues: "The page's honesty made visible: each recording carries its own manifest-sourced receipt, never typed.",
-    costs: "Zero bytes beyond text. One-line render.mjs change to add route + commit fields. Risk: none found.",
-    lie: "A hand-typed caption drifts into fiction the first time a clip is re-rendered and the words aren't.",
-    honest: "Every value is read from manifest.json, which the encoder wrote; missing fields stay missing until the pipeline writes them.",
-  },
-  {
-    id: "07",
-    anchor: "pulse",
-    title: "Live micro-exhibit: the pulse band",
-    fidelity: "live",
-    argues: "Small boxes as live computation, not video: the product's own pulse over the showcase fixture, at your clock.",
-    costs: "Zero bytes of media; the dashboard chunk (already paid by the board embed). Risk: fixture must keep feeding every cell honestly (see showcase.ts's burst-shaped dates).",
-    lie: "A fixture shaped to flatter a chart — one filing per day once drew a picket fence that read as fake.",
-    honest: "The shipped component computes every number at mount; the fixture is the same burst-shaped seed the live board uses, provenance stated.",
+    title: "The sync story",
+    note: "Whole dashboard, the control, a real press, the spinner, what it filed. Two live cameras and one storyboard for the shot DOM can't make. No rejection ever arrives this way — the ambiguous mail lands held, which hands 08 its opening.",
   },
   {
     id: "08",
-    anchor: "held",
-    title: "The held-for-review beat",
-    fidelity: "live",
-    argues: "The product's humility, shown working: three live verdicts, one held under the bar — it inoculates 0.979 against \"too good\".",
-    costs: "Zero bytes. Risk: the trio's split depends on rules.json — if the rules move, the cards re-verdict themselves (that is the point, but re-check the composition after rule changes).",
-    lie: "Writing the held card's top guess as its verdict — forging the human decision the product deliberately refuses to make.",
-    honest: "All three verdicts computed live at render; the held card commits no category, in /import's own words.",
-  },
-  {
-    id: "09",
-    anchor: "spine",
-    title: "A travelling spine in the gutter",
-    fidelity: "live",
-    argues: "One element that never resets: the page's alternation made watchable, ticking machine values it does not own.",
-    costs: "Zero bytes, one fixed-position element on the landing. Risk: another always-on scroll listener (cheap next to the existing scrubs), and it must never carry a number of its own.",
-    lie: "The spine inventing a figure at a handoff — a number that cannot be derived in a gate does not go on a marketing page.",
-    honest: "Every tick is imported from copy.ts / verdictEmailData.ts, the same single sources the landing's claims read.",
-  },
-  {
-    id: "10",
-    anchor: "f1-gate",
-    title: "ClassF1Bars sourced from the artifact",
-    fidelity: "live",
-    argues: "The per-class figure already ships hand-typed and ungated — here it is derived from the evaluation artifact and diffed against itself.",
-    costs: "A build-time sync script + CI gate (readme-facts idiom). Risk: none — correct today, and the gate is what keeps it correct.",
-    lie: "Nothing fails today if the benchmark moves: the bars would keep announcing a number the artifact no longer holds.",
-    honest: "The equality below is computed at render from the artifact the headline is transcribed from — and the gate makes drift a CI failure.",
+    title: "Held for review",
+    note: "The product's humility, three stagings: the stop as the climax, the human's twenty seconds, and where a held mail actually waits.",
   },
 ];
 
-const EXHIBITS: Record<string, React.ReactNode> = {
-  "01": <EstablishingZoom />,
-  "02": <RulesTraceExhibit />,
-  "03": <SyncRailRefill />,
-  "04": <ClipScaleFix />,
-  "05": <CursorStoryboard />,
-  "06": <ProvenanceReceipt />,
-  "07": <PulseExhibit />,
-  "08": <HeldBeat />,
-  "09": <SpineDemo />,
-};
+const PLATES: PlateInfo[] = [
+  {
+    id: "01a",
+    anchor: "oner",
+    title: "The workday oner",
+    fidelity: "live",
+    argues:
+      "One continuous session: the pulse's real filed-on-a-date filter, the board narrowing with its own glide, a row opening, its history docking, the filter clearing. The camera follows the reading, not the pointer.",
+    costs:
+      "Zero media; the take engine (shared by six plates) plus this script. Risk: selector drift if board labels change — the take fails loudly and its caption says so.",
+    lie: "Staging a dropdown the product does not have. The date filter here is the shipped pulse panel's own day bar — no control is drawn for the camera.",
+    honest:
+      "Every event is dispatched at the shipped component; the survivors of the filter are whoever the real filter leaves. Drag a card mid-take and the board answers you, not the script.",
+  },
+  {
+    id: "01b",
+    anchor: "dolly",
+    title: "The dolly",
+    fidelity: "live",
+    argues:
+      "Scroll as the camera: rise to product scale, travel down three stages of real cards, and at the foot the act's own verdict plays — the offer moves its row, the pane docks.",
+    costs:
+      "Zero media; rides MarketingBoard's existing verdict/docked machinery. Risk: runway height wants the usual 1024 measure before shipping.",
+    lie: "A timeline that keeps playing after the reader's hand stops. This is position, not time — it cannot outrun the scroll.",
+    honest:
+      "State is a function of scroll position; scroll up and the verdict un-happens, the landing act's own reversibility rule.",
+  },
+  {
+    id: "01c",
+    anchor: "crane",
+    title: "Start at the end",
+    fidelity: "live",
+    argues:
+      "A reverse crane: open on ONE line of one mail trail, pull back until the whole board holds it. The record is the product's point, so the record is the establishing shot.",
+    costs: "Zero media; one script. Risk: none new — the pane is opened by a real click before the shot settles.",
+    lie: "Composing a 'history' for the shot. The trail in frame is the pane's own, loaded by the shipped transport.",
+    honest:
+      "The camera pulls out of a state the product built for itself; every intermediate frame is the real pane beside the real list.",
+  },
+  {
+    id: "02a",
+    anchor: "highlighter",
+    title: "The highlighter",
+    fidelity: "live",
+    argues:
+      "A reading light sweeps the mail once; the deciding phrases catch and hold at the recorded offsets; the verdict stamps; and beside it the consequence plays — the real board row flips its stage.",
+    costs: "Zero media. Risk: none found; the grammar is substrate for 02b and 03c.",
+    lie: "The sweep passing itself off as the classifier's runtime. It is staging — the verdict and spans are computed before the bar moves, and the exhibit's own caption says so.",
+    honest:
+      "Spans recorded during the scoring walk, in this tab; the panel beside the mail shows what HAPPENED — never a pattern, a weight, or a decimal.",
+  },
+  {
+    id: "02b",
+    anchor: "kept",
+    title: "What it kept",
+    fidelity: "live",
+    argues:
+      "Retention enacted: the mail dissolves — unlit prose first, then even the lit phrases, because they were read and used, never stored — and what remains is the record the database actually holds.",
+    costs: "Zero media; the kept-record grammar already ships on the landing's retention exhibit.",
+    lie: "Letting the dissolve read as deleting mail from Gmail. The captions pin it to Applied's copy, inside Applied's frame; Gmail keeps the original.",
+    honest:
+      "The record shown is the real retained shape — subject, sender, an 80-char snippet, the verdict, body columns never written — and the deciding sentence is demonstrably not in it.",
+  },
+  {
+    id: "02c",
+    anchor: "quiet-case",
+    title: "The quiet case",
+    fidelity: "live",
+    argues:
+      "The restrained option: phrases light one at a time, each quoted verbatim beside the mail, verdict last. Evidence, then conclusion, at reading pace.",
+    costs: "Zero media. Risk: none found.",
+    lie: "Quoting phrases the engine never scored. The quotes are sliced at the recorded offsets, so a rules change re-lights and re-quotes the exhibit in the same render.",
+    honest: "The mail's own words are the whole display — what decided, never how deciding is written.",
+  },
+  {
+    id: "03a",
+    anchor: "round-trip",
+    title: "The round trip",
+    fidelity: "live",
+    argues:
+      "The owner's spec, staged: wide, in to the Sync control, a real press — then OUT while the spinner runs, so the wait becomes anticipation and the payoff lands in the wide shot: two confirmations file, the totals move, and one ambiguous mail lands amber in the tray.",
+    costs:
+      "Zero media; a lab-owned mount (LabSyncBoard) wiring the shipped SyncBar + board + queue over the showcase fixture, because /demo's fixtures are e2e geometry and must not move for a marketing lab.",
+    lie: "Captioning the pass as classification — the simulated sync commits pre-labelled rows, so every caption stays scoped to what it FILED. And a rejection arriving by sync: production has never auto-filed one, so the pool never contains one.",
+    honest:
+      "The press is a real press; the run, receipt, new totals and held arrival are the shipped components' own doing, and replay remounts to the product's initial state.",
+  },
+  {
+    id: "03b",
+    anchor: "master-shot",
+    title: "The master shot",
+    fidelity: "live",
+    argues:
+      "The contrarian camera: one fixed frame, no moves. The product's own motion — the running state, the arrivals' glide, the tray appearing — is the entire effect.",
+    costs: "Zero media; same mount as 03a, a shorter script.",
+    lie: "Same two as 03a — the caption scope and the no-rejection rule — plus any cut that compresses the wait: the spinner runs at its real duration.",
+    honest: "If the take is boring, the product is boring — nothing here can hide it, which is the argument for it.",
+  },
+  {
+    id: "03c",
+    anchor: "one-letter",
+    title: "Follow one letter",
+    fidelity: "storyboard",
+    argues:
+      "The tracking shot DOM cannot make: the camera locks one arrival, it unfolds mid-flight into the mail, the reading light sweeps it, it folds into a board row and rides down into its group.",
+    costs:
+      "One Remotion render (free tier covers this repo) + amending the footage README's cursor covenant in plate 05's recorded-events terms — anything synthesized is synthesized at capture time from the real events, and disclosed. That amendment is part of this plate's price, not a footnote.",
+    lie: "The in-flight reading implying the sync frame classified live, or the tracked letter being a rejection. Both are written into the shot list as refusals.",
+    honest: "Stamped until rendered: no motion is faked on this plate — the storyboard is cards, not a canned animation.",
+  },
+  {
+    id: "08a",
+    anchor: "held-breath",
+    title: "The held breath",
+    fidelity: "live",
+    argues:
+      "Two mails file fast — tick, tick — then the third stops the room: the filed cards dim, an amber ring draws over a full second, and it settles as held with NO guess shown. The stop is the climax.",
+    costs:
+      "Zero media. Risk: the trio's split depends on rules.json — if the rules move, the cards re-verdict themselves; re-check the composition after rule changes.",
+    lie: "Printing the held card's top guess — writing a verdict where the product's answer is the typed null forges the human decision it refuses to make. The old plate showed the guess; this one does not.",
+    honest: "All three verdicts computed live at render; the held card commits nothing, in the product's own words.",
+  },
+  {
+    id: "08b",
+    anchor: "twenty-seconds",
+    title: "Twenty seconds on a Tuesday",
+    fidelity: "live",
+    argues:
+      "The human's half of the loop, on the real queue: an obvious-to-a-person rejection the machine honestly couldn't read from a snippet, and the pointer stopping AT the decision — because the next click is the product.",
+    costs:
+      "Zero media today. The full clear-the-tray cut needs a classify seam in the queue row (it POSTs straight to the API) — a product improvement the demo twin already wants; commissioning 08b in full includes it.",
+    lie: "The take 'filing' the row — forging the one decision this surface reserves for a person. The take ends at the boundary instead, and says so.",
+    honest:
+      "Both held mails are cast mails with live-computed confidences behind the real rows; the rejection-in-the-tray IS the production truth of how rejections reach the board.",
+  },
+  {
+    id: "08c",
+    anchor: "where-it-waits",
+    title: "Where it waits",
+    fidelity: "live",
+    argues:
+      "The mail's journey, not the human's: Cedar's held note settles into the real review queue beneath it — nothing vanishes, nothing is guessed, the question stays open on the board.",
+    costs: "Zero media. Risk: none found.",
+    lie: "A held mail 'disappearing' into a tray the product doesn't have. The tray is the shipped ReviewQueue over the showcase rows.",
+    honest: "The same mail 08a refused to judge is the queue's first row — one cast, one story, across the family.",
+  },
+];
 
-export function MotionLab({
-  derivedF1,
-  macroF1,
-  generatedAt,
-}: {
-  derivedF1: DerivedF1[];
-  macroF1: number;
-  generatedAt: string;
-}) {
+export function MotionLab() {
   return (
     <main className="min-h-screen bg-background text-muted">
       <header className="mx-auto w-full max-w-5xl px-6 pb-10 pt-16">
-        <p className="label-caps">Applied · motion lab · not linked, not indexed</p>
+        <p className="label-caps">Applied · motion lab · round two · not linked, not indexed</p>
         <h1 className="mt-3 max-w-2xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-          Ten motion treatments, working where they can and stamped where they can&apos;t.
+          Twelve takes on the four treatments you picked.
         </h1>
         <p className="mt-4 max-w-2xl">
-          Each plate shows the treatment itself, what it argues, what it costs, and the specific
-          way it could lie. Reply with plate IDs to commission builds — e.g.{" "}
-          <span className="font-mono text-sm text-strong">build 02 06 09</span>.
+          Each family stages the same claim with genuinely different cameras. Eleven plates are
+          live — real components under a camera, a pointer the page drives, a real press wherever
+          something is pressed — and one is the storyboard for the shot DOM can&apos;t make. Reply
+          with sub-IDs to commission builds — e.g.{" "}
+          <span className="font-mono text-sm text-strong">build 01a 03a 08a</span>.
+        </p>
+        <p className="mt-3 max-w-2xl text-sm text-dim">
+          House rule this round, per your ban: no exhibit shows patterns, weights, confidence
+          decimals or anything about how the engine is written. Evidence is the mail&apos;s own
+          words; what stands beside it is what the product did.
         </p>
 
         <nav aria-label="Plates" className="mt-8 overflow-hidden rounded-xl border border-line-soft">
-          <ul className="divide-y divide-line-soft text-sm">
-            {PLATES.map((p) => (
-              <li key={p.id}>
-                <a
-                  href={`#${p.anchor}`}
-                  className="flex items-baseline gap-4 px-4 py-2.5 transition-colors hover:bg-surface"
-                >
-                  <span className="font-mono text-sm text-viz-rules">{p.id}</span>
-                  <span className="min-w-0 flex-1 truncate text-strong">{p.title}</span>
-                  <span
-                    className={`label-caps shrink-0 ${
-                      p.fidelity === "live" ? "text-viz-rules" : "text-review"
-                    }`}
-                  >
-                    {p.fidelity === "live" ? "live" : "storyboard"}
-                  </span>
-                </a>
+          <ul className="text-sm">
+            {FAMILIES.map((family) => (
+              <li key={family.id} className="border-b border-line-soft last:border-b-0">
+                <p className="label-caps bg-surface px-4 pb-1.5 pt-2.5">
+                  {family.id} · {family.title}
+                </p>
+                <ul className="divide-y divide-line-soft">
+                  {PLATES.filter((p) => p.id.startsWith(family.id)).map((p) => (
+                    <li key={p.id}>
+                      <a
+                        href={`#${p.anchor}`}
+                        className="flex items-baseline gap-4 px-4 py-2.5 transition-colors hover:bg-surface"
+                      >
+                        <span className="font-mono text-sm text-viz-rules">{p.id}</span>
+                        <span className="min-w-0 flex-1 truncate text-strong">{p.title}</span>
+                        <span
+                          className={`label-caps shrink-0 ${
+                            p.fidelity === "live" ? "text-viz-rules" : "text-review"
+                          }`}
+                        >
+                          {p.fidelity === "live" ? "live" : "storyboard"}
+                        </span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
               </li>
             ))}
           </ul>
         </nav>
       </header>
 
-      {PLATES.map((info) => (
-        <Plate key={info.id} info={info}>
-          {info.id === "10" ? (
-            <ArtifactF1 derived={derivedF1} macroF1={macroF1} generatedAt={generatedAt} />
-          ) : (
-            EXHIBITS[info.id]
-          )}
-        </Plate>
+      {FAMILIES.map((family) => (
+        <section key={family.id} aria-label={`Treatment ${family.id} — ${family.title}`}>
+          <div className="border-t border-line">
+            <div className="mx-auto w-full max-w-5xl px-6 pb-2 pt-12">
+              <p className="label-caps">treatment {family.id}</p>
+              <h2 className="mt-2 text-2xl font-medium tracking-tight text-strong">
+                {family.title}
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-dim">{family.note}</p>
+            </div>
+          </div>
+          {PLATES.filter((p) => p.id.startsWith(family.id)).map((info) => (
+            <Plate key={info.id} info={info}>
+              {EXHIBITS[info.id]}
+            </Plate>
+          ))}
+        </section>
       ))}
 
       <footer className="border-t border-line-soft">
         <div className="mx-auto w-full max-w-5xl px-6 py-12 text-sm text-dim">
           <p>
-            Pick by ID — <span className="font-mono text-strong">build 02 06 09</span> — or name a
-            plate to argue with. Storyboarded plates need a footage run before they can be judged
-            as motion; everything stamped live is running on this page.
+            Pick by sub-ID — <span className="font-mono text-strong">build 01a 03a 08a</span> — or
+            name a plate to argue with. The storyboarded plate (03c) needs a footage run before it
+            can be judged as motion; everything stamped live is running on this page, and replaying
+            a take remounts the product to its own initial state.
           </p>
         </div>
       </footer>
     </main>
   );
 }
+
+const EXHIBITS: Record<string, React.ReactNode> = {
+  "01a": <WorkdayOner />,
+  "01b": <BoardDolly />,
+  "01c": <ReverseCrane />,
+  "02a": <Highlighter />,
+  "02b": <WhatItKept />,
+  "02c": <QuietCase />,
+  "03a": <RoundTrip />,
+  "03b": <MasterShot />,
+  "03c": <FollowOneLetter />,
+  "08a": <HeldBreath />,
+  "08b": <TwentySeconds />,
+  "08c": <WhereItWaits />,
+};
