@@ -48,13 +48,33 @@ test.describe("beta access notice", () => {
    * `HIDE_ON` in BetaBanner.tsx had NO test of any kind until 2026-08-20, so
    * every entry on it was an unchecked assertion: a typo, a route rename or a
    * dropped line would have silently put a fixed app toast back over a surface
-   * that was deliberately cleared of one. This is the positive control for the
-   * list — it asserts one route ON it and one route OFF it in the same test,
-   * so it cannot pass by finding nothing anywhere.
+   * that was deliberately cleared of one.
    *
-   * /motion-lab is the case that motivated it: a private selection page whose
-   * subject is what the product does and does not claim, with a beta pill
-   * floating over it.
+   * THE FIRST VERSION OF THIS TEST WAS DECORATION, and the way it failed is
+   * worth keeping written down. It navigated, waited for the `<h1>`, then
+   * asserted `toHaveCount(0)`. Both halves were individually reasonable and the
+   * pair was useless: the heading is server-rendered, so waiting for it gates
+   * on nothing, and `toHaveCount(0)` is a wait-UNTIL-TRUE that was already true
+   * in the window before the banner's post-hydration mount. Removing
+   * "/motion-lab" from HIDE_ON entirely left it green, 5 runs out of 5, while
+   * the pill demonstrably rendered on the page.
+   *
+   * So absence here is asserted as a HOLD, not as an instant. Two things make
+   * it real:
+   *
+   *   1. a hydration anchor — the take controls exist only once a client
+   *      effect has resolved the reduced-motion query, so their presence
+   *      proves this route hydrated rather than merely responded;
+   *   2. a sustained window — the banner mounts on a `setTimeout(0)` that lands
+   *      AFTER effects, so a single sample taken at the anchor can still beat
+   *      it. Sampling until a deadline is what closes that gap, and it is why
+   *      this is not a `waitForTimeout` in disguise: a bare sleep would move
+   *      one sample later, while this fails on ANY sample that sees the pill.
+   *
+   * Asserting one route ON the list and one OFF it also keeps the test from
+   * passing by finding nothing anywhere — but note that anti-vacuity argument
+   * only ever protected the safe half, which is exactly how the first version
+   * slipped through.
    */
   test("the pill is hidden on the surfaces HIDE_ON names, and only those", async ({ page }) => {
     const toggle = page.getByRole("button", { name: /limited access/i });
@@ -65,8 +85,20 @@ test.describe("beta access notice", () => {
 
     // ON the list: app chrome does not leak onto the selection surface.
     await page.goto("/motion-lab");
-    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(toggle).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /replay the take/i }).first(),
+    ).toBeVisible();
+
+    const deadline = Date.now() + 2_000;
+    let samples = 0;
+    while (Date.now() < deadline) {
+      expect(await toggle.count(), `beta pill appeared on /motion-lab after ${samples} clean samples`).toBe(0);
+      samples += 1;
+      await page.waitForTimeout(100);
+    }
+    // Guards the guard: if the loop ever degenerates to a single pass, the
+    // hold has stopped being a hold and this test is back to what it was.
+    expect(samples, "the absence hold collected too few samples to mean anything").toBeGreaterThan(10);
   });
 
   test("the email-admin action composes to the admin mailbox with the right subject", async ({
