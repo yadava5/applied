@@ -165,10 +165,22 @@ function readPlayBlock() {
   return map;
 }
 
-/** `.act--scrub …` `animation-delay:` rules → class → [delay] (ms or "--d"). */
+/** `.act--scrub …` `animation-delay:` rules → class → [delay] (ms or "--d").
+ *
+ *  The selector list is matched as one `[^{}]*` run rather than a repeated
+ *  group. `((?:\.act--scrub[^{]*?)+)` — what this was — is ambiguous: every
+ *  extra `.act--scrub` in the list can be attributed to the repetition or
+ *  swallowed by a neighbouring `[^{]*?`, so a non-matching tail makes the
+ *  engine try every split. CodeQL flagged it (js/redos, two alerts) and it is
+ *  not theoretical: 24 repetitions took 1,248ms against 0ms for this form.
+ *
+ *  Only our own stylesheet is ever fed to it, so nothing was exploitable —
+ *  the fix is here because a superlinear parser in a gate is a gate that can
+ *  time out instead of failing honestly. `[^{}]` is also strictly tighter
+ *  than `[^{]`: it cannot run past a closing brace into the next rule. */
 function readScrubDelays() {
   const map = new Map();
-  for (const m of css.matchAll(/((?:\.act--scrub[^{]*?)+)\{\s*animation-delay:([^;]+);/g)) {
+  for (const m of css.matchAll(/(\.act--scrub[^{}]*)\{\s*animation-delay:([^;]+);/g)) {
     const classes = [...m[1].matchAll(new RegExp(`\\.act--scrub\\s+\\.(${CLS})`, "g"))].map((c) => c[1]);
     const delays = splitTop(m[2]).map((calc) => {
       const c = /calc\(\s*(var\(\s*--d\b[^)]*\)|\d*\.?\d+s)\s*-\s*var\(\s*--act-t\b/.exec(calc);
@@ -182,7 +194,7 @@ function readScrubDelays() {
 
 /** The classes `.act--scrub` pauses. */
 function readPausedClasses() {
-  const m = /((?:\.act--scrub[^{]*?)+)\{\s*animation-play-state:\s*paused/.exec(css);
+  const m = /(\.act--scrub[^{}]*)\{\s*animation-play-state:\s*paused/.exec(css);
   assert.ok(m, "the scrub's pause rule is gone — nothing freezes the sequence");
   return new Set([...m[1].matchAll(new RegExp(`\\.(${CLS})`, "g"))].map((c) => c[1]));
 }
