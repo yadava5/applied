@@ -81,47 +81,62 @@ export const HERO = {
 /** The board embed's provenance line — shown with every live mount. */
 export const BOARD = {
   live: "Live fixture data — the shipped board, not a video. Drag a card; open a row.",
+  /** The window act's variant of the same honesty line: the take drives the
+   *  board with a synthesized pointer, and that has to be declared in the
+   *  same breath as "not a video" — while the visitor's own hand still wins
+   *  (the components stay real and interactive under the take). */
+  take: "Live fixture data — the shipped board, a synthesized pointer. Your hand wins: drag a card, open a row.",
   still: "A still of the board. The interactive board needs a wider screen.",
   open: "Open the full demo",
 } as const;
 
 /**
- * The window act's narration — one line per scene, pinned above the frame and
- * swapped as the visitor's scroll advances the board beneath it (`WindowAct`).
- *
- * These exist because the act's first scene was WORDLESS: two thirds of a
- * viewport of a resting board, whose whole point (Larkspur, nineteen days
- * quiet, the amber age tag) is invisible to a visitor who does not yet know
- * the product's grammar. The scene the page bets on cannot be the one screen
- * with nothing to read on it, so `landing-variants.test.mjs` holds the count
- * at three non-empty lines against the act's three sentinels.
- *
- * State, event, consequence — the act's whole argument in three lines.
+ * The window act's words — the narration strip pinned above the frame. The
+ * principle survives from the scrubbed act these replaced: no beat of the
+ * act is wordless, because a visitor who does not yet know the product's
+ * grammar cannot see what the board is showing them until a line names it.
+ * `landing-variants.test.mjs` holds every line non-empty and rendered.
  */
 export const ACT = {
   /**
-   * The middle line names the OFFER, deliberately: the headline's first
-   * sentence is "You don't lose the offer", and this is the beat where the
-   * page proves it — the act's moving row is a win, never a rejection (the
-   * owner's call, 2026-08-16: the flagship demonstration must not turn the
-   * visitor down).
+   * The workday oner's narration — the owner's 01a pick (2026-08-19), ported
+   * with the take from the motion lab it was chosen in. One continuous
+   * working session: the pointer opens the pulse's momentum panel, presses a
+   * real filed-on-a-date day bar, the board narrows with its own glide,
+   * Kestrel's row opens, the pane docks with the mail trail, the filter
+   * clears, the camera returns. Every line lands with the beat it narrates
+   * (`WindowAct` hands them to the director's `say`), and the camera follows
+   * the READING, not the pointer.
+   *
+   * This replaces the three scroll-scene captions of the scrubbed act: the
+   * act plays on its own pausable clock now (the closing act's mechanism,
+   * the owner's call in both places), so captions indexed to scroll
+   * sentinels described a machine that no longer exists.
    */
-  captions: [
-    "The board, nineteen days after you stopped updating it.",
-    "The offer lands, and the row moves without you.",
-    "The row opens on the mail that moved it.",
+  opening:
+    "A continuous working session — filter to a day, open a row, read its history, clear.",
+  narration: [
+    "Monday. The whole search in one frame — ask it what happened.",
+    "The pulse holds the answer: filings, day by day.",
+    "Press the heavy evening —",
+    "— and the board narrows to the applications filed that day.",
+    "Open one: the assessment, its deadline, and every mail that led here.",
+    "Clear the day —",
+    "— and the whole board breathes back. One sitting, no tab-hopping.",
   ],
-  /*
-   * There used to be a fourth line here — "The same board, with the offer
-   * already filed." — for scene 0 REVISITED, because the camera came back
-   * down when the reader scrolled up but the offer did not un-happen. It has
-   * been removed rather than reworded: the act is a function of scroll
-   * position now (WindowAct), so scrolling back up un-does the verdict and
-   * closes the pane, and scene 0 revisited IS scene 0. A line that narrated a
-   * permanently settled board was describing a latch that no longer exists,
-   * and keeping it would have been the one caption on the page that could
-   * contradict the board it captions.
-   */
+  /** A take that cannot find its target must say so, not half-play. */
+  failed: "The take could not finish here — replay to run it again.",
+  /** The visitor's hand on the stage stands the take down (their events are
+   *  trusted; the pointer's are synthesized) and the camera goes home, where
+   *  the whole board — and anything they open on it — is in frame. */
+  yours: "Your hand — the board is yours. Replay runs the take again.",
+  /** The reduced-motion strip: the take stands down entirely and the resting
+   *  board — still the live product — is the whole exhibit. */
+  resting:
+    "Motion is off — your setting is respected, and the board below is the live product at rest.",
+  pause: "Pause",
+  play: "Play",
+  replay: "Replay",
 } as const;
 
 export const DECISION = {
@@ -391,5 +406,23 @@ export const ARTIFACT = {
     "The same body, classified twice",
     "Both verdicts, from the rules layer that ships",
     "The same email, as the database keeps it",
+    /** The escalated exhibit's third beat (02b): the two honesty rails a
+     *  dissolve needs, in one line — this happens to APPLIED'S copy (Gmail
+     *  keeps the original), and what survives is the decision, not the
+     *  correspondence. */
+    "The mail dissolves — Applied's copy, never your Gmail's",
   ],
+} as const;
+
+/**
+ * The held exhibit's wall labels (`HeldExhibit`, the decision rail — the
+ * owner's 08c pick). The same device as the verdict rail's: the exhibit
+ * changes state under the reader, so the label names the state. The GATE
+ * itself is stated inside the exhibit by the product's own review queue
+ * ("held because Applied wasn't sure · your decision files them") — these
+ * lines stage it, they do not restate it.
+ */
+export const HELD = {
+  mail: "A mail the rules will not guess about",
+  queue: "It waits in the review queue — filed by you, never guessed",
 } as const;

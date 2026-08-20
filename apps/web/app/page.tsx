@@ -17,23 +17,26 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  * noindex, as the comparison set.)
  *
  *   1  the promise (display headline);
- *   2  the WINDOW ACT — the framed app pins full-stage and the visitor's
- *      scroll advances the scene inside it: the resting board, the offer
- *      landing (a WIN, deliberately), the pane docking on the mail behind
- *      it, the camera tilting up to the pane's own chrome;
+ *   2  the WINDOW ACT — the workday oner (the owner's 01a pick): the framed
+ *      app pins full-stage and one continuous take plays through a real
+ *      working session on the real board — the pulse opens, a day bar is
+ *      pressed, the board narrows, Kestrel's row opens on its mail trail,
+ *      the filter clears — on the closing act's pin-and-play clock, pausable
+ *      and disarmed by reduced motion (`WindowAct` / `OnerStage`);
  *   3  the descent (`ClaimsDescent`) — three phases, each one column PINNED
  *      while the other flows past, the pinned side switching at every phase
- *      boundary: the email rides the RIGHT rail for the verdict claim, the
- *      rules recording rides the LEFT rail for the decision claim, the sync
- *      recording rides the RIGHT rail for retention while the kept record
- *      collapses in the flow;
+ *      boundary: the email rides the RIGHT rail for the verdict claim and
+ *      escalates raw → split → dissolve → the kept record (02b), the held
+ *      mail settles into the real review queue on the LEFT rail for the
+ *      decision claim (08c) while the rules recording loops in the flow,
+ *      the sync recording rides the RIGHT rail for retention while the kept
+ *      record collapses in the flow;
  *   4  access (`AccessPhase`) — the same language, LEFT rail: the import
  *      recording pinned beside the page's one conversion surface, which the
  *      nav's "Get access" reaches at any depth;
- *   5  the CLOSING ACT — full-stage pin again, and the one surface that
- *      plays on its own clock: once the scene is in view it runs to
- *      completion, slowed, while the pin holds the page (see ClosingAct for
- *      why it cannot be outrun).
+ *   5  the CLOSING ACT — full-stage pin again, playing on its own clock:
+ *      once the scene is in view it runs to completion, slowed, while the
+ *      pin holds the page (see ClosingAct for why it cannot be outrun).
  *
  * Full frame → right → left → right → left → full frame: the alternation is
  * the page's rhythm, the side-switch is what a phase change looks like, and
