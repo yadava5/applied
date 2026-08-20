@@ -1,44 +1,24 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
-import type { Metadata } from "next";
+import facts from "@/lib/benchmark/baseline-v3.generated.json";
 
 import { MotionLab } from "@/components/motion-lab/MotionLab";
 
-/**
- * /motion-lab — a private selection surface for the landing's candidate
- * motion treatments. Deliberately unreachable except by URL: no nav link
- * anywhere, and robots below refuses indexing. Nothing on this route ships
- * to `/`; it exists so the owner can pick treatments by ID instead of
- * commissioning builds sight-unseen.
- */
-export const metadata: Metadata = {
-  title: "Motion lab",
-  robots: { index: false, follow: false },
-};
-
-/** The artifact the 0.979 headline is transcribed from (see ClassF1Bars).
- *  Read at render for plate 10's derive-and-diff; resolved from the repo
- *  root because the file lives with the backend, outside this app. */
-const ARTIFACT = path.join(
-  process.cwd(),
-  "..",
-  "..",
-  "backend",
-  "data",
-  "evaluation",
-  "baseline_hybrid_v3.json",
-);
-
-interface EvalArtifact {
-  per_label: Record<string, { f1: number }>;
-  overall: { macro_f1: number };
-  meta: { generated_at: string };
-}
+/** Plate 10 derives the per-class figures instead of trusting the hand-typed
+ *  literal in `ClassF1Bars`. It reads a GENERATED file that lives inside this
+ *  app, not the backend artifact directly.
+ *
+ *  That distinction is load-bearing and was learned the hard way: the first
+ *  version did `readFileSync(process.cwd() + "/../../backend/...")`, which
+ *  resolves in a local checkout and threw a 500 on every request in
+ *  production, because Vercel's root directory for this project is `apps/web`
+ *  and `backend/` is not in the deployment bundle. A serverless function
+ *  cannot reach the repo root.
+ *
+ *  `scripts/gen-benchmark-facts.mjs` writes the file; `--check` fails if it
+ *  drifts from the artifact, so the numbers stay derived rather than typed.
+ *  Proven able to fail: mutating one f1 exits 1. */
 
 export default function MotionLabPage() {
-  const artifact = JSON.parse(readFileSync(ARTIFACT, "utf8")) as EvalArtifact;
-  const derivedF1 = Object.entries(artifact.per_label).map(([label, m]) => ({
+  const derivedF1 = Object.entries(facts.perLabel).map(([label, m]) => ({
     label,
     f1: m.f1,
   }));
@@ -46,8 +26,8 @@ export default function MotionLabPage() {
   return (
     <MotionLab
       derivedF1={derivedF1}
-      macroF1={artifact.overall.macro_f1}
-      generatedAt={artifact.meta.generated_at}
+      macroF1={facts.macroF1}
+      generatedAt={facts.generatedAt}
     />
   );
 }
