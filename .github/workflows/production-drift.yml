@@ -65,7 +65,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout with full history
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # NOT optional. The fixtures are real commits from this repository --
           # 12b8aee and 60fcec2 among them -- and the detector reads git for
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The comparison is ancestry and commit times, both of which need the
           # history between what production runs and main's tip.
