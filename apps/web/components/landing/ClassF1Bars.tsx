@@ -26,7 +26,10 @@ import { Reveal } from "./Reveal";
 const AXIS_MIN = 0.9;
 const GATE = 0.95;
 
-const CLASSES: { label: string; f1: number }[] = [
+// Exported so a surface sourcing the same numbers from the evaluation
+// artifact can diff itself against these hand-typed values instead of
+// asserting they match (see components/motion-lab).
+export const CLASSES: { label: string; f1: number }[] = [
   { label: "applied", f1: 1.0 },
   { label: "pending_application", f1: 1.0 },
   { label: "interview", f1: 1.0 },

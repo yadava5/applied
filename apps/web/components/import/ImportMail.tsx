@@ -37,8 +37,9 @@ import {
  * load-bearing — reword it only together with the spec.
  */
 
-/** Layer-1 accept bar from the shipped pipeline: rules answer at ≥ 0.90. */
-const RULES_ACCEPT = 0.9;
+/** Layer-1 accept bar from the shipped pipeline: rules answer at ≥ 0.90.
+ *  Exported so other surfaces that state the bar read this one value. */
+export const RULES_ACCEPT = 0.9;
 
 const CATEGORY_DOT: Record<string, string> = {
   offer: "var(--green)",
