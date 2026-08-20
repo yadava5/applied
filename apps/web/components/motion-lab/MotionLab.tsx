@@ -293,7 +293,13 @@ export function MotionLab() {
                         href={`#${p.anchor}`}
                         className="flex items-baseline gap-4 px-4 py-2.5 transition-colors hover:bg-surface"
                       >
-                        <span className="font-mono text-sm text-viz-rules">{p.id}</span>
+                        {/* Fixed column: the sub-IDs are no longer one width
+                            (`03a` beside `03c-iii`), and a ragged key column
+                            is the one thing this list must not be — it is the
+                            surface the reply is written from. */}
+                        <span className="w-16 shrink-0 font-mono text-sm text-viz-rules">
+                          {p.id}
+                        </span>
                         <span className="min-w-0 flex-1 truncate text-strong">{p.title}</span>
                         <span
                           className={`label-caps shrink-0 ${

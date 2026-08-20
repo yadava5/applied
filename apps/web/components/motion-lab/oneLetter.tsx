@@ -35,13 +35,23 @@ import { buildTraceView, categoryWord, segments } from "./traceEvidence";
  * camera's path across the shot's own seconds — and by held frames either
  * side of every move.
  *
- * SIZED FOR THE RAIL, NOT THE STAGE. The winner mounts on the landing's right
- * retention rail, whose column is `minmax(0,26rem)` = 416px and whose box is
- * 16.5rem tall (that number is `ClaimsDescent`'s own measured constant, taken
- * at 1024). Net of the clip frame's head strip, track and stacked caption the
- * PICTURE there is about 416x160 — a 2.6:1 letterbox. So the frames below are
- * drawn at exactly 416x160. What is illegible in one of these boxes will be
- * illegible on the landing, and that is the point of drawing them at size.
+ * SIZED FOR THE RAIL, NOT THE STAGE, and the size is derived rather than
+ * guessed. The winner mounts on the landing's right retention rail, whose
+ * column is `minmax(0,26rem)` = 416px. What that column gives a picture is
+ * decided by the exhibit in it: `ProductClip` sets the video `w-full` with
+ * `aspect-ratio: width / height`, and the sync clip encodes 1152x310
+ * (`CLIPS.boardSyncs`), so at 416 wide the PICTURE is 416x112 — a 3.7:1
+ * letterbox. That reconciles with `ClaimsDescent`'s measured 16.5rem box:
+ * 32px head strip + 112 picture + 44 foot strip + 12 gap + ~64 of three-line
+ * caption = 264. The frames below are therefore drawn at exactly 416x112.
+ *
+ * A first pass drew them at 160 — the number you get by estimating the chrome
+ * instead of reading the encode's aspect — which is 43% more height than the
+ * rail actually gives. What is illegible in one of these boxes is illegible on
+ * the landing, and that is the whole point of drawing them at size. A shot
+ * that needs more than 112 is not disqualified, but it is asking for the
+ * `16.5rem` constant to be re-measured and for more of the phase's runway,
+ * and it has to say so in its own cost line.
  *
  * TWO REFUSALS, carried into every option:
  *   - no frame may imply a sync classified the mail live. The verdict and the
@@ -100,7 +110,7 @@ const BOARD_W = 440;
 
 /** The rail's picture box — see the header for where these come from. */
 const FRAME_W = 416;
-const FRAME_H = 160;
+const FRAME_H = 112;
 
 function MailSurface({
   subject,
@@ -196,6 +206,9 @@ const ASSESS = 95;
 function BoardSurface({ seated, today }: { seated: boolean; today: string }) {
   const columns = useMemo(() => boardColumns(STAGES), []);
   const apps = useMemo(() => showcaseApplications(today), [today]);
+  // Counted off the fixture, never typed: the group heading has to agree with
+  // the board it is standing in for, and the showcase seeds do move.
+  const appliedCount = apps.filter((a) => a.status === "applied").length;
   const applied = apps.find((a) => a.status === "applied");
   const kestrel = apps.find((a) => a.company === "Kestrel Dynamics");
   const appliedCol = columns.find((c) => c.key === "applied");
@@ -211,7 +224,7 @@ function BoardSurface({ seated, today }: { seated: boolean; today: string }) {
 
   return (
     <div style={{ width: BOARD_W }} className="text-left">
-      <GroupHead label={appliedCol.label} color={appliedCol.color} count={3} />
+      <GroupHead label={appliedCol.label} color={appliedCol.color} count={appliedCount} />
       <ApplicationRow
         app={applied}
         columnLabel={appliedCol.label}
@@ -286,10 +299,15 @@ function Frame({ spec, today, verdict }: { spec: FrameSpec; today: string; verdi
       className="relative shrink-0 overflow-hidden rounded-lg border border-line bg-background"
       style={{ width: FRAME_W, height: FRAME_H }}
     >
-      {/* The surfaces are real components, cropped by the frame. They are inert
-          and hidden from assistive tech: a crop can put a control half off
-          screen, and every frame's meaning is in the visible line beneath it. */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 select-none">
+      {/* The surfaces are real components, cropped by the frame — so they carry
+          real controls (every row has a status select). `inert`, not just
+          `aria-hidden`: aria-hidden leaves a control FOCUSABLE, and tabbing
+          into one inside an `overflow-hidden` crop makes the browser scroll the
+          crop to reveal it — the composition would shift under a keyboard user.
+          That is the sr-only scar's exact mechanism. `inert` removes them from
+          the tab order and from the a11y tree together, and every frame's
+          meaning is in the visible line beneath it. */}
+      <div inert className="pointer-events-none absolute inset-0 select-none">
         {spec.layers.map((layer, i) => (
           <div
             key={i}
@@ -362,7 +380,7 @@ function Frame({ spec, today, verdict }: { spec: FrameSpec; today: string; verdi
           ))}
         </span>
       )}
-      <span className="absolute bottom-1 right-1.5 font-mono text-[0.6rem] text-dim">
+      <span className="absolute bottom-1 right-1.5 rounded bg-background/85 px-1 font-mono text-[0.6rem] text-dim">
         {spec.from.toFixed(1)}–{spec.to.toFixed(1)}s
       </span>
     </div>
@@ -494,7 +512,7 @@ interface Option {
   understands: string;
   /** Recorded take, or choreographed real DOM — one verdict, not a hedge. */
   needs: { kind: "take" | "dom"; what: string };
-  /** Whether it survives a 416x160 rail picture, in its own words. */
+  /** Whether it survives a 416x112 rail picture, in its own words. */
   rail: string;
 }
 
@@ -511,7 +529,7 @@ const OPTIONS: Option[] = [
       kind: "take",
       what: "A Remotion take. Continuous travel with a mid-flight transformation and real depth is the one thing DOM cannot do honestly — layered blur is not parallax, and a transform tween through a component swap reads as a glitch at 60fps.",
     },
-    rail: "The hardest fit of the four. Travel needs distance, and 160px of height gives none — the move has to run laterally, which means the mail is legible only while the camera is close, so the board is off-frame until the last beat. Budget a second pass on the crop before committing the render.",
+    rail: "The hardest fit of the four. Travel needs distance, and 112px of picture gives none — the move has to run laterally, which means the mail is legible only while the camera is close, so the board is off-frame until the last beat. This is the one option that would fairly ask for a taller box than the rail currently holds; budget a second pass on the crop, at the height you decide to give it, before committing the render.",
     frames: [
       {
         from: 0,
@@ -519,9 +537,9 @@ const OPTIONS: Option[] = [
         name: "The stream, and the lock",
         what: "Three arrivals drift in at reading pace; the camera settles on Kestrel's and the other two soften out of the focal plane.",
         layers: [
-          { subject: "mail", which: 0, left: -60, top: -4, scale: 0.52, opacity: 0.62, blur: 1.5 },
-          { subject: "mail", left: 96, top: 10, scale: 0.62 },
-          { subject: "mail", which: 1, left: 312, top: 22, scale: 0.52, opacity: 0.62, blur: 1.5 },
+          { subject: "mail", which: 0, left: -56, top: -6, scale: 0.46, opacity: 0.62, blur: 1.5 },
+          { subject: "mail", left: 104, top: 4, scale: 0.55 },
+          { subject: "mail", which: 1, left: 318, top: 14, scale: 0.46, opacity: 0.62, blur: 1.5 },
         ],
       },
       {
@@ -529,7 +547,7 @@ const OPTIONS: Option[] = [
         to: 4.4,
         name: "The reading, in flight",
         what: "Still travelling, the mail opens to full legibility and the reading light sweeps it once — 02a's grammar, at the offsets the scoring walk recorded.",
-        layers: [{ subject: "mail", left: 16, top: -10, scale: 1.08, lit: true }],
+        layers: [{ subject: "mail", left: 16, top: -6, scale: 1.08, lit: true }],
       },
       {
         from: 4.4,
@@ -537,8 +555,8 @@ const OPTIONS: Option[] = [
         name: "The fold",
         what: "The mail compresses toward row proportions as the board comes into frame; nothing about the row is drawn for the shot.",
         layers: [
-          { subject: "mail", left: 4, top: 30, scale: 0.7, opacity: 0.34, blur: 1.5, lit: true },
-          { subject: "board", left: 150, top: 36 - ASSESS * 0.82, scale: 0.82, seated: true },
+          { subject: "mail", left: 4, top: 12, scale: 0.62, opacity: 0.34, blur: 1.5, lit: true },
+          { subject: "board", left: 150, top: 12 - ASSESS * 0.82, scale: 0.82, seated: true },
         ],
       },
       {
@@ -546,7 +564,7 @@ const OPTIONS: Option[] = [
         to: 9,
         name: "The seat",
         what: "The camera rides the row down into its group and stops as the board absorbs it — the group's count is the board's own.",
-        layers: [{ subject: "board", left: 10, top: 44 - ASSESS * 0.92, scale: 0.92, seated: true }],
+        layers: [{ subject: "board", left: 10, top: 14 - ASSESS * 0.92, scale: 0.92, seated: true }],
       },
     ],
   },
@@ -562,23 +580,23 @@ const OPTIONS: Option[] = [
       kind: "dom",
       what: "Choreographed real DOM. Two mounted surfaces and a shared-layout element on the naming line; the lab's stage already namespaces `layoutId` per plate, which is the only trap here. Zero media, no covenant to amend.",
     },
-    rail: "The best fit of the four, and not by a little: a cut needs no travel distance, so each subject owns the entire 416x160 in turn instead of sharing it. It is the only option where the mail is read at full width AND the group it lands in is seen whole.",
+    rail: "The best fit of the four, and not by a little: a cut needs no travel distance, so each subject owns the entire 416x112 in turn instead of sharing it. It is the only option where the mail is read at full width AND the group it lands in is seen whole.",
     frames: [
       {
         from: 0,
         to: 1.6,
         name: "The empty group",
         what: "Locked off on the board, on the stage this mail will land in. The group is empty, and it says so in the product's own words.",
-        layers: [{ subject: "board", left: 12, top: 26 - ASSESS, scale: 1, seated: false }],
-        match: { y: 52, xs: [26] },
+        layers: [{ subject: "board", left: 12, top: 18 - ASSESS, scale: 1, seated: false }],
+        match: { y: 44, xs: [26] },
       },
       {
         from: 1.6,
         to: 4,
         name: "Frame A — the letter",
         what: "Cut to the mail, locked. Its subject line starts on the same mark the empty cell just occupied; the camera holds long enough to read it.",
-        layers: [{ subject: "mail", left: 12, top: 34, scale: 1 }],
-        match: { y: 52, xs: [26] },
+        layers: [{ subject: "mail", left: 12, top: 26, scale: 1 }],
+        match: { y: 44, xs: [26] },
       },
       {
         from: 4,
@@ -586,19 +604,19 @@ const OPTIONS: Option[] = [
         name: "The cut",
         what: "One splice, drawn here as a split frame: the letter's last frame and the board's first, each on its own left edge, both on the one mark.",
         layers: [
-          { subject: "mail", left: 12, top: 34, scale: 1, clip: "left" },
-          { subject: "board", left: 220, top: 26 - ASSESS, scale: 1, seated: true, clip: "right" },
+          { subject: "mail", left: 12, top: 26, scale: 1, clip: "left" },
+          { subject: "board", left: 220, top: 18 - ASSESS, scale: 1, seated: true, clip: "right" },
         ],
         splice: 208,
-        match: { y: 52, xs: [26, 234] },
+        match: { y: 44, xs: [26, 234] },
       },
       {
         from: 4.1,
         to: 6.4,
         name: "Frame B — the board",
         what: "Back to the opening frame, unmoved. Where the empty cell was, and where the subject line was, the row now carries the mail's own name.",
-        layers: [{ subject: "board", left: 12, top: 26 - ASSESS, scale: 1, seated: true }],
-        match: { y: 52, xs: [26] },
+        layers: [{ subject: "board", left: 12, top: 18 - ASSESS, scale: 1, seated: true }],
+        match: { y: 44, xs: [26] },
       },
     ],
   },
@@ -614,7 +632,7 @@ const OPTIONS: Option[] = [
       kind: "dom",
       what: "Choreographed real DOM. Blur, scale and opacity on two mounted surfaces — all compositor work, no media, no covenant to amend.",
     },
-    rail: "Survives, but it is the option the rail taxes most: holding both subjects inside 416x160 means neither ever owns the frame, so the mail is read at about 0.85x and the board sits at 0.6x behind it. Legible; not generous.",
+    rail: "Survives, but it is the option the rail taxes most: holding both subjects inside 416x112 means neither ever owns the frame — the mail is read at 0.84x with two lines of body showing and the board sits at 0.72x behind it. It survives; it is not generous, and it is the option most likely to want the taller box.",
     frames: [
       {
         from: 0,
@@ -622,8 +640,8 @@ const OPTIONS: Option[] = [
         name: "Near — the letter",
         what: "The mail sharp in the foreground; the board is already there behind it, soft, with nothing in the group yet.",
         layers: [
-          { subject: "board", left: 216, top: 22 - ASSESS * 0.72, scale: 0.72, blur: 2.5, opacity: 0.8 },
-          { subject: "mail", left: 4, top: -6, scale: 0.84 },
+          { subject: "board", left: 214, top: 8 - ASSESS * 0.72, scale: 0.72, blur: 2.5, opacity: 0.8 },
+          { subject: "mail", left: 4, top: -2, scale: 0.84 },
         ],
       },
       {
@@ -632,8 +650,8 @@ const OPTIONS: Option[] = [
         name: "The verdict holds",
         what: "The reading finishes and the verdict stamps on the mail. The board has not moved; the focus has not moved.",
         layers: [
-          { subject: "board", left: 216, top: 22 - ASSESS * 0.72, scale: 0.72, blur: 2.5, opacity: 0.8 },
-          { subject: "mail", left: 4, top: -6, scale: 0.84, lit: true, stamped: true },
+          { subject: "board", left: 214, top: 8 - ASSESS * 0.72, scale: 0.72, blur: 2.5, opacity: 0.8 },
+          { subject: "mail", left: 4, top: -2, scale: 0.84, lit: true, stamped: true },
         ],
       },
       {
@@ -642,8 +660,8 @@ const OPTIONS: Option[] = [
         name: "The pull",
         what: "The handover, and the shot's only risky half-second: neither plane is sharp, which is what makes it read as one lens rather than a crossfade. The row seats HERE, in frame, where it can be watched.",
         layers: [
-          { subject: "board", left: 178, top: 22 - ASSESS * 0.78, scale: 0.78, blur: 1.2, opacity: 0.92, seated: true },
-          { subject: "mail", left: -24, top: 0, scale: 0.8, blur: 1.8, opacity: 0.7, lit: true, stamped: true },
+          { subject: "board", left: 178, top: 6 - ASSESS * 0.78, scale: 0.78, blur: 1.2, opacity: 0.92, seated: true },
+          { subject: "mail", left: -24, top: -2, scale: 0.8, blur: 1.8, opacity: 0.7, lit: true, stamped: true },
         ],
       },
       {
@@ -652,8 +670,8 @@ const OPTIONS: Option[] = [
         name: "Far — the board",
         what: "The board comes sharp with the row in its group; the mail stays in frame, soft, still legible as the thing that caused it.",
         layers: [
-          { subject: "mail", left: -74, top: 8, scale: 0.7, blur: 4, opacity: 0.3 },
-          { subject: "board", left: 116, top: 22 - ASSESS * 0.86, scale: 0.86, seated: true },
+          { subject: "mail", left: -74, top: 0, scale: 0.7, blur: 4, opacity: 0.3 },
+          { subject: "board", left: 116, top: 8 - ASSESS * 0.86, scale: 0.86, seated: true },
         ],
       },
     ],
@@ -670,21 +688,21 @@ const OPTIONS: Option[] = [
       kind: "dom",
       what: "Real DOM is possible — transformed text stays vector-crisp at any scale — but the honest range is the open question: the move is roughly 40x, and DOM has no motion blur to hide the last two seconds of it. Prototype the push at 8x in DOM before deciding whether it needs the take.",
     },
-    rail: "Fits, with a caveat that is really an argument for it: an axial push needs no room, only scale, so the letterbox costs it nothing. At 160px tall the waist of the move is where all the risk sits, not the ends.",
+    rail: "Fits, with a caveat that is really an argument for it: an axial push needs no room, only scale, so the letterbox costs it nothing. At 112px the waist of the move is where all the risk sits, not the ends — the wide frames either side are the easy part.",
     frames: [
       {
         from: 0,
         to: 1.8,
         name: "Wide on the letter",
         what: "The whole mail, still, centred. Nothing moves yet; the camera is choosing where to go.",
-        layers: [{ subject: "mail", left: 34, top: 2, scale: 0.8 }],
+        layers: [{ subject: "mail", left: 34, top: -4, scale: 0.72 }],
       },
       {
         from: 1.8,
         to: 3.6,
         name: "Into the line",
         what: "Straight in on the sentence that decided — lit before the camera started moving, which is the whole of what keeps this frame honest.",
-        layers: [{ subject: "mail", left: -180, top: -168, scale: 2.2, lit: true }],
+        layers: [{ subject: "mail", left: -180, top: -196, scale: 2.2, lit: true }],
       },
       {
         from: 3.6,
@@ -692,8 +710,8 @@ const OPTIONS: Option[] = [
         name: "Through",
         what: "The words become shapes and the camera keeps going; the board is already on the far side, small and growing.",
         layers: [
-          { subject: "mail", left: -820, top: -520, scale: 6.4, opacity: 0.32, lit: true },
-          { subject: "board", left: 172, top: 62, scale: 0.09, opacity: 0.95, seated: true },
+          { subject: "mail", left: -820, top: -556, scale: 6.4, opacity: 0.32, lit: true },
+          { subject: "board", left: 178, top: 30, scale: 0.13, opacity: 0.95, seated: true },
         ],
       },
       {
@@ -701,7 +719,7 @@ const OPTIONS: Option[] = [
         to: 8,
         name: "Out on the board",
         what: "The push decelerates into the board at rest, the row seated in its group. The shot has never cut.",
-        layers: [{ subject: "board", left: 8, top: 40 - ASSESS * 0.9, scale: 0.9, seated: true }],
+        layers: [{ subject: "board", left: 8, top: 12 - ASSESS * 0.9, scale: 0.9, seated: true }],
       },
     ],
   },
@@ -838,7 +856,7 @@ export function OneLetter({ option }: { option: OptionId }) {
           </dd>
         </div>
         <div>
-          <dt className="label-caps">In the 416 x 160 rail</dt>
+          <dt className="label-caps">In the 416 x 112 rail</dt>
           <dd className="mt-1.5 leading-relaxed text-dim">{o.rail}</dd>
         </div>
       </dl>

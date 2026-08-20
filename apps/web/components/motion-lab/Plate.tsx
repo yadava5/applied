@@ -10,8 +10,14 @@ import type { ReactNode } from "react";
  * which is why it renders in the machine face.
  *
  * `fidelity` is the page's honesty gradient made visible: LIVE plates really
- * run in this page; STORYBOARD plates need a footage render that has not
- * happened, and the amber dashed stamp says so before anything else does.
+ * run in this page; STORYBOARD plates have not been recorded or built, and the
+ * amber dashed stamp says so before anything else does.
+ *
+ * STORYBOARD does NOT mean "needs footage", which is what this said until the
+ * 03c round: two of that family's four options are buildable as real DOM and
+ * need no render at all. The stamp is a claim about what the plate IS — held
+ * frames and notation — not a prediction about how the shot would be made.
+ * Each plate says which it needs, in its own `costs`.
  */
 export type Fidelity = "live" | "storyboard";
 
