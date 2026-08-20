@@ -929,6 +929,22 @@ test.describe("landing (/)", () => {
    *     Pause renders on both rails, the verdict count reds first.
    *   · replay count: drop `armed &&` AND seed `useState<…>("done")` —
    *     Replay renders, same shape.
+   *   · THE VERDICT'S RESTING STILL (added 2026-08-20, and watched red on
+   *     THIS suite's own `next build && next start`, not on a twin): the
+   *     exhibit's initial state in `ClaimsDescent` reverted from
+   *     `useState(1)` to `useState(0)`, so it rests at `raw` — the take's
+   *     opening beat, and the exact defect `RailTake`'s docblock warns
+   *     about, since with motion off nothing ever winds it forward. The
+   *     verdicts box then measures 0px and the reading reds with that
+   *     number. Restored and green again, `shasum -a 256` identical.
+   *
+   * That reading REPLACED two lines that could not fail — `getByText` on
+   * the chips with `toBeVisible`, which stays green with the exhibit
+   * collapsed, because the clip comes from an ancestor and Playwright's
+   * visibility check does not resolve it. The same suspicion, applied to
+   * the rest of this test, found one more line weaker than its claim: the
+   * `#needs-classification` check gates the queue's MOUNT, not the settle.
+   * Both are stated at the assertions themselves.
    */
   test("reduced motion disarms both rail takes and rests their exhibits", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -961,9 +977,41 @@ test.describe("landing (/)", () => {
     // render): the verdict rests at SPLIT — both live chips expanded — and
     // the held mail rests SETTLED into the review queue, which the shipped
     // component announces by its own id.
+    //
+    // Through the BOX, and measured. Until 2026-08-20 these two lines read
+    // `getByText("preview only"/"whole body")` with `toBeVisible`, which
+    // cannot fail: a chip keeps its own 187x97.9 box when the exhibit is
+    // collapsed, because the clip is an ancestor's `overflow-hidden` and
+    // Playwright's visibility check does not resolve that (see
+    // `theVerdictChips`). The height of the box that actually collapses is
+    // the reading, and it is asserted with the number in the message.
     const verdict = theRailTake(page, "verdict");
-    await expect(verdict.self.getByText("preview only")).toBeVisible();
-    await expect(verdict.self.getByText("whole body")).toBeVisible();
+    const chips = theVerdictChips(verdict.self);
+    await expect(chips.preview).toHaveCount(1);
+    await expect(chips.body).toHaveCount(1);
+    const chipsBox = await chips.box.boundingBox();
+    expect(
+      chipsBox?.height ?? 0,
+      `the verdict exhibit does not rest at split with motion off: its verdicts box measures ${chipsBox?.height ?? 0}px tall, so the two live chips are collapsed. With motion off the take never runs, so whatever the initial render holds is the entire exhibit this reader ever gets.`,
+    ).toBeGreaterThan(0);
+    // A backstop for the one state a height cannot see — laid out, but
+    // `visibility: hidden`. It rides on the reading above (`expect` fails
+    // fast) and is named rather than claimed: no mutation available here
+    // produces it.
+    await expect(chips.box).toBeVisible();
+    // NOT A READING OF `settled`, and this line must not be read as one.
+    // PROVED by mutation, 2026-08-20, own `next build && next start`:
+    // `useState(true)` → `useState(false)` for `settled` in `ClaimsDescent`
+    // — the held mail then does NOT rest settled, and the served HTML
+    // carries the queue at `translate-y-2 opacity-0 aria-hidden="true"` —
+    // and this whole test stayed GREEN. Playwright reads opacity-0 with a
+    // layout box as visible, so the line passes in both beats. What it DOES
+    // gate is that the shipped queue mounted at all (client-only, dated from
+    // an effect, renders nothing until `today` lands), which is worth
+    // keeping and is all it says. Covering the settle needs a handle on the
+    // element that actually moves — the queue wrapper's `aria-hidden`, or
+    // the mail body's own collapsed box — and that is a change to the
+    // exhibit, left for its owner rather than made here.
     await expect(page.locator("[data-rail='review'] #needs-classification")).toBeVisible();
   });
 
