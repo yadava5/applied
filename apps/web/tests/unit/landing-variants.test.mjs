@@ -1,18 +1,25 @@
 /**
- * The landing candidates can never touch a real account — and their claims
- * stay attributed.
+ * No landing page can ever touch a real account — and their claims stay
+ * attributed.
+ *
+ * THE PAGES THIS COVERS ARE `/` AND THE TWO PRESERVED CANDIDATES. The pinned
+ * composition was promoted out of `/landing-b` to the site root, so the
+ * shipping landing is `app/page.tsx` now; `/landing-a` and `/landing-c` stay
+ * where they are, noindex, as the comparison set. Everything below applies to
+ * all three — the promoted page is the one a stranger actually reaches, so it
+ * is held harder, not less.
  *
  * WHAT THE CONTRACT IS. `PipelineBoard`'s `transport` prop DEFAULTS to
  * `liveBoardTransport` (lib/dashboard/transport.ts), which PATCHes
  * /api/applications/*. A marketing embed that forgets to pass the demo
  * transport does not error — in a signed-in owner's browser (localhost serves
  * real production data) dragging a row on the landing page would mutate a
- * real account. So this test walks the real import graph from each candidate
+ * real account. So this test walks the real import graph from each landing
  * page and holds three lines:
  *
- *   1. no module under app/landing-* / components/marketing names
- *      `liveBoardTransport` at all;
- *   2. every `<PipelineBoard …>` reachable from a candidate passes an
+ *   1. no module under app/page.tsx / app/landing-* / components/marketing
+ *      names `liveBoardTransport` at all;
+ *   2. every `<PipelineBoard …>` reachable from a landing page passes an
  *      explicit `transport=` (or is `interactive={false}`, which performs no
  *      mutations) — in practice the one mount is `DemoDashboard`'s, whose
  *      in-memory transports are the reason the landing goes through it;
@@ -27,8 +34,9 @@
  * lives in copy.ts alone, attributed to the rules stage; 0.958 is the cascade;
  * no pattern count appears anywhere (the repo holds three conflicting values
  * for that noun); the privacy promise is RETENTION, not request, and the test
- * it names exists on disk; every page is noindex; the footer keeps the
- * /privacy link Google's OAuth verification looks for.
+ * it names exists on disk; the two preserved candidates stay noindex while
+ * `/` must NOT be; the footer keeps the /privacy link Google's OAuth
+ * verification looks for.
  *
  * The closing act's key and the product clip's words joined that list once they
  * became rendered strings, and both are held on the same principle:
@@ -85,9 +93,15 @@ import { fileURLToPath } from "node:url";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-const PAGES = ["landing-a", "landing-b", "landing-c"].map((dir) =>
+/** The shipping landing, first — `/landing-b` was promoted to `app/page.tsx`. */
+const ROOT_PAGE = join(webRoot, "app", "page.tsx");
+
+/** The preserved comparison set, which stays noindex on its own routes. */
+const CANDIDATE_PAGES = ["landing-a", "landing-c"].map((dir) =>
   join(webRoot, "app", dir, "page.tsx"),
 );
+
+const PAGES = [ROOT_PAGE, ...CANDIDATE_PAGES];
 
 /** Comments out, code only — the comments here quote the very identifiers
  *  this test forbids. Same stripper the aria-current gate uses. */
@@ -139,8 +153,14 @@ function walkGraph() {
 
 const graph = walkGraph();
 const rel = (file) => relative(webRoot, file);
+/** `app/page.tsx` is named exactly: the promoted landing is a landing module,
+ *  and the `app/landing-` prefix does not reach it. Miss this and the
+ *  strongest assertion in this file — no landing module names the live
+ *  transport — silently stops covering the page a stranger actually loads. */
 const isLandingModule = (file) =>
-  rel(file).startsWith("app/landing-") || rel(file).startsWith("components/marketing/");
+  rel(file) === "app/page.tsx" ||
+  rel(file).startsWith("app/landing-") ||
+  rel(file).startsWith("components/marketing/");
 
 const marketing = (name) => join(webRoot, "components", "marketing", name);
 const copyPath = marketing("copy.ts");
@@ -515,7 +535,7 @@ test("the deadband absorbs a real oscillation, and cannot outlast the act", () =
   // THE CONSTANT HAD NO GATE. `ACT_DEADBAND` could be set to 0 and every unit
   // test and every e2e stayed green: the latch test above hardcodes its own
   // band, the marks test only ever subtracts the deadband from a bound (so
-  // zeroing it LOOSENS every assertion), and `landing-b.spec.ts` derives its
+  // zeroing it LOOSENS every assertion), and `landing.spec.ts` derives its
   // sample points from the constant, which makes the probes move with it.
   // A zero deadband is a real defect — tempo.ts says why — and it would have
   // shipped with everything passing.
@@ -747,21 +767,24 @@ test("the page has a persistent path to its one conversion surface", () => {
     "AccessSection lost the id the nav anchors to — the anchor is dangling on A and C",
   );
 
-  // B restages the same ACCESS copy in its spine language (`AccessPhase`),
+  // `/` restages the same ACCESS copy in its spine language (`AccessPhase`),
   // which therefore carries the id there — and must be the ONLY carrier on
   // that page, or the anchor becomes ambiguous. The copy itself still comes
   // from `ACCESS`, so the honesty scans above keep covering it.
   const phase = graph.get(marketing("AccessPhase.tsx"));
-  assert.ok(phase, "AccessPhase.tsx is not in the landing graph — B's conversion surface is gone");
+  assert.ok(
+    phase,
+    "AccessPhase.tsx is not in the landing graph — the landing's conversion surface is gone",
+  );
   assert.match(phase, /id="access"/, "AccessPhase lost the id the nav anchors to");
   for (const key of ["ACCESS.headline", "ACCESS.cap", "ACCESS.noSeat", "ACCESS.cta"]) {
     assert.ok(phase.includes(key), `AccessPhase stopped rendering ${key} — the restaging rewrote copy`);
   }
-  const pageB = graph.get(join(webRoot, "app", "landing-b", "page.tsx"));
-  assert.ok(pageB.includes("AccessPhase"), "landing-b no longer mounts AccessPhase");
+  const rootPage = graph.get(ROOT_PAGE);
+  assert.ok(rootPage.includes("AccessPhase"), "the landing no longer mounts AccessPhase");
   assert.ok(
-    !pageB.includes("AccessSection"),
-    "landing-b mounts AccessSection alongside AccessPhase — two #access targets on one page",
+    !rootPage.includes("AccessSection"),
+    "the landing mounts AccessSection alongside AccessPhase — two #access targets on one page",
   );
 });
 
@@ -777,7 +800,7 @@ test("the marketing board sets no prose in mono", () => {
   );
 });
 
-test("every candidate is noindex and keeps the /privacy footer link", () => {
+test("every landing keeps the /privacy footer link", () => {
   const chrome = graph.get(join(webRoot, "components", "marketing", "chrome.tsx"));
   assert.ok(chrome, "shared chrome missing from graph");
   assert.ok(
@@ -786,7 +809,26 @@ test("every candidate is noindex and keeps the /privacy footer link", () => {
   );
   for (const page of PAGES) {
     const src = graph.get(page);
-    assert.match(src, /index:\s*false/, `${rel(page)} is not noindex`);
     assert.ok(src.includes("MarketingFooter"), `${rel(page)} dropped the shared footer`);
   }
+});
+
+/**
+ * Indexing is now a two-sided contract, and both sides can regress silently.
+ *
+ * The candidates carried `robots: { index: false }` while the choice was open
+ * and must keep it: they are near-duplicates of the shipping landing, and a
+ * crawlable duplicate of `/` is the one thing this preservation must not cost.
+ * The promoted page must carry the opposite — it was `/landing-b`, the
+ * `noindex` came with it, and a promotion that forgets to strip it publishes a
+ * landing no search engine may list.
+ */
+test("the candidates stay noindex and the shipping landing does not", () => {
+  for (const page of CANDIDATE_PAGES) {
+    assert.match(graph.get(page), /index:\s*false/, `${rel(page)} is not noindex`);
+  }
+  assert.ok(
+    !/index:\s*false/.test(graph.get(ROOT_PAGE)),
+    "app/page.tsx is noindex — the site's own landing is hidden from search",
+  );
 });
