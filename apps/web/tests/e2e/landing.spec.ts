@@ -39,6 +39,24 @@ import { ACT } from "../../components/marketing/copy";
  * fails fast, so it is evaluated but never watched red), that is named
  * rather than claimed as coverage.
  *
+ * THE RACE GATE RETIRED WITH THE SAME CHOREOGRAPHY (2026-08-20, one commit
+ * later — its `-g` filter matched two of the deleted tests and correctly
+ * failed loud on an empty run). `.github/workflows/landing-b-race.yml`
+ * guarded whether `MarketingBoard` reads a visitor's own card open as the
+ * page's: a 0ms load timer racing a claim armed from an observer-driven
+ * commit. That race needs the claim ARMED, and no mount passes
+ * `verdict`/`docked` any more, so `pendingSeedRef` is written nowhere and
+ * the guarded branch compares against permanently-undefined. The oner has
+ * no equivalent: the one hand-vs-page classification it makes rides
+ * `event.isTrusted` — synchronous and unforgeable, chosen precisely to
+ * remove the timing dimension — and with no claim to spend, both outcomes
+ * of the old gesture-window check converge to identical observable
+ * behaviour. The workflow's header (last at 9e1675c) carries measured
+ * sensitivity work — p = 0.8% per attempt on ubuntu-latest at --workers=4,
+ * ~16x below a laptop, n sized from it — that must come back WITH the
+ * workflow if the offer beat is ever recalled: recalling the beat re-arms
+ * the claim, and the race is real again the same day.
+ *
  * WHY PRODUCTION-ONLY. `next dev` re-renders every route per request and
  * this page is a static prerender whose board mounts client-side; a dev run
  * has already produced false reds on a clean commit here. Same gate and

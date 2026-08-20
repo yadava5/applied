@@ -14,7 +14,11 @@
  * is DORMANT as of the oner: no mount passes `verdict`/`docked` any more
  * (every live mount is a resting board). It is kept, with these constants,
  * because it is the working implementation of the offer beat should the
- * owner recall it — retire the path and this file goes with it.
+ * owner recall it — retire the path and this file goes with it. Recalling
+ * it is also what re-arms the seeded-open race its CI gate guarded
+ * (`.github/workflows/landing-b-race.yml`, retired 2026-08-20, last at
+ * 9e1675c): restore that workflow — sensitivity arithmetic and all — in the
+ * same change that passes `verdict` to a mount again.
  */
 
 /**
