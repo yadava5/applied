@@ -71,6 +71,13 @@ test.describe("beta access notice", () => {
    *      this is not a `waitForTimeout` in disguise: a bare sleep would move
    *      one sample later, while this fails on ANY sample that sees the pill.
    *
+   * ONE KNOWN COUPLING, so nobody debugs it twice: the hydration anchor exists
+   * only while `reduced === false`. Nothing sets `reducedMotion` in
+   * playwright.config.ts or any workflow today, but adding `reducedMotion:
+   * "reduce"` — an ordinary accessibility move — hides the take controls and
+   * turns this test red on the anchor for a reason unrelated to the pill. If
+   * that happens, the anchor needs replacing, not the hold.
+   *
    * Asserting one route ON the list and one OFF it also keeps the test from
    * passing by finding nothing anywhere — but note that anti-vacuity argument
    * only ever protected the safe half, which is exactly how the first version
@@ -89,16 +96,29 @@ test.describe("beta access notice", () => {
       page.getByRole("button", { name: /replay the take/i }).first(),
     ).toBeVisible();
 
-    const deadline = Date.now() + 2_000;
+    const HOLD_MS = 2_000;
+    const started = Date.now();
+    const deadline = started + HOLD_MS;
     let samples = 0;
     while (Date.now() < deadline) {
       expect(await toggle.count(), `beta pill appeared on /motion-lab after ${samples} clean samples`).toBe(0);
       samples += 1;
       await page.waitForTimeout(100);
     }
-    // Guards the guard: if the loop ever degenerates to a single pass, the
-    // hold has stopped being a hold and this test is back to what it was.
-    expect(samples, "the absence hold collected too few samples to mean anything").toBeGreaterThan(10);
+
+    /* Guards the guard: if the loop ever degenerates to a single pass, the hold
+     * has stopped being a hold and this test is back to what it was.
+     *
+     * Budgeted by ELAPSED TIME rather than a sample count, deliberately. A
+     * fixed floor of "more than 10 samples" was measured against CPU
+     * throttling and starts breaking around a 10-12x slowdown, where each
+     * count() round-trip costs ~82ms and 2s no longer buys 11 of them. That
+     * would have made this flaky on a slow runner for a reason with nothing to
+     * do with the pill — a worse failure than the decoration it replaced,
+     * because it would train someone to re-run it. Elapsed time cannot drift
+     * that way, and two samples is all it takes to prove the loop looped. */
+    expect(Date.now() - started, "the absence hold did not span its window").toBeGreaterThanOrEqual(HOLD_MS);
+    expect(samples, "the absence hold collapsed to a single check").toBeGreaterThanOrEqual(2);
   });
 
   test("the email-admin action composes to the admin mailbox with the right subject", async ({
