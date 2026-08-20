@@ -548,11 +548,16 @@ export function ClaimsDescent() {
               viewport and `justify-center` re-centres every state for free.
               The runway cost that retired this box on the CLIP rails does
               not apply here — their bands were a single claim's screen,
-              while this phase's flow now carries three beats plus the
-              recording, so the band affords the tall box (the pin walk's
-              four corners are the proof, not this sentence). The clip rails
-              below (retention, access) keep the hugging box and their
-              measured constants, unchanged.
+              while this phase's flow carries three beats plus the recording,
+              so the band affords the tall box. A viewport-tall box has one
+              more obligation the clip rails never had: it grows 1:1 with
+              dvh, so its BAND must be dvh-paced too, or the runway collapses
+              linearly with height — the benchmark beat below is `paced` for
+              exactly that reason (its comment carries the measured failure).
+              The pin walk's six corners — the two tall ones exist because
+              this rail is what they could not see — are the proof, not this
+              sentence. The clip rails below (retention, access) keep the
+              hugging box and their measured constants, unchanged.
 
               NOTHING IN CI MEASURES THESE TWO NUMBERS. The pin walk watches
               runway and band, which a wrong centring constant does not move;
@@ -595,15 +600,23 @@ export function ClaimsDescent() {
                 caption={FOOTAGE.rules.caption}
               />
             </Claim>
-            {/* UNPACED, so the phase closes level. Held to `60vh` and centred,
-                this beat ended 176px above the section's rule at 1512 against
-                the rail's 24 — the two columns bottoming out at visibly
-                different heights, which is what the owner saw. Unpaced it ends
-                `py-20` above the rule at EVERY height, which is the line the
-                rail's reclaim now targets. */}
+            {/* PACED AGAIN — and the reversal is the page's own rule, not
+                churn. `paced` exists for claims paired with a TRAVELLING
+                exhibit; this beat went unpaced when the rail beside it held
+                a looping clip, and the rail's cargo is a travelling exhibit
+                once more (the held mail settling into the queue), so the
+                beat sits opposite the settled state the way the doctrine
+                asks. It is also what keeps the rail's pin alive at TALL
+                viewports: the viewport-tall box grows 1:1 with dvh, and
+                with this beat content-paced the phase's band was FIXED at
+                ~1259px — measured under the floor from ~1075px of height
+                (0.191 at 1512×1080, 0.110 at 2560×1440). Paced, the band is
+                dvh-paced like the verdict phase's (Claim 80vh + 60vh ≈
+                1.4·dvh once both bind), which holds the share near 0.33 at
+                1080–1440 and above 0.28 at any height — measured, see the
+                pin walk's tall corners. */}
             <Claim
               continued
-              paced={false}
               label={HELD.mail}
               inline={<HeldExhibit settled={false} queue={false} />}
             >

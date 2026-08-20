@@ -73,6 +73,22 @@ const DESKTOP_1512 = { width: 1512, height: 949 };
  *  band loses. 1512 is where the owner works; every width from 1280 up reads
  *  the same, the container being capped at `max-w-6xl`. */
 const DESKTOP_1512_600 = { width: 1512, height: 600 };
+/** TALL, and the reason the pin is measured above 949 — permanently. The
+ *  walked set has now been chosen after the measurement THREE times, and each
+ *  time the blind spot sat one corner past the set: dc1bdee walked 768 alone
+ *  and missed 949; a47d8e0 walked three viewports and missed wide-and-short;
+ *  and the take rework's set topped out at 949 and missed TALL — the decision
+ *  rail's viewport-tall box grows 1:1 with dvh, so a band that is not
+ *  dvh-paced loses runway linearly with height, and the collapse began at
+ *  ~1075px: 0.305 at 949, 0.191 at 1512×1080, 0.110 at 2560×1440, invisible
+ *  to every walked corner. A 1080p fullscreen is not an exotic viewport; it
+ *  is the most common desktop there is. So the tall edge is a standing
+ *  corner now: 1512×1080 (the fullscreen anyone actually has) and 1024×1120
+ *  (the owner's 1024-wide discipline on a tall screen — narrow wraps the
+ *  band's prose longer, so the two tall cases squeeze by different
+ *  mechanisms, same as the short pair). */
+const DESKTOP_1512_1080 = { width: 1512, height: 1080 };
+const DESKTOP_1024_TALL = { width: 1024, height: 1120 };
 const TABLET_768 = { width: 768, height: 1024 };
 
 /** The exhibit's closing sentence — the honesty guarantee, matched on the
@@ -119,13 +135,21 @@ const PIN_LEAD = 120;
  * The least share of its own band a rail may spend pinned — counting only the
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
- * MEASURED on `next build && next start`, verdict / decision / retention /
- * #access, at each of the four viewports this walk runs:
+ * MEASURED on `next build && next start` (2026-08-20, post-oner staging),
+ * verdict / decision / retention / #access, at each of the six viewports
+ * this walk runs:
  *
- *   1024x600   0.393  0.382  0.745  0.236
- *   1024x768   0.357  0.476  0.774  0.355
- *   1512x600   0.393  0.363  0.738  0.213
- *   1512x949   0.343  0.527  0.782  0.427
+ *   1024x600    0.593  0.574  0.748  0.236
+ *   1024x768    0.582  0.479  0.774  0.355
+ *   1512x600    0.593  0.580  0.743  0.213
+ *   1512x949    0.575  0.397  0.782  0.427
+ *   1512x1080   0.576  0.345  0.792  0.471
+ *   1024x1120   0.575  0.337  0.803  0.489
+ *
+ * Beyond-range probes, because the two viewport-tall rails converge on an
+ * asymptote rather than a cliff: decision reads 0.329 at 1920x1200 and
+ * 0.321 at 2560x1440 (its band is ~1.4·dvh once both paced claims bind, so
+ * the share tends to (1.4-1)/1.4 ≈ 0.29 and never crosses the floor).
  *
  * THE TIGHTEST READING IS #ACCESS AT 1512x600 — WIDE AND SHORT — at 0.213.
  * The revision before this one named 1024x600's 0.236 and said 0.20 "sits 15%
@@ -166,26 +190,32 @@ const PIN_LEAD = 120;
  * 1152x560, while 1024x560 is still 0.215. That is where the contract ends,
  * not a defect — 600 is the shortest viewport this page is designed for.
  *
- * WHY THIS LIST OF VIEWPORTS, since it has now been wrong twice in the same
- * shape. Both times the set was chosen AFTER the measurement that justified
- * it, so the measurement could not see its own blind spot. dc1bdee walked
- * 1024x768 alone, claimed 24% of headroom, and was NEGATIVE at 1512x949;
- * a47d8e0 walked three viewports across two widths, claimed 15%, and reads
- * 0.213 at 1512x600, which was not one of them. The blind spot moved from
- * tall to wide-and-short: one corner over, same shape.
+ * WHY THIS LIST OF VIEWPORTS, since it has now been wrong THREE times in
+ * the same shape. Each time the set was chosen AFTER the measurement that
+ * justified it, so the measurement could not see its own blind spot.
+ * dc1bdee walked 1024x768 alone, claimed 24% of headroom, and was NEGATIVE
+ * at 1512x949; a47d8e0 walked three viewports across two widths, claimed
+ * 15%, and read 0.213 at 1512x600, which was not one of them; and the take
+ * rework (b140562) walked four corners topping out at 949 while its own
+ * new staging — a viewport-tall rail over a content-paced band — collapsed
+ * linearly with HEIGHT: 0.305 at 949, 0.191 at 1512x1080, 0.110 at
+ * 2560x1440. The blind spot went tall→wide→tall again: always one corner
+ * past the set.
  *
  * So the list is not a sample of the range, it is the CORNERS of it —
- * {1024, 1512} x {600, tall} — because width and height squeeze a rail by
+ * {1024, 1512} x {600, 768/949, 1080/1120}, the short edge, the working
+ * middle and the TALL edge — because width and height squeeze a rail by
  * different mechanisms and neither predicts the other: a narrower column
  * wraps the prose longer and lengthens the band, `xl:pt-1` on the caption
- * grows the exhibit past 1280, and a short viewport floors the sticky offset
- * at `5rem`. A minimum built from independent mechanisms lives at a corner,
- * not along an edge. Adding a fifth point in the middle buys nothing; dropping
- * a corner is what went wrong twice.
+ * grows the exhibit past 1280, a short viewport floors the sticky offset at
+ * `5rem`, and a viewport-tall rail grows 1:1 with dvh so height is a squeeze
+ * all of its own. A minimum built from independent mechanisms lives at a
+ * corner, not along an edge; dropping a corner is what has now gone wrong
+ * three times, and the tall pair exists so nobody repeats the third.
  *
  * The netting is currently INERT and deliberately kept. No rail on this page
  * carries a negative bottom margin any more (the clip rails carry `mb-14`,
- * positive), so `overhang` is 0 in all twelve readings and nets nothing. It
+ * positive), so `overhang` is 0 in every reading above and nets nothing. It
  * exists because the staging that did carry one measured, un-netted, on a
  * band collapsed to its rail's own height: 0.174 at 1024x768, 0.200 at
  * 1280x800, 0.249 at 1512x949, 0.288 at 1728x1080 — i.e. a rail with NO
@@ -394,6 +424,31 @@ async function playhead(page: Page): Promise<number> {
 }
 
 
+/**
+ * The window act's own surfaces, scoped and EXACT — the lesson of this
+ * file's first red run (2026-08-20): `getByRole(…, { name })` is
+ * case-insensitive SUBSTRING matching by default, so an unscoped
+ * `{ name: "Play" }` resolved to SIX buttons — the act's Play, its own
+ * Replay (contains "play"), three ProductClip transports and the closing
+ * act's "Replay the closing sequence" — and the strict-mode violation meant
+ * the take trio's real assertions never executed. Every locator here is
+ * scoped to the act's section and matched exactly, so a transport joining
+ * another surface (a clip autoplaying, a second Replay) can never make
+ * these ambiguous again.
+ */
+function theAct(page: Page) {
+  const section = page.locator("section[aria-label='The board, live']");
+  return {
+    section,
+    strip: section.locator("p[aria-live='polite']"),
+    pause: section.getByRole("button", { name: ACT.pause, exact: true }),
+    play: section.getByRole("button", { name: ACT.play, exact: true }),
+    replay: section.getByRole("button", { name: ACT.replay, exact: true }),
+    /** The synthesized pointer's SVG path — nothing else draws this shape. */
+    pointer: section.locator("svg path[d^='M3 1']"),
+  };
+}
+
 test.describe("landing (/)", () => {
   test.skip(
     !PROD_BUILD,
@@ -449,11 +504,14 @@ test.describe("landing (/)", () => {
     // The board is the take's own precondition (`waitFor` inside the script).
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
     // The opening line gives way to the first narrated beat.
-    const strip = page.locator("section[aria-label='The board, live'] p[aria-live='polite']");
-    await expect(strip).toHaveText(ACT.narration[0], { timeout: 20_000 });
+    const act = theAct(page);
+    await expect(act.strip).toHaveText(ACT.narration[0], { timeout: 20_000 });
     // A >5s autoplaying surface owes its viewer a pause (WCAG 2.2.2), in the
     // frame's own chrome.
-    await expect(page.getByRole("button", { name: ACT.pause })).toBeVisible();
+    // MUTATION (watched red 2026-08-20, first run): ACT.narration[0] deleted
+    // from the script — the take played its other six beats in order and
+    // this line simply never appeared.
+    await expect(act.pause).toBeVisible();
   });
 
   test("the pause control freezes the clock, and the visitor's hand stands the take down", async ({
@@ -461,24 +519,34 @@ test.describe("landing (/)", () => {
   }) => {
     await page.setViewportSize(DESKTOP_1024);
     await page.goto("/");
+    const act = theAct(page);
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
-    await expect(page.getByRole("button", { name: ACT.pause })).toBeVisible({ timeout: 20_000 });
+    await expect(act.pause).toBeVisible({ timeout: 20_000 });
 
     // Pause: the control flips to Play (the director's clock advances only
     // while unpaused; the flip is the visible half of that contract).
-    await page.getByRole("button", { name: ACT.pause }).click();
-    await expect(page.getByRole("button", { name: ACT.play })).toBeVisible();
+    await act.pause.click();
+    await expect(act.play).toBeVisible();
 
     // The visitor's hand on the STAGE outranks the script: a real (trusted)
     // press stands the take down, the strip says whose board it is now, and
     // the replay control remains the way back into the take.
-    await page.locator("section[aria-label='The board, live'] [data-testid='pipeline-board']").click({
-      position: { x: 20, y: 20 },
-    });
-    const strip = page.locator("section[aria-label='The board, live'] p[aria-live='polite']");
-    await expect(strip).toHaveText(ACT.yours);
-    await expect(page.getByRole("button", { name: ACT.replay })).toBeVisible();
-    await expect(page.getByRole("button", { name: ACT.pause })).toHaveCount(0);
+    await act.section.getByTestId("pipeline-board").click({ position: { x: 20, y: 20 } });
+    // MUTATION TO RUN (never yet watched red — the first cut of this test
+    // died on an unscoped locator before reaching here): delete the
+    // `isTrusted` stand-down listener from OnerStage. The take then stays
+    // merely PAUSED under this click, so the strip keeps its last narration
+    // line instead of ACT.yours, and the Play control below survives.
+    await expect(act.strip).toHaveText(ACT.yours);
+    await expect(act.replay).toBeVisible();
+    // THE DISCRIMINATOR, and why it is both counts: a merely-paused take
+    // still renders the toggle (reading "Play"), so `Pause` at zero is true
+    // of pause AND of stand-down and proves nothing. Only the stood-down
+    // state — the phase has left "playing" — clears the whole toggle. Under
+    // the stand-down mutation above, `play` reads 1 here and this is the
+    // line that goes red.
+    await expect(act.pause).toHaveCount(0);
+    await expect(act.play).toHaveCount(0);
   });
 
   test("reduced motion disarms the take and rests the board", async ({ page }) => {
@@ -489,15 +557,20 @@ test.describe("landing (/)", () => {
     // The resting state is the live product, not a still: the board mounts.
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
     // The strip says the setting is respected, and no transport renders —
-    // there is nothing to pause.
-    const strip = page.locator("section[aria-label='The board, live'] p[aria-live='polite']");
-    await expect(strip).toHaveText(ACT.resting);
-    await expect(page.getByRole("button", { name: ACT.pause })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: ACT.replay })).toHaveCount(0);
+    // there is nothing to pause and nothing to replay.
+    const act = theAct(page);
+    // MUTATION (watched red 2026-08-20): ACT.resting never swapped in.
+    await expect(act.strip).toHaveText(ACT.resting);
+    // MUTATION TO RUN for the three counts (never yet watched red — the
+    // first cut died on an unscoped Replay locator that caught the closing
+    // act's): render the transport regardless of `armed` in WindowAct (drop
+    // the `armed &&` gate) for the two buttons; render the cursor overlay in
+    // OnerStage's `disarmed` branch for the pointer. Each count then reads 1
+    // on its own line.
+    await expect(act.pause).toHaveCount(0);
+    await expect(act.replay).toHaveCount(0);
     // And no synthesized pointer exists to move.
-    await expect(
-      page.locator("section[aria-label='The board, live'] svg path[d^='M3 1']"),
-    ).toHaveCount(0);
+    await expect(act.pointer).toHaveCount(0);
   });
 
   /**
@@ -587,7 +660,14 @@ test.describe("landing (/)", () => {
    * restored file (`shasum -a 256` identical before and after). The
    * assertions have not changed through any of it.
    */
-  for (const viewport of [DESKTOP_1024, DESKTOP_1024_768, DESKTOP_1512_600, DESKTOP_1512]) {
+  for (const viewport of [
+    DESKTOP_1024,
+    DESKTOP_1024_768,
+    DESKTOP_1512_600,
+    DESKTOP_1512,
+    DESKTOP_1512_1080,
+    DESKTOP_1024_TALL,
+  ]) {
     const size = `${viewport.width}x${viewport.height}`;
     test(`every pinned rail holds at its sticky offset across its own band at ${size}`, async ({
       page,
