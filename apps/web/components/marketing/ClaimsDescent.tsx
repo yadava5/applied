@@ -36,9 +36,10 @@ import { VerdictTally } from "./VerdictTally";
  *   → decision (LEFT rail: the held mail settling into the review queue —
  *   the owner's 08c pick; the rules recording loops in the flow beside the
  *   paragraph it evidences) → retention (RIGHT rail: the sync recording;
- *   the record enacts its collapse in the flow) → access (LEFT rail: the
- *   import recording — `AccessPhase`) → closing act (full frame, plays
- *   itself).
+ *   the record enacts its collapse in the flow) → access (no rail: it held
+ *   the import recording until that clip was retired on 2026-08-20, and
+ *   `AccessPhase` argues why it collapsed rather than borrowed one of these
+ *   two) → closing act (full frame, plays itself).
  *
  * Which exhibit rides which rail is decided by what the exhibit DOES: the
  * artifacts that change state under the reader ride the rails, where the

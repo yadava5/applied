@@ -23,9 +23,24 @@ like that.**
 | file | what it shows | length | webm | mp4 |
 | --- | --- | ---: | ---: | ---: |
 | `gmail-connects` | The Gmail card at "Not connected", the one permission Google is asked for, and the same card at "Connected". **Held back — not in `CLIPS`, not under `public/footage/` (2026-08-19); see the hand-recorded section below.** | 6.7s | 83.5 KB | 325.0 KB |
-| `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 74.6 KB | 236.7 KB |
-| `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through 174 characters of preamble, flips to an amber `REJECTION 70%` (measured: 2.25s–2.45s in the encoded clip, so the middle beat is a readable 250ms, not a single frame), and lands green at `90%` — over the bar where layer 1 answers alone. | 5.0s | 149.9 KB | 263.0 KB |
-| `import-classifies` | One press of "Try a sample export" on the public `/import` page: under the on-device notice the counters arrive — scanned, auto-filed and its share, held for review, and the format. | 4.1s | 85.3 KB | 232.2 KB |
+| `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 106.3 KB | 61.1 KB |
+| `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through the preamble, flips to an amber `REJECTION 70%`, and lands green at `90%` — over the bar where layer 1 answers alone. | 10.9s | 312.0 KB | 154.4 KB |
+
+`import-classifies` was here and is gone (2026-08-20). It never showed the file
+being chosen and what it did show ran past too fast to read, and the owner
+retired it rather than have it re-cut a third time; `clips.mjs` carries the
+whole account and where the capture choreography still lives. Its three
+artifacts came out of `public/footage/` with it — 585 KB that had been
+shipping on every deploy — and `verify.mjs` now fails the run if any file in
+that directory belongs to no clip in `CLIPS`, which is the check that would
+have caught `gmail-connects` doing the same thing.
+
+The row above it was stale before that: `rules-read-the-body` was re-timed to
+per-keystroke typing on 2026-08-19 (5.0s → 10.9s) and this table still said
+5.0s. The lengths and byte counts here are read off `manifest.json` after the
+2026-08-20 render; the old row's "2.25s–2.45s" reading of the amber beat was
+taken on the 5.0s take and has NOT been re-measured on the current one, so it
+is not restated.
 
 Each ships with a `.jpg` poster and is listed in `manifest.json` with its real
 byte count.
@@ -50,11 +65,33 @@ and that column no longer exists. At the 640-768 CSS px the landing shows them
 at, 832 covered 54% of a 2x screen's native pixels; 1152 covers 90% at 640.
 Raising it further would upscale.
 
-**Both encodes ship.** VP9/WebM is 2.1–3.9x smaller than the H.264 fallback on
-this material — flat UI with large unchanging areas is exactly what VP9 is good
-at — and that gap is worth two files. Serve the WebM first with the MP4 as a
-`<source>` fallback. Every clip is well under the 500 KB budget on the modern
-codec; `render.mjs` fails the run if one is not.
+**Both encodes ship, and NEITHER carries audio** — `render.mjs` passes
+`muted: true` since 2026-08-20. Every clip before that shipped a real silent
+track (Opus in the webm, AAC in the mp4, ~317 kbit/s declared) because
+Remotion muxes one when it cannot yet see the asset list. The comment in
+`render.mjs` claimed the clips were "silent by construction"; silent is not
+absent, and on the mp4s the track was most of the file — `board-syncs` went
+263.7 KB → 61.1 KB and `rules-read-the-body` 602.4 KB → 154.4 KB.
+
+**Which also inverted the codec comparison, and this README used to state the
+old one as fact.** With the audio in, VP9/WebM measured 2.1–3.9x smaller than
+the H.264 fallback. With it out, the H.264 is SMALLER — 0.57x the webm on
+`board-syncs`, 0.49x on `rules-read-the-body` — because what the old ratio was
+mostly measuring was AAC against Opus. Whether the ladder should therefore
+serve the mp4 first is a real question and a quality one (VP9 at CRF 34 and
+H.264 at CRF 26 are not the same quality point, and the answer has to be
+LOOKED at on the contact sheets at the 478px these render at), so it has not
+been changed on byte counts alone. It is the open decision here.
+
+The page walks the two encodes IN SCRIPT — one `src` at a time, webm then
+mp4 — rather than as two `<source>` children. `<source>` is a selection list,
+walked once before the first byte decodes, so an element that dies later has
+no fallback left; two clips shipped frozen on the live page that way.
+`components/marketing/clipPlayback.ts` argues it and
+`tests/unit/clip-playback.test.mjs` drives it.
+
+Every clip is well under the 500 KB budget on the modern codec; `render.mjs`
+fails the run if one is not.
 
 Which claim each clip is relevant to is a design decision and lives with the
 page, not here. Nothing in this directory imports from `components/marketing/`
@@ -62,7 +99,7 @@ or the other way round.
 
 ## Where they come from
 
-Two of the three are captured from **`/demo`**, which is public and needs no
+Both shipped clips are captured from **`/demo`**, which is public and needs no
 login. That is deliberate and must stay that way: the owner's real account holds
 genuine job applications with real employer names and real rejections, and none
 of that goes on a public marketing page. `/demo` runs the same shipped components
@@ -78,20 +115,13 @@ belong in it.)
 | --- | --- |
 | `board-syncs` | `/demo` at a 1040x900 viewport |
 | `rules-read-the-body` | `/demo/inbox` at a 600x900 viewport |
-| `import-classifies` | `/import` at a 780x900 viewport, signed out |
 | `gmail-connects` | hand-recorded, see below |
 
-`import-classifies` shows the WHOLE process now (re-staged 2026-08-19 at the
-owner's direction — the button-press take showed nothing arriving): the sample
-export comes in over the drop zone as a real `File`, the zone answers with its
-shipped dragover state, the file lands, and the file line and counters follow.
-The one thing that is still instantaneous is the beat between the drop and the
-counters: `ingest()` is synchronous — parse then classify, both pure, both in
-the tab — so they land in one paint, and a progress bar there would be
-inventing latency the product does not have. The caption states that as the
-claim instead of apologising for it. It is also the one scene that raises the
-crop ceiling (`maxCropW`), because it is placed at 768 CSS px rather than in
-the 416px column the shared ceiling was derived for.
+Every scene now crops at or under 576 CSS px, so `MAX_CROP_W` is not raised
+anywhere: the one scene that did raise it (`import-classifies`, 720 CSS px so
+the stats row laid out as four cells) is retired. `maxCropW` stays a per-scene
+knob, and a scene that raises it still has to say which display width it is
+raising it FOR.
 
 The viewports are not arbitrary — `scenes.mjs` says why each one, and changing
 them changes what fits in the frame.

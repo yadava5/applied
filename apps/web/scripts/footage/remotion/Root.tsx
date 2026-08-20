@@ -78,13 +78,6 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
   // state closes it. Verify the tail against the fresh scene.json on a
   // re-capture; the typing's real end moves with the evaluate overhead.
   "rules-read-the-body": { window: { from: 0, to: 9.6 }, holdIn: 0.3, holdOut: 0.7, fade: 0.3 },
-  // The whole process, in order: the sample export arrives over the drop
-  // zone (~0.7s, the zone answering with the rules accent), holds there a
-  // readable beat, drops at ~1.85s, and the file line and counters land in
-  // the next paint — `ingest()` is synchronous, because nothing leaves the
-  // tab, and that instant landing is the claim, stated by the caption rather
-  // than apologised for. Then the hold on the arithmetic.
-  "import-classifies": { window: { from: 0.1, to: 2.9 }, holdIn: 0.4, holdOut: 0.9, fade: 0.35 },
 };
 
 /**
@@ -104,8 +97,11 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
  * i.e. none. Nothing here scales a frame UP, and raising this further would.
  * At 768 CSS on a 2x screen that is 75% of native instead of 54%.
  *
- * The one scene that crops wider (`import-classifies`, 720 CSS px for the
- * stats row's four cells) is still a genuine downscale at 1152: 0.8x.
+ * The scene that cropped wider — `import-classifies`, 720 CSS px for the
+ * stats row's four cells, a genuine 0.8x downscale at 1152 — was retired on
+ * 2026-08-20 (clips.mjs says why). Both remaining scenes crop at or under
+ * 576, so every clip that ships is now an exact 2.0 read with no downscale
+ * at all; `maxCropW` stays a per-scene knob for the next one that needs it.
  */
 const OUT_WIDTH = 1152;
 

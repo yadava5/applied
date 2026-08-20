@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import type { ClipState } from "./clipPlayback";
+import { createClipPlayback } from "./clipPlayback";
 import { FOOTAGE } from "./copy";
 import type { Clip } from "./footage";
 
@@ -78,6 +80,27 @@ import type { Clip } from "./footage";
  * offered rather than withheld. Autoplay can also be refused outright by the
  * browser, or the tab can be backgrounded; both land in the same place, and
  * the control is what the reader does about it.
+ *
+ * AND THE POSTER NOW ACTUALLY SURVIVES THAT PATH, which is a correction: this
+ * docblock and the code under it both used to claim that a refused play left
+ * the poster in place, and it was FALSE. Starting a clip rewound it first,
+ * unconditionally, waiting on `loadedmetadata` to do it if the element was
+ * still cold — and that seek decodes frame 0 and paints it over the poster
+ * before `play()` has been answered. So a refusal left the reader on the
+ * loop's own "before": for `rules-read-the-body`, an empty body under
+ * OTHER 50% and a line about deferring to e5 / SetFit, which is the product
+ * not having done the thing — exactly the frame `POSTER_AT` exists to keep
+ * off the page. The rewind is guarded on the clock having moved now, so a
+ * cold element is not touched at all.
+ *
+ * PLAYBACK ITSELF IS NOT HERE. `clipPlayback.ts` owns the element: the
+ * webm→mp4 ladder (walked in script, because `<source>` is walked once at
+ * selection time and cannot be walked again after a decode dies), the stall
+ * watchdog, and the generation counter that stops a band crossing OUT from
+ * aborting a play the crossing IN had not been answered for yet. It is a
+ * plain module so `tests/unit/clip-playback.test.mjs` can drive that recovery
+ * directly — a path a healthy run never touches, and one that had already
+ * shipped as a dead end twice over.
  */
 
 /** How far outside the viewport a clip starts fetching, as a share of it. One
@@ -110,37 +133,28 @@ export function ProductClip({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLSpanElement>(null);
-  const [playing, setPlaying] = useState(false);
+  const [state, setState] = useState<ClipState>({ running: false, playing: false });
 
-  /** Start from the top, muted, and never throw at it. `currentTime` is a
-   *  no-op before the metadata is in, so on a cold element the rewind waits
-   *  for it rather than being silently dropped. */
-  const play = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = true; // belt and braces: an audible clip is refused autoplay
-    const rewind = () => {
-      video.currentTime = 0;
-    };
-    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) rewind();
-    else video.addEventListener("loadedmetadata", rewind, { once: true });
-    video.play().then(
-      () => setPlaying(true),
-      // Refused: by the autoplay policy, by a backgrounded tab, or because the
-      // reader asked for reduced motion. The poster stays, the control stays,
-      // and the label is already the right one.
-      () => setPlaying(false),
-    );
-  }, []);
-
-  const pause = useCallback(() => {
-    videoRef.current?.pause();
-    setPlaying(false);
-  }, []);
+  /** The encodes, in the order they are worth trying — one `src` at a time,
+   *  never two `<source>` children. `clipPlayback.ts` says why at length; the
+   *  short version is that `<source>` is a SELECTION list, and by the time a
+   *  clip freezes there is nothing left to select from. */
+  const player = useMemo(
+    () =>
+      createClipPlayback(
+        [
+          { src: `/footage/${clip.id}.webm`, type: 'video/webm; codecs="vp9"' },
+          { src: `/footage/${clip.id}.mp4`, type: 'video/mp4; codecs="avc1.4d401f"' },
+        ],
+        setState,
+      ),
+    [clip.id],
+  );
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || typeof IntersectionObserver === "undefined") return;
+    const detach = player.attach(video);
 
     const arm = new IntersectionObserver(
       (entries) => {
@@ -160,11 +174,11 @@ export function ProductClip({
         for (const entry of entries) {
           inBand = entry.isIntersecting;
           if (!inBand) {
-            pause();
+            player.stop();
             continue;
           }
           if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) continue;
-          play();
+          player.start();
         }
       },
       { rootMargin: PLAY_BAND, threshold: 0 },
@@ -177,7 +191,7 @@ export function ProductClip({
     const onVisible = () => {
       if (document.visibilityState !== "visible" || !inBand) return;
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-      play();
+      player.start();
     };
     document.addEventListener("visibilitychange", onVisible);
 
@@ -185,21 +199,31 @@ export function ProductClip({
       arm.disconnect();
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisible);
+      player.stop();
+      detach();
     };
-  }, [play, pause]);
+  }, [player]);
 
   /**
    * The playback track, written per frame rather than off `timeupdate` —
    * `timeupdate` fires about four times a second, and a progress rule that
    * advances in visible steps looks broken in a way a still one does not. One
    * `scaleX` write per frame, and only while it is actually running.
+   *
+   * IT IS ALSO THE STALL WATCHDOG'S CLOCK, which is why it hangs off
+   * `running` (told to play) rather than `playing` (answered). A frozen
+   * element reports `paused === false` and never advances, and on the worst
+   * case its `play()` never settles at all — so a loop that waited for the
+   * answer would be switched off in exactly the state it exists to notice.
+   * One rAF, two readings of the same `currentTime`.
    */
   useEffect(() => {
-    if (!playing) return;
+    if (!state.running) return;
     let frame = 0;
-    const tick = () => {
+    const tick = (now: number) => {
       const video = videoRef.current;
       const track = trackRef.current;
+      player.sample(now);
       if (video && track && video.duration > 0) {
         track.style.transform = `scaleX(${video.currentTime / video.duration})`;
       }
@@ -207,7 +231,7 @@ export function ProductClip({
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing]);
+  }, [state.running, player]);
 
   return (
     <figure
@@ -272,22 +296,28 @@ export function ProductClip({
             height={clip.height}
             className="block h-auto w-full"
             style={{ aspectRatio: `${clip.width} / ${clip.height}` }}
-          >
-            <source src={`/footage/${clip.id}.webm`} type="video/webm" />
-            <source src={`/footage/${clip.id}.mp4`} type="video/mp4" />
-          </video>
+            // The webm is the markup's own answer, so a reader with no
+            // JavaScript still has a real file behind the poster. The ladder
+            // (including the "this browser will not take VP9" case) is walked
+            // on mount, before `preload="none"` has fetched anything.
+            src={`/footage/${clip.id}.webm`}
+          />
         </div>
         {/* The transport. One control, at the foot's right — diagonally
             opposite the wall label, so each strip carries exactly one thing. */}
         <div className="flex items-center justify-end border-t border-line-soft px-4 py-2 sm:px-5">
           <button
             type="button"
-            onClick={playing ? pause : play}
+            // Not `playing ? pause : play`: on a dead element the label was
+            // the lie, not just the state — `play()` had resolved, so the
+            // control read "Pause" over a frozen frame and pressing it called
+            // `play()` on a corpse. `toggle` recovers first and asks second.
+            onClick={player.toggle}
             // `py-1.5` is the target, not the look: the label is 11px of caps
             // and a pointer needs more than that to land on.
             className="label-caps shrink-0 py-1.5 transition-colors hover:text-strong"
           >
-            {playing ? FOOTAGE.pause : FOOTAGE.play}
+            {state.playing ? FOOTAGE.pause : FOOTAGE.play}
           </button>
         </div>
       </div>

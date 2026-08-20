@@ -21,7 +21,7 @@ import { chromium } from "@playwright/test";
 import { RenderInternals } from "@remotion/renderer";
 import { createReadStream } from "node:fs";
 import { createServer } from "node:http";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { CLIPS } from "./clips.mjs";
@@ -48,16 +48,39 @@ export async function probe(file) {
   return parseFloat(stdout.trim());
 }
 
-/** `SAMPLES` frames spread across a clip, as base64 PNGs. */
+/**
+ * `SAMPLES` frames spread across a clip, as base64 PNGs.
+ *
+ * THE LAST ONE IS EXTRACTED DIFFERENTLY, AND IT HAS TO BE. The seam gate
+ * compares the frame the clip ENDS on against the frame it restarts from, so
+ * the last sample must be the real final frame and not merely a late one —
+ * and every other sample here is a `-ss` seek against the CONTAINER's
+ * duration, which is not the video's. The clips shipped until 2026-08-20 with
+ * a silent audio track that ran 8ms past the last video frame, so
+ * `duration - 0.05` landed inside the final frame's span and the gate read
+ * the end state. Muting the encodes took those 8ms away, `duration - 0.05`
+ * fell two frames earlier — into the loop dissolve, which has not converged
+ * there — and the seam went 0.020% -> 1.451% on a clip whose real seam,
+ * measured against its true last frame, is 0.003% either way. A gate whose
+ * reading depends on how long a track nobody can hear happens to be is
+ * measuring the container, not the loop.
+ *
+ * `-sseof` seeks relative to the end and `-update 1` overwrites the same file
+ * with every frame it decodes, so what survives is the last one — exact, and
+ * with no assumption about the frame rate. Both were checked against a
+ * hand-picked `-ss` on the final frame's own timestamp and all three agree.
+ */
 export async function sample(clip, dir) {
   const duration = await probe(clip);
   await mkdir(dir, { recursive: true });
   const shots = [];
   for (let i = 0; i < SAMPLES; i++) {
+    const last = i === SAMPLES - 1;
     const t = +((duration - 0.05) * (i / (SAMPLES - 1))).toFixed(3);
     const f = path.join(dir, `${String(i).padStart(2, "0")}.png`);
-    await ff(["-y", "-ss", String(t), "-i", clip, "-frames:v", "1", f]);
-    shots.push({ t, b64: (await readFile(f)).toString("base64") });
+    if (last) await ff(["-y", "-sseof", "-0.6", "-i", clip, "-update", "1", f]);
+    else await ff(["-y", "-ss", String(t), "-i", clip, "-frames:v", "1", f]);
+    shots.push({ t: last ? +duration.toFixed(3) : t, b64: (await readFile(f)).toString("base64") });
   }
   return { duration, shots };
 }
@@ -71,6 +94,31 @@ export async function judge(page, shots) {
     // The opening beat against the closing beat, before the loop dissolve.
     moved: await changedPct(page, shots[0].b64, shots[SAMPLES - 2].b64),
   };
+}
+
+/**
+ * Files in `public/footage/` that no clip claims.
+ *
+ * This exists because retiring a clip is a SEVEN-FILE edit and the only one
+ * with a byte cost is the one nothing else notices. `gmail-connects` was held
+ * back with its definition intact and nothing referencing its id, and its
+ * encodes sat in `public/footage/` shipping ~430 KB on every deploy for a
+ * frame no visitor could reach — the manifest had already disowned them, so
+ * every other number on the page looked healthy. `import-classifies` was
+ * retired the same way on 2026-08-20 and would have done the same thing.
+ *
+ * The manifest cannot catch this: `render.mjs` builds it FROM `CLIPS`, so an
+ * orphan is exactly the file the manifest is guaranteed not to mention. Only
+ * the directory listing knows.
+ */
+export async function orphans(dir, ids) {
+  const kept = new Set(ids);
+  const found = [];
+  for (const name of await readdir(dir)) {
+    const m = /^(.+)\.(webm|mp4|jpg)$/.exec(name);
+    if (m && !kept.has(m[1])) found.push(name);
+  }
+  return found.sort();
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -133,6 +181,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   await browser.close();
   server.close();
+
+  const stray = await orphans(DIR, CLIPS);
+  if (stray.length) {
+    console.error(
+      `\n  ${stray.length} file(s) in public/footage/ belong to no clip in CLIPS: ${stray.join(", ")}\n` +
+        "  They ship on every deploy and no frame of them is reachable. Delete them, or put the\n" +
+        "  clip back in CLIPS if the removal was the mistake.",
+    );
+    failed++;
+  }
+
   console.log(`contact sheets -> ${OUT}`);
   if (failed) {
     console.error(`${failed} check(s) failed.`);

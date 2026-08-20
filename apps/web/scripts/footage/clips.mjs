@@ -26,6 +26,32 @@ export const HAND_CAPTURED = {
   source: "oauth/oauth-raw.mov",
 };
 
+/**
+ * RETIRED, and not held: `import-classifies`, removed 2026-08-20.
+ *
+ * The difference from `HAND_CAPTURED` above is the whole point of writing
+ * this down. That one is HELD — the recording is good and the blocker is a
+ * hostname, so its definition stays and a docblock says what letting it back
+ * in takes. This one was rejected on what it SHOWS, by the owner, twice: the
+ * first take pressed "Try a sample export" and showed no process at all, and
+ * the re-staged drag take never showed a file being chosen and ran past too
+ * fast to read. There is no re-cut of the captured frames that fixes either,
+ * so keeping the scene would be keeping a recipe for a take that was already
+ * refused.
+ *
+ * It is therefore gone from `scenes.mjs`, `remotion/Root.tsx`, `POSTER_AT`,
+ * `public/footage/`, `components/marketing/footage.ts` and `copy.ts`. The
+ * capture choreography — the synthetic drop of a real `File` built from
+ * `SAMPLE_MBOX`, and the derived crop that survives an ingest-and-reload —
+ * is worth reading if the import path is ever recorded again, and it is at
+ * `1de1a54:apps/web/scripts/footage/scenes.mjs`.
+ *
+ * The access phase carries the ask without an exhibit now, rather than with
+ * one of the other two recordings moved into the hole — `AccessPhase` argues
+ * that, and it is a real cost of this removal, not a neutral one.
+ */
+export const RETIRED = ["import-classifies"];
+
 /** Every clip under `public/footage/`, in the order the page argues them.
  *  `HAND_CAPTURED.id` belongs at its head once re-recorded — see above. */
 export const CLIPS = [...SCENES.map((s) => s.id)];
@@ -58,5 +84,4 @@ export const POSTER_AT = {
   // sits inside the held end state: full body, REJECTION 90%, the accept-bar
   // line — after the landing at ~9.9 and before the loop dissolve at ~10.6.
   "rules-read-the-body": 10.2,
-  "import-classifies": 3.0,
 };
