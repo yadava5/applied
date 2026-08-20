@@ -152,7 +152,7 @@ concurrency:
 
 jobs:
   race:
-    name: landing-b race (400 unretried attempts)
+    name: landing-b race (800 unretried attempts)
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
@@ -234,7 +234,7 @@ jobs:
       # that reproduces. `--project=chromium` because the two timezone projects
       # only match demo/shell specs and would contribute nothing but a filter
       # that silently matches zero tests.
-      - name: Run the race test, 400 unretried attempts under contention
+      - name: Run the race test, 800 unretried attempts under contention
         working-directory: apps/web
         run: |
           pnpm exec playwright test tests/e2e/landing-b.spec.ts \
