@@ -1,7 +1,9 @@
+import { Fragment } from "react";
+
 import { BoardDolly } from "./BoardDolly";
-import { FollowOneLetter } from "./FollowOneLetter";
 import { HeldBreath } from "./HeldBreath";
 import { Highlighter } from "./Highlighter";
+import { OneLetter, OneLetterIndex } from "./oneLetter";
 import { Plate, type PlateInfo } from "./Plate";
 import { QuietCase } from "./QuietCase";
 import { ReverseCrane } from "./ReverseCrane";
@@ -26,10 +28,13 @@ import { WorkdayOner } from "./WorkdayOner";
  * (This metadata block below is reviewer scaffolding and may still talk
  * engineering; the ban is about what the exhibits show.)
  *
- * Eleven of twelve plates are choreographed REAL DOM — the shipped
+ * Eleven of fifteen plates are choreographed REAL DOM — the shipped
  * components under a camera transform, a synthesized pointer dispatching
  * real events, captions narrating — because real DOM cannot drift from the
- * product. One (03c) is the storyboard for the single shot DOM cannot make.
+ * product. The other four are 03c, held back for a look before anything is
+ * built: four storyboards for one question, differing in camera logic rather
+ * than in easing, and two of the four turn out not to need a recording at
+ * all. None of them claims to be one — every 03c plate is stamped.
  */
 
 interface Family {
@@ -52,7 +57,7 @@ const FAMILIES: Family[] = [
   {
     id: "03",
     title: "The sync story",
-    note: "Whole dashboard, the control, a real press, the spinner, what it filed. Two live cameras and one storyboard for the shot DOM can't make. No rejection ever arrives this way — the ambiguous mail lands held, which hands 08 its opening.",
+    note: "Whole dashboard, the control, a real press, the spinner, what it filed. Two live cameras, then 03c: four storyboards for the one shot you held back — the same question answered by four different cameras. No rejection ever arrives this way — the ambiguous mail lands held, which hands 08 its opening.",
   },
   {
     id: "08",
@@ -160,16 +165,56 @@ const PLATES: PlateInfo[] = [
     honest: "If the take is boring, the product is boring — nothing here can hide it, which is the argument for it.",
   },
   {
-    id: "03c",
-    anchor: "one-letter",
-    title: "Follow one letter",
+    id: "03c-i",
+    anchor: "one-letter-i",
+    title: "Ride the letter",
     fidelity: "storyboard",
     argues:
-      "The tracking shot DOM cannot make: the camera locks one arrival, it unfolds mid-flight into the mail, the reading light sweeps it, it folds into a board row and rides down into its group.",
+      "The tracking shot: the camera locks one arrival out of three and travels with it while it is read, folds into a board row still moving, and rides that row down into its group. The most cinematic of the four and the only one that is also a production.",
     costs:
-      "One Remotion render (free tier covers this repo) + amending the footage README's cursor covenant in plate 05's recorded-events terms — anything synthesized is synthesized at capture time from the real events, and disclosed. That amendment is part of this plate's price, not a footnote.",
-    lie: "The in-flight reading implying the sync frame classified live, or the tracked letter being a rejection. Both are written into the shot list as refusals.",
-    honest: "Stamped until rendered: no motion is faked on this plate — the storyboard is cards, not a canned animation.",
+      "One Remotion render, plus amending the footage README's covenant — 'no fake cursors, no invented UI, no motion graphics laid over the footage' — in the honest terms: anything synthesized is synthesized AT CAPTURE TIME from the real events that drove the take and disclosed there, and a camera move is presentation rather than fabrication. That amendment is part of this plate's price, not a footnote. Also the worst rail fit: travel needs distance and the rail gives 160px of height.",
+    lie: "The in-flight reading implying a sync classified live, or the tracked letter being a rejection — both are refusals written into the shot list. And the one this option nearly shipped: the previous draft opened on ENVELOPES drifting toward the board. Applied has no envelope anywhere; mail is a card in a reading pane. An envelope is invented UI in the same pipeline whose README bans it, so the arrivals here are mail cards, which is what actually arrives.",
+    honest:
+      "Stamped until rendered — the frames are real components under a crop, held, and nothing on the plate animates. Every surface in every frame is the shipped one; a crop is the only thing done to it.",
+  },
+  {
+    id: "03c-ii",
+    anchor: "one-letter-ii",
+    title: "The match cut",
+    fidelity: "storyboard",
+    argues:
+      "The contrarian answer: no camera movement at all. Two locked frames and one splice, matched on the sentence — the mail's subject line is, one frame later, the row's last signal, in the same place on screen. The cheapest option and the clearest claim.",
+    costs:
+      "Zero media, no covenant to amend. Two mounted surfaces and one shared-layout element; the only trap is the `layoutId` collision TakeStage already namespaces per plate. Buildable this week.",
+    lie: "A cut collapses time, and a cut straight from mail to filed row can read as 'the frame classified it'. The splice lands on the FILED state — the verdict is not computed in shot, and no reading happens on camera at all, which is what removes the door rather than guarding it.",
+    honest:
+      "Both frames are the real surfaces, and the thing being matched is real: the row's last signal genuinely is the mail's subject, the same projection the 02 plates make. The match is a fact about the data, not a composition trick.",
+  },
+  {
+    id: "03c-iii",
+    anchor: "one-letter-iii",
+    title: "One frame, two depths",
+    fidelity: "storyboard",
+    argues:
+      "The camera never moves and never cuts; the focus travels instead. Both subjects are in frame for the whole shot — the only option where nothing can be swapped off-camera, because there is no off-camera.",
+    costs:
+      "Zero media. Blur, scale and opacity on two mounted surfaces, all compositor work. The rail taxes it though: holding both subjects inside 416x160 means neither ever owns the frame.",
+    lie: "Selling a blur as a lens. There is no depth here — it is two flat layers, and if the far plane parallaxes it starts claiming a camera that does not exist. It also must not let the board arrive already changed: the row seats DURING the pull, in frame, or the shot implies the focus did the filing.",
+    honest:
+      "Nothing leaves frame, so nothing can be replaced while the reader is not looking — the strongest honesty property of the four, and the reason to keep it in the set even though the rail is unkind to it.",
+  },
+  {
+    id: "03c-iv",
+    anchor: "one-letter-iv",
+    title: "Through the sentence",
+    fidelity: "storyboard",
+    argues:
+      "One axial move: the subject is still and the camera pushes in through the line that decided, coming out on the board. The row is what is left of the letter, said as a move rather than a caption.",
+    costs:
+      "Probably zero media — transformed text stays vector-crisp at any scale, so DOM can do the push; what DOM cannot do is motion-blur the last two seconds of a 40x move. Prototype at 8x before deciding whether it needs the take. That prototype is the cost.",
+    lie: "The most dangerous of the four. Pushing INTO the deciding sentence is one step from 'this is what the classifier read, live' — so it inherits 02a's scoping exactly: the verdict and the lit spans are computed before the camera starts, and the frame says so. And 'the row is what's left of the letter' must not drift into implying the letter is kept; 02b's claim runs the other way, and the mail is not retained.",
+    honest:
+      "The lit phrases are the ones the engine recorded on THIS mail, not Northstar's offsets borrowed for the shot, and the push reveals them rather than performing them.",
   },
   {
     id: "08a",
@@ -215,13 +260,14 @@ export function MotionLab() {
       <header className="mx-auto w-full max-w-5xl px-6 pb-10 pt-16">
         <p className="label-caps">Applied · motion lab · round two · not linked, not indexed</p>
         <h1 className="mt-3 max-w-2xl text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-          Twelve takes on the four treatments you picked.
+          Fifteen takes on the four treatments you picked.
         </h1>
         <p className="mt-4 max-w-2xl">
           Each family stages the same claim with genuinely different cameras. Eleven plates are
           live — real components under a camera, a pointer the page drives, a real press wherever
-          something is pressed — and one is the storyboard for the shot DOM can&apos;t make. Reply
-          with sub-IDs to commission builds — e.g.{" "}
+          something is pressed. The other four are 03c, the one you held back: four storyboards
+          for the same shot, differing in where the camera is, and two of them turn out not to
+          need a recording at all. Reply with sub-IDs to commission builds — e.g.{" "}
           <span className="font-mono text-sm text-strong">build 01a 03a 08a</span>.
         </p>
         <p className="mt-3 max-w-2xl text-sm text-dim">
@@ -278,9 +324,12 @@ export function MotionLab() {
             </div>
           </div>
           {PLATES.filter((p) => p.id.startsWith(family.id)).map((info) => (
-            <Plate key={info.id} info={info}>
-              {EXHIBITS[info.id]}
-            </Plate>
+            <Fragment key={info.id}>
+              {/* The four 03c options share one question, so they get one
+                  doorway: the camera marks side by side, before any prose. */}
+              {info.id === "03c-i" && <OneLetterIndex />}
+              <Plate info={info}>{EXHIBITS[info.id]}</Plate>
+            </Fragment>
           ))}
         </section>
       ))}
@@ -289,9 +338,11 @@ export function MotionLab() {
         <div className="mx-auto w-full max-w-5xl px-6 py-12 text-sm text-dim">
           <p>
             Pick by sub-ID — <span className="font-mono text-strong">build 01a 03a 08a</span> — or
-            name a plate to argue with. The storyboarded plate (03c) needs a footage run before it
-            can be judged as motion; everything stamped live is running on this page, and replaying
-            a take remounts the product to its own initial state.
+            name a plate to argue with. The four 03c plates are storyboards and none has been
+            recorded: 03c-ii and 03c-iii can be built as real DOM the moment you pick one, 03c-i
+            needs a footage run and the README amendment that goes with it, and 03c-iv needs a
+            prototype before that question can be answered. Everything stamped live is running on
+            this page, and replaying a take remounts the product to its own initial state.
           </p>
         </div>
       </footer>
@@ -308,7 +359,10 @@ const EXHIBITS: Record<string, React.ReactNode> = {
   "02c": <QuietCase />,
   "03a": <RoundTrip />,
   "03b": <MasterShot />,
-  "03c": <FollowOneLetter />,
+  "03c-i": <OneLetter option="i" />,
+  "03c-ii": <OneLetter option="ii" />,
+  "03c-iii": <OneLetter option="iii" />,
+  "03c-iv": <OneLetter option="iv" />,
   "08a": <HeldBreath />,
   "08b": <TwentySeconds />,
   "08c": <WhereItWaits />,

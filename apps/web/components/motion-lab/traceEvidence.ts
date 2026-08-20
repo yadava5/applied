@@ -80,8 +80,14 @@ function litRanges(hits: RuleHit[], field: "subject" | "body"): LitRange[] {
   return merged;
 }
 
-export function buildTraceView(): TraceView {
-  const { subject, body, senderEmail } = VERDICT_EMAIL;
+/** `mail` defaults to the descent's travelling email, which is what the 02
+ *  family lights. The 03c storyboards pass the cast's Kestrel assessment
+ *  instead, so their frames light the phrases the engine recorded on THAT
+ *  mail rather than reusing Northstar's offsets on someone else's words. */
+export function buildTraceView(
+  mail: { subject: string; body: string; senderEmail: string } = VERDICT_EMAIL,
+): TraceView {
+  const { subject, body, senderEmail } = mail;
   const { verdict, hits } = traceRules(subject, body, senderEmail);
   const winner = hits.filter((h) => h.category === verdict.category);
   const subjectRanges = litRanges(winner, "subject");
