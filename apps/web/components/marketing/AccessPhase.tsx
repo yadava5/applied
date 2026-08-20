@@ -36,10 +36,11 @@ import { ACCESS } from "./copy";
  * copy is content-paced: the constraint, then the path that needs no seat,
  * then the ask.
  *
- * The page's alternating spine therefore loses its last left-hand beat —
- * full frame → right → left → right → the ask → full frame. That is a real
- * cost and it is named here rather than papered over; putting a rail back
- * needs a recording of the import path worth watching, not a rearrangement.
+ * The spine no longer misses the beat the retirement cost it — the descent
+ * grew to five alternating rails on 2026-08-20 (R → L → R → L → R), so the
+ * ask is simply the phase without an exhibit rather than a broken rhythm.
+ * Putting a rail HERE still needs a recording of the import path worth
+ * watching, not a rearrangement of the five that exist.
  */
 export function AccessPhase() {
   return (

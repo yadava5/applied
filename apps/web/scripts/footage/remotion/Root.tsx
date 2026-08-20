@@ -72,6 +72,13 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
   // 2.9s in the take is the same frame, so the take is cut there and the
   // stillness is bought back as a deliberate hold on the result.
   "board-syncs": { window: { from: 0, to: 2.9 }, holdIn: 0.5, holdOut: 1.1, fade: 0.4 },
+  // The tracked take, and the one cut whose numbers are shared with the
+  // capture: the camera's keyframes are written in the same capture seconds
+  // (`scenes.mjs`), so the window has to contain the whole path or the shot
+  // would be cut off mid-travel. It runs to 7.05s, which is where the camera's
+  // last keyframe sits, and `holdIn` is short because the take already opens
+  // on 0.7s of held letter that the capture records before anything happens.
+  "one-letter": { window: { from: 0, to: 7.05 }, holdIn: 0.2, holdOut: 0.4, fade: 0.4 },
   // The body TYPES in now — one character per step at ~25cps (scenes.mjs,
   // retimed 2026-08-19 after the burst take read as pasting) — so the window
   // is most of the take: the keystrokes run to ~9s and the verdict's landed
@@ -170,10 +177,15 @@ export const RemotionRoot: React.FC = () => {
               const scene: SceneMeta = await fetch(staticFile(`${id}/scene.json`)).then((r) => r.json());
               continueRender(handle);
               const seconds = cut.holdIn + (cut.window.to - cut.window.from) + cut.holdOut + cut.fade;
+              // A tracked scene's shape is its FRAME, not the box the frame
+              // travelled through — the crop rectangle on those is a bounding
+              // box for the capture's `forbid` gate and would encode a clip
+              // several times the right size.
+              const shape = scene.camera ?? scene.crop;
               return {
                 props: { ...cut, scene },
                 width: OUT_WIDTH,
-                height: even((OUT_WIDTH * scene.crop.height) / scene.crop.width),
+                height: even((OUT_WIDTH * shape.height) / shape.width),
                 durationInFrames: Math.round(seconds * FPS),
               };
             }}

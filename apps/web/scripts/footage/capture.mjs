@@ -107,9 +107,27 @@ async function captureScene(browser, scene) {
   // the same width (see MAX_CROP_W). A scene that raises it says why.
   const ceiling = scene.maxCropW ?? MAX_CROP_W;
   const raw = await scene.crop(page);
-  const crop = { ...raw, width: Math.min(raw.width, ceiling) };
-  if (raw.width > ceiling) {
-    console.log(`  ${scene.id}: crop trimmed ${raw.width} -> ${ceiling} CSS px (legibility ceiling)`);
+  // A TRACKED scene's `crop` is the bounding box of the camera's whole travel,
+  // which is what the `forbid` gate has to be measured against — the question
+  // it answers is "could this name ever be in shot", not "is it in shot now".
+  // The legibility ceiling applies to the FRAME, not to that box: what gets
+  // downscaled into the encode is one frame at a time.
+  const camera = scene.camera ? await scene.camera(page) : null;
+  let crop = raw;
+  if (camera) {
+    // A frame cannot be trimmed the way a stationary crop can — halving it
+    // mid-path would be a zoom nobody asked for — so an over-wide one is a
+    // failure, loudly, rather than a silent re-frame.
+    if (camera.width > ceiling) {
+      throw new Error(
+        `[${scene.id}] the camera's frame is ${camera.width} CSS px, over the ${ceiling} legibility ceiling`,
+      );
+    }
+  } else {
+    crop = { ...raw, width: Math.min(raw.width, ceiling) };
+    if (raw.width > ceiling) {
+      console.log(`  ${scene.id}: crop trimmed ${raw.width} -> ${ceiling} CSS px (legibility ceiling)`);
+    }
   }
 
   const dir = path.join(OUT, scene.id);
@@ -147,15 +165,19 @@ async function captureScene(browser, scene) {
     viewport: scene.viewport,
     scale: 2,
     crop,
+    ...(camera ? { camera } : {}),
     frames: frames.map((f) => ({ file: f.file, t: +(f.t - first).toFixed(4) })),
   };
   await writeFile(path.join(dir, "scene.json"), JSON.stringify(meta, null, 2));
   await ctx.close();
 
   const dur = meta.frames.at(-1)?.t ?? 0;
-  const down = (crop.width / 768).toFixed(2);
+  const down = ((camera?.width ?? crop.width) / 768).toFixed(2);
+  const shape = camera
+    ? `frame ${camera.width}x${camera.height} CSS travelling ${crop.width}x${crop.height}`
+    : `crop ${crop.width}x${crop.height} CSS`;
   console.log(
-    `  ${scene.id}: ${frames.length} frames / ${dur.toFixed(2)}s · crop ${crop.width}x${crop.height} CSS · ${down}x downscale at the 768px placement`,
+    `  ${scene.id}: ${frames.length} frames / ${dur.toFixed(2)}s · ${shape} · ${down}x downscale at the 768px placement`,
   );
   return meta;
 }

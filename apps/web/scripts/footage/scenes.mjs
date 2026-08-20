@@ -1,9 +1,10 @@
 /**
- * The scenes — the two moments on the PUBLIC /demo family that survived the
+ * The scenes — the moments on the PUBLIC fixture surfaces that survived the
  * measurement pass. Never the signed-in app: that account holds the owner's
  * real employers and real rejections, and this footage goes on a marketing
  * page. `/demo` runs the same shipped components over fixture data, which is
- * what the landing should show anyway.
+ * what the landing should show anyway; `one-letter` is the one scene that
+ * captures elsewhere, and its own header says why.
  *
  * WHAT WAS REJECTED, AND WHY — kept here because the next person will have the
  * same four ideas, and re-deriving these takes a production build and an hour:
@@ -49,8 +50,52 @@
  *  raising it FOR. Enforced in `capture.mjs`, not remembered. */
 export const MAX_CROP_W = 580;
 
+/**
+ * The tracked scene's frame, in CSS px — derived twice over, never chosen.
+ *
+ * 576 because the encode is 1152 px wide and the capture runs at 2x, so a
+ * 576-wide window is exactly the encode's native pixels: `Clip.tsx`'s
+ * `k = width / frame.width` lands on 2.0 and nothing is scaled either way.
+ * 155 because that is what 576 gives at the shape of the picture this clip is
+ * placed in: the landing's 30rem clip rails render 478 x 128.63 CSS px on a
+ * production build, measured at 1024 and 1512, which is 1152:310 — the aspect
+ * the sync recording already encodes at. The clip landed on the retention
+ * rail and rides its own row rail since the five-rail restaging
+ * (2026-08-20); both share the geometry this frame was derived for.
+ */
+const FRAME = { width: 576, height: 155 };
+
 /** Padding around a derived crop, in CSS px. */
 const PAD = 12;
+
+/**
+ * A camera path: one frame size, and where that frame sits over the page at a
+ * few moments of the take. `at` is in CAPTURE seconds, read off `scene.json`
+ * or a contact sheet exactly as the cut's `window` is; `x` / `y` are the
+ * frame's top-left in CSS px. Two keyframes at the same position are a HOLD,
+ * and a scene with one keyframe is a stationary window — which is what every
+ * other scene here is, written the long way.
+ *
+ * The frame size is constant for the whole path ON PURPOSE, and it is the one
+ * rule this abstraction enforces rather than documents. A frame that changed
+ * size would be a zoom, and a zoom cannot be afforded honestly: the pipeline
+ * never scales a captured pixel up (`Clip.tsx`), which pins the tightest
+ * possible frame at half the encode's width — 576 CSS px — and the widest at
+ * whatever stays legible in a 478px picture, which is about the same number.
+ * The room to zoom is nil. The room to TRAVEL is the whole page.
+ *
+ * The keyframes are DERIVED from real elements, the same rule `boxOf` follows,
+ * so a layout change moves the camera with it instead of quietly filming the
+ * wrong rectangle.
+ */
+export function cameraPath(frame, path) {
+  if (!path.length) throw new Error("a camera path needs at least one keyframe");
+  return {
+    width: Math.round(frame.width),
+    height: Math.round(frame.height),
+    path: path.map((k) => ({ at: k.at, x: Math.round(k.x), y: Math.round(k.y) })),
+  };
+}
 
 /** Union of several element boxes, padded, clamped to the viewport. Crops are
  *  DERIVED from real elements rather than typed in as numbers, so a layout
@@ -157,6 +202,224 @@ export const SCENES = [
     async run(page) {
       await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
       await page.waitForTimeout(7000);
+    },
+  },
+
+  {
+    id: "one-letter",
+    title: "One letter, and the row it left behind",
+    /**
+     * The retention claim's exhibit, and the first scene here shot with a
+     * camera that moves. `PRIVACY.retention` says the classifier reads a
+     * message's body to decide and then discards it; the sync recording showed
+     * the counting half of that, and this shows the OTHER half — one message,
+     * read, and the row it left on the board.
+     *
+     * THE SHOT. One continuous take, one frame size, no cut. It opens held on
+     * the letter — Kestrel Dynamics' assessment invitation, in the detail
+     * pane's own mail trail, carrying the verdict the classifier already
+     * reached (`assessment`, 97%, drawn against the 0.85 gate) and the
+     * sentence that named the deadline. The pane is then closed by a real
+     * press of its own × and the board answers in frame: every row expands
+     * into the space the pane held, by `PipelineBoard`'s own layout animation
+     * (measured on this surface at this viewport: the tracked row goes 632 →
+     * 1036 px wide and un-wraps 68 → 42 px tall, settled in 202 ms). The
+     * camera rides that expansion up and to the left and comes to rest on the
+     * ASSESSMENT group, with the row the letter produced sitting in it.
+     *
+     * WHY /landing-a AND NOT /demo, which every other scene captures from.
+     * The subject has to be an assessment, and it has to be filed AT
+     * assessment — `assessment` has been a stage of its own since 2026-08-12.
+     * /demo cannot show that: it has no `assessment`-status row at all, and
+     * its own Kestrel row is filed at `interviewing` with an assessment mail
+     * behind it, which `lib/demo/demoData.ts` documents as stale rather than
+     * principled. Filming it would publish a fixture this repo already knows
+     * is wrong. /landing-a mounts the SAME shipped components — the real
+     * `PipelineBoard`, the real `ApplicationRow`, the real
+     * `ApplicationDetail` — over `components/marketing/showcase.ts`, where
+     * Kestrel is filed at `assessment` with the deadline its mail stated. The
+     * rule /demo exists to hold is that no marketing frame shows the owner's
+     * real mail; that rule is kept here in full. Every employer in this
+     * fixture is invented.
+     *
+     * TWO REFUSALS, from the storyboard, structural rather than captioned:
+     *  · nothing is classified on camera. The pane is opened, and its trail
+     *    resolved, in `prepare` — before a frame is recorded — so the verdict
+     *    is already a fact when the take begins. There is no moment a viewer
+     *    could read as the frame deciding anything.
+     *  · the letter is never a rejection. Production has never auto-detected
+     *    one; every rejection on a real board came through the human review
+     *    gate, so a shot that filed one on its own would fabricate a
+     *    capability. `forbid` below keeps the board's one closed row out of
+     *    the camera's whole travel, and fails the capture if the path ever
+     *    wanders onto it.
+     *
+     * WHAT WAS CUT FROM THE STORYBOARD, AND WHY. The plate opened on three
+     * mail arrivals drifting toward the board and folded one of them into a
+     * row mid-flight. Neither is filmable: mail does not travel across
+     * Applied's screen, and making it do so means compositing a mail layer
+     * over a board layer — motion graphics, which the covenant bans and the
+     * camera clause does not reach. What survives is the true residue: the
+     * trail really does hold two messages, and the camera really does lock
+     * onto the one that decided.
+     */
+    url: "/landing-a",
+    /**
+     * 1280, and both numbers are load-bearing.
+     *
+     * WIDTH. `ApplicationDetail`'s docked pane grows to 384 CSS px and stops,
+     * and the whole shot depends on the letter being READ: at 1152 the pane
+     * is 346 and the subject line truncates to "Next step: online assessment
+     * (90 m…" — the four words the clip exists for. 1280 is the narrowest
+     * viewport that gives the pane its full width. Above it nothing improves;
+     * the pane is right-anchored, so a frame pushed as far right as the
+     * viewport allows sits 168 px into the worklist at EVERY width.
+     *
+     * HEIGHT. 1000, not 900. The board's stage is
+     * `clamp(480px, calc(100dvh - 16.5rem), 900px)` (app/landing-a/page.tsx),
+     * so the viewport's height decides how much board there is; at 900 the
+     * docked pane's foot falls below the fold and the trail's second message
+     * is cut in half at the exact moment the camera is holding on the first.
+     */
+    viewport: { width: 1280, height: 1000 },
+    /**
+     * The board's one closed row, and the phrase it files under. This is a
+     * FRAMING gate on the camera's whole travel: the showcase fixture carries
+     * a rejection deliberately (a board with no verdict it did not want is a
+     * brochure — see showcase.ts), and it is exactly what this clip must not
+     * be seen filing. `assertNothingForbidden` measures every matching element
+     * against the path's bounding box, so a camera that drifts far enough down
+     * the worklist to catch the closed group fails the capture rather than
+     * shipping.
+     */
+    forbid: ["Atlas Freight", "Moving forward with other candidates"],
+    /**
+     * Two things happen here, and both have to happen BEFORE the first frame.
+     *
+     * The ASSESSMENT group's resting geometry is measured first, because the
+     * camera's landing is a rectangle over a state that does not exist while
+     * the pane is open — the same derived-then-remembered idiom the import
+     * scene uses for its counters, and for the same reason: a crop typed in as
+     * a number stops following the layout.
+     *
+     * Then the row is opened, through its own shipped opener, and the trail is
+     * waited for. That is what puts the verdict on screen before the camera
+     * rolls.
+     */
+    async prepare(page) {
+      await page.waitForSelector('[data-testid="pipeline-board"]');
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForTimeout(600);
+      this.seated = await page.evaluate(() => {
+        const section = [...document.querySelectorAll("section[aria-label]")].find((el) =>
+          /^assessment —/i.test(el.getAttribute("aria-label") ?? ""),
+        );
+        if (!section) throw new Error("one-letter: no assessment group on the board");
+        const row = section.querySelector("li");
+        if (!row) throw new Error("one-letter: the assessment group is empty");
+        const g = section.getBoundingClientRect();
+        const r = row.getBoundingClientRect();
+        return { left: g.x, rowMid: r.y + r.height / 2 };
+      });
+      await page.getByRole("button", { name: /^Open Kestrel Dynamics/ }).click();
+      // The trail is a real transport call, and the pane mounts on "loading
+      // the mail trail…" while it runs. Waiting for the message itself — not
+      // for the pane — is what guarantees the take opens on a resolved
+      // verdict rather than on a spinner.
+      await page
+        .locator('[data-testid="application-detail"] li', { hasText: "online assessment" })
+        .first()
+        .waitFor();
+      await page.waitForTimeout(700);
+    },
+    /**
+     * The camera. 576 x 155 CSS px, held, tracked, held.
+     *
+     * 576 is half the 1152 the clip encodes at, captured at 2x, so
+     * `Clip.tsx`'s `k` lands on exactly 2.0 and not one pixel is scaled up.
+     * 155 is what 576 gives at the retention rail's own aspect — its picture
+     * measures 478 x 128.63 on a production build, which is 1152:310, the
+     * same shape the sync recording already encodes at. That is why this clip
+     * costs the rail nothing: `--exhibit` does not move.
+     *
+     * The three keyframes are the three beats. The hold either side of the
+     * move is what makes it a tracking shot rather than a drift — a camera
+     * that is always moving has no beginning and no end.
+     */
+    async camera(page) {
+      const vp = page.viewportSize();
+      const letter = await page
+        .locator('[data-testid="application-detail"] li', { hasText: "online assessment" })
+        .first()
+        .boundingBox();
+      if (!letter) throw new Error("one-letter: the letter is not on screen");
+      // As far right as the frame can sit and still be a window on the page.
+      // The pane is right-anchored, so this is what puts the letter in frame
+      // with the board's own edge beside it — the shot's whole subject, both
+      // halves, without a composite.
+      const held = { x: Math.min(letter.x - 18, vp.width - FRAME.width), y: letter.y - 46 };
+      // The landing, composed rather than offset: the tracked row sits on the
+      // frame's own centre line, which puts the group heading and its count
+      // above it and the head of the next group below — the row seen IN
+      // something, which is the whole difference between "a row" and "the
+      // row's group". Deriving it from the row's middle rather than from the
+      // group's top is what keeps that true if the heading ever grows a line.
+      const seat = {
+        x: this.seated.left - 12,
+        y: this.seated.rowMid - FRAME.height / 2,
+      };
+      // TWO SEGMENTS, NOT ONE DIAGONAL, and the first cut of this shot is why.
+      // A straight line from the letter to the seat crosses the middle of the
+      // worklist, which is 400-odd px of nothing: an Applied row puts its
+      // identity at the left and its machine facts at the right and leaves the
+      // span between them empty. The contact sheet showed the camera three
+      // seconds in with two stage selects and dark ground in frame, which is a
+      // shot with a hole in it.
+      //
+      // So the camera TILTS first, up the pane's own column, and arrives on
+      // the row's right end — where the deadline it just read in prose is
+      // sitting as `due in 2d · Aug 22`, beside the stage the letter filed it
+      // at. Then it TRACKS left along the row into its group. From the tilt's
+      // end onward the tracked row is in frame continuously, which is the
+      // thing that makes this a tracking shot and not two crops joined by a
+      // move: the camera does not let go of the subject.
+      return cameraPath(FRAME, [
+        { at: 0, ...held },
+        // The press lands at ~2.2s and the board's answer is done by ~2.45s;
+        // the camera stays put through both, so the expansion is watched
+        // rather than chased.
+        { at: 2.55, ...held },
+        { at: 3.55, x: held.x, y: seat.y },
+        // A beat on the match — the letter's sentence, and the row's own tag.
+        { at: 4.15, x: held.x, y: seat.y },
+        { at: 5.65, ...seat },
+        { at: 7.05, ...seat },
+      ]);
+    },
+    /** The path's bounding box, for the `forbid` gate. */
+    async crop(page) {
+      const cam = await this.camera(page);
+      const xs = cam.path.map((k) => k.x);
+      const ys = cam.path.map((k) => k.y);
+      return {
+        x: Math.min(...xs),
+        y: Math.min(...ys),
+        width: Math.max(...xs) - Math.min(...xs) + cam.width,
+        height: Math.max(...ys) - Math.min(...ys) + cam.height,
+      };
+    },
+    async run(page) {
+      // Held on the letter, long enough to read the subject, the sender and
+      // the verdict under it.
+      await page.waitForTimeout(1500);
+      // The take's one input: a press of the pane's own close control. It is
+      // dispatched at the shipped button exactly as every other scene's is,
+      // and nothing draws a pointer for it.
+      await page.getByRole("button", { name: "Close detail" }).click();
+      // The expansion, the tilt, the beat on the match, the track, and the
+      // hold on the seated row — the camera's last keyframe is at 7.05s of
+      // capture time and the take has to outlive it.
+      await page.waitForTimeout(5100);
     },
   },
 

@@ -70,17 +70,30 @@ const take = async (d: Director) => {
   await d.hold(900);
 
   d.say(ACT.narration[2]);
+  // The camera rides the collapse IN the collapse's own frames: `followCover`
+  // arms the director's cover floor before the press, so as the filter
+  // empties the stage (~200ms of the board's own glide) the rendered scale
+  // tracks the live cover bound instead of discovering it at punch time. The
+  // previous cut held 220ms and then punched, and the cover bound — frozen
+  // at punch-time arithmetic — left the frame 47% empty for ~1.4s on the
+  // filter beat at 1024x600 and 1024x768 (measured on the production build);
+  // before that, an authored `zoomTo(…, 1)` earned the owner's screenshot at
+  // 1024x1120. `punchTo`, never an authored scale: the survivors are what
+  // must fill the frame, and its fill and cover are re-resolved every frame
+  // now (see the director's docblock).
+  d.followCover();
   await d.click(() => tallestDayBar(d));
-  await d.hold(500); // the board's own glide carries the survivors into place
   d.say(ACT.narration[3]);
-  await d.zoomTo(() => d.query('[data-testid="worklist-pane"]'), 1, 1500);
-  await d.hold(1600);
+  await d.punchTo(() => d.find('[data-testid="worklist-pane"]'), 1500);
+  await d.hold(1900);
 
   const kestrel = () => d.query('button[aria-label^="Open Kestrel Dynamics"]');
   await d.click(kestrel);
   await d.waitFor(() => d.query('[data-testid="application-detail"]'), 6000, "the detail pane");
   d.say(ACT.narration[4]);
-  await d.zoomTo(() => d.query('[data-testid="application-detail"]'), 1, 1600);
+  // Top-aligned: the pane is taller than most frames, and the beat's line
+  // names its head — the assessment, its deadline — not its middle.
+  await d.punchTo(() => d.find('[data-testid="application-detail"]'), 1600, 0.85, "top");
   await d.hold(2600);
 
   const clear = () => d.query('[data-testid="pulse-filter-band"] button');
@@ -154,6 +167,14 @@ export function OnerStage({
         console.warn("[window-act] take failed:", err);
         onCaption(ACT.failed);
         onPhase("failed");
+        // And it must not strand the camera mid-shot: whatever beat it died
+        // on, the frame glides home to the whole board — the same resting
+        // composition the visitor's own hand buys. A failed take may not
+        // leave a crop, or a void, as its last word.
+        takeActiveRef.current = false;
+        void d.fitAll(600).catch(() => {
+          // Cancelled by a replay remount — nothing to recover.
+        });
       });
   }, [frameRef, onCaption, onPhase]);
 

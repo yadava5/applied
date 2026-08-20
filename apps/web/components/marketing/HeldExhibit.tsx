@@ -9,11 +9,11 @@ import { showcaseApplications } from "./showcase";
 import { cedarReviewItem, HELD_MAIL } from "./heldMail";
 
 /**
- * The decision rail's exhibit — the owner's 08c pick ("where it waits"),
- * recomposed from the motion lab's take for a pinned rail: no director, no
- * synthesized pointer, the SCROLL is the clock (`ClaimsDescent` drives
- * `settled` off the phase's own progress, the way every rail state on this
- * page is driven).
+ * The review rail's exhibit — the owner's 08c pick ("where it waits"),
+ * running as the TAKE he picked it as: `ClaimsDescent` drives `settled` from
+ * a `RailTake` script on a pausable clock — no director, no synthesized
+ * pointer ("the object itself travels", the lab's own words), narrated
+ * beat by beat, autoplaying once the rail is in view.
  *
  * Two beats. Cedar's ambiguous note starts full-size — the mail the rules
  * layer will not guess about — then settles into the REAL review queue

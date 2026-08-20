@@ -1,7 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
-import { ACT } from "../../components/marketing/copy";
+import { ACT, HELD_TAKE, KEPT } from "../../components/marketing/copy";
 
 /**
  * E2E for the landing (`/`) — the pinned-scroll composition, which was
@@ -85,8 +85,8 @@ const DESKTOP_1024_768 = { width: 1024, height: 768 };
  *  a tall one against its phase's runway. #access — a rail this page no
  *  longer has — read 0.262 at 1024x768 and 0.170 at this height on the same
  *  build, so a gate fixed at one height was structurally unable to see the
- *  failure. The decision rail squeezes by the same mechanism and is the
- *  page's tightest now, so the height corners matter MORE than they did. */
+ *  failure. The review rail — the five-rail spine's tightest — squeezes by
+ *  the same mechanism, so the height corners matter MORE than they did. */
 const DESKTOP_1512 = { width: 1512, height: 949 };
 /** WIDE AND SHORT, and the reason the pin is measured at more than one WIDTH.
  *  This was where the tightest pin on the page lived — #access at 0.213 —
@@ -123,16 +123,17 @@ const TABLET_768 = { width: 768, height: 1024 };
  *  tweak that keeps the promise does not turn CI red. */
 const PROVENANCE = /A synthetic email .* computed live in this tab/;
 
-/** A pinned rail (`lg`+ only) — the page's spine is three of them, one per
- *  descent phase, sides alternating (`ClaimsDescent`'s docblock). It was
- *  four: `#access` pinned the import recording until that clip was retired
- *  on 2026-08-20, and with nothing honest to pin the phase collapsed to a
- *  single column rather than borrow an exhibit (`AccessPhase` argues it). Below `lg` each
- *  screen carries its own inline snapshot, and those are the copies this must
- *  NOT measure.
+/** A pinned rail (`lg`+ only) — the page's spine is five of them since the
+ *  2026-08-20 restaging (`RAIL_COUNT` names them), sides alternating
+ *  (`ClaimsDescent`'s docblock). Before that it was three, briefly four:
+ *  `#access` pinned the import recording until that clip was retired on
+ *  2026-08-20, and with nothing honest to pin the phase collapsed to a
+ *  single column rather than borrow an exhibit (`AccessPhase` argues it).
+ *  Below `lg` each screen carries its own inline snapshot, and those are
+ *  the copies this must NOT measure.
  *
  *  It used to be `div.sticky.top-20`, and that stopped being a description of
- *  the spine: the three clip rails now resolve their sticky offset from the
+ *  the spine: the clip rails resolve their sticky offset from the
  *  viewport and their own exhibit's height (`top-[max(5rem,…)]`), because a
  *  viewport-tall box left its phase no runway to pin across. A utility class
  *  was never the right handle anyway — it made a rail's identity a styling
@@ -140,11 +141,14 @@ const PROVENANCE = /A synthetic email .* computed live in this tab/;
  *  being unstaged. `data-rail` names the phase and is what a rail losing its
  *  staging actually removes. */
 const STICKY_EXHIBIT = "[data-rail]";
-/** How many rails the spine runs at `lg`+: verdict (right), decision (left),
- *  retention (right). A fourth means a phase forked its staging — or that
- *  `#access` grew a rail back, which needs a recording, not a rearrangement;
- *  two means one dropped out of the language the page was chosen for. */
-const RAIL_COUNT = 3;
+/** How many rails the spine runs at `lg`+ since 2026-08-20 (the owner's
+ *  "five or six boxes aside from the oner"): verdict (right, the 02b take),
+ *  rules (left, the big box), review (right, the 08c take), row (left, the
+ *  tracked recording), retention (right). A sixth means a phase forked its
+ *  staging — or that `#access` grew a rail back, which needs a recording,
+ *  not a rearrangement; four means one dropped out of the language the page
+ *  was chosen for. */
+const RAIL_COUNT = 5;
 
 /** How close to the sticky offset a sample has to read to count as PINNED.
  *  The plateau measured exactly 80px at 1024x768, but a 1px rounding drift
@@ -165,28 +169,44 @@ const PIN_LEAD = 120;
  * The least share of its own band a rail may spend pinned — counting only the
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
- * MEASURED on `next build && next start` (2026-08-20, post-oner staging),
- * verdict / decision / retention / #access, at each of the six viewports
- * this walk runs:
+ * MEASURED on `next build && next start` (2026-08-20, five-rail restaging,
+ * re-measured the same day after the take rails moved to the 4.5rem offset
+ * for the fold — the +8px of rail height cost the review rail ~1pp at the
+ * tall corners, priced in below), verdict / rules / review / row /
+ * retention, at each of the six viewports this walk runs — taken with the
+ * design-side walk (same band arithmetic, stable-top plateau at tolerance 2
+ * / step 24, no overhang netting, which is inert on this page anyway); this
+ * suite's own run is owed and is the canonical reading:
  *
- *   1024x600    0.593  0.574  0.748  0.236
- *   1024x768    0.582  0.479  0.774  0.355
- *   1512x600    0.593  0.580  0.743  0.213
- *   1512x949    0.575  0.397  0.782  0.427
- *   1512x1080   0.576  0.345  0.792  0.471
- *   1024x1120   0.575  0.337  0.803  0.489
+ *   1024x600    0.570  0.354  0.371  0.543  0.756
+ *   1024x768    0.547  0.469  0.335  0.647  0.768
+ *   1512x600    0.570  0.341  0.371  0.543  0.740
+ *   1512x949    0.531  0.578  0.325  0.705  0.791
+ *   1512x1080   0.533  0.619  0.333  0.746  0.798
+ *   1024x1120   0.525  0.643  0.321  0.765  0.812
  *
- * THE FOURTH COLUMN IS HISTORY AS OF 2026-08-20. `#access` no longer runs a
- * rail — the recording it pinned was retired and the phase collapsed rather
- * than borrow another phase's exhibit — so the page's minimum is no longer
- * 0.213 at a corner nobody had walked. Read off the three columns that
- * remain, the tightest is the DECISION rail at 0.337 (1024x1120), with its
- * beyond-range asymptote at 0.321 (2560x1440); the floor keeps more
- * clearance than it had, and it is deliberately NOT raised to suit, because
- * the number it has to survive is the next restaging's, not this one's.
- * Those three columns are carried over from the run above rather than
- * re-walked for this change — nothing in it touches the descent's bands —
- * and a fresh six-viewport walk is owed before anyone quotes them as current.
+ * Reading the minimum FROM the table, nothing else: REVIEW 0.321 at
+ * 1024x1120, then review 0.325 at 1512x949 — the viewport-tall take rail
+ * over two paced beats, the same dvh-paced shape whose asymptote the old
+ * decision rail measured at ~0.29 beyond range — with the RULES rail's
+ * short edge at 0.341 (1512x600) the tightest non-review reading. A
+ * caution that is now part of this table's method: this prose has named
+ * the wrong corner THREE times, most recently when the previous staging's
+ * design-side walk put its minimum at 1024x1120 while the suite's own
+ * canonical run put it at 1512x1080 (review, 0.333) — the two instruments
+ * agree to ~0.01 and that is enough to move the argmin between corners. So
+ * the sentence above is derived from the table each time the table is
+ * re-measured, never carried forward, and the corner it names is a summary
+ * of THIS table, not a fact about the page. The floor keeps more clearance
+ * than the old spine's tightest corner and is deliberately NOT raised to
+ * suit, because the number it has to survive is the next restaging's, not
+ * this one's.
+ *
+ * The paragraphs below this line predate the five-rail restaging: their
+ * numbers describe the three-rail spine and the retired `#access` rail, and
+ * are kept as the record of how this floor was set — the mechanisms they
+ * name (mb-14's price, the corner blind spots, the band-vs-runway
+ * denominator) are unchanged.
  *
  * Beyond-range probes, because the two viewport-tall rails converge on an
  * asymptote rather than a cliff: decision reads 0.329 at 1920x1200 and
@@ -491,6 +511,69 @@ function theAct(page: Page) {
   };
 }
 
+/**
+ * A rail take's own surfaces, scoped the same way `theAct`'s are and for the
+ * same recorded reason — and for a second one this file has now paid for
+ * twice: the provenance test addressed the verdict exhibit's wall label as
+ * `.locator("p").first()`, and when `RailTake` put two new `<p>` elements
+ * ahead of the exhibit (the caps strip, the aria-live narration) the locator
+ * silently resolved to the strip and the containment assertions below it
+ * never executed. Every handle here is the element's ROLE or its own
+ * attribute, matched exactly, so an element added ahead of it cannot
+ * re-ambiguate it: the strip is the rail's one `aria-live` line, and the
+ * transport is addressed by its exact accessible name.
+ */
+function theRailTake(page: Page, rail: "verdict" | "review") {
+  const self = page.locator(`[data-rail='${rail}']`);
+  return {
+    self,
+    strip: self.locator("p[aria-live='polite']"),
+    pause: self.getByRole("button", { name: ACT.pause, exact: true }),
+    play: self.getByRole("button", { name: ACT.play, exact: true }),
+    replay: self.getByRole("button", { name: ACT.replay, exact: true }),
+  };
+}
+
+/**
+ * The descent exhibit's two live verdicts, addressed by the product's OWN
+ * attributes (`data-verdict-chip`, `data-verdict-chips`, added to
+ * `VerdictEmail` for this gate). A loose locator has sat here twice and cost
+ * the fold test the same block both times — `.locator("p").first()`, then
+ * `getByText("whole body")`. The second is substring matching, and the
+ * beat's narration quotes the chip verbatim ("the preview alone looks
+ * routine — the whole body holds the invitation"), so at the split beat it
+ * resolves 2 nodes inside the rail: strict-mode violation, and `expect`
+ * fails fast, so the containment assertions below it never ran.
+ *
+ * `exact: true` is not the fix, and the reason is worth stating because it
+ * looks like one. MEASURED at the split beat, production build (2026-08-20):
+ * inside the rail it resolves 1, but page-wide it resolves 6 — the other
+ * mounts of the same exhibit — so it is scope, not exactness, doing the
+ * work, and what is left is a locator that stays unique only while the chip
+ * is its own element and no beat is reworded to END on that phrase. Both
+ * prior breaks were exactly that kind of contingency coming due. An
+ * attribute is an address: an element added ahead of it, a restyle, or a
+ * rewritten script cannot re-ambiguate it.
+ *
+ * `box` is the element the collapse ZEROES — `grid-rows-[0fr]` on its grid
+ * parent, and Playwright's visibility check is a non-empty box — so `box` is
+ * the only handle here that can actually read "the verdicts are open". A
+ * chip cannot, and that was MEASURED rather than assumed: on the page's own
+ * collapsed mount of this exhibit (the record at rest, same production
+ * build) the chips box read 414x0 and INVISIBLE while the chip inside it
+ * read VISIBLE with a 187x97.9 box — the clip is an ancestor's
+ * `overflow-hidden`, which Playwright's visibility check does not resolve.
+ * So the chips are asserted by COUNT; a `toBeVisible` on a chip would be one
+ * more check that cannot fail.
+ */
+function theVerdictChips(scope: Locator) {
+  return {
+    box: scope.locator("[data-verdict-chips]"),
+    preview: scope.locator("[data-verdict-chip='preview only']"),
+    body: scope.locator("[data-verdict-chip='whole body']"),
+  };
+}
+
 test.describe("landing (/)", () => {
   test.skip(
     !PROD_BUILD,
@@ -563,6 +646,182 @@ test.describe("landing (/)", () => {
     // line never executes under the mutation above. It has been seen green
     // and has no isolating mutation of its own.
     await expect(act.pause).toBeVisible();
+  });
+
+  /**
+   * THE SHOT IS A SHOT. Production played a whole take with the camera
+   * parked — the pointer pressed the day bar, the board filtered, and the
+   * frame showed the shrunken board centred in a void, because the script's
+   * zooms were authored at absolute scale 1 (owner screenshot, 2026-08-20).
+   * Every gate was green: the take's logic ran, so nothing red existed to
+   * see. This is the assertion that was missing: the director now writes
+   * `data-cam-scale` on the frame each time it applies the camera
+   * (`applyCam`), and a take must actually TRAVEL — the range between the
+   * shallowest and deepest shot must be a real push-in, not jitter.
+   *
+   * 1024x1120 DELIBERATELY, not the working 1024x768: at tall frames the
+   * establishing fit clamps to 1.0 and the parked-camera defect reads a
+   * range of ~0.0, while at short frames the sub-1 establishing fit gives
+   * even a parked camera a free range (0.524 → 1.0 at 600 tall reads
+   * 0.476 — NOT blind, 0.024 from this floor, which is why the range
+   * metric alone must never be trusted at the short corner; the 1024x600
+   * test below gates that corner on DEPTH instead, where the separation is
+   * real). The tall corner is where the range metric is unambiguous and
+   * ONLY the fix passes: fixed, the range there is ~1.26 (1.000
+   * establishing → 2.26 close-up, held for seconds at a time, so 250ms
+   * sampling cannot miss it).
+   *
+   * MUTATION (watched red 2026-08-20, via the design-side twin of this
+   * exact poll — same bundle, same browser, same arithmetic; this suite is
+   * not run by the frontend agent): `punchTo` reverted to
+   * `zoomTo(target, 1)`. The take plays to completion, every narration
+   * assertion above stays green, and the observed range collapses to 0.000
+   * — this line is the only one that reds. Restored and watched green the
+   * same way; a first run of this suite itself is owed and is the
+   * canonical proof.
+   */
+  test("the camera arrives: the take's shots actually travel", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 1120 });
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    await expect
+      .poll(
+        async () => {
+          const v = await page.evaluate(
+            () => document.querySelector<HTMLElement>("[data-cam-scale]")?.dataset.camScale,
+          );
+          if (v) {
+            const n = Number(v);
+            min = Math.min(min, n);
+            max = Math.max(max, n);
+          }
+          return max - min;
+        },
+        { timeout: 30_000, intervals: [250] },
+      )
+      .toBeGreaterThanOrEqual(0.5);
+  });
+
+  /**
+   * THE OWNER'S OWN CORNER, gated on what actually discriminates there. At
+   * 1024x600 the range metric above is structurally near-blind — a parked
+   * camera reads 0.476 of range for free off the sub-1 establishing fit,
+   * 0.024 under the 0.5 floor, and any small lift to that fit turns the
+   * corner green on a broken camera. What DOES separate is DEPTH: a parked
+   * camera's deepest write is its AUTHORED constant, give or take the cover
+   * floor's own correction — exactly 1.000 where the punch is parked at
+   * `zoomTo(target, 1)` AND `followCover` is dropped — the recipe below,
+   * watched 2026-08-20 — and 1.017 where the scale is parked at 1 with the
+   * cover floor left armed, which is a SEPARATE reading on the same
+   * production build and not one the recipe below produces — while a
+   * computed close-up pushes past
+   * natural scale (max 1.605 — the live cover bound riding the filtered
+   * board — with the fill bound's 1.12 as the independent backstop if the
+   * fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
+   * parked variants with room: an authored scale plus a floor correction is
+   * not a measurement of the shot, so the clearance budget belongs entirely
+   * to the real side, under both computed drivers.
+   *
+   * AND THE FRAME STAYS FULL, watched PER FRAME, not per poll. The owner's
+   * void, third report: the day filter shrinks the board while the camera
+   * is parked at the establishing scale, and a cover bound evaluated only
+   * at punch time left the frame 47% empty for ~1.4s (198px of 424 at this
+   * viewport) on the beat where the product does the thing. The director's
+   * cover floor now holds across stage resizes (`applyCam`/`followCover`),
+   * and at this viewport the vertical void is structurally zero for the
+   * whole take — establishing is height-fit, close-ups are cover-floored —
+   * so the 32px allowance is pure slack. The watcher is an in-page rAF
+   * loop, one reading per rendered frame, because an external poll was
+   * MEASURED missing the defect on the very mutation built to prove this
+   * assertion — it shared the depth poll's loop and stopped sampling the
+   * moment depth passed, ~700ms before the void finished (it read 7px
+   * where 198 existed: a gate that could not fail, caught before it
+   * shipped). It runs concurrently with the depth poll from the same
+   * start, and its 24s window comfortably covers the filter beat (~4-8s
+   * in), which is the only beat that can void.
+   *
+   * PERSISTENCE, NOT A SINGLE FRAME: the reading is the worst void seen on
+   * two CONSECUTIVE rendered frames (the min of each adjacent pair). rAF
+   * callbacks run BEFORE ResizeObserver delivery in the same rendering
+   * pass, so on the frame where the board's layout collapses, a
+   * getBoundingClientRect inside rAF sees the new layout under the
+   * not-yet-reframed camera — a state that never paints (measured on the
+   * fixed build: one 198px reading, worstRun 1, gone by the next frame). A
+   * painted defect cannot hide there: the real one holds for ~84 frames.
+   *
+   * TWO MUTATIONS, one per assertion, because `expect` fails fast and the
+   * void line never executes while the depth line is red (both watched
+   * 2026-08-20, each on its own `next build && next start`, via the
+   * design-side twin of this poll — same bundle, same browser, same
+   * arithmetic; this suite's own run is owed and canonical):
+   *   · DEPTH: `punchTo` reverted to `zoomTo(target, 1)` and `followCover`
+   *     dropped — the take completes, the narration gates stay green, max
+   *     reads exactly 1.000, this line reds.
+   *   · VOID: the pre-fix director restored WHOLE (`git show` of
+   *     director.ts and OnerStage.tsx at the defect's own commit — the
+   *     historical bug, not a synthetic break) — depth reads 1.079 and
+   *     stays green; the watcher reds alone at 198.2px, the owner's own
+   *     number, held for 166 consecutive frames. Two SYNTHETIC void
+   *     mutations were tried first and measured GREEN — freezing the
+   *     punch's cover at first evaluation while leaving the reframe
+   *     observer alive — because the reframe alone already re-fits this
+   *     corner within ~7px. That is worth keeping: the void guarantee
+   *     rides the reframe+floor system as a whole, and only removing the
+   *     system reproduces the defect.
+   * Restored and watched green the same way after each.
+   */
+  test("the deepest shot is computed and the frame never empties at 1024x600", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP_1024);
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    // The per-frame void watcher, started BEFORE the depth poll so both
+    // cover the same stretch of the take. Not awaited until the poll is
+    // done — they run together.
+    const voidWatch = page.evaluate(async () => {
+      let worst = 0;
+      let prev = 0;
+      const t0 = performance.now();
+      while (performance.now() - t0 < 24_000) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
+        const stage = frame?.firstElementChild?.firstElementChild;
+        if (!frame || !stage) continue;
+        const f = frame.getBoundingClientRect();
+        const r = stage.getBoundingClientRect();
+        const gap = Math.max(0, r.top - f.top) + Math.max(0, f.bottom - r.bottom);
+        // Two consecutive frames, so a pre-paint rAF/RO phase artifact
+        // cannot red this — see the docblock.
+        worst = Math.max(worst, Math.min(prev, gap));
+        prev = gap;
+      }
+      return worst;
+    });
+
+    let max = 0;
+    await expect
+      .poll(
+        async () => {
+          const v = await page.evaluate(
+            () => document.querySelector<HTMLElement>("[data-cam-scale]")?.dataset.camScale,
+          );
+          if (v) max = Math.max(max, Number(v));
+          return max;
+        },
+        { timeout: 30_000, intervals: [200] },
+      )
+      .toBeGreaterThanOrEqual(1.06);
+
+    const worstVoid = await voidWatch;
+    expect(
+      worstVoid,
+      `the frame showed ${worstVoid.toFixed(1)}px of vertical void mid-take — the cover bound is not holding through the board's own resizes`,
+    ).toBeLessThanOrEqual(32);
   });
 
   test("the pause control freezes the clock, and the visitor's hand stands the take down", async ({
@@ -644,6 +903,119 @@ test.describe("landing (/)", () => {
   });
 
   /**
+   * The RAIL TAKES' reduced-motion disarm — the oner's contract, held for
+   * the other two takes on the page. Until 2026-08-20 this was browser-pass
+   * evidence only: the suite covered the oner's disarm and nothing covered
+   * `RailTake`'s, though it is a separate implementation of the same
+   * promise. Each rail is PARKED IN VIEW first, because the failure mode
+   * worth money is not "the resting line renders at load" but "the arming
+   * observer starts a take the moment the exhibit is seen".
+   *
+   * The transport counts inherit the oner trio's lesson verbatim: under
+   * reduced motion `armed = reduced === false` is false, `start()` is never
+   * reached, and `phase` cannot leave "idle" — so the inner gates
+   * (`phase === "playing"`, `phase !== "idle"`) stay shut whatever `armed`
+   * does, and dropping `armed &&` alone reddens nothing. Each count's
+   * mutation therefore seeds the phase as well.
+   *
+   * MUTATIONS (each on its own `next build && next start`, watched red via
+   * the design-side twin of these exact assertions — same bundle, same
+   * browser, same arithmetic; this suite's own run is owed and canonical):
+   *   · strip: `reduced ? resting : caption` in RailTake collapsed to
+   *     `caption` — both rails' strips then hold their opening lines and
+   *     the verdict strip assertion is the first to red. The review strip
+   *     assertion rides the same ternary and is named, not claimed.
+   *   · pause count: drop `armed &&` AND seed `useState<…>("playing")` —
+   *     Pause renders on both rails, the verdict count reds first.
+   *   · replay count: drop `armed &&` AND seed `useState<…>("done")` —
+   *     Replay renders, same shape.
+   *   · THE VERDICT'S RESTING STILL (added 2026-08-20, and watched red on
+   *     THIS suite's own `next build && next start`, not on a twin): the
+   *     exhibit's initial state in `ClaimsDescent` reverted from
+   *     `useState(1)` to `useState(0)`, so it rests at `raw` — the take's
+   *     opening beat, and the exact defect `RailTake`'s docblock warns
+   *     about, since with motion off nothing ever winds it forward. The
+   *     verdicts box then measures 0px and the reading reds with that
+   *     number. Restored and green again, `shasum -a 256` identical.
+   *
+   * That reading REPLACED two lines that could not fail — `getByText` on
+   * the chips with `toBeVisible`, which stays green with the exhibit
+   * collapsed, because the clip comes from an ancestor and Playwright's
+   * visibility check does not resolve it. The same suspicion, applied to
+   * the rest of this test, found one more line weaker than its claim: the
+   * `#needs-classification` check gates the queue's MOUNT, not the settle.
+   * Both are stated at the assertions themselves.
+   */
+  test("reduced motion disarms both rail takes and rests their exhibits", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize(DESKTOP_1024_768);
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    for (const [name, resting] of [
+      ["verdict", KEPT.resting],
+      ["review", HELD_TAKE.resting],
+    ] as const) {
+      const rail = theRailTake(page, name);
+      await rail.self.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(600);
+      // The strip says the setting is respected — the resting line, not the
+      // opening narration a take would have started from.
+      await expect(rail.strip).toHaveText(resting);
+      // No transport renders: nothing is playing, so there is nothing to
+      // pause and nothing to replay. Counts, not visibility — the controls
+      // must not exist. (The review exhibit mounts the shipped queue, which
+      // has buttons of its own, so the counts are by exact accessible name
+      // rather than a bare role sweep.)
+      await expect(rail.pause).toHaveCount(0);
+      await expect(rail.play).toHaveCount(0);
+      await expect(rail.replay).toHaveCount(0);
+    }
+
+    // And the resting states are the demonstrative stills each exhibit
+    // declares (`RailTake`'s docblock: the resting state IS the initial
+    // render): the verdict rests at SPLIT — both live chips expanded — and
+    // the held mail rests SETTLED into the review queue, which the shipped
+    // component announces by its own id.
+    //
+    // Through the BOX, and measured. Until 2026-08-20 these two lines read
+    // `getByText("preview only"/"whole body")` with `toBeVisible`, which
+    // cannot fail: a chip keeps its own 187x97.9 box when the exhibit is
+    // collapsed, because the clip is an ancestor's `overflow-hidden` and
+    // Playwright's visibility check does not resolve that (see
+    // `theVerdictChips`). The height of the box that actually collapses is
+    // the reading, and it is asserted with the number in the message.
+    const verdict = theRailTake(page, "verdict");
+    const chips = theVerdictChips(verdict.self);
+    await expect(chips.preview).toHaveCount(1);
+    await expect(chips.body).toHaveCount(1);
+    const chipsBox = await chips.box.boundingBox();
+    expect(
+      chipsBox?.height ?? 0,
+      `the verdict exhibit does not rest at split with motion off: its verdicts box measures ${chipsBox?.height ?? 0}px tall, so the two live chips are collapsed. With motion off the take never runs, so whatever the initial render holds is the entire exhibit this reader ever gets.`,
+    ).toBeGreaterThan(0);
+    // A backstop for the one state a height cannot see — laid out, but
+    // `visibility: hidden`. It rides on the reading above (`expect` fails
+    // fast) and is named rather than claimed: no mutation available here
+    // produces it.
+    await expect(chips.box).toBeVisible();
+    // NOT A READING OF `settled`, and this line must not be read as one.
+    // PROVED by mutation, 2026-08-20, own `next build && next start`:
+    // `useState(true)` → `useState(false)` for `settled` in `ClaimsDescent`
+    // — the held mail then does NOT rest settled, and the served HTML
+    // carries the queue at `translate-y-2 opacity-0 aria-hidden="true"` —
+    // and this whole test stayed GREEN. Playwright reads opacity-0 with a
+    // layout box as visible, so the line passes in both beats. What it DOES
+    // gate is that the shipped queue mounted at all (client-only, dated from
+    // an effect, renders nothing until `today` lands), which is worth
+    // keeping and is all it says. Covering the settle needs a handle on the
+    // element that actually moves — the queue wrapper's `aria-hidden`, or
+    // the mail body's own collapsed box — and that is a change to the
+    // exhibit, left for its owner rather than made here.
+    await expect(page.locator("[data-rail='review'] #needs-classification")).toBeVisible();
+  });
+
+  /**
    * SEED 6, and it closes the gap the count above leaves open.
    *
    * `toHaveCount(RAIL_COUNT)` counts nodes carrying `sticky top-20`. It was
@@ -662,10 +1034,13 @@ test.describe("landing (/)", () => {
    * band it spent HELD at its sticky offset. The numbers in my table move with
    * every copy edit and none of them are pinned here — only the share, against
    * a threshold below the tightest real reading. It was 6.1% below #access's
-   * 0.213 at 1512x600; #access no longer runs a rail (2026-08-20), so the
-   * tightest of the readings that remain is the decision rail's 0.337 and
-   * the floor sits well under it. `MIN_PIN_SHARE` carries the table and says
-   * why the floor is not being raised to close that gap back up.
+   * 0.213 at 1512x600; #access no longer runs a rail (2026-08-20), and the
+   * spine is five rails now with no decision rail among them — the tightest
+   * reading that remains is the REVIEW rail's 0.321 at 1024x1120 (per the
+   * measured table in `MIN_PIN_SHARE`, which is the one place that number
+   * lives) and the floor sits well under it. `MIN_PIN_SHARE` carries the
+   * table and says why the floor is not being raised to close that gap
+   * back up.
    *
    * The pre-fix signature is a `top` that falls by exactly the scroll delta at
    * every sample (measured then, over six samples: 281 181 81 -19 -119 -219).
@@ -811,11 +1186,54 @@ test.describe("landing (/)", () => {
    * in the stage where the verdicts are actually on screen.
    *
    * It asserts CONTAINMENT, not a margin. The clearance measured here on
-   * 2026-08-15 (`next build && next start`, headless Chromium, 1024×600) is
-   * 2.9px — bottom 597.1 against a 600px fold — but pinning that number would
-   * make a font-metric change a CI failure, which is not what this guards.
-   * The margin is reported in the failure message so a red run says how far
-   * out it went.
+   * 2026-08-20 (`next build && next start`, headless Chromium, 1024×600,
+   * five-rail staging) is 7.2px — bottom 592.8 against a 600px fold, paused
+   * at the split beat, and 7.2 is also the MINIMUM over the whole take at
+   * 150ms sampling — but pinning that number would make a font-metric change
+   * a CI failure, which is not what this guards. The margin is reported in
+   * the failure message so a red run says how far out it went.
+   *
+   * REWRITTEN 2026-08-20, because the take restaging broke it in two stale
+   * layers and the second hid the first: `.locator("p").first()` resolved to
+   * `RailTake`'s new caps strip instead of the wall label (see
+   * `theRailTake`'s docblock), and the split stage this test parked on had
+   * become a transient beat of the 02b take. The text assertion failed
+   * fast, so the containment lines below — the page's number-one honesty
+   * guarantee — NEVER EXECUTED, and the fold was 10.6px broken at the
+   * owner's working height with this test green-by-absence. The take's own
+   * transport is the fix: ride to the split beat and PAUSE there, which is
+   * both deterministic (the beat holds 3.8s against a ~100ms poll, and
+   * Pause freezes the clock) and the exact scenario the defect was
+   * measured in.
+   *
+   * AND IT LOST THE SAME BLOCK A SECOND TIME, in that very rewrite: the
+   * split check below addressed the chips as `getByText("whole body")`,
+   * which is SUBSTRING matching, and the beat's own narration line quotes
+   * that phrase — strict-mode violation, and `expect` fails fast, so the
+   * containment assertions had STILL never executed. They execute for the
+   * first time from the commit that added `theVerdictChips` (2026-08-20).
+   * Read 8045d5a's message with that in mind: "watched red on the reverted
+   * fix: -10.6px through the new drive" was NOT measured through this spec —
+   * this spec stopped at the chip locator, three lines above the margin —
+   * but on a design-side twin of the drive using a different locator. The
+   * red is real and reproduces here (see the recipe below); the instrument
+   * named in that message was not this one.
+   *
+   * WATCHED RED, from this file, on this drive (2026-08-20, `next build &&
+   * next start`, 1024x600): `ClaimsDescent.tsx` restored byte-exact from
+   * 8fd2a30 — the `top-20` + `py-4` rails, the historical defect, not a
+   * synthetic break — reds THIS test's containment assertion at -10.625px,
+   * with the drive intact all the way to it. Green again on the restored
+   * file (`shasum -a 256` identical before and after). The message that
+   * assertion prints was itself watched, on a temporary floor of 1000: it
+   * reports from the margin line, quoting the live clearance (7.19px).
+   *
+   * THE TOP-EDGE LINE RIDES ON IT, and this file names that rather than
+   * claiming it: `box.y >= 0` is evaluated on every green run but has never
+   * been watched red, because `expect` fails fast and no mutation available
+   * to this staging pushes the line's TOP off — 8fd2a30's defect crops the
+   * bottom only. It is a backstop against a future staging that pins the
+   * exhibit past the top of the fold, not a reddened guarantee.
    */
   test("the exhibit's provenance line stays inside the fold at 1024x600", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024);
@@ -828,23 +1246,29 @@ test.describe("landing (/)", () => {
     // which the scroll-progress rewrite removed.
     await centreOnText(page, /^So the shipped rules layer runs on it twice/);
 
-    // Arrived at the SPLIT stage: the wall label names it and both live
-    // verdict chips have actually expanded (collapsed `grid-rows-[0fr]` gives
-    // them a zero-height box, so `toBeVisible` discriminates).
-    //
-    // The spine runs three rails, so the verdict's is picked out by the
-    // one thing only it holds at `lg`+: the provenance line itself. (The
-    // retention record carries the same line, but in the FLOW column — the
-    // clip rails hold recordings, not emails.)
-    const exhibit = page.locator(STICKY_EXHIBIT).filter({ has: page.getByText(PROVENANCE) });
-    await expect(exhibit).toHaveCount(1);
-    await expect(exhibit.locator("p").first()).toHaveText("The same body, classified twice");
-    await expect(exhibit.getByText("preview only")).toBeVisible();
-    await expect(exhibit.getByText("whole body")).toBeVisible();
+    // The rail autoplays its take once in view: wait for the SPLIT beat —
+    // the narration line is the beat's address, imported from the copy so a
+    // retimed script cannot detach this — and hold it with the take's own
+    // Pause. Split is the exhibit's tallest state and the one where the
+    // verdicts are on screen, i.e. the stage the guarantee is about.
+    const rail = theRailTake(page, "verdict");
+    await expect(rail.self).toHaveCount(1);
+    await expect(rail.strip).toHaveText(KEPT.narration[1], { timeout: 20_000 });
+    await rail.pause.click();
+    await expect(rail.play).toBeVisible();
 
-    await settledHeight(page, `${STICKY_EXHIBIT} > div:last-child`);
+    // Parked at split for real: the verdicts' box has actually opened. That
+    // box is the element the collapse zeroes, so `toBeVisible` reads the beat
+    // here — a chip cannot, see `theVerdictChips` — and the two chips are
+    // then asserted present, one each.
+    const chips = theVerdictChips(rail.self);
+    await expect(chips.box).toBeVisible();
+    await expect(chips.preview).toHaveCount(1);
+    await expect(chips.body).toHaveCount(1);
 
-    const provenance = exhibit.getByText(PROVENANCE);
+    await settledHeight(page, "[data-rail='verdict'] > div");
+
+    const provenance = rail.self.getByText(PROVENANCE);
     await expect(provenance).toHaveCount(1);
     const box = await provenance.boundingBox();
     expect(box, "the provenance line has no box — it is not rendered").not.toBeNull();

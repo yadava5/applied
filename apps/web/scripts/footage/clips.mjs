@@ -78,6 +78,15 @@ export const CLIPS = [...SCENES.map((s) => s.id)];
  */
 export const POSTER_AT = {
   "board-syncs": 3.6,
+  // The seated row, and the reason a TRACKED clip needs this map even more
+  // than a stationary one does: frame 0 of `one-letter` is the letter, so a
+  // first-frame poster would show a reduced-motion visitor a piece of mail
+  // and no board at all — the setup, with the entire payoff withheld. The
+  // camera comes to rest at 5.05s of composed time (0.2 of held-in plus the
+  // path's last move, which lands at 4.85 of capture time) and holds until
+  // 6.8, where the loop dissolve starts. 6.0 is inside that hold with room
+  // either side.
+  "one-letter": 6.0,
   // 10.2, moved from 4.3 when the take was retimed to per-keystroke typing
   // (5.0s -> 10.9s, 2026-08-19): 4.3s of the NEW clip is mid-word under
   // OTHER 50% — exactly the "before" frame this map exists to avoid. 10.2

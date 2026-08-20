@@ -11,6 +11,15 @@
       "poster": 28540
     },
     {
+      "id": "one-letter",
+      "width": 1152,
+      "height": 310,
+      "seconds": 8.05,
+      "webm": 374304,
+      "mp4": 502188,
+      "poster": 20122
+    },
+    {
       "id": "rules-read-the-body",
       "width": 1152,
       "height": 630,
