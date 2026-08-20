@@ -713,9 +713,11 @@ test.describe("landing (/)", () => {
    * corner green on a broken camera. What DOES separate is DEPTH: a parked
    * camera's deepest write is its AUTHORED constant, give or take the cover
    * floor's own correction — exactly 1.000 where the punch is parked at
-   * `zoomTo(target, 1)` AND `followCover` is dropped, and 1.017 where the
-   * scale is parked at 1 with the cover floor left armed (both measured
-   * 2026-08-20, production build) — while a computed close-up pushes past
+   * `zoomTo(target, 1)` AND `followCover` is dropped — the recipe below,
+   * watched 2026-08-20 — and 1.017 where the scale is parked at 1 with the
+   * cover floor left armed, which is a SEPARATE reading on the same
+   * production build and not one the recipe below produces — while a
+   * computed close-up pushes past
    * natural scale (max 1.605 — the live cover bound riding the filtered
    * board — with the fill bound's 1.12 as the independent backstop if the
    * fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
@@ -1174,7 +1176,16 @@ test.describe("landing (/)", () => {
    * 8fd2a30 — the `top-20` + `py-4` rails, the historical defect, not a
    * synthetic break — reds THIS test's containment assertion at -10.625px,
    * with the drive intact all the way to it. Green again on the restored
-   * file (`shasum -a 256` identical before and after).
+   * file (`shasum -a 256` identical before and after). The message that
+   * assertion prints was itself watched, on a temporary floor of 1000: it
+   * reports from the margin line, quoting the live clearance (7.19px).
+   *
+   * THE TOP-EDGE LINE RIDES ON IT, and this file names that rather than
+   * claiming it: `box.y >= 0` is evaluated on every green run but has never
+   * been watched red, because `expect` fails fast and no mutation available
+   * to this staging pushes the line's TOP off — 8fd2a30's defect crops the
+   * bottom only. It is a backstop against a future staging that pins the
+   * exhibit past the top of the fold, not a reddened guarantee.
    */
   test("the exhibit's provenance line stays inside the fold at 1024x600", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024);
