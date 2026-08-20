@@ -179,7 +179,7 @@ const PLATES: PlateInfo[] = [
     argues:
       "Two mails file fast — tick, tick — then the third stops the room: the filed cards dim, an amber ring draws over a full second, and it settles as held with NO guess shown. The stop is the climax.",
     costs:
-      "Zero media. Risk: the trio's split depends on rules.json — if the rules move, the cards re-verdict themselves; re-check the composition after rule changes.",
+      "Zero media. Risk: the trio's split is computed live from the shipped classifier, so if its behaviour changes the cards re-verdict themselves — re-check the composition after any such change.",
     lie: "Printing the held card's top guess — writing a verdict where the product's answer is the typed null forges the human decision it refuses to make. The old plate showed the guess; this one does not.",
     honest: "All three verdicts computed live at render; the held card commits nothing, in the product's own words.",
   },
@@ -225,9 +225,12 @@ export function MotionLab() {
           <span className="font-mono text-sm text-strong">build 01a 03a 08a</span>.
         </p>
         <p className="mt-3 max-w-2xl text-sm text-dim">
-          House rule this round, per your ban: no exhibit shows patterns, weights, confidence
-          decimals or anything about how the engine is written. Evidence is the mail&apos;s own
-          words; what stands beside it is what the product did.
+          House rule this round, per your ban: nothing the lab itself writes shows patterns,
+          weights, confidence decimals or anything about how the engine is built. Evidence is the
+          mail&apos;s own words; what stands beside it is what the product did. One exception, and it
+          is deliberate — where a plate mounts a real product surface, that surface keeps its own
+          numbers, because showing the product is the whole brief. The review queue in 08b and 08c
+          is the only place that happens.
         </p>
 
         <nav aria-label="Plates" className="mt-8 overflow-hidden rounded-xl border border-line-soft">

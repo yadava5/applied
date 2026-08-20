@@ -51,6 +51,10 @@ const HIDE_ON = [
   "/landing-a",
   "/landing-b",
   "/landing-c",
+  // Same reasoning, private surface: /motion-lab is a selection page whose
+  // whole subject is what the product does and does not claim. A fixed app
+  // toast over it is chrome the page did not design around.
+  "/motion-lab",
 ];
 
 export function BetaBanner() {

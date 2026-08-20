@@ -44,6 +44,31 @@ test.describe("beta access notice", () => {
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
+  /**
+   * `HIDE_ON` in BetaBanner.tsx had NO test of any kind until 2026-08-20, so
+   * every entry on it was an unchecked assertion: a typo, a route rename or a
+   * dropped line would have silently put a fixed app toast back over a surface
+   * that was deliberately cleared of one. This is the positive control for the
+   * list — it asserts one route ON it and one route OFF it in the same test,
+   * so it cannot pass by finding nothing anywhere.
+   *
+   * /motion-lab is the case that motivated it: a private selection page whose
+   * subject is what the product does and does not claim, with a beta pill
+   * floating over it.
+   */
+  test("the pill is hidden on the surfaces HIDE_ON names, and only those", async ({ page }) => {
+    const toggle = page.getByRole("button", { name: /limited access/i });
+
+    // OFF the list: the landing is a narrative surface designed around it.
+    await page.goto("/");
+    await expect(toggle).toBeVisible();
+
+    // ON the list: app chrome does not leak onto the selection surface.
+    await page.goto("/motion-lab");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(toggle).toHaveCount(0);
+  });
+
   test("the email-admin action composes to the admin mailbox with the right subject", async ({
     page,
   }) => {
