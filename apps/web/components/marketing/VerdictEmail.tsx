@@ -2,6 +2,8 @@
 
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
 
+import { cn } from "@/lib/utils";
+import { buildTraceView, segments, segmentsBetween, type TraceView } from "./traceEvidence";
 import { PREVIEW_CHARS, VERDICT_EMAIL } from "./verdictEmailData";
 
 /**
@@ -24,7 +26,13 @@ import { PREVIEW_CHARS, VERDICT_EMAIL } from "./verdictEmailData";
  * just stop animating.
  */
 
-export type VerdictStage = "raw" | "split" | "retained";
+/**
+ * `dissolve` is the escalated exhibit's third beat (see the `evidence` prop):
+ * the mail is still at full height, but every phrase the scoring walk did NOT
+ * match fades to a residue while the lit phrases hold. Without `evidence` it
+ * renders as `split`, so no legacy caller can reach a state it never staged.
+ */
+export type VerdictStage = "raw" | "split" | "dissolve" | "retained";
 
 // The email itself lives in verdictEmailData.ts (plain data, no directive) so
 // variant C's server-rendered hero row can derive its stage chip from the
@@ -69,35 +77,103 @@ function Chip({
   );
 }
 
-export function VerdictEmail({ stage }: { stage: VerdictStage }) {
+/** Lazily built and memoised at module scope: pure and date-free, so it is
+ *  the same on the server pass and in the browser — and consumers that never
+ *  pass `evidence` never pay for the trace walk. */
+let traceMemo: TraceView | null = null;
+function trace(): TraceView {
+  return (traceMemo ??= buildTraceView());
+}
+
+/** The highlight grammar, shared with the take that introduced it (02b):
+ *  matched phrases carry the rules-layer colour; dissolved prose is a
+ *  residue, deliberately below legibility — the state is "going", and the
+ *  wall label beside the exhibit names it. */
+const LIT = "rounded-sm bg-viz-rules/15 px-0.5 text-strong shadow-[inset_0_-1px_0_var(--viz-rules)]";
+const GONE = "opacity-[0.14] blur-[1.5px] grayscale";
+
+function EvidenceText({
+  parts,
+  stage,
+}: {
+  parts: { text: string; mark: boolean }[];
+  stage: VerdictStage;
+}) {
+  return (
+    <>
+      {parts.map((part, i) => (
+        <span
+          key={i}
+          className={cn(
+            "motion-safe:transition-[opacity,filter,color,background-color] motion-safe:duration-700",
+            part.mark && stage !== "raw" && LIT,
+            !part.mark && stage === "dissolve" && GONE,
+          )}
+        >
+          {part.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
+export function VerdictEmail({
+  stage,
+  evidence = false,
+}: {
+  stage: VerdictStage;
+  /**
+   * The escalated staging (the owner's 02b pick, 2026-08-19): the phrases the
+   * scoring walk matched are lit from `split` on, `dissolve` fades the prose
+   * that never scored, and `retained` then takes the lit phrases too — the
+   * record is all that outlives the mail, deciding phrase included. Off by
+   * default: every other mount (the candidates, the inline snapshots, the
+   * retention record) keeps its approved rendering untouched.
+   */
+  evidence?: boolean;
+}) {
   // Live, both of them — the whole point of the artifact.
   const fromPreview = classifyWithRules(SUBJECT, PREVIEW, SENDER_EMAIL);
   const fromBody = classifyWithRules(SUBJECT, BODY, SENDER_EMAIL);
+  if (stage === "dissolve" && !evidence) stage = "split";
   const retained = stage === "retained";
+  const view = evidence ? trace() : null;
 
   return (
     <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
       {/* ---- header: what is always visible ------------------------------ */}
       <div className="border-b border-line-soft px-4 py-3">
-        <p className="text-sm font-medium text-strong">{SUBJECT}</p>
+        <p className="text-sm font-medium text-strong">
+          {view ? <EvidenceText parts={segments(SUBJECT, view.subjectRanges)} stage={stage} /> : SUBJECT}
+        </p>
         <p className="mt-0.5 text-xs text-dim">
           {SENDER_NAME} · <span className="font-mono">{SENDER_EMAIL}</span>
         </p>
       </div>
 
-      {/* ---- body: collapses when the claim is retention ------------------ */}
+      {/* ---- body: dissolves under the escalated staging, collapses when
+              the claim is retention ------------------------------------- */}
       <div
         className={`grid motion-safe:transition-[grid-template-rows,opacity] motion-safe:duration-500 ${
           retained ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
         }`}
-        aria-hidden={retained}
+        aria-hidden={retained || stage === "dissolve"}
       >
         <div className="min-h-0 overflow-hidden">
           <div className="px-4 py-3 text-[0.8125rem] leading-relaxed text-muted">
-            <p>{PREVIEW}</p>
+            <p>
+              {view ? (
+                <EvidenceText
+                  parts={segmentsBetween(BODY, view.bodyRanges, 0, PREVIEW_CHARS)}
+                  stage={stage}
+                />
+              ) : (
+                PREVIEW
+              )}
+            </p>
             <p
               className={`label-caps my-2 flex items-center gap-3 motion-safe:transition-opacity motion-safe:duration-500 ${
-                stage === "raw" ? "opacity-40" : "opacity-100"
+                stage === "raw" ? "opacity-40" : stage === "dissolve" ? "opacity-0" : "opacity-100"
               }`}
               aria-hidden
             >
@@ -105,17 +181,30 @@ export function VerdictEmail({ stage }: { stage: VerdictStage }) {
               Gmail&apos;s preview ends here
               <span className="h-px flex-1 bg-line-strong" />
             </p>
-            <p>{REST}</p>
+            <p>
+              {view ? (
+                <EvidenceText
+                  parts={segmentsBetween(BODY, view.bodyRanges, PREVIEW_CHARS, BODY.length)}
+                  stage={stage}
+                />
+              ) : (
+                REST
+              )}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* ---- the two live verdicts --------------------------------------- */}
+      {/* ---- the two live verdicts. They hold through the dissolve — the
+              verdicts are the part that survives the prose — and leave only
+              for the record. ---------------------------------------------- */}
       <div
         className={`grid motion-safe:transition-[grid-template-rows,opacity] motion-safe:duration-500 ${
-          stage === "split" ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          stage === "split" || stage === "dissolve"
+            ? "grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0"
         }`}
-        aria-hidden={stage !== "split"}
+        aria-hidden={stage !== "split" && stage !== "dissolve"}
       >
         <div className="min-h-0 overflow-hidden">
           <div className="grid gap-2 border-t border-line-soft px-4 py-3 sm:grid-cols-2">

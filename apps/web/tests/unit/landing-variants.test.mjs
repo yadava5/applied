@@ -70,14 +70,13 @@
  * 5`, and the three "these words render" checks on ProductClip and
  * ClaimsDescent.
  *
- * And it holds the three STRUCTURAL bets the round-two edit made, each of
- * which is a copy claim in disguise:
+ * And it holds the STRUCTURAL bets that are copy claims in disguise:
  *
- *   · every scene of the window act carries a caption — the act's first scene
- *     used to be a wordless viewport of a resting board;
- *   · beat 0's sentinel zone stays long enough that the verdict cannot land
- *     on a window that has not finished pinning (the inequality is derived in
- *     WindowAct's docblock and asserted here in vh);
+ *   · every beat of the window act's take is narrated, in order, from
+ *     `ACT.narration` — a wordless beat was the original act's dead dwell,
+ *     and a line the script never says is stranded copy;
+ *   · the take is pausable (WCAG 2.2.2), disarmable (reduced motion), and
+ *     declares its synthesized pointer in the frame's own honesty line;
  *   · the split verdict stays TWO micro-beats under one headline. A single
  *     `split` screen would still render every word this file allows, and the
  *     page would still be wrong — the exhibit is a demonstration only because
@@ -165,45 +164,7 @@ const isLandingModule = (file) =>
 const marketing = (name) => join(webRoot, "components", "marketing", name);
 const copyPath = marketing("copy.ts");
 const actPath = marketing("WindowAct.tsx");
-const tempoPath = marketing("tempo.ts");
-
-/**
- * The act's marks, read out of tempo.ts rather than restated here.
- *
- * By text, because this suite is a source gate and cannot import TypeScript —
- * and because restating the numbers would make the gate agree with itself
- * instead of with the component. Comments are stripped first: every mark in
- * that file carries a paragraph above it, and several of those paragraphs
- * contain numbers.
- */
-function readMarks() {
-  const src = (graph.get(tempoPath) ?? "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-  const block = /export const ACT_MARKS\s*=\s*\{([\s\S]*?)\}\s*as const;/.exec(src);
-  assert.ok(block, "ACT_MARKS is gone from tempo.ts — the act has no marks to be in order");
-  const scalar = (key) => {
-    const m = new RegExp(`${key}:\\s*(-?[\\d.]+)`).exec(block[1]);
-    assert.ok(m, `ACT_MARKS.${key} is gone`);
-    return Number(m[1]);
-  };
-  const pair = (key) => {
-    const m = new RegExp(`${key}:\\s*\\[\\s*(-?[\\d.]+)\\s*,\\s*(-?[\\d.]+)`).exec(block[1]);
-    assert.ok(m, `ACT_MARKS.${key} is no longer a pair`);
-    return [Number(m[1]), Number(m[2])];
-  };
-  const band = /export const ACT_DEADBAND\s*=\s*([\d.]+)/.exec(src);
-  assert.ok(band, "ACT_DEADBAND is gone — the latches would chatter at every mark");
-  return {
-    ACT_MARKS: {
-      scene: scalar("scene"),
-      pan: pair("pan"),
-      receipt: pair("receipt"),
-      verdict: scalar("verdict"),
-      docked: scalar("docked"),
-      dockPan: pair("dockPan"),
-    },
-    ACT_DEADBAND: Number(band[1]),
-  };
-}
+const stagePath = marketing("OnerStage.tsx");
 const descentPath = marketing("ClaimsDescent.tsx");
 const closingPath = marketing("ClosingAct.tsx");
 const clipPath = marketing("ProductClip.tsx");
@@ -378,118 +339,94 @@ test("the privacy claim is about RETENTION, not about what is requested", () => 
   );
 });
 
-test("the window act captions every scene — and no scene is wordless", () => {
+test("the window act narrates every beat — and none of its words are stranded", () => {
   const act = graph.get(actPath);
+  const stage = graph.get(stagePath);
   assert.ok(act, "WindowAct.tsx is not in the landing graph");
-  const block = /captions:\s*\[([\s\S]*?)\]/.exec(graph.get(copyPath));
-  assert.ok(block, "ACT.captions is gone — the act's scenes have no words");
-  const captions = [...block[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(stage, "OnerStage.tsx is not in the landing graph — the take is unmounted");
 
-  // The count FIRST. It used to sit after a `deepEqual` on the sentinel
-  // indices, so the moment those changed this property stopped being reachable
-  // at all — the assertion was there, and could not run.
-  assert.equal(
-    captions.length,
-    3,
-    "the act has three scenes (rest, the verdict, the mail) — a scene without a caption is the dead dwell this fixed",
-  );
-  for (const [i, line] of captions.entries()) {
-    assert.ok(line.trim().length > 0, `caption ${i} is empty`);
+  const copySrc = graph.get(copyPath);
+  const block = /narration:\s*\[([\s\S]*?)\]/.exec(copySrc);
+  assert.ok(block, "ACT.narration is gone — the take's beats have no words");
+  const lines = [...block[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+
+  // The principle survives from the scrubbed act: no beat is wordless. The
+  // oner has seven narrated beats; what is held is that every line exists,
+  // is non-empty, and is actually SAID by the script — a line the script
+  // never reaches is stranded copy, and an index past the array is a beat
+  // narrated by `undefined`.
+  assert.ok(lines.length >= 5, `ACT.narration holds ${lines.length} lines — the take lost its story`);
+  for (const [i, line] of lines.entries()) {
+    assert.ok(line.trim().length > 0, `narration line ${i} is empty`);
   }
-  assert.ok(act.includes("ACT.captions"), "WindowAct stopped rendering the captions");
+  const said = [...stage.matchAll(/ACT\.narration\[(\d+)\]/g)].map((m) => Number(m[1]));
+  assert.ok(said.length >= lines.length, "the script says fewer lines than the copy carries");
+  for (let i = 0; i < lines.length; i += 1) {
+    assert.ok(said.includes(i), `ACT.narration[${i}] is never said by the take`);
+  }
+  for (const index of said) {
+    assert.ok(index < lines.length, `the take says ACT.narration[${index}], past the array's end`);
+  }
+  // In order: the narration is a story, and a script that says line 4 before
+  // line 2 is a story told out of order with every string intact.
+  assert.deepEqual(said, [...said].sort((a, b) => a - b), "the take says its lines out of order");
 
-  // Scene 0 revisited is RETIRED, and this asserts the retirement rather than
-  // the old line. The act is a function of scroll position now, so scrolling
-  // back up un-does the verdict and closes the pane: scene 0 revisited IS
-  // scene 0. A caption describing a permanently settled board would be the one
-  // line on the page that could contradict the board it captions — so if a
-  // latch ever comes back and brings that line with it, this goes red.
-  assert.doesNotMatch(
-    graph.get(copyPath),
-    /^\s*settled:\s*"/m,
-    "ACT.settled is back — a caption for a settled board means the act stopped reversing",
-  );
-  assert.ok(
-    !act.includes("ACT.settled"),
-    "WindowAct references a revisited-scene caption again — the act is meant to reverse instead",
-  );
+  // The strip's other states render too: the opening line before the take
+  // starts, the resting line under reduced motion, the failure line when a
+  // target vanishes, and the stand-down line when the visitor takes the
+  // wheel.
+  for (const key of ["ACT.opening", "ACT.resting"]) {
+    assert.ok(act.includes(key), `WindowAct stopped rendering ${key}`);
+  }
+  for (const key of ["ACT.failed", "ACT.yours"]) {
+    assert.ok(stage.includes(key), `OnerStage stopped using ${key}`);
+  }
+  for (const key of ["opening", "resting", "failed", "yours"]) {
+    const found = new RegExp(`${key}:\\s*"([^"]*)"`).exec(copySrc);
+    assert.ok(found && found[1].trim().length > 0, `ACT.${key} is gone or empty`);
+  }
 });
 
-test("the act's marks keep the choreography in order", () => {
-  // These used to be three `h-[N%]` sentinel zones and an inequality about a
-  // -45% IntersectionObserver band. There are no sentinels now: the act reads
-  // one scroll progress and the marks are shares of it (tempo.ts). What has to
-  // hold is the ORDER, because the order is the product's honesty — the camera
-  // arrives before the receipt announces, the receipt announces before the row
-  // moves, and the pane never opens on a row that has not arrived.
-  const { ACT_MARKS, ACT_DEADBAND } = readMarks();
-  const [panFrom, panTo] = ACT_MARKS.pan;
-  const [receiptFrom, receiptTo] = ACT_MARKS.receipt;
+test("the take is pausable, disarmable, and pinned only when it can play", () => {
+  const act = graph.get(actPath);
+  const stage = graph.get(stagePath);
 
-  for (const [name, value] of [
-    ["scene", ACT_MARKS.scene],
-    ["pan start", panFrom],
-    ["pan end", panTo],
-    ["receipt start", receiptFrom],
-    ["receipt end", receiptTo],
-    ["verdict", ACT_MARKS.verdict],
-    ["docked", ACT_MARKS.docked],
-  ]) {
-    assert.ok(value > 0 && value < 1, `${name} (${value}) is outside the runway`);
+  // WCAG 2.2.2: a >5s autoplaying surface owes its viewer a pause, and the
+  // reader owes nobody a watch — the clock must freeze off-screen.
+  for (const key of ["ACT.pause", "ACT.play", "ACT.replay"]) {
+    assert.ok(act.includes(key), `WindowAct lost its ${key} control`);
   }
-
-  assert.equal(ACT_MARKS.scene, panFrom, "the caption changes at a different point from the camera");
-  assert.ok(panFrom < panTo, "the camera's pan does not advance");
-  assert.ok(receiptFrom < receiptTo, "the receipt's rise does not advance");
-
-  // The camera reaches the foot before the row commits, or the verdict lands
-  // in a frame that is still moving. Deadbands on both sides, because the
-  // latch fires at mark + deadband at the earliest.
   assert.ok(
-    panTo < ACT_MARKS.verdict - ACT_DEADBAND,
-    `the pan ends at ${panTo} but the row can commit from ${ACT_MARKS.verdict - ACT_DEADBAND}`,
+    stage.includes("IntersectionObserver"),
+    "OnerStage no longer watches the frame — the take can finish unwatched",
   );
-  // The receipt announces before the row moves — "announce, then move", the
-  // whole reason there is something to watch — and the gap between them is the
-  // BREATH that replaced VERDICT_BREATH_MS. A zero breath is the defect.
-  const breath = ACT_MARKS.verdict - ACT_DEADBAND - receiptTo;
   assert.ok(
-    breath > 0.05,
-    `the announced breath is ${breath.toFixed(3)} of the runway — the receipt no longer lands before the row moves`,
-  );
-  // The pane docks after the row has committed, with room between them.
-  assert.ok(
-    ACT_MARKS.verdict + ACT_DEADBAND < ACT_MARKS.docked - ACT_DEADBAND,
-    "the verdict and the pane's dock overlap — the pane can open on a row that has not moved",
-  );
-  // The camera's tilt to the pane's head starts only past the dock latch's
-  // far edge — the pane has to EXIST before the camera moves toward it — and
-  // finishes inside the runway with dwell left on the full-chrome frame. The
-  // tilt is what put the pane's × back on screen (the owner's report:
-  // "i don't see the icons to close the right pane"); a tilt that starts
-  // before the dock would aim the camera at a pane that is not there.
-  const [dockPanFrom, dockPanTo] = ACT_MARKS.dockPan;
-  assert.ok(
-    dockPanFrom > ACT_MARKS.docked + ACT_DEADBAND,
-    `the dock tilt starts at ${dockPanFrom}, before the pane's latch can have fired (${ACT_MARKS.docked} + ${ACT_DEADBAND})`,
-  );
-  assert.ok(dockPanFrom < dockPanTo, "the dock tilt does not advance");
-  assert.ok(
-    dockPanTo < 0.95,
-    `the dock tilt ends at ${dockPanTo} — the full-chrome frame gets no dwell before the pin releases`,
+    act.includes("prefers-reduced-motion") || stage.includes("prefers-reduced-motion"),
+    "nothing reads prefers-reduced-motion — the take cannot stand down",
   );
 
-  // And the runway is long enough that those shares are worth real pixels. The
-  // act failed at 270vh: 1723px of pinned scroll for three scenes, ~574px each
-  // against a 3s choreography. The gate is the SHORTEST supported viewport
-  // (600px), where the runway is (H - 1) * 600.
-  const runway = Number(/lg:h-\[(\d+)vh\]/.exec(graph.get(actPath))?.[1]);
-  assert.ok(Number.isFinite(runway), "the act's runway height is no longer a literal vh");
-  const shortest = ((runway - 100) / 100) * 600;
-  const breathPx = breath * shortest;
+  // The runway is a literal vh and CONDITIONAL: it exists only when the take
+  // is armed, so reduced-motion and no-JS visitors never scroll through
+  // screens of pinned stillness (the closing act's pattern).
+  const runway = /runway && "lg:h-\[(\d+)vh\]"/.exec(act);
+  assert.ok(runway, "the act's runway is no longer a state-gated literal vh");
   assert.ok(
-    breathPx > 120,
-    `the breath is ${Math.round(breathPx)}px at a 600-tall viewport — under ~120 nobody crosses it slowly enough to read the announcement`,
+    Number(runway[1]) >= 150,
+    `the runway is ${runway[1]}vh — under 150 the pin barely outlives the fold and the full-frame phase stops reading as one`,
+  );
+
+  // The honesty line: a synthesized pointer must be declared in the same
+  // breath as "not a video", and the visitor's hand must win (the stand-down
+  // discriminates on isTrusted — the one signal the director cannot forge).
+  assert.match(
+    graph.get(copyPath),
+    /take:\s*"[^"]*synthesized pointer[^"]*"/,
+    "BOARD.take no longer declares the synthesized pointer",
+  );
+  assert.ok(act.includes("BOARD.take"), "WindowAct stopped rendering the take's honesty line");
+  assert.ok(
+    stage.includes("isTrusted"),
+    "OnerStage no longer tells the visitor's hand from the pointer's — the take cannot stand down for a real gesture",
   );
 });
 
@@ -529,81 +466,6 @@ test("the latch has hysteresis, and it is symmetric about the mark", () => {
     assert.equal(latch(p, mark, true, band), true, `held state lost at ${p}`);
     assert.equal(latch(p, mark, false, band), false, `state gained early at ${p}`);
   }
-});
-
-test("the deadband absorbs a real oscillation, and cannot outlast the act", () => {
-  // THE CONSTANT HAD NO GATE. `ACT_DEADBAND` could be set to 0 and every unit
-  // test and every e2e stayed green: the latch test above hardcodes its own
-  // band, the marks test only ever subtracts the deadband from a bound (so
-  // zeroing it LOOSENS every assertion), and `landing.spec.ts` derives its
-  // sample points from the constant, which makes the probes move with it.
-  // A zero deadband is a real defect — tempo.ts says why — and it would have
-  // shipped with everything passing.
-  //
-  // So this tests the BEHAVIOUR hysteresis exists for, driven by the constant
-  // the product actually uses: cross a mark once, then wobble around it, and
-  // the latch must flip exactly once.
-  const { ACT_MARKS, ACT_DEADBAND } = readMarks();
-  const latch = (progress, mark, current, deadband) =>
-    current ? progress > mark - deadband : progress >= mark + deadband;
-
-  const runway = Number(/lg:h-\[(\d+)vh\]/.exec(graph.get(actPath))?.[1]);
-  assert.ok(Number.isFinite(runway), "the act's runway height is no longer a literal vh");
-  /** The pinned runway in px at a given viewport height. */
-  const runwayPx = (viewport) => ((runway - 100) / 100) * viewport;
-
-  /**
-   * The jitter this exists to absorb, in px. Scroll anchoring, a trackpad's
-   * momentum settling and a resize each move the reported position by tens of
-   * pixels; 24 is the small end of that, so a deadband that cannot hold it
-   * cannot hold any of them. Every toggle it fails to absorb re-targets a
-   * shared-layout animation.
-   */
-  const JITTER_PX = 24;
-
-  for (const [name, mark] of [
-    ["the caption", ACT_MARKS.scene],
-    ["the verdict", ACT_MARKS.verdict],
-    ["the pane's dock", ACT_MARKS.docked],
-  ]) {
-    // Both ends of the supported range: the band is a share of the runway, so
-    // the px it is worth changes with the viewport and the short one is where
-    // it is thinnest.
-    for (const viewport of [600, 949]) {
-      const jitter = JITTER_PX / runwayPx(viewport);
-      // Approach, cross well clear of the band, then wobble on the spot.
-      const walk = [mark - 4 * jitter, mark + 4 * jitter];
-      for (let i = 0; i < 8; i++) walk.push(mark + (i % 2 ? jitter : -jitter));
-
-      let state = false;
-      let flips = 0;
-      for (const progress of walk) {
-        const next = latch(progress, mark, state, ACT_DEADBAND);
-        if (next !== state) flips += 1;
-        state = next;
-      }
-      assert.equal(
-        flips,
-        1,
-        `${name} latched ${flips} times across one crossing and ${JITTER_PX}px of jitter at a ${viewport}-tall viewport — ` +
-          `ACT_DEADBAND (${ACT_DEADBAND}) is worth ${Math.round(ACT_DEADBAND * runwayPx(viewport))}px there, and the state chatters`,
-      );
-      assert.equal(state, true, `${name} did not stay latched after the reader crossed it`);
-    }
-  }
-
-  // And the other way. The band is deliberately NOT wide enough to outlast the
-  // row's travel (tempo.ts: 1.4s at a slow 400px/s is 560px of scroll), because
-  // a reader who scrolls a screen-tenth back up SHOULD see the row go home —
-  // that reversibility is what the act was rebuilt for. Measured at the tall
-  // end, where the band is worth the most px.
-  const TRAVEL_PX = 560;
-  const widest = ACT_DEADBAND * runwayPx(1080);
-  assert.ok(
-    widest < TRAVEL_PX,
-    `ACT_DEADBAND is worth ${Math.round(widest)}px at a 1080-tall viewport, past the ${TRAVEL_PX}px the row's own travel covers — ` +
-      "the act stops reversing and the move can no longer be replayed",
-  );
 });
 
 test("the camera holds the foot, and re-measures it from the board's box", () => {
@@ -661,14 +523,16 @@ test("the split verdict stays TWO micro-beats under ONE headline", () => {
   // The exhibit is sequential or it is nothing: raw first, so the reader feels
   // the preview end, and only then the two verdicts disagreeing. A single
   // `split` screen would turn the page's best moment into an illustration.
-  // The exhibit advances raw → split, and it is driven by a LATCH over scroll
-  // progress rather than by the enter-only observer this replaced (which could
-  // never revert, because `if (!entry.isIntersecting) continue` has no exit
-  // branch). Both stages have to be reachable from that one boolean.
+  // The exhibit advances along a LADDER now — raw → split → dissolve →
+  // retained, the 02b escalation — and it is driven by LATCHES over scroll
+  // progress rather than by the enter-only observer this replaced (which
+  // could never revert, because `if (!entry.isIntersecting) continue` has no
+  // exit branch). What is held is that raw and split are still the ladder's
+  // first two rungs, in that order, under the one headline.
   assert.match(
     descent,
-    /stage=\{split \? "split" : "raw"\}/,
-    "the descent's exhibit no longer advances raw → split under one headline",
+    /VERDICT_STAGES:\s*readonly VerdictStage\[\]\s*=\s*\["raw",\s*"split",\s*"dissolve",\s*"retained"\]/,
+    "the verdict ladder no longer runs raw → split → dissolve → retained",
   );
   assert.ok(
     descent.includes("latch(") && descent.includes("STAGE_DEADBAND"),

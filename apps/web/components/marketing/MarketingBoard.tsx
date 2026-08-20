@@ -253,8 +253,12 @@ export function MarketingBoard({ verdict, docked, onVisitorOpen }: {
         // That stand-down (PipelineBoard.tsx, the `detailApp !== null` bail)
         // and LandingBoard's camera latch, which never re-engages once
         // released, remain the second and third walls. They are also why this
-        // latch is invisible to every assertion that predates it — it ships
-        // with its own gate in landing-b.spec.ts, which is what can see it.
+        // latch is invisible to every assertion that predates it. Its gates
+        // (the close-control pair in the landing spec, and the race workflow
+        // that hammered them unretried) RETIRED with the scrubbed act: no
+        // mount arms a seed any more, so the branch below is unreachable
+        // until some mount passes `verdict` again — see tempo.ts for what
+        // must be restored alongside it if that day comes.
         const byGesture = performance.now() - gestureAtRef.current < OPEN_GESTURE_MS;
         gestureAtRef.current = Number.NEGATIVE_INFINITY; // one open per gesture
         if (!byGesture && pendingSeedRef.current === id) {

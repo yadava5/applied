@@ -63,20 +63,53 @@ const ATS_DOMAINS: string[] = rulesRaw.ats_domains;
 
 const ATS_BOOSTED = new Set(["applied", "rejection", "interview", "offer"]);
 
+/** Which tier of a category's rule set a pattern belongs to. */
+export type RuleTier = "strong" | "weak" | "negative" | "veto";
+
 /**
- * Classify a subject/body (and optional sender) with the rules layer only.
- *
- * Mirrors `RulesClassifier.classify` / `rulesClassify`: strong patterns score
- * +6 in the subject or +3 in the body; weak +2 / +1; a negative match anywhere
- * is −5; a veto match anywhere caps the category at 0 (it never raises a
- * negative score, so the runner-up margin is untouched). The top category
- * wins; confidence comes from its score and its margin over the runner-up. A
- * message from a known ATS domain gets a small boost on lifecycle categories.
+ * One pattern's hit, exactly as the scoring saw it: the tier it scored under,
+ * the field it scored IN (strong/weak try the subject first and only fall
+ * back to the body — the trace records the field that actually scored), the
+ * points it contributed (0 for a veto, which caps rather than adds), and the
+ * first match's offsets in that field from the same compiled RegExp. The
+ * engine tests each pattern once per field, so one hit per pattern is not a
+ * simplification — it is the whole of what the score saw.
  */
-export function classifyWithRules(
+export interface RuleHit {
+  category: string;
+  tier: RuleTier;
+  field: "subject" | "body";
+  points: number;
+  start: number;
+  end: number;
+  /** The pattern's source, verbatim from rules.json — a machine value. */
+  source: string;
+}
+
+/** A verdict plus every pattern hit that produced it. */
+export interface RulesTrace {
+  verdict: RulesVerdict;
+  hits: RuleHit[];
+}
+
+/** Points per tier and field — the numbers in `score`'s branches, named once
+ *  so the trace cannot quote a different weight than the walk applied. */
+const POINTS = {
+  strong: { subject: 6, body: 3 },
+  weak: { subject: 2, body: 1 },
+} as const;
+
+/**
+ * The one scoring walk. `classifyWithRules` runs it bare; `traceRules` passes
+ * a recorder. Splitting the walk from the wrappers is what keeps the trace
+ * honest by construction: there is no second reading of the rules that could
+ * drift from the one that scores.
+ */
+function score(
   subject: string,
   body: string,
-  sender?: string | null,
+  sender: string | null | undefined,
+  record?: (hit: RuleHit) => void,
 ): RulesVerdict {
   const scores: Record<string, number> = {};
 
@@ -86,21 +119,47 @@ export function classifyWithRules(
     isAts = ATS_DOMAINS.some((a) => domain.includes(a));
   }
 
+  // Where a pattern matched, from the same compiled RegExp that scored it.
+  // None carry the `g` flag, so `.match` returns the first match with its
+  // index — the engine's `.test` answered off that same first match.
+  const at = (cat: string, tier: RuleTier, field: "subject" | "body", points: number, re: RegExp) => {
+    if (!record) return;
+    const m = (field === "subject" ? subject : body).match(re);
+    if (!m || m.index === undefined) return;
+    record({ category: cat, tier, field, points, start: m.index, end: m.index + m[0].length, source: re.source });
+  };
+
   for (const [cat, g] of Object.entries(CATS)) {
     let s = 0;
     for (const re of g.strong) {
-      if (re.test(subject)) s += 6;
-      else if (re.test(body)) s += 3;
+      if (re.test(subject)) {
+        s += POINTS.strong.subject;
+        at(cat, "strong", "subject", POINTS.strong.subject, re);
+      } else if (re.test(body)) {
+        s += POINTS.strong.body;
+        at(cat, "strong", "body", POINTS.strong.body, re);
+      }
     }
     for (const re of g.weak) {
-      if (re.test(subject)) s += 2;
-      else if (re.test(body)) s += 1;
+      if (re.test(subject)) {
+        s += POINTS.weak.subject;
+        at(cat, "weak", "subject", POINTS.weak.subject, re);
+      } else if (re.test(body)) {
+        s += POINTS.weak.body;
+        at(cat, "weak", "body", POINTS.weak.body, re);
+      }
     }
     for (const re of g.negative) {
-      if (re.test(subject) || re.test(body)) s -= 5;
+      if (re.test(subject) || re.test(body)) {
+        s -= 5;
+        at(cat, "negative", re.test(subject) ? "subject" : "body", -5, re);
+      }
     }
     for (const re of g.veto) {
-      if (re.test(subject) || re.test(body)) s = Math.min(s, 0);
+      if (re.test(subject) || re.test(body)) {
+        s = Math.min(s, 0);
+        at(cat, "veto", re.test(subject) ? "subject" : "body", 0, re);
+      }
     }
     scores[cat] = s;
   }
@@ -125,4 +184,35 @@ export function classifyWithRules(
   }
 
   return { category: winner, confidence, scores };
+}
+
+/**
+ * Classify a subject/body (and optional sender) with the rules layer only.
+ *
+ * Mirrors `RulesClassifier.classify` / `rulesClassify`: strong patterns score
+ * +6 in the subject or +3 in the body; weak +2 / +1; a negative match anywhere
+ * is −5; a veto match anywhere caps the category at 0 (it never raises a
+ * negative score, so the runner-up margin is untouched). The top category
+ * wins; confidence comes from its score and its margin over the runner-up. A
+ * message from a known ATS domain gets a small boost on lifecycle categories.
+ */
+export function classifyWithRules(
+  subject: string,
+  body: string,
+  sender?: string | null,
+): RulesVerdict {
+  return score(subject, body, sender);
+}
+
+/**
+ * The same classification, with its evidence: every pattern hit the walk
+ * scored, with tier, field, points and offsets. This is what "show why it
+ * decided" renders from — a surface that lights matched spans must read them
+ * from here, never re-run its own regexes over the text (a second derivation
+ * drifts the moment rules.json moves).
+ */
+export function traceRules(subject: string, body: string, sender?: string | null): RulesTrace {
+  const hits: RuleHit[] = [];
+  const verdict = score(subject, body, sender, (hit) => hits.push(hit));
+  return { verdict, hits };
 }

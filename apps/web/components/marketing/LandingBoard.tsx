@@ -516,9 +516,11 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
 
 /**
  * What the server renders into the reservation: the board's silhouette.
- * Pulses only for visitors who have not asked motion to stop.
+ * Pulses only for visitors who have not asked motion to stop. Exported for
+ * the window act, whose stage fills the same reservation before its take's
+ * chunk lands.
  */
-function StageSkeleton() {
+export function StageSkeleton() {
   return (
     <div aria-hidden className="flex h-full flex-col gap-4 motion-safe:animate-pulse">
       <div className="flex items-center justify-between gap-4">

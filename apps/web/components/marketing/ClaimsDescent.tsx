@@ -5,11 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
-import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, PRIVACY } from "./copy";
+import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, HELD, PRIVACY } from "./copy";
 import { CLIPS } from "./footage";
+import { HeldExhibit } from "./HeldExhibit";
 import { ProductClip } from "./ProductClip";
 import { latch, trackProgress } from "./scrub";
-import { VerdictEmail } from "./VerdictEmail";
+import { VerdictEmail, type VerdictStage } from "./VerdictEmail";
 import { VerdictTally } from "./VerdictTally";
 
 /**
@@ -30,20 +31,22 @@ import { VerdictTally } from "./VerdictTally";
  * reason to exist. With the window act and the closing act (both full-stage
  * pins) as bookends, the page runs:
  *
- *   window act (full frame) → verdict (RIGHT rail: the email, raw → split)
- *   → decision (LEFT rail: the rules recording, looping) → retention (RIGHT
- *   rail: the sync recording; the record enacts its collapse in the flow)
- *   → access (LEFT rail: the import recording — `AccessPhase`) → closing act
- *   (full frame, plays itself).
+ *   window act (full frame: the workday oner) → verdict (RIGHT rail: the
+ *   email, raw → split → dissolve → the kept record — the owner's 02b pick)
+ *   → decision (LEFT rail: the held mail settling into the review queue —
+ *   the owner's 08c pick; the rules recording loops in the flow beside the
+ *   paragraph it evidences) → retention (RIGHT rail: the sync recording;
+ *   the record enacts its collapse in the flow) → access (LEFT rail: the
+ *   import recording — `AccessPhase`) → closing act (full frame, plays
+ *   itself).
  *
  * Which exhibit rides which rail is decided by what the exhibit DOES: the
- * two artifacts that change state under the reader (the split verdict, the
- * kept record) sit where their claims can drive them — the verdict on its
- * rail, the record in the flow beside the sentence it enacts — and the
- * recordings, which loop and need no driving, take the rail on the phases
- * whose claims they evidence. An earlier full-width staging of the decision
- * claim is deliberately superseded here: it measured fine, and it broke the
- * language the page was chosen for.
+ * artifacts that change state under the reader ride the rails, where the
+ * phase's own progress can drive them, and the recordings — which loop and
+ * need no driving — sit in the flow beside the sentences they evidence. An
+ * earlier full-width staging of the decision claim is deliberately
+ * superseded here: it measured fine, and it broke the language the page was
+ * chosen for.
  *
  * The exhibit's stage follows SCROLL PROGRESS, not an observer. The previous
  * mechanism was an enter-only IntersectionObserver (`if (!isIntersecting)
@@ -112,6 +115,17 @@ const BENCH_WINDOW = { from: 0.95, to: 0.55 };
  */
 const RETENTION_WINDOW = { from: 0.8, to: 0.35 };
 const RETENTION_MARK = 0.5;
+
+/**
+ * Where the held mail settles into the review queue, as progress through the
+ * decision phase's own block (the same centre-band window the verdict pair
+ * uses). Before the mark the rail holds Cedar's note alone — the mail the
+ * rules will not guess about — and past it the note takes its place in the
+ * real queue. 0.35 lands the settle while the reader is crossing from the
+ * body/recording beat into the benchmark beat, with the rail pinned in frame
+ * on both sides of the mark.
+ */
+const HELD_MARK = 0.35;
 
 function Claim({
   eyebrow,
@@ -217,7 +231,33 @@ function DrawnBenchmark() {
 export function ClaimsDescent() {
   const pairRef = useRef<HTMLDivElement>(null);
   const secondBeatRef = useRef<HTMLDivElement>(null);
-  const [split, setSplit] = useState(false);
+
+  /**
+   * The verdict rail's ladder — the owner's 02b pick ("what it kept"), as
+   * scroll states rather than the lab's timed take, because every rail state
+   * on this page is a function of position and reverses by construction.
+   *
+   *   0 raw       the mail as Gmail hands it over;
+   *   1 split     the two verdicts disagree AND the deciding phrases light —
+   *               the lit spans are the winning verdict's own evidence
+   *               (`traceEvidence`), so the chips and their cause land as
+   *               one beat;
+   *   2 dissolve  every sentence the walk never matched fades to a residue —
+   *               Applied's copy, never the visitor's Gmail (the wall label
+   *               carries that rail);
+   *   3 retained  the lit phrases go too and the kept record rises: even the
+   *               deciding phrase is read and used, never stored.
+   *
+   * Stages 2–3 are the phase's EXIT gesture: their marks sit past the second
+   * micro-beat, so the reader leaves the verdict phase watching the mail
+   * reduce to the record — the shape the retention phase later argues in
+   * full. REDUCED MOTION caps the ladder at `split`: the dissolve is pure
+   * motion-grammar, and the pre-pick staging (raw ⇄ split) is this exhibit's
+   * legible resting pair.
+   */
+  const [verdictStage, setVerdictStage] = useState(0);
+  const VERDICT_STAGES: readonly VerdictStage[] = ["raw", "split", "dissolve", "retained"];
+  const VERDICT_LABELS = [0, 1, 4, 3] as const;
 
   /**
    * Where the second micro-beat starts, as a share of the pair's own height —
@@ -228,6 +268,18 @@ export function ClaimsDescent() {
    * measurement is not a reason to render.
    */
   const splitAtRef = useRef(0.5);
+  /**
+   * Where the rail UNPINS, as progress through the pair: the sticky box's
+   * bottom is the viewport's bottom (`top-20` + a `100dvh - 5rem` box), so
+   * the release begins when the pair's bottom reaches it — half a viewport
+   * of rect travel before progress 1 (`DESCENT_WINDOW` puts 1 at the
+   * centre). MEASURED like `splitAt`, because it moves with every quantity
+   * the type does: the escalation's marks are derived from it so the
+   * dissolve and the record always fire while the exhibit is PINNED — the
+   * first cut hardcoded tail fractions and the dissolve played at
+   * railTop −112px, off the top of the frame (measured, 1024×600).
+   */
+  const unpinAtRef = useRef(1);
   useEffect(() => {
     const pair = pairRef.current;
     const second = secondBeatRef.current;
@@ -239,6 +291,7 @@ export function ClaimsDescent() {
       if (height <= 0) return;
       splitAtRef.current =
         (second.getBoundingClientRect().top - pair.getBoundingClientRect().top) / height;
+      unpinAtRef.current = 1 - (0.5 * window.innerHeight) / height;
     };
     if (typeof ResizeObserver === "undefined") {
       const id = window.setTimeout(measure, 0);
@@ -252,8 +305,30 @@ export function ClaimsDescent() {
   useEffect(() => {
     const pair = pairRef.current;
     if (!pair) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     return trackProgress(pair, DESCENT_WINDOW, (progress) => {
-      setSplit((prev) => latch(progress, splitAtRef.current, prev, STAGE_DEADBAND));
+      setVerdictStage((prev) => {
+        /**
+         * The escalation marks, derived from two MEASUREMENTS rather than
+         * hardcoded: the record's mark backs off the unpin point by the
+         * latch's own reach (mark + deadband is where it actually fires)
+         * plus a stride of margin, and the dissolve halves the interval —
+         * so both states land while the exhibit is pinned, with equal dwell,
+         * at every viewport the type reflows to. The escalation tail (the
+         * `lg`-only spacer at the pair's foot) is what buys the interval;
+         * if a viewport ever leaves no honest room between the split and
+         * the release, the ladder collapses to raw ⇄ split rather than
+         * flashing states nobody can read.
+         */
+        const splitAt = splitAtRef.current;
+        const retainedAt = unpinAtRef.current - STAGE_DEADBAND - 0.04;
+        const dissolveAt = splitAt + (retainedAt - splitAt) / 2;
+        const room = retainedAt - splitAt > 4 * STAGE_DEADBAND;
+        if (room && !reduce && latch(progress, retainedAt, prev >= 3, STAGE_DEADBAND)) return 3;
+        if (room && !reduce && latch(progress, dissolveAt, prev >= 2, STAGE_DEADBAND)) return 2;
+        if (latch(progress, splitAt, prev >= 1, STAGE_DEADBAND)) return 1;
+        return 0;
+      });
     });
   }, []);
 
@@ -264,6 +339,34 @@ export function ClaimsDescent() {
    * exhibit apart if the reader has not already seen it, the same rule the
    * closing act follows.
    */
+  /**
+   * The held exhibit's beat. `true` — settled in the queue — is the SSR
+   * default and where reduced motion stays, so a visitor who will never see
+   * the settle gets the resting truth (the mail, held, in the tray) rather
+   * than its setup. The scrub only takes the exhibit apart if the reader has
+   * not already seen it — the closing act's rule, shared by every driven
+   * exhibit on this page.
+   */
+  const heldPhaseRef = useRef<HTMLDivElement>(null);
+  const [settled, setSettled] = useState(true);
+  useEffect(() => {
+    const el = heldPhaseRef.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let stop: (() => void) | undefined;
+    const raf = requestAnimationFrame(() => {
+      if (el.getBoundingClientRect().top < window.innerHeight) return;
+      setSettled(false);
+      stop = trackProgress(el, DESCENT_WINDOW, (progress) => {
+        setSettled((prev) => latch(progress, HELD_MARK, prev, STAGE_DEADBAND));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      stop?.();
+    };
+  }, []);
+
   const keptRef = useRef<HTMLDivElement>(null);
   const [kept, setKept] = useState(true);
   useEffect(() => {
@@ -325,6 +428,18 @@ export function ClaimsDescent() {
               <VerdictTally className="hidden lg:block" />
             </Claim>
           </div>
+
+          {/* THE ESCALATION'S RUNWAY — the 02b tail. Not dead ground: this
+              is the scroll the exhibit's two solo beats spend, with the
+              flow's argument finished and the rail holding centre — the
+              mail dissolves to its lit phrases, then to the record, while
+              the wall label names each state. Every pixel of it produces a
+              visible change, which is the page's own bar for runway. The
+              marks are derived from the measured pin (see the drive above),
+              so the tail's height sets the DWELL, not the correctness.
+              `lg`-only: below `lg` there is no rail to perform into, and
+              the inline snapshots already carry the states. */}
+          <div aria-hidden className="hidden h-[80vh] lg:block" />
         </div>
 
         {/* ---- the artifact, riding alongside (`lg`+) ---------------------
@@ -357,24 +472,35 @@ export function ClaimsDescent() {
           >
             {/* The exhibit's wall label. It changes with the stage, so the
                 reader is never looking at a state the page has not named —
-                and it is what marks the second micro-beat as a new moment
-                rather than a redrawn diagram. */}
-            <p className="label-caps mb-2 h-4">{ARTIFACT.labels[split ? 1 : 0]}</p>
-            <VerdictEmail stage={split ? "split" : "raw"} />
+                and it is what marks each beat as a new moment rather than a
+                redrawn diagram. */}
+            <p className="label-caps mb-2 h-4">
+              {ARTIFACT.labels[VERDICT_LABELS[verdictStage] ?? 0]}
+            </p>
+            <VerdictEmail evidence stage={VERDICT_STAGES[verdictStage] ?? "raw"} />
           </div>
         </div>
       </div>
 
       {/* ---- the decision: the spine's first handoff — the pinned side
-              SWITCHES. The recording of the rules layer answering a body
-              rides the LEFT rail, looping, while the claim that explains it
-              flows past on the right: the reader is watching the layer that
-              ships work for the whole time they are reading why it ships.
-              The benchmark ladder stays in the flow as the claim's second
-              beat — it is the argument's own figure, and it still draws
-              under the reader's descent. ------------------------------- */}
+              SWITCHES. The held mail rides the LEFT rail (the owner's 08c
+              pick, "where it waits"): Cedar's ambiguous note, which settles
+              into the REAL review queue as the reader crosses the phase —
+              the honest other half of "how it decides", enacted by the
+              component that actually holds such mail, in the product's own
+              words ("held because Applied wasn't sure · your decision files
+              them"). The rules recording is KEPT — the owner's call,
+              2026-08-20: the approved clips stay alongside the new takes —
+              and moves INTO THE FLOW, directly under the paragraph it
+              evidences, where it renders once for every width instead of a
+              rail copy and an inline twin. The benchmark ladder stays in the
+              flow as the claim's second beat — it is the argument's own
+              figure, and it still draws under the reader's descent. ------ */}
       <div className="border-t border-line-soft">
-        <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+        <div
+          ref={heldPhaseRef}
+          className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]"
+        >
           {/* THE RAIL'S BOX IS ITS EXHIBIT, NOT THE VIEWPORT. Centring used to
               be the box's job — `min-h-[calc(100dvh-5rem)]` with
               `justify-center`, which put the exhibit in the middle of the free
@@ -402,23 +528,36 @@ export function ClaimsDescent() {
               beat ends on too (`paced={false}`, `py-20`).
 
               `--exhibit` is the exhibit's MEASURED height, to the nearest
-              eighth-rem, and it takes TWO values because the exhibit does:
-              417.8px below `xl` and 421.8px from `xl` on, because
-              `ProductClip`'s figcaption carries `xl:pt-1`. That is a media
-              query at 1280 and it was positive-controlled as one — 417.8px at
-              1279, 421.8px at 1280, on `next build && next start`.
-
-              ONE CONSTANT FOR BOTH WAS OFF THE APPROVED RENDER. `26.25rem`
-              (420px) was measured at 1024 and centred that exhibit 1.1px high
-              and the 1512 one 0.9px low, against a 1px bar. This is a CENTRING
-              constant only — release and alignment come off the box's real
-              height — so a stale value shifts the pinned exhibit by half its
-              error and nothing else, which is exactly how 4px of exhibit
-              became 2px of render. Eighth-rem rather than quarter: 4px of
+              eighth-rem — measured on `next build && next start`, because
+              `next dev` cannot measure this page. A CENTRING constant only —
+              release and alignment come off the box's real height — so a
+              stale value shifts the pinned exhibit by half its error and
+              nothing else. Eighth-rem rather than quarter: 4px of
               granularity is 2px of shift and cannot hold 1px; 2px of
-              granularity can. `max(5rem, …)` is the floor for short viewports,
-              where the exhibit is taller than the free viewport and there is
-              nothing left to centre.
+              granularity can. `max(5rem, …)` is the floor for short
+              viewports, where the exhibit is taller than the free viewport
+              and there is nothing left to centre.
+
+              THIS RAIL NO LONGER USES ONE. The held exhibit is the other
+              kind of rail cargo: its height moves in BOTH beats (the card's
+              body collapses while the queue rises — measured at 1024×600 on
+              `next build && next start`: 401.6px un-settled against ~313px
+              settled), so there is no one constant that centres both states,
+              which is the same fact that keeps the verdict rail on the
+              viewport-tall box. It takes that staging: the box owns the free
+              viewport and `justify-center` re-centres every state for free.
+              The runway cost that retired this box on the CLIP rails does
+              not apply here — their bands were a single claim's screen,
+              while this phase's flow carries three beats plus the recording,
+              so the band affords the tall box. A viewport-tall box has one
+              more obligation the clip rails never had: it grows 1:1 with
+              dvh, so its BAND must be dvh-paced too, or the runway collapses
+              linearly with height — the benchmark beat below is `paced` for
+              exactly that reason (its comment carries the measured failure).
+              The pin walk's six corners — the two tall ones exist because
+              this rail is what they could not see — are the proof, not this
+              sentence. The clip rails below (retention, access) keep the
+              hugging box and their measured constants, unchanged.
 
               NOTHING IN CI MEASURES THESE TWO NUMBERS. The pin walk watches
               runway and band, which a wrong centring constant does not move;
@@ -437,41 +576,50 @@ export function ClaimsDescent() {
           <div className="hidden lg:block">
             <div
               data-rail="decision"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:26.125rem] xl:[--exhibit:26.375rem]"
+              className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6"
             >
+              {/* The wall label, the verdict rail's device: the exhibit
+                  changes state under the reader, so the label names the
+                  state — the mail alone, then its place in the queue. */}
+              <p className="label-caps mb-2 h-4">{settled ? HELD.queue : HELD.mail}</p>
+              <HeldExhibit settled={settled} />
+            </div>
+          </div>
+          <div>
+            <Claim eyebrow={DECISION.eyebrow} headline={DECISION.headline}>
+              <p>{DECISION.body}</p>
+              {/* The rules recording, in the flow it evidences — one mount
+                  for every width, where the rail copy + inline twin used to
+                  be two. It loops and needs no driving, and `ProductClip`'s
+                  own centre-band observer still means no two recordings on
+                  the page run at once. */}
               <ProductClip
                 stack
                 clip={CLIPS.rulesReadTheBody}
                 name={FOOTAGE.rules.name}
                 caption={FOOTAGE.rules.caption}
               />
-            </div>
-          </div>
-          <div>
-            <Claim
-              eyebrow={DECISION.eyebrow}
-              headline={DECISION.headline}
-              inline={
-                <ProductClip
-                  stack
-                  clip={CLIPS.rulesReadTheBody}
-                  name={FOOTAGE.rules.name}
-                  caption={FOOTAGE.rules.caption}
-                />
-              }
-            >
-              <p>{DECISION.body}</p>
             </Claim>
-            {/* UNPACED, so the phase closes level. Held to `60vh` and centred,
-                this beat ended 176px above the section's rule at 1512 against
-                the rail's 24 — the two columns bottoming out at visibly
-                different heights, which is what the owner saw. Unpaced it ends
-                `py-20` above the rule at EVERY height, which is the line the
-                rail's reclaim now targets. `paced` was already documented as
-                being for claims paired with a travelling exhibit; the clip
-                beside this one loops rather than advancing, so pacing bought
-                the beat nothing here and cost it the centring slack. */}
-            <Claim continued paced={false}>
+            {/* PACED AGAIN — and the reversal is the page's own rule, not
+                churn. `paced` exists for claims paired with a TRAVELLING
+                exhibit; this beat went unpaced when the rail beside it held
+                a looping clip, and the rail's cargo is a travelling exhibit
+                once more (the held mail settling into the queue), so the
+                beat sits opposite the settled state the way the doctrine
+                asks. It is also what keeps the rail's pin alive at TALL
+                viewports: the viewport-tall box grows 1:1 with dvh, and
+                with this beat content-paced the phase's band was FIXED at
+                ~1259px — measured under the floor from ~1075px of height
+                (0.191 at 1512×1080, 0.110 at 2560×1440). Paced, the band is
+                dvh-paced like the verdict phase's (Claim 80vh + 60vh ≈
+                1.4·dvh once both bind), which holds the share near 0.33 at
+                1080–1440 and above 0.28 at any height — measured, see the
+                pin walk's tall corners. */}
+            <Claim
+              continued
+              label={HELD.mail}
+              inline={<HeldExhibit settled={false} queue={false} />}
+            >
               <DrawnBenchmark />
               <p className="text-sm text-dim">{DECISION.gate}</p>
             </Claim>
