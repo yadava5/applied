@@ -145,3 +145,9 @@ build/
 # sibling is the captured app's stdout, kept for when a run fails.
 apps/web/.footage-frames/
 apps/web/.footage-frames.server.log
+
+# Weights & Biases run artifacts. An offline run is a machine-local record of
+# a training session, not a dependency manifest, but GitHub reads its frozen
+# files/requirements.txt as one — a single stub run accounted for 87 of the
+# repo's 93 open Dependabot alerts. Runs belong in the W&B project, not here.
+ml/wandb/
