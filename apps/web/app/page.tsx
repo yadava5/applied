@@ -1,568 +1,85 @@
-import Link from "next/link";
-import { DecisionTrace } from "@/components/viz/DecisionTrace";
-import { Reveal } from "@/components/landing/Reveal";
-import { RawInbox, ClassifiedInbox } from "@/components/landing/InboxScene";
-import { Cascade } from "@/components/landing/Cascade";
-import { ClassF1Bars } from "@/components/landing/ClassF1Bars";
-import { AmbientField } from "@/components/landing/AmbientField";
-import { CountUp } from "@/components/landing/CountUp";
-import { ScrambleText } from "@/components/landing/ScrambleText";
-import { MagneticLink } from "@/components/landing/MagneticLink";
-import { SignatureEnding } from "@/components/landing/SignatureEnding";
-import { Logo } from "@/components/brand/Logo";
+import { AccessPhase } from "@/components/marketing/AccessPhase";
+import { ClaimsDescent } from "@/components/marketing/ClaimsDescent";
+import { MarketingFooter, MarketingNav } from "@/components/marketing/chrome";
+import { ClosingAct } from "@/components/marketing/ClosingAct";
+import { HERO } from "@/components/marketing/copy";
+import { WindowAct } from "@/components/marketing/WindowAct";
 
 /**
- * Landing — a narrative scroll: PROBLEM → SHIFT → HOW → PROOF → TRY IT.
+ * The landing (`/`) — the pinned-scroll composition, and the pin IS the page.
+ * It was built and chosen as candidate B (it served at `/landing-b` while the
+ * choice was open) for the fixed-scroll language, and the build where it
+ * carried one phase and lapsed into ordinary sections for the rest was
+ * rejected; the whole page speaks it now, as one alternating spine. It
+ * replaces the project-shaped case study that used to live here — model
+ * names, rule counts and test counts are the System Card's register, not a
+ * product landing's. (`/landing-a` and `/landing-c` stand unchanged, and
+ * noindex, as the comparison set.)
  *
- * The story is Applied's own, told in its own dark-monochrome system with
- * the viz accents (cyan rules / violet e5 / green SetFit / amber gate). Every
- * number on this page is verified against the repo:
- *   · 201 regex rules      — classifier/rules.py (106 strong + 26 weak + 69 neg)
- *   · pretrained e5-small-v2 · fine-tuned SetFit (MiniLM-L6 body)
- *   · 0.85 confidence gate  — hybrid.py / DecisionTrace
- *   · 22.8 MB int8 ONNX     — model_quantized.onnx (22,843,695 B), from 90.4 MB
- *   · 0.9791 macro-F1       — the RULES stage, on the 96-email v3 benchmark.
- *       Read this carefully before changing it. The number lives in
- *       baseline_hybrid_v3.json, but that file is byte-identical to
- *       baseline_rules_v3.json, because evaluate_classifier.py's
- *       `deterministic` hybrid profile disables SetFit and blanks the
- *       embedding examples (evaluate_classifier.py:156-167). So the file
- *       named "hybrid" measured the regexes alone. The full cascade scored
- *       0.9583 on this same set (docs/ML_EXECUTION_TRACKER.md:378) — it beat
- *       the rules on v2 (0.9843 vs 0.9686) and lost on v3. Attribute this
- *       number to the rules stage, never to the cascade.
- *   · CI floor 0.95         — backend-ci.yml (--min-macro-f1 0.95, ×2 gates)
- *   · 288 tests             — backend suite incl. the 10 real-Postgres RLS
- *       enforcement tests · 9 classes (8 predicted + needs_review)
+ *   1  the promise (display headline);
+ *   2  the WINDOW ACT — the framed app pins full-stage and the visitor's
+ *      scroll advances the scene inside it: the resting board, the offer
+ *      landing (a WIN, deliberately), the pane docking on the mail behind
+ *      it, the camera tilting up to the pane's own chrome;
+ *   3  the descent (`ClaimsDescent`) — three phases, each one column PINNED
+ *      while the other flows past, the pinned side switching at every phase
+ *      boundary: the email rides the RIGHT rail for the verdict claim, the
+ *      rules recording rides the LEFT rail for the decision claim, the sync
+ *      recording rides the RIGHT rail for retention while the kept record
+ *      collapses in the flow;
+ *   4  access (`AccessPhase`) — the same language, LEFT rail: the import
+ *      recording pinned beside the page's one conversion surface, which the
+ *      nav's "Get access" reaches at any depth;
+ *   5  the CLOSING ACT — full-stage pin again, and the one surface that
+ *      plays on its own clock: once the scene is in view it runs to
+ *      completion, slowed, while the pin holds the page (see ClosingAct for
+ *      why it cannot be outrun).
  *
- * Motion is progressive enhancement only (components/landing/Reveal.tsx + the
- * CSS in globals.css): it degrades to fully-visible under prefers-reduced-motion
- * and, via the <noscript> below, with JavaScript disabled.
+ * Full frame → right → left → right → left → full frame: the alternation is
+ * the page's rhythm, the side-switch is what a phase change looks like, and
+ * no section drops out of the language between the bookends.
+ *
+ * NO `metadata` EXPORT, deliberately. This page INHERITS the root layout's
+ * title ("Applied — your inbox, made legible"), description, OpenGraph and
+ * Twitter cards — that block is written for the site root and a page-level
+ * `title` string here would only get the layout's "%s · Applied" template
+ * appended to it. It also carries NO `robots` key: the candidate route was
+ * `index: false` while the choice was open, and `/` is the one landing that
+ * must be indexable. `tests/unit/landing-variants.test.mjs` holds both halves
+ * — A and C noindex, this page not.
  */
-
-// The Hugging Face Space that used to live here was made private on 2026-08-15:
-// it served the int8 ONNX weights of a checkpoint fitted partly on a real
-// mailbox (iCloud IMAP, not Gmail — see docs/ML_PROMOTION_POLICY.md), and
-// published weights trained on real mail should not be redistributed. Every
-// door that pointed at it now points at /import, which classifies in the
-// browser with the rules layer and ships no weights at all.
-const IMPORT_URL = "/import";
-const SYSTEM_CARD = "/system-card";
-
-/**
- * The landing is a showcase: every link that leaves it for the live app
- * (dashboard/demo/import), the sign-in entry point, the separately-built System
- * Card, or an external project opens in a NEW TAB so the narrative stays put
- * behind it. Only in-page anchors stay same-tab. `rel="noopener noreferrer"`
- * on each so the opened tab can't reach back through `window.opener`.
- */
-const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const;
-
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return <p className="label-mono mb-4">{children}</p>;
-}
-
 export default function Landing() {
   return (
-    <main data-theme="dark" className="relative flex flex-col bg-background text-foreground">
-      {/* Motion is enhancement-only: with no JS, reveal everything up front. */}
-      <noscript>
-        <style>{`.reveal,.reveal-stagger>*,.bar-grow{opacity:1!important;transform:none!important}.bar-grow{width:var(--bar-w)!important}`}</style>
-      </noscript>
+    <main className="flex flex-col bg-background text-foreground">
+      <MarketingNav />
 
-      {/* App-native ambient field — fixed, low-alpha, behind the z-10 content. */}
-      <AmbientField />
-
-      <div className="relative z-10 flex flex-col">
-      {/* ---- nav -------------------------------------------------------- */}
-      <header className="sticky top-0 z-50 border-b border-line-soft bg-background">
-        <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-6">
-          <Link
-            href="/"
-            aria-label="Applied — home"
-            className="brand-logo-link min-h-11 items-center text-strong"
-          >
-            <Logo className="h-6 w-auto" />
-          </Link>
-          <nav className="flex items-center gap-4">
-            <a
-              href={SYSTEM_CARD}
-              {...NEW_TAB}
-              className="hidden min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong sm:inline-flex"
-            >
-              system card
-            </a>
-            <a
-              href="/demo"
-              {...NEW_TAB}
-              className="inline-flex min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
-            >
-              live demo
-            </a>
-            {/*
-              Deliberately NOT NEW_TAB. The demo link above opens in a new tab so
-              the landing survives behind it, but signing in is the opposite:
-              opening /login in a second tab strands the user on a stale landing
-              page and leaves them with two tabs after auth.
-            */}
-            <Link
-              href="/login"
-              className="inline-flex min-h-11 items-center rounded-lg border border-line px-3 py-1.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
-            >
-              Sign in
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      {/* ---- hero ------------------------------------------------------- */}
-      <section className="mx-auto flex w-full max-w-5xl flex-col items-center px-6 pt-20 pb-16 text-center sm:pt-28">
-        <p className="mb-8 inline-flex items-center gap-2 rounded-full border border-line px-4 py-1.5 font-mono text-xs text-muted">
-          <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
-          three layers · gated at 0.95 macro-F1 · rules stage 0.979
-        </p>
-        <h1 className="max-w-3xl text-balance text-5xl font-medium tracking-tight text-strong sm:text-6xl">
-          Your inbox already holds the verdict.
-          <span className="block text-muted">Applied extracts it.</span>
+      {/* ---- hero: the headline at display scale -------------------------
+          The paddings and the display bump are a FOLD budget, not taste: at
+          1024×600 the board's summary strip plus one full application row
+          need `pipeline-board` to start by ~466px, and this page's whole bet
+          is that row being visible before anyone scrolls. The 7xl step waits
+          for `xl` because at 1024 those extra ~25px of headline are exactly
+          the row's margin. Re-measure on `next build && next start` if any
+          of this moves — `next dev` cannot measure it. */}
+      <section className="mx-auto w-full max-w-6xl px-6 pt-9 pb-4 sm:pt-11">
+        <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl xl:text-7xl">
+          {HERO.headline}
         </h1>
-        <p className="mt-6 max-w-xl text-balance text-muted">
-          Every application ends as an email — applied, interview, assessment, offer, rejection. The
-          outcome is already written down. A three-layer classifier reads it at the source, so the
-          tracker fills itself.
-        </p>
-        <div className="mt-9 flex flex-wrap justify-center gap-3">
-          <MagneticLink
-            href="/demo"
-            {...NEW_TAB}
-            className="rounded-lg bg-strong px-5 py-2.5 font-medium text-background shadow-[0_0_0_0_transparent] transition-shadow duration-300 hover:shadow-[0_10px_34px_-10px_rgba(255,255,255,0.3)]"
-          >
-            Enter the live demo <span aria-hidden>→</span>
-          </MagneticLink>
-          <a
-            href={SYSTEM_CARD}
-            {...NEW_TAB}
-            className="spring-ease hover-lift rounded-lg border border-line px-5 py-2.5 text-foreground hover:border-line-strong hover:text-strong"
-          >
-            Read the System Card →
-          </a>
-        </div>
-        <p className="mt-6 font-mono text-[11px] text-dim">
-          zero servers ·{" "}
-          <a href={IMPORT_URL} className="text-muted underline-offset-4 hover:text-strong hover:underline">
-            run the classifier →
-          </a>
-        </p>
-        <div className="scroll-cue mt-16 font-mono text-[11px] text-dim" aria-hidden>
-          ↓ scroll · the whole story
-        </div>
+        <p className="mt-4 max-w-xl text-balance text-lg text-muted">{HERO.subhead}</p>
       </section>
 
-      {/* ---- 01 · PROBLEM ---------------------------------------------- */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="max-w-2xl">
-            <Eyebrow>01 · the problem</Eyebrow>
-            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              A job search lives in your inbox.
-            </h2>
-            <p className="mt-5 text-muted">
-              Dozens of applications. Replies, rejections, assessments, an offer if you are lucky —
-              all arriving unlabeled, interleaved with newsletters and receipts, across two accounts,
-              faster than anyone keeps up with by hand.
-            </p>
-          </Reveal>
+      {/* ---- the window act: the app proves it before the page explains -- */}
+      <WindowAct />
 
-          <Reveal className="mt-10">
-            <RawInbox />
-          </Reveal>
+      {/* ---- the descent: the email behind the act, one claim per screen - */}
+      <ClaimsDescent />
 
-          <Reveal className="mt-10 max-w-2xl">
-            <p className="label-mono mb-4">manual tracking is lossy</p>
-            <ul className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
-              {[
-                "The assessment scrolls past — its 48-hour deadline passes unseen.",
-                "“Did I hear back from them?” has no answer but a scroll.",
-                "The row still says applied three weeks after they said no.",
-                "Two accounts, one search — half the thread lives where you aren’t looking.",
-              ].map((item) => (
-                <li key={item} className="flex gap-2 text-sm text-muted">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-reject" aria-hidden />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-6 text-sm text-dim">
-              A manual tracker is only ever as fresh as your discipline. Classification never gets
-              tired.
-            </p>
-          </Reveal>
-        </div>
-      </section>
-
-      {/* ---- 02 · SHIFT ------------------------------------------------- */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="max-w-2xl">
-            <Eyebrow>02 · the shift</Eyebrow>
-            <h2 className="text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              <ScrambleText text="Stop tracking. Start classifying." />
-            </h2>
-            <p className="mt-5 text-muted">
-              Tracking is bookkeeping — a symptom. The real task is classification: given an email,
-              which job-search outcome is this, and how sure are we? Solve that at the source and the
-              tracker maintains itself — applications link, statuses advance, and the board is just
-              a projection over labeled mail.
-            </p>
-          </Reveal>
-
-          <Reveal className="mt-10 max-w-2xl border-l-2 border-line-strong pl-5">
-            <p className="text-balance text-xl font-medium text-strong sm:text-2xl">
-              “If you can label the email, you never have to track the application.”
-            </p>
-          </Reveal>
-
-          <Reveal className="mt-10">
-            <ClassifiedInbox />
-            <p className="mt-3 font-mono text-[11px] leading-relaxed text-dim">
-              The same seven emails — nothing added, the signal just made legible. The one it is not
-              sure about, it refuses to guess on.
-            </p>
-            <a
-              href="/demo/inbox"
-              {...NEW_TAB}
-              className="mt-5 inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
-            >
-              See it label a full sample inbox — real verdicts, no sign-in
-              <span aria-hidden>→</span>
-            </a>
-          </Reveal>
-        </div>
-      </section>
-
-      {/* ---- 03 · HOW --------------------------------------------------- */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="max-w-2xl">
-            <Eyebrow>03 · how it works</Eyebrow>
-            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              Three layers in series, cheapest first.
-            </h2>
-            <p className="mt-5 text-muted">
-              One email enters the top. Each layer tries to decide; clear its threshold and the
-              cascade files and stops. Fall short and it drops to a smarter, costlier layer — and
-              finally to a gate that would rather ask a human than guess.
-            </p>
-          </Reveal>
-
-          <Reveal className="mt-10">
-            <Cascade />
-          </Reveal>
-
-          {/* runs in your browser */}
-          <Reveal className="mt-12 rounded-xl border border-line-soft bg-surface p-5 sm:p-7">
-            <h3 className="text-xl font-medium tracking-tight text-strong sm:text-2xl">
-              And the learned model runs in your browser.
-            </h3>
-            <p className="mt-4 max-w-2xl text-muted">
-              The one trained model — the SetFit head — exports to int8 ONNX. 90.4 MB of float32
-              weights quantize to <span className="text-strong">22.8 MB</span>; Transformers.js
-              executes them in WebAssembly, on your own CPU. No inference server. No per-request cost.
-              No data leaves the tab.
-            </p>
-            <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line-soft bg-line-soft sm:grid-cols-4">
-              {[
-                { k: "model", v: (<><CountUp end={22.8} decimals={1} /> MB int8 ONNX</>) },
-                { k: "from", v: (<><CountUp end={90.4} decimals={1} /> MB float32 · ≈4×</>) },
-                { k: "runtime", v: "Transformers.js · WASM" },
-                { k: "privacy", v: "allowRemoteModels = false" },
-              ].map(({ k, v }) => (
-                <div key={k} className="bg-surface p-3">
-                  <dt className="label-mono">{k}</dt>
-                  <dd className="tabular mt-1 font-mono text-[12px] font-semibold text-strong">{v}</dd>
-                </div>
-              ))}
-            </dl>
-          </Reveal>
-
-          {/* the signature decision trace */}
-          <Reveal className="mt-12">
-            <h3 className="text-xl font-medium tracking-tight text-strong sm:text-2xl">
-              Every verdict, traced.
-            </h3>
-            <p className="mt-4 mb-5 max-w-2xl text-muted">
-              The signature view: each email’s path through the three layers and the gate. The layer
-              that fired lights in its own hue; earlier layers passed it on, later ones were never
-              needed. Click any row to open its adjudication.
-            </p>
-            <DecisionTrace />
-            <p className="mt-3 font-mono text-[11px] text-dim">
-              live logic · fixture data — no inbox is read.
-            </p>
-          </Reveal>
-        </div>
-      </section>
-
-      {/* ---- 04 · PROOF ------------------------------------------------- */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="max-w-2xl">
-            <Eyebrow>04 · the receipts</Eyebrow>
-            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              0.979 macro-F1 — and a gate that blocks merges.
-            </h2>
-            <p className="mt-5 text-muted">
-              Macro-F1 averages the per-class F1 so no category hides behind the frequent ones. It is
-              not a one-time screenshot: two GitHub Actions gates re-run the evaluation on every
-              backend change and fail the build below 0.95. The number is load-bearing.
-            </p>
-            <p className="mt-4 text-sm text-dim">
-              To be precise about what that measures: 0.979 is the <strong>rules stage</strong> on a
-              96-email benchmark. The full cascade scores 0.958 on the same set — it beat the rules
-              on the previous benchmark and lost on this one, which is why the regexes are what ship
-              in the hosted app. The embeddings and SetFit head run in the browser demo.
-            </p>
-          </Reveal>
-
-          <div className="mt-10 grid gap-6 lg:grid-cols-[auto_1fr] lg:items-center">
-            <Reveal className="rounded-xl border border-line-soft bg-surface px-8 py-7 text-center lg:text-left">
-              <p className="tabular font-mono text-6xl font-semibold text-strong sm:text-7xl">
-                <CountUp end={0.979} decimals={3} />
-              </p>
-              <p className="mt-2 font-mono text-[11px] leading-relaxed text-dim">
-                macro-F1 · rules stage · v3 benchmark
-                <br />
-                accuracy 0.979 · two of 96 held-out emails misclassified
-              </p>
-            </Reveal>
-            <ClassF1Bars />
-          </div>
-
-          <Reveal stagger className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { id: "floor", v: <CountUp end={0.95} decimals={2} />, k: "macro-F1 CI floor — the merge fails below it" },
-              { id: "tests", v: <CountUp end={288} />, k: "tests in the backend suite" },
-              { id: "classes", v: <CountUp end={9} />, k: "email classes — 8 predicted + needs_review" },
-              { id: "agree", v: (<><CountUp end={6} /> / 6</>), k: "output-agreement vs the Python pipeline" },
-            ].map((s, i) => (
-              <div
-                key={s.id}
-                className="rounded-xl border border-line-soft bg-surface p-4 transition-colors hover:border-line"
-                style={{ ["--i" as string]: i }}
-              >
-                <p className="tabular font-mono text-2xl font-semibold text-strong">{s.v}</p>
-                <p className="mt-1.5 text-[12px] leading-snug text-muted">{s.k}</p>
-              </div>
-            ))}
-          </Reveal>
-
-        </div>
-      </section>
-
-      {/* ---- 05 · PRIVACY ---------------------------------------------- */}
-      {/* Every claim here is verified against the codebase:
-       *   · no external LLM/model in the classify path — the only openai/anthropic
-       *     strings in the repo are an employer domain→name lookup (tracking/extractor.py)
-       *   · 3 layers — classifier/rules.py · classifier/embeddings.py (intfloat/e5-small-v2)
-       *     · classifier/setfit_model.py (SetFitClassifier)
-       *   · 22.8 MB int8 ONNX runs client-side — ml/browser/site/app.js sets
-       *     env.allowRemoteModels = false; model_quantized.onnx = 22,843,695 B
-       *   · gmail.readonly is the ONLY scope — email_clients/gmail.py SCOPES,
-       *     config.py default. (Deliberately NOT claiming Fernet-at-rest or
-       *     revoke-at-Google here — those paths aren't wired in the deployed cloud.) */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="max-w-2xl">
-            <Eyebrow>05 · private by design</Eyebrow>
-            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              Your inbox stays yours.
-            </h2>
-            <p className="mt-5 text-muted">
-              Applied never hands your mail to an LLM. The classifier is a small, purpose-built
-              pipeline that can run entirely in your browser — on that path, your mail never leaves
-              your machine.
-            </p>
-          </Reveal>
-
-          <Reveal className="mt-10">
-            <div className="privacy-card relative isolate overflow-hidden rounded-2xl border border-line-soft bg-surface p-5 sm:p-7">
-              <div className="relative z-[1] grid gap-6 sm:grid-cols-3">
-                {[
-                  {
-                    hue: "text-viz-rules",
-                    k: "no large language model",
-                    title: "No LLM reads your mail",
-                    body: (
-                      <>
-                        Classification is three small layers — regex rules, a compact{" "}
-                        <span className="text-strong">e5</span>{" "}embedding, and a fine-tuned{" "}
-                        <span className="text-strong">SetFit</span>{" "}head. Nothing in that path calls
-                        a third-party model or LLM API, so your email is never handed to one.
-                      </>
-                    ),
-                  },
-                  {
-                    hue: "text-viz-embeddings",
-                    k: "on your own cpu",
-                    title: "It can run in your browser",
-                    body: (
-                      <>
-                        The trained model compiles to a{" "}
-                        <span className="text-strong">22.8 MB</span> int8-ONNX file that
-                        Transformers.js runs on your own CPU (
-                        <span className="font-mono text-dim">allowRemoteModels = false</span>). Paste
-                        text into the in-browser Space and it is classified on-device, never leaving
-                        the tab.
-                      </>
-                    ),
-                  },
-                  {
-                    hue: "text-viz-setfit",
-                    k: "least privilege",
-                    title: "Read-only, by construction",
-                    body: (
-                      <>
-                        Connecting Gmail requests exactly one Google scope —{" "}
-                        <span className="font-mono text-strong">gmail.readonly</span>. It can read
-                        messages to classify them and <span className="text-strong">cannot</span>{" "}
-                        send, delete, or modify anything; you authorize on Google&apos;s own consent
-                        screen.
-                      </>
-                    ),
-                  },
-                ].map((p) => (
-                  <div key={p.title} className="flex flex-col">
-                    <p className={`label-mono inline-flex items-center gap-2 ${p.hue}`}>
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden />
-                      {p.k}
-                    </p>
-                    <h3 className="mt-3 text-base font-medium text-strong">{p.title}</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-muted">{p.body}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Reveal>
-
-          <Reveal className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <a
-              href="/demo/inbox"
-              {...NEW_TAB}
-              className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong"
-            >
-              See it classify on-device <span aria-hidden>→</span>
-            </a>
-            <span className="text-[12px] leading-relaxed text-dim">
-              Connecting your own Gmail is invite-only while we&apos;re in beta.
-            </span>
-          </Reveal>
-        </div>
-      </section>
-
-      {/* ---- 06 · TRY IT ------------------------------------------------ */}
-      <section className="border-t border-line-soft">
-        <div className="mx-auto w-full max-w-5xl px-6 py-20 sm:py-28">
-          <Reveal className="max-w-2xl">
-            <Eyebrow>06 · try it</Eyebrow>
-            <h2 className="title-focus text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
-              Run a real email through all three layers.
-            </h2>
-          </Reveal>
-
-          <Reveal stagger className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              {
-                href: "/demo",
-                title: "Live demo",
-                arrow: "→",
-                body: "The signed-in app itself — rail, board, worklist — on fixture data. One click, no sign-in.",
-              },
-              {
-                href: "/demo/inbox",
-                title: "Sample inbox",
-                arrow: "→",
-                body: "Eleven job emails, the real classifier's verdicts, gate, and trace. No inbox read.",
-              },
-              {
-                href: "/import",
-                title: "Import your mail",
-                arrow: "→",
-                body: "Drop a Google Takeout .mbox; it's parsed and classified in your browser. No upload, no sign-in.",
-              },
-              {
-                href: "/demo",
-                title: "Watch it decide",
-                arrow: "→",
-                body: "A synthetic inbox with every verdict traced layer by layer — why each email landed where it did.",
-              },
-              {
-                href: SYSTEM_CARD,
-                title: "System Card",
-                arrow: "→",
-                body: "The full printed walkthrough: the why, the cascade, and the receipts.",
-              },
-            ].map((door, i) => (
-              // Every door leaves the landing (import / demo / System Card), so
-              // each opens in a new tab per the standard.
-              <a
-                key={door.title}
-                href={door.href}
-                {...NEW_TAB}
-                className="group block rounded-xl border border-line bg-surface p-5 transition-colors duration-200 hover:border-line-strong hover:bg-surface-2"
-                style={{ ["--i" as string]: i }}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-base font-medium text-strong">{door.title}</span>
-                  <span className="font-mono text-muted transition-transform group-hover:translate-x-0.5">
-                    {door.arrow}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-muted">{door.body}</p>
-              </a>
-            ))}
-          </Reveal>
-
-          <p className="mt-8 text-center font-mono text-[11px] text-dim">
-            three layers · one gate · zero servers
-          </p>
-          <p className="mx-auto mt-3 max-w-xl text-balance text-center text-[12px] leading-relaxed text-muted">
-            Signed in, Applied connects your Gmail{" "}
-            <span className="text-strong">read-only</span> to classify real mail — tokens encrypted,
-            revocable anytime, nothing sent or deleted.
-          </p>
-        </div>
-      </section>
-
-      {/* ---- footer + signature ending ---------------------------------- */}
-      {/* The signature ending is the page's last image: a full-bleed band
-       * below the footer meta, AutoML-landing style — the pipeline crossing
-       * the whole width and resolving into the wordmark. */}
-      <footer className="border-t border-line-soft">
-        <div className="mx-auto flex w-full max-w-5xl flex-col items-center justify-between gap-3 px-6 py-8 sm:flex-row">
-          <span className="font-mono text-xs text-dim">
-            demo runs on fixture data — no inbox is read · by Ayush Yadav
-          </span>
-          <nav className="flex items-center gap-4 font-mono text-[11px] text-dim">
-            {/* Privacy is a document, not a destination in the product — it
-                opens in its own tab like every other link that leaves the
-                landing, and it is the link Google's OAuth verification looks
-                for on the homepage. */}
-            <a href="/privacy" {...NEW_TAB} className="transition-colors hover:text-strong">
-              Privacy
-            </a>
-            <a href={SYSTEM_CARD} {...NEW_TAB} className="transition-colors hover:text-strong">
-              System Card
-            </a>
-            <a href="/demo" {...NEW_TAB} className="transition-colors hover:text-strong">
-              Live demo
-            </a>
-            <a href={IMPORT_URL} className="transition-colors hover:text-strong">
-              Import mail
-            </a>
-          </nav>
-        </div>
-        <SignatureEnding />
-      </footer>
-      </div>
+      {/* The CTA in the spine's own language — the import recording pinned
+          beside the promise it evidences. A and C keep the shared
+          `AccessSection` and are unchanged. */}
+      <AccessPhase />
+      <ClosingAct />
+      <MarketingFooter />
     </main>
   );
 }

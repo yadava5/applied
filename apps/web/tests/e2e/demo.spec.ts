@@ -1157,9 +1157,16 @@ test.describe("live demo (/demo)", () => {
   });
 
   // The decision-trace tests that closed this file moved with the surface:
-  // /demo mounts the shell now, and the fixture-verdict `DecisionTrace` shows
-  // on the landing (landing.spec.ts) while the REAL-verdict traces live on
-  // /demo/inbox (sample-inbox.spec.ts).
+  // /demo mounts the shell now, and the REAL-verdict traces live on
+  // /demo/inbox (sample-inbox.spec.ts), which is where the 0.85 gate is
+  // exercised in a browser.
+  //
+  // The fixture-verdict `DecisionTrace` used to render on the landing and was
+  // gated there. It does not any more: the landing is the pinned composition
+  // promoted from /landing-b, and `components/viz/DecisionTrace.tsx` is now
+  // mounted by nothing. It is left on disk rather than deleted — a decision
+  // for whoever next decides where a fixture trace belongs, not for the PR
+  // that moved a page.
 
   test("the rail's demo nav leads somewhere real: Inbox is the sample inbox", async ({ page }) => {
     // Every signed-in nav target is an auth bounce for an anonymous visitor,

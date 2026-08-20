@@ -3,7 +3,7 @@ name: Landing B race gate
 # ---------------------------------------------------------------------------
 # WHY THIS EXISTS AS ITS OWN WORKFLOW, AND NOT AS A STEP IN e2e-ci.yml.
 #
-# `landing-b.spec.ts`'s SEED 3 guards a RACE: whether `MarketingBoard` reads a
+# `landing.spec.ts`'s SEED 3 guards a RACE: whether `MarketingBoard` reads a
 # visitor's own card open as the page's. A race is not a property you can assert
 # once. The main e2e jobs run `retries: 2`, `workers: 1`, no `--repeat-each` —
 # which is the correct shape for a deterministic assertion and the WORST possible
@@ -161,7 +161,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
       BACKEND_API_URL: http://localhost:8000
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
-      # NOT OPTIONAL. The whole `landing B (/landing-b)` describe is skipped
+      # NOT OPTIONAL. The whole `landing (/)` describe is skipped
       # unless this is exactly "1" (the spec's `test.describe.skip` at the top),
       # and a skip is green. Without it this job would run, report success and
       # execute zero assertions — the exact defect it exists to remove. The
@@ -237,7 +237,7 @@ jobs:
       - name: Run the race test, 800 unretried attempts under contention
         working-directory: apps/web
         run: |
-          pnpm exec playwright test tests/e2e/landing-b.spec.ts \
+          pnpm exec playwright test tests/e2e/landing.spec.ts \
             --project=chromium \
             --retries=0 \
             --workers=4 \
@@ -279,7 +279,7 @@ jobs:
             console.log("expected=" + s.expected + " unexpected=" + s.unexpected + " flaky=" + s.flaky + " skipped=" + s.skipped + " ran=" + ran);
             let bad = false;
             if (s.skipped) {
-              console.error("::error::" + s.skipped + " instances SKIPPED. The landing-b describe skips unless PLAYWRIGHT_PROD_BUILD=1, and a skip is green — this gate proved nothing.");
+              console.error("::error::" + s.skipped + " instances SKIPPED. The landing describe skips unless PLAYWRIGHT_PROD_BUILD=1, and a skip is green — this gate proved nothing.");
               bad = true;
             }
             if (ran !== want) {

@@ -103,7 +103,7 @@ function code(src) {
 
 const act = code(readFileSync(join(webRoot, "components", "marketing", "ClosingAct.tsx"), "utf8"));
 const css = code(readFileSync(join(webRoot, "app", "globals.css"), "utf8"));
-const page = code(readFileSync(join(webRoot, "app", "landing-b", "page.tsx"), "utf8"));
+const page = code(readFileSync(join(webRoot, "app", "page.tsx"), "utf8"));
 
 const num = (name) => {
   const m = new RegExp(`const ${name}\\s*=\\s*([\\d.]+)`).exec(act);

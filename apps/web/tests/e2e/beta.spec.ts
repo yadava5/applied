@@ -7,13 +7,14 @@ import {
 } from "./helpers";
 
 /**
- * E2E for the beta-access notice and the privacy positioning.
+ * E2E for the beta-access notice.
  *
  * The rich <BetaCard> lives on /settings and the not-connected /inbox, which
  * are auth-gated and unreachable without a session — so these specs exercise
- * the publicly reachable surfaces: the dismissible site-wide banner (whose
- * popover carries the same verified copy + actions as the card) and the
- * landing's privacy section.
+ * the publicly reachable surface: the dismissible site-wide banner, whose
+ * popover carries the same verified copy + actions as the card. It is
+ * root-layout chrome (`app/layout.tsx` mounts <BetaBanner/>), so `/` is only
+ * the page these tests happen to load it on.
  */
 
 // encodeURIComponent("Applied beta access request") === "Applied%20beta%20access%20request"
@@ -81,7 +82,7 @@ test.describe("beta access notice", () => {
     // Persisted in localStorage — still gone after a reload.
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: /Your inbox already holds the verdict/i }),
+      page.getByRole("heading", { name: /lose the offer\. You lose the email/i }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /limited access/i })).toHaveCount(0);
   });
@@ -103,39 +104,23 @@ test.describe("beta access notice", () => {
   });
 });
 
-test.describe("privacy positioning (landing)", () => {
-  test("the privacy section renders with the verified claims", async ({ page }) => {
-    await page.goto("/");
+/**
+ * THE `privacy positioning (landing)` DESCRIBE WAS DELETED HERE, and what it
+ * covered is worth naming rather than losing quietly.
+ *
+ * It asserted the OLD landing's PRIVACY section — "Your inbox stays yours",
+ * the three pillars, and four code-verified strings rendered on the page:
+ * `gmail.readonly`, `allowRemoteModels = false`, "never handed to one" and
+ * "22.8 MB". That section does not exist on the landing this repo now serves
+ * (the pinned composition promoted from `/landing-b`), which makes its
+ * privacy argument in its own register — retention, not model provenance —
+ * so there is nothing here to re-point the locators at.
+ *
+ * The claims themselves are not unclaimed: the model/scope facts still live
+ * in the System Card and in `ml/`, and the new landing's retention promise is
+ * held by `tests/unit/landing-variants.test.mjs` (a source scan, which names
+ * the backend test that proves it). But those four strings no longer have a
+ * RENDER-TIME gate anywhere in this suite. If the landing ever states them
+ * again, gate them again.
+ */
 
-    await expect(
-      page.getByRole("heading", { name: /your inbox stays yours/i }),
-    ).toBeVisible();
-
-    // The three verified pillars.
-    await expect(page.getByRole("heading", { name: /no llm reads your mail/i })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /it can run in your browser/i })).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: /read-only, by construction/i }),
-    ).toBeVisible();
-
-    // Load-bearing, code-verified facts — scoped to the privacy section so the
-    // landing's other mentions of the same strings don't trip strict mode.
-    const section = page
-      .locator("section")
-      .filter({ has: page.getByRole("heading", { name: /your inbox stays yours/i }) });
-    await expect(section.getByText(/gmail\.readonly/)).toBeVisible();
-    await expect(section.getByText(/allowRemoteModels = false/)).toBeVisible();
-    await expect(section.getByText(/never handed to one/i)).toBeVisible();
-    await expect(section.getByText(/22\.8 MB/)).toBeVisible();
-  });
-
-  test("the on-device link opens the sample inbox in a new tab", async ({ page }) => {
-    await page.goto("/");
-    // Landing → live-app link opens a new tab per the landing standard.
-    const [popup] = await Promise.all([
-      page.waitForEvent("popup"),
-      page.getByRole("link", { name: /see it classify on-device/i }).click(),
-    ]);
-    await expect(popup).toHaveURL(/\/demo\/inbox$/);
-  });
-});

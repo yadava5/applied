@@ -35,7 +35,7 @@ test.describe("route gating", () => {
     await page.getByRole("link", { name: /back to the landing/i }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(
-      page.getByRole("heading", { name: /Your inbox already holds the verdict/i }),
+      page.getByRole("heading", { name: /lose the offer\. You lose the email/i }),
     ).toBeVisible();
   });
 });

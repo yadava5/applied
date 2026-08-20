@@ -27,7 +27,13 @@ test.describe("Gmail connect — honest degradation", () => {
 
   test("the landing try-it area surfaces the no-connection import path", async ({ page }) => {
     await page.goto("/");
-    const importLink = page.getByRole("link", { name: /import your mail/i }).first();
+    // The landing's own words for this path: the access phase's CTA is
+    // `ACCESS.cta` ("Classify your exported mail") and the closing act
+    // restates it in `CLOSING.importAside` — the regex matches both, and
+    // `.first()` takes the access phase's, which is the page's conversion
+    // surface. Copy lives in `components/marketing/copy.ts`; the destination
+    // is what this test is about.
+    const importLink = page.getByRole("link", { name: /classify your exported mail/i }).first();
     await expect(importLink).toHaveAttribute("href", "/import");
     // Landing links to the live app open in a new tab (the landing standard),
     // so the import path is proven by the popup it opens.
