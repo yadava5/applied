@@ -365,8 +365,30 @@ export function ClaimsDescent() {
               under the reader's descent. ------------------------------- */}
       <div className="border-t border-line-soft">
         <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+          {/* THE RAIL RECLAIMS ITS OWN SLACK, and that is the second half of
+              the crop fix (`ProductClip` is the first). The box is a whole
+              free viewport tall and centres a much shorter exhibit in it, so
+              at release — which is when the box's bottom meets the section's
+              — the exhibit's bottom is still half the leftover height above
+              the section's end, and the reader gets the rest of the phase
+              with the rail already sliding away. Sticky travel is bounded by
+              the MARGIN box, so a negative bottom margin of exactly that
+              half-slack lets the box carry on to where its CONTENT lands on
+              the section's end instead. Nothing paints in the reclaimed
+              region — it was the empty half of the centring — the pinned
+              render is untouched, and the pin gets longer for free
+              (decision 337 → 386 at 1024×643, 460 → 662 at 1512×949).
+
+              `26rem` is the exhibit's MEASURED height at these column widths
+              (418px at 1024, 422 at 1512, on `next build && next start`),
+              rounded DOWN so the margin can only ever under-reclaim: a stale
+              constant leaves a few pixels of slack, where an over-large one
+              would push the caption past the section's rule. Re-measure it if
+              the clip, its caption or the column changes. `min(0px, …)` is
+              the floor for short viewports, where the box is already the
+              exhibit's own height and there is no slack to take. */}
           <div className="hidden lg:block">
-            <div className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+            <div className="sticky top-20 mb-[min(0px,calc((26rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
               <ProductClip
                 stack
                 clip={CLIPS.rulesReadTheBody}
@@ -468,8 +490,13 @@ export function ClaimsDescent() {
               </p>
             </Claim>
           </div>
+          {/* Slack reclaimed, as on the decision rail above — see there for
+              why. `16rem` is this exhibit's own measured height (264px at
+              1024, 268 at 1512): the sync recording is a wide, short crop, so
+              it floats in the most empty rail on the page and has the most to
+              take back. */}
           <div className="hidden lg:block">
-            <div className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+            <div className="sticky top-20 mb-[min(0px,calc((16rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
               <ProductClip
                 stack
                 clip={CLIPS.boardSyncs}

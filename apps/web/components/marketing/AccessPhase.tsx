@@ -41,8 +41,14 @@ export function AccessPhase() {
   return (
     <section id="access" className="scroll-mt-20 border-t border-line-soft">
       <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+        {/* Slack reclaimed, the same negative bottom margin the descent's clip
+            rails carry — `ClaimsDescent`'s decision rail argues it. `31rem`
+            is this exhibit's measured height (505px at 1024, 509 at 1512):
+            the import caption is the longest on the page, so this is the
+            tallest of the three rails and the one with the least slack to
+            take back. */}
         <div className="hidden lg:block">
-          <div className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+          <div className="sticky top-20 mb-[min(0px,calc((31rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
             <ProductClip
               stack
               clip={CLIPS.importClassifies}

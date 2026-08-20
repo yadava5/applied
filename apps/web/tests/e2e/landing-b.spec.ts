@@ -178,15 +178,25 @@ const PIN_STEP = 24;
  *  every reading. It is what makes "the rail entered and left" assertable. */
 const PIN_LEAD = 120;
 /**
- * The least share of its own band a rail may spend pinned.
+ * The least share of its own band a rail may spend pinned — counting only the
+ * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
- * MEASURED at 1024x768 on `next build && next start`, band by band: 0.357,
- * 0.357, 0.576, 0.357 (the sync rail's band is two extra claims long, hence
- * its bigger share). The tightest of those is 384px of pin sampled out of a
- * 387px runway inside a 1075px band. 0.20 sits 44% below it, so a copy edit
- * would have to take a fifth of a phase's flow column out before this reddens
- * — while the defect it guards reads 0.00, because a section collapsed to its
- * rail's own height has no runway to pin across at all.
+ * RE-MEASURED at 1024x768 on `next build && next start` after the three clip
+ * rails took their centring slack back: 0.357, 0.342, 0.588, 0.357. The
+ * reading before that change was 0.357, 0.357, 0.576, 0.357 — the same
+ * numbers, which is the point of netting the overhang off: what the gate
+ * watches is whether a phase's flow column still outruns its rail, and a
+ * negative bottom margin does not make that any more true. The tightest is
+ * still the verdict rail, 384px of pin sampled out of a 387px runway inside a
+ * 1075px band. 0.20 sits 44% below it, so a copy edit would have to take a
+ * fifth of a phase's flow column out before this reddens — while the defect
+ * it guards reads 0.00, because a section collapsed to its rail's own height
+ * has no runway of its own to pin across at all.
+ *
+ * WITHOUT the netting a collapsed band would read 0.279 on the sync rail —
+ * its 192px of margin overhang over a 688px band — and slip past this floor
+ * while showing the exact defect. Measured, not reasoned: the mutation is in
+ * the test below.
  *
  * The denominator is the BAND, not the runway: pin/runway is ~0.97 on the
  * fixed page and would be ~1.00 on the broken one (a 1px runway is 1px
@@ -201,6 +211,11 @@ type RailWalk = {
   offset: number;
   bandHeight: number;
   railHeight: number;
+  /** How far the rail's border box may pass its band's end, i.e. the negative
+   *  bottom margin the three clip rails carry to take their centring slack
+   *  back (`ClaimsDescent`). It is pin the MARGIN pays for rather than the
+   *  band, so the walk has to reach past it and the share has to net it off. */
+  overhang: number;
   runway: number;
   pinned: number;
   approach: number;
@@ -214,9 +229,18 @@ type RailWalk = {
  *
  * THE BAND IS THE RAIL'S PARENT, and that is not a convenience: `position:
  * sticky` travels inside its containing block, so the parent's box IS the
- * runway and `bandHeight - railHeight` is the whole pin a rail can ever have.
- * Reading it from the DOM rather than from a section selector means a phase
- * restaged into a different wrapper is still measured.
+ * runway. Reading it from the DOM rather than from a section selector means a
+ * phase restaged into a different wrapper is still measured.
+ *
+ * The runway is `bandHeight - railHeight` PLUS the rail's negative bottom
+ * margin, because what sticky keeps inside the band is the MARGIN box: the
+ * three clip rails pull their bottom margin in by half their empty centring
+ * height so the pin lasts to the end of the phase (`ClaimsDescent`), and a
+ * walk that stopped at `bandHeight - railHeight` would stop INSIDE the pin.
+ * Measured on the build that introduced it: the sync rail pins 1172px across
+ * a 1666px band, so the border-box arithmetic ended its walk 192px early,
+ * read `exit` at the sticky offset, and reddened the "it never left its band"
+ * assertion on a page that was working. Nothing else here moves.
  *
  * `pinned` counts only the scroll distance between two CONSECUTIVE samples
  * that both read the offset. A single sample at the offset earns nothing —
@@ -265,13 +289,17 @@ async function walkRails(page: Page): Promise<RailWalk[]> {
         await frame();
 
         // The offset is the browser's reading of the rail's own `top-20`, not
-        // a number restated here.
-        const offset = parseFloat(getComputedStyle(rail).top);
+        // a number restated here — and so is the overhang, off the same
+        // computed style, so a rail that stops reclaiming its slack is
+        // measured as it renders rather than as this file remembers it.
+        const railStyle = getComputedStyle(rail);
+        const offset = parseFloat(railStyle.top);
+        const overhang = Math.max(0, -parseFloat(railStyle.marginBottom));
         const bandRect = band.getBoundingClientRect();
         const bandTop = window.scrollY + bandRect.top;
         const bandHeight = bandRect.height;
         const railHeight = rail.getBoundingClientRect().height;
-        const runway = bandHeight - railHeight;
+        const runway = bandHeight - railHeight + overhang;
 
         const from = bandTop - offset - lead;
         const to = bandTop + runway - offset + lead;
@@ -297,6 +325,7 @@ async function walkRails(page: Page): Promise<RailWalk[]> {
         walks.push({
           label,
           offset,
+          overhang: Math.round(overhang),
           bandHeight: Math.round(bandHeight),
           railHeight: Math.round(railHeight),
           runway: Math.round(runway),
@@ -690,6 +719,15 @@ test.describe("landing B (/landing-b)", () => {
    * that extreme. Two consecutive samples inside the tolerance need about 20px
    * of real pin (a `PIN_STEP` stride, less `PIN_TOLERANCE` at each end), so
    * EVERY collapsed-band variant, the 689-vs-688 one included, reads 0px.
+   *
+   * RE-MUTATED when the clip rails took their centring slack back (same rig,
+   * same viewport), because a negative bottom margin hands every rail that
+   * much pin for free and the guard had to be shown still able to fail with
+   * one in place. Each clip rail's band was collapsed in-page to its rail's
+   * own border height — the same 0px-runway shape — and each read RED on the
+   * share, the worst of them (the sync rail, the biggest overhang) at 0.000
+   * once the overhang is netted off, against 0.279 if it is not. That 0.279
+   * is why `MIN_PIN_SHARE`'s numerator changed; the assertions did not.
    */
   test("every pinned rail holds at its sticky offset across its own band", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024_768);
@@ -707,8 +745,8 @@ test.describe("landing B (/landing-b)", () => {
     for (const walk of walks) {
       const detail =
         `${walk.label}: band ${walk.bandHeight}px, rail ${walk.railHeight}px, ` +
-        `runway ${walk.runway}px, pinned ${walk.pinned}px at an offset of ${walk.offset}px. ` +
-        `Rail top through the walk: ${walk.trace}`;
+        `overhang ${walk.overhang}px, runway ${walk.runway}px, pinned ${walk.pinned}px ` +
+        `at an offset of ${walk.offset}px. Rail top through the walk: ${walk.trace}`;
 
       expect(walk.offset, `${detail} — the rail resolves no sticky offset`).toBeGreaterThan(0);
 
@@ -726,7 +764,10 @@ test.describe("landing B (/landing-b)", () => {
         `${detail} — the walk ended with the rail still at its pin, so it never left its band`,
       ).toBeLessThan(walk.offset - PIN_TOLERANCE);
 
-      const share = walk.pinned / walk.bandHeight;
+      // Net the margin overhang off: it is pin the rail brings with it, not
+      // pin the phase's flow column earned, and leaving it in would let a band
+      // collapsed to its rail's own height still read a fifth of itself pinned.
+      const share = (walk.pinned - walk.overhang) / walk.bandHeight;
       expect(
         share,
         `${detail} — the rail holds at its sticky offset for ${(share * 100).toFixed(1)}% of its band, under the ${MIN_PIN_SHARE * 100}% floor. A sticky column whose band is no taller than the column has nowhere to pin, so it translates with the scroll and carries its exhibit's chrome off the top of the fold — the defect 5c91e80 fixed at #access.`,
