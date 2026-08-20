@@ -26,7 +26,6 @@ export const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const
  */
 export const ACCESS_ANCHOR = "#access";
 
-const SYSTEM_CARD = "/system-card";
 
 export function MarketingNav() {
   return (
@@ -81,10 +80,13 @@ export function MarketingNav() {
  *   · "Live demo" — already in the nav on every page of this family; a
  *     footer that restates the nav is filler.
  *
- * What stays: Privacy (the homepage link Google's OAuth verification looks
- * for — do not remove it) and the System Card, which is a differentiator no
- * competitor can echo and earns a place in both the privacy phase's prose
- * and here, where product-trust links conventionally live.
+ *   · the System Card link — cut 2026-08-19 at the owner's direction. It is
+ *     still a differentiator and it is still linked from the privacy phase's
+ *     own prose, which is where a reader meets it in context; a second copy
+ *     in the footer was the last piece of project-shaped furniture here.
+ *
+ * What stays: Privacy, and only Privacy. It is the homepage link Google's
+ * OAuth verification looks for — do not remove it.
  */
 export function MarketingFooter() {
   return (
@@ -94,9 +96,6 @@ export function MarketingFooter() {
         <nav className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.8125rem] text-dim">
           <a href="/privacy" {...NEW_TAB} className="transition-colors hover:text-strong">
             Privacy
-          </a>
-          <a href={SYSTEM_CARD} {...NEW_TAB} className="transition-colors hover:text-strong">
-            System Card
           </a>
         </nav>
       </div>
