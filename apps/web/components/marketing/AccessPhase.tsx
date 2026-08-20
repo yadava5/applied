@@ -87,8 +87,15 @@ export function AccessPhase() {
 
               IT ALSO SHORTENS THE BAND, which is what 5c91e80 bought this
               phase, so the rail is measured rather than assumed: runway 203px
-              at 1024×600, 337px at 1024×768 and 454px at 1512×949 — 0.236,
-              0.355 and 0.427 of the band, against the pin gate's 0.20 floor.
+              at 1024×600, 337px at 1024×768, 175px at 1512×600 and 454px at
+              1512×949 — 0.236, 0.355, 0.213 and 0.427 of the band, against the
+              pin gate's 0.20 floor. THE 1512×600 READING IS THE PAGE'S
+              MINIMUM, and it was missing from this list until 2026-08-19:
+              widening the viewport wraps this column's prose shorter and takes
+              24px off the band while the rail gains 4px, so wide-and-short is
+              tighter than short alone. The gate walks it now, and
+              `MIN_PIN_SHARE` decomposes it.
+
               5c91e80 recorded 387px at 1024×768 with a viewport-tall rail box;
               this trades a little of that at the short end for a great deal at
               the tall end, where the same rail had fallen to 0.170 and under

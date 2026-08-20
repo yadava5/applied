@@ -153,6 +153,17 @@ const DESKTOP_1024_768 = { width: 1024, height: 768 };
  *  0.170 at this height on the same build, so a gate fixed at one height was
  *  structurally unable to see the failure. */
 const DESKTOP_1512 = { width: 1512, height: 949 };
+/** WIDE AND SHORT, and the reason the pin is measured at more than one WIDTH.
+ *  This is where the tightest pin on the page lives — #access at 0.213, the
+ *  whole page's minimum (`MIN_PIN_SHARE` decomposes it) — and until 2026-08-19
+ *  no walk had ever visited it: width moves the rail by a different mechanism
+ *  than height does, so a set of heights at one width cannot see it. Widening
+ *  past 1024 wraps the flow column's prose shorter and takes 24px off #access's
+ *  band, and passing 1280 grows every clip exhibit by 4px
+ *  (`ProductClip`'s figcaption takes `xl:pt-1`), so the rail gains what the
+ *  band loses. 1512 is where the owner works; every width from 1280 up reads
+ *  the same, the container being capped at `max-w-6xl`. */
+const DESKTOP_1512_600 = { width: 1512, height: 600 };
 const TABLET_768 = { width: 768, height: 1024 };
 
 /** The exhibit's closing sentence — the honesty guarantee, matched on the
@@ -200,22 +211,68 @@ const PIN_LEAD = 120;
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
  * MEASURED on `next build && next start`, verdict / decision / retention /
- * #access, at each of the three heights this walk runs:
+ * #access, at each of the four viewports this walk runs:
  *
- *   1024x600   0.393  0.382  0.748  0.236
+ *   1024x600   0.393  0.382  0.745  0.236
  *   1024x768   0.357  0.476  0.774  0.355
+ *   1512x600   0.393  0.363  0.738  0.213
  *   1512x949   0.343  0.527  0.782  0.427
  *
- * THE TIGHTEST READING IS #ACCESS AT 1024x600, 0.236, and it is tightest
- * there for a reason worth keeping: a rail's box is its exhibit's own height
- * now, so a SHORT viewport is what squeezes it — the import clip is 553px of
- * fixed content inside an 812px band. A tall viewport squeezes the other way,
- * which is what the staging before this one got wrong: with a viewport-tall
- * box, #access read 0.296 at 1024x600 and 0.170 at 1512x949, under this floor,
- * while the walk ran at 1024x768 only and reported 0.262. Both ends are walked
- * now, and 0.20 sits 15% below the tightest of the twelve readings — a
- * narrower margin than the 44% this floor was first set with, and the number
- * to watch if the access copy is re-paced again.
+ * THE TIGHTEST READING IS #ACCESS AT 1512x600 — WIDE AND SHORT — at 0.213.
+ * The revision before this one named 1024x600's 0.236 and said 0.20 "sits 15%
+ * below the tightest of the twelve readings". That was false, and false in
+ * this file's characteristic way: 0.236 was the tightest reading the walk
+ * TOOK, not the tightest the page HAS. A sweep of 21 viewports puts the
+ * minimum at 0.213, at height 600 and every width from 1100 up — measured
+ * identically to three decimals at 1100, 1279, 1280, 1440, 1512 and 1920.
+ * Widening from 1024 wraps #access's prose shorter and drops its band 812 ->
+ * 788 while the rail grows 553 -> 557, so the pin loses at both ends.
+ *
+ * DECOMPOSED at 1512x600, because which ratio you name changes what the
+ * number means:
+ *
+ *   (band - rail)/band   231/788 = 0.293   what the flow column supplies
+ *   runway/band          175/788 = 0.222   after `mb-14` spends 56px landing
+ *                                          the exhibit on the closing line
+ *   share, i.e. the gate 168/788 = 0.213   after PIN_STEP granularity
+ *
+ * So the structural headroom over the floor is 2.2pp — 0.222 against 0.200 —
+ * and what the gate actually reads clears it by 1.3pp, 6.5% of the floor. Not
+ * 15% of anything, and not the 44% this floor was first set with. Between
+ * 1100 and 1279 the same 0.213 arrives by a different route: the exhibit is
+ * 4px shorter below `xl`, so runway/band is 179/788 = 0.227 there and the
+ * stride eats the extra. Same gate reading, so that stretch needs no walk of
+ * its own.
+ *
+ * `mb-14` COSTS 7.1pp OF THAT SHARE — 56px of a 788px band, three times the
+ * margin that is left over. It is a deliberate trade for the level close (the
+ * exhibit comes to rest on the phase's closing line, where the flow column's
+ * last beat ends too — `ClaimsDescent`), and it is written down here because
+ * its price never had been. If this floor is ever genuinely in the way, that
+ * margin is the term to argue about before the floor is.
+ *
+ * NOTHING INSIDE THE DESIGN RANGE (w >= 1024, h >= 600) IS UNDER THE FLOOR.
+ * Outside it the page does read red, and the crossing sits between 580 and
+ * 600px tall at 1100+ wide: #access reads 0.187 at 1152x580 and 0.190 at
+ * 1152x560, while 1024x560 is still 0.215. That is where the contract ends,
+ * not a defect — 600 is the shortest viewport this page is designed for.
+ *
+ * WHY THIS LIST OF VIEWPORTS, since it has now been wrong twice in the same
+ * shape. Both times the set was chosen AFTER the measurement that justified
+ * it, so the measurement could not see its own blind spot. dc1bdee walked
+ * 1024x768 alone, claimed 24% of headroom, and was NEGATIVE at 1512x949;
+ * a47d8e0 walked three viewports across two widths, claimed 15%, and reads
+ * 0.213 at 1512x600, which was not one of them. The blind spot moved from
+ * tall to wide-and-short: one corner over, same shape.
+ *
+ * So the list is not a sample of the range, it is the CORNERS of it —
+ * {1024, 1512} x {600, tall} — because width and height squeeze a rail by
+ * different mechanisms and neither predicts the other: a narrower column
+ * wraps the prose longer and lengthens the band, `xl:pt-1` on the caption
+ * grows the exhibit past 1280, and a short viewport floors the sticky offset
+ * at `5rem`. A minimum built from independent mechanisms lives at a corner,
+ * not along an edge. Adding a fifth point in the middle buys nothing; dropping
+ * a corner is what went wrong twice.
  *
  * The netting is currently INERT and deliberately kept. No rail on this page
  * carries a negative bottom margin any more (the clip rails carry `mb-14`,
@@ -722,17 +779,20 @@ test.describe("landing B (/landing-b)", () => {
    * same construction repeated, so the defect is available to all four, and
    * three of them had no coverage of it either.
    *
-   * THREE VIEWPORTS, and that is the correction this test needed most. It ran
-   * at 1024x768 alone on the reasoning that the pin is a fact about the band
-   * and the rail and both are `vh`-paced — which is false: a rail's exhibit is
-   * a fixed number of pixels tall in a fixed-width column, so the ratio moves
-   * with the viewport and does NOT move monotonically. A short viewport
-   * squeezes a rail against its own exhibit; a tall one squeezes it against
-   * its phase's runway. On the staging before this one #access read 0.262 here
-   * and 0.170 at 1512x949, under the floor, and this test could not see it.
-   * 600 is the shortest height the page is designed for and is where the
-   * tightest reading now lives; 949 is where the one that hid lived; 768 is
-   * where the original crop was found.
+   * FOUR VIEWPORTS, AND THEY ARE THE CORNERS OF THE DESIGN RANGE rather than
+   * a sample of it. This ran at 1024x768 alone on the reasoning that the pin
+   * is a fact about the band and the rail and both are `vh`-paced — which is
+   * false: a rail's exhibit is a fixed number of pixels tall in a fixed-width
+   * column, so the ratio moves with the viewport and does NOT move
+   * monotonically. A short viewport squeezes a rail against its own exhibit; a
+   * tall one squeezes it against its phase's runway; and WIDTH moves both by a
+   * third mechanism, which is what the three-viewport version still could not
+   * see. 768 is where the original crop was found; 949 is where the
+   * viewport-tall staging's 0.170 hid (it read 0.262 at 768, under a gate that
+   * only ran there); 1024x600 is the shortest the page is designed for; and
+   * 1512x600 is where the page's real minimum lives, 0.213. `MIN_PIN_SHARE`
+   * carries the readings and the argument for why the corners, and not a
+   * midpoint, are the thing to walk.
    *
    * MUTATION-TESTED AT INTRODUCTION (2026-08-19, `next build && next start` in
    * a detached worktree, headless Chromium, 1024x768). `AccessPhase` restored
@@ -769,9 +829,14 @@ test.describe("landing B (/landing-b)", () => {
    * the share nets the overhang off. Under the current staging, where the box
    * is the exhibit and the margin is positive, the same collapse leaves a
    * runway of -56px and all three read 0.000 RED, at 1024x768 and at
-   * 1512x949. The assertions have not changed through any of it.
+   * 1512x949. RE-RUN 2026-08-19 with 1512x600 added and the rails' centring
+   * constants re-derived: one rail collapsed at a time, three rails x four
+   * walked viewports, 12/12 RED — each naming its own rail and a `top` that
+   * falls a whole 24px stride at every sample — and green again on the
+   * restored file (`shasum -a 256` identical before and after). The
+   * assertions have not changed through any of it.
    */
-  for (const viewport of [DESKTOP_1024, DESKTOP_1024_768, DESKTOP_1512]) {
+  for (const viewport of [DESKTOP_1024, DESKTOP_1024_768, DESKTOP_1512_600, DESKTOP_1512]) {
     const size = `${viewport.width}x${viewport.height}`;
     test(`every pinned rail holds at its sticky offset across its own band at ${size}`, async ({
       page,
