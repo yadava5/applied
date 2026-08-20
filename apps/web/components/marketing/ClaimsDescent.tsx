@@ -426,7 +426,14 @@ export function ClaimsDescent() {
               against dc1bdee's approved render (`next build && next start`,
               1024×600 / 643 / 768 and 1512×949: every rail within 0.5px, the
               verdict rail — which never changed — 0.0px as the control). A
-              re-measure needs that comparison run again, not a green suite. */}
+              re-measure needs that comparison run again, not a green suite.
+
+              A DROPPED constant is at least loud, which a stale one is not:
+              `calc()` over an undefined `var()` is invalid at computed-value
+              time, so `top` would fall back to `auto`, the rail would stop
+              pinning, and the pin walk reds. Nothing above these rails
+              declares `--exhibit` — the verdict rail, which does not use one,
+              resolves it empty — so each rail reads only its own. */}
           <div className="hidden lg:block">
             <div
               data-rail="decision"
