@@ -41,18 +41,22 @@ export function AccessPhase() {
   return (
     <section id="access" className="scroll-mt-20 border-t border-line-soft">
       <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
-        {/* Slack reclaimed to the phase's closing line, the same negative
-            bottom margin the descent's clip rails carry — `ClaimsDescent`'s
-            decision rail argues it. `31rem` is this exhibit's measured height
+        {/* Box hugs its exhibit, the offset does the centring, `mb-14` lands it
+            on the phase's closing line — `ClaimsDescent`'s decision rail
+            argues all three. `31.5rem` is this exhibit's measured height
             (505px at 1024, 509 at 1512): the import caption is the longest on
-            the page, so this is the tallest of the three rails and the one
-            with the least slack to take back — at 1024×643 it has almost none
-            and the `min(0px, …)` floor holds it where it is. */}
+            the page, so this is the tallest box of the three, and this phase
+            has the least runway to spare — which is why the old viewport-tall
+            box put THIS rail under its own pin floor at 1512×949 (0.170 of its
+            band against a 0.20 minimum) while the gate, fixed at 1024×768,
+            read 0.262 and stayed green. */}
         <div className="hidden lg:block">
-          <div className="pointer-events-none sticky top-20 mb-[min(0px,calc(3.5rem_+_(31rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+          <div
+            data-rail="access"
+            className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_31.5rem)/2))] mb-14 py-6"
+          >
             <ProductClip
               stack
-              className="pointer-events-auto"
               clip={CLIPS.importClassifies}
               name={FOOTAGE.import.name}
               caption={FOOTAGE.import.caption}
@@ -80,12 +84,14 @@ export function AccessPhase() {
               they close on the same line at every viewport, and the slack that
               did nothing but hold them apart comes out.
 
-              THIS SHORTENS THE RUNWAY 5c91e80 BOUGHT, and that is the one
-              trade in this change: beat one still paces at `80vh`, but the
-              rail's runway measures 274px at 1024×768 against the 387px that
-              commit recorded — 26% of the band, against the gate's 20% floor
-              and against the 0% the defect it fixed read. The pin engages;
-              it engages over less. */}
+              IT ALSO SHORTENS THE BAND, which is what 5c91e80 bought this
+              phase, so the rail is measured rather than assumed: runway 203px
+              at 1024×600, 337px at 1024×768 and 454px at 1512×949 — 0.236,
+              0.355 and 0.427 of the band, against the pin gate's 0.20 floor.
+              5c91e80 recorded 387px at 1024×768 with a viewport-tall rail box;
+              this trades a little of that at the short end for a great deal at
+              the tall end, where the same rail had fallen to 0.170 and under
+              the floor. Beat one still paces at `80vh`. */}
           <div className="flex flex-col justify-center lg:py-20">
             <p className="mt-4 max-w-xl text-muted lg:mt-0">{ACCESS.noSeat}</p>
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">

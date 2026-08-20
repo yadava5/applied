@@ -344,7 +344,17 @@ export function ClaimsDescent() {
             an exhibit taller than the viewport grows the box instead of being
             cropped symmetrically by it. --------------------------------- */}
         <div className="hidden lg:block">
-          <div className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+          {/* This rail keeps the viewport-tall box the three clip rails gave
+              up (see the decision rail below): its exhibit CHANGES HEIGHT
+              between stages — raw, split, retained — so there is no one
+              measured constant to centre it against, and a box that owns the
+              whole free viewport re-centres each stage for free. It carries
+              no playback control and its band is the descent's longest, so
+              neither of the two costs that moved the others applies here. */}
+          <div
+            data-rail="verdict"
+            className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6"
+          >
             {/* The exhibit's wall label. It changes with the stage, so the
                 reader is never looking at a state the page has not named —
                 and it is what marks the second micro-beat as a new moment
@@ -365,49 +375,47 @@ export function ClaimsDescent() {
               under the reader's descent. ------------------------------- */}
       <div className="border-t border-line-soft">
         <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
-          {/* THE RAIL RECLAIMS ITS OWN SLACK, and that is the second half of
-              the crop fix (`ProductClip` is the first) as well as the answer
-              to the phase not CLOSING LEVEL. The box is a whole free viewport
-              tall and centres a much shorter exhibit in it, so at release —
-              when the box's bottom meets the section's — the exhibit's bottom
-              is still half the leftover height above the section's end: the
-              reader gets the rest of the phase with the rail already sliding
-              away, and the two columns bottom out at different heights, the
-              gap widening with the viewport (measured 34px apart at 1024×643
-              and 88px at 1512×949, the flowing side hanging lower).
+          {/* THE RAIL'S BOX IS ITS EXHIBIT, NOT THE VIEWPORT. Centring used to
+              be the box's job — `min-h-[calc(100dvh-5rem)]` with
+              `justify-center`, which put the exhibit in the middle of the free
+              viewport by making the BOX a viewport tall — and it cost two
+              measured things.
 
-              Sticky travel is bounded by the MARGIN box, so a negative bottom
-              margin lets the box carry on past its band until its CONTENT
-              lands on THE PHASE'S CLOSING LINE — `5rem` above the section's
-              rule, which is where the flow column's last beat ends too
-              (`paced={false}`, `py-20`). Half the leftover height, less the
-              `1.5rem` the rail already pads with, is that margin. Nothing
-              paints in the reclaimed region — it was the empty half of the
-              centring — the pinned render is untouched, and the pin gets
-              longer for free.
+              A pin lives inside `band - rail`, so an empty box that tall ATE
+              THE PHASE'S RUNWAY: #access held only 0.170 of its band at
+              1512×949, under the 0.20 floor its own gate enforces, and the
+              gate could not see it because it only ever ran at 1024×768.
 
-              `26rem` is the exhibit's MEASURED height at these column widths
-              (418px at 1024, 422 at 1512, on `next build && next start`),
-              rounded DOWN so the margin can only ever under-reclaim: a stale
-              constant leaves a few pixels of slack, where an over-large one
-              would push the caption past the section's rule. Re-measure it if
-              the clip, its caption or the column changes. `min(0px, …)` is
-              the floor for short viewports, where the box is already the
-              exhibit's own height and there is no slack to take. */}
+              And the phase did not CLOSE LEVEL. At release the exhibit's
+              bottom sat half the leftover height above the section's end, so
+              the two columns bottomed out at different heights and the gap
+              widened with the viewport — 34px at 1024×643, 88px at 1512×949,
+              the flowing side hanging lower, which is what the owner saw.
+
+              So the centring moves into the sticky OFFSET, where it costs
+              nothing: the box hugs its exhibit, and `top` is what puts that
+              box in the middle of the free viewport — `5rem` for the nav plus
+              half of what is left over. Pinned, this renders where it rendered
+              before. `mb-14` is the release: `5rem` above the section's rule
+              less the `1.5rem` the box pads with, so the exhibit comes to rest
+              on THE PHASE'S CLOSING LINE — the line the flow column's last
+              beat ends on too (`paced={false}`, `py-20`).
+
+              `26.25rem` is the exhibit's MEASURED height at these column
+              widths (418px at 1024, 422 at 1512, on `next build && next
+              start`), to the nearest quarter-rem. It is a CENTRING constant
+              only — release and alignment come off the box's real height — so
+              a stale value shifts the pinned exhibit by half its error and
+              nothing else. `max(5rem, …)` is the floor for short viewports,
+              where the exhibit is taller than the free viewport and there is
+              nothing left to centre. */}
           <div className="hidden lg:block">
-            <div className="pointer-events-none sticky top-20 mb-[min(0px,calc(3.5rem_+_(26rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
-              {/* `pointer-events` is the reclaim's one side effect and it is
-                  worth stating: the rail's BOX now ends below its band, and a
-                  sticky element is positioned, so its empty tail paints — and
-                  hit-tests — above the next phase's opening copy in the same
-                  column. Nothing is under it today (probed at both viewports
-                  across the whole exit), but an invisible lid over the next
-                  headline is exactly the class of defect this page keeps
-                  having, so the box takes no pointers and the exhibit takes
-                  them back. The control and the caption are inside it. */}
+            <div
+              data-rail="decision"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_26.25rem)/2))] mb-14 py-6"
+            >
               <ProductClip
                 stack
-                className="pointer-events-auto"
                 clip={CLIPS.rulesReadTheBody}
                 name={FOOTAGE.rules.name}
                 caption={FOOTAGE.rules.caption}
@@ -516,16 +524,19 @@ export function ClaimsDescent() {
               </p>
             </Claim>
           </div>
-          {/* Slack reclaimed to the same closing line, as on the decision rail
-              above — see there for why. `16rem` is this exhibit's own measured
-              height (264px at 1024, 268 at 1512): the sync recording is a
-              wide, short crop, so it floats in the most empty rail on the page
-              and has the most to take back. */}
+          {/* Box hugs its exhibit, the offset does the centring, `mb-14` lands
+              it on the phase's closing line — the decision rail above argues
+              all three. `16.5rem` is this exhibit's own measured height (264px
+              at 1024, 268 at 1512): the sync recording is a wide, short crop,
+              so it is the shortest box on the page and the one whose old
+              viewport-tall box wasted the most runway. */}
           <div className="hidden lg:block">
-            <div className="pointer-events-none sticky top-20 mb-[min(0px,calc(3.5rem_+_(16rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+            <div
+              data-rail="retention"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_16.5rem)/2))] mb-14 py-6"
+            >
               <ProductClip
                 stack
-                className="pointer-events-auto"
                 clip={CLIPS.boardSyncs}
                 name={FOOTAGE.sync.name}
                 caption={FOOTAGE.sync.caption}
