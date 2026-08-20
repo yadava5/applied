@@ -665,6 +665,13 @@ def ci_min_macro_f1() -> float:
     return float(hits.pop())
 
 
+#: Matches the gap between `@` and the version in a `uses:` ref, whether the
+#: action is referenced by tag (`@v7`) or pinned to an immutable commit with
+#: the version carried in a trailing comment (`@<40-char sha> # v7.0.1`).
+#: Pinning is the supply-chain fix; these facts still read the same version.
+PINNED = r"(?:[0-9a-f]{40}\s*#\s*)?"
+
+
 def workflow_pin(pattern: str, what: str) -> int:
     """
     A toolchain version the workflows agree on, read out of the workflows.
@@ -1231,7 +1238,7 @@ FACTS: dict[str, dict] = {
         "kind": "static",
         "describe": "the `version:` input given to pnpm/action-setup",
         "compute": lambda: workflow_pin(
-            r"pnpm/action-setup@v\d+\s*\n\s*with:\s*\n\s*version:\s*['\"]?(\d+)", "pnpm version"
+            r"pnpm/action-setup@" + PINNED + r"v\d+[^\n]*\n\s*with:\s*\n\s*version:\s*['\"]?(\d+)", "pnpm version"
         ),
         "sites": [
             r"Node\.js \d+ and pnpm (\d+), for the web app",
@@ -1243,7 +1250,7 @@ FACTS: dict[str, dict] = {
     "setupNodeMajor": {
         "kind": "static",
         "describe": "actions/setup-node major used across .github/workflows/",
-        "compute": lambda: workflow_pin(r"actions/setup-node@v(\d+)", "actions/setup-node version"),
+        "compute": lambda: workflow_pin(r"actions/setup-node@" + PINNED + r"v(\d+)", "actions/setup-node version"),
         "sites": [
             {"re": r"Node \d+ via `actions/setup-node@v(\d+)`", "file": "docs/DEPLOYMENT.md"},
         ],
@@ -1251,7 +1258,7 @@ FACTS: dict[str, dict] = {
     "pnpmActionSetupMajor": {
         "kind": "static",
         "describe": "pnpm/action-setup major used across .github/workflows/",
-        "compute": lambda: workflow_pin(r"pnpm/action-setup@v(\d+)", "pnpm/action-setup version"),
+        "compute": lambda: workflow_pin(r"pnpm/action-setup@" + PINNED + r"v(\d+)", "pnpm/action-setup version"),
         "sites": [
             {"re": r"pnpm \d+ via `pnpm/action-setup@v(\d+)`", "file": "docs/DEPLOYMENT.md"},
         ],
