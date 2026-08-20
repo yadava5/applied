@@ -162,6 +162,160 @@ const STICKY_EXHIBIT = "div.sticky.top-20";
  *  for. */
 const RAIL_COUNT = 4;
 
+/** How close to the sticky offset a sample has to read to count as PINNED.
+ *  The plateau measured exactly 80px at 1024x768, but a 1px rounding drift
+ *  has shown up on another probe of the same rails, so this is a tolerance
+ *  and not an equality. It is deliberately far below `PIN_STEP`: a rail that
+ *  is translating 1:1 with the scroll moves a whole step between samples, so
+ *  two consecutive samples cannot both land inside this band by accident. */
+const PIN_TOLERANCE = 2;
+/** The walk's stride, in scrolled pixels. Small enough that the shortest real
+ *  plateau (387px of runway) is sampled a dozen times, large enough that the
+ *  whole spine is walked in one test. */
+const PIN_STEP = 24;
+/** How far outside the pin the walk starts and ends, so the approach and the
+ *  exit — the two stretches where a working rail DOES translate 1:1 — are in
+ *  every reading. It is what makes "the rail entered and left" assertable. */
+const PIN_LEAD = 120;
+/**
+ * The least share of its own band a rail may spend pinned.
+ *
+ * MEASURED at 1024x768 on `next build && next start`, band by band: 0.357,
+ * 0.357, 0.576, 0.357 (the sync rail's band is two extra claims long, hence
+ * its bigger share). The tightest of those is 384px of pin sampled out of a
+ * 387px runway inside a 1075px band. 0.20 sits 44% below it, so a copy edit
+ * would have to take a fifth of a phase's flow column out before this reddens
+ * — while the defect it guards reads 0.00, because a section collapsed to its
+ * rail's own height has no runway to pin across at all.
+ *
+ * The denominator is the BAND, not the runway: pin/runway is ~0.97 on the
+ * fixed page and would be ~1.00 on the broken one (a 1px runway is 1px
+ * "pinned"), so measuring against the runway is precisely the check that
+ * cannot fail.
+ */
+const MIN_PIN_SHARE = 0.2;
+
+/** One rail's traversal, as measured by `walkRails`. */
+type RailWalk = {
+  label: string;
+  offset: number;
+  bandHeight: number;
+  railHeight: number;
+  runway: number;
+  pinned: number;
+  approach: number;
+  exit: number;
+  trace: string;
+};
+
+/**
+ * Scroll each pinned rail through its own band and report how far it held at
+ * its sticky offset.
+ *
+ * THE BAND IS THE RAIL'S PARENT, and that is not a convenience: `position:
+ * sticky` travels inside its containing block, so the parent's box IS the
+ * runway and `bandHeight - railHeight` is the whole pin a rail can ever have.
+ * Reading it from the DOM rather than from a section selector means a phase
+ * restaged into a different wrapper is still measured.
+ *
+ * `pinned` counts only the scroll distance between two CONSECUTIVE samples
+ * that both read the offset. A single sample at the offset earns nothing —
+ * every rail passes through 80 on its way past, and the pre-fix defect passed
+ * through it too.
+ *
+ * The walk runs in one `page.evaluate` with a rAF between scrolls rather than
+ * as a Playwright scroll loop: the sticky position is layout, not script, so a
+ * frame is all it needs, and ~130 samples across four rails would otherwise be
+ * ~130 round trips.
+ */
+async function walkRails(page: Page): Promise<RailWalk[]> {
+  return page.evaluate(
+    async ({ sel, step, lead, tolerance }) => {
+      const frame = () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      const rails = Array.from(document.querySelectorAll<HTMLElement>(sel));
+      const walks = [];
+
+      for (let index = 0; index < rails.length; index += 1) {
+        const rail = rails[index];
+        const band = rail.parentElement;
+        if (!band) throw new Error(`rail ${index} has no containing block to pin inside`);
+
+        // Named by where a reader would look for it: the section's own id or
+        // label, plus the exhibit it carries. The three descent rails share one
+        // unnamed <section>, and two of them carry the same chrome strip, so
+        // the recording's own name (`ProductClip` puts it on the <video>) is
+        // what tells them apart in a failure message.
+        const section = rail.closest("section");
+        const where = section?.id
+          ? `#${section.id}`
+          : (section?.getAttribute("aria-label") ?? "an unnamed section");
+        const carried =
+          rail.querySelector("video[aria-label]")?.getAttribute("aria-label") ??
+          rail.querySelector(".label-caps, figcaption, p")?.textContent?.trim();
+        const label = `rail ${index} in ${where}${carried ? ` (${carried.slice(0, 32)})` : ""}`;
+
+        // Park at the approach BEFORE measuring. The descent drives its
+        // exhibits off scroll progress, so a band's height read from the top
+        // of the document can be stale by the time the walk reaches it.
+        const rough = window.scrollY + band.getBoundingClientRect().top;
+        window.scrollTo({ top: Math.max(0, rough - lead), behavior: "instant" });
+        await frame();
+
+        // The offset is the browser's reading of the rail's own `top-20`, not
+        // a number restated here.
+        const offset = parseFloat(getComputedStyle(rail).top);
+        const bandRect = band.getBoundingClientRect();
+        const bandTop = window.scrollY + bandRect.top;
+        const bandHeight = bandRect.height;
+        const railHeight = rail.getBoundingClientRect().height;
+        const runway = bandHeight - railHeight;
+
+        const from = bandTop - offset - lead;
+        const to = bandTop + runway - offset + lead;
+        const samples: { y: number; top: number }[] = [];
+        for (let y = from; y <= to + 0.5; y += step) {
+          window.scrollTo({ top: Math.max(0, Math.round(y)), behavior: "instant" });
+          await frame();
+          samples.push({
+            y: window.scrollY,
+            top: Math.round(rail.getBoundingClientRect().top * 10) / 10,
+          });
+        }
+
+        const held = (s: { top: number }) => Math.abs(s.top - offset) <= tolerance;
+        let pinned = 0;
+        for (let i = 1; i < samples.length; i += 1) {
+          if (held(samples[i - 1]) && held(samples[i])) pinned += samples[i].y - samples[i - 1].y;
+        }
+
+        // A readable slice of the walk for the failure message — the pre-fix
+        // signature is a top that falls by a whole step at every sample.
+        const every = Math.max(1, Math.ceil(samples.length / 10));
+        walks.push({
+          label,
+          offset,
+          bandHeight: Math.round(bandHeight),
+          railHeight: Math.round(railHeight),
+          runway: Math.round(runway),
+          pinned: Math.round(pinned),
+          approach: samples.length ? samples[0].top : Number.NaN,
+          exit: samples.length ? samples[samples.length - 1].top : Number.NaN,
+          trace: samples
+            .filter((_, i) => i % every === 0)
+            .map((s) => s.top)
+            .join(" "),
+        });
+      }
+
+      return walks;
+    },
+    { sel: STICKY_EXHIBIT, step: PIN_STEP, lead: PIN_LEAD, tolerance: PIN_TOLERANCE },
+  );
+}
+
 /**
  * Put the act at a given share of its PINNED RUNWAY — the same quantity
  * `WindowAct` derives (`useScroll`, `start start` → `end end`), computed the
@@ -466,12 +620,118 @@ test.describe("landing B (/landing-b)", () => {
     await expect(
       page.getByRole("heading", { name: /The preview ends before the verdict/i }),
     ).toBeVisible();
+    // A COUNT, and only a count: `div.sticky.top-20` says the class is
+    // declared, never that the rail travels. That difference shipped a defect
+    // (see the pin test below, which is the assertion this line cannot make).
     await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(RAIL_COUNT);
     // 4 — the conversion surface and the closing act.
     await expect(page.getByRole("heading", { name: /One hundred seats/i })).toBeVisible();
     await expect(page.locator("section.act")).toHaveCount(1);
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
+  });
+
+  /**
+   * SEED 6, and it closes the gap the count above leaves open.
+   *
+   * `toHaveCount(RAIL_COUNT)` counts nodes carrying `sticky top-20`. It was
+   * green on the build where `#access` declared that class and the pin had
+   * ZERO RANGE: the phase paced its copy as one 75vh screen, the section
+   * collapsed to the rail's own height (sectionH 689 == railH 688), and a
+   * sticky box with no runway simply translates with the scroll. `5c91e80`
+   * fixed it, and nothing in either suite could have caught it — re-pacing
+   * that copy back to one screen restores the exact defect with every gate
+   * green. The visible cost was the import clip's chrome strip, play/pause
+   * included, cropping above the fold while its body was still on screen: the
+   * crop the whole board rework exists to kill, at the conversion surface.
+   *
+   * WHAT IS ASSERTED IS THE RELATION, NOT THE GEOMETRY. Each rail is walked
+   * through its own band and its `top` sampled; the reading is how much of the
+   * band it spent HELD at its sticky offset. The numbers in my table move with
+   * every copy edit and none of them are pinned here — only the share, against
+   * a threshold ~40% below the tightest real one (`MIN_PIN_SHARE`).
+   *
+   * The pre-fix signature is a `top` that falls by exactly the scroll delta at
+   * every sample (measured then, over six samples: 281 181 81 -19 -119 -219).
+   * That reading earns zero pinned distance here — the plateau is counted
+   * BETWEEN consecutive samples that both read the offset, and 1:1 translation
+   * cannot produce two of those in a row at a 24px stride.
+   *
+   * EVERY rail, not just the one that broke. The spine's four rails are the
+   * same construction repeated, so the defect is available to all four, and
+   * three of them had no coverage of it either.
+   *
+   * One viewport, 1024x768: the pin is a fact about the band and the rail, and
+   * both are `vh`-paced, so a second height re-measures the same relation with
+   * different numbers. 768 is where the original crop was found.
+   *
+   * MUTATION-TESTED AT INTRODUCTION (2026-08-19, `next build && next start` in
+   * a detached worktree, headless Chromium, 1024x768). `AccessPhase` restored
+   * to its pre-`5c91e80` single-screen pacing — the defect itself put back,
+   * not a synthetic break — and this went RED naming the rail:
+   *
+   *   rail 3 in #access: band 688px, rail 688px, runway 0px, pinned 0px at an
+   *   offset of 80px. Rail top through the walk: 199.8 151.8 103.8 55.8 7.8
+   *   -40.2 — the rail holds at its sticky offset for 0.0% of its band
+   *
+   * — pure translation, every reading a whole stride below the last, which is
+   * the pre-fix signature exactly. Green again on the restored file (`shasum
+   * -a 256` identical before and after), 18/18 across this suite, and steady
+   * under `--repeat-each=3`.
+   *
+   * THE THREE DESCENT RAILS WERE MEASURED IN THAT SAME RUN AND PASSED, and
+   * that is named rather than claimed as coverage: `expect` fails fast, so
+   * their readings were evaluated but never watched go red. They run the one
+   * code path `#access` reddened, so the path is proven able to fail; the
+   * geometry of each of the three is not independently reddened.
+   *
+   * The mutation restored a 688px band on a 688px rail — a 0px runway, where
+   * the historical defect had 1px — and the reading is not sensitive only at
+   * that extreme. Two consecutive samples inside the tolerance need about 20px
+   * of real pin (a `PIN_STEP` stride, less `PIN_TOLERANCE` at each end), so
+   * EVERY collapsed-band variant, the 689-vs-688 one included, reads 0px.
+   */
+  test("every pinned rail holds at its sticky offset across its own band", async ({ page }) => {
+    await page.setViewportSize(DESKTOP_1024_768);
+    await page.goto("/landing-b");
+
+    // Arrival, before anything is measured: the rails exist only at `lg`+, and
+    // the client tree is live (the board mounts from an effect), so what is
+    // walked below is the pinned staging and not the stacked twin.
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+    await expect(page.locator(STICKY_EXHIBIT)).toHaveCount(RAIL_COUNT);
+
+    const walks = await walkRails(page);
+    expect(walks, "the walk did not reach every rail").toHaveLength(RAIL_COUNT);
+
+    for (const walk of walks) {
+      const detail =
+        `${walk.label}: band ${walk.bandHeight}px, rail ${walk.railHeight}px, ` +
+        `runway ${walk.runway}px, pinned ${walk.pinned}px at an offset of ${walk.offset}px. ` +
+        `Rail top through the walk: ${walk.trace}`;
+
+      expect(walk.offset, `${detail} — the rail resolves no sticky offset`).toBeGreaterThan(0);
+
+      // The walk genuinely traversed the band: the rail arrived below its
+      // offset and left above it. Without this pair a rail that never moved at
+      // all — one that had become `fixed`, or a band measured wrong — would
+      // read as a flawless plateau, which is the shape this test exists to
+      // stop shipping.
+      expect(
+        walk.approach,
+        `${detail} — the walk started with the rail already at or past its pin, so the plateau below is not a measurement`,
+      ).toBeGreaterThan(walk.offset + PIN_TOLERANCE);
+      expect(
+        walk.exit,
+        `${detail} — the walk ended with the rail still at its pin, so it never left its band`,
+      ).toBeLessThan(walk.offset - PIN_TOLERANCE);
+
+      const share = walk.pinned / walk.bandHeight;
+      expect(
+        share,
+        `${detail} — the rail holds at its sticky offset for ${(share * 100).toFixed(1)}% of its band, under the ${MIN_PIN_SHARE * 100}% floor. A sticky column whose band is no taller than the column has nowhere to pin, so it translates with the scroll and carries its exhibit's chrome off the top of the fold — the defect 5c91e80 fixed at #access.`,
+      ).toBeGreaterThanOrEqual(MIN_PIN_SHARE);
+    }
   });
 
   /**
