@@ -125,9 +125,34 @@ export class TakeClock {
   }
 }
 
+/** A shot the camera can HOLD, not just arrive at: the subject, a scale
+ *  resolver re-evaluated against live geometry, and whether the cover floor
+ *  is armed while it plays. Recording the shot (rather than the number it
+ *  resolved to once) is what lets `reframe` keep the composition true when
+ *  the stage changes size under a parked camera. */
+type Shot = {
+  target: Target | null;
+  scale: () => number;
+  align: "centre" | "top";
+  cover: boolean;
+};
+
 export class Director extends TakeClock {
   private cam = { scale: 1, x: 0, y: 0 };
+  /** What the camera element actually renders — `cam` raised to the cover
+   *  floor and re-clamped. Kept separate so tweens interpolate the AUTHORED
+   *  path while the floor rides over it, and so stage-rect measurements can
+   *  unscale by the transform that is really applied. */
+  private rendered = { scale: 1, x: 0, y: 0 };
   private cur = { x: 0, y: 0 };
+  /** The current shot, kept live by `reframe` whenever the stage resizes. */
+  private shot: Shot | null = null;
+  /** True while a camera tween is in flight — the tween re-derives its own
+   *  destination every frame, so `reframe` must not fight it. */
+  private moving = false;
+  /** The cover floor's switch — see `followCover` and `applyCam`. */
+  private covering = false;
+  private ro: ResizeObserver | null = null;
 
   constructor(
     private frame: HTMLElement,
@@ -137,6 +162,20 @@ export class Director extends TakeClock {
     onCaption: (line: string) => void,
   ) {
     super(onCaption);
+    // The stage's size is part of every shot's arithmetic, and it CHANGES
+    // mid-take — the day filter collapses the board, the pulse panel grows
+    // it — so the director watches it and re-derives the current shot when
+    // it moves. Transforms are not layout, so applying the camera cannot
+    // re-fire this.
+    if (typeof ResizeObserver !== "undefined") {
+      this.ro = new ResizeObserver(() => this.reframe());
+      this.ro.observe(stage);
+    }
+  }
+
+  cancel() {
+    super.cancel();
+    this.ro?.disconnect();
   }
 
   // ---- finding things on the stage ----------------------------------------
@@ -170,16 +209,94 @@ export class Director extends TakeClock {
 
   // ---- the camera ----------------------------------------------------------
 
+  /** The scale at which the stage covers the frame's height, capped at
+   *  `COVER_MAX` — past the cap a letterbox is the lesser evil (see the
+   *  constant). Live: re-read every time, because the stage resizing is
+   *  exactly when this number matters. */
+  private coverScale(): number {
+    return Math.min(this.frame.getBoundingClientRect().height / this.stage.offsetHeight, COVER_MAX);
+  }
+
+  /** Clamp a pan so the stage never tears off an edge it covers, and centre
+   *  it on any axis it does not — the same rule `camTargetFor` applies at
+   *  target time, applied continuously so no rendered frame can violate it. */
+  private clampPan(scale: number, x: number, y: number) {
+    const f = this.frame.getBoundingClientRect();
+    const sw = this.stage.offsetWidth;
+    const sh = this.stage.offsetHeight;
+    x = scale * sw > f.width ? clamp(x, f.width - scale * sw, 0) : (f.width - scale * sw) / 2;
+    y = scale * sh > f.height ? clamp(y, f.height - scale * sh, 0) : Math.max(0, (f.height - scale * sh) / 2);
+    return { x, y };
+  }
+
   private applyCam() {
-    this.camera.style.transform = `translate3d(${this.cam.x}px, ${this.cam.y}px, 0) scale(${this.cam.scale})`;
+    let { scale, x, y } = this.cam;
+    // THE COVER FLOOR, enforced on every rendered frame rather than once at
+    // punch time. The owner's void, in its second form (measured 2026-08-20,
+    // production build): the day filter SHRINKS the board while the camera is
+    // still parked at the establishing scale, and a cover bound evaluated
+    // only when `punchTo` was called left the frame 47% empty for the ~1.4s
+    // it took the push-in to catch up — at 1024x600 and 1024x768 alike, on
+    // the beat where the product does the thing. While `covering` is armed
+    // (a punch, or `followCover` ahead of a click the script knows will
+    // collapse the stage), the rendered scale never drops below the live
+    // cover bound: as the board's own glide shrinks the stage, the floor
+    // rises with it and the camera RIDES the collapse, frame for frame. The
+    // raise keeps the frame's centre on its subject; `clampPan` then keeps
+    // every edge honest. `fitAll` disarms it — the establishing shot's
+    // letterbox is composition, not void (see `fitAll`).
+    if (this.covering) {
+      const floor = this.coverScale();
+      if (scale < floor) {
+        const f = this.frame.getBoundingClientRect();
+        x = f.width / 2 - (floor / scale) * (f.width / 2 - x);
+        y = f.height / 2 - (floor / scale) * (f.height / 2 - y);
+        scale = floor;
+      }
+    }
+    ({ x, y } = this.clampPan(scale, x, y));
+    this.rendered = { scale, x, y };
+    this.camera.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
     // The camera's position, written where a test can read it. The take's own
     // suite is green when the LOGIC runs — the pointer really pressed the day
     // bar, the board really narrowed — and none of it could see that the shot
     // was not a shot: production played a whole take with the camera parked
     // at scale 1 and nobody's gate went red. A shot is assertable now:
     // `data-cam-scale` on the frame is the truth of where the camera is, per
-    // frame, and the e2e can require it to actually arrive somewhere.
-    this.frame.dataset.camScale = this.cam.scale.toFixed(3);
+    // frame — the RENDERED truth, floor included — and the e2e can require it
+    // to actually arrive somewhere.
+    this.frame.dataset.camScale = scale.toFixed(3);
+  }
+
+  /**
+   * Arm the cover floor BEFORE the stage move that needs it. The script
+   * calls this ahead of a click it knows will collapse the board: from that
+   * moment the rendered scale tracks the live cover bound, so the camera
+   * follows the collapse in the same frames the board plays it, instead of
+   * discovering the void at punch time. Every `punchTo` arms it too;
+   * `fitAll` stands it down.
+   */
+  followCover() {
+    this.covering = true;
+  }
+
+  /** Re-derive the current shot after the stage changed size outside a
+   *  camera tween — a fit re-fits (letterbox intact), a punch re-frames its
+   *  subject at its re-resolved scale, and the cover floor (when armed) is
+   *  re-applied by `applyCam` either way. Snaps rather than tweens: the
+   *  observer fires on each frame of an animated resize, so tracking IS the
+   *  motion. */
+  private reframe() {
+    if (!this.shot) return;
+    if (this.moving) {
+      // The active tween re-derives its own destination; just keep the
+      // rendered frame honest (floor + clamp) — this is what covers a take
+      // PAUSED mid-tween while the board's own animation finishes.
+      this.applyCam();
+      return;
+    }
+    this.cam = this.camTargetFor(this.shot.target, this.shot.scale(), this.shot.align);
+    this.applyCam();
   }
 
   /** Where the camera must sit for `target`'s centre to hold frame-centre at
@@ -197,9 +314,11 @@ export class Director extends TakeClock {
     if (el) {
       const r = el.getBoundingClientRect();
       const sr = this.stage.getBoundingClientRect();
-      const cx = (r.left + r.width / 2 - sr.left) / this.cam.scale;
-      const ty = (r.top - sr.top) / this.cam.scale;
-      const cy = ty + r.height / 2 / this.cam.scale;
+      // Unscale by the RENDERED transform — the one the rects were measured
+      // under — not the authored one, which the cover floor may sit above.
+      const cx = (r.left + r.width / 2 - sr.left) / this.rendered.scale;
+      const ty = (r.top - sr.top) / this.rendered.scale;
+      const cy = ty + r.height / 2 / this.rendered.scale;
       x = f.width / 2 - scale * cx;
       y = align === "top" ? CLOSEUP_HEADROOM - scale * ty : f.height / 2 - scale * cy;
     } else {
@@ -212,14 +331,35 @@ export class Director extends TakeClock {
   }
 
   async zoomTo(target: Target | null, scale: number, ms = 1400, align: "centre" | "top" = "centre") {
-    const from = { ...this.cam };
-    const to = this.camTargetFor(target, scale, align);
-    await this.tween(ms, (t) => {
-      this.cam.scale = from.scale + (to.scale - from.scale) * t;
-      this.cam.x = from.x + (to.x - from.x) * t;
-      this.cam.y = from.y + (to.y - from.y) * t;
-      this.applyCam();
-    });
+    await this.moveCam({ target, scale: () => scale, align, cover: false }, ms);
+  }
+
+  /**
+   * The one camera move. The destination is re-derived EVERY FRAME — target
+   * rect, resolved scale, clamps — the same rule the pointer already lives
+   * by, because a shot authored against the stage as it was at call time is
+   * a stale composition the moment the board moves (the punch-time cover
+   * bound was exactly that bug). The tween still eases from where the
+   * AUTHORED camera was, and lands exactly on the live destination at t=1.
+   */
+  private async moveCam(shot: Shot, ms: number) {
+    this.shot = shot;
+    this.covering = shot.cover;
+    this.moving = true;
+    try {
+      const from = { ...this.cam };
+      await this.tween(ms, (t) => {
+        const to = this.camTargetFor(shot.target, shot.scale(), shot.align);
+        this.cam = {
+          scale: from.scale + (to.scale - from.scale) * t,
+          x: from.x + (to.x - from.x) * t,
+          y: from.y + (to.y - from.y) * t,
+        };
+        this.applyCam();
+      });
+    } finally {
+      this.moving = false;
+    }
   }
 
   /**
@@ -246,30 +386,63 @@ export class Director extends TakeClock {
    *     is shorter than the frame, the scale rises until the stage covers it
    *     (up to `COVER_MAX`) — the frame must not be able to show a void, and
    *     a tighter close-up is the honest way out where a letterbox is not.
+   *
+   * Both are LIVE. A first cut evaluated the cover bound once, at punch
+   * time, and the void it existed to kill simply moved one beat earlier:
+   * the board shrinks when the filter lands, the punch's arithmetic was
+   * already frozen against the pre-shrink stage, and the frame sat 47%
+   * empty for the ~1.4s the push-in took to catch up (measured 2026-08-20
+   * at 1024x600 and 1024x768, production build). The resolver below and
+   * the armed cover floor in `applyCam` are the fix: the bound holds
+   * continuously across a stage resize, not only at punch time.
    */
   async punchTo(target: Target, ms = 1500, fill = 0.85, align: "centre" | "top" = "centre") {
-    const el = resolve(target);
-    if (!el) throw new TakeError("punch target vanished");
-    const f = this.frame.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    const rw = r.width / this.cam.scale;
-    const rh = r.height / this.cam.scale;
-    let s = clamp(Math.min((f.width * fill) / rw, (f.height * fill) / rh), 1, PUNCH_MAX);
-    const cover = f.height / this.stage.offsetHeight;
-    if (s < cover) s = Math.min(cover, COVER_MAX);
-    await this.zoomTo(target, s, ms, align);
+    if (!resolve(target)) throw new TakeError("punch target vanished");
+    // The fill and the cover bound are RESOLVERS now, not numbers: both are
+    // re-evaluated on every frame of the move (and by `reframe` on every
+    // stage resize after it), so a board that shrinks under the punch raises
+    // the shot with it instead of leaving the frame to a stale arithmetic.
+    // Falls back to the last resolved scale if the target vanishes mid-move —
+    // the shot ends where it was pointed, and the script's own waits decide
+    // what happens next.
+    let last = Math.max(1, this.rendered.scale);
+    const scale = () => {
+      const el = resolve(target);
+      if (!el) return last;
+      const f = this.frame.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const rw = r.width / this.rendered.scale;
+      const rh = r.height / this.rendered.scale;
+      let s = clamp(Math.min((f.width * fill) / rw, (f.height * fill) / rh), 1, PUNCH_MAX);
+      const cover = f.height / this.stage.offsetHeight;
+      if (s < cover) s = Math.min(cover, COVER_MAX);
+      last = s;
+      return s;
+    };
+    await this.moveCam({ target, scale, align, cover: true }, ms);
   }
 
   /** The establishing shot: the whole mounted surface in one frame, centred,
-   *  floored at 0.3× so a very tall dashboard stays an image, not a speck. */
+   *  floored at 0.3× so a very tall dashboard stays an image, not a speck —
+   *  and CAPPED AT 1×, deliberately, bands and all. At 1024x1120 the cap
+   *  letterboxes the establishing shot (~81px top and bottom, ~63px at
+   *  rest, measured 2026-08-20): the whole-surface shot cannot fill a frame
+   *  taller than the board's own aspect without either cropping columns off
+   *  a surface whose point is its wholeness, or blowing the product's 13px
+   *  type past its own size for band-hygiene. Symmetric letterbox is the
+   *  honest composition; the VOID this file guards against is the
+   *  asymmetric, resize-born kind, and that is the cover floor's job
+   *  (`applyCam`), which this shot stands down. */
   async fitAll(ms = 1400) {
-    const f = this.frame.getBoundingClientRect();
-    const s = clamp(
-      Math.min(f.width / this.stage.offsetWidth, f.height / this.stage.offsetHeight),
-      0.3,
-      1,
-    );
-    await this.zoomTo(null, s, ms);
+    const scale = () => {
+      const f = this.frame.getBoundingClientRect();
+      return clamp(
+        Math.min(f.width / this.stage.offsetWidth, f.height / this.stage.offsetHeight),
+        0.3,
+        1,
+      );
+    };
+    await this.moveCam({ target: null, scale, align: "centre", cover: false }, ms);
   }
 
   // ---- the pointer ---------------------------------------------------------

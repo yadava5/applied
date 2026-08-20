@@ -70,18 +70,20 @@ const take = async (d: Director) => {
   await d.hold(900);
 
   d.say(ACT.narration[2]);
+  // The camera rides the collapse IN the collapse's own frames: `followCover`
+  // arms the director's cover floor before the press, so as the filter
+  // empties the stage (~200ms of the board's own glide) the rendered scale
+  // tracks the live cover bound instead of discovering it at punch time. The
+  // previous cut held 220ms and then punched, and the cover bound — frozen
+  // at punch-time arithmetic — left the frame 47% empty for ~1.4s on the
+  // filter beat at 1024x600 and 1024x768 (measured on the production build);
+  // before that, an authored `zoomTo(…, 1)` earned the owner's screenshot at
+  // 1024x1120. `punchTo`, never an authored scale: the survivors are what
+  // must fill the frame, and its fill and cover are re-resolved every frame
+  // now (see the director's docblock).
+  d.followCover();
   await d.click(() => tallestDayBar(d));
   d.say(ACT.narration[3]);
-  // One beat of the board's own glide, then the camera FOLLOWS the collapse
-  // rather than reacting to it: the filter empties most of the stage in
-  // ~200ms, and a camera that sat out a long hold left the shrunken board
-  // floating in the frame's void for two seconds at tall viewports
-  // (measured at 1024x1120 on the production build). `punchTo`, never an
-  // authored scale: the survivors are what must fill the frame, and how much
-  // scale that takes depends on the frame and on how far the board just
-  // shrank — see the director's docblock for the production screenshot the
-  // authored `zoomTo(…, 1)` earned here.
-  await d.hold(220);
   await d.punchTo(() => d.find('[data-testid="worklist-pane"]'), 1500);
   await d.hold(1900);
 

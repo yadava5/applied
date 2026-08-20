@@ -340,11 +340,20 @@ export function ClaimsDescent() {
         {/* The rail's box is the VIEWPORT, not the exhibit: this exhibit
             changes height at every beat (raw, split, the record), so there
             is no one measured constant to centre it against, and a box that
-            owns the whole free viewport re-centres each stage for free. */}
+            owns the whole free viewport re-centres each stage for free.
+
+            Pinned at 4.5rem — the oner's own offset, the page's other
+            viewport-tall pinned box — and UNPADDED, both for the fold: at
+            1024x600 the split beat's exhibit plus the take's chrome runs the
+            box to the fold's edge, and the old `top-20` + `py-4` spent 24px
+            of that budget putting the provenance line 10.6px UNDER it
+            (measured 2026-08-20, production build). The box is the viewport;
+            padding inside it only ever manifests as crop at the one height
+            where the fold guarantee is tight. */}
         <div className="hidden lg:block">
           <div
             data-rail="verdict"
-            className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-4"
+            className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
           >
             <RailTake
               take={verdictTake}
@@ -434,11 +443,13 @@ export function ClaimsDescent() {
           </div>
           {/* Viewport-tall box, the verdict rail's argument: the exhibit's
               height moves in BOTH beats (the card's body collapses while
-              the queue rises), so no constant centres both states. */}
+              the queue rises), so no constant centres both states. Same
+              4.5rem offset and no padding, for the verdict rail's fold
+              reasons — the two take rails are one construction. */}
           <div className="hidden lg:block">
             <div
               data-rail="review"
-              className="sticky top-20 flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-4"
+              className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
             >
               <RailTake
                 take={heldTake}
