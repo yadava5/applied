@@ -41,16 +41,18 @@ export function AccessPhase() {
   return (
     <section id="access" className="scroll-mt-20 border-t border-line-soft">
       <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
-        {/* Slack reclaimed, the same negative bottom margin the descent's clip
-            rails carry — `ClaimsDescent`'s decision rail argues it. `31rem`
-            is this exhibit's measured height (505px at 1024, 509 at 1512):
-            the import caption is the longest on the page, so this is the
-            tallest of the three rails and the one with the least slack to
-            take back. */}
+        {/* Slack reclaimed to the phase's closing line, the same negative
+            bottom margin the descent's clip rails carry — `ClaimsDescent`'s
+            decision rail argues it. `31rem` is this exhibit's measured height
+            (505px at 1024, 509 at 1512): the import caption is the longest on
+            the page, so this is the tallest of the three rails and the one
+            with the least slack to take back — at 1024×643 it has almost none
+            and the `min(0px, …)` floor holds it where it is. */}
         <div className="hidden lg:block">
-          <div className="sticky top-20 mb-[min(0px,calc((31rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
+          <div className="pointer-events-none sticky top-20 mb-[min(0px,calc(3.5rem_+_(31rem_+_8rem_-_100dvh)/2))] flex min-h-[calc(100dvh-5rem)] flex-col justify-center py-6">
             <ProductClip
               stack
+              className="pointer-events-auto"
               clip={CLIPS.importClassifies}
               name={FOOTAGE.import.name}
               caption={FOOTAGE.import.caption}
@@ -68,8 +70,23 @@ export function AccessPhase() {
           </div>
           {/* Beat two: the path that needs no seat, and the ask. `mt-4`
               below `lg` keeps the paragraph rhythm the single-screen staging
-              had (the old `space-y-4`); at `lg` the beat box owns the gap. */}
-          <div className="flex flex-col justify-center lg:min-h-[60vh] lg:py-16">
+              had (the old `space-y-4`); at `lg` the beat box owns the gap.
+
+              It is the phase's LAST beat, so at `lg` it is unpaced — `py-20`,
+              the descent's own closing line — rather than centred in `60vh`.
+              Centred, the ask ended 119px above the section's rule at 1024 and
+              223 at 1512 while the rail's exhibit ended at 24, so the phase
+              closed with its two columns at visibly different heights. Unpaced
+              they close on the same line at every viewport, and the slack that
+              did nothing but hold them apart comes out.
+
+              THIS SHORTENS THE RUNWAY 5c91e80 BOUGHT, and that is the one
+              trade in this change: beat one still paces at `80vh`, but the
+              rail's runway measures 274px at 1024×768 against the 387px that
+              commit recorded — 26% of the band, against the gate's 20% floor
+              and against the 0% the defect it fixed read. The pin engages;
+              it engages over less. */}
+          <div className="flex flex-col justify-center lg:py-20">
             <p className="mt-4 max-w-xl text-muted lg:mt-0">{ACCESS.noSeat}</p>
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
               <a

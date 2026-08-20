@@ -182,21 +182,24 @@ const PIN_LEAD = 120;
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
  * RE-MEASURED at 1024x768 on `next build && next start` after the three clip
- * rails took their centring slack back: 0.357, 0.342, 0.588, 0.357. The
- * reading before that change was 0.357, 0.357, 0.576, 0.357 — the same
- * numbers, which is the point of netting the overhang off: what the gate
- * watches is whether a phase's flow column still outruns its rail, and a
- * negative bottom margin does not make that any more true. The tightest is
- * still the verdict rail, 384px of pin sampled out of a 387px runway inside a
- * 1075px band. 0.20 sits 44% below it, so a copy edit would have to take a
- * fifth of a phase's flow column out before this reddens — while the defect
- * it guards reads 0.00, because a section collapsed to its rail's own height
- * has no runway of its own to pin across at all.
+ * rails took their centring slack back and the phases' last beats stopped
+ * pacing: 0.357, 0.301, 0.577, 0.262. The reading before those changes was
+ * 0.357, 0.357, 0.576, 0.357. Netting the overhang off is what keeps these
+ * comparable — what the gate watches is whether a phase's flow column still
+ * outruns its rail, and a negative bottom margin does not make that any more
+ * true. The tightest is now #access at 0.262, 264px of pin sampled out of a
+ * 274px runway inside a 946px band: it gave up flow-column height to close
+ * level with its rail, and 0.20 sits 24% below where it landed. That is a
+ * narrower margin than the 44% this floor was set with, and it is the number
+ * to watch if the access copy is re-paced again — while the defect it guards
+ * still reads 0.00, because a section collapsed to its rail's own height has
+ * no runway of its own to pin across at all.
  *
- * WITHOUT the netting a collapsed band would read 0.279 on the sync rail —
- * its 192px of margin overhang over a 688px band — and slip past this floor
- * while showing the exact defect. Measured, not reasoned: the mutation is in
- * the test below.
+ * WITHOUT the netting, a collapsed band reads whatever the rail's own margin
+ * overhang is worth: 0.174 on the sync rail at 1024x768 today (136px over a
+ * 688px band), and the overhang grows with the viewport, so a taller run
+ * crosses this floor on a rail with no runway at all. Netted it reads 0.000.
+ * Measured, not reasoned: the mutation is in the test below.
  *
  * The denominator is the BAND, not the runway: pin/runway is ~0.97 on the
  * fixed page and would be ~1.00 on the broken one (a 1px runway is 1px
@@ -237,7 +240,7 @@ type RailWalk = {
  * three clip rails pull their bottom margin in by half their empty centring
  * height so the pin lasts to the end of the phase (`ClaimsDescent`), and a
  * walk that stopped at `bandHeight - railHeight` would stop INSIDE the pin.
- * Measured on the build that introduced it: the sync rail pins 1172px across
+ * Measured on the build that introduced it: the sync rail pinned 1172px across
  * a 1666px band, so the border-box arithmetic ended its walk 192px early,
  * read `exit` at the sticky offset, and reddened the "it never left its band"
  * assertion on a page that was working. Nothing else here moves.
@@ -725,8 +728,8 @@ test.describe("landing B (/landing-b)", () => {
    * much pin for free and the guard had to be shown still able to fail with
    * one in place. Each clip rail's band was collapsed in-page to its rail's
    * own border height — the same 0px-runway shape — and each read RED on the
-   * share, the worst of them (the sync rail, the biggest overhang) at 0.000
-   * once the overhang is netted off, against 0.279 if it is not. That 0.279
+   * share: the decision rail at -0.012, the sync rail and #access at -0.023,
+   * against 0.174 for the sync rail with the overhang left in. That
    * is why `MIN_PIN_SHARE`'s numerator changed; the assertions did not.
    */
   test("every pinned rail holds at its sticky offset across its own band", async ({ page }) => {
