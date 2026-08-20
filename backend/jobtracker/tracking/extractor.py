@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+from jobtracker.classifier.rules import domain_matches
+
 logger = logging.getLogger(__name__)
 
 COMPANY_NAME_CANONICAL = {
@@ -35,8 +37,24 @@ GENERIC_ATS_SENDER_NAMES = {
 # Known Company Domains (expand as needed)
 # =============================================================================
 
-# Domain suffix → Company name mapping
-# None = ATS platform, extract company from email content
+# Sender domain → Company name mapping.
+# None = ATS platform, extract company from email content.
+#
+# Every key is a bare registrable domain, lower-case, no leading dot and no
+# full hostnames — and the lookup below relies on that, because it matches with
+# ``rules.domain_matches``: the sender's domain must BE the key or be a proper
+# subdomain of it. It used to be ``domain.endswith(known_domain)``, which had no
+# boundary at all, so ``evil-greenhouse.io`` read as Greenhouse and
+# ``evil-google.com`` was attributed to Google at 0.95 confidence. That is the
+# same defect class as CodeQL ``py/incomplete-url-substring-sanitization``
+# (alert 50) and this one nothing flagged, because what it decides is not a URL:
+# it decides WHICH EMPLOYER an application is filed under, and whether the mail
+# is read as ATS relay traffic at all. A misfiled card is the reachable harm.
+#
+# ``myworkday.com`` is the one key that is a string suffix of another
+# (``workday.com``) and it is listed FIRST, because the loop below breaks on the
+# first hit. Under the anchored match the two are disjoint and the order no
+# longer decides anything — but the order is load-bearing history, so leave it.
 DOMAIN_TO_COMPANY: dict[str, str] = {
     # ATS Platforms (need body/subject parsing)
     "greenhouse-mail.io": None,
@@ -275,9 +293,10 @@ class CompanyExtractor:
         if sender_email:
             domain = self._extract_domain(sender_email)
             if domain:
-                # Check direct mapping
+                # Check direct mapping — anchored on a dot boundary, see the
+                # note on DOMAIN_TO_COMPANY.
                 for known_domain, company in DOMAIN_TO_COMPANY.items():
-                    if domain.endswith(known_domain):
+                    if domain_matches(domain, known_domain):
                         if company:  # Direct mapping exists
                             direct_company = company
                         else:
