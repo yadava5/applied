@@ -42,18 +42,19 @@ export function AccessPhase() {
     <section id="access" className="scroll-mt-20 border-t border-line-soft">
       <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
         {/* Box hugs its exhibit, the offset does the centring, `mb-14` lands it
-            on the phase's closing line — `ClaimsDescent`'s decision rail
-            argues all three. `31.5rem` is this exhibit's measured height
-            (505px at 1024, 509 at 1512): the import caption is the longest on
-            the page, so this is the tallest box of the three, and this phase
-            has the least runway to spare — which is why the old viewport-tall
-            box put THIS rail under its own pin floor at 1512×949 (0.170 of its
-            band against a 0.20 minimum) while the gate, fixed at 1024×768,
-            read 0.262 and stayed green. */}
+            on the phase's closing line, and `--exhibit` carries the two
+            measured heights `ProductClip`'s `xl:pt-1` produces —
+            `ClaimsDescent`'s decision rail argues all four. Here that is
+            504.9px below `xl` and 508.9px from `xl` on: the import caption is
+            the longest on the page, so this is the tallest box of the three,
+            and this phase has the least runway to spare — which is why the old
+            viewport-tall box put THIS rail under its own pin floor at 1512×949
+            (0.170 of its band against a 0.20 minimum) while the gate, fixed at
+            1024×768, read 0.262 and stayed green. */}
         <div className="hidden lg:block">
           <div
             data-rail="access"
-            className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_31.5rem)/2))] mb-14 py-6"
+            className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:31.5rem] xl:[--exhibit:31.75rem]"
           >
             <ProductClip
               stack

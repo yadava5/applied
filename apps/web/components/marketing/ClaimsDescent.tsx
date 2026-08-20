@@ -401,18 +401,36 @@ export function ClaimsDescent() {
               on THE PHASE'S CLOSING LINE — the line the flow column's last
               beat ends on too (`paced={false}`, `py-20`).
 
-              `26.25rem` is the exhibit's MEASURED height at these column
-              widths (418px at 1024, 422 at 1512, on `next build && next
-              start`), to the nearest quarter-rem. It is a CENTRING constant
-              only — release and alignment come off the box's real height — so
-              a stale value shifts the pinned exhibit by half its error and
-              nothing else. `max(5rem, …)` is the floor for short viewports,
+              `--exhibit` is the exhibit's MEASURED height, to the nearest
+              eighth-rem, and it takes TWO values because the exhibit does:
+              417.8px below `xl` and 421.8px from `xl` on, because
+              `ProductClip`'s figcaption carries `xl:pt-1`. That is a media
+              query at 1280 and it was positive-controlled as one — 417.8px at
+              1279, 421.8px at 1280, on `next build && next start`.
+
+              ONE CONSTANT FOR BOTH WAS OFF THE APPROVED RENDER. `26.25rem`
+              (420px) was measured at 1024 and centred that exhibit 1.1px high
+              and the 1512 one 0.9px low, against a 1px bar. This is a CENTRING
+              constant only — release and alignment come off the box's real
+              height — so a stale value shifts the pinned exhibit by half its
+              error and nothing else, which is exactly how 4px of exhibit
+              became 2px of render. Eighth-rem rather than quarter: 4px of
+              granularity is 2px of shift and cannot hold 1px; 2px of
+              granularity can. `max(5rem, …)` is the floor for short viewports,
               where the exhibit is taller than the free viewport and there is
-              nothing left to centre. */}
+              nothing left to centre.
+
+              NOTHING IN CI MEASURES THESE TWO NUMBERS. The pin walk watches
+              runway and band, which a wrong centring constant does not move;
+              where the exhibit actually comes to rest was checked by hand
+              against dc1bdee's approved render (`next build && next start`,
+              1024×600 / 643 / 768 and 1512×949: every rail within 0.5px, the
+              verdict rail — which never changed — 0.0px as the control). A
+              re-measure needs that comparison run again, not a green suite. */}
           <div className="hidden lg:block">
             <div
               data-rail="decision"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_26.25rem)/2))] mb-14 py-6"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:26.125rem] xl:[--exhibit:26.375rem]"
             >
               <ProductClip
                 stack
@@ -525,15 +543,16 @@ export function ClaimsDescent() {
             </Claim>
           </div>
           {/* Box hugs its exhibit, the offset does the centring, `mb-14` lands
-              it on the phase's closing line — the decision rail above argues
-              all three. `16.5rem` is this exhibit's own measured height (264px
-              at 1024, 268 at 1512): the sync recording is a wide, short crop,
-              so it is the shortest box on the page and the one whose old
+              it on the phase's closing line, and `--exhibit` carries the two
+              measured heights the `xl:pt-1` on the caption produces — the
+              decision rail above argues all four. Here that is 263.9px below
+              `xl` and 267.9px from `xl` on: the sync recording is a wide, short
+              crop, so it is the shortest box on the page and the one whose old
               viewport-tall box wasted the most runway. */}
           <div className="hidden lg:block">
             <div
               data-rail="retention"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_16.5rem)/2))] mb-14 py-6"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:16.5rem] xl:[--exhibit:16.75rem]"
             >
               <ProductClip
                 stack
