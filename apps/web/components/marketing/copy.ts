@@ -184,8 +184,32 @@ export const ACCESS = {
   noSeat:
     "No seat? Run it on your own exported mail instead — ask Google for a Takeout .mbox, and when the archive lands in your inbox, drop it in: it is parsed and classified in your browser. Nothing uploads.",
   cta: "Classify your exported mail",
-  aside: "or ask for a seat:",
-  contact: "aesh.03.23@gmail.com",
+  aside: "or",
+  /** The seat ask is a product action, not a `mailto:`.
+   *
+   *  It used to be the owner's personal Gmail, rendered on all three landings
+   *  and again as the closing act's PRIMARY call to action. A raw address on
+   *  a public marketing page is a spam magnet, it does not scale past one
+   *  inbox, and it is the single loudest "this is somebody's side project"
+   *  signal a landing can carry — the same reason the footer's byline and
+   *  address were cut on 2026-08-19.
+   *
+   *  `/signup` is the honest destination rather than a stand-in: `cap` above
+   *  already states that the seats "are invited one at a time", so the
+   *  account list IS the queue, and a new account reaches the beta-capacity
+   *  notice on /settings which states the cap and offers the import path.
+   *  Nothing new is stored to make this true and no claim is added.
+   *
+   *  This deliberately stays a single constant so the domain cutover is one
+   *  edit: when getapplied.dev lands, a `seats@` address (or a real waitlist
+   *  form) replaces this href in one place, not at three call sites.
+   *
+   *  NOT the only surface carrying the address — `app/(app)/privacy` keeps it
+   *  because Google's OAuth verification reads a contact off the privacy
+   *  policy, and `components/beta/constants.ts` still composes a beta request
+   *  from the site-wide pill. Neither is this page's copy. */
+  seatLink: "ask for a seat",
+  seatHref: "/signup",
 } as const;
 
 /**

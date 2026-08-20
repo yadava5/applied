@@ -498,7 +498,7 @@ export function ClosingAct() {
           <p className="text-base font-medium text-strong sm:text-lg lg:text-2xl">{CLOSING.thesis}</p>
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
             <a
-              href={`mailto:${ACCESS.contact}`}
+              href={ACCESS.seatHref}
               className="act-cta inline-flex min-h-11 items-center rounded-lg px-6 py-2.5 font-medium"
             >
               {CLOSING.seatCta} <span aria-hidden className="ml-2">→</span>

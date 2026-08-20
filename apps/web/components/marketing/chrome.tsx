@@ -74,9 +74,10 @@ export function MarketingNav() {
  *     page as a side project. The name still signs the work everywhere it
  *     should (the repo, the System Card); the footer is the product's.
  *   · the personal Gmail address — a raw mailto in a footer is a spam
- *     magnet and does not scale past one inbox. The seat ask keeps its
- *     contact where it converts (`ACCESS.contact`, beside the CTA, where
- *     writing in is the point); the footer repeats no address.
+ *     magnet and does not scale past one inbox. Superseded 2026-08-19: the
+ *     seat ask no longer carries an address either. It resolves to
+ *     `ACCESS.seatHref` (/signup), because the account list is the queue the
+ *     cap sentence already describes. No landing surface renders a mailto.
  *   · "Live demo" — already in the nav on every page of this family; a
  *     footer that restates the nav is filler.
  *

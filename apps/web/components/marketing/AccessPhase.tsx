@@ -76,10 +76,10 @@ export function AccessPhase() {
               <span className="text-sm text-dim">
                 {ACCESS.aside}{" "}
                 <a
-                  href={`mailto:${ACCESS.contact}`}
+                  href={ACCESS.seatHref}
                   className="text-muted underline-offset-4 hover:text-strong hover:underline"
                 >
-                  {ACCESS.contact}
+                  {ACCESS.seatLink}
                 </a>
               </span>
             </div>
