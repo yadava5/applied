@@ -302,7 +302,7 @@ export const CLAIMS = {
 /**
  * The words around the product recordings the page plays (`ProductClip`).
  *
- * THREE ARE PLACED, and the test each one had to pass is that the paragraph
+ * TWO ARE PLACED, and the test each one had to pass is that the paragraph
  * beside it already says what the frames say, without the reader being told:
  *
  *   · `rules-read-the-body` against the decision claim — the layer that ships,
@@ -310,10 +310,16 @@ export const CLAIMS = {
  *   · `board-syncs` against the retention claim's first sentence, "the
  *     classifier reads a message's body to decide, then discards it". The clip
  *     is the READING — a pass of mail going in — and the exhibit beneath it is
- *     what comes out. Two halves of one sentence, in two media;
- *   · `import-classifies` against the access claim — the page's second CTA,
- *     which promised "it is parsed and classified in your browser" and had no
- *     evidence anywhere.
+ *     what comes out. Two halves of one sentence, in two media.
+ *
+ * THERE WERE THREE. `import-classifies` argued the access claim — the page's
+ * second CTA, which promises "it is parsed and classified in your browser" —
+ * and the owner retired it on 2026-08-20: the take never showed the file
+ * being chosen, and what it did show went past too fast to read. Its words
+ * came out of this file with it, because a caption for a clip nobody can
+ * watch is a claim with nothing behind it. The access phase carries the ask
+ * without an exhibit now (`AccessPhase`), and putting one back means
+ * recording the import path properly, not re-cutting this take.
  *
  * A FOURTH EXISTS AND IS DELIBERATELY NOT ON THE PAGE. `gmail-connects` is the
  * best privacy exhibit in the repository — Google's own consent screen stating
@@ -368,24 +374,6 @@ export const FOOTAGE = {
      */
     caption:
       "The demo board's own Sync, recorded there. The strip counts the pass — what it filed, and what it had already seen.",
-  },
-  import: {
-    /** Re-recorded 2026-08-19 (the owner's call: the button take showed no
-     *  process). The take is now the CTA's own sentence enacted — the export
-     *  arrives over the drop zone as a real file, the zone answers, it
-     *  lands, and the counters follow — so the words describe that arc. */
-    name:
-      "Screen recording: a sample mail export is dragged onto Applied's import page. The drop zone answers as the file arrives, the file lands, and under the on-device notice the counters appear — how many messages were scanned, how many were filed automatically and at what share, how many are held for review, and the format the file was read as.",
-    /**
-     * The caption's job is still the one thing a viewer might read as a
-     * fault — there is no progress bar between the drop and the counters —
-     * and it states that as the claim it is: the work happens in the tab the
-     * moment the file lands, so there is no wait to watch. The old caption
-     * apologised for a take that showed no arrival at all; the take shows
-     * the arrival now, and the caption scopes what happens after it.
-     */
-    caption:
-      "The import page, recorded on its public route. The export lands as a file and is read and classified the moment it arrives — in the tab, nothing uploaded, so there is no wait to watch.",
   },
 } as const;
 

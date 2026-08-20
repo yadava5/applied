@@ -31,16 +31,23 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  *      decision claim (08c) while the rules recording loops in the flow,
  *      the sync recording rides the RIGHT rail for retention while the kept
  *      record collapses in the flow;
- *   4  access (`AccessPhase`) — the same language, LEFT rail: the import
- *      recording pinned beside the page's one conversion surface, which the
- *      nav's "Get access" reaches at any depth;
+ *   4  access (`AccessPhase`) — the page's one conversion surface, which the
+ *      nav's "Get access" reaches at any depth. It HAD a left rail, pinning
+ *      the import recording beside the promise that recording evidenced;
+ *      the owner retired that clip on 2026-08-20 (scripts/footage/clips.mjs
+ *      says why) and the phase collapsed to a single column rather than
+ *      borrow another phase's exhibit to keep the rail occupied;
  *   5  the CLOSING ACT — full-stage pin again, playing on its own clock:
  *      once the scene is in view it runs to completion, slowed, while the
  *      pin holds the page (see ClosingAct for why it cannot be outrun).
  *
- * Full frame → right → left → right → left → full frame: the alternation is
- * the page's rhythm, the side-switch is what a phase change looks like, and
- * no section drops out of the language between the bookends.
+ * Full frame → right → left → right → the ask → full frame. The alternation
+ * is the page's rhythm and the side-switch is what a phase change looks
+ * like, and the ask is now the one beat that does not speak it — a cost of
+ * the import recording's removal, named here rather than glossed. Putting
+ * the beat back needs a recording of the import path worth watching; it does
+ * not need a rearrangement of the three exhibits the page already has, each
+ * of which is where it is because of the sentence beside it.
  *
  * NO `metadata` EXPORT, deliberately. This page INHERITS the root layout's
  * title ("Applied — your inbox, made legible"), description, OpenGraph and
@@ -77,8 +84,7 @@ export default function Landing() {
       {/* ---- the descent: the email behind the act, one claim per screen - */}
       <ClaimsDescent />
 
-      {/* The CTA in the spine's own language — the import recording pinned
-          beside the promise it evidences. A and C keep the shared
+      {/* The CTA on the spine's own gutter. A and C keep the shared
           `AccessSection` and are unchanged. */}
       <AccessPhase />
       <ClosingAct />

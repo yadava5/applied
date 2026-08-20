@@ -106,7 +106,15 @@ for (const id of scenes) {
       // the only symptom is a missing clip at the end of a successful-looking
       // render. renderStill is the one that takes `output`.
       outputLocation,
-      // No audio track at all: these clips are silent by construction.
+      // NO AUDIO TRACK — and this line is what makes that true. The comment
+      // that used to sit here said the clips were "silent by construction"
+      // and it was WRONG: every shipped file carried a real track (Opus in
+      // the webm, AAC in the mp4, ~317 kbit/s declared), because Remotion's
+      // `getShouldRenderAudio` answers "maybe" when it cannot see the asset
+      // list yet and "maybe" muxes a track. Silent is not absent — an absent
+      // track is bytes not spent and a decoder not set up, on clips the page
+      // plays `muted` and no visitor can ever hear.
+      muted: true,
       inputProps: {},
       ...opts,
     });

@@ -82,20 +82,23 @@ const DESKTOP_1024_768 = { width: 1024, height: 768 };
  *  exhibits are a fixed number of pixels tall in a fixed-width column — so the
  *  ratio the pin gate watches MOVES with the viewport, and it does not move
  *  monotonically: a short viewport squeezes the rail against its own exhibit,
- *  a tall one against its phase's runway. #access read 0.262 at 1024x768 and
- *  0.170 at this height on the same build, so a gate fixed at one height was
- *  structurally unable to see the failure. */
+ *  a tall one against its phase's runway. #access — a rail this page no
+ *  longer has — read 0.262 at 1024x768 and 0.170 at this height on the same
+ *  build, so a gate fixed at one height was structurally unable to see the
+ *  failure. The decision rail squeezes by the same mechanism and is the
+ *  page's tightest now, so the height corners matter MORE than they did. */
 const DESKTOP_1512 = { width: 1512, height: 949 };
 /** WIDE AND SHORT, and the reason the pin is measured at more than one WIDTH.
- *  This is where the tightest pin on the page lives — #access at 0.213, the
- *  whole page's minimum (`MIN_PIN_SHARE` decomposes it) — and until 2026-08-19
- *  no walk had ever visited it: width moves the rail by a different mechanism
- *  than height does, so a set of heights at one width cannot see it. Widening
- *  past 1024 wraps the flow column's prose shorter and takes 24px off #access's
- *  band, and passing 1280 grows every clip exhibit by 4px
- *  (`ProductClip`'s figcaption takes `xl:pt-1`), so the rail gains what the
- *  band loses. 1512 is where the owner works; every width from 1280 up reads
- *  the same, the container being capped at `max-w-6xl`. */
+ *  This was where the tightest pin on the page lived — #access at 0.213 —
+ *  and until 2026-08-19 no walk had ever visited it: width moves a rail by a
+ *  different mechanism than height does, so a set of heights at one width
+ *  cannot see it. #access is gone (see `STICKY_EXHIBIT`), which removes the
+ *  reading, NOT the mechanism: passing 1280 still grows every clip exhibit by
+ *  4px (`ProductClip`'s figcaption takes `xl:pt-1`) while a narrower column
+ *  wraps its band's prose longer, so the two axes still trade against each
+ *  other and a single-width set still could not see it. The corner stays
+ *  walked. 1512 is where the owner works; every width from 1280 up reads the
+ *  same, the container being capped at `max-w-6xl`. */
 const DESKTOP_1512_600 = { width: 1512, height: 600 };
 /** TALL, and the reason the pin is measured above 949 — permanently. The
  *  walked set has now been chosen after the measurement THREE times, and each
@@ -120,8 +123,11 @@ const TABLET_768 = { width: 768, height: 1024 };
  *  tweak that keeps the promise does not turn CI red. */
 const PROVENANCE = /A synthetic email .* computed live in this tab/;
 
-/** A pinned rail (`lg`+ only) — the page's spine is four of them now, one
- *  per phase, sides alternating (`ClaimsDescent`'s docblock). Below `lg` each
+/** A pinned rail (`lg`+ only) — the page's spine is three of them, one per
+ *  descent phase, sides alternating (`ClaimsDescent`'s docblock). It was
+ *  four: `#access` pinned the import recording until that clip was retired
+ *  on 2026-08-20, and with nothing honest to pin the phase collapsed to a
+ *  single column rather than borrow an exhibit (`AccessPhase` argues it). Below `lg` each
  *  screen carries its own inline snapshot, and those are the copies this must
  *  NOT measure.
  *
@@ -135,10 +141,10 @@ const PROVENANCE = /A synthetic email .* computed live in this tab/;
  *  staging actually removes. */
 const STICKY_EXHIBIT = "[data-rail]";
 /** How many rails the spine runs at `lg`+: verdict (right), decision (left),
- *  retention (right), access (left). A fifth means a phase forked its
- *  staging; three means one dropped out of the language the page was chosen
- *  for. */
-const RAIL_COUNT = 4;
+ *  retention (right). A fourth means a phase forked its staging — or that
+ *  `#access` grew a rail back, which needs a recording, not a rearrangement;
+ *  two means one dropped out of the language the page was chosen for. */
+const RAIL_COUNT = 3;
 
 /** How close to the sticky offset a sample has to read to count as PINNED.
  *  The plateau measured exactly 80px at 1024x768, but a 1px rounding drift
@@ -169,6 +175,18 @@ const PIN_LEAD = 120;
  *   1512x949    0.575  0.397  0.782  0.427
  *   1512x1080   0.576  0.345  0.792  0.471
  *   1024x1120   0.575  0.337  0.803  0.489
+ *
+ * THE FOURTH COLUMN IS HISTORY AS OF 2026-08-20. `#access` no longer runs a
+ * rail — the recording it pinned was retired and the phase collapsed rather
+ * than borrow another phase's exhibit — so the page's minimum is no longer
+ * 0.213 at a corner nobody had walked. Read off the three columns that
+ * remain, the tightest is the DECISION rail at 0.337 (1024x1120), with its
+ * beyond-range asymptote at 0.321 (2560x1440); the floor keeps more
+ * clearance than it had, and it is deliberately NOT raised to suit, because
+ * the number it has to survive is the next restaging's, not this one's.
+ * Those three columns are carried over from the run above rather than
+ * re-walked for this change — nothing in it touches the descent's bands —
+ * and a fresh six-viewport walk is owed before anyone quotes them as current.
  *
  * Beyond-range probes, because the two viewport-tall rails converge on an
  * asymptote rather than a cliff: decision reads 0.329 at 1920x1200 and
@@ -299,7 +317,7 @@ type RailWalk = {
  *
  * The walk runs in one `page.evaluate` with a rAF between scrolls rather than
  * as a Playwright scroll loop: the sticky position is layout, not script, so a
- * frame is all it needs, and ~130 samples across four rails would otherwise be
+ * frame is all it needs, and ~130 samples across the spine's rails would be
  * ~130 round trips.
  */
 async function walkRails(page: Page): Promise<RailWalk[]> {
@@ -453,7 +471,7 @@ async function playhead(page: Page): Promise<number> {
  * file's first red run (2026-08-20): `getByRole(…, { name })` is
  * case-insensitive SUBSTRING matching by default, so an unscoped
  * `{ name: "Play" }` resolved to SIX buttons — the act's Play, its own
- * Replay (contains "play"), three ProductClip transports and the closing
+ * Replay (contains "play"), the ProductClip transports and the closing
  * act's "Replay the closing sequence" — and the strict-mode violation meant
  * the take trio's real assertions never executed. Every locator here is
  * scoped to the act's section and matched exactly, so a transport joining
@@ -643,10 +661,11 @@ test.describe("landing (/)", () => {
    * through its own band and its `top` sampled; the reading is how much of the
    * band it spent HELD at its sticky offset. The numbers in my table move with
    * every copy edit and none of them are pinned here — only the share, against
-   * a threshold 6.1% below the tightest real reading: 0.20 against #access's
-   * 0.213 at 1512x600. `MIN_PIN_SHARE` decomposes that margin and names it
-   * from the other end — 1.3pp is 6.5% OF THE FLOOR — which is the same
-   * clearance, not a second number.
+   * a threshold below the tightest real reading. It was 6.1% below #access's
+   * 0.213 at 1512x600; #access no longer runs a rail (2026-08-20), so the
+   * tightest of the readings that remain is the decision rail's 0.337 and
+   * the floor sits well under it. `MIN_PIN_SHARE` carries the table and says
+   * why the floor is not being raised to close that gap back up.
    *
    * The pre-fix signature is a `top` that falls by exactly the scroll delta at
    * every sample (measured then, over six samples: 281 181 81 -19 -119 -219).
@@ -654,9 +673,9 @@ test.describe("landing (/)", () => {
    * BETWEEN consecutive samples that both read the offset, and 1:1 translation
    * cannot produce two of those in a row at a 24px stride.
    *
-   * EVERY rail, not just the one that broke. The spine's four rails are the
-   * same construction repeated, so the defect is available to all four, and
-   * three of them had no coverage of it either.
+   * EVERY rail, not just the one that broke. The spine's rails are the same
+   * construction repeated, so the defect is available to all of them, and
+   * the ones that did not break had no coverage of it either.
    *
    * SIX VIEWPORTS, AND THEY ARE THE CORNERS OF THE DESIGN RANGE rather than
    * a sample of it. This ran at 1024x768 alone on the reasoning that the pin
@@ -699,6 +718,11 @@ test.describe("landing (/)", () => {
    * their readings were evaluated but never watched go red. They run the one
    * code path `#access` reddened, so the path is proven able to fail; the
    * geometry of each of the three is not independently reddened.
+   *
+   * `#ACCESS` IS NO LONGER AVAILABLE AS THAT MUTATION (2026-08-20): the phase
+   * has no rail to collapse. The re-mutation below — one descent rail's band
+   * collapsed in-page at a time — is the live procedure now, and it covers
+   * every rail the page has.
    *
    * The mutation restored a 688px band on a 688px rail — a 0px runway, where
    * the historical defect had 1px — and the reading is not sensitive only at
@@ -808,7 +832,7 @@ test.describe("landing (/)", () => {
     // verdict chips have actually expanded (collapsed `grid-rows-[0fr]` gives
     // them a zero-height box, so `toBeVisible` discriminates).
     //
-    // The spine runs four rails now, so the verdict's is picked out by the
+    // The spine runs three rails, so the verdict's is picked out by the
     // one thing only it holds at `lg`+: the provenance line itself. (The
     // retention record carries the same line, but in the FLOW column — the
     // clip rails hold recordings, not emails.)
