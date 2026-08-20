@@ -132,7 +132,7 @@ const PROVENANCE = /A synthetic email .* computed live in this tab/;
  *  NOT measure.
  *
  *  It used to be `div.sticky.top-20`, and that stopped being a description of
- *  the spine: the three clip rails now resolve their sticky offset from the
+ *  the spine: the clip rails resolve their sticky offset from the
  *  viewport and their own exhibit's height (`top-[max(5rem,…)]`), because a
  *  viewport-tall box left its phase no runway to pin across. A utility class
  *  was never the right handle anyway — it made a rail's identity a styling
@@ -140,11 +140,14 @@ const PROVENANCE = /A synthetic email .* computed live in this tab/;
  *  being unstaged. `data-rail` names the phase and is what a rail losing its
  *  staging actually removes. */
 const STICKY_EXHIBIT = "[data-rail]";
-/** How many rails the spine runs at `lg`+: verdict (right), decision (left),
- *  retention (right). A fourth means a phase forked its staging — or that
- *  `#access` grew a rail back, which needs a recording, not a rearrangement;
- *  two means one dropped out of the language the page was chosen for. */
-const RAIL_COUNT = 3;
+/** How many rails the spine runs at `lg`+ since 2026-08-20 (the owner's
+ *  "five or six boxes aside from the oner"): verdict (right, the 02b take),
+ *  rules (left, the big box), review (right, the 08c take), row (left, the
+ *  tracked recording), retention (right). A sixth means a phase forked its
+ *  staging — or that `#access` grew a rail back, which needs a recording,
+ *  not a rearrangement; four means one dropped out of the language the page
+ *  was chosen for. */
+const RAIL_COUNT = 5;
 
 /** How close to the sticky offset a sample has to read to count as PINNED.
  *  The plateau measured exactly 80px at 1024x768, but a 1px rounding drift
@@ -165,28 +168,33 @@ const PIN_LEAD = 120;
  * The least share of its own band a rail may spend pinned — counting only the
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
- * MEASURED on `next build && next start` (2026-08-20, post-oner staging),
- * verdict / decision / retention / #access, at each of the six viewports
- * this walk runs:
+ * MEASURED on `next build && next start` (2026-08-20, five-rail restaging),
+ * verdict / rules / review / row / retention, at each of the six viewports
+ * this walk runs — taken with the design-side walk (same band arithmetic,
+ * stable-top plateau at tolerance 2 / step 24, no overhang netting, which
+ * is inert on this page anyway); this suite's own run is owed and is the
+ * canonical reading:
  *
- *   1024x600    0.593  0.574  0.748  0.236
- *   1024x768    0.582  0.479  0.774  0.355
- *   1512x600    0.593  0.580  0.743  0.213
- *   1512x949    0.575  0.397  0.782  0.427
- *   1512x1080   0.576  0.345  0.792  0.471
- *   1024x1120   0.575  0.337  0.803  0.489
+ *   1024x600    0.570  0.354  0.343  0.543  0.746
+ *   1024x768    0.547  0.469  0.357  0.647  0.773
+ *   1512x600    0.570  0.341  0.371  0.543  0.746
+ *   1512x949    0.531  0.578  0.343  0.705  0.777
+ *   1512x1080   0.533  0.619  0.333  0.746  0.798
+ *   1024x1120   0.536  0.628  0.321  0.765  0.800
  *
- * THE FOURTH COLUMN IS HISTORY AS OF 2026-08-20. `#access` no longer runs a
- * rail — the recording it pinned was retired and the phase collapsed rather
- * than borrow another phase's exhibit — so the page's minimum is no longer
- * 0.213 at a corner nobody had walked. Read off the three columns that
- * remain, the tightest is the DECISION rail at 0.337 (1024x1120), with its
- * beyond-range asymptote at 0.321 (2560x1440); the floor keeps more
- * clearance than it had, and it is deliberately NOT raised to suit, because
- * the number it has to survive is the next restaging's, not this one's.
- * Those three columns are carried over from the run above rather than
- * re-walked for this change — nothing in it touches the descent's bands —
- * and a fresh six-viewport walk is owed before anyone quotes them as current.
+ * The tightest is the REVIEW rail at 0.321 (1024x1120) — the viewport-tall
+ * take rail over two paced beats, the same dvh-paced shape whose asymptote
+ * the old decision rail measured at ~0.29 beyond range — with the RULES
+ * rail's short edge next at 0.341 (1512x600). The floor keeps more
+ * clearance than the old spine's tightest corner and is deliberately NOT
+ * raised to suit, because the number it has to survive is the next
+ * restaging's, not this one's.
+ *
+ * The paragraphs below this line predate the five-rail restaging: their
+ * numbers describe the three-rail spine and the retired `#access` rail, and
+ * are kept as the record of how this floor was set — the mechanisms they
+ * name (mb-14's price, the corner blind spots, the band-vs-runway
+ * denominator) are unchanged.
  *
  * Beyond-range probes, because the two viewport-tall rails converge on an
  * asymptote rather than a cliff: decision reads 0.329 at 1920x1200 and
@@ -563,6 +571,59 @@ test.describe("landing (/)", () => {
     // line never executes under the mutation above. It has been seen green
     // and has no isolating mutation of its own.
     await expect(act.pause).toBeVisible();
+  });
+
+  /**
+   * THE SHOT IS A SHOT. Production played a whole take with the camera
+   * parked — the pointer pressed the day bar, the board filtered, and the
+   * frame showed the shrunken board centred in a void, because the script's
+   * zooms were authored at absolute scale 1 (owner screenshot, 2026-08-20).
+   * Every gate was green: the take's logic ran, so nothing red existed to
+   * see. This is the assertion that was missing: the director now writes
+   * `data-cam-scale` on the frame each time it applies the camera
+   * (`applyCam`), and a take must actually TRAVEL — the range between the
+   * shallowest and deepest shot must be a real push-in, not jitter.
+   *
+   * 1024x1120 DELIBERATELY, not the working 1024x768: at tall frames the
+   * establishing fit clamps to 1.0 and the parked-camera defect reads a
+   * range of ~0.0, while at short frames the sub-1 establishing fit gives
+   * even a parked camera a spurious range (0.52 → 1.0 at 600 tall). The
+   * tall corner is where the defect is visible and ONLY the fix passes:
+   * fixed, the range there is ~1.26 (1.000 establishing → 2.26 close-up,
+   * held for seconds at a time, so 250ms sampling cannot miss it).
+   *
+   * MUTATION (watched red 2026-08-20, via the design-side twin of this
+   * exact poll — same bundle, same browser, same arithmetic; this suite is
+   * not run by the frontend agent): `punchTo` reverted to
+   * `zoomTo(target, 1)`. The take plays to completion, every narration
+   * assertion above stays green, and the observed range collapses to 0.000
+   * — this line is the only one that reds. Restored and watched green the
+   * same way; a first run of this suite itself is owed and is the
+   * canonical proof.
+   */
+  test("the camera arrives: the take's shots actually travel", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 1120 });
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    await expect
+      .poll(
+        async () => {
+          const v = await page.evaluate(
+            () => document.querySelector<HTMLElement>("[data-cam-scale]")?.dataset.camScale,
+          );
+          if (v) {
+            const n = Number(v);
+            min = Math.min(min, n);
+            max = Math.max(max, n);
+          }
+          return max - min;
+        },
+        { timeout: 30_000, intervals: [250] },
+      )
+      .toBeGreaterThanOrEqual(0.5);
   });
 
   test("the pause control freezes the clock, and the visitor's hand stands the take down", async ({

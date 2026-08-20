@@ -399,11 +399,12 @@ export const FOOTAGE = {
       "Screen recording: on Applied's board, a card is open on the mail behind it — an assessment invitation from Kestrel Dynamics, carrying the verdict the classifier reached for it and the deadline the message stated. The card is closed and the board's rows expand into the space it held. The frame then travels to the row itself, past the same deadline drawn on the row, and comes to rest with the row sitting in the board's assessment group.",
     /**
      * Two scopes in two short sentences, and the length is a CONSTRAINT, not
-     * a style: `ClaimsDescent`'s retention rail centres itself against
-     * `--exhibit`, a measured constant, and a caption that wraps to a third
-     * line grows the exhibit 21px and puts the pinned rail ~10px out against
-     * an approved render. Two lines at the rail's 480px measure, checked on a
-     * production build at 1024 and 1512.
+     * a style: `ClaimsDescent`'s row rail (where this clip rides since the
+     * five-rail restaging, 2026-08-20) centres itself against `--exhibit`, a
+     * measured constant, and a caption that wraps to a third line grows the
+     * exhibit ~21px and puts the pinned rail ~10px out against an approved
+     * render. Two lines at the rail's 480px measure, checked on a production
+     * build at 1024 and 1512.
      *
      * The second sentence is the storyboard's refusal turned into a sentence
      * rather than left to the staging: the pane is opened and its verdict
@@ -442,14 +443,88 @@ export const ARTIFACT = {
 } as const;
 
 /**
- * The held exhibit's wall labels (`HeldExhibit`, the decision rail — the
- * owner's 08c pick). The same device as the verdict rail's: the exhibit
- * changes state under the reader, so the label names the state. The GATE
- * itself is stated inside the exhibit by the product's own review queue
- * ("held because Applied wasn't sure · your decision files them") — these
- * lines stage it, they do not restate it.
+ * The held exhibit's wall labels (`HeldExhibit`, the owner's 08c pick). The
+ * same device as the verdict rail's: the exhibit changes state under the
+ * reader, so the label names the state. The GATE itself is stated inside the
+ * exhibit by the product's own review queue ("held because Applied wasn't
+ * sure · your decision files them") — these lines stage it, they do not
+ * restate it.
  */
 export const HELD = {
   mail: "A mail the rules will not guess about",
   queue: "It waits in the review queue — filed by you, never guessed",
+} as const;
+
+/**
+ * The rail takes' words (`RailTake` in `ClaimsDescent`) — the 02b and 08c
+ * picks running AS TAKES, the way they ran in the lab the owner chose them
+ * from: a pausable clock, narration per beat, autoplay once in view. The
+ * narration lines are the lab's own where the lab had them; the two beats
+ * the lab's 02b never staged (raw and split — its exhibit opened already
+ * lit) restate `CLAIMS.verdict.raw` / `.split`, never a new claim.
+ *
+ * NO DIGITS in any string here, the FOOTAGE rule for the same reason: these
+ * rails sit a screen from the benchmark, and a figure in an exhibit's own
+ * words reads as a second measurement.
+ *
+ * `resting` is the reduced-motion line: each take's exhibit RESTS at its
+ * most demonstrative state (the split verdicts; the settled queue), so the
+ * line's job is to say the surface is at rest, not to apologise for it.
+ */
+export const KEPT = {
+  label: "Live verdict — computed in your tab",
+  opening: "One mail, read past its preview — then reduced to the record.",
+  narration: [
+    "The mail as Gmail hands it over. The preview ends where the inviting begins.",
+    "Read twice, live in your tab: the preview alone looks routine — the whole body holds the invitation.",
+    "Now the mail dissolves. This is Applied's copy — your Gmail keeps the original.",
+    "Even the lit phrases go: read and used, never stored. What remains is the record.",
+  ],
+  resting: "Motion is off — the two verdicts are still computed live in your tab.",
+} as const;
+
+export const HELD_TAKE = {
+  label: "The real review queue — the shipped component",
+  opening: "A held mail doesn't disappear; watch where it goes.",
+  narration: [
+    "The mail Applied wouldn't guess about.",
+    "It isn't filed and it doesn't vanish — it takes its place in the review queue, question still open.",
+    "Nothing moves until you decide: the mail keeps its place, the board keeps its truth.",
+  ],
+  resting: "Motion is off — the mail rests where the product holds it: in the review queue.",
+} as const;
+
+/**
+ * The decision phase's second half, split into its own beat (2026-08-20).
+ * One phase was carrying two ideas — what the rules do, and what they do
+ * when they cannot — and the held exhibit's claim column was the benchmark's
+ * leftovers. Nothing here is a new claim: the gate is the review queue's own
+ * chrome ("held because Applied wasn't sure · your decision files them"),
+ * the accept bar is `RULES_ACCEPT` — the constant the import page ships —
+ * and "the record keeps that it was your decision" is what the correction
+ * store actually writes.
+ */
+export const REVIEW = {
+  eyebrow: "When it isn't sure",
+  headline: "Not every mail gets a verdict. That's the point.",
+  body:
+    "Cedar's note commits to nothing — no next step, no decision, just patience requested. The rules read it whole and come back under their own accept bar, and a score under the bar is not a verdict.",
+  gate:
+    "So the mail is held, not filed: it joins the review queue on your board, question still open. Your decision files it — and the record keeps that it was your decision, not a guess.",
+} as const;
+
+/**
+ * The tracked clip's claim beat. This is the hero's own sentence — "Applied
+ * moves the row for you" — promoted from a passing clause to the beat the
+ * recording evidences: the storyboarded "ride the letter" take ends on the
+ * row sitting in its group with the mail's deadline drawn on it. No number,
+ * no new capability: everything stated here is inside the frame beside it.
+ */
+export const ROW = {
+  eyebrow: "What you see",
+  headline: "The mail becomes the move.",
+  body:
+    "An assessment invitation, already read — and the row it left behind, already sitting in the board's assessment group with the deadline the mail stated drawn on it. Applied moves the row for you; that is the hero's whole promise, on camera.",
+  aside:
+    "The mail that moved it stays one click away, behind the row it moved — the trail the take opens on.",
 } as const;

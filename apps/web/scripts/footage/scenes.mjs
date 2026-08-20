@@ -57,10 +57,11 @@ export const MAX_CROP_W = 580;
  * 576-wide window is exactly the encode's native pixels: `Clip.tsx`'s
  * `k = width / frame.width` lands on 2.0 and nothing is scaled either way.
  * 155 because that is what 576 gives at the shape of the picture this clip is
- * placed in: the landing's retention rail renders 478 x 128.63 CSS px on a
+ * placed in: the landing's 30rem clip rails render 478 x 128.63 CSS px on a
  * production build, measured at 1024 and 1512, which is 1152:310 — the aspect
- * the sync recording already encodes at, and the reason a tracked clip can
- * take that rail without moving `--exhibit` by a pixel.
+ * the sync recording already encodes at. The clip landed on the retention
+ * rail and rides its own row rail since the five-rail restaging
+ * (2026-08-20); both share the geometry this frame was derived for.
  */
 const FRAME = { width: 576, height: 155 };
 

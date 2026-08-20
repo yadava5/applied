@@ -23,14 +23,17 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  *      pressed, the board narrows, Kestrel's row opens on its mail trail,
  *      the filter clears — on the closing act's pin-and-play clock, pausable
  *      and disarmed by reduced motion (`WindowAct` / `OnerStage`);
- *   3  the descent (`ClaimsDescent`) — three phases, each one column PINNED
- *      while the other flows past, the pinned side switching at every phase
- *      boundary: the email rides the RIGHT rail for the verdict claim and
- *      escalates raw → split → dissolve → the kept record (02b), the held
- *      mail settles into the real review queue on the LEFT rail for the
- *      decision claim (08c) while the rules recording loops in the flow,
- *      the sync recording rides the RIGHT rail for retention while the kept
- *      record collapses in the flow;
+ *   3  the descent (`ClaimsDescent`) — FIVE phases now (the owner's call,
+ *      2026-08-20: "five or six boxes aside from the oner", sides strictly
+ *      alternating), each one column PINNED while the other flows past, and
+ *      the rails running as TAKES — narrated, autoplaying, pausable — the
+ *      way the owner picked them off the motion lab: the email plays raw →
+ *      split → dissolve → the kept record on the RIGHT (02b), the rules
+ *      recording rides the LEFT as the page's one BIG box, the held mail
+ *      settles into the real review queue on the RIGHT (08c), the tracked
+ *      "ride the letter" recording rides the LEFT against the hero's own
+ *      promise (03c-i), and the sync recording rides the RIGHT for
+ *      retention while the kept record collapses in the flow;
  *   4  access (`AccessPhase`) — the page's one conversion surface, which the
  *      nav's "Get access" reaches at any depth. It HAD a left rail, pinning
  *      the import recording beside the promise that recording evidenced;
@@ -41,13 +44,12 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  *      once the scene is in view it runs to completion, slowed, while the
  *      pin holds the page (see ClosingAct for why it cannot be outrun).
  *
- * Full frame → right → left → right → the ask → full frame. The alternation
- * is the page's rhythm and the side-switch is what a phase change looks
- * like, and the ask is now the one beat that does not speak it — a cost of
- * the import recording's removal, named here rather than glossed. Putting
- * the beat back needs a recording of the import path worth watching; it does
- * not need a rearrangement of the three exhibits the page already has, each
- * of which is where it is because of the sentence beside it.
+ * Full frame → R → L → R → L → R → the ask → full frame. The alternation is
+ * the page's rhythm and the side-switch is what a phase change looks like;
+ * the ask stays the one beat without an exhibit — putting one back needs a
+ * recording of the import path worth watching, not a rearrangement of the
+ * five the page already has, each of which is where it is because of the
+ * sentence beside it.
  *
  * NO `metadata` EXPORT, deliberately. This page INHERITS the root layout's
  * title ("Applied — your inbox, made legible"), description, OpenGraph and
