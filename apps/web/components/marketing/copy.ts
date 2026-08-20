@@ -375,6 +375,40 @@ export const FOOTAGE = {
     caption:
       "The demo board's own Sync, recorded there. The strip counts the pass — what it filed, and what it had already seen.",
   },
+  letter: {
+    /**
+     * The name has to carry a CAMERA MOVE, which none of the others do: this
+     * recording's frame travels, so a reader who cannot see it needs to know
+     * that the mail and the row are two places on one board rather than two
+     * screens. Written as the shot happens, in order.
+     *
+     * NO DIGITS, anywhere in this block. `landing-variants.test.mjs` asserts
+     * it, and the reason is not tidiness: the recordings sit a screen from the
+     * benchmark, so a figure in a clip's own words reads as a second
+     * measurement of the same thing. The confidence and the date are IN THE
+     * FRAME, where they belong to one email; naming them out here would lift
+     * them out of that scope. So this says "the verdict the classifier reached
+     * for it" rather than the number it reached.
+     */
+    name:
+      "Screen recording: on Applied's board, a card is open on the mail behind it — an assessment invitation from Kestrel Dynamics, carrying the verdict the classifier reached for it and the deadline the message stated. The card is closed and the board's rows expand into the space it held. The frame then travels to the row itself, past the same deadline drawn on the row, and comes to rest with the row sitting in the board's assessment group.",
+    /**
+     * Two scopes in two short sentences, and the length is a CONSTRAINT, not
+     * a style: `ClaimsDescent`'s retention rail centres itself against
+     * `--exhibit`, a measured constant, and a caption that wraps to a third
+     * line grows the exhibit 21px and puts the pinned rail ~10px out against
+     * an approved render. Two lines at the rail's 480px measure, checked on a
+     * production build at 1024 and 1512.
+     *
+     * The second sentence is the storyboard's refusal turned into a sentence
+     * rather than left to the staging: the pane is opened and its verdict
+     * resolved before a frame is recorded, so no moment of this clip can be
+     * read as the arrival deciding anything. The first names the provenance
+     * the way the other captions do.
+     */
+    caption:
+      "The board this page runs live, recorded off it: an assessment invitation, and the row it left behind. Nothing is classified on camera.",
+  },
 } as const;
 
 /**

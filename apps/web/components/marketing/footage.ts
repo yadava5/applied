@@ -16,6 +16,10 @@
 export const CLIPS = {
   rulesReadTheBody: { id: "rules-read-the-body", width: 1152, height: 630 },
   boardSyncs: { id: "board-syncs", width: 1152, height: 310 },
+  // Same 1152:310 as the sync recording, and not by coincidence: it is a
+  // TRACKED clip framed for the retention rail's own picture (478 x 128.63 on
+  // a production build), so it takes that rail without moving `--exhibit`.
+  oneLetter: { id: "one-letter", width: 1152, height: 310 },
 } as const;
 
 export type Clip = (typeof CLIPS)[keyof typeof CLIPS];
