@@ -480,10 +480,11 @@ export function ClaimsDescent() {
       </div>
 
       {/* ---- retention: the spine hands back to the RIGHT. The pinned
-              exhibit is the READING — a pass of mail going in, counted by the
-              strip that counts it (`PRIVACY.retention` opens "the classifier
-              reads a message's body to decide, then discards it", and this is
-              the first of those two events). What a read message leaves
+              exhibit is the READING — one message, and the row it left on the
+              board (`PRIVACY.retention` opens "the classifier reads a
+              message's body to decide, then discards it", and this is the
+              first of those two events; the sync recording it replaced counted
+              a whole pass, which argued the volume and never the message). What a read message leaves
               behind — the record — stays IN THE FLOW beside the paragraph it
               enacts: it arrives as the email and, as the reader crosses the
               sentence that says the body is discarded, the body is
@@ -498,9 +499,9 @@ export function ClaimsDescent() {
               inline={
                 <ProductClip
                   stack
-                  clip={CLIPS.boardSyncs}
-                  name={FOOTAGE.sync.name}
-                  caption={FOOTAGE.sync.caption}
+                  clip={CLIPS.oneLetter}
+                  name={FOOTAGE.letter.name}
+                  caption={FOOTAGE.letter.caption}
                 />
               }
             >
@@ -553,9 +554,12 @@ export function ClaimsDescent() {
               it on the phase's closing line, and `--exhibit` carries the two
               measured heights the `xl:pt-1` on the caption produces — the
               decision rail above argues all four. Here that is 263.9px below
-              `xl` and 267.9px from `xl` on: the sync recording is a wide, short
-              crop, so it is the shortest box on the page and the one whose old
-              viewport-tall box wasted the most runway. */}
+              `xl` and 267.9px from `xl` on: this rail's recording is a wide,
+              short frame, so it is the shortest box on the page and the one
+              whose old viewport-tall box wasted the most runway. The two
+              constants are UNTOUCHED by the change of clip — `one-letter` is
+              framed at the same 1152:310 the sync recording encoded at, which
+              is what let a tracked shot take this rail without a re-measure. */}
           <div className="hidden lg:block">
             <div
               data-rail="retention"
@@ -563,9 +567,9 @@ export function ClaimsDescent() {
             >
               <ProductClip
                 stack
-                clip={CLIPS.boardSyncs}
-                name={FOOTAGE.sync.name}
-                caption={FOOTAGE.sync.caption}
+                clip={CLIPS.oneLetter}
+                name={FOOTAGE.letter.name}
+                caption={FOOTAGE.letter.caption}
               />
             </div>
           </div>
