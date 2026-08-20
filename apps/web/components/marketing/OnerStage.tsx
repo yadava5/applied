@@ -71,16 +71,27 @@ const take = async (d: Director) => {
 
   d.say(ACT.narration[2]);
   await d.click(() => tallestDayBar(d));
-  await d.hold(500); // the board's own glide carries the survivors into place
   d.say(ACT.narration[3]);
-  await d.zoomTo(() => d.query('[data-testid="worklist-pane"]'), 1, 1500);
-  await d.hold(1600);
+  // One beat of the board's own glide, then the camera FOLLOWS the collapse
+  // rather than reacting to it: the filter empties most of the stage in
+  // ~200ms, and a camera that sat out a long hold left the shrunken board
+  // floating in the frame's void for two seconds at tall viewports
+  // (measured at 1024x1120 on the production build). `punchTo`, never an
+  // authored scale: the survivors are what must fill the frame, and how much
+  // scale that takes depends on the frame and on how far the board just
+  // shrank — see the director's docblock for the production screenshot the
+  // authored `zoomTo(…, 1)` earned here.
+  await d.hold(220);
+  await d.punchTo(() => d.find('[data-testid="worklist-pane"]'), 1500);
+  await d.hold(1900);
 
   const kestrel = () => d.query('button[aria-label^="Open Kestrel Dynamics"]');
   await d.click(kestrel);
   await d.waitFor(() => d.query('[data-testid="application-detail"]'), 6000, "the detail pane");
   d.say(ACT.narration[4]);
-  await d.zoomTo(() => d.query('[data-testid="application-detail"]'), 1, 1600);
+  // Top-aligned: the pane is taller than most frames, and the beat's line
+  // names its head — the assessment, its deadline — not its middle.
+  await d.punchTo(() => d.find('[data-testid="application-detail"]'), 1600, 0.85, "top");
   await d.hold(2600);
 
   const clear = () => d.query('[data-testid="pulse-filter-band"] button');
@@ -154,6 +165,14 @@ export function OnerStage({
         console.warn("[window-act] take failed:", err);
         onCaption(ACT.failed);
         onPhase("failed");
+        // And it must not strand the camera mid-shot: whatever beat it died
+        // on, the frame glides home to the whole board — the same resting
+        // composition the visitor's own hand buys. A failed take may not
+        // leave a crop, or a void, as its last word.
+        takeActiveRef.current = false;
+        void d.fitAll(600).catch(() => {
+          // Cancelled by a replay remount — nothing to recover.
+        });
       });
   }, [frameRef, onCaption, onPhase]);
 

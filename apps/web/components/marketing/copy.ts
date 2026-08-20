@@ -84,8 +84,13 @@ export const BOARD = {
   /** The window act's variant of the same honesty line: the take drives the
    *  board with a synthesized pointer, and that has to be declared in the
    *  same breath as "not a video" — while the visitor's own hand still wins
-   *  (the components stay real and interactive under the take). */
-  take: "Live fixture data — the shipped board, a synthesized pointer. Your hand wins: drag a card, open a row.",
+   *  (the components stay real and interactive under the take). Two ideas,
+   *  short: it sits in caps beside the transport while a take is playing,
+   *  and the earlier three-clause version was furniture competing with the
+   *  exhibit. "Drag a card, open a row" belongs to the resting line
+   *  (`BOARD.live`); the stand-down line (`ACT.yours`) already invites the
+   *  hand in prose when the take ends. */
+  take: "Live fixture data, a synthesized pointer — your hand wins.",
   still: "A still of the board. The interactive board needs a wider screen.",
   open: "Open the full demo",
 } as const;
