@@ -16,7 +16,7 @@ import { ACT } from "../../components/marketing/copy";
  *     fold at the shortest supported viewport, in the stage where the
  *     verdicts are on screen.
  *  2. THE RAIL PIN — every pinned rail holds at its sticky offset for at
- *     least `MIN_PIN_SHARE` of its own band, at the four corner viewports of
+ *     least `MIN_PIN_SHARE` of its own band, at the six corner viewports of
  *     the design range. Do not weaken this to fit an exhibit; reshape the
  *     exhibit.
  *
@@ -28,10 +28,16 @@ import { ACT } from "../../components/marketing/copy";
  * went with it: their subject no longer exists. Git history holds them, with
  * their mutation evidence, should the choreography ever be recalled. What
  * covers the oner now is the take trio below (autoplay + narration, the
- * pause control, reduced-motion disarm) — WRITTEN BLIND, in a session that
- * could not run Playwright: no run of them has been watched go red or green,
- * and the first labrat run should treat them as under calibration rather
- * than as settled instruments.
+ * pause control, reduced-motion disarm). They were WRITTEN BLIND, in a
+ * session that could not run Playwright, and that history is kept rather
+ * than tidied away because it is how a false mutation recipe got into this
+ * file. The debt is now discharged: all three have been watched go red on a
+ * named mutation and green again on the restored file (2026-08-20), and
+ * each recipe now sits at the assertion it actually reddens rather than one
+ * standing for a group — a group recipe is what hid a double-gated
+ * assertion here. Where a line rides on the assertion above it (`expect`
+ * fails fast, so it is evaluated but never watched red), that is named
+ * rather than claimed as coverage.
  *
  * WHY PRODUCTION-ONLY. `next dev` re-renders every route per request and
  * this page is a static prerender whose board mounts client-side; a dev run
@@ -485,9 +491,16 @@ test.describe("landing (/)", () => {
 
   /**
    * THE TAKE TRIO — the workday oner's own gates, replacing the scrubbed
-   * act's suite (see the header). All three were WRITTEN BLIND: no run has
-   * been watched go red or green, and the first labrat run should calibrate
-   * their waits before trusting either colour.
+   * act's suite (see the header). All three were WRITTEN BLIND, in a session
+   * that could not run Playwright; all three have since been watched red and
+   * green, each mutation on its own `next build && next start` (2026-08-20).
+   * Every strip assertion and every count carries the mutation that reddens
+   * IT; the transport-visibility lines that follow one of those are
+   * evaluated but never watched red, and are named as such below rather
+   * than counted as coverage. The blind period is recorded and not erased:
+   * the
+   * first recipe written for the reduced-motion counts was never run, and
+   * when it finally was it passed — see the note there.
    *
    * The narration line is addressed by copy (`ACT.narration`, imported), so
    * a retimed script cannot silently detach these from the words the reader
@@ -505,12 +518,14 @@ test.describe("landing (/)", () => {
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
     // The opening line gives way to the first narrated beat.
     const act = theAct(page);
-    await expect(act.strip).toHaveText(ACT.narration[0], { timeout: 20_000 });
-    // A >5s autoplaying surface owes its viewer a pause (WCAG 2.2.2), in the
-    // frame's own chrome.
     // MUTATION (watched red 2026-08-20, first run): ACT.narration[0] deleted
     // from the script — the take played its other six beats in order and
-    // this line simply never appeared.
+    // this line simply never appeared. It isolates THIS assertion only.
+    await expect(act.strip).toHaveText(ACT.narration[0], { timeout: 20_000 });
+    // A >5s autoplaying surface owes its viewer a pause (WCAG 2.2.2), in the
+    // frame's own chrome. NAMED, NOT CLAIMED: `expect` fails fast, so this
+    // line never executes under the mutation above. It has been seen green
+    // and has no isolating mutation of its own.
     await expect(act.pause).toBeVisible();
   });
 
@@ -532,19 +547,24 @@ test.describe("landing (/)", () => {
     // press stands the take down, the strip says whose board it is now, and
     // the replay control remains the way back into the take.
     await act.section.getByTestId("pipeline-board").click({ position: { x: 20, y: 20 } });
-    // MUTATION TO RUN (never yet watched red — the first cut of this test
-    // died on an unscoped locator before reaching here): delete the
-    // `isTrusted` stand-down listener from OnerStage. The take then stays
-    // merely PAUSED under this click, so the strip keeps its last narration
-    // line instead of ACT.yours, and the Play control below survives.
+    // MUTATION (watched red 2026-08-20): delete the `isTrusted` stand-down
+    // listener from OnerStage. The take then stays merely PAUSED under this
+    // click, so the strip keeps its last narration line instead of ACT.yours
+    // and this line is the one that goes red. It isolates THIS assertion and
+    // nothing below it: `expect` fails fast, so the Play-count line further
+    // down never executes under this mutation and needs its own.
     await expect(act.strip).toHaveText(ACT.yours);
     await expect(act.replay).toBeVisible();
     // THE DISCRIMINATOR, and why it is both counts: a merely-paused take
     // still renders the toggle (reading "Play"), so `Pause` at zero is true
     // of pause AND of stand-down and proves nothing. Only the stood-down
-    // state — the phase has left "playing" — clears the whole toggle. Under
-    // the stand-down mutation above, `play` reads 1 here and this is the
-    // line that goes red.
+    // state — the phase has left "playing" — clears the whole toggle.
+    // MUTATION (watched red 2026-08-20), and it is NOT the one above: keep
+    // the `isTrusted` listener and drop only `onPhase("done")` from
+    // `takeOver`. The strip assertion passes, the `pause` count passes at 0,
+    // and the `play` count reads 1 — which is also the direct proof that
+    // both counts are needed, since the old single-count assertion would
+    // have been green on that same defect.
     await expect(act.pause).toHaveCount(0);
     await expect(act.play).toHaveCount(0);
   });
@@ -561,15 +581,29 @@ test.describe("landing (/)", () => {
     const act = theAct(page);
     // MUTATION (watched red 2026-08-20): ACT.resting never swapped in.
     await expect(act.strip).toHaveText(ACT.resting);
-    // MUTATION TO RUN for the three counts (never yet watched red — the
-    // first cut died on an unscoped Replay locator that caught the closing
-    // act's): render the transport regardless of `armed` in WindowAct (drop
-    // the `armed &&` gate) for the two buttons; render the cursor overlay in
-    // OnerStage's `disarmed` branch for the pointer. Each count then reads 1
-    // on its own line.
+    // THE TWO TRANSPORT COUNTS ARE DOUBLE-GATED, and the recipe that
+    // forgot it was GREEN. Under reduced motion `disarmed = reduced !==
+    // false` is true, so OnerStage returns the resting board before any
+    // effect runs, every effect early-returns on `disarmed`, `start()` is
+    // never reached, and `phase` can never leave "idle". Both inner gates in
+    // WindowAct — `phase === "playing"` on the pause/play toggle,
+    // `phase !== "idle"` on replay — therefore stay shut whatever `armed`
+    // does. That is defence in depth and it stays; it just means dropping
+    // `armed &&` alone reddens NOTHING here (run, and green in 758ms with
+    // the gate gone from the served bundle), so each count needs the phase
+    // seeded as well.
+    // MUTATION (watched red 2026-08-20, own build): drop `armed &&` in
+    // WindowAct AND seed `useState<OnerPhase>("playing")` — `pause`
+    // received 1.
     await expect(act.pause).toHaveCount(0);
+    // MUTATION (watched red 2026-08-20, own build): drop `armed &&` AND seed
+    // `useState<OnerPhase>("done")` — `replay` received 1, resolving to
+    // exactly one element. The pause count above passes first under this
+    // one, which is what proves the two counts discriminate independently.
     await expect(act.replay).toHaveCount(0);
     // And no synthesized pointer exists to move.
+    // MUTATION (watched red 2026-08-20): render the cursor in OnerStage's
+    // `disarmed` branch. Single-gated, so this one needs no seeded phase.
     await expect(act.pointer).toHaveCount(0);
   });
 
@@ -591,7 +625,10 @@ test.describe("landing (/)", () => {
    * through its own band and its `top` sampled; the reading is how much of the
    * band it spent HELD at its sticky offset. The numbers in my table move with
    * every copy edit and none of them are pinned here — only the share, against
-   * a threshold ~40% below the tightest real one (`MIN_PIN_SHARE`).
+   * a threshold 6.1% below the tightest real reading: 0.20 against #access's
+   * 0.213 at 1512x600. `MIN_PIN_SHARE` decomposes that margin and names it
+   * from the other end — 1.3pp is 6.5% OF THE FLOOR — which is the same
+   * clearance, not a second number.
    *
    * The pre-fix signature is a `top` that falls by exactly the scroll delta at
    * every sample (measured then, over six samples: 281 181 81 -19 -119 -219).
@@ -603,7 +640,7 @@ test.describe("landing (/)", () => {
    * same construction repeated, so the defect is available to all four, and
    * three of them had no coverage of it either.
    *
-   * FOUR VIEWPORTS, AND THEY ARE THE CORNERS OF THE DESIGN RANGE rather than
+   * SIX VIEWPORTS, AND THEY ARE THE CORNERS OF THE DESIGN RANGE rather than
    * a sample of it. This ran at 1024x768 alone on the reasoning that the pin
    * is a fact about the band and the rail and both are `vh`-paced — which is
    * false: a rail's exhibit is a fixed number of pixels tall in a fixed-width
@@ -611,10 +648,17 @@ test.describe("landing (/)", () => {
    * monotonically. A short viewport squeezes a rail against its own exhibit; a
    * tall one squeezes it against its phase's runway; and WIDTH moves both by a
    * third mechanism, which is what the three-viewport version still could not
-   * see. 768 is where the original crop was found; 949 is where the
-   * viewport-tall staging's 0.170 hid (it read 0.262 at 768, under a gate that
-   * only ran there); 1024x600 is the shortest the page is designed for; and
-   * 1512x600 is where the page's real minimum lives, 0.213. `MIN_PIN_SHARE`
+   * see. The walked set is {1024, 1512} x {600, 768/949, 1080/1120}, six in
+   * all: 1024x600 is the shortest the page is designed for; 768 is where the
+   * original crop was found; 1512x600 is where the page's real minimum
+   * lives, 0.213; 949 is where the viewport-tall staging's 0.170 hid (it
+   * read 0.262 at 768, under a gate that only ran there); and 1512x1080 and
+   * 1024x1120 are the TALL corners. HEIGHT EARNED ITS OWN CORNER because a
+   * viewport-tall rail grows 1:1 with dvh while a content-paced band does
+   * not, so the share bleeds away linearly above ~1075px — the take
+   * rework's staging read 0.305 at 949 and 0.191 at 1512x1080 — and a
+   * short-only set is structurally unable to see a tall squeeze, the same
+   * way a single-width set was unable to see a wide one. `MIN_PIN_SHARE`
    * carries the readings and the argument for why the corners, and not a
    * midpoint, are the thing to walk.
    *
