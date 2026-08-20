@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
 import { ACT, HELD_TAKE, KEPT } from "../../components/marketing/copy";
@@ -534,6 +534,46 @@ function theRailTake(page: Page, rail: "verdict" | "review") {
   };
 }
 
+/**
+ * The descent exhibit's two live verdicts, addressed by the product's OWN
+ * attributes (`data-verdict-chip`, `data-verdict-chips`, added to
+ * `VerdictEmail` for this gate). A loose locator has sat here twice and cost
+ * the fold test the same block both times — `.locator("p").first()`, then
+ * `getByText("whole body")`. The second is substring matching, and the
+ * beat's narration quotes the chip verbatim ("the preview alone looks
+ * routine — the whole body holds the invitation"), so at the split beat it
+ * resolves 2 nodes inside the rail: strict-mode violation, and `expect`
+ * fails fast, so the containment assertions below it never ran.
+ *
+ * `exact: true` is not the fix, and the reason is worth stating because it
+ * looks like one. MEASURED at the split beat, production build (2026-08-20):
+ * inside the rail it resolves 1, but page-wide it resolves 6 — the other
+ * mounts of the same exhibit — so it is scope, not exactness, doing the
+ * work, and what is left is a locator that stays unique only while the chip
+ * is its own element and no beat is reworded to END on that phrase. Both
+ * prior breaks were exactly that kind of contingency coming due. An
+ * attribute is an address: an element added ahead of it, a restyle, or a
+ * rewritten script cannot re-ambiguate it.
+ *
+ * `box` is the element the collapse ZEROES — `grid-rows-[0fr]` on its grid
+ * parent, and Playwright's visibility check is a non-empty box — so `box` is
+ * the only handle here that can actually read "the verdicts are open". A
+ * chip cannot, and that was MEASURED rather than assumed: on the page's own
+ * collapsed mount of this exhibit (the record at rest, same production
+ * build) the chips box read 414x0 and INVISIBLE while the chip inside it
+ * read VISIBLE with a 187x97.9 box — the clip is an ancestor's
+ * `overflow-hidden`, which Playwright's visibility check does not resolve.
+ * So the chips are asserted by COUNT; a `toBeVisible` on a chip would be one
+ * more check that cannot fail.
+ */
+function theVerdictChips(scope: Locator) {
+  return {
+    box: scope.locator("[data-verdict-chips]"),
+    preview: scope.locator("[data-verdict-chip='preview only']"),
+    body: scope.locator("[data-verdict-chip='whole body']"),
+  };
+}
+
 test.describe("landing (/)", () => {
   test.skip(
     !PROD_BUILD,
@@ -671,14 +711,17 @@ test.describe("landing (/)", () => {
    * camera reads 0.476 of range for free off the sub-1 establishing fit,
    * 0.024 under the 0.5 floor, and any small lift to that fit turns the
    * corner green on a broken camera. What DOES separate is DEPTH: a parked
-   * camera's deepest write is exactly 1.000, an authored constant emitted
-   * verbatim, while a computed close-up pushes past natural scale (measured
-   * 2026-08-20, production build: max 1.605 — the live cover bound riding
-   * the filtered board — with the fill bound's 1.12 as the independent
-   * backstop if the fixture ever reshapes). The floor sits at 1.06: the
-   * parked side cannot drift — a constant is not a measurement — so the
-   * clearance budget belongs entirely to the real side, under both computed
-   * drivers.
+   * camera's deepest write is its AUTHORED constant, give or take the cover
+   * floor's own correction — exactly 1.000 where the punch is parked at
+   * `zoomTo(target, 1)` AND `followCover` is dropped, and 1.017 where the
+   * scale is parked at 1 with the cover floor left armed (both measured
+   * 2026-08-20, production build) — while a computed close-up pushes past
+   * natural scale (max 1.605 — the live cover bound riding the filtered
+   * board — with the fill bound's 1.12 as the independent backstop if the
+   * fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
+   * parked variants with room: an authored scale plus a floor correction is
+   * not a measurement of the shot, so the clearance budget belongs entirely
+   * to the real side, under both computed drivers.
    *
    * AND THE FRAME STAYS FULL, watched PER FRAME, not per poll. The owner's
    * void, third report: the day filter shrinks the board while the camera
@@ -1112,6 +1155,26 @@ test.describe("landing (/)", () => {
    * both deterministic (the beat holds 3.8s against a ~100ms poll, and
    * Pause freezes the clock) and the exact scenario the defect was
    * measured in.
+   *
+   * AND IT LOST THE SAME BLOCK A SECOND TIME, in that very rewrite: the
+   * split check below addressed the chips as `getByText("whole body")`,
+   * which is SUBSTRING matching, and the beat's own narration line quotes
+   * that phrase — strict-mode violation, and `expect` fails fast, so the
+   * containment assertions had STILL never executed. They execute for the
+   * first time from the commit that added `theVerdictChips` (2026-08-20).
+   * Read 8045d5a's message with that in mind: "watched red on the reverted
+   * fix: -10.6px through the new drive" was NOT measured through this spec —
+   * this spec stopped at the chip locator, three lines above the margin —
+   * but on a design-side twin of the drive using a different locator. The
+   * red is real and reproduces here (see the recipe below); the instrument
+   * named in that message was not this one.
+   *
+   * WATCHED RED, from this file, on this drive (2026-08-20, `next build &&
+   * next start`, 1024x600): `ClaimsDescent.tsx` restored byte-exact from
+   * 8fd2a30 — the `top-20` + `py-4` rails, the historical defect, not a
+   * synthetic break — reds THIS test's containment assertion at -10.625px,
+   * with the drive intact all the way to it. Green again on the restored
+   * file (`shasum -a 256` identical before and after).
    */
   test("the exhibit's provenance line stays inside the fold at 1024x600", async ({ page }) => {
     await page.setViewportSize(DESKTOP_1024);
@@ -1135,11 +1198,14 @@ test.describe("landing (/)", () => {
     await rail.pause.click();
     await expect(rail.play).toBeVisible();
 
-    // Parked at split for real: both live verdict chips have actually
-    // expanded (collapsed `grid-rows-[0fr]` gives them a zero-height box, so
-    // `toBeVisible` discriminates).
-    await expect(rail.self.getByText("preview only")).toBeVisible();
-    await expect(rail.self.getByText("whole body")).toBeVisible();
+    // Parked at split for real: the verdicts' box has actually opened. That
+    // box is the element the collapse zeroes, so `toBeVisible` reads the beat
+    // here — a chip cannot, see `theVerdictChips` — and the two chips are
+    // then asserted present, one each.
+    const chips = theVerdictChips(rail.self);
+    await expect(chips.box).toBeVisible();
+    await expect(chips.preview).toHaveCount(1);
+    await expect(chips.body).toHaveCount(1);
 
     await settledHeight(page, "[data-rail='verdict'] > div");
 

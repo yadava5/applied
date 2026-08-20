@@ -57,7 +57,12 @@ function Chip({
   fired?: boolean;
 }) {
   return (
+    // `data-verdict-chip` is the chip's ADDRESS, for the fold gate that has to
+    // find it (landing.spec.ts). Its words are quoted in the take's narration,
+    // so a text match resolves the narration line too — an addressable handle
+    // is what stops that gate losing itself to a strict-mode violation.
     <div
+      data-verdict-chip={source}
       className={`rounded-lg border px-3 py-2 ${
         fired ? "border-viz-rules/50 bg-surface" : "border-line-soft bg-surface"
       }`}
@@ -206,7 +211,11 @@ export function VerdictEmail({
         }`}
         aria-hidden={stage !== "split" && stage !== "dissolve"}
       >
-        <div className="min-h-0 overflow-hidden">
+        {/* `data-verdict-chips` names the element the collapse ZEROES: the grid
+            item is what `grid-rows-[0fr]` gives height 0, while the chips
+            inside keep their own boxes under the clip. It is the one handle
+            on this exhibit that reads "the verdicts are open". */}
+        <div data-verdict-chips className="min-h-0 overflow-hidden">
           <div className="grid gap-2 border-t border-line-soft px-4 py-3 sm:grid-cols-2">
             <Chip
               source="preview only"
