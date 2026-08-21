@@ -98,17 +98,41 @@ test("the card is a real 1200x630 PNG", () => {
  * This is the test that makes the "no prose in card.mjs" rule mechanical
  * rather than a comment asking politely.
  */
+/**
+ * Everything that is not rendered text, removed until removing changes nothing.
+ *
+ * A single pass is what CodeQL calls incomplete-multi-character-sanitization,
+ * and the objection is real even here, where the input is a template this repo
+ * writes: one pass over `<[^>]+>` turns `<a<b>c>` into `c>`, so a nested or
+ * malformed construct leaves debris the assertion below would then report as
+ * prose that nobody typed. Looping to a fixed point removes the whole class
+ * rather than the examples someone thought of.
+ *
+ * This is a test helper and not a sanitiser: nothing here is ever inserted
+ * into a document. It is written to the stricter standard anyway, because the
+ * cheap version's failure mode is a confusing red rather than a hole.
+ */
+function stripMarkup(html) {
+  const PATTERNS = [
+    /<style[\s\S]*?<\/style>/gi,
+    /<svg[\s\S]*?<\/svg>/gi,
+    /<!doctype[^>]*>/gi,
+    /<[^<>]*>/g,
+  ];
+  let out = html;
+  for (let guard = 0; guard < 50; guard += 1) {
+    const before = out;
+    for (const pattern of PATTERNS) out = out.replace(pattern, " ");
+    if (out === before) return out;
+  }
+  throw new Error("stripMarkup did not reach a fixed point; the card's markup is pathological");
+}
+
 test("the card draws the copy and nothing else", () => {
   const sentinels = { wordmark: "WORDMARKZZ", line: "LINEZZ", foot: "FOOTZZ" };
   const drawn = cardHtml(sentinels, "data:,");
 
-  const text = drawn
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<svg[\s\S]*?<\/svg>/gi, "")
-    .replace(/<!doctype[^>]*>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const text = stripMarkup(drawn).replace(/\s+/g, " ").trim();
 
   const leftover = Object.values(sentinels).reduce((s, v) => s.split(v).join(" "), text).trim();
   assert.equal(
