@@ -118,6 +118,31 @@ const PROP_FILES = new Set([
 ]);
 
 /**
+ * The document's own head, which the import graph cannot reach.
+ *
+ * `app/layout.tsx` is not imported by `app/page.tsx` — Next composes them —
+ * so a walk from the landing page never sees it. Its `metadata` export
+ * nonetheless renders into the head of the landing, into every search
+ * result, and into every link preview anyone shares. It is the most public
+ * copy Applied has.
+ *
+ * It survived the whole #394 sweep with the architecture, two model names, a
+ * self-graded score, a CI threshold and two em dashes intact:
+ *
+ *   "A 3-layer classifier — rules, e5 embeddings, SetFit — reads your
+ *    applications out of your inbox; the rules stage alone scores 0.9791
+ *    macro-F1, CI-gated at 0.95."
+ *
+ * THAT IS THE THIRD TIME THIS SHAPE HAS BITTEN, and the shape is worth
+ * naming: text that reaches the landing from outside the landing's module
+ * set. First the filmed component, whose words were inside a video. Then
+ * this. A gate scoped to "what the landing imports" is scoped to the wrong
+ * thing; the scope is "what a reader ends up seeing", and every time that
+ * gap is found it gets added here rather than argued about.
+ */
+const DOCUMENT_HEAD = ["app/layout.tsx"];
+
+/**
  * Modules the landing does not import but DOES film, and THE REGION OF EACH
  * ONE THE CAMERA ACTUALLY SEES.
  *
@@ -157,6 +182,9 @@ function scannedModules() {
     if (!isLandingModule(file)) continue;
     if (PROP_FILES.has(rel(file))) continue;
     out.set(rel(file), src);
+  }
+  for (const path of DOCUMENT_HEAD) {
+    out.set(path, code(readFileSync(join(webRoot, path), "utf8")));
   }
   for (const { path, from, to } of FILMED) {
     const lines = code(readFileSync(join(webRoot, path), "utf8")).split("\n");
@@ -199,6 +227,13 @@ test("the voice scan actually reaches the landing's words", () => {
       `the filmed region of ${path} is ${scanned.get(key).split("\n").length} lines — too small to contain the verdict row it is supposed to cover`,
     );
   }
+  for (const path of DOCUMENT_HEAD) {
+    assert.ok(scanned.has(path), `${path} is listed as document head but was not scanned`);
+  }
+  assert.ok(
+    DOCUMENT_HEAD.length >= 1,
+    "DOCUMENT_HEAD is empty — the head renders on the landing and in every search result, and it is where the internals last survived a sweep",
+  );
   assert.ok(
     FILMED.length >= 1,
     "FILMED is empty — the recorded surfaces are unscanned, and the internals leak this gate was built for was in exactly one of them",
