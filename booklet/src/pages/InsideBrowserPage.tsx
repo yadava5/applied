@@ -1,11 +1,11 @@
 import React from "react";
 import { BodyPage } from "../templates/BodyPage";
 import { COLORS, FONTS, TYPE, SECTION_INK } from "../theme";
-import { INSIDE, BRAND } from "../content";
+import { INSIDE } from "../content";
 import { DeviceCard } from "../primitives/DeviceCard";
 import { SourceNote } from "../primitives/SourceNote";
 
-/** Page 17 — the model runs in the browser, zero servers. */
+/** Page 17 — the model RAN in the browser, zero servers. Withdrawn 2026-08-15. */
 export const InsideBrowserPage: React.FC<{
   parity: "recto" | "verso";
   pageNumber: number;
@@ -39,10 +39,12 @@ export const InsideBrowserPage: React.FC<{
         ))}
       </div>
 
-      {/* Device panel — the classifier running client-side */}
-      <DeviceCard chrome={`${BRAND.liveUrl}/demo`} accent={COLORS.E5_VIOLET}>
+      {/* Device panel — the classifier as it ran client-side. The chrome names
+          the Hugging Face Space, NOT the product URL: per README.md this never
+          ran on getapplied.vercel.app, whose CSP forbids the WASM eval. */}
+      <DeviceCard chrome="huggingface.co/spaces · private" accent={COLORS.E5_VIOLET}>
         <div style={{ fontFamily: FONTS.MONO, fontSize: 9, lineHeight: 1.7, color: COLORS.ON_DARK_MUTED }}>
-          <div style={{ color: COLORS.ON_DARK_SUBTLE }}>{"// no backend · WASM"}</div>
+          <div style={{ color: COLORS.ON_DARK_SUBTLE }}>{"// no backend · WASM · withdrawn"}</div>
           <div>
             <span style={{ color: COLORS.E5_VIOLET }}>load</span> model_quantized.onnx
           </div>
@@ -51,7 +53,7 @@ export const InsideBrowserPage: React.FC<{
             <span style={{ color: COLORS.SETFIT_GREEN }}>classify</span>(email)
           </div>
           <div style={{ color: COLORS.ON_DARK_SUBTLE }}>&nbsp;&nbsp;→ interview · 0.88</div>
-          <div style={{ marginTop: 6, color: COLORS.RULES_CYAN }}>◍ runs on your CPU</div>
+          <div style={{ marginTop: 6, color: COLORS.RULES_CYAN }}>◍ ran on your CPU</div>
         </div>
       </DeviceCard>
     </div>

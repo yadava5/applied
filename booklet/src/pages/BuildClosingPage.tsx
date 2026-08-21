@@ -7,7 +7,7 @@ import { BUILD } from "../content";
 /**
  * Page 31 — Try it. The reader's exit into the live product. The QR lives HERE
  * now (moved off the back cover, which is a quiet closing): scan to open the
- * app, plus the two destinations and the in-browser classifier Space.
+ * app, plus the two destinations and the in-tab rules classifier at /import.
  */
 export const BuildClosingPage: React.FC<{
   parity: "recto" | "verso";

@@ -3,7 +3,8 @@ import { COLORS } from "../../theme";
 import { SceneFrame, Marker, iso } from "./primitives";
 
 /**
- * INSIDE — the model runs in the browser, no server. An isometric browser
+ * INSIDE — the model ran in the browser, no server (withdrawn 2026-08-15; the
+ * diorama depicts the build as it was). An isometric browser
  * window (chrome bar + 3 dots + a URL line) is the container; inside it a
  * quantized ONNX chip (package + pin-legs + a violet die) does the work.
  * Behind it, a server rack silhouette is crossed out: NO SERVER. A small

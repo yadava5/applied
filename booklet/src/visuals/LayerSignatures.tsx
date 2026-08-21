@@ -103,9 +103,10 @@ export const RulesSignature: React.FC = () => (
   </div>
 );
 
-// ── Layer 1 · Rules — how the 201 patterns split across categories ─────────
+// ── Layer 1 · Rules — how the 219 patterns split across categories ─────────
 // A lollipop (dot) chart, not a bar — the real per-category rule counts from
-// content.CATEGORIES (sum = 201). Distinct chart form; honest data.
+// content.CATEGORIES (strong + weak + negative, sum = 219; the 40 veto
+// patterns are not scored and are not plotted). Distinct chart form; honest data.
 
 export const RulesDistribution: React.FC = () => {
   const rows = CATEGORIES.filter((c) => c.rules > 0)
