@@ -50,8 +50,46 @@ const PUNCH_MAX = 1.9;
 /** How far the cover rule may push past `PUNCH_MAX` before a letterbox is
  *  accepted after all. 2.75 covers the measured worst case on this page — the
  *  day-filtered board (three rows) inside a tall viewport's frame — with the
- *  type still legible; past it a void is the lesser evil. */
-const COVER_MAX = 2.75;
+ *  type still legible; past it a void is the lesser evil. Exported for the
+ *  script's own scale resolvers (`OnerStage.filteredCover`), which must cap
+ *  where the camera caps. */
+export const COVER_MAX = 2.75;
+
+/** The tracking thresholds: below these, a reframe delta is one frame of an
+ *  ANIMATED resize and assignment is the correct motion; above them it is a
+ *  single-layout-pass change — the day filter, a pane mounting — and there
+ *  is no animation to track, so assignment would be the whole transition.
+ *  That assignment was the owner's cut (measured: scale +88% and a 447px
+ *  pan snap between two frames 8ms apart), so past the threshold the
+ *  reframe ABSORBS instead: a real eased camera move to the re-derived
+ *  shot (`absorb`). Sized to what one 60fps frame of the board's own glide
+ *  can move a shot by, with slack; a snap under them is sub-perceptual. */
+const TRACK_EPS_SCALE = 0.01;
+const TRACK_EPS_PAN = 6;
+
+/** The absorb move's length. Short enough to read as the camera catching
+ *  the board's change, long enough to be a move rather than a flick; any
+ *  authored move the script starts supersedes it mid-flight (`motion`). */
+const ABSORB_MS = 450;
+
+/** The last rendered camera state, read back from the frame's own
+ *  `data-cam-*` — the values `applyCam` writes, in this file's own decimal
+ *  format. A takeover director must glide from where the last one left the
+ *  shot rather than restate it, and the dataset is how a fresh instance
+ *  adopts a predecessor's last frame without any hand-off protocol. NOT
+ *  parsed from `style.transform`: the browser re-serializes what it stores
+ *  (the unitless z becomes `0px`), and a parser of one's own writes is
+ *  exactly the kind of gate that cannot fail — the first cut of this
+ *  adoption did fail on that serialization, silently, and the takeover
+ *  snapped home (measured Δscale 0.849 in one frame before the fix). */
+function adoptCam(frame: HTMLElement): { scale: number; x: number; y: number } | null {
+  const scale = Number(frame.dataset.camScale);
+  const x = Number(frame.dataset.camX);
+  const y = Number(frame.dataset.camY);
+  return Number.isFinite(scale) && Number.isFinite(x) && Number.isFinite(y)
+    ? { scale, x, y }
+    : null;
+}
 
 /** Where a top-aligned close-up seats its target below the frame's top edge,
  *  in frame px — one breath, so the pane's own border reads as inside the
@@ -69,6 +107,20 @@ const CLOSEUP_HEADROOM = 24;
  */
 export class TakeClock {
   paused = false;
+  /**
+   * Take-time per wall-second — the rail governor's one knob (see
+   * `RailTake`). A rail's band is a scroll DISTANCE and this clock is a
+   * TIME, and the owner's dissolve-at-departure screenshot is what their
+   * mismatch looks like: where a beat lands was purely a function of the
+   * visitor's scroll speed. The governor raises this above 1 when the
+   * visitor is outrunning the story, so the take compresses instead of
+   * overflowing its band. Floor 1 by contract: a parked visitor always
+   * gets the authored tempo. The oner never touches it.
+   */
+  rate = 1;
+  /** Take-time elapsed since construction, ms — what the governor steers
+   *  by. Advances by rate-scaled wall time, freezes with `paused`. */
+  elapsed = 0;
   private cancelled = false;
 
   constructor(protected onCaption: (line: string) => void) {}
@@ -93,7 +145,9 @@ export class TakeClock {
           rej(new TakeError("cancelled"));
           return;
         }
-        res(this.paused ? 0 : performance.now() - prev);
+        const dt = this.paused ? 0 : (performance.now() - prev) * this.rate;
+        this.elapsed += dt;
+        res(dt);
       });
     });
   }
@@ -150,6 +204,12 @@ export class Director extends TakeClock {
   /** True while a camera tween is in flight — the tween re-derives its own
    *  destination every frame, so `reframe` must not fight it. */
   private moving = false;
+  /** Which camera move owns the transform. Every `moveCam` takes a fresh
+   *  token and each of its frames checks it still holds it, so an authored
+   *  move STARTED DURING an absorb simply takes over mid-flight — the
+   *  superseded tween's remaining frames become no-ops and drain out. One
+   *  camera, one hand on it, no hand-off seam. */
+  private motion = 0;
   /** The cover floor's switch — see `followCover` and `applyCam`. */
   private covering = false;
   private ro: ResizeObserver | null = null;
@@ -171,6 +231,24 @@ export class Director extends TakeClock {
       this.ro = new ResizeObserver(() => this.reframe());
       this.ro.observe(stage);
     }
+    // THE CAMERA IS NEVER ALLOWED AN UNTRANSFORMED FRAME. Production opened
+    // on ~500ms of the mounting board at natural scale and then cut to the
+    // establishing fit (measured 2026-08-20: 56 frames at 1.0, then a hard
+    // snap to 0.925 at 1440x900 — a 32% mismatch at 1024x768), because the
+    // camera element renders with no transform and `fitAll(0)` was the
+    // first write. So construction composes the frame on the spot:
+    //   · a virgin camera is seeded with the establishing fit of whatever
+    //     the stage holds right now (the skeleton fits too — when the real
+    //     board lands, the resize is absorbed as a move like any other);
+    //   · a camera with a predecessor's rendered state on it is ADOPTED
+    //     as-is, so a takeover director glides home from the live shot
+    //     instead of restating it (`adoptCam`).
+    // Constructed in a layout effect, so the seed is applied before the
+    // stage's first paint — there is no frame for the defect to show on.
+    this.shot = { target: null, scale: this.fitScale, align: "centre", cover: false };
+    this.cam = adoptCam(frame) ?? this.camTargetFor(null, this.fitScale(), "centre");
+    this.rendered = { ...this.cam };
+    this.applyCam();
   }
 
   cancel() {
@@ -182,6 +260,25 @@ export class Director extends TakeClock {
 
   query(selector: string): HTMLElement | null {
     return this.stage.querySelector<HTMLElement>(selector);
+  }
+
+  queryAll(selector: string): HTMLElement[] {
+    return Array.from(this.stage.querySelectorAll<HTMLElement>(selector));
+  }
+
+  /** Stage geometry for script-side scale resolvers (`filteredCover`) —
+   *  layout truth (`offsetHeight`) and rendered truth (the rect), so a
+   *  resolver can unscale what it measures the way internal ones do. */
+  stageHeight(): number {
+    return this.stage.offsetHeight;
+  }
+
+  stageRect(): DOMRect {
+    return this.stage.getBoundingClientRect();
+  }
+
+  frameRect(): DOMRect {
+    return this.frame.getBoundingClientRect();
   }
 
   find(selector: string): HTMLElement {
@@ -264,17 +361,22 @@ export class Director extends TakeClock {
     // at scale 1 and nobody's gate went red. A shot is assertable now:
     // `data-cam-scale` on the frame is the truth of where the camera is, per
     // frame — the RENDERED truth, floor included — and the e2e can require it
-    // to actually arrive somewhere.
+    // to actually arrive somewhere. The pan joined it (2026-08-20): the
+    // owner's cuts were pan snaps as much as scale snaps (447px in one 8ms
+    // frame), and the continuity gate needs all three axes to hold the line.
     this.frame.dataset.camScale = scale.toFixed(3);
+    this.frame.dataset.camX = x.toFixed(1);
+    this.frame.dataset.camY = y.toFixed(1);
   }
 
   /**
-   * Arm the cover floor BEFORE the stage move that needs it. The script
-   * calls this ahead of a click it knows will collapse the board: from that
-   * moment the rendered scale tracks the live cover bound, so the camera
-   * follows the collapse in the same frames the board plays it, instead of
-   * discovering the void at punch time. Every `punchTo` arms it too;
-   * `fitAll` stands it down.
+   * Arm the cover floor without moving the camera — for a script that knows
+   * a stage change is coming but has no shot to author against it. The oner
+   * no longer needs this on the filter beat (`brace` arms the floor through
+   * its own shot, and arrives BEFORE the collapse instead of letting the
+   * floor snap through it), but the switch stays: it is the director's only
+   * way to hold the void guarantee across a change no move anticipates.
+   * Every `punchTo` arms it too; `fitAll` stands it down.
    */
   followCover() {
     this.covering = true;
@@ -283,9 +385,20 @@ export class Director extends TakeClock {
   /** Re-derive the current shot after the stage changed size outside a
    *  camera tween — a fit re-fits (letterbox intact), a punch re-frames its
    *  subject at its re-resolved scale, and the cover floor (when armed) is
-   *  re-applied by `applyCam` either way. Snaps rather than tweens: the
-   *  observer fires on each frame of an animated resize, so tracking IS the
-   *  motion. */
+   *  re-applied by `applyCam` either way.
+   *
+   *  A first cut snapped here unconditionally, on the premise that "the
+   *  observer fires on each frame of an animated resize, so tracking IS
+   *  the motion". The premise was FALSE for the two changes that matter:
+   *  the day filter and the detail pane's mount are single layout passes
+   *  (measured 2026-08-20: `offsetHeight` 783 → 417, then 417 → 806,
+   *  between consecutive frames 8ms apart), so there was no animation to
+   *  track and the snap was the entire transition — both of the owner's
+   *  cuts. So the reframe now discriminates by DELTA: within the tracking
+   *  thresholds it assigns (one frame of a real animated resize, or
+   *  jitter); past them it absorbs — a genuine eased camera move whose
+   *  destination is re-derived every frame, so it also tracks a resize
+   *  that is still animating underneath it. */
   private reframe() {
     if (!this.shot) return;
     if (this.moving) {
@@ -295,8 +408,23 @@ export class Director extends TakeClock {
       this.applyCam();
       return;
     }
-    this.cam = this.camTargetFor(this.shot.target, this.shot.scale(), this.shot.align);
-    this.applyCam();
+    const to = this.camTargetFor(this.shot.target, this.shot.scale(), this.shot.align);
+    if (
+      Math.abs(to.scale - this.cam.scale) <= TRACK_EPS_SCALE &&
+      Math.abs(to.x - this.cam.x) <= TRACK_EPS_PAN &&
+      Math.abs(to.y - this.cam.y) <= TRACK_EPS_PAN
+    ) {
+      this.cam = to;
+      this.applyCam();
+      return;
+    }
+    // Fire-and-forget on purpose: nothing is awaiting a resize. A newer
+    // discontinuity, or the script's next authored move, supersedes this
+    // one via `motion` and the drained tween's frames no-op. Cancellation
+    // lands here as TakeError, which is the take unwinding — not an error.
+    void this.moveCam(this.shot, ABSORB_MS).catch((err: unknown) => {
+      if (!(err instanceof TakeError)) throw err;
+    });
   }
 
   /** Where the camera must sit for `target`'s centre to hold frame-centre at
@@ -334,6 +462,49 @@ export class Director extends TakeClock {
     await this.moveCam({ target, scale: () => scale, align, cover: false }, ms);
   }
 
+  /** The rendered scale, for script-side resolvers that must unscale rects
+   *  they measured under the live transform (`OnerStage.filteredCover`) —
+   *  the same division every internal resolver already performs. */
+  get renderedScale(): number {
+    return this.rendered.scale;
+  }
+
+  /**
+   * The anticipation shot: push in to the composition a coming collapse
+   * will demand, BEFORE the press that causes it.
+   *
+   * This exists because the one stage change the camera cannot ride is the
+   * day filter's: React removes the filtered rows in a single layout pass,
+   * so there is no animation for the reframe to track and no tween that
+   * could cross the change without either a cut or a void — at the collapse
+   * instant, a full frame requires `frame.height / postHeight` of scale,
+   * period. The only continuous answer is to be there already: the camera
+   * tightens onto the stage's head (null target — top-anchored, and the
+   * head is exactly what survives a worklist collapse: bands, filter, the
+   * surviving rows) at the caller's predicted post-collapse cover, while
+   * the pointer makes its own travel to the control. Then the press lands
+   * inside a frame every pixel of which survives it: the rows file out as
+   * product behaviour under a camera that does not move at all.
+   *
+   * Cover-armed, so a prediction that lands slightly UNDER the true bound
+   * is caught by the floor as a small rise instead of a void — but the
+   * caller's contract is to underestimate the filtered stage's height, so
+   * the shot over-covers and the punch that follows relaxes onto the
+   * survivors as a pull-back reveal. See `filteredCover` in OnerStage for
+   * the prediction's terms.
+   */
+  async brace(scale: () => number, ms = 1100) {
+    await this.moveCam({ target: null, scale, align: "centre", cover: false }, ms);
+    // Armed on ARRIVAL, not at the first frame of the move: on tall frames
+    // the establishing shot letterboxes (fit capped at 1) and sits under
+    // the live cover, so arming at the start raised the rendered frame in
+    // one step — measured 1.000 → 1.206 at 1024x1120, a cut of this file's
+    // own making. By the time the push has landed, the authored scale is at
+    // the predicted cover and arming is a no-op; the floor exists from here
+    // purely to catch the collapse the press is about to cause.
+    this.covering = true;
+  }
+
   /**
    * The one camera move. The destination is re-derived EVERY FRAME — target
    * rect, resolved scale, clamps — the same rule the pointer already lives
@@ -343,12 +514,15 @@ export class Director extends TakeClock {
    * AUTHORED camera was, and lands exactly on the live destination at t=1.
    */
   private async moveCam(shot: Shot, ms: number) {
+    const token = ++this.motion;
     this.shot = shot;
     this.covering = shot.cover;
     this.moving = true;
     try {
       const from = { ...this.cam };
       await this.tween(ms, (t) => {
+        // Superseded — a newer move owns the camera; drain silently.
+        if (this.motion !== token) return;
         const to = this.camTargetFor(shot.target, shot.scale(), shot.align);
         this.cam = {
           scale: from.scale + (to.scale - from.scale) * t,
@@ -358,7 +532,7 @@ export class Director extends TakeClock {
         this.applyCam();
       });
     } finally {
-      this.moving = false;
+      if (this.motion === token) this.moving = false;
     }
   }
 
@@ -433,16 +607,19 @@ export class Director extends TakeClock {
    *  honest composition; the VOID this file guards against is the
    *  asymmetric, resize-born kind, and that is the cover floor's job
    *  (`applyCam`), which this shot stands down. */
+  /** The establishing fit's scale — a field, not a method, so the
+   *  constructor's seed and `fitAll` share one arithmetic by construction. */
+  private fitScale = () => {
+    const f = this.frame.getBoundingClientRect();
+    return clamp(
+      Math.min(f.width / this.stage.offsetWidth, f.height / this.stage.offsetHeight),
+      0.3,
+      1,
+    );
+  };
+
   async fitAll(ms = 1400) {
-    const scale = () => {
-      const f = this.frame.getBoundingClientRect();
-      return clamp(
-        Math.min(f.width / this.stage.offsetWidth, f.height / this.stage.offsetHeight),
-        0.3,
-        1,
-      );
-    };
-    await this.moveCam({ target: null, scale, align: "centre", cover: false }, ms);
+    await this.moveCam({ target: null, scale: this.fitScale, align: "centre", cover: false }, ms);
   }
 
   // ---- the pointer ---------------------------------------------------------
