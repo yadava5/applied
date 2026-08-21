@@ -24,13 +24,37 @@ no SQLite in the deployed path.
 
 ## Backend Components
 
-The deployed app mounts **28 routes** from four modules. Every router under
-`jobtracker/cloud/` is mounted with a router-level `require_user()` dependency
-and filters on `user_id`.
+The deployed app mounts **29 routes**. Four routers are *registered*
+(`applications`, `gmail_oauth`, `account`, `cron` — `main_cloud.py:667-684`),
+but **five modules define routes**, because `main_cloud` owns five itself.
+
+**Auth, stated exactly, because the blanket version of this sentence was
+false.** Two of the four routers carry a router-level `require_user()`:
+`applications.py:266` and `account.py:61`. `gmail_oauth.py:122` and
+`cron.py:159` create their routers with no `dependencies=` — deliberately, and
+`main_cloud.py:679-680` says why. Of the 29 routes, **23 require a Supabase
+JWT** and **6 do not**:
+
+| Public route | What stands in for the JWT |
+| --- | --- |
+| `GET /` | nothing — it returns API metadata only |
+| `GET /health` | nothing — no DB hit, no credential probe, so uptime monitors can poll it |
+| `GET /health/schema` | nothing — reports `{expected, applied, ok}` |
+| `GET /health/gmail-capacity` | nothing — a count of enrolled mailboxes against the beta ceiling |
+| `GET /auth/gmail/callback` | the HS256-signed `state` parameter, verified before any identity is bound (`gmail_oauth.py:1242`) |
+| `GET\|POST /cron/sync` | `JOBTRACKER_VERCEL_CRON_SECRET`, compared with `hmac.compare_digest` and **failing closed** when unconfigured (`cron.py:295-339`) |
+
+The other six `gmail_oauth` routes declare `Depends(current_user)` per
+endpoint rather than at the router. So a handler added to `gmail_oauth.py` or
+`cron.py` is **not** protected by its mount and must declare its own
+dependency — the mount is not the guarantee there that it is for
+`applications.py` and `account.py`. Every authenticated handler additionally
+filters on `user_id`, and RLS enforces it a third time.
 
 - `jobtracker/main_cloud.py`
   - app lifecycle, CORS, the cloud exception handlers
-  - `GET /`, `GET /auth/me`, `GET /health`, `GET /health/schema`
+  - `GET /`, `GET /auth/me`, `GET /health`, `GET /health/schema`,
+    `GET /health/gmail-capacity`
 - `jobtracker/cloud/applications.py`
   - application CRUD, listing, summary, statuses vocabulary
   - the review queue and per-message classification
@@ -122,6 +146,10 @@ CI workflows:
 - `.github/workflows/frontend-ci.yml`
 - `.github/workflows/e2e-ci.yml` — Playwright against both a dev server and a
   real production build
-- `.github/workflows/readme-facts.yml` — the only workflow with no path filter
+- `.github/workflows/readme-facts.yml` — no path filter, because a claim in
+  the README can be invalidated from anywhere. It is not the only one:
+  `codeql.yml`, `gitleaks.yml`, `scorecard.yml`, `learning-gate.yml` and
+  `ml-monitoring-weekly.yml` also carry none, the last two because they are
+  dispatch- and schedule-only and have no pull-request trigger to filter.
 
 `macos-ci.yml` was deleted with the app it built.
