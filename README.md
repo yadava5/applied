@@ -661,6 +661,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `./scripts/generate_api_schema.sh` | Regenerate `apps/web/lib/api/schema.d.ts` from the cloud app; `e2e-ci.yml` fails on any diff |
 | `pnpm dev` / `pnpm build` | Web app, from `apps/web/` |
 | `pnpm typecheck` / `pnpm lint` / `pnpm e2e` | The three checks `frontend-ci.yml` and `e2e-ci.yml` run |
+| `pnpm e2e:prod <files>` | **The landing, boot and production specs only run this way.** They are skipped against `next dev`, which gets this page's geometry wrong, so `pnpm e2e tests/e2e/landing.spec.ts` reports `24 skipped` and exits 0. Needs `pnpm build && pnpm start` first |
+| `pnpm e2e:check <files>` | Same as `pnpm e2e`, but fails instead of exiting 0 when every selected test skipped |
 | `pytest tests -q --cov=jobtracker` | Backend suite with coverage, from `backend/` |
 | `./scripts/generate_eval_baselines.sh --version 3` | Regenerate the committed rules and hybrid baselines |
 | `./scripts/train_pipeline.sh` | Retrain the SetFit head and write the provenance artifact |

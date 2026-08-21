@@ -378,6 +378,14 @@ cd apps/web
 pnpm exec playwright install chromium
 pnpm e2e
 
+# The landing, boot and production specs are SKIPPED against `next dev` --
+# it gets the landing's geometry wrong, so measuring there is worse than not
+# measuring. Selecting them alone reports "24 skipped" and exits 0. To run
+# them, serve a real build and use e2e:prod (which fails, rather than exits
+# 0, if everything skipped):
+cd apps/web && pnpm build && PORT=3210 pnpm start &
+PLAYWRIGHT_BASE_URL=http://localhost:3210 pnpm e2e:prod tests/e2e/landing.spec.ts
+
 # Backend cloud-smoke
 cd backend
 JOBTRACKER_DEPLOYMENT=cloud JOBTRACKER_CORS_ALLOWED_HOSTS=jobtracker.app \
