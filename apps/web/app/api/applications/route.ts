@@ -113,6 +113,20 @@ export async function GET() {
  * token from cookies. Keeps `BACKEND_API_URL` and the JWT entirely
  * server-side — the client never learns either.
  */
+/**
+ * Read one optional text field off a parsed JSON body.
+ *
+ * `payload` is typed for the caller's convenience, but its values arrive from
+ * the wire: the annotation is a claim about the happy path, not a guarantee.
+ * `payload.notes?.trim()` therefore throws on `{"notes": 1}`, and every such
+ * read in this handler sat inside the try whose catch reports 502 "Backend
+ * unreachable" — so a local TypeError was shown to the user as a healthy
+ * backend being down.
+ */
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
 export async function POST(request: Request) {
   let payload: {
     company?: string;
@@ -128,8 +142,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: "Invalid JSON body" }, { status: 400 });
   }
 
-  const company = payload.company?.trim();
-  const position = payload.position?.trim();
+  // `typeof === "string"` rather than `payload.company?.trim()`.
+  //
+  // The declared type is a lie the wire can tell: `payload` is whatever JSON
+  // arrived, so `{"company": 1}` gives a number, `.trim` is undefined, and the
+  // call threw. These two reads sit OUTSIDE the try above, so the throw
+  // escaped the handler entirely and Next answered 500. Measured against the
+  // running route: `{"company":1,"position":1}` and
+  // `{"company":true,"position":"Eng"}` both returned 500, where every other
+  // body-taking route in this app answers 422 for a bad body.
+  //
+  // The sibling fields are worse rather than better: `notes` and `url` throw
+  // the same TypeError from INSIDE the try, and the catch-all reports it as
+  // 502 "Backend unreachable" — a local type error blamed on a healthy
+  // backend. Reading the fields defensively is what fixes both shapes.
+  const company = typeof payload.company === "string" ? payload.company.trim() : "";
+  const position = typeof payload.position === "string" ? payload.position.trim() : "";
   if (!company || !position) {
     return NextResponse.json({ detail: "company and position are required" }, { status: 422 });
   }
@@ -140,7 +168,7 @@ export async function POST(request: Request) {
   // that the form showed verbatim. Rejecting it here says the same thing in
   // this app's words, and — now that the schema is generated — the compiler
   // is what forces the check to exist at all.
-  const status = payload.status?.trim() || "applied";
+  const status = (typeof payload.status === "string" ? payload.status.trim() : "") || "applied";
   if (!isApplicationStatus(status)) {
     return NextResponse.json(
       { detail: `status must be one of: ${APPLICATION_STATUSES.join(", ")}` },
@@ -159,9 +187,12 @@ export async function POST(request: Request) {
         company,
         position,
         status,
-        notes: payload.notes?.trim() || null,
-        applied_date: payload.applied_date?.trim() || null,
-        url: payload.url?.trim() || null,
+        // Same reason as `company`/`position` above: these are wire values,
+        // not the declared type. `{"notes": 1}` used to throw here, inside the
+        // try, and come back to the user as 502 "Backend unreachable".
+        notes: optionalText(payload.notes),
+        applied_date: optionalText(payload.applied_date),
+        url: optionalText(payload.url),
       },
     });
     if (error || !data) {

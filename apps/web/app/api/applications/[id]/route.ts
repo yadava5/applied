@@ -22,7 +22,16 @@ function badId() {
 async function resolveId(params: Ctx["params"]): Promise<number | null> {
   const { id } = await params;
   const n = Number(id);
-  return Number.isInteger(n) && n > 0 ? n : null;
+  // `isSafeInteger`, not `isInteger`. `Number("1e10")` and
+  // `Number("99999999999999999999")` are both integral as far as `isInteger`
+  // is concerned, so the old guard passed them through and the request
+  // travelled to the backend carrying a value past `MAX_SAFE_INTEGER` and past
+  // a Postgres bigint. Measured against the running proxy: `/1e10` and
+  // `/99999999999999999999` both cleared the guard and reached auth (401),
+  // while `/0`, `/-1`, `/1.5` and `/abc` were correctly refused with 400.
+  // Nothing was scoped wrongly — the backend still 404s across users — but an
+  // id this route cannot represent should not become the backend's problem.
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 export async function GET(_req: NextRequest, ctx: Ctx) {

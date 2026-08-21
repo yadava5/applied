@@ -192,7 +192,27 @@ export function parseFrom(value: string): { name: string | null; email: string }
  * recruiting mail. Everything else is reachable numerically, and an unknown
  * `&name;` is left exactly as written rather than guessed at.
  */
-const NAMED_ENTITIES: Record<string, string> = {
+/*
+ * `Object.create(null)`, NOT an object literal, and the same for RAW_TEXT_END
+ * below. A literal inherits from `Object.prototype`, so a lookup keyed on
+ * attacker-supplied text can walk off the table and return a prototype member.
+ *
+ * Exactly one key reaches it, and only one is needed: both call sites
+ * lower-case the key first, and `constructor` is the sole all-lowercase member
+ * of `Object.prototype`. `toString`, `valueOf` and `hasOwnProperty` are safe by
+ * accident of their casing, which is not a property to rely on.
+ *
+ * Measured before the fix, on the public `/import` path:
+ *   stripHtml("price &constructor; end")
+ *     -> "price function Object() { [native code] } end"
+ *   stripHtml("A<constructor>x</constructor>B")
+ *     -> TypeError: rawEnd.exec is not a function
+ * The first put JavaScript source into the text the classifier scores. The
+ * second threw, and `ImportMail.ingest` wraps the whole parse in one
+ * try/catch, so ONE such message discarded an entire mbox — 400 mails in,
+ * "Couldn't parse that file" out.
+ */
+const NAMED_ENTITIES: Record<string, string> = Object.assign(Object.create(null), {
   amp: "&",
   lt: "<",
   gt: ">",
@@ -215,7 +235,7 @@ const NAMED_ENTITIES: Record<string, string> = {
   copy: "\u00a9",
   reg: "\u00ae",
   trade: "\u2122",
-};
+});
 
 const ENTITY = /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{0,30});/g;
 
@@ -242,14 +262,14 @@ function decodeEntities(text: string): string {
 }
 
 /** Elements whose content is data, not text: dropped along with the element. */
-const RAW_TEXT_END: Record<string, RegExp> = {
+const RAW_TEXT_END: Record<string, RegExp> = Object.assign(Object.create(null), {
   // HTML ends a raw-text element at `</name` followed by whitespace, `/` or
   // `>` — `</script >` and `</script foo=bar>` close it just as `</script>`
   // does. Matching only the literal `</script>` is CodeQL `js/bad-tag-filter`,
   // and it left the element's contents in the text we score.
   script: /<\/script(?=[\s/>])/gi,
   style: /<\/style(?=[\s/>])/gi,
-};
+});
 
 /** `<` + a tag name at `lt`, or null when the `<` is just prose ("3 < 4"). */
 const TAG_OPEN = /<(\/?)([a-zA-Z][^\s/>]*)/y;

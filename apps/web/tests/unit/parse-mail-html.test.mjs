@@ -211,3 +211,70 @@ test("the sample.mbox fixture parses exactly as recorded", () => {
     },
   ]);
 });
+
+// --- Prototype members are not table entries --------------------------------
+//
+// `NAMED_ENTITIES` and `RAW_TEXT_END` were object literals, so they inherited
+// from `Object.prototype` and a lookup keyed on mail content could walk off the
+// table. Both call sites lower-case the key first, which leaves exactly one
+// reachable member — `constructor` is the only all-lowercase name on
+// `Object.prototype`. That single key was enough to break the public
+// unauthenticated `/import` path two different ways.
+//
+// The `toString` cases are the controls that make these tests mean something:
+// they were ALWAYS safe, by accident of their casing. A fix that only special-
+// cased the word "constructor" would pass the first assertion of each pair and
+// still be wrong, so each pair pins the table's shape rather than one string.
+
+test("a tag named after an Object.prototype member is treated as a tag", () => {
+  // Before: RAW_TEXT_END["constructor"] returned Object, and the raw-text
+  // branch called `.exec` on it — TypeError, thrown out of parseMailFile.
+  assert.equal(stripHtml("A<constructor>x</constructor>B"), "A x B");
+  assert.equal(stripHtml("A<toString>x</toString>B"), "A x B");
+  // The real raw-text elements still behave: their contents are data and go.
+  assert.equal(stripHtml("A<script>bad()</script>B"), "A B");
+});
+
+test("an entity named after an Object.prototype member is left as written", () => {
+  // Before: this returned "price function Object() { [native code] } end",
+  // i.e. JavaScript source spliced into the text the classifier scores.
+  assert.equal(stripHtml("price &constructor; end"), "price &constructor; end");
+  assert.equal(stripHtml("price &toString; end"), "price &toString; end");
+  // A real entity still decodes, so the table is reachable at all.
+  assert.equal(stripHtml("price &amp; end"), "price & end");
+});
+
+test("one hostile message does not discard the rest of an mbox", () => {
+  // The failure that made this worth fixing was not the TypeError itself but
+  // its blast radius: `ImportMail.ingest` wraps the whole parse in a single
+  // try/catch, so a throw on message 2 lost messages 1 and 3 as well.
+  const mbox = [
+    "From a@b Thu Jul 16 09:00:00 2026",
+    "From: Waypoint <careers@waypoint.test>",
+    "Subject: Thanks for applying",
+    "",
+    "We received your application.",
+    "",
+    "From a@b Thu Jul 16 10:00:00 2026",
+    "From: Hostile <x@y.test>",
+    "Subject: Update",
+    "Content-Type: text/html",
+    "",
+    "<constructor>boom</constructor>",
+    "",
+    "From a@b Thu Jul 16 11:00:00 2026",
+    "From: Kestrel <talent@kestrel.test>",
+    "Subject: Next step",
+    "",
+    "Please book an assessment.",
+    "",
+  ].join("\n");
+
+  const { messages: parsed } = parseMailFile("probe.mbox", mbox);
+  assert.equal(parsed.length, 3, "all three messages must survive");
+  assert.equal(parsed[0].subject, "Thanks for applying");
+  assert.equal(parsed[1].subject, "Update");
+  assert.equal(parsed[2].subject, "Next step");
+  // And the hostile one parses to its text rather than to script source.
+  assert.ok(!/native code/.test(parsed[1].body), "no prototype source in the body");
+});
