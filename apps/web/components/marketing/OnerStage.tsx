@@ -305,10 +305,23 @@ export function OnerStage({
    *
    * The skeleton path three files up already passes `h-full p-4 lg:p-5` for
    * exactly this reason. The real path dropped it.
+   *
+   * `min-h-full`, NOT `h-full`, AND THE DIFFERENCE IS THE WHOLE CAMERA. The
+   * first version of this fix used `h-full` and CI caught it: the camera's
+   * own gate went red with "the camera never panned at this viewport". A
+   * fixed height is a ceiling as well as a floor, so the full board stopped
+   * overflowing the frame, and a camera that pans over a board taller than
+   * its window has nothing to pan over once the board is exactly its window.
+   * The gate that caught it is the positive control added on 2026-08-21 for
+   * precisely this class of mistake: it requires the pan to be non-zero at
+   * 1512x949 before it will believe the bound on how far the pan may jump.
+   *
+   * A minimum is what the two cases actually want. Ten rows still overflow
+   * and the camera still travels; one row still fills the window.
    */
   if (disarmed) {
     return (
-      <div className="h-full p-4 lg:p-5">
+      <div className="min-h-full p-4 lg:p-5">
         <MarketingBoard />
       </div>
     );
@@ -316,8 +329,8 @@ export function OnerStage({
 
   return (
     <>
-      <div ref={cameraRef} className="h-full" style={{ transformOrigin: "0 0" }}>
-        <div ref={stageRef} className="h-full p-4 lg:p-5">
+      <div ref={cameraRef} className="min-h-full" style={{ transformOrigin: "0 0" }}>
+        <div ref={stageRef} className="p-4 lg:p-5">
           <MarketingBoard />
         </div>
       </div>

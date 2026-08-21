@@ -480,12 +480,26 @@ export const SCENES = [
      * the same module the landing's own `VerdictEmail` calls) recomputing in the
      * tab on every keystroke — no network, no model download, nothing precomputed.
      *
-     * The arc is real and was measured, not staged (`scripts/footage/geom2.mjs`):
-     * the verdict holds at OTHER for the first 174 characters and flips to
-     * REJECTION at 175, on "…consideration we have decided…", landing at 90% —
-     * over the 0.90 bar at which layer 1 answers on its own. Gmail's preview is
-     * about 200 characters. The flip lands inside that window, which is the
-     * whole point of the claim beside it.
+     * The arc is real and was measured, not staged: the verdict holds at
+     * OTHER for the first 174 characters and flips to REJECTION at 175, on
+     * "…consideration we have decided…". Gmail's preview is about 200
+     * characters. The flip lands inside that window, which is the whole point
+     * of the claim beside it.
+     *
+     * `scripts/footage/geom2.mjs` was cited here as the instrument that
+     * measured it and DOES NOT EXIST in the tree. Re-measured on the shipped
+     * mp4 on 2026-08-21 by extracting all 654 frames: the chip flips at frame
+     * 426 (7.083s), which is ~char 176, so the documented 175 is right to
+     * within one frame of capture granularity.
+     *
+     * WHAT THAT RE-MEASUREMENT ALSO FOUND, and it is NOT new: the confidence
+     * steps 50% → 70% at the flip and 70% → 90% at frame 502, 1.267s later,
+     * and the status line under the verdict changes on the SECOND step, not
+     * the first. That split is a property of the arc rather than of any
+     * threshold: 0.90 and 0.85 both sit inside (0.70, 0.90], so the old
+     * status line and the current one change on exactly the same frame. The
+     * clip has always read as two events. Worth knowing before anyone
+     * "fixes" a threshold to close a gap a threshold did not open.
      *
      * Captured at a 620px viewport: `/demo/inbox` is `max-w-3xl px-6`, so a
      * desktop capture makes the playground card 720 CSS px — 1.7x down in a

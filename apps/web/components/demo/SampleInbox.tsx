@@ -332,7 +332,23 @@ function LivePlayground() {
         >
           {pct(result.confidence)}
         </span>
-        <span className="font-mono text-[11px] text-dim">
+        {/* `basis-full` KEEPS THIS ON ITS OWN ROW IN BOTH STATES, and it is
+            not cosmetic. The row is `flex-wrap`, so a short status string
+            fits inline beside the confidence and the card loses a line. The
+            first re-record after this line was rewritten did exactly that:
+            "certain enough to file on its own" fitted inline, the card
+            shrank, and the `rejection +9` score chip rose into a crop that
+            `scenes.mjs` says "deliberately stops ABOVE the score chips",
+            because including them "would make the card's bottom edge move
+            during the take". Measured on the shipped mp4: the chip was fully
+            visible from frame 502 to the loop. A fixed row count restores
+            that invariant and costs nothing.
+
+            NOT MONO, either. This used to be a machine value and is a
+            sentence now, and mono is reserved for machine values on this
+            estate. The confidence beside it keeps its mono, because that IS
+            one. */}
+        <span className="basis-full text-[11px] text-dim">
           {/* WHAT THE PRODUCT DOES, NOT HOW IT IS BUILT. This line used to
               read "clears the layer-1 accept bar (≥0.90) — rules would
               answer" / "below 0.90 — the full pipeline would defer to e5 /

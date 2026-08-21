@@ -1421,7 +1421,13 @@ test.describe("landing (/)", () => {
     // half). So drive to that micro-beat's own paragraph — the thing the
     // boundary is derived from — instead of to a `[data-claim]` sentinel,
     // which the scroll-progress rewrite removed.
-    await centreOnText(page, /^So the shipped rules layer runs on it twice/);
+    // Addressed by the words the reader sees, which means a copy edit moves
+    // it. The 2026-08-21 sweep rewrote this paragraph off "the shipped rules
+    // layer" (an internals name the page no longer speaks) and this locator
+    // went with it. Anchored on the shortest phrase that is unique to this
+    // micro-beat and carries no vocabulary the voice gates can retire: it is
+    // the SECOND reading that defines the boundary being measured.
+    await centreOnText(page, /^So Applied reads it twice/);
 
     // The rail autoplays its take once in view: wait for the SPLIT beat —
     // the narration line is the beat's address, imported from the copy so a
