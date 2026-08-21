@@ -86,34 +86,32 @@ import { ACCESS, CLOSING } from "./copy";
  * ask, one short glance back up, rhymes with the full stop. Do not "fix"
  * this by moving the ask below the scene.
  *
- * Type in the scene: mono marks the machine value and STOPS at its edge.
- * The F1 figures are mono (read out of the benchmark JSONs); the words
- * beside them — `what ships`, `benchmarked, not shipped` — are captions,
- * set in the product's caps-label voice (`.act__words`, the `.label-caps`
- * device restated for the key).
+ * NO TYPE IN THE SCENE AT ALL SINCE 2026-08-21. Everything below is kept
+ * because it is the reasoning that made a legend legible, and because it is
+ * the reasoning that eventually retired the legend: a device this hard to
+ * make readable was carrying a claim the page has now stopped making.
  *
- * THE KEY IS DOM TEXT, NOT SVG TEXT (2026-08-15). The rail tags used to live
- * inside the scene as `<text>` nodes, and a viewBox scales its contents
- * uniformly: at 375 the 1200-unit scene renders at 0.3125×, so a 10.5-unit
- * figure landed at 3.28px and a 9.75-unit caption at 3.05px. Measured, not
- * eyeballed — `getScreenCTM().a` × the user-unit size, because computed
- * fontSize on an svg node reports user units and reads as if nothing were
- * wrong. It is not a small-screen problem either: at 1024 the same tags
- * measure 8.96px and 8.32px, so the page's central comparison was under any
- * legible floor at every width a visitor actually uses.
+ * WHAT USED TO STAND HERE. The scene's two dashed ghost rails were labelled
+ * by `Key`, a two-row legend printing a benchmark figure beside `what ships`
+ * and `benchmarked, not shipped`.
  *
- * A font-size bump inside the svg only moves the problem, because the size
- * is a function of the viewport either way. So the words left the drawing:
- * `Key` is real DOM text, absolutely positioned at `lg`+ over the rails it
- * names (the same x the tags used, sitting on the rails' own top edge, in
- * the same colours) and restacked below `lg` into a legend above the scene,
- * where each row carries a mark cut like the rail it stands for. One set of
- * nodes, two arrangements — never a visible copy and a hidden twin.
+ * THE KEY WAS DOM TEXT, NOT SVG TEXT (2026-08-15), and that fix is worth
+ * remembering. The rail tags first lived inside the scene as `<text>` nodes,
+ * and a viewBox scales its contents uniformly: at 375 the 1200-unit scene
+ * renders at 0.3125x, so a 10.5-unit figure landed at 3.28px and a 9.75-unit
+ * caption at 3.05px. Measured, not eyeballed: `getScreenCTM().a` times the
+ * user-unit size, because computed fontSize on an svg node reports user units
+ * and reads as if nothing were wrong. It was not a small-screen problem
+ * either. At 1024 the same tags measured 8.96px and 8.32px, so the page's
+ * central comparison sat under any legible floor at every width a visitor
+ * actually uses. A font-size bump inside the svg only moves the problem,
+ * because the size is a function of the viewport either way, so the words
+ * left the drawing and became real DOM text.
  *
- * That also settles the accessibility of the claim. The svg is decorative
- * and says so, which was a lie while it held the only statement of the
- * comparison; now the geometry is genuinely all it holds, and the key is a
- * list a screen reader reaches like any other text.
+ * That also settled the accessibility of the claim: the svg is decorative and
+ * says so, which was a lie while it held the only statement of the
+ * comparison. The claim is gone now, so the svg's `aria-hidden` is honest for
+ * a simpler reason. The replay button's own `aria-label` narrates the arc.
  */
 
 /* ---- scene geometry (viewBox 0 0 1200 370) ------------------------------ */

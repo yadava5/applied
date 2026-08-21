@@ -147,12 +147,22 @@ function parseAnimation(entry) {
 }
 
 /**
- * A block-element class name. Hyphenated names are part of the vocabulary
- * (`.act__key-mark`), so a bare `act__[a-z]+` would silently skip any rule
- * that grew one — the gate would parse nothing and say nothing. The trailing
- * group is `-[a-z]+` and not `[a-z-]+` on purpose: `.act__tag--rules` is a
- * MODIFIER of `.act__tag` and must still resolve to `act__tag`, which is the
- * class the animations are written against.
+ * A block-element class name.
+ *
+ * BOTH WORKED EXAMPLES BELOW ARE NOW HISTORICAL, and they are kept as
+ * historical rather than swapped for live ones, because the shapes are what
+ * the pattern defends against and no surviving class has either shape. The
+ * closing act lost its legend and its ghost rails on 2026-08-21, taking
+ * `.act__key-mark` and `.act__tag--rules` with them; every remaining `act__`
+ * class is a single unhyphenated word. A future rule that grows one of these
+ * shapes is exactly the case this pattern exists for.
+ *
+ * Hyphenated names were part of the vocabulary (`.act__key-mark`), so a bare
+ * `act__[a-z]+` would silently skip any rule that grew one — the gate would
+ * parse nothing and say nothing. The trailing group is `-[a-z]+` and not
+ * `[a-z-]+` on purpose: `.act__tag--rules` was a MODIFIER of `.act__tag` and
+ * had to still resolve to `act__tag`, which is the class the animations are
+ * written against.
  */
 const CLS = "act__[a-z]+(?:-[a-z]+)*";
 
