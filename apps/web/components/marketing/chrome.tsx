@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Logo } from "@/components/brand/Logo";
+import { cn } from "@/lib/utils";
 
 /**
  * Shared chrome for the three landing candidates. One nav and one footer so
@@ -27,10 +28,20 @@ export const NEW_TAB = { target: "_blank", rel: "noopener noreferrer" } as const
 export const ACCESS_ANCHOR = "#access";
 
 
-export function MarketingNav() {
+/**
+ * `wide` puts the chrome on the fluid landing's 85rem gutter (`app/page.tsx`
+ * says why that page widened) so the logo sits over the headline rather than
+ * 100px inside it. A and C stay on `max-w-6xl`, which is their content's cap.
+ */
+export function MarketingNav({ wide = false }: { wide?: boolean }) {
   return (
     <header className="sticky top-0 z-50 border-b border-line-soft bg-background">
-      <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-6">
+      <div
+        className={cn(
+          "mx-auto flex h-14 w-full items-center justify-between px-6",
+          wide ? "max-w-[85rem]" : "max-w-6xl",
+        )}
+      >
         <Link
           href="/"
           aria-label="Applied — home"
@@ -88,10 +99,15 @@ export function MarketingNav() {
  * What stays: Privacy, and only Privacy. It is the homepage link Google's
  * OAuth verification looks for — do not remove it.
  */
-export function MarketingFooter() {
+export function MarketingFooter({ wide = false }: { wide?: boolean }) {
   return (
     <footer className="border-t border-line-soft">
-      <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-3 px-6 py-8 sm:flex-row sm:items-center">
+      <div
+        className={cn(
+          "mx-auto flex w-full flex-col items-start justify-between gap-3 px-6 py-8 sm:flex-row sm:items-center",
+          wide ? "max-w-[85rem]" : "max-w-6xl",
+        )}
+      >
         <span className="text-[0.8125rem] text-dim">© 2026 Applied</span>
         <nav className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.8125rem] text-dim">
           <a href="/privacy" {...NEW_TAB} className="transition-colors hover:text-strong">

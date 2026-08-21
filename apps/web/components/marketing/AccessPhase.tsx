@@ -6,10 +6,11 @@ import { ACCESS } from "./copy";
  * renders (imported, never rewritten), in the spine's own container.
  *
  * A and C keep `AccessSection` (sections.tsx) and are unchanged; this exists
- * so the one conversion surface sits on the same `max-w-6xl` gutter as every
- * phase above it rather than stepping in to the shared section's narrower
- * `max-w-5xl` block, which at 1152 and wider reads as the ask having come
- * from a different page.
+ * so the one conversion surface sits on the same gutter as every phase above
+ * it — the landing's 85rem spread since the 2026-08-20 widening
+ * (`app/page.tsx` argues the cap) — rather than stepping in to the shared
+ * section's narrower `max-w-5xl` block, which at 1152 and wider reads as the
+ * ask having come from a different page.
  *
  * It carries the `#access` id here, where `AccessSection` is not mounted —
  * the nav's "Get access" anchor (`ACCESS_ANCHOR`) has exactly one target per
@@ -45,7 +46,7 @@ import { ACCESS } from "./copy";
 export function AccessPhase() {
   return (
     <section id="access" className="scroll-mt-20 border-t border-line-soft">
-      <div className="mx-auto w-full max-w-6xl px-6 py-20 sm:py-24">
+      <div className="mx-auto w-full max-w-[85rem] px-6 py-20 sm:py-24">
         <div className="max-w-xl">
           <p className="label-caps mb-4">{ACCESS.eyebrow}</p>
           <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">

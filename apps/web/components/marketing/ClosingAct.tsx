@@ -489,7 +489,9 @@ export function ClosingAct() {
           is a plain block at content height, vertical auto margins resolve to
           zero, and the shallow pt is the composed image's own spacing — the
           section above already carries py-24. */}
-      <div className="my-auto mx-auto w-full max-w-6xl px-6 pt-8 sm:pt-10">
+      {/* 85rem: the landing's one gutter (`app/page.tsx`) — the ask lines up
+          with the hero it answers. */}
+      <div className="my-auto mx-auto w-full max-w-[85rem] px-6 pt-8 sm:pt-10">
         <div className="act__ask">
           {/* steps up at `lg` because that is where the frame gets a 1500px
               runway and the thesis becomes a held title card in open space —

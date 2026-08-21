@@ -62,8 +62,24 @@ import { WindowAct } from "@/components/marketing/WindowAct";
  */
 export default function Landing() {
   return (
+    /* ONE GUTTER, 85rem, THE WHOLE PAGE (the owner's edit, 2026-08-20: "we
+       have that much of space to use, use that"). `max-w-6xl` capped every
+       surface at 1152 and threw 350px away at the 1512 he works at, while
+       the descent's exhibits sat in 30rem boxes — the page went wide for
+       nothing and narrow for its evidence. Every document surface on `/` —
+       nav, hero, the window act's frame, the descent's grids, the ask, the
+       closing act's seat, the footer — now shares one 85rem (1360px) cap:
+       at 1512 that is 76px of margin a side instead of 180, at 1024 it
+       changes NOTHING (976 usable was already under both caps, and the fold
+       budgets below are measured there), and past 1512 it stops. It stops
+       because the parts stop honestly: the descent's clip exhibits cap at
+       the width their 1152px encodes can fill without fabricating pixels,
+       and the prose caps at a readable measure (`ClaimsDescent` derives
+       both) — a wider gutter past that would only re-open the dead margin
+       this edit removes. A and C keep `max-w-6xl`; the fluid spread is this
+       staging's. */
     <main className="flex flex-col bg-background text-foreground">
-      <MarketingNav />
+      <MarketingNav wide />
 
       {/* ---- hero: the headline at display scale -------------------------
           The paddings and the display bump are a FOLD budget, not taste: at
@@ -73,7 +89,7 @@ export default function Landing() {
           for `xl` because at 1024 those extra ~25px of headline are exactly
           the row's margin. Re-measure on `next build && next start` if any
           of this moves — `next dev` cannot measure it. */}
-      <section className="mx-auto w-full max-w-6xl px-6 pt-9 pb-4 sm:pt-11">
+      <section className="mx-auto w-full max-w-[85rem] px-6 pt-9 pb-4 sm:pt-11">
         <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl xl:text-7xl">
           {HERO.headline}
         </h1>
@@ -90,7 +106,7 @@ export default function Landing() {
           `AccessSection` and are unchanged. */}
       <AccessPhase />
       <ClosingAct />
-      <MarketingFooter />
+      <MarketingFooter wide />
     </main>
   );
 }

@@ -124,12 +124,16 @@ export function WindowAct() {
             the director reaches each beat. Fixed height, so the frame below
             never moves; polite, so a screen reader hears the story at its
             own pace rather than mid-word. */}
-        <div className="mx-auto w-full max-w-6xl px-4 pb-1.5 sm:px-6">
+        {/* On the landing's 85rem gutter (`app/page.tsx`), like every other
+            surface of the page: the frame IS the page's widest exhibit, and
+            it was the one box already argued full-width. At 1024 nothing
+            moves; the stage's height budget is untouched either way. */}
+        <div className="mx-auto w-full max-w-[85rem] px-4 pb-1.5 sm:px-6">
           <p aria-live="polite" className="min-h-6 truncate text-[0.9375rem] leading-6 text-muted">
             {strip}
           </p>
         </div>
-        <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
+        <div className="mx-auto w-full max-w-[85rem] px-4 sm:px-6">
           <div className="overflow-clip rounded-2xl border border-line bg-surface shadow-[0_24px_60px_-30px_rgb(0_0_0/0.55)]">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2 sm:px-5">
               <span className="label-caps flex min-w-0 items-center gap-2">
@@ -203,7 +207,7 @@ export function WindowAct() {
       {/* ---- below `lg`: the receipt in flow under the still. The offer
               mail with the bridge line, because the exhibit the descent
               opens on below is the other mail (the invitation). ---------- */}
-      <div className="mx-auto mt-5 w-full max-w-6xl px-4 sm:px-6 lg:hidden">
+      <div className="mx-auto mt-5 w-full max-w-[85rem] px-4 sm:px-6 lg:hidden">
         <ChangedRow email={OFFER_EMAIL} foot="bridge" />
       </div>
     </section>

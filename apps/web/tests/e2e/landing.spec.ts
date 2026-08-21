@@ -97,8 +97,11 @@ const DESKTOP_1512 = { width: 1512, height: 949 };
  *  4px (`ProductClip`'s figcaption takes `xl:pt-1`) while a narrower column
  *  wraps its band's prose longer, so the two axes still trade against each
  *  other and a single-width set still could not see it. The corner stays
- *  walked. 1512 is where the owner works; every width from 1280 up reads the
- *  same, the container being capped at `max-w-6xl`. */
+ *  walked — and it matters MORE since the fluid spread (2026-08-20): rail
+ *  widths now ramp with vw between 1024 and 1512 (`ClaimsDescent`), so width
+ *  moves every exhibit's height continuously, not by one 4px breakpoint
+ *  step. 1512 is where the owner works AND where the ramp tops out; widths
+ *  past 1512 read the same, the composition capping at its 85rem gutter. */
 const DESKTOP_1512_600 = { width: 1512, height: 600 };
 /** TALL, and the reason the pin is measured above 949 — permanently. The
  *  walked set has now been chosen after the measurement THREE times, and each
@@ -169,27 +172,31 @@ const PIN_LEAD = 120;
  * The least share of its own band a rail may spend pinned — counting only the
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
- * MEASURED on `next build && next start` (2026-08-20, five-rail restaging,
- * re-measured the same day after the take rails moved to the 4.5rem offset
- * for the fold — the +8px of rail height cost the review rail ~1pp at the
- * tall corners, priced in below), verdict / rules / review / row /
- * retention, at each of the six viewports this walk runs — taken with the
- * design-side walk (same band arithmetic, stable-top plateau at tolerance 2
- * / step 24, no overhang netting, which is inert on this page anyway); this
- * suite's own run is owed and is the canonical reading:
+ * MEASURED on `next build && next start` (2026-08-20, the FLUID-SPREAD
+ * restaging: the descent's rails scale 30→40rem / 36→44rem with viewport
+ * width from a frozen 1024 base, and the container widened to 85rem —
+ * `ClaimsDescent`'s sizing docblock derives it; the 1024 rows below are
+ * unchanged from the prior table because 1024 is the ramp's floor by
+ * construction), verdict / rules / review / row / retention, at each of the
+ * six viewports this walk runs — taken with the design-side walk (same band
+ * arithmetic, stable-top plateau at tolerance 2 / step 24, overhang netted,
+ * which is inert on this page anyway); this suite's own run is owed and is
+ * the canonical reading:
  *
  *   1024x600    0.570  0.354  0.371  0.543  0.756
  *   1024x768    0.547  0.469  0.335  0.647  0.768
- *   1512x600    0.570  0.341  0.371  0.543  0.740
- *   1512x949    0.531  0.578  0.325  0.705  0.791
- *   1512x1080   0.533  0.619  0.333  0.746  0.798
+ *   1512x600    0.583  0.312  0.371  0.486  0.725
+ *   1512x949    0.531  0.524  0.325  0.686  0.763
+ *   1512x1080   0.533  0.571  0.333  0.714  0.784
  *   1024x1120   0.525  0.643  0.321  0.765  0.812
  *
  * Reading the minimum FROM the table, nothing else: REVIEW 0.321 at
  * 1024x1120, then review 0.325 at 1512x949 — the viewport-tall take rail
  * over two paced beats, the same dvh-paced shape whose asymptote the old
  * decision rail measured at ~0.29 beyond range — with the RULES rail's
- * short edge at 0.341 (1512x600) the tightest non-review reading. A
+ * short edge now 0.312 at 1512x600: the fluid width grows that exhibit
+ * ~57px at the wide-short corner (height-capped, so its transport keeps the
+ * fold) while its band barely moves, which is the whole 0.341 → 0.312. A
  * caution that is now part of this table's method: this prose has named
  * the wrong corner THREE times, most recently when the previous staging's
  * design-side walk put its minimum at 1024x1120 while the suite's own
