@@ -45,7 +45,7 @@ import { ACCESS } from "./copy";
  */
 export function AccessPhase() {
   return (
-    <section id="access" className="scroll-mt-20 border-t border-line-soft">
+    <section id="access" className="column-ruled scroll-mt-20 border-t border-line-soft">
       <div className="mx-auto w-full max-w-[85rem] px-6 py-20 sm:py-24">
         <div className="max-w-xl">
           <p className="label-caps mb-4">{ACCESS.eyebrow}</p>
