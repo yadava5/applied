@@ -17,7 +17,7 @@ import { AccessSection, DecisionSection, PrivacySection } from "@/components/mar
  * `/` keeps serving the current page untouched.
  */
 export const metadata: Metadata = {
-  title: "Landing A — full bleed",
+  title: "Landing A, full bleed",
   robots: { index: false, follow: false },
 };
 

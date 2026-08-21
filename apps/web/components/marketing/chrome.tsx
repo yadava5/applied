@@ -44,7 +44,7 @@ export function MarketingNav({ wide = false }: { wide?: boolean }) {
       >
         <Link
           href="/"
-          aria-label="Applied — home"
+          aria-label="Applied, home"
           className="brand-logo-link min-h-11 items-center text-strong"
         >
           <Logo className="h-6 w-auto" />

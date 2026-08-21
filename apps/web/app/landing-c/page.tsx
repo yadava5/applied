@@ -24,7 +24,7 @@ import { AccessSection } from "@/components/marketing/sections";
  * Same copy as A and B (`copy.ts`); the staging is the difference.
  */
 export const metadata: Metadata = {
-  title: "Landing C — in motion",
+  title: "Landing C, in motion",
   robots: { index: false, follow: false },
 };
 

@@ -333,9 +333,34 @@ function LivePlayground() {
           {pct(result.confidence)}
         </span>
         <span className="font-mono text-[11px] text-dim">
-          {result.confidence >= 0.9
-            ? "clears the layer-1 accept bar (≥0.90) — rules would answer"
-            : "below 0.90 — the full pipeline would defer to e5 / SetFit"}
+          {/* WHAT THE PRODUCT DOES, NOT HOW IT IS BUILT. This line used to
+              read "clears the layer-1 accept bar (≥0.90) — rules would
+              answer" / "below 0.90 — the full pipeline would defer to e5 /
+              SetFit": two model names, a threshold and a dash.
+
+              It is a demo-page string, so a landing copy sweep would never
+              have found it — except that `rules-read-the-body`, the biggest
+              exhibit on the landing, is a recording OF THIS COMPONENT. The
+              internals were being published inside a video, where no edit to
+              `copy.ts` could reach them. Change this line and the clip is
+              stale until `FOOTAGE_ONLY=rules-read-the-body pnpm footage`
+              re-records it, and `FOOTAGE.rules.name` describes the words
+              below, so it moves too.
+
+              THE THRESHOLD MOVED WITH THE WORDS, and that is a behaviour
+              change, not a copy change, so it is called out here. The test
+              was `>= 0.9` while the CONFIDENCE FIGURE two spans up colours
+              itself at `>= GATE` (0.85), so a confidence of, say, 0.87
+              rendered a green number beside a line saying the pipeline would
+              defer: the same reading, reported two ways, disagreeing with
+              itself on screen. `GATE` is the right one for the sentence
+              written here, because `GATE` is documented as the bar below
+              which nothing is auto-filed and filing is what this line now
+              talks about. `RULES_ACCEPT` (0.9, ImportMail.tsx) is a
+              different bar answering a different question and is unchanged. */}
+          {result.confidence >= GATE
+            ? "certain enough to file on its own"
+            : "not certain enough to file, so this one waits for you"}
         </span>
       </div>
 

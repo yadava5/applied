@@ -1,5 +1,4 @@
 import { Reveal } from "@/components/landing/Reveal";
-import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ACCESS, DECISION, PRIVACY } from "./copy";
 
@@ -30,9 +29,14 @@ export function DecisionSection() {
         </h2>
         <p className="mt-5 text-muted">{DECISION.body}</p>
       </Reveal>
-      <Reveal className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,26rem)_1fr] lg:items-center">
-        <BenchmarkFigure />
-        <p className="max-w-md text-sm text-dim">{DECISION.gate}</p>
+      {/* The benchmark figure stood here until 2026-08-21 (`copy.ts`'s
+          DECISION block says why it left the product entirely). A and C are
+          the comparison set for a staging choice, so they lose it with B:
+          the family's whole invariant is that the variants differ in
+          composition and never in what they claim. */}
+      <Reveal className="mt-8 max-w-2xl">
+        <p className="text-muted">{DECISION.payoff}</p>
+        <p className="mt-4 text-sm text-dim">{DECISION.proof}</p>
       </Reveal>
     </SectionShell>
   );
@@ -60,8 +64,8 @@ export function PrivacySection() {
             className="text-muted underline underline-offset-4 transition-colors hover:text-strong"
           >
             {PRIVACY.systemCardLink}
-          </a>{" "}
-          — {PRIVACY.policyLead}{" "}
+          </a>
+          . {PRIVACY.policyLead}{" "}
           <a
             href="/privacy"
             {...NEW_TAB}

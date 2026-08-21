@@ -3,22 +3,22 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { NEW_TAB } from "./chrome";
-import { ACCESS, CLOSING, DECISION } from "./copy";
+import { ACCESS, CLOSING } from "./copy";
 
 /**
  * The closing act — the page's last image, and its one emphasised ask.
  *
  * The page spends nine screens making a sentence; this band draws the
- * sentence and punctuates it. One envelope enters at the left and crosses
- * the full width — but it meets ONE cyan rail, the rules stage, the figure
- * that ships (`DECISION.rulesF1` — the digits live in copy.ts, and naming
- * the key rather than spelling them out keeps this comment true when the
- * attribution is the thing under discussion) — and then collapses into the
- * emerald verdict, which falls and
- * seats itself as the full stop after the drawn `applied` wordmark. The
- * email literally finishes the sentence: the thesis line beneath says the
- * inbox already holds the verdict, and the closing image is the mail
- * becoming the punctuation of the product's name.
+ * sentence and punctuates it. One envelope enters at the left, crosses the
+ * full width, meets ONE cyan rail — the reading — and collapses into the
+ * emerald verdict, which falls and seats itself as the full stop after the
+ * drawn `applied` wordmark. The email literally finishes the sentence: the
+ * thesis line beneath says the inbox already holds the verdict, and the
+ * closing image is the mail becoming the punctuation of the product's name.
+ *
+ * IT WAS A THREE-RAIL SCENE UNTIL 2026-08-21, and the two it lost were the
+ * benchmark's ghosts. See the deletion note where `Key` used to live for why
+ * a legend was the tell.
  *
  * This replaces `SignatureEnding` FOR THIS FAMILY ONLY (the old landing
  * still mounts it): that scene pulsed three layers and an 0.85 gate — the
@@ -136,16 +136,6 @@ const DOT_R = 19.4;
 /** Lane (y=64) → baseline seat (y=335.2). Mirrored in the CSS keyframes. */
 const DOT_SEAT_Y = 335.2;
 
-/**
- * Where the key sits over the scene at `lg`+, as shares of the viewBox — the
- * x each tag used (369 and 569 of 1200) and the rails' own top edge (y=24 of
- * 370) as the row's bottom, so the words rest on the rails rather than
- * floating above them. Shares, not pixels: the svg is fluid, and these have
- * to track it.
- */
-const KEY_LEFT = { rules: "30.75%", ghost: "47.417%" } as const;
-const KEY_BOTTOM = "93.514%";
-
 const at = (d: string): CSSProperties => ({ ["--d" as string]: d });
 
 /**
@@ -175,18 +165,19 @@ function Scene() {
         strokeDasharray="2 6"
       />
 
-      {/* the neural layers, as ghosts: present, benchmarked, not shipped.
-          Dashed, achromatic, and the envelope crosses them without an event —
-          the page's central comparison restaged as furniture. The dashes stay
-          quiet (opacity in globals.css, per theme, measured to the 3:1
-          non-text floor); what they MEAN is carried by the key, in text a
-          visitor can read. */}
-      <g className="act__ghosts" stroke="currentColor">
-        <line x1="560" y1="24" x2="560" y2="104" strokeWidth="1.5" strokeDasharray="3 5" />
-        <line x1="800" y1="24" x2="800" y2="104" strokeWidth="1.5" strokeDasharray="3 5" />
-      </g>
+      {/* TWO DASHED GHOST RAILS STOOD AT x=560 AND x=800 until 2026-08-21,
+          with a key naming them "benchmarked, not shipped" against the solid
+          rail's "what ships", and the two scores printed beside those words.
+          They restaged the page's benchmark comparison as its LAST IMAGE —
+          which is precisely the comparison the page stopped making (see
+          `copy.ts`, the DECISION block). Deleting them leaves the arc the
+          scene was always drawing: an envelope enters, crosses the reading,
+          and becomes the full stop. Nothing was added to replace them, and
+          nothing should be: the emptiness between the rail and the wordmark
+          is the envelope's travel, and it now reads as travel rather than as
+          two obstacles the reader has to have explained. */}
 
-      {/* the one rail — the rules, the layer that ships */}
+      {/* the one rail: the reading the envelope crosses */}
       <g className="act__rules">
         <line
           className="act__draw act__rail"
@@ -284,42 +275,22 @@ function Scene() {
   );
 }
 
-/**
- * The scene's key — the whole comparison, in two rows.
+/*
+ * `Key` STOOD HERE and went with the ghosts it labelled (2026-08-21). It was
+ * the scene's legend: two rows, absolutely placed on the rails they named at
+ * `lg`+ and stacked above the scene below that, each printing a score beside
+ * "what ships" or "benchmarked, not shipped".
  *
- * At `lg`+ each row is absolutely placed on the rail it names, which is the
- * composition the scene was drawn for. Below that the rows have no room to
- * sit side by side (they collide under ~1024), so they stack into a legend
- * above the scene — above, because nothing may sit below it: the wordmark's
- * descenders bleed off the band's bottom edge and that crop is the ending.
- * The stacked rows earn a mark cut like the rail they stand for, solid or
- * dashed, since at that width the rails themselves are 25px ticks.
+ * It is worth recording WHY a legend was needed at all, because that is the
+ * argument against the thing it explained. The ghosts carried no meaning a
+ * reader could see; they meant something only once a caption told them, so
+ * the page's closing image required a footnote. An image that needs a
+ * footnote is not the image. With one rail the scene reads without help: an
+ * envelope crosses something and comes out the other side as a full stop.
+ *
+ * `KEY_LEFT` and `KEY_BOTTOM` went with it, along with the `act__key`,
+ * `act__tag` and `act__key-mark` rules in globals.css.
  */
-function Key() {
-  return (
-    <ul
-      className="act__key mx-auto mt-6 flex w-full max-w-6xl flex-col gap-2 px-6 text-[0.8125rem] lg:pointer-events-none lg:absolute lg:inset-0 lg:z-10 lg:mt-0 lg:block lg:max-w-none lg:px-0 lg:text-xs xl:text-[0.8125rem]">
-      <li
-        className="act__tag act__tag--rules flex items-center gap-2 lg:absolute lg:gap-1.5"
-        style={{ left: KEY_LEFT.rules, bottom: KEY_BOTTOM }}
-      >
-        <span aria-hidden className="act__key-mark inline-block lg:hidden" />
-        <span className="tabular font-mono">{DECISION.rulesF1}</span>
-        <span aria-hidden>·</span>
-        <span className="act__words">{CLOSING.railShips}</span>
-      </li>
-      <li
-        className="act__tag act__tag--ghost flex items-center gap-2 lg:absolute lg:gap-1.5"
-        style={{ left: KEY_LEFT.ghost, bottom: KEY_BOTTOM }}
-      >
-        <span aria-hidden className="act__key-mark act__key-mark--ghost inline-block lg:hidden" />
-        <span className="tabular font-mono">{DECISION.cascadeF1}</span>
-        <span aria-hidden>·</span>
-        <span className="act__words">{CLOSING.railGhost}</span>
-      </li>
-    </ul>
-  );
-}
 
 /**
  * The sequence's own length, in seconds — the last animation's delay (the
@@ -516,17 +487,17 @@ export function ClosingAct() {
         </div>
       </div>
 
-      {/* The key rides over this box at `lg`+, so it is the box the scene's
-          own geometry defines: the button is the svg and nothing else, and
-          the key's percentage placement lands on the rails it names. Below
-          `lg` the key is in flow above the button and the box is both. */}
+      {/* The box the scene's own geometry defines: the button is the svg and
+          nothing else. It kept `relative` and the ref when the key was
+          removed — `sceneBoxRef` is what the play trigger watches, and the
+          band's own ratio says nothing about whether the drawing is on
+          screen. */}
       <div ref={sceneBoxRef} className="relative">
-        <Key />
         <button
           type="button"
           onClick={replay}
           className="act__scene relative block w-full cursor-pointer border-0 bg-transparent p-0"
-          aria-label="Replay the closing sequence: one email crosses the rules layer — the one that ships — and lands as the emerald full stop after the applied wordmark."
+          aria-label="Replay the closing sequence: one email crosses the reading, then lands as the full stop after the applied wordmark."
         >
           <span aria-hidden className="act__hint absolute right-6 top-1 text-[0.8125rem] text-dim sm:right-10">
             {CLOSING.replay}
