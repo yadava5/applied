@@ -287,9 +287,28 @@ export function OnerStage({
 
   useEffect(() => () => directorRef.current?.cancel(), []);
 
+  /*
+   * `h-full` ON BOTH WRAPPERS, and it is a bug fix rather than a tidy-up.
+   *
+   * `MarketingBoard`'s own root is `flex h-full flex-col gap-4`: it is written
+   * to fill whatever it is given. On this path it was given nothing. The chain
+   * ran frame (a real height, `calc(100dvh - 11rem)`) → camera div (auto) →
+   * this wrapper (auto), so the board's `h-full` resolved against an
+   * auto-height parent and collapsed to its content.
+   *
+   * Nobody saw it while the board was full, because ten rows overflow the
+   * frame anyway. Filter the stage lens to anything but "all" and the board
+   * shrinks to its rows while the frame stays a viewport tall: measured on
+   * production at 1512x893, the assessment lens left 343px of the 717px
+   * camera as bare page background, 47.8% of the window, and the whole
+   * composition read as broken. That is #392.
+   *
+   * The skeleton path three files up already passes `h-full p-4 lg:p-5` for
+   * exactly this reason. The real path dropped it.
+   */
   if (disarmed) {
     return (
-      <div className="p-4 lg:p-5">
+      <div className="h-full p-4 lg:p-5">
         <MarketingBoard />
       </div>
     );
@@ -297,8 +316,8 @@ export function OnerStage({
 
   return (
     <>
-      <div ref={cameraRef} style={{ transformOrigin: "0 0" }}>
-        <div ref={stageRef} className="p-4 lg:p-5">
+      <div ref={cameraRef} className="h-full" style={{ transformOrigin: "0 0" }}>
+        <div ref={stageRef} className="h-full p-4 lg:p-5">
           <MarketingBoard />
         </div>
       </div>
