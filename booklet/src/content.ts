@@ -483,16 +483,16 @@ export const PROOF = {
 
   tests: {
     eyebrow: "§04 · THE GUARANTEE",
-    headline: "305 tests and a gate that blocks merges.",
+    headline: "1,240 tests and a gate that blocks merges.",
     body:
-      "Correctness is not asserted, it is enforced. The backend ships a 305-test suite — all 305 passing, including the ten Postgres row-level-security tests, which now provision their own postgres:16 through testcontainers instead of skipping; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
+      "Correctness is not asserted, it is enforced. The backend ships a 1,240-test suite — all 1,240 passing, including the twenty-one Postgres row-level-security tests, which provision their own postgres:16 through testcontainers instead of skipping; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
     stats: [
-      { value: "305", label: "tests · backend suite", note: "pytest tests -q" },
+      { value: "1,240", label: "tests · backend suite", note: "pytest tests -q" },
       { value: "2", label: "CI gates · rules + hybrid", note: "backend-ci.yml" },
       { value: "0.95", label: "macro-F1 merge floor", note: "--min-macro-f1" },
     ],
     honest:
-      "Provenance: 305 is what `pytest tests -q` collects, all of them passing, run 2026-08-06 against backend/.venv311 on Python 3.11.14. The ten Postgres row-level-security tests that used to skip now start their own postgres:16 container via testcontainers, so the isolation claim is demonstrated rather than described — on a machine with no Docker daemon those ten skip again, and the suite reports 295. A hedge about a figure is worth nothing when the hedge is itself unchecked, so this row names a command, and the condition under which the command gives a different answer.",
+      "Provenance: 1,240 is what `pytest tests -q` collects from backend/, all of them passing, run 2026-08-21 on Python 3.11.14 with a Docker daemon available. The twenty-one Postgres row-level-security tests start their own postgres:16 container through testcontainers, so database-level tenant isolation is demonstrated rather than described — without Docker and without JOBTRACKER_TEST_PG_ADMIN_URL those twenty-one skip, and that isolation is simply unverified on such a run. A hedge about a figure is worth nothing when the hedge is itself unchecked, so this row names a command, and the condition under which the command gives a different answer. The figure was 305 on 2026-08-06; the suite has grown, it has not been re-scoped.",
     handoffQuote:
       "A classifier that knows when to stop is worth more than one that is always sure.",
   },
