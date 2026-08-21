@@ -121,10 +121,40 @@ const DESKTOP_1512_1080 = { width: 1512, height: 1080 };
 const DESKTOP_1024_TALL = { width: 1024, height: 1120 };
 const TABLET_768 = { width: 768, height: 1024 };
 
-/** The exhibit's closing sentence — the honesty guarantee, matched on the
- *  clause that carries it rather than on the whole sentence, so a wording
- *  tweak that keeps the promise does not turn CI red. */
-const PROVENANCE = /A synthetic email .* computed live in this tab/;
+/**
+ * The exhibit's closing sentence — the honesty guarantee, matched on the two
+ * clauses that carry it rather than on the whole sentence, so a wording tweak
+ * that keeps the promise does not turn CI red.
+ *
+ * IT DID TURN CI RED, on 2026-08-21, over ONE CHARACTER. The pattern demanded
+ * a literal space after "email", and the copy sweep changed
+ *
+ *     "A synthetic email — the verdicts are computed live in this tab by the
+ *      shipped rules layer."
+ *     "A synthetic email. The verdicts are computed live in this tab."
+ *
+ * which keeps the promise exactly and drops only the internals name. So the
+ * regex failed its own stated intent, one line above itself. `\b[\s\S]*` now
+ * spans whatever punctuation sits between the two clauses.
+ *
+ * THE STRUCTURAL POINT IS WORTH MORE THAN THE FIX. This was the THIRD time
+ * this test's containment block has been disarmed by a fail-fast locator
+ * upstream of it, and the docblock below documents the first two itself. Ten
+ * or so assertions gate the one that matters, so a copy edit anywhere in the
+ * drive stops the guarantee being checked at all — and the failure that
+ * reaches you says "locator not found", which invites loosening the locator
+ * rather than asking whether the guarantee still holds.
+ *
+ * SO ASK, every time. On this occasion it did hold: measured 7.19px of
+ * clearance against a 600px fold, matching the 7.2px this file records as
+ * canonical. A loosened locator with an unmeasured guarantee behind it is a
+ * check that cannot fail.
+ *
+ * Deliberately still addressed by the words the reader sees, not by a
+ * test-only attribute. A hook here would be a knob rather than a measurement,
+ * and the thing under test is what a reader can actually see in the frame.
+ */
+const PROVENANCE = /A synthetic email\b[\s\S]*computed live in this tab/;
 
 /** A pinned rail (`lg`+ only) — the page's spine is five of them since the
  *  2026-08-20 restaging (`RAIL_COUNT` names them), sides alternating
@@ -1212,12 +1242,25 @@ test.describe("landing (/)", () => {
    * every copy edit and none of them are pinned here — only the share, against
    * a threshold below the tightest real reading. It was 6.1% below #access's
    * 0.213 at 1512x600; #access no longer runs a rail (2026-08-20), and the
-   * spine is five rails now with no decision rail among them — the tightest
-   * reading that remains is the REVIEW rail's 0.321 at 1024x1120 (per the
-   * measured table in `MIN_PIN_SHARE`, which is the one place that number
-   * lives) and the floor sits well under it. `MIN_PIN_SHARE` carries the
-   * table and says why the floor is not being raised to close that gap
-   * back up.
+   * spine is five rails now with no decision rail among them. The tightest
+   * reading that remains is the RULES rail's 0.312 at 1512x600, with ROW's
+   * 0.314 at two corners just behind it (per the measured table in
+   * `MIN_PIN_SHARE`, which is the one place those numbers live), and the
+   * floor sits well under both. `MIN_PIN_SHARE` carries the table and says
+   * why the floor is not being raised to close that gap back up.
+   *
+   * THIS SENTENCE SAID "REVIEW's 0.321 at 1024x1120" until 2026-08-21, which
+   * contradicted the table it cites: the table's own argmin prose has read
+   * rules-then-row-then-review since the 4:3 recapture. That is the FIFTH
+   * time this file's prose has named the wrong corner, and the first four are
+   * already confessed in `MIN_PIN_SHARE`. The pattern is always the same, a
+   * number re-derived in prose instead of read off the table, so read it off
+   * the table.
+   *
+   * Re-confirmed against a full production run on 2026-08-21, after the
+   * decision phase lost the benchmark figure from the rules rail's own
+   * runway: 30 of 30 readings clear the floor, the rules rail's worst is
+   * 0.314 at 1024x600 and 1512x600, and overhang is zero everywhere.
    *
    * The pre-fix signature is a `top` that falls by exactly the scroll delta at
    * every sample (measured then, over six samples: 281 181 81 -19 -119 -219).

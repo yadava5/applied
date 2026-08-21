@@ -371,12 +371,23 @@ jobs:
         working-directory: apps/web
         run: pnpm exec playwright test
 
-      # Same census as the dev-server job, and it must report the SAME 13. This
-      # job satisfies `PLAYWRIGHT_PROD_BUILD`, so production.spec.ts's 12 skips
-      # do not happen here — and because the count is prefix-matched to
-      # `tests/e2e/session.ts` rather than taken from the skip total, that
-      # difference cannot move the number. A total that means 25 on one job and
-      # 13 on the other would be the very ambiguity this step exists to remove.
+      # Same census as the dev-server job, and it must report the SAME NUMBER
+      # on both. This job satisfies `PLAYWRIGHT_PROD_BUILD`, so
+      # production.spec.ts's 12 skips do not happen here — and because the
+      # count is prefix-matched to `tests/e2e/session.ts` rather than taken
+      # from the skip total, that difference cannot move the number. A total
+      # that means one thing on one job and another on the other would be the
+      # very ambiguity this step exists to remove.
+      #
+      # THE LITERAL "13" WAS WRONG HERE, corrected 2026-08-21 against a full
+      # production run that reported 28. `shell.spec.ts` joined
+      # `DAY_DEPENDENT_SPECS` at some point and tripled its own 6 to 18. The
+      # census itself was right the whole time; only this comment was stale,
+      # which is the worse failure of the two — a reader checking the run
+      # against the prose would have "corrected" a working count. The
+      # invariant is that the two jobs AGREE, and that is what this says now,
+      # because a hardcoded expectation in a comment nothing executes is a
+      # claim with no gate behind it.
       - name: Census — coverage that did not run for want of a session
         if: always()
         working-directory: apps/web
