@@ -724,10 +724,10 @@ test.describe("landing (/)", () => {
    * watched 2026-08-20 — and 1.017 where the scale is parked at 1 with the
    * cover floor left armed, which is a SEPARATE reading on the same
    * production build and not one the recipe below produces — while a
-   * computed close-up pushes past
-   * natural scale (max 1.605 — the live cover bound riding the filtered
-   * board — with the fill bound's 1.12 as the independent backstop if the
-   * fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
+   * computed close-up pushes past natural scale (max 1.155 at this
+   * viewport, re-measured on the merged tree 2026-08-21 — the live cover
+   * bound riding the filtered board — with the fill bound's 1.12 as the
+   * independent backstop if the fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
    * parked variants with room: an authored scale plus a floor correction is
    * not a measurement of the shot, so the clearance budget belongs entirely
    * to the real side, under both computed drivers.
@@ -793,12 +793,18 @@ test.describe("landing (/)", () => {
     const voidWatch = page.evaluate(async () => {
       let worst = 0;
       let prev = 0;
+      // How many frames actually carried the handle. The loop `continue`s
+      // when it does not, and a watcher that never found the camera would
+      // otherwise return a perfect 0 — the shape this whole file exists to
+      // refuse. `seen` turns absence into a red instead of a pass.
+      let seen = 0;
       const t0 = performance.now();
       while (performance.now() - t0 < 24_000) {
         await new Promise((r) => requestAnimationFrame(r));
         const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
         const stage = frame?.firstElementChild?.firstElementChild;
         if (!frame || !stage) continue;
+        seen += 1;
         const f = frame.getBoundingClientRect();
         const r = stage.getBoundingClientRect();
         const gap = Math.max(0, r.top - f.top) + Math.max(0, f.bottom - r.bottom);
@@ -807,7 +813,7 @@ test.describe("landing (/)", () => {
         worst = Math.max(worst, Math.min(prev, gap));
         prev = gap;
       }
-      return worst;
+      return { worst, seen };
     });
 
     let max = 0;
@@ -824,7 +830,15 @@ test.describe("landing (/)", () => {
       )
       .toBeGreaterThanOrEqual(1.06);
 
-    const worstVoid = await voidWatch;
+    const { worst: worstVoid, seen: voidFrames } = await voidWatch;
+    // The watcher's own positive control: it must have found the camera on
+    // hundreds of frames. 24s of rAF is >1400 frames on a healthy runner and
+    // ~700 on a heavily throttled one; 300 clears both and still separates
+    // absolutely from a watcher that measured nothing.
+    expect(
+      voidFrames,
+      `the void watcher found the camera on only ${voidFrames} frame(s) — it measured nothing, so its 0px reading is not evidence`,
+    ).toBeGreaterThan(300);
     expect(
       worstVoid,
       `the frame showed ${worstVoid.toFixed(1)}px of vertical void mid-take — the cover bound is not holding through the board's own resizes`,
@@ -895,110 +909,135 @@ test.describe("landing (/)", () => {
    *     25,053 px/s) and only line 3 reds.
    * Restored and watched green the same way after each.
    */
-  test("the camera is seeded, braced and continuous at 1024x1120", async ({ page }) => {
-    await page.setViewportSize(DESKTOP_1024_TALL);
-    // The watcher must predate the board: the unseeded-camera defect lives
-    // in the window between the camera mounting and the take's first move.
-    await page.addInitScript(() => {
-      interface CamSample {
-        t: number;
-        unseeded: boolean;
-        s: number | null;
-        x: number | null;
-        y: number | null;
-        sh: number | null;
-        fh: number | null;
-      }
-      const samples: CamSample[] = [];
-      (window as unknown as { __cam: CamSample[] }).__cam = samples;
-      // The camera is found STRUCTURALLY — walk up from the board to the
-      // element carrying a transform-origin — never via `[data-cam-scale]`:
-      // the dataset is written by the code under test, so a camera that was
-      // never composed would also never be found, and the unseeded count
-      // could not fail. (The first cut of this watcher had exactly that
-      // hole a second way: it compared `style.transformOrigin === "0 0"`,
-      // which the CSSOM serializes as `0px 0px`, so the predicate matched
-      // nothing and the seed mutation stayed green. Watched, then fixed.)
-      const tick = () => {
-        const board = document.querySelector<HTMLElement>('[data-testid="pipeline-board"]');
-        let camera: HTMLElement | null = null;
-        for (let el = board?.parentElement ?? null; el; el = el.parentElement) {
-          if (el instanceof HTMLElement && el.style.transformOrigin) {
-            camera = el;
-            break;
-          }
+  /**
+   * TWO VIEWPORTS, and 1512x949 is the one that carries the point. Every
+   * camera number here is a function of the frame's dimensions, and the
+   * fluid composition widens that frame by up to ~208px above 1280 — so a
+   * gate pinned to 1024 measures the camera on the one width where the
+   * widening contributes nothing. Measured on the merged tree: max pan per
+   * frame climbs 7.85 -> 12.81 -> 14.26px and max depth 1.481 -> 1.811 ->
+   * 1.934 across 1024x768 / 1440x900 / 1512x949. The code re-measures; this
+   * makes the gate re-measure with it.
+   */
+  for (const [label, viewport] of [
+    ["1024x1120", DESKTOP_1024_TALL],
+    ["1512x949", DESKTOP_1512],
+  ] as const) {
+    test(`the camera is seeded, braced and continuous at ${label}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      // The watcher must predate the board: the unseeded-camera defect lives
+      // in the window between the camera mounting and the take's first move.
+      await page.addInitScript(() => {
+        interface CamSample {
+          t: number;
+          unseeded: boolean;
+          s: number | null;
+          x: number | null;
+          y: number | null;
+          sh: number | null;
+          fh: number | null;
         }
-        const frame = camera?.parentElement ?? null;
-        samples.push({
-          t: performance.now(),
-          unseeded: !!camera && !camera.style.transform,
-          s: frame?.dataset.camScale ? Number(frame.dataset.camScale) : null,
-          x: frame?.dataset.camX ? Number(frame.dataset.camX) : null,
-          y: frame?.dataset.camY ? Number(frame.dataset.camY) : null,
-          sh: camera?.firstElementChild instanceof HTMLElement ? camera.firstElementChild.offsetHeight : null,
-          fh: frame ? frame.getBoundingClientRect().height : null,
-        });
+        const samples: CamSample[] = [];
+        (window as unknown as { __cam: CamSample[] }).__cam = samples;
+        // The camera is found STRUCTURALLY — walk up from the board to the
+        // element carrying a transform-origin — never via `[data-cam-scale]`:
+        // the dataset is written by the code under test, so a camera that was
+        // never composed would also never be found, and the unseeded count
+        // could not fail. (The first cut of this watcher had exactly that
+        // hole a second way: it compared `style.transformOrigin === "0 0"`,
+        // which the CSSOM serializes as `0px 0px`, so the predicate matched
+        // nothing and the seed mutation stayed green. Watched, then fixed.)
+        const tick = () => {
+          const board = document.querySelector<HTMLElement>('[data-testid="pipeline-board"]');
+          let camera: HTMLElement | null = null;
+          for (let el = board?.parentElement ?? null; el; el = el.parentElement) {
+            if (el instanceof HTMLElement && el.style.transformOrigin) {
+              camera = el;
+              break;
+            }
+          }
+          const frame = camera?.parentElement ?? null;
+          samples.push({
+            t: performance.now(),
+            unseeded: !!camera && !camera.style.transform,
+            s: frame?.dataset.camScale ? Number(frame.dataset.camScale) : null,
+            x: frame?.dataset.camX ? Number(frame.dataset.camX) : null,
+            y: frame?.dataset.camY ? Number(frame.dataset.camY) : null,
+            sh: camera?.firstElementChild instanceof HTMLElement ? camera.firstElementChild.offsetHeight : null,
+            fh: frame ? frame.getBoundingClientRect().height : null,
+          });
+          requestAnimationFrame(tick);
+        };
         requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
-    await page.goto("/");
-    await expect(page.getByTestId("pipeline-board")).toBeVisible();
-    // Long enough to cover the establishing handoff, the filter beat and
-    // the pane mount at authored tempo (collapse ~7.3s, mount ~11.5s).
-    await page.waitForTimeout(16_000);
-    const samples = await page.evaluate(
-      () =>
-        (window as unknown as { __cam: { t: number; unseeded: boolean; s: number | null; x: number | null; y: number | null; sh: number | null; fh: number | null }[] }).__cam,
-    );
+      });
+      await page.goto("/");
+      await expect(page.getByTestId("pipeline-board")).toBeVisible();
+      // Long enough to cover the establishing handoff, the filter beat and
+      // the pane mount at authored tempo (collapse ~7.3s, mount ~11.5s).
+      await page.waitForTimeout(16_000);
+      const samples = await page.evaluate(
+        () =>
+          (window as unknown as { __cam: { t: number; unseeded: boolean; s: number | null; x: number | null; y: number | null; sh: number | null; fh: number | null }[] }).__cam,
+      );
 
-    // 1 — SEEDED: no frame ever renders the camera untransformed.
-    const unseeded = samples.filter((r) => r.unseeded).length;
-    expect(
-      unseeded,
-      `${unseeded} frame(s) rendered with the camera untransformed — the establishing shot is being cut to, not seeded (Director's constructor seed)`,
-    ).toBe(0);
+      // 1 — SEEDED: no frame ever renders the camera untransformed.
+      const unseeded = samples.filter((r) => r.unseeded).length;
+      expect(
+        unseeded,
+        `${unseeded} frame(s) rendered with the camera untransformed — the establishing shot is being cut to, not seeded (Director's constructor seed)`,
+      ).toBe(0);
 
-    // 2 — BRACED: on the frame the stage collapses, the camera already
-    // covers the new height. 0.06 of slack is measurement noise; the
-    // unbraced defect misses by 1.26.
-    let braced = true;
-    let braceMsg = "no collapse observed";
-    for (let i = 1; i < samples.length; i++) {
-      const a = samples[i - 1]!;
-      const b = samples[i]!;
-      if (a.sh && b.sh && b.sh < a.sh * 0.75 && a.s !== null && b.fh) {
-        const required = b.fh / b.sh;
-        braced = a.s >= required - 0.06;
-        braceMsg = `at the collapse (stage ${a.sh} -> ${b.sh}) the camera held ${a.s} against a cover of ${required.toFixed(3)}`;
-        break;
+      // 2 — BRACED: on the frame the stage collapses, the camera already
+      // covers the new height. 0.06 of slack is measurement noise; the
+      // unbraced defect misses by 1.26.
+      let braced = true;
+      let collapses = 0;
+      let braceMsg = "no collapse observed";
+      for (let i = 1; i < samples.length; i++) {
+        const a = samples[i - 1]!;
+        const b = samples[i]!;
+        if (a.sh && b.sh && b.sh < a.sh * 0.75 && a.s !== null && b.fh) {
+          collapses += 1;
+          const required = b.fh / b.sh;
+          braced = a.s >= required - 0.06;
+          braceMsg = `at the collapse (stage ${a.sh} -> ${b.sh}) the camera held ${a.s} against a cover of ${required.toFixed(3)}`;
+          break;
+        }
       }
-    }
-    expect(braced, `${braceMsg} — the press is not being braced (OnerStage's filteredCover)`).toBe(
-      true,
-    );
+      // The brace loop's own positive control. Without it, a restaging that
+      // softens the collapse below the 0.75 trip leaves `braced` at its
+      // initial `true` and the gate goes quiet with no other symptom — the
+      // silence this file exists to refuse.
+      expect(
+        collapses,
+        "no stage collapse was observed at all — the brace assertion measured nothing, so its pass is not evidence",
+      ).toBeGreaterThan(0);
+      expect(braced, `${braceMsg} — the press is not being braced (OnerStage's filteredCover)`).toBe(
+        true,
+      );
 
-    // 3 — CONTINUOUS: the rendered camera's per-frame speed limit.
-    let maxScaleRate = 0;
-    let maxPanRate = 0;
-    for (let i = 1; i < samples.length; i++) {
-      const a = samples[i - 1]!;
-      const b = samples[i]!;
-      if (a.s === null || b.s === null || Number.isNaN(a.s) || Number.isNaN(b.s)) continue;
-      const dt = (b.t - a.t) / 1000;
-      if (dt <= 0) continue;
-      maxScaleRate = Math.max(maxScaleRate, Math.abs(b.s - a.s) / dt);
-      maxPanRate = Math.max(maxPanRate, Math.abs(b.x! - a.x!) / dt, Math.abs(b.y! - a.y!) / dt);
-    }
-    expect(
-      maxScaleRate,
-      `the camera's scale moved at ${maxScaleRate.toFixed(1)}/s within one frame — a cut, not a move (reframe's absorb)`,
-    ).toBeLessThanOrEqual(6);
-    expect(
-      maxPanRate,
-      `the camera panned at ${maxPanRate.toFixed(0)}px/s within one frame — a cut, not a move (reframe's absorb)`,
-    ).toBeLessThanOrEqual(5500);
-  });
+      // 3 — CONTINUOUS: the rendered camera's per-frame speed limit.
+      let maxScaleRate = 0;
+      let maxPanRate = 0;
+      for (let i = 1; i < samples.length; i++) {
+        const a = samples[i - 1]!;
+        const b = samples[i]!;
+        if (a.s === null || b.s === null || Number.isNaN(a.s) || Number.isNaN(b.s)) continue;
+        const dt = (b.t - a.t) / 1000;
+        if (dt <= 0) continue;
+        maxScaleRate = Math.max(maxScaleRate, Math.abs(b.s - a.s) / dt);
+        maxPanRate = Math.max(maxPanRate, Math.abs(b.x! - a.x!) / dt, Math.abs(b.y! - a.y!) / dt);
+      }
+      expect(
+        maxScaleRate,
+        `the camera's scale moved at ${maxScaleRate.toFixed(1)}/s within one frame — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(6);
+      expect(
+        maxPanRate,
+        `the camera panned at ${maxPanRate.toFixed(0)}px/s within one frame — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(5500);
+    });
+  }
 
   test("the pause control freezes the clock, and the visitor's hand stands the take down", async ({
     page,

@@ -476,7 +476,7 @@ test("the pin and the page order make the enter-only trigger safe", () => {
   // geometry that guarantees the scene is still on screen at max scroll.
   assert.match(
     page,
-    /<ClosingAct \/>\s*<MarketingFooter \/>/,
+    /<ClosingAct[^>]*\/>\s*<MarketingFooter[^>]*\/>/,
     "ClosingAct is no longer immediately before the footer — the cannot-escape-the-viewport argument no longer holds",
   );
   // And the component only grows the runway for a band still below the fold,
