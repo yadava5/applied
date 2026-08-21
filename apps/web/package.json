@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "node scripts/assert-unit-suite-ran.mjs",
     "e2e": "playwright test",
+    "e2e:check": "node scripts/assert-e2e-ran.mjs",
+    "e2e:prod": "PLAYWRIGHT_PROD_BUILD=1 node scripts/assert-e2e-ran.mjs",
     "e2e:ui": "playwright test --ui",
     "api:gen": "../../scripts/generate_api_schema.sh",
     "api:gen:local": "../../scripts/generate_api_schema.sh",
