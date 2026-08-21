@@ -899,20 +899,49 @@ test.describe("landing (/)", () => {
    *      side. Displacement is the face-value question and is dt-free, so
    *      the bunching mechanism cannot recur in any form.
    *
-   *      MEASURED, n=15 runs per viewport, 2026-08-21. Authored tweens
-   *      reach 0.054 of scale per frame at 1512x949 and 0.073 at
-   *      1024x1120 (one unexplained outlier; the other 15 runs sat at
-   *      ≤0.034). The CONTINUITY defect displaces 0.192 at 1512 and 0.364
-   *      at 1024, stable 3/3, and the historical cuts displaced 0.81. The
-   *      physical window between authored motion and the smallest defect
-   *      is only 3.6x, so the bound cannot have an order of magnitude to
-   *      each side the way the earlier prose claimed — 0.12 is the
-   *      balance point at 1.64x over authored and 1.60x under the defect,
-   *      and that narrowness is a property of the shot, not a slack
-   *      threshold. Frame times run 8.4ms median against an 18.3ms p99,
-   *      so a dropped frame inflates authored displacement by ~2.2x at
-   *      worst; the argmax pairs sit at the SHORT end (rawDt 1.3-1.4ms),
-   *      which is why that inflation is not what sets the bound.
+   *      MEASURED, n=16 runs per viewport, 2026-08-21. The defect is
+   *      perfectly deterministic under this metric — 0.3640 and 0.1920 on
+   *      4/4 runs each, zero variance, where the same defect ranged
+   *      21.5-43.7 as a rate. That determinism is itself the argument for
+   *      a dt-free reading.
+   *
+   *        viewport    authored   defect   historical cut
+   *        1024x1120   0.0860     0.3640   0.81
+   *        1512x949    0.0540     0.1920   —
+   *
+   *      THE BOUND IS PER-VIEWPORT, and that is not tuning. Forcing one
+   *      constant onto both shots was measured UNSATISFIABLE: authored
+   *      motion is worst at 1024 and the defect is smallest at 1512, so a
+   *      shared bound needs ≥0.1290 and ≤0.1280 to clear 1.5x on both
+   *      sides — an empty interval, missed by about 1%. The binding
+   *      constraints come from different viewports, which is exactly why
+   *      neither corner alone revealed it and why the single-constant
+   *      version read 1.40x green. Per shot the windows are 4.2x and
+   *      3.6x, and 0.18 / 0.10 sit near the middle of each: 2.09x/2.02x
+   *      at 1024, 1.85x/1.92x at 1512. The camera's authored motion is a
+   *      function of frame size; so is the defect's magnitude; a bound
+   *      that is a function of neither was the anomaly.
+   *
+   *      WHAT CAN STILL FALSE-RED, stated because it is real. Displacement
+   *      grows with frame duration, so the argmax migrates to LONG frames
+   *      — the opposite of the rate metric, where it sat at 1.3-1.4ms.
+   *      The 1024 maximum of 0.0860 came from a 19.0ms frame at an
+   *      ordinary 4.53/s: pure frame-length inflation, not anomalous
+   *      motion. At that velocity the bound is reached by a 39.7ms frame,
+   *      and dtMax was observed up to 37.9ms. What keeps it rare is the
+   *      conjunction — the long frame has to land on the punch's peak
+   *      velocity — not headroom. Read it as "can happen", not "will
+   *      fail". One run in 16 also read 0.0790 at a NORMAL 7.30ms frame,
+   *      which is genuinely anomalous camera motion rather than a
+   *      sampling artifact, and it is the reading that sets the 1024
+   *      floor.
+   *
+   *      PAN stays a single constant at 100px, because its physical
+   *      window is 11.5x rather than 3.6x and one number clears both
+   *      shots comfortably: authored 41.80px at 1024 and 35.00px at 1512
+   *      against a defect of 523.60px and 480.10px, so 2.39x is the
+   *      binding margin. Both bounds are on the same argmax pair as the
+   *      scale reading in 15/16 runs, so they are watching one event.
    *
    * 1024x1120 because it is the discriminating corner for all three: the
    * establishing fit clamps to 1.000 (so an unseeded camera is invisible
@@ -954,9 +983,9 @@ test.describe("landing (/)", () => {
    * 1.934 across 1024x768 / 1440x900 / 1512x949. The code re-measures; this
    * makes the gate re-measure with it.
    */
-  for (const [label, viewport] of [
-    ["1024x1120", DESKTOP_1024_TALL],
-    ["1512x949", DESKTOP_1512],
+  for (const [label, viewport, maxStep] of [
+    ["1024x1120", DESKTOP_1024_TALL, 0.18],
+    ["1512x949", DESKTOP_1512, 0.1],
   ] as const) {
     test(`the camera is seeded, braced and continuous at ${label}`, async ({ page }) => {
       await page.setViewportSize(viewport);
@@ -1066,8 +1095,8 @@ test.describe("landing (/)", () => {
       }
       expect(
         maxScaleStep,
-        `the camera's scale jumped ${maxScaleStep.toFixed(3)} between two frames — a cut, not a move (reframe's absorb)`,
-      ).toBeLessThanOrEqual(0.12);
+        `the camera's scale jumped ${maxScaleStep.toFixed(3)} between two frames, over this shot's ${maxStep} — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(maxStep);
       expect(
         maxPanStep,
         `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
