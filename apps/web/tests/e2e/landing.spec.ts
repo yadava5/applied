@@ -712,6 +712,31 @@ test.describe("landing (/)", () => {
    * is neither exempt nor was it gated, and the camera demonstrably travels
    * there. Canonical gaps: -20 / -153 / -38 / -31 at 1024x600, and
    * -20 / -191 / -230 / -124.5 at 1512x949.
+   *
+   * AND THE 1512 INSTANCE IS THE WEAK ONE, said plainly rather than left
+   * for someone to discover. The mutation that reds 1024x600 at +328.4px —
+   * an unpanned press of the worklist's last row — was measured GREEN at
+   * 1512x949, reading gap -20.6: at that viewport the row is inside the
+   * frame whether the camera pans to it or not. A second variant, the same
+   * press moved behind the detail-pane beat, passed at both viewports for
+   * a different reason: by then the board is filtered to three rows and
+   * "last row" resolves to a row already framed.
+   *
+   * So this instance currently has ~20px of margin and no mutation that
+   * reds it. It is NOT vacuous the way 1024x1120's pan clause was — the
+   * margin is finite and the camera really does travel 1.8px — but the
+   * reason it holds is close to structural: a scale-locked camera plus a
+   * board that fits the frame leaves little for a mis-framed press to fall
+   * off. That is also why the owner's original defect could not reproduce
+   * here after the recut: it needed a ZOOMED frame showing a fraction of
+   * the board, which no longer exists.
+   *
+   * It is kept because it stops being structural the moment the
+   * composition grows the board past the frame at this width, which is
+   * live work (see the resolution-matrix issue). If a future reader finds
+   * this instance still unfailable and the composition unchanged, deleting
+   * it is defensible; what is not defensible is leaving it here while
+   * believing it guards something.
    */
   for (const [pressLabel, pressViewport] of [
     ["1024x600", DESKTOP_1024],
@@ -825,6 +850,25 @@ test.describe("landing (/)", () => {
    * (the camera does not move at all), and 1512x949, where the camera
    * demonstrably does pan, asserts BOTH that it moved and that it never
    * jumped. `pans` in the tuple is which contract the shot is under.
+   * Canonical pan at 1512x949 is 1.8px, dead stable across six repeats,
+   * not the 1.9-to-4.1 spread an earlier draft of this block recorded:
+   * the 4.1 came from a run carrying a press mutation that changes the
+   * take, and comparing it against a clean run was a measurement error.
+   *
+   * MUTATION EVIDENCE, all three watched red 2026-08-21 on their own
+   * production builds, each verified by reading the shipped `applyCam` in
+   * the chunk rather than by hashing `.next/static` (BUILD_ID sits in that
+   * path, so the aggregate hash changes on byte-identical sources and
+   * discriminates nothing):
+   *   · SCALE: a returning zoom of 0.002 amplitude reds both viewports at
+   *     0.0040 — 45x below the retired 0.18 ceiling, which is exactly the
+   *     regression the old bound admitted in silence.
+   *   · STIR: a 0.5px sine on the camera reds 1024x1120 alone at 0.9px,
+   *     and would have sailed under the old `<= 100`.
+   *   · FREEZE: pinning the transform reds 1512x949 alone on the "never
+   *     panned" line.
+   * The last two red in exactly one viewport each, which is the evidence
+   * that the per-viewport split does real work rather than being decor.
    *
    * AND THE WATCHER HAS A POSITIVE CONTROL AT LAST. Mutating its
    * camera-finding predicate so it could never locate the element was
