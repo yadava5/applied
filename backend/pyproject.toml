@@ -6,7 +6,18 @@ build-backend = "hatchling.build"
 name = "jobtracker"
 version = "0.1.0"
 description = "Email-powered job application tracker with ML classification"
-readme = "README.md"
+# NO `readme` KEY, deliberately (#403). It declared "README.md" and that file
+# has never existed in this directory, which made every documented way of
+# installing the backend fail at metadata time rather than at import time:
+#
+#   $ cd backend && uv sync
+#   OSError: Readme file does not exist: README.md          (exit 1)
+#   $ uv pip install -e .                                    (exit 1)
+#
+# So the package could not be installed at all, and nothing noticed, because
+# CI runs the suite from `requirements-dev.txt` against the source tree and
+# never builds this package. The docs are at the repository root; the same is
+# true of LICENSE, which is why `license-files` is unset just below.
 # Proprietary, all rights reserved -- see the repository-root LICENSE. Written
 # as a PEP 639 `LicenseRef-` expression because no SPDX identifier describes
 # "no licence granted to anyone"; `license-files` is not set because the LICENSE
