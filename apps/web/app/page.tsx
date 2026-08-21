@@ -89,7 +89,7 @@ export default function Landing() {
           for `xl` because at 1024 those extra ~25px of headline are exactly
           the row's margin. Re-measure on `next build && next start` if any
           of this moves — `next dev` cannot measure it. */}
-      <section className="mx-auto w-full max-w-[85rem] px-6 pt-9 pb-4 sm:pt-11">
+      <section className="column-ruled column-ruled-flush mx-auto w-full max-w-[85rem] px-6 pt-9 pb-4 sm:pt-11">
         <h1 className="max-w-4xl text-balance text-5xl font-semibold tracking-[-0.025em] text-strong sm:text-6xl xl:text-7xl">
           {HERO.headline}
         </h1>

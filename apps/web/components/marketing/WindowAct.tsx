@@ -117,7 +117,7 @@ export function WindowAct() {
   const strip = reduced ? ACT.resting : caption;
 
   return (
-    <section aria-label="The board, live" className={cn("relative", runway && "lg:h-[260vh]")}>
+    <section aria-label="The board, live" className={cn("column-ruled relative", runway && "lg:h-[260vh]")}>
       {/* ---- the window, pinned through the act -------------------------- */}
       <div className="lg:sticky lg:top-[4.5rem]">
         {/* The act's narration: one pinned line above the frame, swapped as

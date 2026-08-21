@@ -369,7 +369,7 @@ export function ClaimsDescent() {
        its floor drops to 26rem so a short viewport shrinks the box instead of
        cropping its transport under the fold (at 600dvh the cap resolves
        ~432px, under the 36rem the rules rail can hold there). */
-    <section className="border-t border-line-soft [--rail:clamp(30rem,32.787vw_+_9.016rem,40rem)] [--rail-big:clamp(36rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.8286),44rem)] [--rail-row:clamp(26rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.3333),44rem)] [--measure:clamp(26rem,13.115vw_+_17.606rem,30rem)]">
+    <section className="column-ruled border-t border-line-soft [--rail:clamp(30rem,32.787vw_+_9.016rem,40rem)] [--rail-big:clamp(36rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.8286),44rem)] [--rail-row:clamp(26rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.3333),44rem)] [--measure:clamp(26rem,13.115vw_+_17.606rem,30rem)]">
       {/* ---- 1 · VERDICT, rail RIGHT: the merged claim's two micro-beats,
               with the 02b take riding beside them. The take opens on `raw`
               as the rail pins — the same beat the first paragraph argues —

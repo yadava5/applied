@@ -1866,3 +1866,72 @@ html[data-boot="1"] .boot-overlay {
     opacity: 1;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * THE LANDING'S COLUMN RULES — the missing perpendicular, and only where the
+ * column stops being self-evident.
+ *
+ * Every phase boundary on `/` is already a hairline that crosses the WHOLE
+ * viewport (`border-t border-line-soft` on the full-width sections). So the
+ * page is ruled in one axis: the horizontals say where a phase ends, and
+ * nothing says where the 85rem column is. Below ~1800px that costs nothing —
+ * the column edge is close enough to the bezel that the bezel states it. Past
+ * it the margin opens (600px a side at 2560) and the strip reads as floating
+ * rather than placed.
+ *
+ * The rules are the perpendicular the composition is missing: 1px, static,
+ * achromatic, in the same `--line-soft` the horizontals use, so they meet
+ * those horizontals as a T and read as one ruling system rather than a second
+ * decoration. Nothing here moves: this page's ground treatments are scoped to
+ * surfaces with jobs (the window's dot grid, the verdict's bloom), and the
+ * page ground stays the null surface those read against.
+ *
+ * ON THE CONTENT EDGE, NOT THE CONTAINER EDGE. The container's own edge is
+ * drawn nowhere on this page — every surface sits inside `px-6`. The content
+ * edge is drawn everywhere: it is the hero headline's left, the window frame's
+ * own border, the descent grid's outer tracks and the ask's measure. At the
+ * window act the rule therefore lands exactly ON the frame's border rather
+ * than 24px outside it, where a second hairline would read as a double edge;
+ * the frame's opaque `bg-surface` (border-box clipped) covers the rule for its
+ * whole height, and the rule shows through only where `rounded-2xl` pulls the
+ * corner away.
+ *
+ * TWO EXPRESSIONS, ONE LINE. The hero section IS the container, so its rules
+ * are `1.5rem` from its own edge; the other three are full-width, so theirs
+ * are half the leftover plus the same padding. They resolve to the same x at
+ * every width the rules exist at. `100%` and never `100vw` — with classic
+ * scrollbars `100vw` includes the scrollbar while the container centres in the
+ * content box, and the rules would stagger off the frame by the scrollbar's
+ * width.
+ *
+ * `position: relative` is inside the query too, so at 1024–1512 and every
+ * mobile width this rule set contributes nothing at all. Relative is also the
+ * most a sticky ancestor may take: a transform, filter, perspective or a new
+ * overflow here would re-resolve the descent rails' containing block or their
+ * scrollport, and the pan and pin gates are measured against both.
+ * ------------------------------------------------------------------------ */
+@media (min-width: 1800px) {
+  .column-ruled {
+    position: relative;
+  }
+  .column-ruled::before,
+  .column-ruled::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--line-soft);
+    pointer-events: none;
+  }
+  .column-ruled::before {
+    left: var(--column-rule, calc((100% - 85rem) / 2 + 1.5rem));
+  }
+  .column-ruled::after {
+    right: var(--column-rule, calc((100% - 85rem) / 2 + 1.5rem));
+  }
+  /* The hero: the section and the container are the same box. */
+  .column-ruled-flush {
+    --column-rule: 1.5rem;
+  }
+}
