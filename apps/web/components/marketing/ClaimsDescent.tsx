@@ -138,6 +138,77 @@ const BENCH_WINDOW = { from: 0.95, to: 0.55 };
 const RETENTION_WINDOW = { from: 0.8, to: 0.35 };
 const RETENTION_MARK = 0.5;
 
+/**
+ * The rails' entrance window: `{ from: 1, to: 1 }` — from the box touching
+ * the fold to fully in frame, the closing band's own grammar (`scrub.ts`
+ * derives it). Chosen over a mid-viewport window because the two take rails
+ * are viewport-tall flex boxes whose content centres itself: a window that
+ * ends deeper than the fold is unreachable for them once the pin holds, and
+ * an exhibit stuck at 99% scale forever is exactly the kind of quiet defect
+ * this page keeps having to measure for.
+ */
+const RAIL_ZOOM_WINDOW = { from: 1, to: 1 };
+
+/** Where the dolly starts. 0.9 is a real arrival — visible at a glance,
+ *  finished by the time the box is whole in frame — without ever reading as
+ *  an effect layered on the exhibit: the box scales as ONE object, chrome
+ *  and all, the way a camera closes on a subject. */
+const RAIL_ZOOM_FROM = 0.9;
+
+/**
+ * THE CINEMATIC ZOOM LIVES HERE NOW — the owner's call, twice over
+ * (2026-08-21): the oner plays at natural size with no zoom at all
+ * (`OnerStage`), and "the zoom was for boxes, when we scroll through them,
+ * which are five of them". So each of the spine's five rails arrives on a
+ * dolly-in: the box enters the fold at 0.9 of its size and closes to 1 as
+ * the reader scrolls it into frame, driven by scroll POSITION — reversible
+ * by construction, which is what makes it honest for a rail (the exhibits'
+ * own stories stay takes and clips; this is only the camera picking the box
+ * up). It completes before the rail pins, so the pinned exhibit — the state
+ * every geometry gate on this page measures — renders untransformed.
+ *
+ * Deliberately NOT a drift: past the entrance the transform is removed
+ * outright, so the exhibit's text and footage render crisp at rest and
+ * nothing keeps rasterizing under a live transform. Reduced motion never
+ * arms it, and a box already on screen at load is never taken apart — the
+ * same two rules every driven exhibit on this page follows.
+ */
+function RailZoom({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let stop: (() => void) | undefined;
+    const raf = requestAnimationFrame(() => {
+      if (el.getBoundingClientRect().top < window.innerHeight) return;
+      el.style.willChange = "transform";
+      stop = trackProgress(el, RAIL_ZOOM_WINDOW, (progress) => {
+        if (progress >= 1) {
+          el.style.transform = "";
+          el.style.willChange = "";
+          return;
+        }
+        el.style.willChange = "transform";
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const scale = RAIL_ZOOM_FROM + (1 - RAIL_ZOOM_FROM) * eased;
+        el.style.transform = `scale(${scale.toFixed(4)})`;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      stop?.();
+      el.style.transform = "";
+      el.style.willChange = "";
+    };
+  }, []);
+  return (
+    <div ref={ref} style={{ transformOrigin: "50% 50%" }}>
+      {children}
+    </div>
+  );
+}
+
 function Claim({
   eyebrow,
   headline,
@@ -332,7 +403,13 @@ export function ClaimsDescent() {
        pin gates were measured against. `--rail-big`'s min() term is the
        fold fit: the transport at the frame's foot must clear a 100dvh fold
        from a 5rem pin with py-6 — see the sizing paragraph. */
-    <section className="border-t border-line-soft [--rail:clamp(30rem,32.787vw_+_9.016rem,40rem)] [--rail-big:clamp(36rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.8286),44rem)] [--measure:clamp(26rem,13.115vw_+_17.606rem,30rem)]">
+    /* `--rail-row` is the row rail's own width since the big-box restaging
+       (2026-08-21): same ramp as `--rail-big`, but its fold cap multiplies by
+       1152/864 = 1.3333 — the ratio of the 4:3 `one-letter` re-capture — and
+       its floor drops to 26rem so a short viewport shrinks the box instead of
+       cropping its transport under the fold (at 600dvh the cap resolves
+       ~432px, under the 36rem the rules rail can hold there). */
+    <section className="border-t border-line-soft [--rail:clamp(30rem,32.787vw_+_9.016rem,40rem)] [--rail-big:clamp(36rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.8286),44rem)] [--rail-row:clamp(26rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.3333),44rem)] [--measure:clamp(26rem,13.115vw_+_17.606rem,30rem)]">
       {/* ---- 1 · VERDICT, rail RIGHT: the merged claim's two micro-beats,
               with the 02b take riding beside them. The take opens on `raw`
               as the rail pins — the same beat the first paragraph argues —
@@ -397,14 +474,16 @@ export function ClaimsDescent() {
             data-rail="verdict"
             className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
           >
-            <RailTake
-              beats={verdictBeats}
-              label={KEPT.label}
-              opening={KEPT.opening}
-              resting={KEPT.resting}
-            >
-              <VerdictEmail evidence stage={VERDICT_STAGES[verdictStage] ?? "split"} />
-            </RailTake>
+            <RailZoom>
+              <RailTake
+                beats={verdictBeats}
+                label={KEPT.label}
+                opening={KEPT.opening}
+                resting={KEPT.resting}
+              >
+                <VerdictEmail evidence stage={VERDICT_STAGES[verdictStage] ?? "split"} />
+              </RailTake>
+            </RailZoom>
           </div>
         </div>
       </div>
@@ -441,12 +520,14 @@ export function ClaimsDescent() {
               data-rail="rules"
               className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail-big)_-_2px)*0.546875_+_8.46rem)] xl:[--exhibit:calc((var(--rail-big)_-_2px)*0.546875_+_8.71rem)]"
             >
-              <ProductClip
-                stack
-                clip={CLIPS.rulesReadTheBody}
-                name={FOOTAGE.rules.name}
-                caption={FOOTAGE.rules.caption}
-              />
+              <RailZoom>
+                <ProductClip
+                  stack
+                  clip={CLIPS.rulesReadTheBody}
+                  name={FOOTAGE.rules.name}
+                  caption={FOOTAGE.rules.caption}
+                />
+              </RailZoom>
             </div>
           </div>
           <div>
@@ -502,14 +583,16 @@ export function ClaimsDescent() {
               data-rail="review"
               className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
             >
-              <RailTake
-                beats={heldBeats}
-                label={HELD_TAKE.label}
-                opening={HELD_TAKE.opening}
-                resting={HELD_TAKE.resting}
-              >
-                <HeldExhibit settled={settled} />
-              </RailTake>
+              <RailZoom>
+                <RailTake
+                  beats={heldBeats}
+                  label={HELD_TAKE.label}
+                  opening={HELD_TAKE.opening}
+                  resting={HELD_TAKE.resting}
+                >
+                  <HeldExhibit settled={settled} />
+                </RailTake>
+              </RailZoom>
             </div>
           </div>
         </div>
@@ -519,22 +602,33 @@ export function ClaimsDescent() {
               letter") against the hero's own sentence, promoted from a
               passing clause to the beat it deserved: the mail becomes the
               move. The camera move is disclosed in the clip's own words
-              (`FOOTAGE.letter`), per the footage covenant. -------------- */}
+              (`FOOTAGE.letter`), per the footage covenant.
+
+              THE PAGE'S SECOND BIG BOX since 2026-08-21 — the owner's call,
+              off a screenshot of the old 478x129 strip: "a big square and
+              rectangle box that covers the entire half of the left side".
+              The clip was re-captured for it at a 704x528 CSS frame (4:3,
+              encoded 1408x1056 — scenes.mjs derives both), so the box is
+              real picture, not a letterboxed strip: at `--rail-row`'s 44rem
+              ceiling the recording renders at the product's own scale, and
+              the left column it sits in is half the 85rem gutter. --------- */}
       <div className="border-t border-line-soft">
-        <div className="mx-auto grid w-full max-w-[85rem] gap-x-16 px-6 lg:grid-cols-[minmax(0,var(--rail))_minmax(0,1fr)]">
+        <div className="mx-auto grid w-full max-w-[85rem] gap-x-12 px-6 lg:grid-cols-[minmax(0,var(--rail-row))_minmax(0,1fr)]">
           <div className="hidden lg:block">
-            {/* `--exhibit` = picture (310:1152 over the inner width) + the
-                same measured chrome constants the rules rail derives. */}
+            {/* `--exhibit` = picture (1056:1408 = 0.75 over the inner width)
+                + the same measured chrome constants the rules rail derives. */}
             <div
               data-rail="row"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.46rem)] xl:[--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.71rem)]"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail-row)_-_2px)*0.75_+_8.46rem)] xl:[--exhibit:calc((var(--rail-row)_-_2px)*0.75_+_8.71rem)]"
             >
-              <ProductClip
-                stack
-                clip={CLIPS.oneLetter}
-                name={FOOTAGE.letter.name}
-                caption={FOOTAGE.letter.caption}
-              />
+              <RailZoom>
+                <ProductClip
+                  stack
+                  clip={CLIPS.oneLetter}
+                  name={FOOTAGE.letter.name}
+                  caption={FOOTAGE.letter.caption}
+                />
+              </RailZoom>
             </div>
           </div>
           <div>
@@ -633,12 +727,14 @@ export function ClaimsDescent() {
               data-rail="retention"
               className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.46rem)] xl:[--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.71rem)]"
             >
-              <ProductClip
-                stack
-                clip={CLIPS.boardSyncs}
-                name={FOOTAGE.sync.name}
-                caption={FOOTAGE.sync.caption}
-              />
+              <RailZoom>
+                <ProductClip
+                  stack
+                  clip={CLIPS.boardSyncs}
+                  name={FOOTAGE.sync.name}
+                  caption={FOOTAGE.sync.caption}
+                />
+              </RailZoom>
             </div>
           </div>
         </div>

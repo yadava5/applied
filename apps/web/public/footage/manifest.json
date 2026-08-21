@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-20T19:09:17.258Z",
+  "generated": "2026-08-21T07:46:34.782Z",
   "clips": [
     {
       "id": "board-syncs",
@@ -12,12 +12,12 @@
     },
     {
       "id": "one-letter",
-      "width": 1152,
-      "height": 310,
+      "width": 1408,
+      "height": 1056,
       "seconds": 8.05,
-      "webm": 374304,
-      "mp4": 502188,
-      "poster": 20122
+      "webm": 667887,
+      "mp4": 504834,
+      "poster": 100195
     },
     {
       "id": "rules-read-the-body",
