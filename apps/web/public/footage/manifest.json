@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-21T07:46:34.782Z",
+  "generated": "2026-08-21T09:46:40.543Z",
   "clips": [
     {
       "id": "board-syncs",
@@ -24,9 +24,9 @@
       "width": 1152,
       "height": 630,
       "seconds": 10.9,
-      "webm": 319466,
-      "mp4": 158139,
-      "poster": 61026
+      "webm": 297504,
+      "mp4": 150668,
+      "poster": 57581
     }
   ]
 }

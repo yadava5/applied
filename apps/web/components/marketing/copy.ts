@@ -1,24 +1,98 @@
 /**
  * The one source of copy for the three landing candidates (/landing-a, -b, -c).
  *
- * The variants differ in STAGING only — same claims, same numbers, same
- * sentences — so the choice between them is about composition, not content.
- * Keeping every shared string here is what makes that literally true, and it
- * gives `tests/unit/landing-variants.test.mjs` one file to hold the honesty
- * constraints against:
+ * The variants differ in STAGING only — same claims, same sentences — so the
+ * choice between them is about composition, not content. Keeping every shared
+ * string here is what makes that literally true, and it gives
+ * `tests/unit/landing-variants.test.mjs` one file to hold the honesty
+ * constraints against.
  *
- *   · 0.979 is the RULES stage, never the cascade. `baseline_hybrid_v3.json`
- *     is byte-identical to `baseline_rules_v3.json` (the deterministic profile
- *     disables SetFit), so the file named "hybrid" measured the regexes alone.
- *     The full cascade scored 0.958 on the same 96-email v3 set — and that
- *     comparison is the pitch, not a caveat: the benchmark chose what ships.
- *   · No pattern count appears anywhere. The repo currently holds three
- *     different numbers for that noun; a number that cannot be derived in a
- *     gate does not go on a marketing page.
+ * TWO GATES RUN OVER THIS FILE, and both are mechanical rather than trusted,
+ * because the hand-built censuses that preceded them each missed strings
+ * (`tests/unit/landing-voice.test.mjs` says how they are derived):
+ *
+ *   · NO DASHES in any rendered string. An em or en dash reads as unedited
+ *     machine output, and the three reference landings measured on 2026-08-21
+ *     carry 0, 1 and 2 respectively. The fabricated recruiter mails are
+ *     EXEMPT and must stay exempt — they are props imitating how companies
+ *     write, and stripping their dashes makes them read as written by the
+ *     same hand as the page. Comments in this file are repo docs, not
+ *     rendered prose, and keep theirs.
+ *   · NO INTERNALS. No architecture, no model names, no training or
+ *     evaluation numbers, no CI thresholds, no score-shaped digits. See the
+ *     block on `DECISION` for why the benchmark left this file entirely.
+ *
+ * The surviving honesty constraint from the benchmark era, which still binds
+ * every sentence here:
+ *
  *   · The privacy claim is RETENTION, not request — the app fetches bodies as
  *     of 2026-08-14 and discards them, and
  *     backend/tests/test_body_is_never_persisted.py is the enforcement the
  *     copy names. See app/(app)/privacy/page.tsx for the full sourced version.
+ *
+ * THE VOICE IS THE CLERK, and which grammatical subject holds a sentence is
+ * itself the information:
+ *
+ *   · THE WORLD ACTS. "An interview invite lands at 2am." "The preview ends
+ *     before the verdict." "Cedar's note commits to nothing." The mail is the
+ *     protagonist and the source of every problem.
+ *   · APPLIED DOES CLERICAL VERBS, present tense, active: reads, files,
+ *     moves, holds, waits, asks, discards, keeps, records, classifies. Never
+ *     cognition, never affect. Applied is never a mind, and the reason is
+ *     structural rather than stylistic: the page's central promise is that no
+ *     mind reads your mail, so personifying it collapses the privacy story
+ *     into a paradox.
+ *
+ *     NEGATED COGNITION IS LICENSED, and the distinction is not a loophole.
+ *     "Applied wouldn't guess about it", "comes back unsure" and "never
+ *     guessed" are the claim "not a mind" said out loud; positive cognition
+ *     is the paradox. So `REVIEW.body`'s "comes back unsure, and unsure is
+ *     not a verdict" is correct and must not be swept for saying "unsure".
+ *
+ *     THE SWEEP BROKE THIS ONCE, on 2026-08-21, and it is worth naming
+ *     because it broke it in the one phase where a skeptic is asking what
+ *     exactly reads their mail: `DECISION` was written as "How it decides" /
+ *     "decides on what it says", and `PRIVACY.retention` as "reads a body to
+ *     decide". Deciding is cognition, and it also bleeds the possession
+ *     grammar below: `REVIEW.gate`'s "your decision files it, not a guess"
+ *     only has force if the decisions are the reader's word. They read
+ *     "How it reads", "files it on what it says" and "to classify it" now.
+ *   · YOU OWN the possessions and the decisions. "Your board." "Your decision
+ *     files it."
+ *
+ * Two consequences a later editor should not "fix":
+ *
+ *   1. IMPERATIVE SECTION HEADINGS ARE REJECTED, despite all three reference
+ *      landings using them. Commanding this reader assigns them work, and the
+ *      entire pitch is that the work is done for them. Imperatives address
+ *      the reader only for actions ON the page: drag a card, replay, ask for
+ *      a seat.
+ *   2. OPENING WITH A CATEGORY ASSERTION IS REJECTED. The references are
+ *      category incumbents. Applied's category, "job tracker", is a commodity
+ *      with a graveyard behind it, and leading with it files Applied under
+ *      every tool the reader already abandoned. The pain-first hero is the
+ *      considered exception, not an oversight.
+ *
+ * No "we", anywhere. Agentless passive only where the absence IS the claim
+ * ("is never stored", "nothing uploads"). The page's signature shape is the
+ * two-beat reversal ("You don't lose the offer. You lose the email."), at
+ * most one per phase.
+ *
+ * `payoff` FIELDS ARE NEW (2026-08-21) and they are the point of the rewrite.
+ * Every phase used to end on apparatus — computed in your tab, recorded on
+ * the demo page, the record keeps that it was your decision — so the page
+ * proved a great deal and never once said what any of it does for the
+ * reader. Each `payoff` restates a capability the phase has ALREADY proven,
+ * in outcome form. None of them may introduce a claim the phase has not
+ * earned; that is the whole discipline of the field.
+ *
+ * THE WITNESS MUST BE ABOVE, NEVER BELOW. A payoff may restate anything the
+ * reader has already been shown; it may not draw on an exhibit further down
+ * the page, because a reader who leaves at that phase never sees it. The
+ * first draft of `DECISION.payoff` was defended in its own comment by
+ * pointing two phases FORWARD to the row's mail trail, which contradicts the
+ * rule it was written under. `ACCESS.payoff` is the one exception and stays
+ * coherent under the same rule: its witness is the entire page above it.
  */
 
 /**
@@ -31,13 +105,12 @@
  *
  * The urgency has to come from the mechanism, never from a statistic. There is
  * no sourced number for "how many candidates miss a reply", so none appears
- * here — a fabricated one would fail the same honesty bar the DECISION block
- * is held to.
+ * here.
  *
  * Both privacy sentences are load-bearing and both are auditable:
- *   · "No AI reads your mail" — classification is the deterministic rules
- *     stage; no message content reaches a language model.
- *   · "never storing the message body" — RETENTION, not request. Bodies are
+ *   · "No AI reads your mail" — classification is the deterministic path; no
+ *     message content reaches a language model.
+ *   · "the message body is never stored" — RETENTION, not request. Bodies are
  *     fetched in flight and discarded; test_body_is_never_persisted.py is the
  *     gate, and production carries 0 populated `body_text`/`body_html` columns.
  *
@@ -73,24 +146,38 @@ export const HERO = {
    * one full row another 113.3px — the latter is not reachable by trimming
    * this subhead, so it is a layout change, not a copy change. Re-measure on
    * `next build && next start` if you touch this; `next dev` cannot measure it.
+   *
+   * THE 2026-08-21 DASH SWEEP CHANGED ONE CHARACTER HERE, deliberately: the
+   * dash before "no AI reads your mail" became a full stop, which is one
+   * character SHORTER, so the measured three-line fit is unchanged rather
+   * than re-argued. Nothing else in this string moved. The page's missing
+   * category statement was considered for this slot and REJECTED on the same
+   * budget: naming the category costs a fourth line, and a fourth line costs
+   * every board pixel above the fold.
    */
   subhead:
-    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied moves the row for you — no AI reads your mail, and the message body is never stored.",
+    "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied moves the row for you. No AI reads your mail, and the message body is never stored.",
 } as const;
 
 /** The board embed's provenance line — shown with every live mount. */
 export const BOARD = {
-  live: "Live fixture data — the shipped board, not a video. Drag a card; open a row.",
+  /**
+   * TRANSLATED, NOT DELETED, in the dash sweep. The first draft cut the
+   * phrase disclosing that the board's data is fabricated, and the page's
+   * honesty covenant hangs off exactly that distinction: the board is real
+   * and the rows in it are not. "Sample data" carries it in two words.
+   */
+  live: "Sample data, the real board. Not a video: drag a card, open a row.",
   /** The window act's variant of the same honesty line: the take drives the
    *  board with a synthesized pointer, and that has to be declared in the
    *  same breath as "not a video" — while the visitor's own hand still wins
-   *  (the components stay real and interactive under the take). Two ideas,
-   *  short: it sits in caps beside the transport while a take is playing,
-   *  and the earlier three-clause version was furniture competing with the
-   *  exhibit. "Drag a card, open a row" belongs to the resting line
-   *  (`BOARD.live`); the stand-down line (`ACT.yours`) already invites the
-   *  hand in prose when the take ends. */
-  take: "Live fixture data, a synthesized pointer — your hand wins.",
+   *  (the components stay real and interactive under the take).
+   *
+   *  LENGTH IS A CONSTRAINT: this sits in a `truncate` span sharing a row
+   *  with three transport controls, so a replacement that is longer than
+   *  what it replaces gets clipped at 1024. This one is 48 characters
+   *  against the old 58. */
+  take: "Sample data, a synthetic pointer. Your hand wins.",
   still: "A still of the board. The interactive board needs a wider screen.",
   open: "Open the full demo",
 } as const;
@@ -115,64 +202,145 @@ export const ACT = {
    *
    * The 2026-08-21 recut plays at NATURAL SIZE throughout (the camera is a
    * scroll, never a zoom — `director.ts` says why), so no line here may
-   * promise a composition only a zoom could make: line 0 used to say "the
-   * whole search in one frame", which a scale-1 camera on a short viewport
-   * cannot show, and the claim moved to the board, where it is true at any
-   * frame height.
+   * promise a composition only a zoom could make.
    *
-   * This replaces the three scroll-scene captions of the scrubbed act: the
-   * act plays on its own pausable clock now (the closing act's mechanism,
-   * the owner's call in both places), so captions indexed to scroll
-   * sentinels described a machine that no longer exists.
+   * TWO LINES USED TO BE ONE SENTENCE BROKEN OVER A DASH ("Press the heavy
+   * evening —" / "— and the board narrows"). The sweep kept the
+   * continuation and dropped the punctuation: a beat that opens on "And"
+   * carries across the cut without a dash at either end. Do not restore the
+   * dashes to "fix" the fragment; the fragment is the take's rhythm.
    */
   opening:
-    "A continuous working session — filter to a day, open a row, read its history, clear.",
+    "One continuous working session: filter to a day, open a row, read its history, clear.",
   narration: [
-    "Monday. The whole search on one board — ask it what happened.",
+    "Monday. The whole search on one board. Ask it what happened.",
     "The pulse holds the answer: filings, day by day.",
-    "Press the heavy evening —",
-    "— and the board narrows to the applications filed that day.",
+    "Press the heavy evening.",
+    "And the board narrows to the applications filed that day.",
     "Open one: the assessment, its deadline, and every mail that led here.",
-    "Clear the day —",
-    "— and the whole board breathes back. One sitting, no tab-hopping.",
+    "Clear the day.",
+    "And the whole board breathes back. One sitting, no tab-hopping.",
   ],
   /** A take that cannot find its target must say so, not half-play. */
-  failed: "The take could not finish here — replay to run it again.",
+  failed: "The take could not finish here. Replay to run it again.",
   /** The visitor's hand on the stage stands the take down (their events are
    *  trusted; the pointer's are synthesized) and the camera goes home, where
    *  the whole board — and anything they open on it — is in frame. */
-  yours: "Your hand — the board is yours. Replay runs the take again.",
+  yours: "Your hand: the board is yours. Replay runs the take again.",
   /** The reduced-motion strip: the take stands down entirely and the resting
    *  board — still the live product — is the whole exhibit. */
   resting:
-    "Motion is off — your setting is respected, and the board below is the live product at rest.",
+    "Motion is off, and the page keeps it off. The board below is the live product at rest.",
   pause: "Pause",
   play: "Play",
   replay: "Replay",
 } as const;
 
+/**
+ * THE BENCHMARK LEFT THIS FILE ON 2026-08-21, and the deletion is the point
+ * of the phase rather than damage to it. What used to stand here:
+ *
+ *   headline  "We benchmarked the neural cascade against the regexes. We
+ *              shipped the regexes."
+ *   body      "Three layers exist — deterministic rules, e5 embeddings, a
+ *              fine-tuned SetFit head. …"
+ *   rulesF1 / cascadeF1 / window / rulesLabel / cascadeLabel / gate
+ *
+ * That is an architecture, two model names, an evaluation method, a held-out
+ * set size, two self-graded scores and a CI threshold, on the largest exhibit
+ * of a product landing page.
+ *
+ * WHY IT WENT. Three landings were read on 2026-08-21 (vercel.com,
+ * linear.app, claude.com) for how they actually handle numbers, and the rule
+ * they follow is CHECKABLE-BY-OTHERS VERSUS GRADED-BY-SELF. Adoption,
+ * customers and price are stated freely, including in the company's own voice
+ * (Linear: "Linear powers over 40,000 product teams"). A figure grading the
+ * product's own quality, in the company's own voice, appears on none of them;
+ * Anthropic publishes hard benchmark numbers only inside attributed
+ * third-party quotes. Applied has no customers to name, no adoption figure and
+ * no third-party quotes, so it holds none of the sanctioned number types.
+ *
+ * The stronger argument does not need the comparison. Strip the supporting
+ * cluster the trade-secret rule already bans — model names, the metric, the
+ * set size, the threshold — and what is left is a bare 0.979 that cannot say
+ * what it is a score OF. It either wears its lab coat, which is banned, or
+ * stands naked as hype, which is also banned. And for this page's buyer the
+ * figure reads NEGATIVE: a job seeker does not know what macro-F1 is, and
+ * "96 held-out emails" reads as "they tested it on 96 emails".
+ *
+ * THE FIGURE IS NOT LOST. It keeps its home in the System Card, which the
+ * privacy phase links from its own prose, and where the attribution that
+ * makes it true has room to stand. Do not bring it back here without
+ * bringing the attribution with it, and re-read this block first.
+ *
+ * WHAT REPLACES IT is a capability claim carrying no figure, and the
+ * capability is the one the rail beside it records: Applied reads the whole
+ * message and decides on what it says. `proof` points at the demo, where the
+ * reader can hand it any mail they like and watch the verdict move. That is
+ * a number the reader generates themselves, which is the only kind this page
+ * is willing to show them.
+ */
 export const DECISION = {
-  eyebrow: "How it decides",
-  headline: "We benchmarked the neural cascade against the regexes. We shipped the regexes.",
-  /** Attribution is load-bearing: rules stage, v3, 96 held-out emails. */
-  rulesF1: "0.979",
-  cascadeF1: "0.958",
-  window: "macro-F1 · 96 held-out emails · v3 benchmark",
-  rulesLabel: "rules stage — what ships",
-  cascadeLabel: "full neural cascade",
+  eyebrow: "How it reads",
+  /** Not a two-beat reversal: the verdict phase above already spends the
+   *  page's one-per-phase allowance on one, and two in adjacent phases turn
+   *  a signature into a tic. Agentless passive, because the ABSENCE is the
+   *  claim (nothing is filed on so little). */
+  headline: "Nothing is filed on a subject line.",
   body:
-    "Three layers exist — deterministic rules, e5 embeddings, a fine-tuned SetFit head. On the held-out set the rules alone beat the full cascade, so the rules are what classify your mail in the hosted app: inspectable, deterministic, fast. The neural layers run where they cost you nothing — in your own browser, on the demo and the import page.",
-  gate:
-    "The number is load-bearing: two CI gates re-run the benchmark on every backend change and fail the merge below 0.95 macro-F1.",
+    "A rejection can open like a thank you. An invitation can open like a formality. So Applied reads the whole message and files it on what it says, not on how it starts.",
+  /**
+   * The phase's payoff, in the reader's terms: a board you can trust is a
+   * board whose moves you can account for.
+   *
+   * ITS WITNESSES ARE ABOVE IT, which is the rule (see the header). The
+   * window act has already opened Kestrel's row on "the assessment, its
+   * deadline, and every mail that led here" (`ACT.narration[4]`), and
+   * `BOARD.live` invited the reader to open a row themselves. The ROW phase
+   * two screens down restates it with a recording; it is not what earns this.
+   *
+   * IT USED TO SAY "see exactly what moved it", and "exactly" collided with
+   * the page's other headline promise. What moved the row is the whole body,
+   * and the body is the one thing Applied never keeps: behind a row sit a
+   * sender, a subject, a date, Gmail's preview and the verdict
+   * (`PRIVACY.retention` lists them). "The mail that moved it" is true as
+   * identity and silent on content, which is exactly the shape of what the
+   * product can actually show.
+   */
+  payoff: "So when a row moves on your board, you can see the mail that moved it.",
+  /** Not an imperative: the reader is not commanded off the page. The demo is
+   *  stated as a thing that exists and what it will do for them.
+   *
+   *  SCOPED TWICE, and both scopes are load-bearing.
+   *
+   *  SCOPED TO THE SANDBOX, not to the demo page: the sandbox calls
+   *  `classifyWithRules` (SampleInbox.tsx:277), and the rest of that page
+   *  shows precomputed verdicts and, further down, a layer visualiser. A
+   *  draft said "the demo page" and claimed sameness for all of it.
+   *
+   *  SCOPED TO THIS PAGE, not to the hosted app: it says "the same reading
+   *  THIS PAGE runs". That is provable and gated — the landing's own
+   *  `VerdictEmail` calls the identical module. "The same reading" full stop
+   *  would claim parity between a TypeScript module and the Python that
+   *  classifies in production, and NO PARITY GATE EXISTS between them
+   *  (checked 2026-08-21: no shared-fixture test, nothing named parity). It
+   *  was the most falsifiable sentence on the page and is now the least
+   *  interesting kind of true. If a parity gate is ever built, this sentence
+   *  may widen; until then it may not. */
+  proof:
+    "The sandbox on the demo page runs the same reading this page runs, in your own browser, and you can hand it any mail you like.",
 } as const;
 
 export const PRIVACY = {
   eyebrow: "Privacy",
   headline: "Read in flight. Never kept.",
   scope:
-    "Applied connects with one Google permission — gmail.readonly. It can read your mail; the grant carries no right to send, delete or change anything.",
+    "Applied connects with one Google permission, gmail.readonly. It can read your mail; the grant carries no right to send, delete or change anything.",
+  /** "Applied", not "the classifier". The page has one actor and it is the
+   *  product; naming a component here is the same internals leak the
+   *  DECISION block documents, in a quieter register. */
   retention:
-    "The classifier reads a message's body to decide, then discards it. No body is written to the database, returned by an endpoint, or logged. What is kept: a subject line, a sender, a date, Gmail's own short preview, and the verdict.",
+    "Applied reads a message's body to classify it, then discards it. No body is stored, sent back to your browser, or written to a log. What is kept: a subject line, a sender, a date, Gmail's own short preview, and the verdict.",
   /**
    * The enforcement sentence, and the one place on this page a visitor could
    * catch the product out — so it states the SCOPE of the check rather than
@@ -188,14 +356,51 @@ export const PRIVACY = {
    * table, every log record, and every response it touches, `GET /gmail/inbox`
    * included, which was the one response the file never checked despite being
    * the handler that does the reading.
+   *
+   * THE 2026-08-21 SWEEP TRANSLATED THE JARGON AND KEPT THE SPECIFICITY,
+   * which is the whole difficulty of this string: it is the page's
+   * credibility core, and a version that reads more smoothly by naming less
+   * is a downgrade, not an edit.
+   *
+   * IT ALSO WIDENED THE CLAIM TWICE ON THE WAY THROUGH, and both were caught
+   * in review before this shipped. Recorded because this is the one string a
+   * visitor can falsify from the test file it names, and because the
+   * translation is exactly where a scope quietly grows:
+   *
+   *   · "any response the scan touches" became "every response the app sends
+   *     back". That is a universal over all endpoints, and the test does not
+   *     have it: it can only scan the responses it drives. Now "every
+   *     response handed back to it", which is the original scope in the
+   *     reader's vocabulary rather than a bigger promise in it.
+   *   · "every change to the backend" became "every change to the part of
+   *     Applied that reads mail" — and the browser import path also reads
+   *     mail, parses a Takeout .mbox in the tab, and lives in `apps/web`,
+   *     outside the `backend/` path filter this sentence describes. Now
+   *     "reads your Gmail", which is the true boundary: the browser path
+   *     reads your export, not your Gmail.
+   *
+   * The lesson is the docblock's own, one paragraph up, generalised: a claim
+   * about a gate is a claim about WHEN it fires and about WHAT it covers.
    */
   mechanism:
-    "That is a claim about code, so code enforces it: a test runs a scan whose message bodies carry a marker string, and fails if the marker reaches any column of any table, any log record, or any response the scan touches — the inbox endpoint that does the reading included. It runs in CI on every change to the backend.",
+    "That is a claim about code, so code enforces it. A test feeds Applied mail whose bodies carry a marker string, then hunts for that marker everywhere a body could have left a trace: every column of every table, every log record, and every response handed back to it, the one that does the reading included. If it turns up anywhere, the build fails. The check runs on every change to the part of Applied that reads your Gmail.",
   /** The machine value the mechanism sentence names. Mono where rendered. */
   testPath: "backend/tests/test_body_is_never_persisted.py",
-  systemCardLead: "The System Card is the full walkthrough behind that promise —",
+  /**
+   * THESE TWO LEADS ARE CO-EDITED WITH THEIR JSX, and a string swap alone
+   * will publish a broken sentence. Both `ClaimsDescent` (the landing) and
+   * `sections.tsx` (/landing-a, /landing-c) render them as
+   *
+   *     {systemCardLead} <a>{systemCardLink}</a>. {policyLead} <a>{policyLink}</a>.
+   *
+   * The full stop after the first link lives in the JSX, which is why
+   * `policyLead` is capitalised and why `systemCardLead` ends on a colon
+   * rather than the dash it used to carry. Change one and change all four
+   * sites, or the page ships a lowercase fragment after a full stop.
+   */
+  systemCardLead: "The System Card is the full walkthrough: how it reads, how it is tested, and what it keeps:",
   systemCardLink: "read it",
-  policyLead: "and the privacy policy states what every sentence describes:",
+  policyLead: "The privacy policy states what every sentence here describes:",
   policyLink: "what Applied reads, and what it keeps",
 } as const;
 
@@ -203,13 +408,27 @@ export const ACCESS = {
   eyebrow: "Access",
   headline: "One hundred seats.",
   cap:
-    "Google caps an app awaiting verification at 100 Gmail accounts. Those are Applied's seats while the review runs, and they are invited one at a time.",
+    "Google caps an app awaiting verification at 100 Gmail accounts. Those are Applied's seats while the review runs, and Applied fills them one at a time.",
+  /** The ask's payoff, and the only one that may sit ABOVE its evidence:
+   *  this phase's evidence is the whole page above it. Outcome form, no new
+   *  claim — "the filing" is what every phase before this has just shown
+   *  being done. */
+  payoff: "A seat means the filing stops being your job.",
   /** Takeout is prepared asynchronously — Google mails the archive back, and
    *  that can take hours. The old line promised "today", which is the one
    *  sentence on the page a visitor could catch out at the moment of highest
-   *  intent, so it states the wait instead of hiding it. */
+   *  intent, so it states the wait instead of hiding it.
+   *
+   *  "ASK GOOGLE FOR A TAKEOUT .MBOX" IS AN OFF-PAGE IMPERATIVE AND STAYS.
+   *  It is the letter of the no-imperatives rule broken and the spirit kept:
+   *  the rule exists because commanding this reader assigns them work when
+   *  the whole pitch is that the work is done for them, and this is the one
+   *  path where the reader has already chosen to do the work, having just
+   *  been told there is no seat. Rewriting it into "a Google Takeout .mbox
+   *  works" was drafted and rejected as over-editing under cover of the
+   *  sweep, which is a named failure mode here. Considered, not overlooked. */
   noSeat:
-    "No seat? Run it on your own exported mail instead — ask Google for a Takeout .mbox, and when the archive lands in your inbox, drop it in: it is parsed and classified in your browser. Nothing uploads.",
+    "No seat? Run it on your own exported mail instead. Ask Google for a Takeout .mbox, and when the archive lands in your inbox, drop it in: it is read and filed in your browser. Nothing uploads.",
   cta: "Classify your exported mail",
   aside: "or",
   /** The seat ask is a product action, not a `mailto:`.
@@ -244,23 +463,25 @@ export const ACCESS = {
  * sentence the logo already encodes (components/brand/Logo.tsx); the CTAs
  * restate ACCESS with the seat ask made primary — the close is where the ask
  * carries weight — and "nothing uploads" is ACCESS.noSeat's own promise.
- * The rail labels compose DECISION.rulesF1 / DECISION.cascadeF1 in the
- * component, so the numbers stay single-sourced. No new claim.
  *
- * `rail*` are the scene's key: the one cyan rail the envelope crosses and the
- * two dashed ghosts it passes through. They were literals inside the svg
- * until they were measured at 3.1–3.3px there (uniform viewBox scaling makes
- * every in-scene size a function of the viewport), and the words moved out to
- * real DOM text — so they are copy now, and copy lives here. Sentence case:
- * the caps are a CSS treatment, which DOM text can carry reliably.
+ * `railShips` AND `railGhost` WERE DELETED ON 2026-08-21 with the benchmark
+ * (see `DECISION`). They labelled the scene's two dashed ghost rails as
+ * "benchmarked, not shipped" against the one solid rail's "what ships", and
+ * composed `DECISION.rulesF1` / `cascadeF1` beside them — so the page's LAST
+ * IMAGE was a restaging of the comparison the rest of the page had just
+ * stopped making, with the two scores printed on it. The ghosts and the key
+ * that named them are gone from the scene; the envelope now crosses one rail
+ * and becomes the full stop, which is the arc the scene always drew and the
+ * only one it needed.
  */
 export const CLOSING = {
   thesis: "Your inbox already holds the verdict.",
   seatCta: "Ask for a seat",
-  importAside: "or classify your exported mail — nothing uploads",
+  /** A colon, not the comma the first draft used: "or classify your exported
+   *  mail, nothing uploads" is a comma splice, which is worse than the dash
+   *  it was replacing. */
+  importAside: "or classify your exported mail: nothing uploads",
   replay: "Replay ↺",
-  railShips: "what ships",
-  railGhost: "benchmarked, not shipped",
 } as const;
 
 /**
@@ -283,31 +504,59 @@ export const CLAIMS = {
     headline: "The preview ends before the verdict. Applied reads past it.",
     /**
      * Micro-beat one: the mail as Gmail hands it over. The exhibit is an
-     * INTERVIEW INVITATION, not a rejection — the owner's call (2026-08-16):
-     * the landing carries no rejection anywhere, and the invitation is the
-     * larger loss anyway, because what the preview hides here is the
-     * opportunity itself. The split is computed live and was verified to
+     * INTERVIEW INVITATION, not a rejection — the owner's call (2026-08-16),
+     * and the invitation is the larger loss anyway, because what the preview
+     * hides here is the opportunity itself.
+     *
+     * THIS NOTE USED TO READ "the landing carries no rejection anywhere",
+     * and that was already untrue when it was written: the
+     * `rules-read-the-body` recording has always typed a rejection into the
+     * sandbox, and `DECISION.body` opens "A rejection can open like a thank
+     * you." Scoped to what the call actually governs — THIS EXHIBIT, the one
+     * the reader reads word by word. If the owner meant it globally, the
+     * clip needs re-recording and the decision line needs rewriting, and
+     * that is a call to make rather than a comment to leave standing. The split is computed live and was verified to
      * reproduce against the post-#356 rules before this copy was written:
      * preview → applied, whole body → interview.
+     *
+     * THE CLAUSE "all most tools ever see" WAS RECAST in the sweep, and not
+     * for the dash: it sets "all most" adjacent, which the eye reads as
+     * "almost" and then has to re-parse. The replacement puts the same idea
+     * at the end of the sentence where nothing collides with it.
      */
     raw:
-      "An interview invitation spends its first two hundred characters being polite. Gmail's preview — all most tools ever see — ends right where the inviting begins.",
+      "An interview invitation spends its first two hundred characters being polite. Gmail's preview ends right where the inviting begins, and for most tools the preview is all there ever is.",
     /** Micro-beat two: the same body, run twice. "So" carries the cause across
      *  the screen break, because this paragraph has no headline of its own. */
     split:
-      "So the shipped rules layer runs on it twice, live in your tab: once on the preview alone, once on the whole body. The preview reads as a routine acknowledgment. The body holds the invitation.",
+      "So Applied reads it twice, live in your tab: once on the preview alone, once on the whole body. The preview reads as a routine acknowledgment. The body holds the invitation.",
+    /**
+     * THE PAGE'S MOST IMPORTANT PAYOFF LINE. It converts the page's best
+     * proof — the live disagreement between preview and body, computed in
+     * the reader's own tab — into the reader's own stakes, and it closes
+     * back onto the hero's "under sixty other things". If only one payoff
+     * line ever ships, it is this one.
+     */
+    payoff: "So the invitation surfaces on your board instead of under sixty other things.",
     /**
      * The words around `VerdictTally` — the figure that fills micro-beat two's
      * claim column with the arithmetic behind the two chips beside it. Words
      * only: every number in the figure is a score the engine computed in the
      * visitor's tab, from the same two calls the chips print, so nothing here
      * may state one.
+     *
+     * THESE SCORES SURVIVED THE BENCHMARK DELETION ON PURPOSE, and the
+     * distinction is the one `DECISION` derives: a macro-F1 is the product
+     * grading itself and the reader cannot check it, while these are worked
+     * out from the mail in front of them, in their own browser, and change
+     * if the mail changes. Checkable-by-others is the test, not
+     * "is it a digit".
      */
     tallyLabel: "The tally behind each verdict",
     tallyPreview: "preview only",
     tallyBody: "whole body",
     tallyNote:
-      "Same engine, same weights, both runs — only the text differs. A pattern can only score on text its run can see, and the winner's score with its margin over the runner-up sets the confidence.",
+      "Two readings of one mail, and only the text differs. A phrase can only count toward a verdict if the reading can see it, which is why these two columns do not agree.",
   },
 } as const;
 
@@ -317,12 +566,12 @@ export const CLAIMS = {
  * TWO ARE PLACED, and the test each one had to pass is that the paragraph
  * beside it already says what the frames say, without the reader being told:
  *
- *   · `rules-read-the-body` against the decision claim — the layer that ships,
- *     answering a body on its own;
- *   · `board-syncs` against the retention claim's first sentence, "the
- *     classifier reads a message's body to decide, then discards it". The clip
- *     is the READING — a pass of mail going in — and the exhibit beneath it is
- *     what comes out. Two halves of one sentence, in two media.
+ *   · `rules-read-the-body` against the decision claim — the reading that
+ *     ships, answering a body on its own;
+ *   · `board-syncs` against the retention claim's first sentence, "Applied
+ *     reads a message's body to decide, then discards it". The clip is the
+ *     READING — a pass of mail going in — and the exhibit beneath it is what
+ *     comes out. Two halves of one sentence, in two media.
  *
  * THERE WERE THREE. `import-classifies` argued the access claim — the page's
  * second CTA, which promises "it is parsed and classified in your browser" —
@@ -345,8 +594,18 @@ export const CLAIMS = {
  *
  * `label` is the wall label, the same device the travelling exhibit uses. It
  * is not decoration: the board embed on this same page advertises itself as
- * "the shipped board, not a video" (`BOARD.live`), so anything that IS one
+ * "the real board" and "not a video" (`BOARD.live`), so anything that IS one
  * has to say so in the page's own voice, or that distinction quietly dies.
+ *
+ * ONE CLIP WAS RE-RECORDED FOR THE COPY SWEEP, which is the only reason a
+ * copy pass touched a video file. `rules-read-the-body` shows the demo
+ * sandbox, and the sandbox's own status line read "below 0.90 — the full
+ * pipeline would defer to e5 / SetFit". Two model names, a threshold and a
+ * dash, rendered INSIDE the page's largest exhibit, where no edit to this
+ * file could reach them: the whole sweep would have gone green with the
+ * internals still on screen. `components/demo/SampleInbox.tsx` now states
+ * what the product does instead of how it is built, and the clip was
+ * re-captured against it.
  */
 export const FOOTAGE = {
   label: "Recorded in the app",
@@ -360,32 +619,42 @@ export const FOOTAGE = {
     /**
      * The accessible name. A silent screen recording carries all of its
      * meaning in pixels, so it needs the same text equivalent an image does —
-     * what happens, in order, not what it is called.
+     * what happens, in order, not what it is called. Accessible names are
+     * Applied's voice too: this one used to speak "the rules layer" and "the
+     * neural layers" to every screen reader user, which is the internals leak
+     * again in the one register nobody proofreads.
+     *
+     * It describes the RE-RECORDED clip. The status line it names is the one
+     * `SampleInbox` renders now; if that line changes, this name is wrong
+     * until the clip is captured again.
      */
     name:
-      "Screen recording: a rejection body is typed into the classifier sandbox on Applied's demo page, and the rules layer re-scores it as the text arrives — the verdict moves from Other to Rejection, and the line beneath it changes from deferring to the neural layers to answering on its own.",
+      "Screen recording: a rejection is typed into the classifier sandbox on Applied's demo page, and Applied re-reads the message as the text arrives. The verdict moves from Other to Rejection, and the note beneath it changes from holding the mail for a person to filing it.",
     /**
-     * The caption does one job the label cannot: it scopes the numbers inside
-     * the frame. The confidence in the recording is one email's, from the
-     * accept bar the layer uses at read time; the figure directly above it is
-     * a macro-F1 over a held-out set. A visitor who reads them as the same
-     * quantity has been misled by the staging, not by the copy.
+     * The caption does one job the label cannot: it scopes the number inside
+     * the frame. The confidence in the recording is one email's, worked out
+     * at read time from that email.
+     *
+     * IT USED TO END "not the benchmark above it", and that clause is gone
+     * with the benchmark: there is no longer a figure above this clip for a
+     * reader to confuse it with. A scoping sentence that scopes against
+     * something no longer on the page is furniture.
      */
     caption:
-      "The classifier sandbox on the demo page, recorded there. The confidence beside the verdict is this one email's, scored live by the rules layer — not the benchmark above it.",
+      "The sandbox on the demo page, recorded there. The confidence beside the verdict is this one email's, worked out live as the words arrive.",
   },
   sync: {
     name:
       "Screen recording: one press of Sync on Applied's demo board. The counters at the head of the board rise as new mail is filed, the applied group's own count follows, and the status line beside them says how many messages the pass filed and how many it had already seen.",
     /**
      * Scoped, like the rules caption, and for the same reason: the counters in
-     * the frame are the demo's fixture mailbox, not a claim about anyone's real
+     * the frame are the demo's sample mailbox, not a claim about anyone's real
      * volume. What the clip is evidence FOR is the paragraph beside it — that a
      * pass reads mail — and the exhibit below it is what a read message leaves
      * behind. No number here: the frame states its own.
      */
     caption:
-      "The demo board's own Sync, recorded there. The strip counts the pass — what it filed, and what it had already seen.",
+      "The demo board's own Sync, recorded there. The strip counts the pass: what it filed, and what it had already seen.",
   },
   letter: {
     /**
@@ -395,15 +664,15 @@ export const FOOTAGE = {
      * screens. Written as the shot happens, in order.
      *
      * NO DIGITS, anywhere in this block. `landing-variants.test.mjs` asserts
-     * it, and the reason is not tidiness: the recordings sit a screen from the
-     * benchmark, so a figure in a clip's own words reads as a second
-     * measurement of the same thing. The confidence and the date are IN THE
-     * FRAME, where they belong to one email; naming them out here would lift
-     * them out of that scope. So this says "the verdict the classifier reached
-     * for it" rather than the number it reached.
+     * it, and the reason is not tidiness: a figure in a clip's own words
+     * reads as a second measurement of what the frame already states. The
+     * confidence and the date are IN THE FRAME, where they belong to one
+     * email; naming them out here would lift them out of that scope. So this
+     * says "the verdict the classifier reached for it" rather than the number
+     * it reached.
      */
     name:
-      "Screen recording: on Applied's board, a card is open on the mail behind it — an assessment invitation from Kestrel Dynamics, carrying the verdict the classifier reached for it and the deadline the message stated. The card is closed and the board's rows expand into the space it held. The frame then travels to the row itself, past the same deadline drawn on the row, and comes to rest with the row sitting in the board's assessment group.",
+      "Screen recording: on Applied's board, a card is open on the mail behind it, an assessment invitation from Kestrel Dynamics, carrying the verdict Applied recorded for it and the deadline the message stated. The card is closed and the board's rows expand into the space it held. The frame then travels to the row itself, past the same deadline drawn on the row, and comes to rest with the row sitting in the board's assessment group.",
     /**
      * Two scopes in two short sentences, and the length is a CONSTRAINT, not
      * a style: `ClaimsDescent`'s row rail (where this clip rides since the
@@ -439,13 +708,13 @@ export const ARTIFACT = {
   labels: [
     "The email, as Gmail hands it over",
     "The same body, classified twice",
-    "Both verdicts, from the rules layer that ships",
+    "Both verdicts, from the reading that ships",
     "The same email, as the database keeps it",
     /** The escalated exhibit's third beat (02b): the two honesty rails a
      *  dissolve needs, in one line — this happens to APPLIED'S copy (Gmail
      *  keeps the original), and what survives is the decision, not the
      *  correspondence. */
-    "The mail dissolves — Applied's copy, never your Gmail's",
+    "The mail dissolves. Applied's copy, never your Gmail's",
   ],
 } as const;
 
@@ -458,8 +727,8 @@ export const ARTIFACT = {
  * restate it.
  */
 export const HELD = {
-  mail: "A mail the rules will not guess about",
-  queue: "It waits in the review queue — filed by you, never guessed",
+  mail: "A mail Applied will not guess about",
+  queue: "It waits in the review queue, filed by you and never guessed",
 } as const;
 
 /**
@@ -470,35 +739,42 @@ export const HELD = {
  * the lab's 02b never staged (raw and split — its exhibit opened already
  * lit) restate `CLAIMS.verdict.raw` / `.split`, never a new claim.
  *
- * NO DIGITS in any string here, the FOOTAGE rule for the same reason: these
- * rails sit a screen from the benchmark, and a figure in an exhibit's own
- * words reads as a second measurement.
+ * NO DIGITS in any string here, the FOOTAGE rule for the same reason: a
+ * figure in an exhibit's own words reads as a second measurement of what the
+ * exhibit already shows.
  *
  * `resting` is the reduced-motion line: each take's exhibit RESTS at its
  * most demonstrative state (the split verdicts; the settled queue), so the
  * line's job is to say the surface is at rest, not to apologise for it.
  */
 export const KEPT = {
-  label: "Live verdict — computed in your tab",
-  opening: "One mail, read past its preview — then reduced to the record.",
+  /** A WALL LABEL NAMES THE THING, then says where it comes from. The first
+   *  draft of the sweep cut this to "Computed in your tab", which names a
+   *  provenance with no subject: the reader is told where something happens
+   *  and never what it is. The comma does the work the dash did. */
+  label: "Live verdict, computed in your tab",
+  opening: "One mail, read past its preview, then reduced to the record.",
   narration: [
     "The mail as Gmail hands it over. The preview ends where the inviting begins.",
-    "Read twice, live in your tab: the preview alone looks routine — the whole body holds the invitation.",
-    "Now the mail dissolves. This is Applied's copy — your Gmail keeps the original.",
+    "Read twice, live in your tab. The preview alone looks routine; the whole body holds the invitation.",
+    "Now the mail dissolves. This is Applied's copy, and your Gmail keeps the original.",
     "Even the lit phrases go: read and used, never stored. What remains is the record.",
   ],
-  resting: "Motion is off — the two verdicts are still computed live in your tab.",
+  resting: "Motion is off, and the two verdicts are still computed live in your tab.",
 } as const;
 
 export const HELD_TAKE = {
-  label: "The real review queue — the shipped component",
+  /** "The shipped component" was page anatomy in a wall label: it told the
+   *  reader about the repository, not about the queue. What the label owes
+   *  them is that this is the real one, the one they will get. */
+  label: "The real review queue, the one on your board",
   opening: "A held mail doesn't disappear; watch where it goes.",
   narration: [
     "The mail Applied wouldn't guess about.",
-    "It isn't filed and it doesn't vanish — it takes its place in the review queue, question still open.",
+    "It isn't filed and it doesn't vanish. It takes its place in the review queue, question still open.",
     "Nothing moves until you decide: the mail keeps its place, the board keeps its truth.",
   ],
-  resting: "Motion is off — the mail rests where the product holds it: in the review queue.",
+  resting: "Motion is off, and the mail rests where Applied holds it: in the review queue.",
 } as const;
 
 /**
@@ -507,17 +783,27 @@ export const HELD_TAKE = {
  * when they cannot — and the held exhibit's claim column was the benchmark's
  * leftovers. Nothing here is a new claim: the gate is the review queue's own
  * chrome ("held because Applied wasn't sure · your decision files them"),
- * the accept bar is `RULES_ACCEPT` — the constant the import page ships —
  * and "the record keeps that it was your decision" is what the correction
  * store actually writes.
+ *
+ * THE ACCEPT BAR IS NO LONGER NAMED. `body` used to say the rules "come back
+ * under their own accept bar, and a score under the bar is not a verdict",
+ * which is a threshold with a component attached to it. What the reader
+ * needs is that Applied came back unsure, and that unsure is not a verdict —
+ * the same fact, in the vocabulary of somebody who is not going to read the
+ * source.
  */
 export const REVIEW = {
   eyebrow: "When it isn't sure",
   headline: "Not every mail gets a verdict. That's the point.",
   body:
-    "Cedar's note commits to nothing — no next step, no decision, just patience requested. The rules read it whole and come back under their own accept bar, and a score under the bar is not a verdict.",
+    "Cedar's note commits to nothing: no next step, no decision, just patience requested. Applied reads it whole and comes back unsure, and unsure is not a verdict.",
   gate:
-    "So the mail is held, not filed: it joins the review queue on your board, question still open. Your decision files it — and the record keeps that it was your decision, not a guess.",
+    "So the mail is held, not filed: it joins the review queue on your board, question still open. Your decision files it, and the record keeps that it was your decision and not a guess.",
+  /** The payoff, and the one that turns a limitation into the feature it
+   *  actually is: a queue of one ambiguous mail is a reading list, not a
+   *  backlog. No new claim — the exhibit beside it is the queue. */
+  payoff: "And what it holds is the mail you would have wanted to read yourself.",
 } as const;
 
 /**
@@ -526,12 +812,21 @@ export const REVIEW = {
  * recording evidences: the storyboarded "ride the letter" take ends on the
  * row sitting in its group with the mail's deadline drawn on it. No number,
  * no new capability: everything stated here is inside the frame beside it.
+ *
+ * "THAT IS THE HERO'S WHOLE PROMISE" IS GONE from `body`. "The hero" is page
+ * anatomy: a visitor does not know the page has one, and being told that a
+ * sentence they read four screens ago was structurally important is a note
+ * from the author to themselves.
  */
 export const ROW = {
   eyebrow: "What you see",
   headline: "The mail becomes the move.",
   body:
-    "An assessment invitation, already read — and the row it left behind, already sitting in the board's assessment group with the deadline the mail stated drawn on it. Applied moves the row for you; that is the hero's whole promise, on camera.",
+    "An assessment invitation, already read, and the row it left behind: already sitting in the board's assessment group, carrying the deadline the message named. Applied moves the row for you, and this is what that looks like.",
   aside:
-    "The mail that moved it stays one click away, behind the row it moved — the trail the take opens on.",
+    "The mail that moved it stays one click away, behind the row it moved. That is the trail this recording opens on.",
+  /** The payoff, in the reader's own arithmetic. "Sixty threads" is the
+   *  hero's "sixty other things" collected back up, which is what makes it a
+   *  close rather than a new claim. */
+  payoff: "You check one board, not sixty threads.",
 } as const;

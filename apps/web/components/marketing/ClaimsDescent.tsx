@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, HELD, HELD_TAKE, KEPT, PRIVACY, REVIEW, ROW } from "./copy";
 import { CLIPS } from "./footage";
@@ -113,15 +112,6 @@ import { VerdictTally } from "./VerdictTally";
  * chatter here costs nothing but would still look nervous.
  */
 const STAGE_DEADBAND = 0.03;
-
-/**
- * The benchmark ladder's own window: 0 as the figure's top enters from the
- * foot of the viewport, 1 once its bottom is comfortably above the middle. The
- * bars draw across that, so the decision claim's exhibit arrives WITH the
- * reader instead of sitting there already finished. See `BenchmarkFigure` for
- * why both bars run on one clock and why the default is the composed figure.
- */
-const BENCH_WINDOW = { from: 0.95, to: 0.55 };
 
 /**
  * The retention exhibit's window and mark. The claim is "read in flight, never
@@ -278,45 +268,15 @@ function Claim({
   );
 }
 
-/**
- * The benchmark ladder, drawn under the reader's own descent.
- *
- * The figure itself is untouched and still server-renders complete: what this
- * adds is a `--bench` on its wrapper, which `BenchmarkFigure`'s bars read as
- * `scaleX(var(--bench, 1))`. Nobody driving means the composed figure, so
- * reduced motion, no JS and every other consumer of the figure get exactly
- * what they got before.
- *
- * Linear, not eased: what is growing is a length on a measured axis, and the
- * numeral beside each bar is static text stating the true value the whole
- * time. It refuses to take apart a figure that is already on screen at load,
- * the same rule the closing act follows.
+/*
+ * `DrawnBenchmark` STOOD HERE, and it went with the figure it drew
+ * (2026-08-21). It wrapped `BenchmarkFigure` and drove a `--bench` custom
+ * property from the reader's own scroll so the two bars grew as the decision
+ * claim arrived. It was a good piece of machinery attached to a claim this
+ * page no longer makes; `copy.ts`'s DECISION block is the argument, and the
+ * scroll-driven exhibits that remain (the rail zoom, the retention dissolve)
+ * are the same technique against claims that survived.
  */
-function DrawnBenchmark() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    let stop: (() => void) | undefined;
-    const raf = requestAnimationFrame(() => {
-      if (el.getBoundingClientRect().top < window.innerHeight) return;
-      el.style.setProperty("--bench", "0");
-      stop = trackProgress(el, BENCH_WINDOW, (progress) => {
-        el.style.setProperty("--bench", progress.toFixed(4));
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf);
-      stop?.();
-    };
-  }, []);
-  return (
-    <div ref={ref}>
-      <BenchmarkFigure />
-    </div>
-  );
-}
 
 export function ClaimsDescent() {
   /**
@@ -440,6 +400,13 @@ export function ClaimsDescent() {
             }
           >
             <p>{CLAIMS.verdict.split}</p>
+            {/* The page's one indispensable payoff line (`copy.ts` says
+                why it is this one): the reader has just watched the two
+                verdicts disagree, and this is the sentence that tells them
+                what the disagreement buys them. It sits with `split`
+                rather than in a `continued` claim so it lands while the
+                exhibit that earns it is still beside them. */}
+            <p className="text-strong">{CLAIMS.verdict.payoff}</p>
             {/* The claim side of micro-beat two: the tally is the claim's
                 own evidence — the same two calls, one level deeper — not a
                 filler figure. `lg`+ only: below `lg` it renders inline
@@ -546,8 +513,8 @@ export function ClaimsDescent() {
               <p>{DECISION.body}</p>
             </Claim>
             <Claim continued>
-              <DrawnBenchmark />
-              <p className="text-sm text-dim">{DECISION.gate}</p>
+              <p className="text-strong">{DECISION.payoff}</p>
+              <p className="text-sm text-dim">{DECISION.proof}</p>
             </Claim>
           </div>
         </div>
@@ -571,6 +538,7 @@ export function ClaimsDescent() {
             </Claim>
             <Claim continued>
               <p>{REVIEW.gate}</p>
+              <p className="text-strong">{REVIEW.payoff}</p>
             </Claim>
           </div>
           {/* Viewport-tall box, the verdict rail's argument: the exhibit's
@@ -648,6 +616,7 @@ export function ClaimsDescent() {
             </Claim>
             <Claim continued>
               <p>{ROW.aside}</p>
+              <p className="text-strong">{ROW.payoff}</p>
             </Claim>
           </div>
         </div>
@@ -706,8 +675,8 @@ export function ClaimsDescent() {
                   className="text-muted underline underline-offset-4 transition-colors hover:text-strong"
                 >
                   {PRIVACY.systemCardLink}
-                </a>{" "}
-                — {PRIVACY.policyLead}{" "}
+                </a>
+                . {PRIVACY.policyLead}{" "}
                 <a
                   href="/privacy"
                   {...NEW_TAB}

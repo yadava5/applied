@@ -221,7 +221,7 @@ export function VerdictEmail({
               source="preview only"
               category={fromPreview.category}
               confidence={fromPreview.confidence}
-              note="reads as a routine acknowledgment — wrong"
+              note="reads as a routine acknowledgment. Wrong."
             />
             <Chip
               source="whole body"
@@ -267,7 +267,7 @@ export function VerdictEmail({
       </div>
 
       <p className="border-t border-line-soft px-4 py-2.5 text-[11px] leading-relaxed text-dim">
-        A synthetic email — the verdicts are computed live in this tab by the shipped rules layer.
+        A synthetic email. The verdicts are computed live in this tab.
       </p>
     </div>
   );

@@ -1448,81 +1448,8 @@ body {
 .act__rules {
   color: var(--viz-rules);
 }
-/* The KEY (`.act__key`) is the scene's only text, and it is DOM text beside
- * the svg rather than `<text>` inside it — a viewBox scales its contents, so
- * the tags it used to hold measured 3.28px/3.05px at 375 and 8.96px/8.32px at
- * 1024 (see ClosingAct for the measurement and why a size bump could not fix
- * it). Each row is a MIXED run: the F1 figure is mono (a machine value, read
- * out of the benchmark JSONs) and the words beside it are a caption in the
- * product's voice — `.act__words` below, the `.label-caps` device restated
- * for the key. Mono stops at the edge of the machine value.
- *
- * `.act__tag` still carries the choreography (the fade below), so the key
- * enters with the scene it belongs to.
- *
- * Colour is unchanged from the drawn tags — only the size is. Measured on
- * --background: dark rules #38bdf8 on #0a0a0b = 9.24:1 / APCA Lc 60.5, dark
- * ghost #aeb4be = 9.49:1 / Lc 61.4. Light's --viz-rules (#0284c7) measures
- * 3.92:1 on #fafafa — fine for the rail (non-text, 3:1 floor) but under AA
- * for text, so the key alone steps down a shade to #0369a1 = 5.68:1 /
- * Lc 76.1; light ghost #676b73 = 5.12:1 / Lc 73.7. */
-.act__tag--rules {
-  color: var(--viz-rules);
-}
-[data-theme="light"] .act__tag--rules {
-  color: #0369a1;
-}
-.act__tag--ghost {
-  color: var(--text-dim);
-}
-/* The stacked key's rail mark (below `lg`, where the rails themselves are
- * 25px ticks): the same cut as the line it stands for, solid for the rules
- * rail and dashed for the ghosts, inheriting the row's own colour. */
-/* Display is left to the utility (`inline-block lg:hidden` on the element):
- * this file loads after Tailwind's utilities, so a `display` here would win
- * the cascade and the mark would survive into the `lg` layout, where the
- * real rail is right there behind it. */
-.act__key-mark {
-  width: 0;
-  height: 0.95em;
-  border-left: 1.5px solid currentColor;
-}
-.act__key-mark--ghost {
-  border-left-style: dashed;
-}
-/* Caps as a treatment, not as typed literals — the reason the old tags spelled
- * them out (text-transform is uneven on SVG text) went away with the svg.
- * Size steps down from the mono figure so the caps run's optical height sits
- * just under the digits: the figure stays the loud half. */
-.act__words {
-  font-family: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.93em;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
 .act__rail {
   opacity: 0.8;
-}
-.act__ghosts {
-  color: var(--text-dim);
-}
-/* The ghost DASHES hold quiet while the ghost row of the key rides the full
- * dim rank — quiet is a rank, not an opacity. An earlier build faded the
- * whole group to 0.45, which composited the label to Lc 16.4 on dark
- * (#54565c — a hair above invisible) and Lc 34.4 / 1.86:1 on light
- * (#b8babd): the page's central comparison, unreadable in both themes. The
- * key is outside this group now and cannot be dimmed by it at all. The
- * dashes are furniture but MEANINGFUL furniture (they are the cascade), so
- * they get
- * WCAG 1.4.11's 3:1 floor, measured composited: dark 0.5 → #5c5f64, 3.09:1;
- * light needs more ink on paper, 0.75 → #8c8f95, 3.11:1. A matched pair,
- * deliberately at the quiet end of legal. */
-.act__ghosts line {
-  opacity: 0.5;
-}
-[data-theme="light"] .act__ghosts line {
-  opacity: 0.75;
 }
 
 /* pre-play: everything waits. The travel group idles off-canvas (the svg
@@ -1543,8 +1470,6 @@ body {
   stroke-dashoffset: 1.05;
 }
 .act .act__guide,
-.act .act__ghosts,
-.act .act__tag,
 .act .act__pop,
 .act .act__dot,
 .act .act__ripple,
@@ -1568,15 +1493,8 @@ body {
 .act--play .act__guide {
   animation: act-fade 0.4s ease 0s forwards;
 }
-/* the ghost group fades in whole; its dashes carry their own quiet (above) */
-.act--play .act__ghosts {
-  animation: act-fade 0.4s ease 0.05s forwards;
-}
 .act--play .act__draw {
   animation: act-draw 0.4s ease var(--d, 0s) forwards;
-}
-.act--play .act__tag {
-  animation: act-fade 0.35s ease 0.1s forwards;
 }
 /* the rail flares as the envelope passes it (~0.26s into the travel) */
 .act--play .act__rail {
@@ -1628,9 +1546,7 @@ body {
  * animations have to exist to be paused.
  * ------------------------------------------------------------------------- */
 .act--scrub .act__guide,
-.act--scrub .act__ghosts,
 .act--scrub .act__draw,
-.act--scrub .act__tag,
 .act--scrub .act__rail,
 .act--scrub .act__pop,
 .act--scrub .act__travel,
@@ -1645,15 +1561,9 @@ body {
 .act--scrub .act__travel {
   animation-delay: calc(0s - var(--act-t, 0s));
 }
-.act--scrub .act__ghosts {
-  animation-delay: calc(0.05s - var(--act-t, 0s));
-}
 .act--scrub .act__draw,
 .act--scrub .act__pop {
   animation-delay: calc(var(--d, 0s) - var(--act-t, 0s));
-}
-.act--scrub .act__tag {
-  animation-delay: calc(0.1s - var(--act-t, 0s));
 }
 /* two animations, so two delays — the draw on `--d`, the flare on 0.24s */
 .act--scrub .act__rail {
@@ -1772,13 +1682,9 @@ body {
   stroke-dashoffset: 0;
 }
 .act--static .act__guide,
-.act--static .act__tag,
 .act--static .act__pop,
 .act--static .act__ask,
 .act--static .act__hint {
-  opacity: 1;
-}
-.act--static .act__ghosts {
   opacity: 1;
 }
 .act--static .act__dot {
@@ -1809,14 +1715,9 @@ body {
     stroke-dashoffset: 0 !important;
   }
   .act .act__guide,
-  .act .act__tag,
   .act .act__pop,
   .act .act__ask,
   .act .act__hint {
-    animation: none !important;
-    opacity: 1 !important;
-  }
-  .act .act__ghosts {
     animation: none !important;
     opacity: 1 !important;
   }

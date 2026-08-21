@@ -528,10 +528,12 @@ export function StageSkeleton() {
         <div className="h-5 w-56 rounded bg-surface-2" />
       </div>
       <div className="flex min-h-0 flex-1 gap-5">
-        <div className="hidden w-56 shrink-0 rounded-xl bg-surface lg:block" />
+        {/* `surface-2` plates: the stage ground is `surface` now (WindowAct,
+            #392), so a `surface` silhouette would vanish into it. */}
+        <div className="hidden w-56 shrink-0 rounded-xl bg-surface-2 lg:block" />
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="h-20 rounded-xl border border-line-soft bg-surface" />
+            <div key={i} className="h-20 rounded-xl border border-line-soft bg-surface-2" />
           ))}
         </div>
       </div>

@@ -287,9 +287,41 @@ export function OnerStage({
 
   useEffect(() => () => directorRef.current?.cancel(), []);
 
+  /*
+   * `h-full` ON BOTH WRAPPERS, and it is a bug fix rather than a tidy-up.
+   *
+   * `MarketingBoard`'s own root is `flex h-full flex-col gap-4`: it is written
+   * to fill whatever it is given. On this path it was given nothing. The chain
+   * ran frame (a real height, `calc(100dvh - 11rem)`) → camera div (auto) →
+   * this wrapper (auto), so the board's `h-full` resolved against an
+   * auto-height parent and collapsed to its content.
+   *
+   * Nobody saw it while the board was full, because ten rows overflow the
+   * frame anyway. Filter the stage lens to anything but "all" and the board
+   * shrinks to its rows while the frame stays a viewport tall: measured on
+   * production at 1512x893, the assessment lens left 343px of the 717px
+   * camera as bare page background, 47.8% of the window, and the whole
+   * composition read as broken. That is #392.
+   *
+   * The skeleton path three files up already passes `h-full p-4 lg:p-5` for
+   * exactly this reason. The real path dropped it.
+   *
+   * `min-h-full`, NOT `h-full`, AND THE DIFFERENCE IS THE WHOLE CAMERA. The
+   * first version of this fix used `h-full` and CI caught it: the camera's
+   * own gate went red with "the camera never panned at this viewport". A
+   * fixed height is a ceiling as well as a floor, so the full board stopped
+   * overflowing the frame, and a camera that pans over a board taller than
+   * its window has nothing to pan over once the board is exactly its window.
+   * The gate that caught it is the positive control added on 2026-08-21 for
+   * precisely this class of mistake: it requires the pan to be non-zero at
+   * 1512x949 before it will believe the bound on how far the pan may jump.
+   *
+   * A minimum is what the two cases actually want. Ten rows still overflow
+   * and the camera still travels; one row still fills the window.
+   */
   if (disarmed) {
     return (
-      <div className="p-4 lg:p-5">
+      <div className="min-h-full p-4 lg:p-5">
         <MarketingBoard />
       </div>
     );
@@ -297,7 +329,7 @@ export function OnerStage({
 
   return (
     <>
-      <div ref={cameraRef} style={{ transformOrigin: "0 0" }}>
+      <div ref={cameraRef} className="min-h-full" style={{ transformOrigin: "0 0" }}>
         <div ref={stageRef} className="p-4 lg:p-5">
           <MarketingBoard />
         </div>

@@ -30,45 +30,33 @@
  * are components this harness cannot render, and the failure that actually
  * happens is one line — a board mounted without its transport prop.
  *
- * It also pins the copy honesty rules the variants were built under: 0.979
- * lives in copy.ts alone, attributed to the rules stage; 0.958 is the cascade;
- * no pattern count appears anywhere (the repo holds three conflicting values
- * for that noun); the privacy promise is RETENTION, not request, and the test
- * it names exists on disk; the two preserved candidates stay noindex while
- * `/` must NOT be; the footer keeps the /privacy link Google's OAuth
- * verification looks for.
+ * It also pins the copy honesty rules the variants were built under: the
+ * privacy promise is RETENTION, not request, and the test it names exists on
+ * disk; the two preserved candidates stay noindex while `/` must NOT be; the
+ * footer keeps the /privacy link Google's OAuth verification looks for; and
+ * the product clip's words state no number at all, because a figure in a
+ * recording's own words reads as a second measurement of what the frame
+ * already shows.
  *
- * The closing act's key and the product clip's words joined that list once they
- * became rendered strings, and both are held on the same principle:
+ * THE BENCHMARK'S GATES LEFT THIS FILE ON 2026-08-21 with the benchmark. The
+ * deletion note further down names both tests and what replaced them
+ * (`landing-voice.test.mjs`), and the argument for the deletion itself is in
+ * `components/marketing/copy.ts`, above `DECISION`.
  *
- *   · the rail labels (`CLOSING.railShips` / `railGhost`) are WORDS. The
- *     figures beside them are composed in `ClosingAct` from `DECISION`, so a
- *     digit typed into a label — the drift where 0.979 acquires a second home
- *     and its attribution stops travelling with it — is a failure. Both
- *     figures are held: only 0.979 had a no-hardcoding scan, and 0.958 could
- *     be typed anywhere on the page with every gate green.
- *   · `FOOTAGE` states no number at all. It sits beside the benchmark, and a
- *     figure in the recording's own words reads as a second measurement; the
- *     one number the frames contain is scoped by the caption instead.
+ * Everything here reads the STRIPPED source (`graph.get`, never
+ * `readFileSync`): these components' docblocks quote the very identifiers the
+ * scans forbid, so a raw-source scan would go red on the comment explaining a
+ * removal and stay green when a render was deleted and its comment left
+ * behind.
  *
- * Both read the STRIPPED source (`graph.get`, never `readFileSync`): the two
- * components' docblocks quote `DECISION.rulesF1` and `FOOTAGE.label` verbatim,
- * so a scan of raw source would stay green with the render deleted and the
- * comment left behind.
- *
- * MUTATION-TESTED AT INTRODUCTION (2026-08-15). Nine deliberate breaks, each
- * watched go red and green again on restore: an empty rail label; `0.979`
- * typed into a rail label; `0.958` typed into `ClosingAct` in place of the
- * composed value; the `{DECISION.rulesF1}` span deleted (its docblock mention
- * left behind); an empty `FOOTAGE.label`; a figure added to the clip's
- * caption; the label no longer naming a recording; the caption's scoping
- * clause dropped; `ClaimsDescent` inlining the clip's accessible name.
+ * MUTATION-TESTED AT INTRODUCTION (2026-08-15). Of the nine deliberate breaks
+ * watched red and green again on restore, five belonged to the benchmark
+ * gates and went with them. The four that still stand: an empty
+ * `FOOTAGE.label`; a figure added to the clip's caption; the label no longer
+ * naming a recording; `ClaimsDescent` inlining the clip's accessible name.
  * Companion bounds NOT independently reddened, and named as such rather than
- * claimed: the three graph-reachability guards, the key-present regexes (the
- * empty-string mutations prove the value, not the key), `act.includes(
- * "CLOSING.railShips")`, the `rulesF1: "0.979"` shape match, `lines.length >=
- * 5`, and the three "these words render" checks on ProductClip and
- * ClaimsDescent.
+ * claimed: the three graph-reachability guards, `lines.length >= 5`, and the
+ * three "these words render" checks on ProductClip and ClaimsDescent.
  *
  * And it holds the STRUCTURAL bets that are copy claims in disguise:
  *
@@ -76,7 +64,7 @@
  *     `ACT.narration` — a wordless beat was the original act's dead dwell,
  *     and a line the script never says is stranded copy;
  *   · the take is pausable (WCAG 2.2.2), disarmable (reduced motion), and
- *     declares its synthesized pointer in the frame's own honesty line;
+ *     declares its synthetic pointer in the frame's own honesty line;
  *   · the split verdict stays TWO micro-beats under one headline. A single
  *     `split` screen would still render every word this file allows, and the
  *     page would still be wrong — the exhibit is a demonstration only because
@@ -86,87 +74,29 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
-const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-
-/** The shipping landing, first — `/landing-b` was promoted to `app/page.tsx`. */
-const ROOT_PAGE = join(webRoot, "app", "page.tsx");
-
-/** The preserved comparison set, which stays noindex on its own routes. */
-const CANDIDATE_PAGES = ["landing-a", "landing-c"].map((dir) =>
-  join(webRoot, "app", dir, "page.tsx"),
-);
-
-const PAGES = [ROOT_PAGE, ...CANDIDATE_PAGES];
-
-/** Comments out, code only — the comments here quote the very identifiers
- *  this test forbids. Same stripper the aria-current gate uses. */
-function code(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
-
-/** `import x from "y"`, `export … from "y"`, and dynamic `import("y")`. */
-function importSpecs(src) {
-  return [...src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1]);
-}
-
-function resolveSpec(spec, fromDir) {
-  const base = spec.startsWith("@/")
-    ? join(webRoot, spec.slice(2))
-    : spec.startsWith(".")
-      ? join(fromDir, spec)
-      : null;
-  if (!base) return null; // a package — not ours to walk
-  for (const candidate of [
-    base,
-    `${base}.ts`,
-    `${base}.tsx`,
-    join(base, "index.ts"),
-    join(base, "index.tsx"),
-  ]) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-  }
-  return null;
-}
-
-/** Every repo module reachable from the candidate pages, path → code. */
-function walkGraph() {
-  const seen = new Map();
-  const queue = [...PAGES];
-  while (queue.length > 0) {
-    const file = queue.pop();
-    if (seen.has(file)) continue;
-    const src = readFileSync(file, "utf8");
-    seen.set(file, code(src));
-    if (!/\.(ts|tsx)$/.test(file)) continue; // json/css carry no imports
-    for (const spec of importSpecs(src)) {
-      const resolved = resolveSpec(spec, dirname(file));
-      if (resolved && !seen.has(resolved)) queue.push(resolved);
-    }
-  }
-  return seen;
-}
+/* The graph walker moved to a shared helper on 2026-08-21 so the voice gates
+   (`landing-voice.test.mjs`) hold the same module set this file does. A second
+   hand-rolled walker would drift from this one the first time a page moved. */
+import {
+  CANDIDATE_PAGES,
+  PAGES,
+  ROOT_PAGE,
+  isLandingModule,
+  marketing,
+  rel,
+  walkGraph,
+  webRoot,
+} from "./helpers/landingGraph.mjs";
 
 const graph = walkGraph();
-const rel = (file) => relative(webRoot, file);
-/** `app/page.tsx` is named exactly: the promoted landing is a landing module,
- *  and the `app/landing-` prefix does not reach it. Miss this and the
- *  strongest assertion in this file — no landing module names the live
- *  transport — silently stops covering the page a stranger actually loads. */
-const isLandingModule = (file) =>
-  rel(file) === "app/page.tsx" ||
-  rel(file).startsWith("app/landing-") ||
-  rel(file).startsWith("components/marketing/");
 
-const marketing = (name) => join(webRoot, "components", "marketing", name);
 const copyPath = marketing("copy.ts");
 const actPath = marketing("WindowAct.tsx");
 const stagePath = marketing("OnerStage.tsx");
 const descentPath = marketing("ClaimsDescent.tsx");
-const closingPath = marketing("ClosingAct.tsx");
 const clipPath = marketing("ProductClip.tsx");
 /** Repo-relative (webRoot is apps/web), because the copy names it verbatim. */
 const PRIVACY_TEST_PATH = "backend/tests/test_body_is_never_persisted.py";
@@ -211,92 +141,31 @@ test("the candidates never reach the locked shell", () => {
   );
 });
 
-test("0.979 is stated once, in copy.ts, attributed to the rules stage", () => {
-  const copySrc = graph.get(copyPath);
-  assert.ok(copySrc, "components/marketing/copy.ts is not in the graph");
-  assert.ok(copySrc.includes('rulesF1: "0.979"'), "rules figure moved or lost its attribution key");
-  assert.ok(copySrc.includes('cascadeF1: "0.958"'), "cascade figure moved or lost its attribution key");
-  assert.match(
-    copySrc,
-    /rulesLabel:\s*"rules stage/,
-    "the 0.979 label no longer names the rules stage",
-  );
-  for (const [file, src] of graph) {
-    if (!isLandingModule(file) || file === copyPath) continue;
-    assert.ok(
-      !src.includes("0.979"),
-      `${rel(file)} hardcodes 0.979 — the figure lives in copy.ts so its attribution cannot drift`,
-    );
-  }
-});
-
-test("the closing act's rail labels are words, and compose the figures", () => {
-  const copySrc = graph.get(copyPath);
-  const act = graph.get(closingPath);
-  assert.ok(act, "ClosingAct.tsx is not in the landing graph — the closing act is unmounted");
-
-  // The scene's key is DOM text now: as svg `<text>` inside a 1200-unit
-  // viewBox it measured 3.1–3.3px at 375 and 8.3–9.0px at 1024, so the page's
-  // central comparison was under any legible floor at every width. Words that
-  // render are copy, and copy lives in one file.
-  const labels = new Map();
-  for (const key of ["railShips", "railGhost"]) {
-    const found = new RegExp(`${key}:\\s*"([^"]*)"`).exec(copySrc);
-    assert.ok(
-      found,
-      `CLOSING.${key} is gone from copy.ts — the rail's words are back inside the drawing`,
-    );
-    assert.ok(
-      found[1].trim().length > 0,
-      `CLOSING.${key} is empty — the rail it names claims nothing`,
-    );
-    labels.set(key, found[1]);
-    assert.ok(act.includes(`CLOSING.${key}`), `ClosingAct stopped rendering CLOSING.${key}`);
-  }
-
-  // COMPOSED, NOT TYPED. The label carries the attribution and `DECISION`
-  // carries the figure; a digit in the label gives the number a second home,
-  // and the attribution stops travelling with it. That drift is the whole
-  // reason this file exists — 0.979 is the RULES stage, not the cascade.
-  for (const [key, label] of labels) {
-    assert.ok(
-      !/\d/.test(label),
-      `CLOSING.${key} ("${label}") types a figure into the rail label — the digits are DECISION.rulesF1 / DECISION.cascadeF1, composed beside it in ClosingAct`,
-    );
-  }
-
-  for (const [key, figure] of [
-    ["rulesF1", "0.979"],
-    ["cascadeF1", "0.958"],
-  ]) {
-    const stated = copySrc.split(figure).length - 1;
-    assert.equal(
-      stated,
-      1,
-      `${figure} is written ${stated} times in copy.ts — it is stated once, as DECISION.${key}`,
-    );
-    assert.match(
-      copySrc,
-      new RegExp(`${key}:\\s*"${figure}"`),
-      `DECISION.${key} is no longer ${figure}`,
-    );
-    assert.ok(
-      act.includes(`DECISION.${key}`),
-      `the closing act's key no longer composes DECISION.${key} — its figure is not the single-sourced one`,
-    );
-    // The 0.979 half restates the scan above; the 0.958 half is new. The
-    // cascade figure had no no-hardcoding rule at all, so it could be typed
-    // into any landing module — including the rail it labels — with every
-    // gate green.
-    for (const [file, src] of graph) {
-      if (!isLandingModule(file) || file === copyPath) continue;
-      assert.ok(
-        !src.includes(figure),
-        `${rel(file)} hardcodes ${figure} — the figure lives in copy.ts so its attribution cannot drift`,
-      );
-    }
-  }
-});
+/*
+ * TWO TESTS STOOD HERE AND WERE DELETED ON 2026-08-21 WITH THE FIGURE THEY
+ * GUARDED, which is the correct fate for a gate whose subject leaves the
+ * product rather than a hole in the coverage:
+ *
+ *   · "0.979 is stated once, in copy.ts, attributed to the rules stage" —
+ *     it pinned `rulesF1` / `cascadeF1` into `DECISION`, held `rulesLabel` to
+ *     naming the rules stage, and scanned every landing module for a
+ *     hardcoded copy of either figure.
+ *   · "the closing act's rail labels are words, and compose the figures" —
+ *     it held `CLOSING.railShips` / `railGhost` non-empty, digit-free and
+ *     rendered, and held `ClosingAct` to composing the numbers rather than
+ *     typing them.
+ *
+ * Both existed to keep an attribution travelling with a benchmark figure that
+ * the landing no longer publishes at all (`copy.ts`, the DECISION block, is
+ * the argument). Keeping them would have meant keeping the figure.
+ *
+ * WHAT REPLACED THEM IS STRICTER, not weaker: `landing-voice.test.mjs` reds
+ * on either figure appearing anywhere the landing renders, on the shape of a
+ * self-graded score in any prose string, and on the model names the old gates
+ * never mentioned. It also scans one module the import graph cannot reach —
+ * the component the page's largest clip is a recording of — which is where
+ * the internals were still being published while every gate above was green.
+ */
 
 test("no pattern count appears on the candidates", () => {
   // Three different values exist in this repo for that one noun (201, 214,
@@ -415,13 +284,29 @@ test("the take is pausable, disarmable, and pinned only when it can play", () =>
     `the runway is ${runway[1]}vh — under 150 the pin barely outlives the fold and the full-frame phase stops reading as one`,
   );
 
-  // The honesty line: a synthesized pointer must be declared in the same
-  // breath as "not a video", and the visitor's hand must win (the stand-down
-  // discriminates on isTrusted — the one signal the director cannot forge).
+  // The honesty line: a pointer the page drives itself must be declared in the
+  // same breath as the data being fabricated, and the visitor's hand must win
+  // (the stand-down discriminates on isTrusted — the one signal the director
+  // cannot forge).
+  //
+  // HELD ON THE JOB, NOT THE WORDING. This used to require the exact phrase
+  // "synthesized pointer", and the 2026-08-21 sweep shortened the line to
+  // "synthetic pointer" to fit the `truncate` span it shares with three
+  // transport controls. A gate that pins an adjective reds on an edit that
+  // keeps the promise, which trains the next reader to loosen it rather than
+  // to think about it. Both disclosures are what matter: the pointer, and the
+  // data.
+  const takeLine = /take:\s*"([^"]*)"/.exec(graph.get(copyPath));
+  assert.ok(takeLine, "BOARD.take is gone — the take runs with no honesty line at all");
   assert.match(
-    graph.get(copyPath),
-    /take:\s*"[^"]*synthesized pointer[^"]*"/,
-    "BOARD.take no longer declares the synthesized pointer",
+    takeLine[1],
+    /synthe(?:tic|sized|sised)\s+pointer/i,
+    `BOARD.take ("${takeLine[1]}") no longer declares that the pointer is not a person's`,
+  );
+  assert.match(
+    takeLine[1],
+    /sample data|fixture data/i,
+    `BOARD.take ("${takeLine[1]}") no longer declares that the board's rows are fabricated`,
   );
   assert.ok(act.includes("BOARD.take"), "WindowAct stopped rendering the take's honesty line");
   assert.ok(
@@ -582,23 +467,26 @@ test("the product clip's words add no number, and no claim the page does not mak
     assert.ok(line.trim().length > 0, `FOOTAGE string ${i} is empty`);
   }
 
-  // NO NEW NUMBER. The clip is placed against the decision claim, one screen
-  // from the benchmark: any figure in its own words reads as a second
-  // measurement of the same thing. The one number inside the FRAME is this
-  // email's confidence, and the caption is what scopes it — so the caption has
-  // to keep saying it is not the benchmark above it.
+  // NO NEW NUMBER. A figure in a recording's own words reads as a second
+  // measurement of what the frame already shows. The one number inside the
+  // FRAME is this email's confidence, and the caption is what scopes it.
   for (const line of lines) {
     assert.ok(
       !/\d/.test(line),
-      `FOOTAGE states a figure ("${line}") — the recording sits beside the benchmark and a number in its words reads as a second measurement`,
+      `FOOTAGE states a figure ("${line}") — a number in a recording's words reads as a second measurement of what the frame already shows`,
     );
   }
+  // THE CAPTION SCOPES THE CONFIDENCE, and it used to do that by saying it was
+  // "not the benchmark above it". That clause was correct until 2026-08-21 and
+  // is now a reference to something no longer on the page, so the assertion
+  // holds the JOB rather than the wording: the caption has to say the number
+  // in the frame belongs to ONE email.
   const caption = /caption:\s*"([^"]*)"/.exec(block);
   assert.ok(caption, "FOOTAGE.rules.caption is gone — the clip's numbers are unscoped");
   assert.match(
     caption[1],
-    /not the benchmark/,
-    "the caption no longer separates the confidence in the frame from the macro-F1 above it — two different quantities, one staging that invites the confusion",
+    /this one email's/,
+    "the caption no longer scopes the confidence in the frame to a single email — unscoped, it reads as a claim about the product's accuracy",
   );
 
   // AND IT SAYS WHAT IT IS. The board embed on this same page advertises

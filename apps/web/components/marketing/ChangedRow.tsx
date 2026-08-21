@@ -49,7 +49,7 @@ const STAGE_TONE: Record<string, string> = {
  * writing the verdict through its own fixture transport (MarketingBoard). So
  * both captions claim the classifier's work, not the classifier's hand on
  * this particular row. One literal each, shared by both forms. */
-const PROVENANCE = "what the classifier does — replayed on fixture data";
+const PROVENANCE = "what Applied does, replayed on sample data";
 /** Points at the descent's exhibit — true only where that exhibit shows THIS
  *  email (variant C's hero over `VERDICT_EMAIL`). */
 const POINTER = "the email that did it ↓";
