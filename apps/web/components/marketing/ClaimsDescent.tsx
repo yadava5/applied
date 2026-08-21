@@ -1,16 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, HELD, HELD_TAKE, KEPT, PRIVACY, REVIEW, ROW } from "./copy";
-import type { TakeClock } from "./director";
 import { CLIPS } from "./footage";
 import { HeldExhibit } from "./HeldExhibit";
 import { ProductClip } from "./ProductClip";
-import { RailTake } from "./RailTake";
+import { RailTake, type RailBeat } from "./RailTake";
 import { latch, trackProgress } from "./scrub";
 import { VerdictEmail, type VerdictStage } from "./VerdictEmail";
 import { VerdictTally } from "./VerdictTally";
@@ -45,9 +44,12 @@ import { VerdictTally } from "./VerdictTally";
  * THEY RAN AS TAKES — narrated, autoplaying, pausable — and the rebuild
  * that turned them into reversible scroll states discarded the thing he
  * picked, twice. The precedent is his own and already on this page: both
- * bookends pin and PLAY. The rails now do the same (`RailTake`), with the
- * scroll still holding one job on them — the clock freezes when the rail
- * leaves the viewport, so nothing finishes unwatched. The flow exhibits
+ * bookends pin and PLAY. The rails now do the same (`RailTake`), and scroll
+ * holds exactly the jobs a band can honestly hold over a clock it does not
+ * drive: the take starts at the pin, freezes when the rail leaves the
+ * viewport (nothing finishes unwatched), compresses under a governor when
+ * the visitor outpaces it so the beats land while the rail still holds, and
+ * composes its ending if even that is outrun — never a scrub. The flow exhibits
  * (the benchmark draw, the kept record's collapse) remain scroll-driven:
  * they sit IN the reading column, where the reader's own descent is the
  * honest clock.
@@ -268,20 +270,15 @@ export function ClaimsDescent() {
   const [verdictStage, setVerdictStage] = useState(1);
   const VERDICT_STAGES: readonly VerdictStage[] = ["raw", "split", "dissolve", "retained"];
 
-  const verdictTake = useCallback(async (clock: TakeClock) => {
-    setVerdictStage(0);
-    clock.say(KEPT.narration[0]);
-    await clock.hold(3000);
-    setVerdictStage(1);
-    clock.say(KEPT.narration[1]);
-    await clock.hold(3800);
-    setVerdictStage(2);
-    clock.say(KEPT.narration[2]);
-    await clock.hold(2800);
-    setVerdictStage(3);
-    clock.say(KEPT.narration[3]);
-    await clock.hold(800);
-  }, []);
+  const verdictBeats = useMemo<readonly RailBeat[]>(
+    () => [
+      { enter: () => setVerdictStage(0), line: KEPT.narration[0], hold: 3000 },
+      { enter: () => setVerdictStage(1), line: KEPT.narration[1], hold: 3800 },
+      { enter: () => setVerdictStage(2), line: KEPT.narration[2], hold: 2800 },
+      { enter: () => setVerdictStage(3), line: KEPT.narration[3], hold: 800 },
+    ],
+    [],
+  );
 
   /**
    * The held rail's two beats — the owner's 08c pick ("where it waits"), as
@@ -290,16 +287,16 @@ export function ClaimsDescent() {
    * needs); the take winds it back.
    */
   const [settled, setSettled] = useState(true);
-  const heldTake = useCallback(async (clock: TakeClock) => {
-    setSettled(false);
-    clock.say(HELD_TAKE.narration[0]);
-    await clock.hold(2600);
-    setSettled(true);
-    clock.say(HELD_TAKE.narration[1]);
-    await clock.hold(3000);
-    clock.say(HELD_TAKE.narration[2]);
-    await clock.hold(800);
-  }, []);
+  const heldBeats = useMemo<readonly RailBeat[]>(
+    () => [
+      { enter: () => setSettled(false), line: HELD_TAKE.narration[0], hold: 2600 },
+      { enter: () => setSettled(true), line: HELD_TAKE.narration[1], hold: 3000 },
+      // The gate line is a beat of its own — no state change, the settled
+      // queue is the image it narrates over.
+      { enter: () => {}, line: HELD_TAKE.narration[2], hold: 800 },
+    ],
+    [],
+  );
 
   /**
    * The retention flow exhibit's stage. `true` — the record — is the SSR
@@ -401,7 +398,7 @@ export function ClaimsDescent() {
             className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
           >
             <RailTake
-              take={verdictTake}
+              beats={verdictBeats}
               label={KEPT.label}
               opening={KEPT.opening}
               resting={KEPT.resting}
@@ -506,7 +503,7 @@ export function ClaimsDescent() {
               className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
             >
               <RailTake
-                take={heldTake}
+                beats={heldBeats}
                 label={HELD_TAKE.label}
                 opening={HELD_TAKE.opening}
                 resting={HELD_TAKE.resting}
