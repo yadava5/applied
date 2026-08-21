@@ -297,3 +297,81 @@ async def _get_schema(cloud_app) -> dict:
         response = await client.get("/health/schema")
     assert response.status_code == 200
     return response.json()
+
+
+def test_cloud_app_does_not_import_the_desktop_email_clients():
+    """The desktop mail clients stay out of the deployed import graph.
+
+    WHY THIS EXISTS, specifically. ``docs/google/RESTRICTED-SCOPE-JUSTIFICATION.md``
+    is submitted to Google for restricted-scope OAuth review. It tells a reviewer
+    that ``emails.body_text`` / ``body_html`` / ``raw_headers`` are legacy desktop
+    columns which nothing in the hosted app can write, because the only code that
+    writes them lives under ``jobtracker/email_clients/`` and that package is not
+    reachable from ``main_cloud``.
+
+    An earlier draft of that document claimed THIS FILE enforced it. It did not:
+    ``grep -c email_clients`` on this module returned 0. The sibling test above
+    guards ``keyring``, ``aiosqlite``, ``torch`` and ``setfit``, and says nothing
+    about mail clients. The filing has been corrected to state the fact without
+    claiming a gate; this test is the gate, so the stronger sentence can be true.
+
+    THE POSITIVE CONTROL IS THE POINT. A scan for "did this package get imported"
+    passes trivially if the package cannot be imported at all, if it was renamed,
+    or if the prefix is misspelled — the exact "check that cannot fail" shape this
+    repo keeps rediscovering. So the subprocess also imports the package on
+    purpose afterwards and asserts the SAME expression then finds it. If the
+    detector cannot see the package when it is genuinely loaded, this test fails
+    rather than reporting a clean import graph it never actually measured.
+    """
+
+    import json
+    import subprocess
+    import sys
+
+    script = (
+        "import os, sys, json, importlib\n"
+        "os.environ['JOBTRACKER_DEPLOYMENT'] = 'cloud'\n"
+        "PKG = 'jobtracker.email_clients'\n"
+        "def loaded():\n"
+        "    return sorted(m for m in sys.modules if m == PKG or m.startswith(PKG + '.'))\n"
+        "from jobtracker.main_cloud import app  # noqa: F401\n"
+        "leaked = loaded()\n"
+        "control_error = None\n"
+        "try:\n"
+        "    importlib.import_module(PKG)\n"
+        "except Exception as exc:\n"
+        "    control_error = f'{type(exc).__name__}: {exc}'\n"
+        "print(json.dumps({\n"
+        "    'leaked': leaked,\n"
+        "    'after_explicit_import': loaded(),\n"
+        "    'control_error': control_error,\n"
+        "}))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = json.loads(result.stdout.strip().splitlines()[-1])
+
+    assert data["leaked"] == [], (
+        "main_cloud reached the desktop mail clients: "
+        f"{data['leaked']}. The Google restricted-scope filing tells a reviewer "
+        "that no hosted code path can write emails.body_text / body_html / "
+        "raw_headers, and that is only true while this package stays out of the "
+        "deployed import graph."
+    )
+
+    # The control. Without it, every assertion above is satisfied by a package
+    # that simply cannot be imported, and this test would go green over nothing.
+    assert data["control_error"] is None, (
+        "jobtracker.email_clients could not be imported at all "
+        f"({data['control_error']}), so the check above proved nothing. Fix the "
+        "import or this gate is decorative."
+    )
+    assert data["after_explicit_import"], (
+        "importing jobtracker.email_clients did not make it visible to the very "
+        "expression used to detect a leak, so that expression cannot detect one. "
+        "The package was probably renamed; update PKG."
+    )
