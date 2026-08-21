@@ -13,6 +13,11 @@ import importlib
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.test_cloud_routes_carry_auth import (
+    INCLUDED_ROUTER_WITNESS,
+    _walk_routes,
+)
+
 
 @pytest.fixture
 def cloud_settings(monkeypatch: pytest.MonkeyPatch):
@@ -111,7 +116,26 @@ def test_cloud_app_does_not_import_keyring_or_aiosqlite(tmp_path):
 
 
 def test_cloud_app_does_not_register_websocket_route(cloud_app):
-    paths = {getattr(route, "path", None) for route in cloud_app.routes}
+    """WHY THE WALK AND NOT ``cloud_app.routes`` (#405).
+
+    This assertion was written as a flat scan and could not have failed. On
+    FastAPI 0.141 ``include_router()`` leaves an opaque ``_IncludedRouter``
+    proxy in ``app.routes`` with ``path`` None, so a flat scan sees 5 paths out
+    of 29 and none of them come from a router. Adding the very route this test
+    forbids, through the mechanism all 24 real routes use, left it green.
+
+    The witness below is the fix: a path that only exists behind
+    ``include_router`` must be visible, or the "not in" assertion is being made
+    against a set that could not contain it either way.
+    """
+
+    paths = {getattr(route, "path", None) for route in _walk_routes(cloud_app)}
+
+    assert INCLUDED_ROUTER_WITNESS in paths, (
+        f"the route scan cannot see {INCLUDED_ROUTER_WITNESS}, which is served "
+        "through include_router. Until it can, 'X is absent' says nothing: 24 "
+        "of the app's 29 routes are invisible to it."
+    )
     assert "/ws/sync-status" not in paths, (
         "Vercel Python runtime does not support WebSockets; /ws/sync-status "
         "is intentionally absent from the cloud app (C7 replaces it with polling)."
