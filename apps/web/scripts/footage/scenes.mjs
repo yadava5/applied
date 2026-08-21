@@ -53,17 +53,34 @@ export const MAX_CROP_W = 580;
 /**
  * The tracked scene's frame, in CSS px — derived twice over, never chosen.
  *
- * 576 because the encode is 1152 px wide and the capture runs at 2x, so a
- * 576-wide window is exactly the encode's native pixels: `Clip.tsx`'s
- * `k = width / frame.width` lands on 2.0 and nothing is scaled either way.
- * 155 because that is what 576 gives at the shape of the picture this clip is
- * placed in: the landing's 30rem clip rails render 478 x 128.63 CSS px on a
- * production build, measured at 1024 and 1512, which is 1152:310 — the aspect
- * the sync recording already encodes at. The clip landed on the retention
- * rail and rides its own row rail since the five-rail restaging
- * (2026-08-20); both share the geometry this frame was derived for.
+ * 704x528 since 2026-08-21, when the owner turned the row rail into the
+ * page's second big box ("a big square and rectangle box that covers the
+ * entire half of the left side" — his words, on a screenshot of the old
+ * 478x129 strip). The strip's 576x155 was derived from a rail picture that
+ * no longer exists, so both numbers re-derive from the new one:
+ *
+ * 704 because the row rail's ceiling is 44rem (`ClaimsDescent`'s
+ * `--rail-row`), whose picture renders 702 CSS px wide — so a 704 CSS
+ * frame, captured at 2x, encodes 1408 native px and the 2x screen the page
+ * is designed on reads the clip at essentially 1:1, with `Clip.tsx`'s `k`
+ * on exactly 2.0 and not one captured pixel scaled up. That is over the
+ * shared 580 ceiling, which is a DEFAULT sized for the old 478px placement;
+ * the scene raises its own (`maxCropW` below) for the 702px placement, the
+ * knob MAX_CROP_W's docblock reserves for exactly this.
+ * 528 because the box should read as a box, not a slot, and 4:3 is the
+ * tallest shape the short viewport corner can seat: at 1024x600 the rail's
+ * fold cap resolves the box to ~432px wide, whose 4:3 picture plus chrome
+ * still clears the fold with the transport reachable (the `--rail-row`
+ * derivation in ClaimsDescent carries the arithmetic). Squarer than 4:3
+ * breaks that corner; wider stops being the box the owner asked for.
+ * 1408x1056 divides evenly for H.264 and `k = 2.0` exactly.
+ *
+ * WHAT THE HEIGHT BUYS, in shot terms: the held opening now carries the
+ * whole letter IN its pane with the board beside it, and the landing seats
+ * the row inside its group with the neighbouring groups in frame — the row
+ * seen in the board, which the 155px strip could only gesture at.
  */
-const FRAME = { width: 576, height: 155 };
+const FRAME = { width: 704, height: 528 };
 
 /** Padding around a derived crop, in CSS px. */
 const PAD = 12;
@@ -283,6 +300,13 @@ export const SCENES = [
      */
     viewport: { width: 1280, height: 1000 },
     /**
+     * Raised for the big-box placement: the row rail shows this clip at up
+     * to 702 CSS px (`--rail-row`'s 44rem ceiling), so a 704 frame is a
+     * 1.0x read there — the shared 580 default is sized for a placement
+     * this clip no longer has. FRAME's docblock carries the derivation.
+     */
+    maxCropW: FRAME.width,
+    /**
      * The board's one closed row, and the phrase it files under. This is a
      * FRAMING gate on the camera's whole travel: the showcase fixture carries
      * a rejection deliberately (a board with no verdict it did not want is a
@@ -317,9 +341,26 @@ export const SCENES = [
         if (!section) throw new Error("one-letter: no assessment group on the board");
         const row = section.querySelector("li");
         if (!row) throw new Error("one-letter: the assessment group is empty");
+        const closed = [...document.querySelectorAll("section[aria-label]")].find((el) =>
+          /^closed —/i.test(el.getAttribute("aria-label") ?? ""),
+        );
+        if (!closed) throw new Error("one-letter: no closed group to keep out of frame");
+        const board = document.querySelector('[data-testid="pipeline-board"]');
+        if (!board) throw new Error("one-letter: no board");
         const g = section.getBoundingClientRect();
         const r = row.getBoundingClientRect();
-        return { left: g.x, rowMid: r.y + r.height / 2 };
+        // `boardLeft` is the whole board's edge — spine included — because
+        // that is where the seat's frame now rests (see `camera`). The
+        // closed group's top is measured in the SAME resting state the
+        // landing films in: the 4:3 frame reaches far enough down the board
+        // that the seat must be derived against it, not just trusted to the
+        // forbid gate's failure.
+        return {
+          left: g.x,
+          boardLeft: board.getBoundingClientRect().x,
+          rowMid: r.y + r.height / 2,
+          closedTop: closed.getBoundingClientRect().y,
+        };
       });
       await page.getByRole("button", { name: /^Open Kestrel Dynamics/ }).click();
       // The trail is a real transport call, and the pane mounts on "loading
@@ -333,18 +374,17 @@ export const SCENES = [
       await page.waitForTimeout(700);
     },
     /**
-     * The camera. 576 x 155 CSS px, held, tracked, held.
-     *
-     * 576 is half the 1152 the clip encodes at, captured at 2x, so
+     * The camera. 704 x 528 CSS px (FRAME's docblock derives both), held,
+     * tracked, held — half the 1408 the clip encodes at, captured at 2x, so
      * `Clip.tsx`'s `k` lands on exactly 2.0 and not one pixel is scaled up.
-     * 155 is what 576 gives at the retention rail's own aspect — its picture
-     * measures 478 x 128.63 on a production build, which is 1152:310, the
-     * same shape the sync recording already encodes at. That is why this clip
-     * costs the rail nothing: `--exhibit` does not move.
      *
-     * The three keyframes are the three beats. The hold either side of the
-     * move is what makes it a tracking shot rather than a drift — a camera
-     * that is always moving has no beginning and no end.
+     * The keyframes are the beats. The hold either side of the move is what
+     * makes it a tracking shot rather than a drift — a camera that is
+     * always moving has no beginning and no end. The 4:3 frame keeps the
+     * same path shape as the 155px strip did (hold on the letter, tilt to
+     * the row's line, track into its group): the taller window changes what
+     * each position CONTAINS — the whole pane, the row among its
+     * neighbours — not where the camera goes.
      */
     async camera(page) {
       const vp = page.viewportSize();
@@ -356,43 +396,50 @@ export const SCENES = [
       // As far right as the frame can sit and still be a window on the page.
       // The pane is right-anchored, so this is what puts the letter in frame
       // with the board's own edge beside it — the shot's whole subject, both
-      // halves, without a composite.
-      const held = { x: Math.min(letter.x - 18, vp.width - FRAME.width), y: letter.y - 46 };
-      // The landing, composed rather than offset: the tracked row sits on the
-      // frame's own centre line, which puts the group heading and its count
-      // above it and the head of the next group below — the row seen IN
-      // something, which is the whole difference between "a row" and "the
-      // row's group". Deriving it from the row's middle rather than from the
-      // group's top is what keeps that true if the heading ever grows a line.
-      const seat = {
-        x: this.seated.left - 12,
-        y: this.seated.rowMid - FRAME.height / 2,
+      // halves, without a composite. Vertically the frame ENDS just under the
+      // letter (12px into the gap before the trail's second message, which is
+      // excluded whole rather than cut mid-card): the 4:3 window read upward
+      // from there holds the pane's chips, the deadline, the next-step line
+      // and the letter, with the worklist's own rows beside them — measured
+      // at 1280x1000, frame y 263..791 against a pane at 300..936.
+      const held = {
+        x: Math.min(letter.x - 18, vp.width - FRAME.width),
+        y: letter.y + letter.height + 12 - FRAME.height,
       };
-      // TWO SEGMENTS, NOT ONE DIAGONAL, and the first cut of this shot is why.
-      // A straight line from the letter to the seat crosses the middle of the
-      // worklist, which is 400-odd px of nothing: an Applied row puts its
-      // identity at the left and its machine facts at the right and leaves the
-      // span between them empty. The contact sheet showed the camera three
-      // seconds in with two stage selects and dark ground in frame, which is a
-      // shot with a hole in it.
+      // The landing: the board's whole left flank — the stages spine (with
+      // ASSESSMENT counted on it), the group heading, and the row's identity,
+      // every one of them WHOLE. Measured post-close at 1280x1000: heading
+      // 224 to deadline-chip end 997 spans 773 CSS px, so no 704 frame can
+      // rest on both ends without slicing one — and a sliced chip in the
+      // landed poster was exactly what the first 4:3 cut produced. The chip
+      // is not lost: the track carries it through the frame at 1:1 on the
+      // way to this seat ("past the same deadline drawn on the row" —
+      // FOOTAGE.letter.name has always said the camera goes PAST it). What
+      // the shot rests on is the row seen IN the board, spine and all.
       //
-      // So the camera TILTS first, up the pane's own column, and arrives on
-      // the row's right end — where the deadline it just read in prose is
-      // sitting as `due in 2d · Aug 22`, beside the stage the letter filed it
-      // at. Then it TRACKS left along the row into its group. From the tilt's
-      // end onward the tracked row is in frame continuously, which is the
-      // thing that makes this a tracking shot and not two crops joined by a
-      // move: the camera does not let go of the subject.
+      // Same y as the held frame — a PURE lateral track, no drift — with the
+      // closed group's line as the one override: the frame must never reach
+      // the group this clip refuses to film (`forbid`), so the seat rises
+      // off the shared line before it lets that happen.
+      const seat = {
+        x: this.seated.boardLeft - 12,
+        y: Math.min(held.y, this.seated.closedTop - 12 - FRAME.height),
+      };
+      // ONE TRACK, NOT THE OLD TILT-THEN-TRACK. The 155px strip needed two
+      // segments because its letterbox could only hold one line of the page
+      // at a time — it had to climb the pane's column before it could travel.
+      // The 4:3 frame holds the letter AND the row's own line at once, so the
+      // move that remains is the honest one: after the press is answered, the
+      // camera tracks LEFT along the row it never lets go of, from the pane's
+      // side of the board into the ASSESSMENT group, and rests.
       return cameraPath(FRAME, [
         { at: 0, ...held },
         // The press lands at ~2.2s and the board's answer is done by ~2.45s;
         // the camera stays put through both, so the expansion is watched
-        // rather than chased.
-        { at: 2.55, ...held },
-        { at: 3.55, x: held.x, y: seat.y },
-        // A beat on the match — the letter's sentence, and the row's own tag.
-        { at: 4.15, x: held.x, y: seat.y },
-        { at: 5.65, ...seat },
+        // rather than chased — camera motion is spent only on what the press
+        // did, never on arriving somewhere nothing happened.
+        { at: 2.9, ...held },
+        { at: 4.4, ...seat },
         { at: 7.05, ...seat },
       ]);
     },

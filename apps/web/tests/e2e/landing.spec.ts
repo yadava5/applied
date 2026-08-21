@@ -656,348 +656,149 @@ test.describe("landing (/)", () => {
   });
 
   /**
-   * THE SHOT IS A SHOT. Production played a whole take with the camera
-   * parked — the pointer pressed the day bar, the board filtered, and the
-   * frame showed the shrunken board centred in a void, because the script's
-   * zooms were authored at absolute scale 1 (owner screenshot, 2026-08-20).
-   * Every gate was green: the take's logic ran, so nothing red existed to
-   * see. This is the assertion that was missing: the director now writes
-   * `data-cam-scale` on the frame each time it applies the camera
-   * (`applyCam`), and a take must actually TRAVEL — the range between the
-   * shallowest and deepest shot must be a real push-in, not jitter.
+   * EVERY PRESS LANDS FRAMED — the recut's one camera covenant, and the
+   * invariant all three of the owner's complaints about the zoomed cut
+   * violated (2026-08-21): the camera cropped the momentum panel and then
+   * clicked inside it; it framed near the deadlines cell while nothing was
+   * pressed there; and it pressed a worklist row while still framed on the
+   * pulse. The zoom-era gates (shot depth, travel range, the cover-floor
+   * void watcher) retired WITH the zoom — a scale-locked camera cannot
+   * travel in scale, so a range assertion would gate a contract that no
+   * longer exists — and this is what replaced them: at the instant of every
+   * synthesized press, the pressed element's bounding rect must sit whole
+   * inside the frame's rect. The camera frames the press BEFORE the pointer
+   * lands it, or this reds with the control's own name and how far outside
+   * the frame it was.
    *
-   * 1024x1120 DELIBERATELY, not the working 1024x768: at tall frames the
-   * establishing fit clamps to 1.0 and the parked-camera defect reads a
-   * range of ~0.0, while at short frames the sub-1 establishing fit gives
-   * even a parked camera a free range (0.524 → 1.0 at 600 tall reads
-   * 0.476 — NOT blind, 0.024 from this floor, which is why the range
-   * metric alone must never be trusted at the short corner; the 1024x600
-   * test below gates that corner on DEPTH instead, where the separation is
-   * real). The tall corner is where the range metric is unambiguous and
-   * ONLY the fix passes: fixed, the range there is ~1.26 (1.000
-   * establishing → 2.26 close-up, held for seconds at a time, so 250ms
-   * sampling cannot miss it).
+   * MEASURED FROM OUTSIDE the code under test: an init-script capture
+   * listener records every `isTrusted: false` pointerdown inside the frame
+   * (only the take's pointer dispatches those there) and takes its own
+   * rects. The positive control is the count — the script presses four
+   * controls (the momentum cell, the day bar, Kestrel's row, the filter's
+   * clear), so fewer than four recorded presses means the listener measured
+   * nothing and its zero violations are not evidence.
    *
-   * MUTATION (watched red 2026-08-20, via the design-side twin of this
-   * exact poll — same bundle, same browser, same arithmetic; this suite is
-   * not run by the frontend agent): `punchTo` reverted to
-   * `zoomTo(target, 1)`. The take plays to completion, every narration
-   * assertion above stays green, and the observed range collapses to 0.000
-   * — this line is the only one that reds. Restored and watched green the
-   * same way; a first run of this suite itself is owed and is the
-   * canonical proof.
+   * 1024x600 DELIBERATELY: the shortest supported frame is the only corner
+   * where the camera must actually pan to keep this true (at 1024x1120 the
+   * whole board sits inside the frame at natural size and the invariant is
+   * unbreakable by construction). 1px of slack is rect rounding.
+   *
+   * MUTATION (watched red 2026-08-21 via the design-side twin of this exact
+   * listener — same bundle, same browser, same arithmetic; this suite's own
+   * run is owed and canonical): a press of the worklist's LAST row inserted
+   * before the take's first beat, with no pan before it — at 600 tall that
+   * row is far below the frame's foot. The take completed, the last
+   * narration line still landed, and the press recorded as "Open Atlas
+   * Freight — Software Engineer II" at gap +328.4px while all four scripted
+   * presses stayed negative — this gate reds alone. Restored and watched
+   * green the same way (gaps -20 / -153 / -38 / -31 at 1024x600).
    */
-  test("the camera arrives: the take's shots actually travel", async ({ page }) => {
-    await page.setViewportSize({ width: 1024, height: 1120 });
-    await page.goto("/");
-    await expect(page.getByTestId("pipeline-board")).toBeVisible();
-
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-    await expect
-      .poll(
-        async () => {
-          const v = await page.evaluate(
-            () => document.querySelector<HTMLElement>("[data-cam-scale]")?.dataset.camScale,
-          );
-          if (v) {
-            const n = Number(v);
-            min = Math.min(min, n);
-            max = Math.max(max, n);
-          }
-          return max - min;
-        },
-        { timeout: 30_000, intervals: [250] },
-      )
-      .toBeGreaterThanOrEqual(0.5);
-  });
-
-  /**
-   * THE OWNER'S OWN CORNER, gated on what actually discriminates there. At
-   * 1024x600 the range metric above is structurally near-blind — a parked
-   * camera reads 0.476 of range for free off the sub-1 establishing fit,
-   * 0.024 under the 0.5 floor, and any small lift to that fit turns the
-   * corner green on a broken camera. What DOES separate is DEPTH: a parked
-   * camera's deepest write is its AUTHORED constant, give or take the cover
-   * floor's own correction — exactly 1.000 where the punch is parked at
-   * `zoomTo(target, 1)` AND `followCover` is dropped — the recipe below,
-   * watched 2026-08-20 — and 1.017 where the scale is parked at 1 with the
-   * cover floor left armed, which is a SEPARATE reading on the same
-   * production build and not one the recipe below produces — while a
-   * computed close-up pushes past natural scale (max 1.155 at this
-   * viewport, re-measured on the merged tree 2026-08-21 — the live cover
-   * bound riding the filtered board — with the fill bound's 1.12 as the
-   * independent backstop if the fixture ever reshapes). The floor sits at
-   * 1.06 because it clears BOTH parked variants with room: an authored
-   * scale plus a floor correction is not a measurement of the shot, so the
-   * clearance budget belongs entirely to the real side, under both
-   * computed drivers.
-   *
-   * AND THE FRAME STAYS FULL, watched PER FRAME, not per poll. The owner's
-   * void, third report: the day filter shrinks the board while the camera
-   * is parked at the establishing scale, and a cover bound evaluated only
-   * at punch time left the frame 47% empty for ~1.4s (198px of 424 at this
-   * viewport) on the beat where the product does the thing. The director's
-   * cover floor now holds across stage resizes (`applyCam`/`followCover`),
-   * and at this viewport the vertical void is structurally zero for the
-   * whole take — establishing is height-fit, close-ups are cover-floored —
-   * so the 32px allowance is pure slack. The watcher is an in-page rAF
-   * loop, one reading per rendered frame, because an external poll was
-   * MEASURED missing the defect on the very mutation built to prove this
-   * assertion — it shared the depth poll's loop and stopped sampling the
-   * moment depth passed, ~700ms before the void finished (it read 7px
-   * where 198 existed: a gate that could not fail, caught before it
-   * shipped). It runs concurrently with the depth poll from the same
-   * start, and its 24s window comfortably covers the filter beat (~4-8s
-   * in), which is the only beat that can void.
-   *
-   * PERSISTENCE, NOT A SINGLE FRAME: the reading is the worst void seen on
-   * two CONSECUTIVE rendered frames (the min of each adjacent pair). rAF
-   * callbacks run BEFORE ResizeObserver delivery in the same rendering
-   * pass, so on the frame where the board's layout collapses, a
-   * getBoundingClientRect inside rAF sees the new layout under the
-   * not-yet-reframed camera — a state that never paints (measured on the
-   * fixed build: one 198px reading, worstRun 1, gone by the next frame). A
-   * painted defect cannot hide there: the real one holds for ~84 frames.
-   *
-   * TWO MUTATIONS, one per assertion, because `expect` fails fast and the
-   * void line never executes while the depth line is red (both watched
-   * 2026-08-20, each on its own `next build && next start`, via the
-   * design-side twin of this poll — same bundle, same browser, same
-   * arithmetic; this suite's own run is owed and canonical):
-   *   · DEPTH: `punchTo` reverted to `zoomTo(target, 1)` and `followCover`
-   *     dropped — the take completes, the narration gates stay green, max
-   *     reads exactly 1.000, this line reds.
-   *   · VOID: the pre-fix director restored WHOLE (`git show` of
-   *     director.ts and OnerStage.tsx at the defect's own commit — the
-   *     historical bug, not a synthetic break) — depth reads 1.079 and
-   *     stays green; the watcher reds alone at 198.2px, the owner's own
-   *     number, held for 166 consecutive frames. Two SYNTHETIC void
-   *     mutations were tried first and measured GREEN — freezing the
-   *     punch's cover at first evaluation while leaving the reframe
-   *     observer alive — because the reframe alone already re-fits this
-   *     corner within ~7px. That is worth keeping: the void guarantee
-   *     rides the reframe+floor system as a whole, and only removing the
-   *     system reproduces the defect.
-   * Restored and watched green the same way after each.
-   */
-  test("the deepest shot is computed and the frame never empties at 1024x600", async ({
+  test("every press lands inside the frame: the camera frames what the pointer clicks", async ({
     page,
   }) => {
     await page.setViewportSize(DESKTOP_1024);
+    await page.addInitScript(() => {
+      interface Press {
+        label: string;
+        gap: number;
+      }
+      const presses: Press[] = [];
+      (window as unknown as { __presses: Press[] }).__presses = presses;
+      document.addEventListener(
+        "pointerdown",
+        (event) => {
+          // The visitor's hand is trusted; the take's pointer is not. Only
+          // the synthesized presses are this gate's subject.
+          if (event.isTrusted) return;
+          const el = event.target instanceof HTMLElement ? event.target : null;
+          const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
+          if (!el || !frame || !frame.contains(el)) return;
+          const r = el.getBoundingClientRect();
+          const f = frame.getBoundingClientRect();
+          const gap = Math.max(
+            f.left - r.left,
+            r.right - f.right,
+            f.top - r.top,
+            r.bottom - f.bottom,
+          );
+          presses.push({
+            label: el.getAttribute("aria-label") ?? (el.textContent ?? "").slice(0, 40),
+            gap: Math.round(gap * 10) / 10,
+          });
+        },
+        true,
+      );
+    });
     await page.goto("/");
     await expect(page.getByTestId("pipeline-board")).toBeVisible();
 
-    // The per-frame void watcher, started BEFORE the depth poll so both
-    // cover the same stretch of the take. Not awaited until the poll is
-    // done — they run together.
-    const voidWatch = page.evaluate(async () => {
-      let worst = 0;
-      let prev = 0;
-      // How many frames actually carried the handle, against how many were
-      // rendered at all. The loop `continue`s when the handle is missing,
-      // and a watcher that never found the camera would otherwise return a
-      // perfect 0 — the shape this whole file exists to refuse. The
-      // reading is a RATIO, deliberately: a bare frame count would floor
-      // the runner's frame rate, which has nothing to do with the defect,
-      // and this suite has already been bitten once by a frame-count floor
-      // that broke under CPU throttling. Measured 2026-08-21 by replaying
-      // this loop under CDP throttling: seen === frames at 1x, 4x, 10x and
-      // 20x (2880 / 2872 / 2484 / 1399 frames), so the ratio holds at 1.0
-      // while the count varies 2x.
-      let seen = 0;
-      let frames = 0;
-      const t0 = performance.now();
-      while (performance.now() - t0 < 24_000) {
-        await new Promise((r) => requestAnimationFrame(r));
-        frames += 1;
-        const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
-        const stage = frame?.firstElementChild?.firstElementChild;
-        if (!frame || !stage) continue;
-        seen += 1;
-        const f = frame.getBoundingClientRect();
-        const r = stage.getBoundingClientRect();
-        const gap = Math.max(0, r.top - f.top) + Math.max(0, f.bottom - r.bottom);
-        // Two consecutive frames, so a pre-paint rAF/RO phase artifact
-        // cannot red this — see the docblock.
-        worst = Math.max(worst, Math.min(prev, gap));
-        prev = gap;
-      }
-      return { worst, seen, frames };
-    });
+    // The whole take, at authored tempo: the last narration line is the
+    // script's own "done", and every press has happened by the time it shows.
+    const act = theAct(page);
+    await expect(act.strip).toHaveText(ACT.narration[6], { timeout: 45_000 });
 
-    let max = 0;
-    await expect
-      .poll(
-        async () => {
-          const v = await page.evaluate(
-            () => document.querySelector<HTMLElement>("[data-cam-scale]")?.dataset.camScale,
-          );
-          if (v) max = Math.max(max, Number(v));
-          return max;
-        },
-        { timeout: 30_000, intervals: [200] },
-      )
-      .toBeGreaterThanOrEqual(1.06);
-
-    const { worst: worstVoid, seen: voidFrames, frames: voidTicks } = await voidWatch;
-    // The watcher's own positive control, as a share of the frames that
-    // actually rendered. Measured 1.0 at every throttling rate tried, so
-    // 0.9 is slack, not a guess about a runner's speed.
+    const presses = await page.evaluate(
+      () => (window as unknown as { __presses: { label: string; gap: number }[] }).__presses,
+    );
     expect(
-      voidFrames,
-      `the void watcher found the camera on ${voidFrames} of ${voidTicks} rendered frame(s) — it measured little or nothing, so its ${worstVoid.toFixed(1)}px reading is not evidence`,
-    ).toBeGreaterThan(voidTicks * 0.9);
-    expect(
-      worstVoid,
-      `the frame showed ${worstVoid.toFixed(1)}px of vertical void mid-take — the cover bound is not holding through the board's own resizes`,
-    ).toBeLessThanOrEqual(32);
+      presses.length,
+      `only ${presses.length} synthesized press(es) were recorded — the listener measured little or nothing, so zero violations is not evidence`,
+    ).toBeGreaterThanOrEqual(4);
+    for (const press of presses) {
+      expect(
+        press.gap,
+        `"${press.label}" was pressed ${press.gap}px outside the frame — the camera did not frame the press before the pointer landed it`,
+      ).toBeLessThanOrEqual(1);
+    }
   });
 
   /**
-   * THE CAMERA MOVES — IT NEVER CUTS. The owner's report, frame-stepped
-   * (2026-08-20, production): the take was continuous except at exactly two
-   * frames, and both were cuts — the day filter's collapse (scale 0.925 →
-   * 1.736 with a 447px pan snap, between two frames 8ms apart) and the
-   * detail pane's mount (1.736 → 1.900, then a tween DOWN — "it cuts the
-   * zoom out", his words). And the take OPENED on a cut: ~500ms of the
-   * mounting board at natural scale, then a hard snap to the establishing
-   * fit, because the camera element rendered with no transform at all.
-   * Every existing gate was green through all three: depth and void
-   * measure where the camera GETS, not how it travels. This is the
-   * assertion class that was missing, and it is three lines because the
-   * three defects have three different fixes:
+   * THE CAMERA IS SEEDED AND IT NEVER CUTS. Two of the three clauses the
+   * zoomed cut needed, kept because they still mean something at scale 1:
    *
-   *   1. SEEDED — the director now exists from mount (layout effect) and
-   *      composes the establishing fit before first paint, so no frame
-   *      ever renders with the camera untransformed.
-   *   2. BRACED — the filter's collapse is a single layout pass, so no
-   *      tween can cross it: at the collapse instant a full frame requires
-   *      the post-collapse cover, period. The script now pushes in to a
-   *      live-predicted cover BEFORE the press (`brace`/`filteredCover`),
-   *      so the rows file out under a motionless camera. The assertion is
-   *      the brace's contract: on the frame the stage collapses, the
-   *      rendered scale must already cover the new height.
-   *   3. CONTINUOUS — everything else (the pane's mount, the clear beat's
-   *      regrowth, the skeleton's handoff) is absorbed by the reframe as
-   *      an eased move (`director.ts`, the tracking thresholds). The
-   *      assertion is a per-frame DISPLACEMENT limit on the rendered
-   *      camera: how far it moved between two adjacent rendered frames,
-   *      full stop, with no division by anything.
+   *   1. SEEDED — the director exists from mount (layout effect) and writes
+   *      its resting transform before first paint, so no frame ever renders
+   *      the camera untransformed. (The historical defect: ~500ms of bare
+   *      board, then a hard snap when the take's first write landed.)
+   *   2. CONTINUOUS — every stage change the take does not author (the day
+   *      filter's collapse, the pane's mount, the clear beat's regrowth,
+   *      the skeleton handoff) is absorbed by the reframe as an eased move
+   *      (`director.ts`). The assertion is a per-frame DISPLACEMENT limit
+   *      on the rendered camera — how far it moved between two adjacent
+   *      rendered frames, full stop, no division by dt (a dt-normalised
+   *      rate was measured false-redding on rAF tick bunching at 1512x949:
+   *      an ordinary eased frame over a 1.4ms divisor read 24.29 scale/s
+   *      against a bound of 6; displacement is dt-free and the mechanism
+   *      cannot recur). The historical cut this guards against was a 447px
+   *      pan snap between two frames 8ms apart.
    *
-   *      It was a dt-normalised RATE for one commit, on the premise that
-   *      a janky frame should lower rather than raise the reading. That
-   *      premise holds for long frames and is exactly inverted for short
-   *      ones, and the inversion is not hypothetical: at 1512x949 the rAF
-   *      ticks bunch (minDt 1.10ms against an 8.40ms median), and an
-   *      ordinary eased frame divided by 1.4ms read 24.29 scale/s against
-   *      a bound of 6 — a red on a camera whose actual movement was
-   *      0.034, the same displacement the passing 1024 corner produces.
-   *      Clamping the divisor to 120Hz fixed that red but left the metric
-   *      conflating "how fast the camera is allowed to move" with "did it
-   *      jump", and the surviving window at 1512 was 1.23x on the green
-   *      side. Displacement is the face-value question and is dt-free, so
-   *      the bunching mechanism cannot recur in any form.
+   * THE BRACED CLAUSE RETIRED 2026-08-21 with the zoom recut, and its
+   * assertion (with its collapse positive-control) came out rather than
+   * being kept green-forever: the brace existed to carry a ZOOMED camera
+   * across the day filter's single-pass collapse, and a camera locked at
+   * scale 1 has no cover scale to arrive at — the contract it gated no
+   * longer exists. Its mutation evidence lives in git history with the
+   * machinery (`Director.brace`, `filteredCover`, `COVER_MAX`).
    *
-   *      MEASURED, n=16 runs per viewport, 2026-08-21. The defect is
-   *      perfectly deterministic under this metric — 0.3640 and 0.1920 on
-   *      4/4 runs each, zero variance, where the same defect ranged
-   *      21.5-43.7 as a rate. That determinism is itself the argument for
-   *      a dt-free reading.
+   * WHAT THE NUMBERS READ NOW, measured on the recut (design-side twin,
+   * production build, 2026-08-21): scale displacement is exactly 0.000 at
+   * both viewports — `data-cam-scale` is the constant 1.000 by contract —
+   * and the pan bound is what still does the work. The per-viewport scale
+   * bounds are kept at their zoom-era values (0.18 / 0.115) deliberately:
+   * they are ceilings a scale-locked camera sits 100% under, and any
+   * reading above 0.0 at all now means a zoom came back without this
+   * docblock hearing about it.
    *
-   *        viewport    authored   defect   historical cut
-   *        1024x1120   0.0860     0.3640   0.81
-   *        1512x949    0.0700     0.1920   —
-   *
-   *      Both authored figures are n=38 and both are the LARGEST reading
-   *      seen, not a typical one: 1 run in 38 exceeded 0.054 at 1512. The
-   *      bounds are set from the outlier because that is what a gate has
-   *      to survive.
-   *
-   *      THE BOUND IS PER-VIEWPORT, and that is not tuning. Forcing one
-   *      constant onto both shots was measured UNSATISFIABLE: authored
-   *      motion is worst at 1024 and the defect is smallest at 1512, so a
-   *      shared bound needs ≥0.1290 and ≤0.1280 to clear 1.5x on both
-   *      sides — an empty interval, missed by about 1%. The binding
-   *      constraints come from different viewports, which is exactly why
-   *      neither corner alone revealed it and why the single-constant
-   *      version read 1.40x green. Per shot the windows are 4.23x and
-   *      2.74x, and each bound sits at its own geometric balance point —
-   *      0.18 giving 2.09x/2.02x at 1024, 0.115 giving 1.64x/1.67x at
-   *      1512. The camera's authored motion is a function of frame size;
-   *      so is the defect's magnitude; a bound that is a function of
-   *      neither was the anomaly.
-   *
-   *      WHAT CAN STILL FALSE-RED, stated because it is real. Displacement
-   *      grows with frame duration, so the argmax migrates to LONG frames
-   *      — the opposite of the rate metric, where it sat at 1.3-1.4ms.
-   *      The 1024 maximum of 0.0860 came from a 19.0ms frame at an
-   *      ordinary 4.53/s: pure frame-length inflation, not anomalous
-   *      motion. 1512's 0.0700 is the same mechanism at 18.30ms and
-   *      3.83/s. At those velocities the bounds are reached by a 39.7ms
-   *      frame at 1024 and a 30.0ms frame at 1512, and frames of 28-37ms
-   *      were observed at both. THE BINDING RISK IS 1512's, not 1024's —
-   *      an earlier draft of this block quoted only the 1024 threshold
-   *      and so understated it, the same error as the rawDt sentence
-   *      above: a figure derived at one viewport and stated as general.
-   *      What keeps it rare is the conjunction — the long frame has to
-   *      land on the punch's peak velocity — not headroom. Read it as
-   *      "can happen", not "will fail". One run in 38 also read 0.0790 at
-   *      a NORMAL 7.30ms frame at 1024, which is genuinely anomalous
-   *      camera motion rather than a sampling artifact.
-   *
-   *      PAN stays a single constant at 100px, because its physical
-   *      window is 11.5x rather than 3.6x and one number clears both
-   *      shots comfortably: authored 41.80px at 1024 and 45.80px at 1512
-   *      against a defect of 523.60px and 480.10px, so 2.18x is the
-   *      binding margin. Both bounds are on the same argmax pair as the
-   *      scale reading in 15/16 runs, so they are watching one event.
-   *
-   * 1024x1120 because it is the discriminating corner for all three: the
-   * establishing fit clamps to 1.000 (so an unseeded camera is invisible
-   * to a scale-only check anywhere shorter), the post-collapse cover is
-   * the take's deepest (2.264 — the widest gap an unbraced camera has to
-   * snap across), and the brace's own arming was measured cutting HERE
-   * (1.000 → 1.206, the letterbox raise) and nowhere shorter — the fix
-   * arms the floor on arrival instead.
-   *
-   * ORDERED so each mutation reds its own line: seed first, brace second,
-   * continuity last — dropping the brace also breaks continuity, so the
-   * brace line must run before the continuity line or its red could never
-   * be watched through this test.
-   *
-   * MUTATIONS (each on its own `next build && next start`, watched red
-   * 2026-08-20 via the design-side twin of this exact watcher — same
-   * bundle, same browser, same arithmetic; this suite's own run is owed
-   * and canonical):
-   *   · SEED: the constructor's seed block removed from `Director` — the
-   *     camera renders untransformed until the take's first `fitAll`, the
-   *     watcher counts those frames, only line 1 reds.
-   *   · BRACE: the script's `Promise.all([brace, moveTo])` reverted to a
-   *     bare `moveTo` — the collapse lands on the establishing scale and
-   *     the floor snaps through it; line 2 reds at 1.000 against a 2.264
-   *     requirement (and line 3 would red behind it, which is why it is
-   *     behind it).
-   *   · CONTINUITY: `reframe`'s absorb branch reverted to the historical
-   *     assignment — the pane-mount reframe snaps (measured 17.4 scale/s,
-   *     25,053 px/s) and only line 3 reds.
-   * Restored and watched green the same way after each.
-   */
-  /**
-   * TWO VIEWPORTS, and 1512x949 is the one that carries the point. Every
-   * camera number here is a function of the frame's dimensions, and the
-   * fluid composition widens that frame by up to ~208px above 1280 — so a
-   * gate pinned to 1024 measures the camera on the one width where the
-   * widening contributes nothing. Measured on the merged tree: max pan per
-   * frame climbs 7.85 -> 12.81 -> 14.26px and max depth 1.481 -> 1.811 ->
-   * 1.934 across 1024x768 / 1440x900 / 1512x949. The code re-measures; this
-   * makes the gate re-measure with it.
+   * TWO VIEWPORTS, unchanged reasoning: every camera number is a function
+   * of the frame's dimensions, and the fluid composition widens the frame
+   * by up to ~208px above 1280 — 1512x949 measures the camera on a width
+   * where 1024 contributes nothing.
    */
   for (const [label, viewport, maxStep] of [
     ["1024x1120", DESKTOP_1024_TALL, 0.18],
     ["1512x949", DESKTOP_1512, 0.115],
   ] as const) {
-    test(`the camera is seeded, braced and continuous at ${label}`, async ({ page }) => {
+    test(`the camera is seeded and continuous at ${label}`, async ({ page }) => {
       await page.setViewportSize(viewport);
       // The watcher must predate the board: the unseeded-camera defect lives
       // in the window between the camera mounting and the take's first move.
@@ -1061,36 +862,7 @@ test.describe("landing (/)", () => {
         `${unseeded} frame(s) rendered with the camera untransformed — the establishing shot is being cut to, not seeded (Director's constructor seed)`,
       ).toBe(0);
 
-      // 2 — BRACED: on the frame the stage collapses, the camera already
-      // covers the new height. 0.06 of slack is measurement noise; the
-      // unbraced defect misses by 1.26.
-      let braced = true;
-      let collapses = 0;
-      let braceMsg = "no collapse observed";
-      for (let i = 1; i < samples.length; i++) {
-        const a = samples[i - 1]!;
-        const b = samples[i]!;
-        if (a.sh && b.sh && b.sh < a.sh * 0.75 && a.s !== null && b.fh) {
-          collapses += 1;
-          const required = b.fh / b.sh;
-          braced = a.s >= required - 0.06;
-          braceMsg = `at the collapse (stage ${a.sh} -> ${b.sh}) the camera held ${a.s} against a cover of ${required.toFixed(3)}`;
-          break;
-        }
-      }
-      // The brace loop's own positive control. Without it, a restaging that
-      // softens the collapse below the 0.75 trip leaves `braced` at its
-      // initial `true` and the gate goes quiet with no other symptom — the
-      // silence this file exists to refuse.
-      expect(
-        collapses,
-        "no stage collapse was observed at all — the brace assertion measured nothing, so its pass is not evidence",
-      ).toBeGreaterThan(0);
-      expect(braced, `${braceMsg} — the press is not being braced (OnerStage's filteredCover)`).toBe(
-        true,
-      );
-
-      // 3 — CONTINUOUS: how far the rendered camera moves between two
+      // 2 — CONTINUOUS: how far the rendered camera moves between two
       // adjacent frames. Displacement, not a rate — see the docblock for
       // why dividing by dt was the defect and not the measurement.
       let maxScaleStep = 0;

@@ -90,12 +90,23 @@ for (const id of scenes) {
   });
 
   const encodes = {};
+  // Per-clip CRF overrides, defaulting to the shared knobs. `one-letter`
+  // re-encoded at 1408x1056 for the row rail's big box (2026-08-21) — 4.2x
+  // the pixel area of its old 1152x310 strip — and the shared CRFs priced it
+  // at webm 1187 KB / mp4 580 KB. One notch each holds the 500 KB budget
+  // without touching the other clips: measured on this source, VP9 38 →
+  // 861 KB, 42 → 652 KB; H.264 28 is what brings the smaller encode under
+  // budget. 42 was compared against the 34 encode at 1:1 on the held seat
+  // and mid-track frames before it was kept — flat UI at this size holds
+  // its text through it.
+  const VP9_CRF = { "one-letter": 42 };
+  const H264_CRF = { "one-letter": 28 };
   for (const [ext, opts] of [
     // VP9/WebM: the modern half. CRF is the quality knob; 34 is visually clean
     // on flat UI at this size, where a photographic source would band.
-    ["webm", { codec: "vp9", crf: 34 }],
+    ["webm", { codec: "vp9", crf: VP9_CRF[id] ?? 34 }],
     // H.264/MP4: the fallback every browser and every embedded player takes.
-    ["mp4", { codec: "h264", crf: 26 }],
+    ["mp4", { codec: "h264", crf: H264_CRF[id] ?? 26 }],
   ]) {
     const outputLocation = `${base}.${ext}`;
     await renderMedia({

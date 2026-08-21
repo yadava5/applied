@@ -113,6 +113,13 @@ export const ACT = {
    * (`WindowAct` hands them to the director's `say`), and the camera follows
    * the READING, not the pointer.
    *
+   * The 2026-08-21 recut plays at NATURAL SIZE throughout (the camera is a
+   * scroll, never a zoom — `director.ts` says why), so no line here may
+   * promise a composition only a zoom could make: line 0 used to say "the
+   * whole search in one frame", which a scale-1 camera on a short viewport
+   * cannot show, and the claim moved to the board, where it is true at any
+   * frame height.
+   *
    * This replaces the three scroll-scene captions of the scrubbed act: the
    * act plays on its own pausable clock now (the closing act's mechanism,
    * the owner's call in both places), so captions indexed to scroll
@@ -121,7 +128,7 @@ export const ACT = {
   opening:
     "A continuous working session — filter to a day, open a row, read its history, clear.",
   narration: [
-    "Monday. The whole search in one frame — ask it what happened.",
+    "Monday. The whole search on one board — ask it what happened.",
     "The pulse holds the answer: filings, day by day.",
     "Press the heavy evening —",
     "— and the board narrows to the applications filed that day.",

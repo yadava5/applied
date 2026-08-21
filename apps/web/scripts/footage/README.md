@@ -67,7 +67,7 @@ a rule loose enough that nobody can tell which was done.
 | --- | --- | ---: | ---: | ---: |
 | `gmail-connects` | The Gmail card at "Not connected", the one permission Google is asked for, and the same card at "Connected". **Held back — not in `CLIPS`, not under `public/footage/` (2026-08-19); see the hand-recorded section below.** | 6.7s | 83.5 KB | 325.0 KB |
 | `board-syncs` | One press of Sync: the counters go 17 filed · 14 open → 19 · 16, `APPLIED` 10 → 12, and the strip says "2 filed, 3 already known". | 4.9s | 106.3 KB | 61.1 KB |
-| `one-letter` | **Tracked — the frame moves.** A card open on the mail behind a Kestrel Dynamics row: an assessment invitation, filed `assessment` at 97%, naming a deadline of Aug 22. The card is closed, the worklist expands into the space it held (`PipelineBoard`'s own layout animation — the tracked row goes 632→1036 px wide and un-wraps 68→42 tall, settled in 202 ms), and the camera tilts up to the row's own `due in 2d · Aug 22` tag and then tracks left into the ASSESSMENT group. | 8.1s | 365.5 KB | 490.4 KB |
+| `one-letter` | **Tracked — the frame moves.** Re-framed 4:3 (704x528 CSS, encoded 1408x1056) for the row rail's big box, 2026-08-21. It opens held on the letter — the assessment invitation in the pane's own trail, filed `assessment` at 97%, with the pane's head (the stage, the `due in 2d` chip, the next step) and the board's rows beside it. The pane's × is pressed, the worklist expands into the space it held (`PipelineBoard`'s own layout animation), and the camera makes ONE lateral track left along the row — its `due in 2d` tag passing through frame at 1:1 — coming to rest on the board's left flank: the stages spine, the ASSESSMENT heading, and the row seated in its group, all whole. The old tilt-then-track died with the 155px letterbox that needed it; `scenes.mjs` carries the derivation. | 8.05s | 652.2 KB | 493.0 KB |
 | `rules-read-the-body` | A rejection typed into the shipped rules layer. The verdict holds at `OTHER 50%` through the preamble, flips to an amber `REJECTION 70%`, and lands green at `90%` — over the bar where layer 1 answers alone. | 10.9s | 312.0 KB | 154.4 KB |
 
 `import-classifies` was here and is gone (2026-08-20). It never showed the file
@@ -105,17 +105,23 @@ without playing sees INSTEAD of the recording, so it has to carry the argument
 on its own. `gmail-connects` is the exception and still shows its first frame,
 because it is not re-rendered by this pipeline.
 
-**The encode is 1152px wide** (`OUT_WIDTH` in `remotion/Root.tsx`), which is
-the capture's own native device-pixel width: the scenes crop at or under 576
-CSS px and record at `--force-device-scale-factor=2`, so `Clip.tsx`'s
+**The encode width is per-clip since 2026-08-21** (`OUT_WIDTH` plus the
+per-cut `outWidth` override in `remotion/Root.tsx`), and each one is its
+capture's own native device-pixel width: a scene's crop at N CSS px recorded
+at `--force-device-scale-factor=2` encodes at 2N, so `Clip.tsx`'s
 `k = width / (scene.camera?.width ?? scene.crop.width)` lands on exactly 2.0
-and nothing is scaled up. That is also what fixes a tracked clip's frame at
-576 CSS px and leaves it no room to zoom — `scenes.mjs` argues it where the
-camera is defined.
-It was 832 — twice the 26rem artifact column the clips were first placed in —
-and that column no longer exists. At the 640-768 CSS px the landing shows them
-at, 832 covered 54% of a 2x screen's native pixels; 1152 covers 90% at 640.
-Raising it further would upscale.
+and nothing is scaled up. The shared default is 1152 (the 576-and-under
+crops); `one-letter` encodes at 1408 for its 704 CSS frame — the row rail's
+big-box placement shows it at up to 702 CSS px, so 1152 would have thrown
+away a quarter of the capture's pixels on the page's second-largest picture.
+The default was 832 once — twice the 26rem artifact column the clips were
+first placed in — and the history matters because it is the same rule both
+times: the encode is sized for where the clip is SHOWN, capped at what the
+capture natively holds, and raising it past that would upscale.
+A tracked clip's frame is still one size for its whole path — a frame that
+changed size would be a zoom the pipeline cannot afford honestly, since no
+captured pixel may be scaled up — `scenes.mjs` argues it where the camera is
+defined.
 
 **Both encodes ship, and NEITHER carries audio** — `render.mjs` passes
 `muted: true` since 2026-08-20. Every clip before that shipped a real silent
@@ -145,25 +151,27 @@ no fallback left; two clips shipped frozen on the live page that way.
 Every clip is well under the 500 KB budget on the modern codec; `render.mjs`
 fails the run if one is not.
 
-**A camera move costs about 3.4x, and it is the codec's advantage that it
-spends.** `one-letter` is 365.5 KB of WebM against `board-syncs`' 106.3 KB for
-a picture the same size and 3.2s more of it — VP9's win here comes from large
-areas that do not change between frames, and a frame that is travelling has
-none. A Safari visitor who takes the H.264 fallback pays 490.4 KB, the
-heaviest single artifact on the page. **The budget was NOT raised.** It holds
-as it stands, at 73% on the codec the gate measures, and it is worth keeping
-tight: a second tracked clip would be a decision to make on its merits, not
-one that slips in under a ceiling raised for the first. What must not happen
-is the budget being met by lifting CRF — the encode's quality is the thing
-the 1152px width exists to protect.
+**A camera move costs, and the big frame multiplied it.** The 2026-08-21
+re-frame took `one-letter` from 1152x310 to 1408x1056 — 4.2x the pixel area,
+on the one clip whose frame travels — and at the shared CRFs that priced it
+at webm 1187 KB / mp4 580 KB, over the 500 KB budget on BOTH encodes.
+**The budget was still not raised.** What moved instead is the clip's own
+CRF, one decision earlier this file forbade in the words "what must not
+happen is the budget being met by lifting CRF" — and that sentence is
+superseded deliberately, not forgotten: it was written about a fixed-size
+encode, where a CRF lift is pure quality loss chasing a number. Here the
+picture QUADRUPLED and the question is what per-pixel quality a 4x picture
+must carry; `render.mjs`'s per-clip map holds VP9 42 / H.264 28 for this
+clip alone (652.2 / 493.0 KB), and the 42 encode was compared against the
+34 encode at 1:1 on the held seat and mid-track frames before it was kept.
+If a future eye disagrees with that comparison, the honest alternatives are
+a per-clip budget raise or a narrower travel — not a quiet return to 34
+with the gate red.
 
-`one-letter`'s two encodes still carry the silent audio track (verified with
-ffprobe, 2026-08-20): they were rendered before the strip described above, and
-they ship as rendered rather than being re-derived — the take is
-owner-approved and a re-capture is not guaranteed to reproduce it. The next
-deliberate re-render of this clip inherits the strip and should shave the mp4
-in particular; until then these two files are the one place the "silent by
-construction" claim above does not yet reach.
+`one-letter`'s old encodes carried the silent audio track this README
+documents above; the 2026-08-21 re-render replaced both files under
+`muted: true`, so the "silent by construction" claim now reaches every clip
+this pipeline renders.
 
 Which claim each clip is relevant to is a design decision and lives with the
 page, not here. Nothing in this directory imports from `components/marketing/`

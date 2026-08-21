@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 
 
 import { MarketingBoard } from "./MarketingBoard";
 import { ACT } from "./copy";
-import { COVER_MAX, Director, TakeError } from "./director";
+import { Director, TakeError } from "./director";
 
 export type OnerPhase = "idle" | "playing" | "done" | "failed";
 
@@ -24,6 +24,19 @@ export type OnerPhase = "idle" | "playing" | "done" | "failed";
  *   · a replay REMOUNTS this stage (the parent keys it by run), so a take
  *     that mutated real state starts over from the product's own initial
  *     state, never from a rewound recording.
+ *
+ * THE RECUT'S TWO RULES (2026-08-21, the owner's rejection of the zoomed
+ * cut, re-authored from scratch rather than patched):
+ *   · the take plays AT NATURAL SIZE, start to finish — the board at the
+ *     browser zoom a person actually keeps, the director's camera locked at
+ *     scale 1 and moving only the way a reader's own scroll does. No
+ *     establishing fit, no close-ups, no push-ins: the cinematic zoom this
+ *     page does spend lives on the descent's rail boxes, not here;
+ *   · THE CAMERA FRAMES WHAT THE POINTER PRESSES, BEFORE IT PRESSES IT.
+ *     Every beat pans first (`panTo`, awaited alongside the pointer's own
+ *     travel) and clicks second, so no press can land outside the frame —
+ *     the invariant all three of the owner's complaints about the previous
+ *     cut violated, and the one the e2e press gate now measures.
  *
  * The clock is pausable in three ways that compose (`director.paused`): the
  * user's pause control, the frame leaving the viewport (nothing may finish
@@ -53,117 +66,60 @@ function tallestDayBar(d: Director): HTMLElement | null {
   return best;
 }
 
-/**
- * The scale the day filter's collapse will demand, predicted from what is
- * measurable BEFORE the press — the brace's one input (see `Director.brace`
- * for why the press is the beat the camera must anticipate rather than
- * follow).
- *
- * The filtered stage is the pane it keeps, reassembled: the same chrome
- * above (plus the filter band that will mount), the pane's own head and
- * tail, and the surviving rows — which KEEP their stage headers, so the
- * present pane's average row pitch (headers amortised in) is the honest
- * pitch for them too. Probed at 1440x900, production build, 2026-08-20:
- * true filtered stage 417, this prediction 403 — 3.6% under, which is the
- * right side to miss on: an under-prediction over-covers, never voids, and
- * the resolver keeps being re-evaluated after the collapse, where its
- * terms are the REAL filtered pane and the live-cover floor takes over —
- * so the shot settles onto the true bound by itself and the punch confirms
- * it. The one term with no pre-press measurement is the filter band, and
- * it borrows the pulse strip's own cell height — the same strip family,
- * measured live, and smaller than the band it stands in for (56 vs 76 at
- * 1440).
- *
- * Nothing here is a frame-size or fixture constant: every term re-measures
- * live, so the prediction moves with the frame the page actually renders
- * (the gutter is about to widen — the arithmetic must not care). If any
- * term is unreadable — a relabelled bar, a reshaped pane — the resolver
- * degrades to the LIVE cover of the current stage: the brace becomes a
- * hold, the armed floor catches the collapse exactly as it did before the
- * brace existed, and the brace gate is what goes red rather than the frame
- * going void.
- */
-const filteredCover = (d: Director, bar: () => HTMLElement | null) => () => {
-  const f = d.frameRect();
-  const live = f.height / Math.max(1, d.stageHeight());
-  const degraded = Math.max(live, d.renderedScale);
-  const pane = d.query('[data-testid="worklist-pane"]');
-  const label = bar()?.getAttribute("aria-label") ?? "";
-  const count = Number(/(\d+)\s+filed/.exec(label)?.[1]);
-  if (!pane || !Number.isFinite(count) || count < 1) return degraded;
-  const rows = d.queryAll('button[aria-label^="Open "]').filter((el) => el.offsetParent !== null);
-  const first = rows[0]?.getBoundingClientRect();
-  const last = rows[rows.length - 1]?.getBoundingClientRect();
-  if (!first || !last || rows.length < 2) return degraded;
-  const s = d.renderedScale;
-  const paneR = pane.getBoundingClientRect();
-  const paneTop = (paneR.top - d.stageRect().top) / s;
-  const head = Math.max(0, (first.top - paneR.top) / s);
-  const tail = Math.max(0, (paneR.bottom - last.bottom) / s);
-  const pitch = (last.bottom - first.top) / s / rows.length;
-  const strip = d.query('button[aria-controls="pulse-detail"]');
-  const band = strip ? strip.getBoundingClientRect().height / s : 0;
-  if (paneTop <= 0 || pitch <= 0) return degraded;
-  const predicted = paneTop + band + head + count * pitch + tail;
-  return Math.min(Math.max(f.height / predicted, live), COVER_MAX);
-};
-
 /** The oner. Every `say` line is `ACT.narration`, in order — the unit gate
- *  holds the two in sync, so the script cannot drift from the copy. */
+ *  holds the two in sync, so the script cannot drift from the copy.
+ *
+ *  Beat grammar, uniform on purpose: frame the control (`panTo`, riding with
+ *  the pointer's glide), press it, then let the camera follow the READING —
+ *  the panel that opened, the survivors, the pane's head — as its own move.
+ *  The pans are scroll-into-view, so a control already in frame costs no
+ *  motion at all: at tall frames the whole board fits at natural size and
+ *  the camera never stirs, which is correct, not a degenerate case. */
 const take = async (d: Director) => {
   await d.waitFor(() => d.query('button[aria-label^="Open "]'), 12000, "the board");
-  // Arrive, never cut: the constructor seeded the establishing composition
-  // before first paint, so this is usually a no-op glide — and when the
-  // board landed a breath ago and the camera is still absorbing the
-  // skeleton's fit, it completes the arrival on the authored ease.
-  await d.fitAll(700);
   d.say(ACT.narration[0]);
   await d.hold(1600);
 
   d.enterCursor();
-  const pulseTrigger = () => d.query('button[aria-controls="pulse-detail"]');
-  await d.moveTo(pulseTrigger);
+  // The momentum cell BY NAME — `aria-controls="pulse-detail"` is shared by
+  // every pulse cell, and the first match once sent the previous cut toward
+  // the wrong card. The name is the cell's own accessible label.
+  const pulseTrigger = () => d.query('button[aria-label="Momentum detail"]');
+  await Promise.all([d.panTo(pulseTrigger), d.moveTo(pulseTrigger)]);
   d.say(ACT.narration[1]);
   await d.click(pulseTrigger);
   await d.waitFor(() => d.query('[data-testid="pulse-detail"]'), 5000, "the pulse panel");
+  // The press's answer is the shot now: bring the opened panel into frame
+  // whole, so the bar the next beat presses is never cropped mid-story.
+  await d.panTo(() => d.query('[data-testid="pulse-detail"]'));
   await d.hold(900);
 
   d.say(ACT.narration[2]);
-  // THE PRESS IS ANTICIPATED, NOT FOLLOWED. The filter removes rows in a
-  // single layout pass (measured: stage 783 → 417 between two frames 8ms
-  // apart), so no floor, tween or observer can carry a camera across it
-  // continuously from the establishing shot — at the collapse instant a
-  // full frame simply requires the post-collapse cover scale, and anything
-  // arriving later is either a cut or a void. Two earlier cuts proved both
-  // halves: `zoomTo(…, 1)` earned the owner's 47%-void screenshot, and the
-  // armed-floor-only version killed the void by snapping — "it just cuts
-  // there", his words, at exactly this beat. So the camera now pushes in
-  // WHILE the pointer travels to the bar (`brace` — top-anchored, at the
-  // predicted post-collapse cover, floor armed as the backstop), the press
-  // lands inside a frame every pixel of which survives the filter, the rows
-  // file out as the product's own answer under a motionless camera, and the
-  // punch relaxes onto the survivors as the reveal.
   const bar = () => tallestDayBar(d);
-  await Promise.all([d.brace(filteredCover(d, bar)), d.moveTo(bar)]);
+  await Promise.all([d.panTo(bar), d.moveTo(bar)]);
   await d.click(bar);
   d.say(ACT.narration[3]);
-  await d.punchTo(() => d.find('[data-testid="worklist-pane"]'), 1500);
+  // The filter collapses the board in one layout pass; the camera's own
+  // reframe absorbs whatever that leaves out of clamp, and this pan seats
+  // the survivors' head — the filter band and the rows that answered.
+  await d.panTo(() => d.find('[data-testid="worklist-pane"]'), "top");
   await d.hold(1900);
 
   const kestrel = () => d.query('button[aria-label^="Open Kestrel Dynamics"]');
+  await Promise.all([d.panTo(kestrel), d.moveTo(kestrel)]);
   await d.click(kestrel);
   await d.waitFor(() => d.query('[data-testid="application-detail"]'), 6000, "the detail pane");
   d.say(ACT.narration[4]);
   // Top-aligned: the pane is taller than most frames, and the beat's line
   // names its head — the assessment, its deadline — not its middle.
-  await d.punchTo(() => d.find('[data-testid="application-detail"]'), 1600, 0.85, "top");
+  await d.panTo(() => d.find('[data-testid="application-detail"]'), "top");
   await d.hold(2600);
 
   const clear = () => d.query('[data-testid="pulse-filter-band"] button');
-  await d.moveTo(clear);
+  await Promise.all([d.panTo(clear), d.moveTo(clear)]);
   d.say(ACT.narration[5]);
   await d.click(clear);
-  await d.fitAll(1600);
+  await d.panHome(1100);
   d.say(ACT.narration[6]);
   await d.hold(1000);
   d.hideCursor();
@@ -210,14 +166,14 @@ export function OnerStage({
 
   /**
    * The director exists from MOUNT, not from the take's first beat — and in
-   * a LAYOUT effect, deliberately: its constructor seeds the establishing
-   * composition synchronously, so the seed is on the camera before the
-   * stage's first paint. Production opened with ~500ms of the mounting
-   * board at natural scale and then a hard snap to the establishing fit
-   * (measured 2026-08-20), because the camera was only born at the take's
-   * first beat; now there is no frame it could show untransformed, and any
-   * stage growth between mount and take start (the skeleton giving way to
-   * the board) is absorbed by the director's own reframe as a move.
+   * a LAYOUT effect, deliberately: its constructor seeds the resting shot
+   * (the board's own top, natural size) synchronously, so the seed is on
+   * the camera before the stage's first paint. Production opened with
+   * ~500ms of an untransformed camera and then a hard snap when the take's
+   * first write landed (measured 2026-08-20); now there is no frame it
+   * could show untransformed, and any stage growth between mount and take
+   * start (the skeleton giving way to the board) is absorbed by the
+   * director's own reframe as a move.
    */
   useLayoutEffect(() => {
     if (disarmed) return;
@@ -258,11 +214,11 @@ export function OnerStage({
         onCaption(ACT.failed);
         onPhase("failed");
         // And it must not strand the camera mid-shot: whatever beat it died
-        // on, the frame glides home to the whole board — the same resting
-        // composition the visitor's own hand buys. A failed take may not
-        // leave a crop, or a void, as its last word.
+        // on, the frame glides home to the board's own top — the same
+        // resting composition the visitor's own hand buys. A failed take
+        // may not leave a crop as its last word.
         takeActiveRef.current = false;
-        void d.fitAll(600).catch(() => {
+        void d.panHome(600).catch(() => {
           // Cancelled by a replay remount — nothing to recover.
         });
       });
@@ -272,11 +228,11 @@ export function OnerStage({
    * The visitor's hand outranks the script. A REAL press on the stage — the
    * director's own events are `isTrusted: false`, which is what tells the
    * two hands apart — cancels the take mid-line and glides the camera home,
-   * where the whole board, and any pane the visitor then opens, is inside
-   * the frame. This is the new act's answer to the defect the scrubbed act
-   * solved with its camera release (the pane whose × the crop held
-   * off-screen, closeable only with Escape): the moment the page stops
-   * narrating, the frame stops cropping.
+   * where the board reads from its own top and any pane the visitor then
+   * opens is theirs to scroll. This is the new act's answer to the defect
+   * the scrubbed act solved with its camera release (the pane whose × the
+   * crop held off-screen, closeable only with Escape): the moment the page
+   * stops narrating, the frame stops framing.
    */
   useEffect(() => {
     if (disarmed) return;
@@ -295,7 +251,7 @@ export function OnerStage({
       home.hideCursor();
       onCaption(ACT.yours);
       onPhase("done");
-      void home.fitAll(600).catch(() => {
+      void home.panHome(600).catch(() => {
         // Cancelled by a replay remount — nothing to recover.
       });
     };

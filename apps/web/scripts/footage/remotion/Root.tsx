@@ -67,7 +67,7 @@ const OAUTH = {
  * re-recording the app. `window` is in CAPTURE seconds — read them off
  * `scene.json`, or off a contact sheet.
  */
-const CUTS: Record<string, Omit<ClipProps, "scene">> = {
+const CUTS: Record<string, Omit<ClipProps, "scene"> & { outWidth?: number }> = {
   // Rest, one press of Sync, the whole strip lands at ~2.4s. Everything after
   // 2.9s in the take is the same frame, so the take is cut there and the
   // stillness is bought back as a deliberate hold on the result.
@@ -78,7 +78,12 @@ const CUTS: Record<string, Omit<ClipProps, "scene">> = {
   // would be cut off mid-travel. It runs to 7.05s, which is where the camera's
   // last keyframe sits, and `holdIn` is short because the take already opens
   // on 0.7s of held letter that the capture records before anything happens.
-  "one-letter": { window: { from: 0, to: 7.05 }, holdIn: 0.2, holdOut: 0.4, fade: 0.4 },
+  // `outWidth` 1408: the scene's frame is 704 CSS at 2x (scenes.mjs derives
+  // it for the row rail's big box), so 1408 is ITS native pixel width the
+  // same way 1152 is the 576-frame scenes' — k = 2.0 exactly, nothing
+  // scaled up. Encoding it at the shared 1152 would throw away a quarter of
+  // the capture's pixels on the page's second-largest picture.
+  "one-letter": { window: { from: 0, to: 7.05 }, holdIn: 0.2, holdOut: 0.4, fade: 0.4, outWidth: 1408 },
   // The body TYPES in now — one character per step at ~25cps (scenes.mjs,
   // retimed 2026-08-19 after the burst take read as pasting) — so the window
   // is most of the take: the keystrokes run to ~9s and the verdict's landed
@@ -155,7 +160,9 @@ export const RemotionRoot: React.FC = () => {
         })}
       />
       {SCENE_IDS.map((id) => {
-        const cut = CUTS[id];
+        // The encode width is per-clip (default OUT_WIDTH) and is metadata,
+        // not a prop — destructured off so the component never receives it.
+        const { outWidth = OUT_WIDTH, ...cut } = CUTS[id];
         return (
           <Composition
             key={id}
@@ -164,7 +171,7 @@ export const RemotionRoot: React.FC = () => {
             fps={FPS}
             // Real values arrive from calculateMetadata; these only have to be
             // legal so the composition can be registered.
-            width={OUT_WIDTH}
+            width={outWidth}
             height={468}
             durationInFrames={FPS}
             defaultProps={{ ...cut, scene: undefined as unknown as SceneMeta }}
@@ -184,8 +191,8 @@ export const RemotionRoot: React.FC = () => {
               const shape = scene.camera ?? scene.crop;
               return {
                 props: { ...cut, scene },
-                width: OUT_WIDTH,
-                height: even((OUT_WIDTH * shape.height) / shape.width),
+                width: outWidth,
+                height: even((outWidth * shape.height) / shape.width),
                 durationInFrames: Math.round(seconds * FPS),
               };
             }}

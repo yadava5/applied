@@ -16,10 +16,12 @@
 export const CLIPS = {
   rulesReadTheBody: { id: "rules-read-the-body", width: 1152, height: 630 },
   boardSyncs: { id: "board-syncs", width: 1152, height: 310 },
-  // Same 1152:310 as the sync recording, and not by coincidence: it is a
-  // TRACKED clip framed for the retention rail's own picture (478 x 128.63 on
-  // a production build), so it takes that rail without moving `--exhibit`.
-  oneLetter: { id: "one-letter", width: 1152, height: 310 },
+  // 4:3 since the 2026-08-21 re-capture — the owner's big-box direction for
+  // the row rail ("covers the entire half of the left side"). The frame is
+  // 704x528 CSS captured at 2x, so 1408x1056 is the encode's native pixel
+  // grid: at the row rail's 44rem ceiling the picture renders 702 CSS px
+  // wide and a 2x screen reads it at essentially 1:1.
+  oneLetter: { id: "one-letter", width: 1408, height: 1056 },
 } as const;
 
 export type Clip = (typeof CLIPS)[keyof typeof CLIPS];
