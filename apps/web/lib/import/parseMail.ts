@@ -47,6 +47,18 @@ export interface ParseResult {
   totalFound: number;
   /** True when `totalFound` exceeded the cap and `messages` was trimmed. */
   truncated: boolean;
+  /**
+   * Detected messages that were inside the cap and still produced nothing,
+   * because `parseRfc822` / `parseJsonMessage` returned null.
+   *
+   * THIS EXISTS BECAUSE THE COUNT USED TO VANISH. `messages.length` was the
+   * only number the caller had, so a 400-message batch that lost 7 to
+   * unparseable entries reported 400 found and listed 393, with nothing
+   * anywhere saying the other 7 had been dropped. Discarding a person's mail
+   * silently is bad on its own; it also made the UI's summary sentence false,
+   * because "the first 393" describes a prefix and this is not one.
+   */
+  unreadable: number;
 }
 
 /** Keep the tab responsive: a Takeout mbox can hold tens of thousands of mails. */
@@ -91,18 +103,49 @@ const MAX_FROM_CHARS = 1024;
 // Format detection
 // ---------------------------------------------------------------------------
 
+/**
+ * An mbox opens on a `From ` separator line, with no colon after "From".
+ *
+ * `\r?` IS LOAD-BEARING AND WAS MISSING. The pattern was `/^From .+\n/`, and
+ * in JavaScript `.` excludes carriage returns as well as newlines, so on a
+ * CRLF mbox `.+` stopped before the `\r` and the `\n` never matched. Every
+ * Takeout export this page exists to read is CRLF. The sniff therefore
+ * answered "eml" for every mbox that reached it, and nothing noticed because
+ * the sniff only runs for files whose extension is not already known.
+ */
+const MBOX_OPENER = /^From .+\r?\n/;
+
 export function detectFormat(filename: string, text: string): MailFormat {
   const lower = filename.toLowerCase();
+  const head = text.slice(0, 4000).trimStart();
+
+  /**
+   * THE CONTENT WINS OVER THE EXTENSION FOR ONE CASE, and it is the case that
+   * loses a person's whole export.
+   *
+   * A Takeout mbox saved or renamed as `.eml` used to be believed. `eml` means
+   * "one message", so 400 mails collapsed into a single row: the first mail's
+   * headers, and a body containing raw undecoded base64 followed by the entire
+   * MIME source of the other 399. Renaming the same bytes to `.mbox` produced
+   * 400 correct rows. Nothing warned, because from the parser's point of view
+   * one message is a perfectly good answer.
+   *
+   * The sniff is narrow on purpose: only when the file opens on an mbox `From `
+   * separator line, which a lone RFC-822 message does not do (it opens on
+   * headers, and `From:` carries a colon that this pattern requires to be
+   * absent). So it cannot reclassify a genuine `.eml`.
+   */
+  if (lower.endsWith(".eml") && MBOX_OPENER.test(head)) return "mbox";
+
   if (lower.endsWith(".json")) return "json";
   if (lower.endsWith(".mbox")) return "mbox";
   if (lower.endsWith(".eml")) return "eml";
 
   // Content sniffing for drag-and-drop or oddly-named files.
-  const head = text.slice(0, 4000).trimStart();
   if (head.startsWith("[") || head.startsWith("{")) return "json";
   // An mbox begins with a "From " separator line; a lone .eml usually starts
   // straight into headers.
-  if (/^From .+\n/.test(head)) return "mbox";
+  if (MBOX_OPENER.test(head)) return "mbox";
   return "eml";
 }
 
@@ -624,5 +667,11 @@ export function parseMailFile(
     if (msg) messages.push(msg);
   });
 
-  return { format, messages, totalFound, truncated: totalFound > capped.length };
+  return {
+    format,
+    messages,
+    totalFound,
+    truncated: totalFound > capped.length,
+    unreadable: capped.length - messages.length,
+  };
 }

@@ -104,11 +104,20 @@ interface ImportState {
   format: MailFormat;
   totalFound: number;
   truncated: boolean;
+  /** Read but unparseable. See ParseResult.unreadable in lib/import/parseMail. */
+  unreadable: number;
   items: Classified[];
 }
 
 function pct(n: number) {
   return `${Math.round(n * 100)}%`;
+}
+
+/** Bytes as a person reads them, for the file-too-large message. */
+function formatBytes(bytes: number) {
+  const gb = bytes / 1_000_000_000;
+  if (gb >= 1) return `${gb.toFixed(1)}GB`;
+  return `${Math.round(bytes / 1_000_000)}MB`;
 }
 
 function pretty(category: string) {
@@ -271,6 +280,7 @@ export function ImportMail() {
         format: result.format,
         totalFound: result.totalFound,
         truncated: result.truncated,
+        unreadable: result.unreadable,
         items: classify(result.messages),
       });
     } catch {
@@ -285,8 +295,45 @@ export function ImportMail() {
       setBusy(true);
       try {
         const text = await file.text();
+
+        /**
+         * A FILE THE BROWSER COULD NOT HOLD, told apart from an empty one.
+         *
+         * Above roughly 512MB, V8's maximum string length, Chromium's
+         * `File.text()` RESOLVES WITH AN EMPTY STRING rather than rejecting.
+         * So the try/catch below never fires, the empty string parses to zero
+         * messages, and the page told the visitor:
+         *
+         *   "No messages found in that file. Expected a Google Takeout
+         *    .mbox, a single .eml, or a JSON array..."
+         *
+         * about a valid 1.1GB Takeout mbox holding 1,664,400 messages, on a
+         * page whose own instructions tell them to produce exactly that file.
+         * Measured by wrapping `File.prototype.text` before the bundle ran:
+         * `file.size` was the full 1,100,047,731 bytes and `text().length` was
+         * 0. The cliff sits between 520,017,757 bytes (works, 786,800 messages
+         * found) and 540,109,953 (fails).
+         *
+         * The condition is `size > 0 && text === ""`, which is the observed
+         * failure exactly. It is deliberately not a byte threshold: the limit
+         * is engine-specific, so a hard-coded number would be wrong in Safari
+         * and would rot when V8 changes. A genuinely empty file has size 0 and
+         * still gets the ordinary message.
+         */
+        if (file.size > 0 && text.length === 0) {
+          setState(null);
+          setError(
+            `That file is ${formatBytes(file.size)}, which is too large for this browser to open in one piece. ` +
+              "Nothing is wrong with the export. Split the mbox and import the pieces, or use a smaller date range in Takeout.",
+          );
+          return;
+        }
+
         ingest(file.name, text);
       } catch {
+        // Clear results too. An error banner sitting over the previous file's
+        // rows reads as a verdict on the file that just failed.
+        setState(null);
         setError("Couldn't read that file in the browser.");
       } finally {
         setBusy(false);
@@ -427,9 +474,35 @@ export function ImportMail() {
             ))}
           </dl>
 
+          {/* WHAT HAPPENED TO EVERY MESSAGE, which this line used to get wrong
+              in both directions.
+
+              It read: `${totalFound} messages found` plus, only when the cap
+              bit, `· classified the first ${items.length}`. Two defects.
+
+              THE CLAUSE WAS FALSE. `items.length` is how many SURVIVED
+              parsing, not how many were read, so a 1,000-record file with 300
+              blank entries said "classified the first 280" when it had read
+              the first 400 and classified 280 of them. Records 281 to 400 were
+              read; a reader concludes they were skipped. "The first N"
+              describes a prefix, and this was never a prefix.
+
+              AND THE DROPS WERE INVISIBLE BELOW THE CAP. `truncated` is false
+              when nothing was trimmed, so a 50-record file that lost 20 to
+              unparseable entries printed "50 messages found", listed 30 rows,
+              and said nothing at all. That fires on real corpus data too: a
+              400-message batch quietly became 393.
+
+              So the line now accounts for every message it claims to have
+              found: how many were read, how many produced a verdict, and how
+              many did not. Each clause appears only when it is true. */}
           <p className="tabular text-xs text-dim">
             {state.fileName} · {state.totalFound} message{state.totalFound === 1 ? "" : "s"} found
-            {state.truncated ? ` · classified the first ${state.items.length}` : ""}
+            {state.truncated ? ` · stopped after the first ${DEFAULT_MESSAGE_CAP}` : ""}
+            {` · classified ${state.items.length}`}
+            {state.unreadable > 0
+              ? ` · ${state.unreadable} could not be read and ${state.unreadable === 1 ? "was" : "were"} skipped`
+              : ""}
           </p>
 
           <div className="overflow-hidden rounded-xl border border-line-soft bg-surface">
