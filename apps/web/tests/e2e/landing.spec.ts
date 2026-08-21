@@ -727,10 +727,11 @@ test.describe("landing (/)", () => {
    * computed close-up pushes past natural scale (max 1.155 at this
    * viewport, re-measured on the merged tree 2026-08-21 — the live cover
    * bound riding the filtered board — with the fill bound's 1.12 as the
-   * independent backstop if the fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
-   * parked variants with room: an authored scale plus a floor correction is
-   * not a measurement of the shot, so the clearance budget belongs entirely
-   * to the real side, under both computed drivers.
+   * independent backstop if the fixture ever reshapes). The floor sits at
+   * 1.06 because it clears BOTH parked variants with room: an authored
+   * scale plus a floor correction is not a measurement of the shot, so the
+   * clearance budget belongs entirely to the real side, under both
+   * computed drivers.
    *
    * AND THE FRAME STAYS FULL, watched PER FRAME, not per poll. The owner's
    * void, third report: the day filter shrinks the board while the camera
@@ -793,14 +794,23 @@ test.describe("landing (/)", () => {
     const voidWatch = page.evaluate(async () => {
       let worst = 0;
       let prev = 0;
-      // How many frames actually carried the handle. The loop `continue`s
-      // when it does not, and a watcher that never found the camera would
-      // otherwise return a perfect 0 — the shape this whole file exists to
-      // refuse. `seen` turns absence into a red instead of a pass.
+      // How many frames actually carried the handle, against how many were
+      // rendered at all. The loop `continue`s when the handle is missing,
+      // and a watcher that never found the camera would otherwise return a
+      // perfect 0 — the shape this whole file exists to refuse. The
+      // reading is a RATIO, deliberately: a bare frame count would floor
+      // the runner's frame rate, which has nothing to do with the defect,
+      // and this suite has already been bitten once by a frame-count floor
+      // that broke under CPU throttling. Measured 2026-08-21 by replaying
+      // this loop under CDP throttling: seen === frames at 1x, 4x, 10x and
+      // 20x (2880 / 2872 / 2484 / 1399 frames), so the ratio holds at 1.0
+      // while the count varies 2x.
       let seen = 0;
+      let frames = 0;
       const t0 = performance.now();
       while (performance.now() - t0 < 24_000) {
         await new Promise((r) => requestAnimationFrame(r));
+        frames += 1;
         const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
         const stage = frame?.firstElementChild?.firstElementChild;
         if (!frame || !stage) continue;
@@ -813,7 +823,7 @@ test.describe("landing (/)", () => {
         worst = Math.max(worst, Math.min(prev, gap));
         prev = gap;
       }
-      return { worst, seen };
+      return { worst, seen, frames };
     });
 
     let max = 0;
@@ -830,15 +840,14 @@ test.describe("landing (/)", () => {
       )
       .toBeGreaterThanOrEqual(1.06);
 
-    const { worst: worstVoid, seen: voidFrames } = await voidWatch;
-    // The watcher's own positive control: it must have found the camera on
-    // hundreds of frames. 24s of rAF is >1400 frames on a healthy runner and
-    // ~700 on a heavily throttled one; 300 clears both and still separates
-    // absolutely from a watcher that measured nothing.
+    const { worst: worstVoid, seen: voidFrames, frames: voidTicks } = await voidWatch;
+    // The watcher's own positive control, as a share of the frames that
+    // actually rendered. Measured 1.0 at every throttling rate tried, so
+    // 0.9 is slack, not a guess about a runner's speed.
     expect(
       voidFrames,
-      `the void watcher found the camera on only ${voidFrames} frame(s) — it measured nothing, so its 0px reading is not evidence`,
-    ).toBeGreaterThan(300);
+      `the void watcher found the camera on ${voidFrames} of ${voidTicks} rendered frame(s) — it measured little or nothing, so its ${worstVoid.toFixed(1)}px reading is not evidence`,
+    ).toBeGreaterThan(voidTicks * 0.9);
     expect(
       worstVoid,
       `the frame showed ${worstVoid.toFixed(1)}px of vertical void mid-take — the cover bound is not holding through the board's own resizes`,
@@ -874,10 +883,22 @@ test.describe("landing (/)", () => {
    *      an eased move (`director.ts`, the tracking thresholds). The
    *      assertion is a per-frame speed limit on the rendered camera, in
    *      dt-normalised units so a janky frame lowers rather than raises
-   *      the reading: authored tweens measure ≤3.9 scale/s and ≤3964 px/s
-   *      at this viewport (worst of five viewports measured 2026-08-20);
-   *      the cuts measured ~100 scale/s and ~55,000 px/s. The bounds sit
-   *      between with an order of magnitude to each side.
+   *      the reading — but the dt is CLAMPED to a 120Hz floor, because
+   *      that premise is exactly inverted for SHORT frames. Measured
+   *      2026-08-21: at 1512x949 the rAF ticks bunch (minDt 1.10ms against
+   *      a 8.40ms median, dtP99 18.3ms), and a full frame's delta divided
+   *      by 1.4ms read 24.29 scale/s and 16,000 px/s — a red on a camera
+   *      whose largest single-frame move was 0.034 of scale, the SAME
+   *      delta the passing 1024 corner produces. Unnormalised deltas were
+   *      the other candidate and were rejected: a runner that drops to
+   *      10fps legitimately covers 3-4x the distance in one frame, which
+   *      is real motion, not a cut. The clamp keeps both properties — a
+   *      long frame still lowers the reading, a bunched one can no longer
+   *      raise it — and leaves the 1024 reading at 3.90 untouched.
+   *      Clamped, authored tweens measure ≤4.1 scale/s and ≤2688 px/s
+   *      across both viewports; the cuts measured ~100 scale/s and
+   *      ~55,000 px/s, and the CONTINUITY mutation ~17 scale/s. The
+   *      bounds sit between, with roughly 2x to each side.
    *
    * 1024x1120 because it is the discriminating corner for all three: the
    * establishing fit clamps to 1.000 (so an unseeded camera is invisible
@@ -1023,15 +1044,18 @@ test.describe("landing (/)", () => {
         const a = samples[i - 1]!;
         const b = samples[i]!;
         if (a.s === null || b.s === null || Number.isNaN(a.s) || Number.isNaN(b.s)) continue;
-        const dt = (b.t - a.t) / 1000;
-        if (dt <= 0) continue;
+        // 120Hz floor. See the docblock: sub-millisecond rAF bunching turns
+        // an ordinary eased frame into a fake cut, and no threshold nudge
+        // fixes a divisor that can approach zero.
+        const dt = Math.max((b.t - a.t) / 1000, 1 / 120);
+        if (b.t <= a.t) continue;
         maxScaleRate = Math.max(maxScaleRate, Math.abs(b.s - a.s) / dt);
         maxPanRate = Math.max(maxPanRate, Math.abs(b.x! - a.x!) / dt, Math.abs(b.y! - a.y!) / dt);
       }
       expect(
         maxScaleRate,
         `the camera's scale moved at ${maxScaleRate.toFixed(1)}/s within one frame — a cut, not a move (reframe's absorb)`,
-      ).toBeLessThanOrEqual(6);
+      ).toBeLessThanOrEqual(8);
       expect(
         maxPanRate,
         `the camera panned at ${maxPanRate.toFixed(0)}px/s within one frame — a cut, not a move (reframe's absorb)`,
