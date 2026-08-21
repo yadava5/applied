@@ -907,7 +907,12 @@ test.describe("landing (/)", () => {
    *
    *        viewport    authored   defect   historical cut
    *        1024x1120   0.0860     0.3640   0.81
-   *        1512x949    0.0540     0.1920   —
+   *        1512x949    0.0700     0.1920   —
+   *
+   *      Both authored figures are n=38 and both are the LARGEST reading
+   *      seen, not a typical one: 1 run in 38 exceeded 0.054 at 1512. The
+   *      bounds are set from the outlier because that is what a gate has
+   *      to survive.
    *
    *      THE BOUND IS PER-VIEWPORT, and that is not tuning. Forcing one
    *      constant onto both shots was measured UNSATISFIABLE: authored
@@ -916,30 +921,35 @@ test.describe("landing (/)", () => {
    *      sides — an empty interval, missed by about 1%. The binding
    *      constraints come from different viewports, which is exactly why
    *      neither corner alone revealed it and why the single-constant
-   *      version read 1.40x green. Per shot the windows are 4.2x and
-   *      3.6x, and 0.18 / 0.10 sit near the middle of each: 2.09x/2.02x
-   *      at 1024, 1.85x/1.92x at 1512. The camera's authored motion is a
-   *      function of frame size; so is the defect's magnitude; a bound
-   *      that is a function of neither was the anomaly.
+   *      version read 1.40x green. Per shot the windows are 4.23x and
+   *      2.74x, and each bound sits at its own geometric balance point —
+   *      0.18 giving 2.09x/2.02x at 1024, 0.115 giving 1.64x/1.67x at
+   *      1512. The camera's authored motion is a function of frame size;
+   *      so is the defect's magnitude; a bound that is a function of
+   *      neither was the anomaly.
    *
    *      WHAT CAN STILL FALSE-RED, stated because it is real. Displacement
    *      grows with frame duration, so the argmax migrates to LONG frames
    *      — the opposite of the rate metric, where it sat at 1.3-1.4ms.
    *      The 1024 maximum of 0.0860 came from a 19.0ms frame at an
    *      ordinary 4.53/s: pure frame-length inflation, not anomalous
-   *      motion. At that velocity the bound is reached by a 39.7ms frame,
-   *      and dtMax was observed up to 37.9ms. What keeps it rare is the
-   *      conjunction — the long frame has to land on the punch's peak
-   *      velocity — not headroom. Read it as "can happen", not "will
-   *      fail". One run in 16 also read 0.0790 at a NORMAL 7.30ms frame,
-   *      which is genuinely anomalous camera motion rather than a
-   *      sampling artifact, and it is the reading that sets the 1024
-   *      floor.
+   *      motion. 1512's 0.0700 is the same mechanism at 18.30ms and
+   *      3.83/s. At those velocities the bounds are reached by a 39.7ms
+   *      frame at 1024 and a 30.0ms frame at 1512, and frames of 28-37ms
+   *      were observed at both. THE BINDING RISK IS 1512's, not 1024's —
+   *      an earlier draft of this block quoted only the 1024 threshold
+   *      and so understated it, the same error as the rawDt sentence
+   *      above: a figure derived at one viewport and stated as general.
+   *      What keeps it rare is the conjunction — the long frame has to
+   *      land on the punch's peak velocity — not headroom. Read it as
+   *      "can happen", not "will fail". One run in 38 also read 0.0790 at
+   *      a NORMAL 7.30ms frame at 1024, which is genuinely anomalous
+   *      camera motion rather than a sampling artifact.
    *
    *      PAN stays a single constant at 100px, because its physical
    *      window is 11.5x rather than 3.6x and one number clears both
-   *      shots comfortably: authored 41.80px at 1024 and 35.00px at 1512
-   *      against a defect of 523.60px and 480.10px, so 2.39x is the
+   *      shots comfortably: authored 41.80px at 1024 and 45.80px at 1512
+   *      against a defect of 523.60px and 480.10px, so 2.18x is the
    *      binding margin. Both bounds are on the same argmax pair as the
    *      scale reading in 15/16 runs, so they are watching one event.
    *
@@ -985,7 +995,7 @@ test.describe("landing (/)", () => {
    */
   for (const [label, viewport, maxStep] of [
     ["1024x1120", DESKTOP_1024_TALL, 0.18],
-    ["1512x949", DESKTOP_1512, 0.1],
+    ["1512x949", DESKTOP_1512, 0.115],
   ] as const) {
     test(`the camera is seeded, braced and continuous at ${label}`, async ({ page }) => {
       await page.setViewportSize(viewport);
