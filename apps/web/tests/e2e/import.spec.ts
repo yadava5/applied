@@ -131,6 +131,18 @@ test.describe("import your mail", () => {
     await expect(results.getByText(/text\/html/)).toHaveCount(0);
   });
 
+  /**
+   * "HONEST" HAS TO MEAN THE WORDS, not the presence of a banner.
+   *
+   * This asserted only that `import-error` was visible, and that is satisfied
+   * by a message saying the opposite of the truth. A valid 1.1GB Takeout mbox
+   * of 1,664,400 messages produced:
+   *
+   *   "No messages found in that file. Expected a Google Takeout .mbox..."
+   *
+   * on the page whose own instructions tell you to produce that file. This
+   * test went green on exactly that input. So it now reads the text.
+   */
   test("an unparseable file shows an honest error, not a crash", async ({ page }) => {
     await page.goto("/import");
     await page.getByTestId("import-file").setInputFiles({
@@ -138,8 +150,48 @@ test.describe("import your mail", () => {
       mimeType: "application/json",
       buffer: Buffer.from("{ this is not valid json ", "utf-8"),
     });
-    await expect(page.getByTestId("import-error")).toBeVisible();
+    const error = page.getByTestId("import-error");
+    await expect(error).toBeVisible();
+    // The file IS malformed, so naming the format is the true statement here.
+    await expect(error).toContainText(/valid \.mbox, \.eml, or JSON/i);
     await expect(page.getByTestId("import-results")).toHaveCount(0);
+  });
+
+  /**
+   * THE COUNTS ON SCREEN ADD UP.
+   *
+   * Nothing asserted the found / classified / skipped triple, which is why a
+   * 400-message batch could quietly list 393 and a 1,000-record file could
+   * claim it "classified the first 280" after reading the first 400. Both
+   * were found by driving this page with an adversarial corpus, and neither
+   * was representable in this spec.
+   */
+  test("every message found is accounted for on screen", async ({ page }) => {
+    const records = [
+      ...Array.from({ length: 6 }, (_, i) => ({
+        subject: `Interview ${i}`,
+        from: `recruiter${i}@acme.test`,
+        body: "We would like to schedule a technical interview with the team.",
+      })),
+      ...Array.from({ length: 4 }, () => ({ subject: "", from: "", body: "" })),
+    ];
+
+    await page.goto("/import");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "accounting.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(records), "utf-8"),
+    });
+
+    await expect(page.getByTestId("import-results")).toBeVisible();
+    const summary = page.getByText(/messages found/);
+    await expect(summary).toContainText("10 messages found");
+    await expect(summary).toContainText("classified 6");
+    await expect(
+      summary,
+      "the 4 blank records were read and produced nothing, and the page must say so rather than listing 6 rows under '10 found'",
+    ).toContainText(/4 could not be read/);
+    await expect(page.getByTestId("import-row")).toHaveCount(6);
   });
 
   test("no horizontal overflow on mobile with results", async ({ page }) => {
