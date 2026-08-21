@@ -12,7 +12,7 @@ Scope: monitoring triage for classifier confidence/drift alerts
 > backend; neither runs in CI or on Vercel. The deployed classifier is
 > **rules-only** — `HybridClassifier.classify` short-circuits to the rules layer
 > whenever `settings.deployment == "cloud"`
-> (`backend/jobtracker/classifier/hybrid.py:284`).
+> (`backend/jobtracker/classifier/hybrid.py:326`).
 >
 > Every "retrain" remediation below is therefore a local action, and default-deny
 > even there: training refuses unless the corpus is wholly synthetic or its single

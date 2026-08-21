@@ -344,10 +344,13 @@ step is not.
 The api's `"**": false` landed in `e4c72f0`, committed 2026-08-13 22:02 EDT
 (2026-08-14 02:02 UTC) — hours after the api project spent its whole daily
 allowance on previews that same day and then could not deploy production for
-eleven hours. Nothing consumes an api preview: `e2e-ci.yml` boots its own
-FastAPI on `localhost:8000`, `production.spec.ts` runs against a local `next
-start`, and there is no UI on an api preview to look at. **The `"main": true`
-key is load-bearing, not decorative.** Precedence here is not
+eleven hours. Nothing consumes an api preview: `e2e-ci.yml` boots **no backend
+at all** — the `uvicorn jobtracker.main:app` step was removed with the desktop
+app it started (issue #73), and the suite is green pointing at a `:8000` that
+has nothing on it, because every route the specs visit is public or redirects
+at the protected layout before any API call. `production.spec.ts` runs against
+a local `next start`, and there is no UI on an api preview to look at.
+**The `"main": true` key is load-bearing, not decorative.** Precedence here is not
 most-specific-wins — "If a branch matches multiple rules and at least one rule
 is `true`, a deployment will occur"
 ([docs](https://vercel.com/docs/project-configuration/git-configuration)) — so

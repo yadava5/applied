@@ -20,7 +20,7 @@ All endpoints return JSON.
 > easier to state than to read out of a schema, and it can go stale where the
 > generated bindings cannot.
 
-## Authentication (required on every endpoint except `/health` and `/`)
+## Authentication (required on 23 of the 29 routes)
 
 Cloud requests must include a Supabase-issued JWT:
 
@@ -39,9 +39,29 @@ Authorization: Bearer <supabase-jwt>
   `{"detail": "<short reason>"}` and header `WWW-Authenticate:
   Bearer`.
 
-There is no unauthenticated read path. Every router under
-`jobtracker/cloud/` is mounted with a router-level `require_user()`
-dependency, so a handler cannot skip auth by forgetting a decorator.
+**Six routes are reachable without a JWT, and the router mount is not
+what protects the rest.** Two of the four registered routers declare a
+router-level `require_user()` — `cloud/applications.py:266` and
+`cloud/account.py:61`. `cloud/gmail_oauth.py:122` and `cloud/cron.py:159`
+create their routers with no `dependencies=`, deliberately
+(`main_cloud.py:679-680`). In those two modules a handler *can* skip auth by
+forgetting its own `Depends(current_user)`, so the dependency is declared per
+endpoint and must stay that way.
+
+The six that carry no JWT, and what stands in for one:
+
+| Route | Substitute control |
+| --- | --- |
+| `GET /` | none — API metadata only |
+| `GET /health` | none — deliberately credential-free so an uptime monitor can poll it |
+| `GET /health/schema` | none — reports `{expected, applied, ok}` |
+| `GET /health/gmail-capacity` | none — a count of enrolled mailboxes against the beta ceiling |
+| `GET /auth/gmail/callback` | the HS256-signed `state` parameter, verified before any identity is bound (`cloud/gmail_oauth.py:1242`) |
+| `GET`/`POST` `/cron/sync` | the shared `JOBTRACKER_VERCEL_CRON_SECRET`, compared with `hmac.compare_digest` and **failing closed** when unconfigured (`cloud/cron.py:295-339`) |
+
+Every one of the other 23 routes requires the header above. Reads are
+additionally scoped by an explicit `user_id` filter and by Postgres RLS, so an
+authenticated caller still cannot reach another tenant's rows.
 
 ### `GET /auth/me`
 
@@ -98,8 +118,13 @@ expects.
 ## The full route table
 
 Enumerated from the app `api/index.py` serves, by walking `app.routes` and
-resolving each handler to its defining module. **28 routes, four modules.**
-Regenerate rather than hand-edit this list if it looks wrong — the walk is in
+resolving each handler to its defining module. **29 routes across five
+modules.** Routers *registered* is four — `applications`, `gmail_oauth`,
+`account`, `cron` — and that is a different number from modules *defining*
+routes, which is five, because `main_cloud` owns five routes itself. A route
+here is one entry in the walked route table, so the two-method `/cron/sync`
+counts once. Regenerate rather than hand-edit this list if it looks wrong — the
+walk is in
 `backend/tests/test_the_deployed_app_is_the_cloud_app.py`, which also fails the
 build if any route arrives from a module outside `jobtracker.cloud`.
 
@@ -109,6 +134,7 @@ build if any route arrives from a module outside `jobtracker.cloud`.
 | `GET` | `/auth/me` | `main_cloud` |
 | `GET` | `/health` | `main_cloud` |
 | `GET` | `/health/schema` | `main_cloud` |
+| `GET` | `/health/gmail-capacity` | `main_cloud` |
 | `GET` `POST` | `/applications` | `cloud.applications` |
 | `GET` | `/applications/mail` | `cloud.applications` |
 | `GET` | `/applications/review` | `cloud.applications` |

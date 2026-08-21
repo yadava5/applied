@@ -97,10 +97,19 @@ columns themselves.
 The key is supplied as the environment variable
 `JOBTRACKER_SECRET_ENCRYPTION_KEY`, read through
 `settings.secret_encryption_key`. It is injected by Vercel at **deploy time**,
-is never written to the repository, and has exactly **one read site** in the
-codebase: `_require_fernet()` at
-`backend/jobtracker/credentials/cloud.py:64`. Every encrypt and every decrypt
-goes through that function.
+is never written to the repository, and has exactly **one
+Fernet-construction site**: `_require_fernet()` at
+`backend/jobtracker/credentials/cloud.py:107`. Every encrypt and every decrypt
+of a stored credential goes through that function, and no `Fernet` object is
+built anywhere else.
+
+The *variable* `settings.secret_encryption_key` is read at **three** lines, not
+one: `credentials/cloud.py:116` inside `_require_fernet()`, and
+`cloud/gmail_oauth.py:566` and `:594`, which sign and verify the OAuth `state`
+JWT with the same material (§3.4). The distinction matters to the
+access-logging argument in
+[`SECRET-ACCESS-POLICY.md`](SECRET-ACCESS-POLICY.md) §3.2, so both numbers are
+stated there too: one construction site, three reads.
 
 If the key is absent or malformed, `_require_fernet()` raises
 `CredentialEncryptionError` with a message naming the variable and **not** its
@@ -120,10 +129,14 @@ otherwise.** The specifics:
 **The operational consequence, which is the real finding here.** Rotating
 `JOBTRACKER_SECRET_ENCRYPTION_KEY` today invalidates every stored ciphertext at
 once. The failure is not a crash: `get_gmail_credentials` catches
-`InvalidToken`, logs a warning and returns `None`
-(`cloud.py:285-295`), and the same shape applies to the iCloud path
-(`cloud.py:372-382`). So the observable effect of a rotation is that **every
-user silently appears to have no Gmail connection** and must reconnect. Because
+`InvalidToken`, emits the standard `secret_access` record at **`logger.error`**
+with ` error=InvalidToken` appended, and returns `None` (`cloud.py:344-365`);
+the iCloud path is identical (`cloud.py:471-481`). `ERROR` rather than
+`WARNING` is deliberate — a failed decrypt of a live credential is an incident
+— and it is pinned: `backend/tests/test_secret_access_logging.py:300` asserts
+`record.levelno == logging.ERROR` on that record. So the observable effect of a
+rotation is that **every user silently appears to have no Gmail connection**
+and must reconnect. Because
 Vercel injects environment variables at deploy time, the change also does not
 take effect until a deployment runs.
 
@@ -136,7 +149,8 @@ Mitigating facts, offered as context and not as a substitute for rotation:
   (`backend/jobtracker/cloud/account.py`).
 - Recovery from a rotation is self-service: the user reconnects Gmail, and
   reconnecting also clears `revoked_at`, so a reconnected user is immediately
-  visible to the scheduled sync again (`cloud.py:113-124`).
+  visible to the scheduled sync again (`cloud.py:157-171` on Postgres, `:192`
+  on the SQLite test path).
 
 **Recommended remediation, not yet done:** implement `MultiFernet` with an
 ordered key list read from a comma-separated environment variable, keyed by the

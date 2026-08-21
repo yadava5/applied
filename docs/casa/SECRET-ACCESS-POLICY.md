@@ -25,8 +25,14 @@ it was written to prevent.
 
 `JOBTRACKER_GOOGLE_OAUTH_CLIENT_ID`, `NEXT_PUBLIC_SUPABASE_URL` and
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` are **not** secrets. The anon key is
-publishable by design and reaches no table — `anon` holds no grants on any
-application table.
+publishable by design and reaches no data. `anon` holds no grants on nine of
+the ten tables in `public`; it retains the default grant on
+`gmail_sync_enrollment`, which was created after the 2026-08-03 revocation, and
+that grant is inert because every policy on that table is scoped `TO
+jobtracker_app` under forced RLS. The exception is set out in full — with the
+query that finds it — in
+[`ARCHITECTURE-AND-TENANT-ISOLATION.md`](ARCHITECTURE-AND-TENANT-ISOLATION.md)
+§4.1, and it is an open item there.
 
 ### 1.2 User secrets (one per user, per kind)
 
@@ -94,10 +100,29 @@ are no other developers on this project.
 
 ### 2.3 Rules the code enforces
 
-1. The Fernet key has exactly **one read site** in the codebase —
-   `_require_fernet()` at `backend/jobtracker/credentials/cloud.py:64`. Every
-   encrypt and decrypt goes through it. This is what makes "who reads the key"
-   an answerable question rather than a grep across the tree.
+1. The Fernet key has exactly **one construction site** in the codebase —
+   `_require_fernet()` at `backend/jobtracker/credentials/cloud.py:107`. Every
+   encrypt and every decrypt of a stored credential goes through it, so no
+   `Fernet` is built anywhere else. The *variable* it reads,
+   `settings.secret_encryption_key`, has **three** read sites, and the pack
+   names all three rather than rounding to one:
+
+   ```
+   $ grep -rn 'settings\.secret_encryption_key' backend/jobtracker/ \
+       | grep -v __pycache__ | grep -vE ':\s*(#|``)'
+   backend/jobtracker/cloud/gmail_oauth.py:566:    return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
+   backend/jobtracker/cloud/gmail_oauth.py:594:            settings.secret_encryption_key,
+   backend/jobtracker/credentials/cloud.py:116:    key = settings.secret_encryption_key
+   ```
+
+   The two extra reads are the OAuth `state` HMAC — sign at `:566`, verify at
+   `:594` — which reuses this key for a second purpose. That dual use is
+   disclosed in [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md) §3.4. What still holds is
+   the property the control needs: the whole access surface is three named
+   lines in two modules, so "who reads the key" is answerable by citation
+   rather than by a grep across the tree, and a fourth reader arrives as a
+   diff.
+
 2. Decrypted plaintext is never logged, never returned to an HTTP caller, and
    never leaves the request that decrypted it. Tokens are excluded from all API
    responses.
@@ -111,8 +136,9 @@ are no other developers on this project.
    pasting the cron secret into the wrong box and then finding it in a build
    log.
 4. Reconnecting a mailbox re-writes the credential and clears `revoked_at`
-   (`cloud.py:113-124`), so a revoked grant has exactly one self-service route
-   back and it is a write, not a flag flip.
+   (`cloud.py:157-171` on Postgres, `:192` on the SQLite test path), so a
+   revoked grant has exactly one self-service route back and it is a write,
+   not a flag flip.
 
 ### 2.4 Rotation
 
@@ -140,18 +166,37 @@ the access surface is small and closed: reads go through
 `delete_*` and `clear_all_credentials` — all in
 `backend/jobtracker/credentials/cloud.py`.
 
-All eight access sites emit a single fixed-shape record at `logger.info`:
+All **seven** of those access functions emit a single fixed-shape record:
 
 ```
 secret_access user_id=%s kind=%s key_id=%s op=%s outcome=%s
 ```
 
-| `op` | `outcome` values |
-| --- | --- |
-| `read` | `hit`, `miss`, `decrypt_failed` |
-| `write` | `written`, `write_failed` |
-| `delete` | `deleted`, `absent` |
-| `clear` | `kind=all` for the account-deletion purge |
+| `op` | `outcome` values actually emitted | Level |
+| --- | --- | --- |
+| `read` | `hit`, `miss` | `logger.info` |
+| `read` | `decrypt_failed`, with ` error=InvalidToken` appended | `logger.error` |
+| `write` | `written`, `write_failed` | `logger.info` |
+| `delete` | `deleted` | `logger.info` |
+| `clear` | `deleted`, with `kind=all` — the account-deletion purge | `logger.info` |
+
+Two exactness notes, because a compliance table that overstates its own
+vocabulary is the thing an assessor checks first:
+
+- **`logger.info` is the level for every outcome except the two decrypt
+  failures**, which are `logger.error` at `cloud.py:357` (Gmail) and `:473`
+  (iCloud). That is deliberate — a failed decrypt of a live credential is an
+  incident, not a routine outcome — and it is pinned:
+  `backend/tests/test_secret_access_logging.py:300` asserts
+  `record.levelno == logging.ERROR` on that record.
+- **There is no `absent` outcome.** Both delete paths issue the `DELETE` and
+  log `deleted` unconditionally (`cloud.py:393-395`, `:501-503`); neither
+  checks whether a row existed. The log therefore **cannot** distinguish
+  removing a credential from removing nothing. An earlier draft of this table
+  listed `absent`; it was never emitted, and it is removed rather than left
+  standing. Adding it would cost a `SELECT` before the `DELETE` — the same
+  round trip this section declines below for `key_id` — so the honest record
+  is the limitation, not a value that does not exist.
 
 `key_id` is `None` on the delete and clear paths, deliberately: those issue a
 `DELETE` and never read a row, and adding a `SELECT` purely to populate the
@@ -219,10 +264,15 @@ dependency this project has decided against.
 
 **The compensating controls, each verifiable:**
 
-1. **One read site.** `_require_fernet()`
-   (`backend/jobtracker/credentials/cloud.py:64`) is the only place the key is
-   read. A reviewer can confirm the whole access surface by reading one
-   function, and any new reader appears as a diff.
+1. **One construction site, three reads, all named.** `_require_fernet()`
+   (`backend/jobtracker/credentials/cloud.py:107`) is the only place a `Fernet`
+   is built, so every credential encrypt and decrypt passes through one
+   function. The key *variable* is read at three lines in two modules —
+   `credentials/cloud.py:116` and, for the OAuth `state` HMAC,
+   `cloud/gmail_oauth.py:566` and `:594` (§2.3 rule 1). A reviewer can confirm
+   the whole access surface by reading two functions rather than one, and any
+   new reader appears as a diff. The surface is small and enumerable; it is not
+   singular, and this document does not claim it is.
 2. **The key never leaves the process.** It is not logged, not returned, not
    written to disk, and not included in error messages — §2.3 rule 3 covers
    the mechanism that keeps it out of error output.

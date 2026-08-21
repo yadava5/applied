@@ -6,7 +6,7 @@
 > This file describes the full three-layer design and the local operator loop
 > around it. The deployed app is **rules-only**: `HybridClassifier.classify`
 > short-circuits to the rules layer whenever `settings.deployment == "cloud"`
-> (`backend/jobtracker/classifier/hybrid.py:284`), which is every hosted request,
+> (`backend/jobtracker/classifier/hybrid.py:326`), which is every hosted request,
 > so layers 2 and 3 never load and no hosted path retrains anything. A user
 > correction is written to `training_data` and flagged reviewed, and that is
 > where it stops — no deployed reader consumes the table, so a correction does
@@ -211,7 +211,7 @@ belonged to the desktop FastAPI app that was de-scoped in August 2026; no module
 declares them and the production app registers four routers — applications,
 Gmail, account, cron (`backend/jobtracker/main_cloud.py:667-684`). The only
 classification route that exists is `POST
-/applications/review/{message_id}/classify` (`cloud/applications.py:3459`), which
+/applications/review/{message_id}/classify` (`cloud/applications.py:3487`), which
 records a decision and does not train. Kept listed because the underlying
 capabilities still exist as Python (`HybridClassifier.get_status`, the
 `lite_mode` setting, `SetFitClassifier.train`); what is gone is the HTTP surface.

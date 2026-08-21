@@ -92,8 +92,8 @@ FROM emails;
 **`training_data.body_text` is a badly named column, and the name is the whole
 risk of misreading this system.** It does not hold a body. It holds the same
 snippet, copied from `emails.body_snippet` by `_add_training_example`
-(`backend/jobtracker/cloud/applications.py:2207`). Two independent facts
-establish it:
+(`backend/jobtracker/cloud/applications.py:2219`, the copy itself at `:2238`).
+Two independent facts establish it:
 
 1. The longest value in that column across all 11 rows is **201 characters** —
    Gmail's snippet budget. No message body is 201 characters.
@@ -109,7 +109,7 @@ Two disclosures an assessor should have without asking:
 
 - **`training_data` has no foreign key to `emails`.** `training_data.email_id`
   is a bare indexed integer, documented as such at
-  `backend/jobtracker/cloud/applications.py:2175`. One of the 7 populated rows
+  `backend/jobtracker/cloud/applications.py:2196`. One of the 7 populated rows
   today points at an `emails` row that no longer exists — its snippet copy
   (199 characters) outlived its source. This is deliberate: a `training_data`
   row is a *human's correction*, retained as the record of a decision rather
@@ -140,10 +140,19 @@ not implemented** — is in [`CRYPTOGRAPHY.md`](CRYPTOGRAPHY.md).
 
 The browser never holds `BACKEND_API_URL` or a service-role key. The Supabase
 anon key it does hold is publishable by design and reaches no data: `anon`
-holds no grants on nine of the ten tables (revoked 2026-08-03, migration
-`revoke_anon_grants_and_fix_alembic_version_rls`), and on the tenth the grant
-is inert because every policy there is scoped to the `jobtracker_app` role.
-See §4.1 for that exception in full.
+holds no grants on nine of the ten tables, and on the tenth the grant is inert
+because every policy there is scoped to the `jobtracker_app` role. See §4.1 for
+that exception in full.
+
+**How the revocation was applied, stated precisely, because it bears on
+reproducibility.** It is *not* a migration. The `REVOKE` statements were run by
+hand against production on 2026-08-03 and are recorded in
+`docs/harden-2026-08-03.sql`; no Alembic revision performs them, and
+`backend/alembic/versions/` contains no `revoke_anon_grants_*` file. Alembic
+does run on merge to `main` (`.github/workflows/db-migrate.yml`), so a database
+rebuilt from the migration chain alone would carry the default `anon` grants
+that production no longer has. Porting the revoke into a migration is the fix
+and is **open**.
 
 ---
 
@@ -206,12 +215,31 @@ WHERE schemaname = 'public' AND tablename = 'emails';
 --  emails | INSERT | (WITH CHECK, same predicate)
 ```
 
-All 35 are additionally scoped to the role `jobtracker_app`, so a connection
-arriving as any other role matches no policy at all.
+**Role scoping is narrower than the predicate, and this document states which
+is doing the work.** Only the **3** `gmail_sync_enrollment` policies carry a
+`TO` clause (`TO jobtracker_app`, created that way at
+`backend/alembic/versions/e2b6f0a4d517_gmail_sync_enrollment.py:177,183,187`).
+The other **32** are created with no `TO` — which in Postgres means `TO PUBLIC`
+— by `a8d4ec5fba26_enable_rls_policies_postgres_only.py:110-136` and
+`c4_user_credentials_rls.py:34-45`; `c6_rls_initplan_hoist.py` rewrites their
+predicates only and never their roles. The `roles` column in the §4.1 dumps
+below shows this directly: the `emails` dump carries none, the
+`gmail_sync_enrollment` dump carries `{jobtracker_app}`.
+
+Nothing about tenant isolation rests on the missing clause. For those 32
+policies, a connection arriving as some other role *does* match the policy and
+is then filtered by `user_id = (SELECT auth.uid())` — which returns no rows
+unless that connection has bound the row owner's identity. The control is the
+predicate, plus the two properties below, not the role list.
 
 `FORCE` is what makes this real rather than nominal: without it, policies do
 not apply to the table owner, and the owner is what an application typically
-connects as.
+connects as. Together with `jobtracker_app` being `NOBYPASSRLS` (§4.2) and the
+per-transaction identity GUC, that is what an assessor should test.
+
+Adding `ALTER POLICY … TO jobtracker_app` across the other 32 would make the
+role gate uniform and is worth doing as defence in depth. It has **not** been
+done; recorded here as an open item rather than described as if it had.
 
 #### The one policy that is not user-scoped — disclosed
 
@@ -300,10 +328,11 @@ safe under Supabase's shared PgBouncer in transaction-pooling mode:
 `backend/tests/test_rls_postgres.py` exercises this against a **real Postgres**,
 not SQLite — SQLite has no row-level security, so a test that ran there would
 prove nothing. It runs in CI against a Postgres service container
-(`.github/workflows/backend-ci.yml:208`), and the workflow explicitly guards
+(`.github/workflows/backend-ci.yml:175-177`), and the workflow explicitly guards
 against the skip-is-green failure mode: if `JOBTRACKER_TEST_PG_ADMIN_URL` were
 unset the tests would skip silently and the job would still pass, so the
-workflow fails the step when they skip (`:214`).
+workflow parses the JUnit XML and fails the step when the suite reports zero
+tests or any skip (`:224-243`).
 
 ### 4.3 Layer 3 — explicit `user_id` scoping in the application
 
@@ -370,8 +399,15 @@ would be nothing left to revoke.
   in full by the application role. The table holds no secret, but tenant
   isolation for it rests on application code rather than on the database.
 - **`anon` still holds a grant on `gmail_sync_enrollment` (§4.1).** Inert
-  today because policies are role-scoped, but it is drift from the 2026-08-03
-  hardening and should be revoked. **Open item.**
+  today because that table's policies are role-scoped, but it is drift from the
+  2026-08-03 hardening and should be revoked. **Open item.**
+- **The 2026-08-03 `anon` revocation is hand-run SQL, not a migration (§3).**
+  Production has it; a database rebuilt from `backend/alembic/versions/` alone
+  would not. Porting it into a revision is the fix. **Open item.**
+- **32 of the 35 policies carry no role clause (§4.1).** Isolation does not
+  depend on one — the `user_id = (SELECT auth.uid())` predicate, `FORCE` and
+  `NOBYPASSRLS` are what enforce it — but the uniform role gate the pack would
+  prefer to describe does not exist yet. **Open item.**
 
 ---
 

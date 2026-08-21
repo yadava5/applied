@@ -10,9 +10,13 @@ into a pnpm workspace — treat it as a standalone app for now.
 - **TypeScript** strict mode
 - **Tailwind CSS 4**
 - **Supabase Auth** via `@supabase/ssr` (SSR-safe cookie handling)
-- **TanStack Query 5** (installed; real API client lands in C10)
-- **zod** for runtime env validation
-- **shadcn/ui** compatible (`components.json` in place, `Button` added)
+- **`openapi-fetch`** over `openapi-typescript`-generated types — the real API
+  client, shipped in C10 (`lib/api/`). TanStack Query is **not** installed and
+  appears in neither `package.json` nor `pnpm-lock.yaml`; this line used to say
+  it was
+- **zod** for runtime env validation (`lib/env.ts`, `lib/env.server.ts`)
+- **shadcn/ui** compatible (`components.json` in place; `Button`, `Dialog`,
+  `Disclosure` and `Segmented` committed under `components/ui/`)
 
 ## Web dev
 
@@ -55,31 +59,42 @@ pnpm lint         # eslint, --max-warnings 0 (next's a11y rules ship as warnings
 
 ## Layout
 
+Read from the tree on 2026-08-21. The C9 scaffold this block used to describe —
+one placeholder dashboard, two component directories — is long gone.
+
 ```
 apps/web/
 ├── app/
-│   ├── (auth)/
-│   │   ├── login/page.tsx         # email+password form
-│   │   ├── signup/page.tsx        # email+password form
-│   │   └── callback/route.ts      # Supabase PKCE exchange
+│   ├── (auth)/                    # login, signup, callback (PKCE),
+│   │                              # forgot-password, reset-password
 │   ├── (app)/
-│   │   ├── layout.tsx             # protected shell (AppShell)
-│   │   └── dashboard/page.tsx     # placeholder
-│   ├── layout.tsx                 # root html + fonts
-│   └── globals.css
-├── components/
-│   ├── shell/
-│   │   ├── AppShell.tsx
-│   │   ├── Sidebar.tsx
-│   │   └── TopBar.tsx             # includes sign-out
-│   └── ui/button.tsx              # shadcn-compatible
+│   │   ├── (protected)/           # dashboard, inbox, settings, error.tsx
+│   │   ├── import/                # the public import route
+│   │   ├── privacy/
+│   │   └── layout.tsx             # auth-gated shell
+│   ├── api/                       # route handlers: account, applications,
+│   │                              # auth, gmail
+│   ├── demo/                      # signed-out product demo
+│   ├── landing-a/ landing-c/      # landing variants
+│   ├── fonts/  layout.tsx  page.tsx  not-found.tsx  globals.css
+├── components/                    # 16 directories: applications, auth, beta,
+│                                  # boot, brand, dashboard, demo, gmail,
+│                                  # import, landing, mail, marketing,
+│                                  # settings, shell, ui, viz
 ├── lib/
-│   ├── env.ts                     # zod-validated process.env
-│   ├── utils.ts                   # cn() helper
-│   └── supabase/
-│       ├── client.ts              # browser client
-│       ├── server.ts              # server client (async cookies())
-│       └── middleware.ts          # updateSession() for proxy.ts
+│   ├── env.ts / env.server.ts     # zod-validated public + server env
+│   ├── api/                       # client.ts, server.ts, schema.d.ts,
+│   │                              # serverTiming.ts
+│   ├── supabase/                  # client, server, admin, auth, middleware,
+│   │                              # protectedRoutes, pkceVerifierCookies
+│   ├── utils.ts  theme.ts
+│   └── account/ applications/ ambient/ boot/ dashboard/ demo/ gmail/
+│       import/ mail/ security/ settings/ shell/
+├── tests/
+│   ├── e2e/                       # 18 Playwright spec files
+│   └── unit/                      # node --test suite (`pnpm test:unit`)
+├── scripts/                       # csp-gate.mjs, no-session-census.mjs,
+│                                  # footage/
 ├── proxy.ts                       # Next 16 proxy (was middleware.ts)
 ├── components.json                # shadcn/ui config
 └── .env.example
@@ -156,10 +171,18 @@ export default async function Page() {
 
 ## Not yet in scope
 
-- Playwright E2E tests (separate issue, C17).
-- Zod runtime validation layer on top of the static types.
-- shadcn/ui kit beyond `Button`.
-- Monorepo tooling (`pnpm-workspace.yaml`, `turbo.json`).
+- Zod runtime validation layer on top of the static types. `zod` validates the
+  environment (`lib/env.server.ts`); API responses are trusted as typed by the
+  generated schema.
+- Monorepo tooling. Neither `pnpm-workspace.yaml` nor `turbo.json` exists;
+  `apps/web` is still a standalone pnpm project.
+
+**Playwright shipped and is no longer on this list.** 18 spec files live under
+`tests/e2e/` and two CI jobs run them — `playwright` against `pnpm dev` and
+`playwright-production` against a real `next build` + `next start`
+(`.github/workflows/e2e-ci.yml`). `pnpm e2e` runs them locally. The unit suite
+is separate: `node --test` over `tests/unit/`, invoked by `pnpm test:unit`, and
+it needs Node 22.6+ for the runtime's built-in TypeScript stripping.
 
 See `docs/WEB_ARCHITECTURE.md` at the repo root for the broader web
 migration plan.
