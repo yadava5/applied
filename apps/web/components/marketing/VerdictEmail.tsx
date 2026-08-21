@@ -82,6 +82,19 @@ function Chip({
   );
 }
 
+/**
+ * A row of the kept record. The key column is 8.5rem from `sm` up, which is
+ * every width this exhibit was composed for; below it the same 136px column
+ * left 166px for the value on a 390px screen, and `truncate` then spent that
+ * on an ellipsis (measured on the production build, 2026-08-21). The keys are
+ * 12px mono and the longest is `sender_email`, so 6.75rem holds them all, and
+ * below `sm` the value WRAPS rather than truncating: this is a record of what
+ * was kept, and a record that shows none of what it kept makes the opposite
+ * point. From `sm` up nothing moves.
+ */
+const ROW_GRID =
+  "grid grid-cols-[6.75rem_minmax(0,1fr)] gap-x-2 px-4 py-2 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-2";
+
 /** Lazily built and memoised at module scope: pure and date-free, so it is
  *  the same on the server pass and in the browser — and consumers that never
  *  pass `evidence` never pay for the trace walk. */
@@ -249,13 +262,13 @@ export function VerdictEmail({
               { k: "body_snippet", v: `${PREVIEW.slice(0, 80)}…` },
               { k: "classified_as", v: fromBody.category },
             ].map((row) => (
-              <div key={row.k} className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-2 px-4 py-2">
+              <div key={row.k} className={ROW_GRID}>
                 <dt className="font-mono text-xs leading-5 text-strong">{row.k}</dt>
-                <dd className="truncate leading-5 text-muted">{row.v}</dd>
+                <dd className="leading-5 text-muted sm:truncate">{row.v}</dd>
               </div>
             ))}
             {["body_text", "body_html"].map((k) => (
-              <div key={k} className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-2 px-4 py-2">
+              <div key={k} className={ROW_GRID}>
                 <dt className="font-mono text-xs leading-5 text-dim line-through decoration-line-strong">
                   {k}
                 </dt>
