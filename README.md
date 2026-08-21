@@ -295,7 +295,7 @@ Being precise about this is the point.
 - **The embedding model.** `intfloat/e5-small-v2` is **pretrained and used as shipped**. It is downloaded, not trained here; only the stored example set it compares against is this project's.
 - **The SetFit body and training loop.** The `setfit` library does contrastive fine-tuning over a sentence-transformers backbone. This project supplies the data, the sampling policy and the provenance contract.
 - **ONNX quantization.** The int8 export is produced by the standard toolchain (`ml/browser/export_onnx.py`) and executed by Transformers.js. No custom kernel, no custom quantizer.
-- **Identity.** Supabase Auth issues and signs the JWT. This repo verifies it — HS256 pinned, so `alg: none` and `alg: RS256` are rejected — and never mints one.
+- **Identity.** Supabase Auth issues and signs the JWT. This repo verifies it against a two-algorithm whitelist — ES256 against the project's published JWKS, HS256 against the shared secret, everything else rejected including `alg: none` and `alg: RS256` — and never mints one.
 - **Mail access.** `google-api-python-client` for Gmail and `aioimaplib` for iCloud. No hand-rolled IMAP or OAuth transport.
 
 ### Planned — not in this build
@@ -537,7 +537,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | --- | --- |
 | **Runtime** | Python 3.11, FastAPI, Uvicorn |
 | **Data** | SQLModel / SQLAlchemy 2 (async), Alembic, Supabase Postgres via asyncpg (SQLite remains the test fixture and the deleted desktop build's store) |
-| **Auth** | PyJWT `[crypto]`, HS256 pinned, `audience="authenticated"`, `require=["exp","sub","aud"]` |
+| **Auth** | PyJWT `[crypto]`, ES256 via the project JWKS or HS256 via the shared secret (one algorithm per branch, chosen before verification), `audience="authenticated"`, `require=["exp","sub","aud"]` |
 | **Secrets** | `cryptography.fernet` rows in `user_credentials` |
 | **Email** | `google-api-python-client` (Gmail, `gmail.readonly`), `aioimaplib` (iCloud), BeautifulSoup + lxml for parsing |
 
@@ -560,7 +560,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 912 `test_*` functions across 76 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 918 `test_*` functions across 77 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
@@ -633,7 +633,8 @@ JOBTRACKER_DEPLOYMENT=cloud             # or `desktop` (default)
 JOBTRACKER_ENVIRONMENT=test             # used by CI and local test runs
 
 # Cloud only
-JOBTRACKER_SUPABASE_JWT_SECRET=...      # Supabase project HS256 signing key
+JOBTRACKER_SUPABASE_JWT_SECRET=...      # Supabase shared secret, for the HS256 branch
+JOBTRACKER_SUPABASE_JWKS_URL=...        # required when the project signs ES256, which is the default since 2025
 JOBTRACKER_SECRET_ENCRYPTION_KEY=...    # urlsafe base64, 32 bytes, for Fernet
 JOBTRACKER_CORS_ALLOWED_HOSTS=...
 
@@ -686,13 +687,13 @@ applied/
 │   │   ├── classifier/      # rules.py (219 patterns) · embeddings.py · setfit_model.py · hybrid.py
 │   │   ├── cloud/           # every router the app mounts, require_user() at the router level
 │   │   ├── main_cloud.py    # the only app builder
-│   │   ├── auth/            # supabase_jwt.py — HS256 pinned verification
+│   │   ├── auth/            # supabase_jwt.py — ES256/HS256 whitelist, one per branch
 │   │   ├── credentials/     # types · desktop (Keychain, unused) · cloud (Fernet)
 │   │   ├── database/        # models, connection (the RLS GUC listener lives here)
 │   │   └── scripts/         # evaluator, latency benchmark, ML-ops tooling
 │   ├── alembic/versions/    # 21 revisions incl. the RLS + InitPlan-hoist migrations
 │   ├── data/evaluation/     # eval sets, committed baselines, benchmark + monitoring history
-│   └── tests/               # 76 modules
+│   └── tests/               # 77 modules
 │
 ├── ml/                      # the classifier as a deployable service
 │   ├── browser/             # ONNX export + the in-browser site (Transformers.js)
