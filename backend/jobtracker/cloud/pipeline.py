@@ -796,6 +796,25 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"\b(?:applying|applied|application)\b[^.!?\n]{0,40}?"
         r"(?P<role>[A-Z][^.!?\n]{3,90}?)\s+(?:position|role)\b",
     ),
+    # Microsoft-shaped: "submit your application for Software Engineer II
+    # (Job number: 200045485)." No article before the title and no trailing
+    # "position"/"role" keyword after it, so none of the patterns above can
+    # see it, and every Microsoft card on the board has a blank position.
+    #
+    # THE PARENTHESISED REQUISITION IS THE TERMINATOR, and that is what makes
+    # this safe to add. The other patterns end on a common noun that can also
+    # appear mid-sentence; this one ends on an employer explicitly labelling a
+    # requisition, immediately after the title. The capture excludes "(" so it
+    # cannot run past the label, and the label alternation is the same set
+    # `_REQ_ID_PATTERNS` accepts, so a wording either yields both a role and an
+    # id or neither, rather than one of the two.
+    re.compile(
+        r"\b(?:application|applying|applied)\s+(?:for|to)\s+"
+        r"(?P<role>[^.!?\n(]{3,90}?)\s*"
+        r"\(\s*(?:job|requisition|req|posting|position|vacancy)\s*"
+        r"(?:number|no\.?|id|code|ref(?:erence)?)\b",
+        re.IGNORECASE,
+    ),
 )
 
 # A requisition id, when the employer prints one. DELIBERATELY conservative: a
@@ -811,6 +830,30 @@ _REQ_ID_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     # Workday/Greenhouse style standalone requisition codes: "R-4821", "JR0093214".
     re.compile(r"\b(?P<id>(?:R|JR|REQ)-?\d{4,10})\b"),
+    # Microsoft: "(Job number: 200045485)". The pattern above requires the
+    # literal word "id" and Microsoft does not use it, so every Microsoft
+    # confirmation returned no requisition id at all.
+    #
+    # THIS COST FOUR REAL APPLICATIONS. On 2026-08-21 four Microsoft
+    # applications were submitted within five minutes of each other, for
+    # Software Engineer II (200045485), Customer Experience Engineer
+    # (200049333), Software Engineer (200043070) and Pre-Training (200007619).
+    # Every confirmation carries its own number, in the Gmail snippet, well
+    # inside the 200 characters the snippet gives us. None was read, so all
+    # four had null identity at an employer that already had a row.
+    #
+    # THE PREFIX IS MANDATORY HERE, unlike the `id` pattern above where it is
+    # optional. "id" is already a strong enough token to stand alone; "number"
+    # is not, and a bare `number[:\s#]+\d{4,12}` would happily match an order
+    # number, a case number, a phone number or a tracking number in an
+    # employer's boilerplate footer. A wrong requisition id is worse than none:
+    # `_pick_application` files a message with no identity onto the employer's
+    # existing row, while a wrong one mints a duplicate card.
+    re.compile(
+        r"\b(?:job|requisition|req|posting|position|vacancy)\s*"
+        r"(?:number|no\.?|code|ref(?:erence)?)[:\s#]+(?P<id>[A-Z]{0,3}-?\d{4,12})\b",
+        re.IGNORECASE,
+    ),
 )
 
 # Words a role token drops before comparison, so "Software Engineer I, Storage"
