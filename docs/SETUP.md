@@ -45,18 +45,23 @@ To run the suite locally:
 
 ```bash
 cd backend
-python3.11 -m venv .venv
-.venv/bin/pip install -r ../requirements.txt \
+python3.11 -m venv .venv311
+.venv311/bin/pip install -r ../requirements.txt \
     pytest pytest-asyncio pytest-cov httpx aiosqlite alembic keyring numpy
 JOBTRACKER_ENVIRONMENT=test \
 PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
-    .venv/bin/python -m pytest tests -q \
+    .venv311/bin/python -m pytest tests -q \
         --ignore=tests/test_setfit_model.py \
         --ignore=tests/test_evaluate_classifier.py
 ```
 
 Notes on that command, each of which has cost someone an afternoon:
 
+- **The name `.venv311` is not arbitrary.** `scripts/generate_api_schema.sh`
+  looks for `backend/.venv311` and falls back to `python3` from `PATH` when it
+  is absent, and the ML runbooks under `docs/` all invoke
+  `.venv311/bin/python`. This page used to say `.venv`, which built a working
+  test venv that every one of those tools then ignored.
 - It installs the **root** `requirements.txt` — the cloud one. `backend/`'s own
   requirements pull torch + sentence-transformers + setfit (~800 MB) and are
   needed only for the two excluded files. CI installs those and runs them.

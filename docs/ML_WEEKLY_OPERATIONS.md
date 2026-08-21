@@ -12,7 +12,7 @@ Owner: ML maintainer on weekly rotation
 > `scripts/monitoring_cycle.sh`); none appears in a GitHub Actions workflow and
 > none is reachable from the deployed app, which is **rules-only** —
 > `HybridClassifier.classify` short-circuits to the rules layer whenever
-> `settings.deployment == "cloud"` (`backend/jobtracker/classifier/hybrid.py:284`).
+> `settings.deployment == "cloud"` (`backend/jobtracker/classifier/hybrid.py:326`).
 >
 > Where the steps below say "retrain": training is default-deny since #357. It
 > refuses unless the corpus is wholly synthetic or its single owner is on an
@@ -86,23 +86,39 @@ Label decision rules:
 - `rejection`: explicit rejection outcome.
 - `other`: non-job content, newsletters, promotions, unrelated updates.
 
-### Step 3: Apply corrections
+### Steps 3 and 4: apply corrections, then retrain
 
-Apply reviewed labels through correction endpoint (one row at a time):
+> **The `/classify/*` HTTP surface these steps used to call does not exist in
+> this tree.** `PUT /classify/email/<id>/correct` and `POST /classify/retrain`
+> belonged to the desktop FastAPI app (`backend/jobtracker/main.py` and the
+> routers under `backend/jobtracker/api/`), de-scoped and deleted in August
+> 2026 — issue #73. No module declares them; the deployed app registers four
+> routers, applications, Gmail, account and cron
+> (`backend/jobtracker/main_cloud.py:667-684`). The only classification route
+> that exists is `POST /applications/review/{message_id}/classify`
+> (`backend/jobtracker/cloud/applications.py:3487`), and it records a decision
+> — it does not train. [`ML_STRATEGY.md`](ML_STRATEGY.md) states the same thing
+> at its head; this page contradicted it until 2026-08-21.
+
+**Apply corrections** through the review surface in the running app, or by
+writing the corrected rows into `training_data` directly against a local
+database. There is no HTTP correction endpoint to curl.
+
+**Retrain** with the shell wrapper, which is now the only caller of the
+training path that `POST /classify/retrain` used to reach:
 
 ```bash
-curl -X PUT "http://127.0.0.1:8000/classify/email/<EMAIL_ID>/correct" \
-  -H "Content-Type: application/json" \
-  -d '{"category":"<REVIEWED_LABEL>"}'
+./scripts/ml_cycle.sh --retrain
 ```
 
-### Step 4: Trigger retrain
+It resolves `backend/.venv311/bin/python` when that exists, falling back to
+`backend/.venv` and then `python3`.
 
-```bash
-curl -X POST "http://127.0.0.1:8000/classify/retrain"
-```
-
-Wait for retrain completion before gate verification.
+Training is **default-deny** — it refuses unless the corpus is wholly synthetic
+or its single owner is on an explicit allowlist that is empty unless configured
+(`backend/jobtracker/classifier/setfit_model.py:38-75`). An unconfigured
+machine therefore trains on nobody, and that is the intended state, not a
+failure of this step. Wait for retrain completion before gate verification.
 
 ### Step 5: Gate verification checklist
 

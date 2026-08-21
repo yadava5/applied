@@ -4,9 +4,11 @@ This document describes the CI workflows that gate merges into
 `integration/web-migration`, `develop`, and `main`, plus the deployment
 surfaces each workflow protects.
 
-The workflows live under [`.github/workflows/`](../.github/workflows/)
-and are all path-filtered so unrelated changes don't trigger noisy
-runs.
+The workflows live under [`.github/workflows/`](../.github/workflows/).
+Most are path-filtered so unrelated changes don't trigger noisy runs;
+**six carry no path filter at all** — `readme-facts.yml`, `codeql.yml`,
+`gitleaks.yml`, `scorecard.yml`, `learning-gate.yml` and
+`ml-monitoring-weekly.yml`. See Triggers below.
 
 ## CI workflows
 
@@ -26,12 +28,20 @@ re-run a green gate on demand (e.g. after a flake).
 
 ## Triggers
 
-Every workflow runs on:
+Most workflows run on:
 
 - `pull_request` against any branch, filtered by the paths above.
 - `push` to `main` or `develop` (no PR fired there, so this catches
   direct-push emergencies).
 - Manual `workflow_dispatch`.
+
+**`ml-monitoring-weekly.yml` is the exception and has no `pull_request`
+trigger at all** — it is `schedule` (`0 14 * * 1`) plus `workflow_dispatch`, so
+a change to it is never exercised by the PR that makes it. `learning-gate.yml`
+is `workflow_dispatch`-only, deliberately: it scores a checkpoint and a weekly
+red build is a build people mute. `codeql.yml`, `gitleaks.yml` and
+`scorecard.yml` do run on `pull_request` but carry **no path filter**, along
+with `readme-facts.yml` — six workflows in total have none.
 
 Concurrency is scoped per ref (`group: <workflow>-${{ github.ref }}`
 with `cancel-in-progress: true`) so a force-push mid-run cleans up the
@@ -39,7 +49,7 @@ stale job.
 
 ## Backend CI deep dive
 
-`backend-ci.yml` runs two jobs in sequence:
+`backend-ci.yml` runs **four** jobs, and only three of them are in sequence:
 
 1. **`test`** — the status quo. Installs Python 3.11 + pip cache,
    pulls CPU-only torch from the PyTorch index, runs `pytest tests -q`,
@@ -47,7 +57,17 @@ stale job.
    deterministic) against frozen baselines in
    `backend/data/evaluation/`. Any macro-F1 regression beyond
    `--tolerance 0.001` fails the job.
-2. **`cloud-smoke`** (new in issue #28 / C17) — `needs: test`. Imports
+2. **`rls-postgres`** — `needs: test`. Runs `tests/test_rls_postgres.py`
+   against its own `postgres:16` service container, then parses the JUnit
+   XML and **fails if the suite reports zero tests or any skip**. That guard
+   is the point of the job: these tests once waited on a database URL no
+   workflow set, and a skip is green. The migration suite
+   (`tests/test_migrations_postgres.py`) rides along under the same guard.
+3. **`expand-only`** — deliberately **not** `needs: test`, unlike the two
+   jobs around it. It walks the Alembic chain one revision at a time against
+   a `postgres:16` service and fails a revision that drops or narrows
+   anything without a module-level `CONTRACT_STEP` saying why.
+4. **`cloud-smoke`** (new in issue #28 / C17) — `needs: test`. Imports
    `jobtracker.main_cloud:app` under `JOBTRACKER_DEPLOYMENT=cloud`,
    probes `/health` via `httpx.ASGITransport` (no network), and runs
    the focused `tests/test_main_cloud.py` suite. This catches two
@@ -115,15 +135,19 @@ Any non-zero exit fails the job. `--frozen-lockfile` ensures
 4. Boots `pnpm dev` on `127.0.0.1:3000` in the background and polls
    `/login` up to 90 s so Next.js has time to Turbopack-compile the
    first route.
-5. Runs `pnpm exec playwright test --project=chromium`. The suite
-   currently contains one smoke test (`tests/e2e/smoke.spec.ts`) that
-   visits `/login` and asserts the form renders.
+5. Runs `pnpm exec playwright test --project=chromium`. The suite is
+   **18 spec files** under `apps/web/tests/e2e/` — auth, beta, boot,
+   connect, dashboard, demo, file-application, import, inbox-geometry,
+   landing, navigation, production, sample-inbox, scan-correct,
+   session-edge, settings, shell, smoke. `smoke.spec.ts` is one of them,
+   not the whole suite; that sentence was true when the file was the only
+   spec and has not been true for a long time.
 6. On both success and failure, uploads:
    - `apps/web/playwright-report` — the HTML report.
    - `apps/web/test-results` — per-test folders with `.webm` videos,
      screenshots, and trace zips.
-   - `backend.log` + `frontend.log` — server stdout/stderr for
-     post-mortem.
+   - `frontend.log` — the dev server's stdout/stderr for post-mortem.
+     There is no `backend.log`: step 3 boots no backend.
 
 We do **not** set `continue-on-error` on the Playwright step: a red
 test fails the workflow, which is the whole point of having the gate.

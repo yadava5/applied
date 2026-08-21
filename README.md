@@ -282,7 +282,7 @@ Being precise about this is the point.
 
 ### Implemented — hand-written in this repo
 
-- **The rules engine.** 219 regex patterns across 7 categories (129 strong, 29 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 19 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
+- **The rules engine.** 219 regex patterns across 7 categories (129 strong, 29 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 30 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
 - **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the path that writes a correction into `training_data`. That path stops at the write: the row is recorded against its own user's account, and **nothing in the hosted app reads it back to train**. The retrain code exists in the repository and is reachable only as an operator command against a local backend — never on a request path, and default-deny since #357 (refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted).
 - **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
 - **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
@@ -518,14 +518,16 @@ RLS here is live, not staged. Verified against the production database on 2026-0
 
 Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI workflows.
 
+**These four are transcribed by hand, not gated.** `scripts/readme_facts.py` checks the numbers it has been given a rule for, and no dependency version is registered as a fact — so this table read `zod 3.25`, `Next.js 16.2.11`, `React 19.2.4` and `@supabase/ssr 0.5` against a manifest pinning `^4.4.3`, `16.3.0`, `19.2.8` and `^0.12.4` while `--check` printed a clean bill. Corrected 2026-08-21 against `apps/web/package.json`; re-read the manifest rather than trusting this table.
+
 #### Web
 
 | Category | Technologies |
 | --- | --- |
-| **Framework** | Next.js 16.2.11 (App Router, Turbopack), React 19.2.4 |
-| **Language** | TypeScript 5 (strict), zod 3.25 for runtime env validation |
+| **Framework** | Next.js 16.3.0 (App Router, Turbopack), React 19.2.8 |
+| **Language** | TypeScript 5 (strict), zod 4 (`^4.4.3`) for runtime env validation |
 | **Styling** | Tailwind CSS 4, shadcn/ui-compatible scaffold, Radix Slot |
-| **Auth** | Supabase Auth via `@supabase/ssr` 0.5 (SSR cookie `getAll`/`setAll`) |
+| **Auth** | Supabase Auth via `@supabase/ssr` `^0.12.4` (SSR cookie `getAll`/`setAll`) |
 | **API client** | `openapi-fetch` 0.17 over types generated by `openapi-typescript` 7 |
 | **Testing** | Playwright 1.48+ (18 spec files under `apps/web/tests/e2e/`) |
 
@@ -547,7 +549,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 | **Layer 2** | `intfloat/e5-small-v2` (pretrained, downloaded, not trained here) |
 | **Layer 3** | SetFit fine-tuned in this repo on `sentence-transformers/paraphrase-MiniLM-L6-v2`, 8 labels |
 | **Export** | int8 ONNX + Transformers.js (`ml/browser/`), Gradio Space (`ml/demo/`), BentoML service (`ml/bento_service.py`) |
-| **Tracking** | MLflow (`ml/mlruns`, registry alias `production` gated at the 0.95 floor), W&B mirror (offline) |
+| **Tracking** | MLflow — `ml/track_run.py:72` points the tracking store at `sqlite:///ml/mlflow.db`, which is git-ignored (`*.db`) and created by the first local run rather than committed; the plain-filesystem store is in maintenance mode upstream, which is why it is SQLite. The committed run artifacts live under `mlruns/` at the **repo root**, not `ml/mlruns` — that path does not exist. Registry alias `production` gated at the 0.95 floor, plus a W&B mirror (offline) |
 
 #### Infrastructure
 
@@ -577,7 +579,7 @@ This paragraph read "54% overall, 61% excluding one-off scripts … 2,163 statem
 | **Web e2e** | Playwright | 18 spec files — auth, beta, connect, dashboard, demo, file-application, import, landing, navigation, production, sample-inbox, scan-correct, session-edge, settings, shell, smoke |
 | **Web e2e, production build** | Playwright vs `next build` + `next start` | the `production` spec: every route driven against a real production build, failing on React hydration errors, uncaught exceptions and 5xx |
 | **Web static** | `tsc --noEmit`, ESLint, `next build` | every push touching `apps/web/**` |
-| **README claims** | `scripts/readme_facts.py --check` | every number on this page, recomputed from the code that defines it; no path filter |
+| **README claims** | `scripts/readme_facts.py --check` | the 55 **registered** facts, asserted at 166 sites across 20 files; no path filter. 43 are recomputed from source on every run; 12 need a pytest + coverage run and are replayed from `docs/readme-facts.json`. A number that is not registered is not checked — see the note under Tech Stack |
 
 Two lint gates run **advisory**, on purpose. `ruff check .` reported 379 findings on its first CI run (2026-08-07) and `mypy .` under `strict = true` reported 879 across 65 of 92 files. Both were configured in `pyproject.toml` from the start and had never actually run. They print their count on every build and flip to blocking when they reach zero; a gate that is red from birth gets ignored or deleted, and neither should be silenced with `--fix` or blanket `# type: ignore`.
 
@@ -724,12 +726,12 @@ Every number above terminates in something you can open.
 | --- | --- |
 | `backend-ci.yml` | `pytest tests -q --cov=jobtracker` (the coverage number lands in the public run log); the rules gate at `--min-macro-f1 0.95`; the deterministic hybrid gate; the `rls-postgres` job with its assert-it-ran step; the `expand-only` job, which walks the Alembic chain one revision at a time against a `postgres:16` service and fails a revision that drops or narrows anything without a module-level `CONTRACT_STEP` saying why; the `cloud-smoke` job that imports the cloud app under `JOBTRACKER_DEPLOYMENT=cloud` and probes `/health` |
 | `frontend-ci.yml` | `pnpm typecheck`, `pnpm lint` (`--max-warnings 0`, so every warn-level rule next ships — the six `jsx-a11y/*` among them — is a red build rather than a printed suggestion), `pnpm test:unit`, `pnpm build` on Node 22 / pnpm 10. The Node major is a constraint, not a default: `test:unit` needs the runtime's type stripping (22.6+), so pinning back to 20 does not fail the job — it stops running the unit suite, which is exactly what happened before |
-| `e2e-ci.yml` | Playwright against a real backend + frontend pair, uploading traces and server logs |
+| `e2e-ci.yml` | The API schema drift gate — `apps/web/lib/api/schema.d.ts` regenerated from `jobtracker.main_cloud`, red on any diff — then Playwright twice: against `pnpm dev` and against a real `next build` + `next start`. **No backend server is booted.** That step used to run `uvicorn jobtracker.main:app` on `127.0.0.1:8000`; that was the desktop app, deleted in #73, and the workflow now points at nothing on that port. Every route the specs visit is public or redirects at the protected layout before any API call, which the sibling `playwright-production` job — same suite, no backend, green — demonstrates. Uploads the HTML report and per-test traces; there is no `backend.log` any more |
 | `codeql.yml`, `gitleaks.yml` | SAST and full-history secret scanning |
 | `.githooks/pre-commit` (local, opt-in) | The same scan over the *staged* diff, before the commit exists. Not a workflow — git does not enable a hooks path for you, so each clone runs `git config core.hooksPath .githooks` once. CI is the net that always runs; this one exists because a credential that reaches GitHub is published even if the next commit deletes it |
 | `ml-monitoring-weekly.yml` | Scheduled drift/confidence report, artifacts uploaded, alert issue opened on threshold breach |
 | `scorecard.yml`, `booklet.yml` | Supply-chain grading; the system-card booklet build |
-| `readme-facts.yml` | `python3 scripts/readme_facts.py --check` — every number on this page recomputed from the source that defines it. Unfiltered by path, because a claim here can be invalidated from anywhere; and a claim site whose sentence was reworded so the checker can no longer find it fails the build rather than passing quietly |
+| `readme-facts.yml` | `python3 scripts/readme_facts.py --check` — the 55 registered facts at their 166 claim sites, 43 of them recomputed from the source that defines them and 12 replayed from `docs/readme-facts.json` because they need a full pytest + coverage run. Unfiltered by path, because a claim here can be invalidated from anywhere; and a claim site whose sentence was reworded so the checker can no longer find it fails the build rather than passing quietly. **What it does not do is find numbers nobody registered** — the four wrong dependency versions under Tech Stack sat on this page through a green `--check` |
 
 **Committed evaluation artifacts** — `backend/data/evaluation/`:
 

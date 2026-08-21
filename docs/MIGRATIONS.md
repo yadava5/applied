@@ -40,12 +40,14 @@ That is fixed. This document is the contract that keeps it fixed.
 
 ### Why a GitHub Action and not a Vercel build step
 
-Deploys are rate-limited to a daily cap on this account, so a migration that
-fails inside a build burns a slot and ships nothing. And a build step would have
-to be gated on `VERCEL_ENV == "production"` — otherwise every preview migrates
-the production database — which means the runner would only ever execute in
-production. That is the same "gate that cannot fail before it matters" shape
-this codebase keeps finding.
+A migration that fails inside a build ships nothing and has to be re-triggered
+through a redeploy. (This paragraph used to lean on a daily deploy cap; the
+account has been on Vercel Pro since 2026-08-14 and that cap no longer binds.
+The reason below never depended on it.) A build step would have to be gated on
+`VERCEL_ENV == "production"` — otherwise every preview migrates the production
+database — which means the runner would only ever execute in production. That
+is the same "gate that cannot fail before it matters" shape this codebase keeps
+finding.
 
 ## The race
 
