@@ -175,10 +175,39 @@ export function WindowAct() {
                 </a>
               </span>
             </div>
-            {/* ---- the stage (`lg`+): the director's frame ---------------- */}
+            {/* ---- the stage (`lg`+): the director's frame ----------------
+
+                `bg-surface`, NOT `bg-background`, and it is the other half of
+                #392. The stage used to reset the shell's surface back to the
+                page's own paint, so the moment a filter shrank the board
+                (the stage lens, or the take's own day-bar beat) the unused
+                canvas below the rows was pixel-identical to the page behind
+                the window — measured at 1512×949, the assessment lens left
+                54.2% of the frame reading as bare page, i.e. as a hole, not
+                as an empty board. A real app viewport paints its own ground
+                to its own edge whatever its content weighs; one ladder step
+                up gives the window that ground, and makes the whole exhibit
+                one continuous pane — chrome strip and stage on the same
+                material — the way the shadow and border always claimed it
+                was. The camera pans content OVER this ground (it sits on the
+                clipping box, not the camera), which is how a viewport
+                behaves under scroll; no geometry moves, so the pan gates and
+                the fold budget are untouched.
+
+                The dot grid is the half that actually carries. At rest on a
+                1512×949 screen the frame's foot is below the page fold, so
+                the ladder step has no visible edge to read against — and a
+                one-step luminance difference on near-black is invisible
+                without one. A surface has to be self-evidently a surface at
+                any crop: the grid is that, set in the existing `--line`
+                token (so both themes inherit it), 1px dots on a 24px pitch —
+                the bench the board's plates sit on, quiet enough that a full
+                board buries it in its gutters. On the frame, not the camera:
+                one paint site covers the armed, disarmed and skeleton paths,
+                and a viewport's canvas holds still while content glides. */}
             <div
               ref={frameRef}
-              className="relative hidden overflow-clip bg-background lg:block"
+              className="relative hidden overflow-clip bg-surface bg-[radial-gradient(var(--line)_1px,transparent_1px)] [background-size:24px_24px] lg:block"
               style={{ height: "calc(100dvh - 11rem)" }}
             >
               {wide ? (
