@@ -37,11 +37,26 @@
  *     before the verdict." "Cedar's note commits to nothing." The mail is the
  *     protagonist and the source of every problem.
  *   · APPLIED DOES CLERICAL VERBS, present tense, active: reads, files,
- *     moves, holds, waits, asks, discards, keeps. Never cognition, never
- *     affect. "Guess" appears only negated. Applied is never a mind, and the
- *     reason is structural rather than stylistic: the page's central promise
- *     is that no mind reads your mail, so personifying it collapses the
- *     privacy story into a paradox.
+ *     moves, holds, waits, asks, discards, keeps, records, classifies. Never
+ *     cognition, never affect. Applied is never a mind, and the reason is
+ *     structural rather than stylistic: the page's central promise is that no
+ *     mind reads your mail, so personifying it collapses the privacy story
+ *     into a paradox.
+ *
+ *     NEGATED COGNITION IS LICENSED, and the distinction is not a loophole.
+ *     "Applied wouldn't guess about it", "comes back unsure" and "never
+ *     guessed" are the claim "not a mind" said out loud; positive cognition
+ *     is the paradox. So `REVIEW.body`'s "comes back unsure, and unsure is
+ *     not a verdict" is correct and must not be swept for saying "unsure".
+ *
+ *     THE SWEEP BROKE THIS ONCE, on 2026-08-21, and it is worth naming
+ *     because it broke it in the one phase where a skeptic is asking what
+ *     exactly reads their mail: `DECISION` was written as "How it decides" /
+ *     "decides on what it says", and `PRIVACY.retention` as "reads a body to
+ *     decide". Deciding is cognition, and it also bleeds the possession
+ *     grammar below: `REVIEW.gate`'s "your decision files it, not a guess"
+ *     only has force if the decisions are the reader's word. They read
+ *     "How it reads", "files it on what it says" and "to classify it" now.
  *   · YOU OWN the possessions and the decisions. "Your board." "Your decision
  *     files it."
  *
@@ -70,6 +85,14 @@
  * reader. Each `payoff` restates a capability the phase has ALREADY proven,
  * in outcome form. None of them may introduce a claim the phase has not
  * earned; that is the whole discipline of the field.
+ *
+ * THE WITNESS MUST BE ABOVE, NEVER BELOW. A payoff may restate anything the
+ * reader has already been shown; it may not draw on an exhibit further down
+ * the page, because a reader who leaves at that phase never sees it. The
+ * first draft of `DECISION.payoff` was defended in its own comment by
+ * pointing two phases FORWARD to the row's mail trail, which contradicts the
+ * rule it was written under. `ACCESS.payoff` is the one exception and stays
+ * coherent under the same rule: its witness is the entire page above it.
  */
 
 /**
@@ -207,7 +230,7 @@ export const ACT = {
   /** The reduced-motion strip: the take stands down entirely and the resting
    *  board — still the live product — is the whole exhibit. */
   resting:
-    "Motion is off, and the page respects that. The board below is the live product at rest.",
+    "Motion is off, and the page keeps it off. The board below is the live product at rest.",
   pause: "Pause",
   play: "Play",
   replay: "Replay",
@@ -258,31 +281,54 @@ export const ACT = {
  * is willing to show them.
  */
 export const DECISION = {
-  eyebrow: "How it decides",
+  eyebrow: "How it reads",
   /** Not a two-beat reversal: the verdict phase above already spends the
    *  page's one-per-phase allowance on one, and two in adjacent phases turn
    *  a signature into a tic. Agentless passive, because the ABSENCE is the
    *  claim (nothing is filed on so little). */
   headline: "Nothing is filed on a subject line.",
   body:
-    "A rejection can open like a thank you. An invitation can open like a formality. So Applied reads the whole message and decides on what it says, not on how it starts.",
-  /** The phase's payoff. It restates what the phase has already proven, in
-   *  the reader's terms: a board they can trust is a board whose moves they
-   *  can account for. No new capability — the mail behind a row is the ROW
-   *  phase's own exhibit, two phases down. */
-  payoff: "So when a row moves on your board, you can see exactly what moved it.",
+    "A rejection can open like a thank you. An invitation can open like a formality. So Applied reads the whole message and files it on what it says, not on how it starts.",
+  /**
+   * The phase's payoff, in the reader's terms: a board you can trust is a
+   * board whose moves you can account for.
+   *
+   * ITS WITNESSES ARE ABOVE IT, which is the rule (see the header). The
+   * window act has already opened Kestrel's row on "the assessment, its
+   * deadline, and every mail that led here" (`ACT.narration[4]`), and
+   * `BOARD.live` invited the reader to open a row themselves. The ROW phase
+   * two screens down restates it with a recording; it is not what earns this.
+   *
+   * IT USED TO SAY "see exactly what moved it", and "exactly" collided with
+   * the page's other headline promise. What moved the row is the whole body,
+   * and the body is the one thing Applied never keeps: behind a row sit a
+   * sender, a subject, a date, Gmail's preview and the verdict
+   * (`PRIVACY.retention` lists them). "The mail that moved it" is true as
+   * identity and silent on content, which is exactly the shape of what the
+   * product can actually show.
+   */
+  payoff: "So when a row moves on your board, you can see the mail that moved it.",
   /** Not an imperative: the reader is not commanded off the page. The demo is
    *  stated as a thing that exists and what it will do for them.
    *
-   *  SCOPED TO THE SANDBOX, not to the demo page. "That same reading" is a
-   *  sameness claim and it is true of exactly one component: the sandbox
-   *  calls `classifyWithRules` (SampleInbox.tsx:277), the same module the
-   *  landing's own `VerdictEmail` calls. The rest of the demo page shows
-   *  precomputed verdicts and, further down, a layer visualiser. A draft of
-   *  this line said "the demo page" and would have claimed sameness for all
-   *  of it. */
+   *  SCOPED TWICE, and both scopes are load-bearing.
+   *
+   *  SCOPED TO THE SANDBOX, not to the demo page: the sandbox calls
+   *  `classifyWithRules` (SampleInbox.tsx:277), and the rest of that page
+   *  shows precomputed verdicts and, further down, a layer visualiser. A
+   *  draft said "the demo page" and claimed sameness for all of it.
+   *
+   *  SCOPED TO THIS PAGE, not to the hosted app: it says "the same reading
+   *  THIS PAGE runs". That is provable and gated — the landing's own
+   *  `VerdictEmail` calls the identical module. "The same reading" full stop
+   *  would claim parity between a TypeScript module and the Python that
+   *  classifies in production, and NO PARITY GATE EXISTS between them
+   *  (checked 2026-08-21: no shared-fixture test, nothing named parity). It
+   *  was the most falsifiable sentence on the page and is now the least
+   *  interesting kind of true. If a parity gate is ever built, this sentence
+   *  may widen; until then it may not. */
   proof:
-    "The sandbox on the demo page runs that same reading in your own browser, and you can hand it any mail you like.",
+    "The sandbox on the demo page runs the same reading this page runs, in your own browser, and you can hand it any mail you like.",
 } as const;
 
 export const PRIVACY = {
@@ -294,7 +340,7 @@ export const PRIVACY = {
    *  product; naming a component here is the same internals leak the
    *  DECISION block documents, in a quieter register. */
   retention:
-    "Applied reads a message's body to decide, then discards it. No body is stored, sent back to your browser, or written to a log. What is kept: a subject line, a sender, a date, Gmail's own short preview, and the verdict.",
+    "Applied reads a message's body to classify it, then discards it. No body is stored, sent back to your browser, or written to a log. What is kept: a subject line, a sender, a date, Gmail's own short preview, and the verdict.",
   /**
    * The enforcement sentence, and the one place on this page a visitor could
    * catch the product out — so it states the SCOPE of the check rather than
@@ -314,15 +360,30 @@ export const PRIVACY = {
    * THE 2026-08-21 SWEEP TRANSLATED THE JARGON AND KEPT THE SPECIFICITY,
    * which is the whole difficulty of this string: it is the page's
    * credibility core, and a version that reads more smoothly by naming less
-   * is a downgrade, not an edit. "Any response the scan touches, the inbox
-   * endpoint included" became "every response the app sends back, the one
-   * that does the reading included" — same scope, no route names. "It runs
-   * in CI on every change to the backend" became "every change to the part
-   * of Applied that reads mail", which is the same path filter said in the
-   * reader's vocabulary rather than the repository's.
+   * is a downgrade, not an edit.
+   *
+   * IT ALSO WIDENED THE CLAIM TWICE ON THE WAY THROUGH, and both were caught
+   * in review before this shipped. Recorded because this is the one string a
+   * visitor can falsify from the test file it names, and because the
+   * translation is exactly where a scope quietly grows:
+   *
+   *   · "any response the scan touches" became "every response the app sends
+   *     back". That is a universal over all endpoints, and the test does not
+   *     have it: it can only scan the responses it drives. Now "every
+   *     response handed back to it", which is the original scope in the
+   *     reader's vocabulary rather than a bigger promise in it.
+   *   · "every change to the backend" became "every change to the part of
+   *     Applied that reads mail" — and the browser import path also reads
+   *     mail, parses a Takeout .mbox in the tab, and lives in `apps/web`,
+   *     outside the `backend/` path filter this sentence describes. Now
+   *     "reads your Gmail", which is the true boundary: the browser path
+   *     reads your export, not your Gmail.
+   *
+   * The lesson is the docblock's own, one paragraph up, generalised: a claim
+   * about a gate is a claim about WHEN it fires and about WHAT it covers.
    */
   mechanism:
-    "That is a claim about code, so code enforces it. A test feeds Applied mail whose bodies carry a marker string, then hunts for that marker everywhere a body could have left a trace: every column of every table, every log record, and every response the app sends back, the one that does the reading included. If it turns up anywhere, the build fails. The check runs on every change to the part of Applied that reads mail.",
+    "That is a claim about code, so code enforces it. A test feeds Applied mail whose bodies carry a marker string, then hunts for that marker everywhere a body could have left a trace: every column of every table, every log record, and every response handed back to it, the one that does the reading included. If it turns up anywhere, the build fails. The check runs on every change to the part of Applied that reads your Gmail.",
   /** The machine value the mechanism sentence names. Mono where rendered. */
   testPath: "backend/tests/test_body_is_never_persisted.py",
   /**
@@ -337,7 +398,7 @@ export const PRIVACY = {
    * rather than the dash it used to carry. Change one and change all four
    * sites, or the page ships a lowercase fragment after a full stop.
    */
-  systemCardLead: "The System Card is the full walkthrough behind that promise:",
+  systemCardLead: "The System Card is the full walkthrough: how it reads, how it is tested, and what it keeps:",
   systemCardLink: "read it",
   policyLead: "The privacy policy states what every sentence here describes:",
   policyLink: "what Applied reads, and what it keeps",
@@ -347,7 +408,7 @@ export const ACCESS = {
   eyebrow: "Access",
   headline: "One hundred seats.",
   cap:
-    "Google caps an app awaiting verification at 100 Gmail accounts. Those are Applied's seats while the review runs, and they are invited one at a time.",
+    "Google caps an app awaiting verification at 100 Gmail accounts. Those are Applied's seats while the review runs, and Applied fills them one at a time.",
   /** The ask's payoff, and the only one that may sit ABOVE its evidence:
    *  this phase's evidence is the whole page above it. Outcome form, no new
    *  claim — "the filing" is what every phase before this has just shown
@@ -356,7 +417,16 @@ export const ACCESS = {
   /** Takeout is prepared asynchronously — Google mails the archive back, and
    *  that can take hours. The old line promised "today", which is the one
    *  sentence on the page a visitor could catch out at the moment of highest
-   *  intent, so it states the wait instead of hiding it. */
+   *  intent, so it states the wait instead of hiding it.
+   *
+   *  "ASK GOOGLE FOR A TAKEOUT .MBOX" IS AN OFF-PAGE IMPERATIVE AND STAYS.
+   *  It is the letter of the no-imperatives rule broken and the spirit kept:
+   *  the rule exists because commanding this reader assigns them work when
+   *  the whole pitch is that the work is done for them, and this is the one
+   *  path where the reader has already chosen to do the work, having just
+   *  been told there is no seat. Rewriting it into "a Google Takeout .mbox
+   *  works" was drafted and rejected as over-editing under cover of the
+   *  sweep, which is a named failure mode here. Considered, not overlooked. */
   noSeat:
     "No seat? Run it on your own exported mail instead. Ask Google for a Takeout .mbox, and when the archive lands in your inbox, drop it in: it is read and filed in your browser. Nothing uploads.",
   cta: "Classify your exported mail",
@@ -434,10 +504,18 @@ export const CLAIMS = {
     headline: "The preview ends before the verdict. Applied reads past it.",
     /**
      * Micro-beat one: the mail as Gmail hands it over. The exhibit is an
-     * INTERVIEW INVITATION, not a rejection — the owner's call (2026-08-16):
-     * the landing carries no rejection anywhere, and the invitation is the
-     * larger loss anyway, because what the preview hides here is the
-     * opportunity itself. The split is computed live and was verified to
+     * INTERVIEW INVITATION, not a rejection — the owner's call (2026-08-16),
+     * and the invitation is the larger loss anyway, because what the preview
+     * hides here is the opportunity itself.
+     *
+     * THIS NOTE USED TO READ "the landing carries no rejection anywhere",
+     * and that was already untrue when it was written: the
+     * `rules-read-the-body` recording has always typed a rejection into the
+     * sandbox, and `DECISION.body` opens "A rejection can open like a thank
+     * you." Scoped to what the call actually governs — THIS EXHIBIT, the one
+     * the reader reads word by word. If the owner meant it globally, the
+     * clip needs re-recording and the decision line needs rewriting, and
+     * that is a call to make rather than a comment to leave standing. The split is computed live and was verified to
      * reproduce against the post-#356 rules before this copy was written:
      * preview → applied, whole body → interview.
      *
@@ -594,7 +672,7 @@ export const FOOTAGE = {
      * it reached.
      */
     name:
-      "Screen recording: on Applied's board, a card is open on the mail behind it, an assessment invitation from Kestrel Dynamics, carrying the verdict Applied reached for it and the deadline the message stated. The card is closed and the board's rows expand into the space it held. The frame then travels to the row itself, past the same deadline drawn on the row, and comes to rest with the row sitting in the board's assessment group.",
+      "Screen recording: on Applied's board, a card is open on the mail behind it, an assessment invitation from Kestrel Dynamics, carrying the verdict Applied recorded for it and the deadline the message stated. The card is closed and the board's rows expand into the space it held. The frame then travels to the row itself, past the same deadline drawn on the row, and comes to rest with the row sitting in the board's assessment group.",
     /**
      * Two scopes in two short sentences, and the length is a CONSTRAINT, not
      * a style: `ClaimsDescent`'s row rail (where this clip rides since the
@@ -649,7 +727,7 @@ export const ARTIFACT = {
  * restate it.
  */
 export const HELD = {
-  mail: "A mail the rules will not guess about",
+  mail: "A mail Applied will not guess about",
   queue: "It waits in the review queue, filed by you and never guessed",
 } as const;
 
@@ -725,7 +803,7 @@ export const REVIEW = {
   /** The payoff, and the one that turns a limitation into the feature it
    *  actually is: a queue of one ambiguous mail is a reading list, not a
    *  backlog. No new claim — the exhibit beside it is the queue. */
-  payoff: "The one mail it holds is the one you would want to read yourself.",
+  payoff: "And what it holds is the mail you would have wanted to read yourself.",
 } as const;
 
 /**
@@ -746,7 +824,7 @@ export const ROW = {
   body:
     "An assessment invitation, already read, and the row it left behind: already sitting in the board's assessment group, carrying the deadline the message named. Applied moves the row for you, and this is what that looks like.",
   aside:
-    "The mail that moved it stays one click away, behind the row it moved. That is the trail the take opens on.",
+    "The mail that moved it stays one click away, behind the row it moved. That is the trail this recording opens on.",
   /** The payoff, in the reader's own arithmetic. "Sixty threads" is the
    *  hero's "sixty other things" collected back up, which is what makes it a
    *  close rather than a new claim. */
