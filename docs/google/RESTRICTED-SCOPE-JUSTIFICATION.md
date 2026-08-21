@@ -126,7 +126,7 @@ nonetheless the narrower scope, so it was evaluated on capability:
 
 | Scope | Google's tier | Why it does not work |
 | --- | --- | --- |
-| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with `q="in:inbox"` plus a `newer_than:<N>m` age filter (`backend/jobtracker/cloud/gmail_client.py:92`, `:326`, `:613`). Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
+| `gmail.metadata` | **Restricted** | **Cannot run a Gmail query.** Applied lists messages with a `q` it builds itself — by default `in:inbox` plus a `newer_than:<N>m` age filter (`backend/jobtracker/cloud/gmail_client.py:92`, `:325-343`), passed to `users.messages.list` at `:629`. Google documents on [`users.messages.list`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) that the `q` parameter "cannot be used when accessing the api using the gmail.metadata scope." Without `q`, Applied cannot restrict its read to the inbox or to a recent window — it would have to enumerate *more* of the mailbox, not less. Separately, it returns no message body, which §3 shows is decisive. |
 | `gmail.addons.current.message.metadata` | Sensitive | Grants access only to the message a Google Workspace Add-on is currently open on. Applied is a standalone web application whose sync runs on a schedule with no user present and no add-on surface. |
 | `gmail.addons.current.message.readonly` | Sensitive | Same architectural limitation. |
 | `gmail.labels` | Non-sensitive | Labels only — no message content of any kind. |
@@ -216,10 +216,13 @@ prominent, user-facing feature the data serves; there is no other use.
   The classifier that runs in production is **rules-based**: hand-written regex
   patterns over the category vocabulary, scored and weighted, in
   `backend/jobtracker/classifier/rules.py` — no model weights and nothing
-  learned. `HybridClassifier.classify` short-circuits to the rules layer on the
-  first line of work when `settings.deployment == "cloud"`
-  (`backend/jobtracker/classifier/hybrid.py:284`), which is every hosted
-  request, so the embedding and SetFit layers are never constructed. Their
+  learned. When `settings.deployment == "cloud"` — which is every hosted
+  request — the classifier is built in lite mode and **the embedding and SetFit
+  layers are never constructed at all**
+  (`backend/jobtracker/classifier/hybrid.py:199-200`); `classify` then returns
+  the rules verdict rather than escalating past it (`:326`). Construction is
+  the load-bearing half: a layer that is never built cannot run, whatever any
+  later branch does. Their
   dependencies — torch, sentence-transformers, setfit — are absent from the
   deployment's dependency set (`requirements.txt`, which documents the
   exclusion explicitly), which is what "nothing installed to train one with"
@@ -285,8 +288,17 @@ prominent, user-facing feature the data serves; there is no other use.
   board, and removable by the user at any time.
 - **Deletion.** A user can delete their account from within the application.
   Doing so revokes the Gmail grant at Google **first**, then purges every row
-  the user owns across all nine user-bearing tables. Deleting a single
-  application removes its messages with it.
+  the user owns across all nine user-bearing tables.
+
+  Deleting a single application removes its messages with it, with one
+  exception worth naming: a `training_data` row the user created by correcting
+  a verdict survives the application's deletion and is unlinked rather than
+  removed (`backend/tests/test_application_delete_children.py`,
+  `test_delete_keeps_the_training_example_but_unlinks_it`). What it holds is a
+  copy of Gmail's snippet and the user's own label, never a body. **Account**
+  deletion purges it along with everything else, so this is a difference
+  between deleting one application and deleting the account, not a row that
+  outlives the user.
 
 ---
 
@@ -300,17 +312,51 @@ prominent, user-facing feature the data serves; there is no other use.
    just read — a separate assertion checks that the stored snippet *equals*
    Gmail's, because a sentinel search alone would pass for a body prefix that
    stops short of the sentinel.
-5. **Server-side narrowing before any message is transferred.** Applied asks
-   Google for `in:inbox` plus a `newer_than:<N>m` age filter
-   (`gmail_client.py:92`, `:326`), so archived, sent and older mail is never
-   returned to us at all. This is the minimisation that `gmail.metadata` would
-   make impossible (§3.2).
+5. **Server-side narrowing before any message is transferred.** Applied builds
+   a Gmail `q` rather than enumerating the mailbox
+   (`gmail_client.py:340-343`), and the default read is `in:inbox` plus a
+   `newer_than:<N>m` age filter, so ordinary syncs never see archived or sent
+   mail, or mail older than the window. This is the minimisation that
+   `gmail.metadata` would make impossible (§3.2).
+
+   Two exceptions, stated because they are real and a reviewer will find them
+   in the code:
+
+   - **A user-initiated rebuild searches `in:anywhere`**, which includes
+     archived and sent mail. The caller does not get a say: `gmail_oauth.py:1969`
+     forces it. A rebuild is a *destructive* scan — it can delete application
+     rows whose mail no longer matches — and one that reads only `in:inbox`
+     judges on a partial mailbox. On 2026-08-10 exactly that removed two
+     applications whose confirmations had been archived. The wider read is the
+     safeguard, not an oversight.
+   - **`range` is not a closed set.** `_parse_range_months` accepts 3, 6, 9 and
+     12; any other value, including `all` and an unrecognised one, yields no
+     age bound at all, and `build_gmail_query` then emits the base query alone.
+     The hosted UI only ever sends an allowed window, but the API accepts more
+     than the UI sends.
+
+   Neither exception widens the *scope*: `gmail.readonly` is what is granted
+   either way, the body is still discarded after classification (§4), and
+   nothing under `in:anywhere` is stored that would not be stored under
+   `in:inbox`. What they change is how much of the mailbox is READ, which is
+   the claim this section makes, so they belong here rather than in a footnote.
 6. **Encrypted tokens.** The OAuth refresh token is Fernet-encrypted at rest
    (AES-128-CBC + HMAC-SHA256) in a row protected by forced row-level security,
    accessed by a database role that cannot bypass it.
 7. **Per-user isolation in the database**, not only in application code: 35
    row-level-security policies across 9 tables, `FORCE`d, with the application
-   connecting as a `NOBYPASSRLS` role.
+   connecting as a `NOBYPASSRLS` role. Every policy carrying user data
+   predicates on `user_id = auth.uid()`, so a query for another tenant's rows
+   matches nothing regardless of what the application code asks for.
+
+   One table is deliberately not per-user, and stating it is cheaper than a
+   reviewer finding it: `gmail_sync_enrollment` carries a `SELECT` policy of
+   `USING (true)` for the runtime role. It holds a user id and an enrolment
+   timestamp and nothing else — no token, no address, no `kind`. The scheduled
+   sync carries no JWT, so `auth.uid()` is NULL for it and a per-user predicate
+   would match no rows; publishing the membership fact in a table with no secret
+   in it is what avoids granting the cron a path to `user_credentials`, where the
+   refresh tokens live. Writes to it remain owner-scoped.
 
 ---
 
@@ -318,7 +364,7 @@ prominent, user-facing feature the data serves; there is no other use.
 
 | Claim | Where to check |
 | --- | --- |
-| Single scope, read-only | `backend/jobtracker/email_clients/gmail.py:53` |
+| Single scope, read-only | `backend/jobtracker/config.py:292-295`, requested at `backend/jobtracker/cloud/gmail_oauth.py:651` |
 | The metadata measurement | `backend/jobtracker/cloud/gmail_client.py:27-34` |
 | Snippet gets a rejection wrong; body gets it right | `backend/tests/test_body_is_never_persisted.py:335-354` |
 | Body is never persisted | `backend/tests/test_body_is_never_persisted.py` (whole file) |
@@ -343,9 +389,16 @@ disclosed here rather than discovered:
   54 production rows.** They are legacy columns from the desktop application
   that preceded this one and was de-scoped in August 2026. The only code that
   writes them lives under `backend/jobtracker/email_clients/`, which is **not
-  in the deployed import graph** — `backend/tests/test_main_cloud.py` enforces
-  that as an import-hygiene test, because pulling those modules in would break
-  the serverless deploy outright.
+  in the deployed import graph**: nothing under `backend/jobtracker/` imports
+  that package except the package itself, so no hosted request can reach the
+  code that writes those columns.
+
+  Stated precisely, because an earlier draft of this document overstated it:
+  that is a fact about the import graph, verifiable by inspection, and **not**
+  an invariant a test enforces. `backend/tests/test_main_cloud.py` runs a
+  subprocess import-hygiene check, but over `keyring`, `aiosqlite`, `torch`,
+  `setfit` and two classifier submodules — it says nothing about
+  `email_clients`. The claim that it did was wrong and is withdrawn.
 - **`training_data.body_text` is populated, and it does not hold a body.** It
   holds a copy of Gmail's snippet. The longest value across every row is 201
   characters. `test_body_is_never_persisted.py:714` pins it to the snippet by
