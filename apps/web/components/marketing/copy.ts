@@ -630,16 +630,26 @@ export const CLAIMS = {
      * gate at 1024x600 by exactly 36.875px: the paragraph measured 42.3px
      * plus an 8px grid gap, and the exhibit's headroom was 13.4px. No
      * separate line fits, at any wording. This chip's note is already the
-     * tallest thing in its row at two lines of 16px, and 193px of note holds
-     * 60 characters in those two lines (measured on the production build
-     * against ten candidate strings), so saying it HERE costs nothing at all.
-     * The right place for the sentence was the figure it is about.
+     * tallest thing in its row at two lines of 16px, so saying it HERE is
+     * free as long as it STAYS two lines. The right place for the sentence
+     * was the figure it is about.
+     *
+     * AND THE LENGTH IS A WRAP BUDGET, NOT A TASTE. The second attempt read
+     * "reads as a routine acknowledgment. Just as sure, and wrong." at 59
+     * characters. That is two lines in a 193px note on macOS and THREE at
+     * 185px, so it was sitting on the knife-edge of a line break: it passed
+     * locally and failed CI at 2.625px, which is the third line arriving on
+     * a Linux runner's metrics. Measured across five widths on the
+     * production build, the note now holds two lines down to 155px, which is
+     * the same slack the untied wording has. A third line costs 16px and the
+     * whole headroom is 13.4px, so anything without that slack is a gate
+     * failure waiting for a platform to change.
      *
      * Written to survive `rules.json` moving: if the two ever land on
      * different numbers the note reverts on its own, and nothing here states
      * a figure that would then be stale.
      */
-    chipPreviewNoteTied: "reads as a routine acknowledgment. Just as sure, and wrong.",
+    chipPreviewNoteTied: "a routine acknowledgment, just as surely. Wrong.",
     tallyNote:
       "Two readings of one mail, and only the text differs. A phrase can only count toward a verdict if the reading can see it, which is why these two columns do not agree.",
   },

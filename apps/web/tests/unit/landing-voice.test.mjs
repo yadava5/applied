@@ -344,13 +344,28 @@ function isCodeLiteral(literal) {
   return false;
 }
 
+/**
+ * Every regex metacharacter, not just the hyphen.
+ *
+ * This escaped `-` alone, which CodeQL flagged as an incomplete sanitization
+ * (js/incomplete-sanitization, high). Today's BANNED_TERMS are plain words
+ * and one hyphenated pair, so nothing is currently mis-escaped, and that is
+ * exactly the trap: the list is meant to be appended to, and the first term
+ * carrying a `.` or a `+` would silently widen into a pattern that matches
+ * more than the word. A copy gate that quietly starts matching the wrong
+ * strings is worse than no gate, because its greens still get believed.
+ */
+function escapeForRegExp(term) {
+  return term.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+}
+
 test("no landing string names the architecture, a model, or a threshold", () => {
   const offenders = [];
   for (const [path, src] of scanned) {
     for (const literal of stringLiterals(src)) {
       if (isCodeLiteral(literal)) continue;
       for (const term of BANNED_TERMS) {
-        if (new RegExp(`\\b${term.replace(/[-]/g, "\\-")}\\b`, "i").test(literal)) {
+        if (new RegExp(`\\b${escapeForRegExp(term)}\\b`, "i").test(literal)) {
           offenders.push(`${path}  "${literal.slice(0, 100)}"  →  ${term}`);
         }
       }
