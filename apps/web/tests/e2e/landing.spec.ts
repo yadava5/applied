@@ -97,8 +97,11 @@ const DESKTOP_1512 = { width: 1512, height: 949 };
  *  4px (`ProductClip`'s figcaption takes `xl:pt-1`) while a narrower column
  *  wraps its band's prose longer, so the two axes still trade against each
  *  other and a single-width set still could not see it. The corner stays
- *  walked. 1512 is where the owner works; every width from 1280 up reads the
- *  same, the container being capped at `max-w-6xl`. */
+ *  walked — and it matters MORE since the fluid spread (2026-08-20): rail
+ *  widths now ramp with vw between 1024 and 1512 (`ClaimsDescent`), so width
+ *  moves every exhibit's height continuously, not by one 4px breakpoint
+ *  step. 1512 is where the owner works AND where the ramp tops out; widths
+ *  past 1512 read the same, the composition capping at its 85rem gutter. */
 const DESKTOP_1512_600 = { width: 1512, height: 600 };
 /** TALL, and the reason the pin is measured above 949 — permanently. The
  *  walked set has now been chosen after the measurement THREE times, and each
@@ -169,27 +172,31 @@ const PIN_LEAD = 120;
  * The least share of its own band a rail may spend pinned — counting only the
  * pin the BAND pays for (`pinned - overhang`, see `RailWalk.overhang`).
  *
- * MEASURED on `next build && next start` (2026-08-20, five-rail restaging,
- * re-measured the same day after the take rails moved to the 4.5rem offset
- * for the fold — the +8px of rail height cost the review rail ~1pp at the
- * tall corners, priced in below), verdict / rules / review / row /
- * retention, at each of the six viewports this walk runs — taken with the
- * design-side walk (same band arithmetic, stable-top plateau at tolerance 2
- * / step 24, no overhang netting, which is inert on this page anyway); this
- * suite's own run is owed and is the canonical reading:
+ * MEASURED on `next build && next start` (2026-08-20, the FLUID-SPREAD
+ * restaging: the descent's rails scale 30→40rem / 36→44rem with viewport
+ * width from a frozen 1024 base, and the container widened to 85rem —
+ * `ClaimsDescent`'s sizing docblock derives it; the 1024 rows below are
+ * unchanged from the prior table because 1024 is the ramp's floor by
+ * construction), verdict / rules / review / row / retention, at each of the
+ * six viewports this walk runs — taken with the design-side walk (same band
+ * arithmetic, stable-top plateau at tolerance 2 / step 24, overhang netted,
+ * which is inert on this page anyway); this suite's own run is owed and is
+ * the canonical reading:
  *
  *   1024x600    0.570  0.354  0.371  0.543  0.756
  *   1024x768    0.547  0.469  0.335  0.647  0.768
- *   1512x600    0.570  0.341  0.371  0.543  0.740
- *   1512x949    0.531  0.578  0.325  0.705  0.791
- *   1512x1080   0.533  0.619  0.333  0.746  0.798
+ *   1512x600    0.583  0.312  0.371  0.486  0.725
+ *   1512x949    0.531  0.524  0.325  0.686  0.763
+ *   1512x1080   0.533  0.571  0.333  0.714  0.784
  *   1024x1120   0.525  0.643  0.321  0.765  0.812
  *
  * Reading the minimum FROM the table, nothing else: REVIEW 0.321 at
  * 1024x1120, then review 0.325 at 1512x949 — the viewport-tall take rail
  * over two paced beats, the same dvh-paced shape whose asymptote the old
  * decision rail measured at ~0.29 beyond range — with the RULES rail's
- * short edge at 0.341 (1512x600) the tightest non-review reading. A
+ * short edge now 0.312 at 1512x600: the fluid width grows that exhibit
+ * ~57px at the wide-short corner (height-capped, so its transport keeps the
+ * fold) while its band barely moves, which is the whole 0.341 → 0.312. A
  * caution that is now part of this table's method: this prose has named
  * the wrong corner THREE times, most recently when the previous staging's
  * design-side walk put its minimum at 1024x1120 while the suite's own
@@ -717,13 +724,14 @@ test.describe("landing (/)", () => {
    * watched 2026-08-20 — and 1.017 where the scale is parked at 1 with the
    * cover floor left armed, which is a SEPARATE reading on the same
    * production build and not one the recipe below produces — while a
-   * computed close-up pushes past
-   * natural scale (max 1.605 — the live cover bound riding the filtered
-   * board — with the fill bound's 1.12 as the independent backstop if the
-   * fixture ever reshapes). The floor sits at 1.06 because it clears BOTH
-   * parked variants with room: an authored scale plus a floor correction is
-   * not a measurement of the shot, so the clearance budget belongs entirely
-   * to the real side, under both computed drivers.
+   * computed close-up pushes past natural scale (max 1.155 at this
+   * viewport, re-measured on the merged tree 2026-08-21 — the live cover
+   * bound riding the filtered board — with the fill bound's 1.12 as the
+   * independent backstop if the fixture ever reshapes). The floor sits at
+   * 1.06 because it clears BOTH parked variants with room: an authored
+   * scale plus a floor correction is not a measurement of the shot, so the
+   * clearance budget belongs entirely to the real side, under both
+   * computed drivers.
    *
    * AND THE FRAME STAYS FULL, watched PER FRAME, not per poll. The owner's
    * void, third report: the day filter shrinks the board while the camera
@@ -786,12 +794,27 @@ test.describe("landing (/)", () => {
     const voidWatch = page.evaluate(async () => {
       let worst = 0;
       let prev = 0;
+      // How many frames actually carried the handle, against how many were
+      // rendered at all. The loop `continue`s when the handle is missing,
+      // and a watcher that never found the camera would otherwise return a
+      // perfect 0 — the shape this whole file exists to refuse. The
+      // reading is a RATIO, deliberately: a bare frame count would floor
+      // the runner's frame rate, which has nothing to do with the defect,
+      // and this suite has already been bitten once by a frame-count floor
+      // that broke under CPU throttling. Measured 2026-08-21 by replaying
+      // this loop under CDP throttling: seen === frames at 1x, 4x, 10x and
+      // 20x (2880 / 2872 / 2484 / 1399 frames), so the ratio holds at 1.0
+      // while the count varies 2x.
+      let seen = 0;
+      let frames = 0;
       const t0 = performance.now();
       while (performance.now() - t0 < 24_000) {
         await new Promise((r) => requestAnimationFrame(r));
+        frames += 1;
         const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
         const stage = frame?.firstElementChild?.firstElementChild;
         if (!frame || !stage) continue;
+        seen += 1;
         const f = frame.getBoundingClientRect();
         const r = stage.getBoundingClientRect();
         const gap = Math.max(0, r.top - f.top) + Math.max(0, f.bottom - r.bottom);
@@ -800,7 +823,7 @@ test.describe("landing (/)", () => {
         worst = Math.max(worst, Math.min(prev, gap));
         prev = gap;
       }
-      return worst;
+      return { worst, seen, frames };
     });
 
     let max = 0;
@@ -817,12 +840,279 @@ test.describe("landing (/)", () => {
       )
       .toBeGreaterThanOrEqual(1.06);
 
-    const worstVoid = await voidWatch;
+    const { worst: worstVoid, seen: voidFrames, frames: voidTicks } = await voidWatch;
+    // The watcher's own positive control, as a share of the frames that
+    // actually rendered. Measured 1.0 at every throttling rate tried, so
+    // 0.9 is slack, not a guess about a runner's speed.
+    expect(
+      voidFrames,
+      `the void watcher found the camera on ${voidFrames} of ${voidTicks} rendered frame(s) — it measured little or nothing, so its ${worstVoid.toFixed(1)}px reading is not evidence`,
+    ).toBeGreaterThan(voidTicks * 0.9);
     expect(
       worstVoid,
       `the frame showed ${worstVoid.toFixed(1)}px of vertical void mid-take — the cover bound is not holding through the board's own resizes`,
     ).toBeLessThanOrEqual(32);
   });
+
+  /**
+   * THE CAMERA MOVES — IT NEVER CUTS. The owner's report, frame-stepped
+   * (2026-08-20, production): the take was continuous except at exactly two
+   * frames, and both were cuts — the day filter's collapse (scale 0.925 →
+   * 1.736 with a 447px pan snap, between two frames 8ms apart) and the
+   * detail pane's mount (1.736 → 1.900, then a tween DOWN — "it cuts the
+   * zoom out", his words). And the take OPENED on a cut: ~500ms of the
+   * mounting board at natural scale, then a hard snap to the establishing
+   * fit, because the camera element rendered with no transform at all.
+   * Every existing gate was green through all three: depth and void
+   * measure where the camera GETS, not how it travels. This is the
+   * assertion class that was missing, and it is three lines because the
+   * three defects have three different fixes:
+   *
+   *   1. SEEDED — the director now exists from mount (layout effect) and
+   *      composes the establishing fit before first paint, so no frame
+   *      ever renders with the camera untransformed.
+   *   2. BRACED — the filter's collapse is a single layout pass, so no
+   *      tween can cross it: at the collapse instant a full frame requires
+   *      the post-collapse cover, period. The script now pushes in to a
+   *      live-predicted cover BEFORE the press (`brace`/`filteredCover`),
+   *      so the rows file out under a motionless camera. The assertion is
+   *      the brace's contract: on the frame the stage collapses, the
+   *      rendered scale must already cover the new height.
+   *   3. CONTINUOUS — everything else (the pane's mount, the clear beat's
+   *      regrowth, the skeleton's handoff) is absorbed by the reframe as
+   *      an eased move (`director.ts`, the tracking thresholds). The
+   *      assertion is a per-frame DISPLACEMENT limit on the rendered
+   *      camera: how far it moved between two adjacent rendered frames,
+   *      full stop, with no division by anything.
+   *
+   *      It was a dt-normalised RATE for one commit, on the premise that
+   *      a janky frame should lower rather than raise the reading. That
+   *      premise holds for long frames and is exactly inverted for short
+   *      ones, and the inversion is not hypothetical: at 1512x949 the rAF
+   *      ticks bunch (minDt 1.10ms against an 8.40ms median), and an
+   *      ordinary eased frame divided by 1.4ms read 24.29 scale/s against
+   *      a bound of 6 — a red on a camera whose actual movement was
+   *      0.034, the same displacement the passing 1024 corner produces.
+   *      Clamping the divisor to 120Hz fixed that red but left the metric
+   *      conflating "how fast the camera is allowed to move" with "did it
+   *      jump", and the surviving window at 1512 was 1.23x on the green
+   *      side. Displacement is the face-value question and is dt-free, so
+   *      the bunching mechanism cannot recur in any form.
+   *
+   *      MEASURED, n=16 runs per viewport, 2026-08-21. The defect is
+   *      perfectly deterministic under this metric — 0.3640 and 0.1920 on
+   *      4/4 runs each, zero variance, where the same defect ranged
+   *      21.5-43.7 as a rate. That determinism is itself the argument for
+   *      a dt-free reading.
+   *
+   *        viewport    authored   defect   historical cut
+   *        1024x1120   0.0860     0.3640   0.81
+   *        1512x949    0.0700     0.1920   —
+   *
+   *      Both authored figures are n=38 and both are the LARGEST reading
+   *      seen, not a typical one: 1 run in 38 exceeded 0.054 at 1512. The
+   *      bounds are set from the outlier because that is what a gate has
+   *      to survive.
+   *
+   *      THE BOUND IS PER-VIEWPORT, and that is not tuning. Forcing one
+   *      constant onto both shots was measured UNSATISFIABLE: authored
+   *      motion is worst at 1024 and the defect is smallest at 1512, so a
+   *      shared bound needs ≥0.1290 and ≤0.1280 to clear 1.5x on both
+   *      sides — an empty interval, missed by about 1%. The binding
+   *      constraints come from different viewports, which is exactly why
+   *      neither corner alone revealed it and why the single-constant
+   *      version read 1.40x green. Per shot the windows are 4.23x and
+   *      2.74x, and each bound sits at its own geometric balance point —
+   *      0.18 giving 2.09x/2.02x at 1024, 0.115 giving 1.64x/1.67x at
+   *      1512. The camera's authored motion is a function of frame size;
+   *      so is the defect's magnitude; a bound that is a function of
+   *      neither was the anomaly.
+   *
+   *      WHAT CAN STILL FALSE-RED, stated because it is real. Displacement
+   *      grows with frame duration, so the argmax migrates to LONG frames
+   *      — the opposite of the rate metric, where it sat at 1.3-1.4ms.
+   *      The 1024 maximum of 0.0860 came from a 19.0ms frame at an
+   *      ordinary 4.53/s: pure frame-length inflation, not anomalous
+   *      motion. 1512's 0.0700 is the same mechanism at 18.30ms and
+   *      3.83/s. At those velocities the bounds are reached by a 39.7ms
+   *      frame at 1024 and a 30.0ms frame at 1512, and frames of 28-37ms
+   *      were observed at both. THE BINDING RISK IS 1512's, not 1024's —
+   *      an earlier draft of this block quoted only the 1024 threshold
+   *      and so understated it, the same error as the rawDt sentence
+   *      above: a figure derived at one viewport and stated as general.
+   *      What keeps it rare is the conjunction — the long frame has to
+   *      land on the punch's peak velocity — not headroom. Read it as
+   *      "can happen", not "will fail". One run in 38 also read 0.0790 at
+   *      a NORMAL 7.30ms frame at 1024, which is genuinely anomalous
+   *      camera motion rather than a sampling artifact.
+   *
+   *      PAN stays a single constant at 100px, because its physical
+   *      window is 11.5x rather than 3.6x and one number clears both
+   *      shots comfortably: authored 41.80px at 1024 and 45.80px at 1512
+   *      against a defect of 523.60px and 480.10px, so 2.18x is the
+   *      binding margin. Both bounds are on the same argmax pair as the
+   *      scale reading in 15/16 runs, so they are watching one event.
+   *
+   * 1024x1120 because it is the discriminating corner for all three: the
+   * establishing fit clamps to 1.000 (so an unseeded camera is invisible
+   * to a scale-only check anywhere shorter), the post-collapse cover is
+   * the take's deepest (2.264 — the widest gap an unbraced camera has to
+   * snap across), and the brace's own arming was measured cutting HERE
+   * (1.000 → 1.206, the letterbox raise) and nowhere shorter — the fix
+   * arms the floor on arrival instead.
+   *
+   * ORDERED so each mutation reds its own line: seed first, brace second,
+   * continuity last — dropping the brace also breaks continuity, so the
+   * brace line must run before the continuity line or its red could never
+   * be watched through this test.
+   *
+   * MUTATIONS (each on its own `next build && next start`, watched red
+   * 2026-08-20 via the design-side twin of this exact watcher — same
+   * bundle, same browser, same arithmetic; this suite's own run is owed
+   * and canonical):
+   *   · SEED: the constructor's seed block removed from `Director` — the
+   *     camera renders untransformed until the take's first `fitAll`, the
+   *     watcher counts those frames, only line 1 reds.
+   *   · BRACE: the script's `Promise.all([brace, moveTo])` reverted to a
+   *     bare `moveTo` — the collapse lands on the establishing scale and
+   *     the floor snaps through it; line 2 reds at 1.000 against a 2.264
+   *     requirement (and line 3 would red behind it, which is why it is
+   *     behind it).
+   *   · CONTINUITY: `reframe`'s absorb branch reverted to the historical
+   *     assignment — the pane-mount reframe snaps (measured 17.4 scale/s,
+   *     25,053 px/s) and only line 3 reds.
+   * Restored and watched green the same way after each.
+   */
+  /**
+   * TWO VIEWPORTS, and 1512x949 is the one that carries the point. Every
+   * camera number here is a function of the frame's dimensions, and the
+   * fluid composition widens that frame by up to ~208px above 1280 — so a
+   * gate pinned to 1024 measures the camera on the one width where the
+   * widening contributes nothing. Measured on the merged tree: max pan per
+   * frame climbs 7.85 -> 12.81 -> 14.26px and max depth 1.481 -> 1.811 ->
+   * 1.934 across 1024x768 / 1440x900 / 1512x949. The code re-measures; this
+   * makes the gate re-measure with it.
+   */
+  for (const [label, viewport, maxStep] of [
+    ["1024x1120", DESKTOP_1024_TALL, 0.18],
+    ["1512x949", DESKTOP_1512, 0.115],
+  ] as const) {
+    test(`the camera is seeded, braced and continuous at ${label}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      // The watcher must predate the board: the unseeded-camera defect lives
+      // in the window between the camera mounting and the take's first move.
+      await page.addInitScript(() => {
+        interface CamSample {
+          t: number;
+          unseeded: boolean;
+          s: number | null;
+          x: number | null;
+          y: number | null;
+          sh: number | null;
+          fh: number | null;
+        }
+        const samples: CamSample[] = [];
+        (window as unknown as { __cam: CamSample[] }).__cam = samples;
+        // The camera is found STRUCTURALLY — walk up from the board to the
+        // element carrying a transform-origin — never via `[data-cam-scale]`:
+        // the dataset is written by the code under test, so a camera that was
+        // never composed would also never be found, and the unseeded count
+        // could not fail. (The first cut of this watcher had exactly that
+        // hole a second way: it compared `style.transformOrigin === "0 0"`,
+        // which the CSSOM serializes as `0px 0px`, so the predicate matched
+        // nothing and the seed mutation stayed green. Watched, then fixed.)
+        const tick = () => {
+          const board = document.querySelector<HTMLElement>('[data-testid="pipeline-board"]');
+          let camera: HTMLElement | null = null;
+          for (let el = board?.parentElement ?? null; el; el = el.parentElement) {
+            if (el instanceof HTMLElement && el.style.transformOrigin) {
+              camera = el;
+              break;
+            }
+          }
+          const frame = camera?.parentElement ?? null;
+          samples.push({
+            t: performance.now(),
+            unseeded: !!camera && !camera.style.transform,
+            s: frame?.dataset.camScale ? Number(frame.dataset.camScale) : null,
+            x: frame?.dataset.camX ? Number(frame.dataset.camX) : null,
+            y: frame?.dataset.camY ? Number(frame.dataset.camY) : null,
+            sh: camera?.firstElementChild instanceof HTMLElement ? camera.firstElementChild.offsetHeight : null,
+            fh: frame ? frame.getBoundingClientRect().height : null,
+          });
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      await page.goto("/");
+      await expect(page.getByTestId("pipeline-board")).toBeVisible();
+      // Long enough to cover the establishing handoff, the filter beat and
+      // the pane mount at authored tempo (collapse ~7.3s, mount ~11.5s).
+      await page.waitForTimeout(16_000);
+      const samples = await page.evaluate(
+        () =>
+          (window as unknown as { __cam: { t: number; unseeded: boolean; s: number | null; x: number | null; y: number | null; sh: number | null; fh: number | null }[] }).__cam,
+      );
+
+      // 1 — SEEDED: no frame ever renders the camera untransformed.
+      const unseeded = samples.filter((r) => r.unseeded).length;
+      expect(
+        unseeded,
+        `${unseeded} frame(s) rendered with the camera untransformed — the establishing shot is being cut to, not seeded (Director's constructor seed)`,
+      ).toBe(0);
+
+      // 2 — BRACED: on the frame the stage collapses, the camera already
+      // covers the new height. 0.06 of slack is measurement noise; the
+      // unbraced defect misses by 1.26.
+      let braced = true;
+      let collapses = 0;
+      let braceMsg = "no collapse observed";
+      for (let i = 1; i < samples.length; i++) {
+        const a = samples[i - 1]!;
+        const b = samples[i]!;
+        if (a.sh && b.sh && b.sh < a.sh * 0.75 && a.s !== null && b.fh) {
+          collapses += 1;
+          const required = b.fh / b.sh;
+          braced = a.s >= required - 0.06;
+          braceMsg = `at the collapse (stage ${a.sh} -> ${b.sh}) the camera held ${a.s} against a cover of ${required.toFixed(3)}`;
+          break;
+        }
+      }
+      // The brace loop's own positive control. Without it, a restaging that
+      // softens the collapse below the 0.75 trip leaves `braced` at its
+      // initial `true` and the gate goes quiet with no other symptom — the
+      // silence this file exists to refuse.
+      expect(
+        collapses,
+        "no stage collapse was observed at all — the brace assertion measured nothing, so its pass is not evidence",
+      ).toBeGreaterThan(0);
+      expect(braced, `${braceMsg} — the press is not being braced (OnerStage's filteredCover)`).toBe(
+        true,
+      );
+
+      // 3 — CONTINUOUS: how far the rendered camera moves between two
+      // adjacent frames. Displacement, not a rate — see the docblock for
+      // why dividing by dt was the defect and not the measurement.
+      let maxScaleStep = 0;
+      let maxPanStep = 0;
+      for (let i = 1; i < samples.length; i++) {
+        const a = samples[i - 1]!;
+        const b = samples[i]!;
+        if (a.s === null || b.s === null || Number.isNaN(a.s) || Number.isNaN(b.s)) continue;
+        if (b.t <= a.t) continue;
+        maxScaleStep = Math.max(maxScaleStep, Math.abs(b.s - a.s));
+        maxPanStep = Math.max(maxPanStep, Math.abs(b.x! - a.x!), Math.abs(b.y! - a.y!));
+      }
+      expect(
+        maxScaleStep,
+        `the camera's scale jumped ${maxScaleStep.toFixed(3)} between two frames, over this shot's ${maxStep} — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(maxStep);
+      expect(
+        maxPanStep,
+        `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(100);
+    });
+  }
 
   test("the pause control freezes the clock, and the visitor's hand stands the take down", async ({
     page,
@@ -1282,6 +1572,213 @@ test.describe("landing (/)", () => {
     // And it is genuinely on screen, not merely ending above the fold with its
     // top pushed off the other end by a sticky offset.
     expect(box!.y, "the provenance line starts above the viewport").toBeGreaterThanOrEqual(0);
+  });
+
+  /**
+   * A BEAT LANDS WHILE THE RAIL IS PINNED — at any scroll speed a reader
+   * actually reads at. The owner's report with his own screenshot
+   * (2026-08-20): the dissolve beat arriving as the rail rode out of frame,
+   * the next phase already on screen underneath. Measured on that build:
+   * the take armed 488px before the pin (beats 0–1 burned on the approach),
+   * the dissolve rendered 246px past release at 250px/s, and at ≥300px/s
+   * the last two beats were UNREACHABLE — the clock froze below the
+   * visibility threshold and never resumed (verified: parked 15s below,
+   * caption still on beat 1). The cause was structural: the band is a
+   * scroll DISTANCE, the clock is a TIME, and nothing related them.
+   *
+   * `RailTake` now holds a three-clause contract (its docblock): start at
+   * the pin, a governor that compresses the clock when the visitor
+   * outpaces it (floor 1 — parked means authored tempo), and a composed
+   * ending for anyone who outruns even that. These three tests hold one
+   * clause each.
+   *
+   * 250 px/s here because it is the owner's screenshot rate and inside the
+   * governor's comfortable range (required sustained rate ~3.4 of the max
+   * 8): every beat must not merely render but render PINNED. Measured on
+   * the fixed build: all four beats at boxTopDelta 0, the last landing at
+   * p=0.81 of the band.
+   *
+   * MUTATIONS (each on its own `next build && next start`, watched red
+   * 2026-08-20 via the design-side twin of this exact drive; the suite's
+   * own run is owed and canonical):
+   *   · START-AT-PIN: the pin check dropped from `maybeStart` (start on
+   *     visibility alone, the historical arming) — beat 0 renders ~490px
+   *     before the pin and the FIRST transition's pin assertion reds.
+   *   · GOVERNOR: the governor effect deleted — the take plays at rate 1
+   *     and the dissolve's assertion reds while beats 0–1 stay green
+   *     (measured: the dissolve never renders AT ALL at this speed — the
+   *     freeze takes it, the original defect's exact shape — and the
+   *     retained beat lands 564px past release).
+   */
+  test("the verdict take's beats all land pinned at a 250px/s read", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript(() => {
+      interface RailSample {
+        t: number;
+        boxTopDelta: number;
+        cap: string | null;
+      }
+      const samples: RailSample[] = [];
+      (window as unknown as { __rail: RailSample[] }).__rail = samples;
+      const tick = () => {
+        const box = document.querySelector<HTMLElement>("[data-rail='verdict']");
+        if (box) {
+          const r = box.getBoundingClientRect();
+          samples.push({
+            t: performance.now(),
+            boxTopDelta: r.top - parseFloat(getComputedStyle(box).top),
+            cap: box.querySelector("p[aria-live]")?.textContent ?? null,
+          });
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    // A constant-rate rAF drive through the rail's whole band, 900px of
+    // approach included — the reader the page was measured failing.
+    await page.evaluate(async (rate) => {
+      const box = document.querySelector<HTMLElement>("[data-rail='verdict']")!;
+      const cell = box.parentElement!;
+      const stickyTop = parseFloat(getComputedStyle(box).top);
+      const cellTop = cell.getBoundingClientRect().top + window.scrollY;
+      const runway = cell.getBoundingClientRect().height - box.offsetHeight;
+      const from = cellTop - stickyTop - 900;
+      const to = cellTop - stickyTop + runway + 1100;
+      window.scrollTo(0, Math.max(0, from));
+      await new Promise((r) => setTimeout(r, 150));
+      const t0 = performance.now();
+      await new Promise<void>((done) => {
+        const step = () => {
+          const y = from + ((performance.now() - t0) / 1000) * rate;
+          window.scrollTo(0, y);
+          if (y < to) requestAnimationFrame(step);
+          else done();
+        };
+        requestAnimationFrame(step);
+      });
+    }, 250);
+
+    const samples = await page.evaluate(
+      () =>
+        (window as unknown as { __rail: { t: number; boxTopDelta: number; cap: string | null }[] })
+          .__rail,
+    );
+    // First sample of each narration line, with the pin state it landed in.
+    const landings = new Map<string, number>();
+    let prevCap: string | null = null;
+    for (const r of samples) {
+      if (r.cap && r.cap !== prevCap) {
+        if (!landings.has(r.cap)) landings.set(r.cap, r.boxTopDelta);
+        prevCap = r.cap;
+      }
+    }
+    for (const [index, line] of KEPT.narration.entries()) {
+      const delta = landings.get(line);
+      expect(delta, `beat ${index} ("${line.slice(0, 32)}…") never rendered at 250px/s`).toBeDefined();
+      expect(
+        Math.abs(delta!),
+        `beat ${index} ("${line.slice(0, 32)}…") landed ${delta!.toFixed(0)}px off the pin — the beat arrived while the section was ${delta! < 0 ? "leaving" : "still arriving"}`,
+      ).toBeLessThanOrEqual(3);
+    }
+  });
+
+  /**
+   * OUTRUN MEANS FOUND FINISHED, NEVER FROZEN MID-SENTENCE. The measured
+   * defect: at ≥300px/s the clock froze below the visibility threshold
+   * with the caption stuck on beat 1, permanently — parked 15 seconds, no
+   * resume. A visitor who flicks past faster than the governor's ceiling
+   * (~600px/s sustained) now finds the exhibit COMPOSED at its final beat
+   * when the rail leaves below with its band spent — the closing act's own
+   * "scrolled past means found finished" grammar, and the rail's resting
+   * truth (the kept record) rather than a half-told story. Leaving ABOVE
+   * mid-band still freezes: that visitor is coming back down.
+   *
+   * MUTATION (its own `next build && next start`, watched red 2026-08-20
+   * via the design-side twin of this drive; suite run owed): the
+   * compose-on-exit branch deleted from `RailTake`'s observer — after the
+   * flick the phase reads "playing" and the caption holds an early beat,
+   * both assertions red.
+   */
+  test("a 1200px/s flick past the verdict rail lands it composed, not frozen", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    await page.evaluate(async (rate) => {
+      const box = document.querySelector<HTMLElement>("[data-rail='verdict']")!;
+      const cell = box.parentElement!;
+      const stickyTop = parseFloat(getComputedStyle(box).top);
+      const cellTop = cell.getBoundingClientRect().top + window.scrollY;
+      const runway = cell.getBoundingClientRect().height - box.offsetHeight;
+      const from = cellTop - stickyTop - 900;
+      const to = cellTop - stickyTop + runway + 1100;
+      window.scrollTo(0, Math.max(0, from));
+      await new Promise((r) => setTimeout(r, 150));
+      const t0 = performance.now();
+      await new Promise<void>((done) => {
+        const step = () => {
+          const y = from + ((performance.now() - t0) / 1000) * rate;
+          window.scrollTo(0, y);
+          if (y < to) requestAnimationFrame(step);
+          else done();
+        };
+        requestAnimationFrame(step);
+      });
+    }, 1200);
+    // Parked below — the frozen-forever window the defect lived in.
+    await page.waitForTimeout(2500);
+
+    const rail = page.locator("[data-rail='verdict'] [data-take-phase]");
+    await expect(rail, "the take is still 'playing' under a parked visitor who has left").toHaveAttribute(
+      "data-take-phase",
+      "done",
+    );
+    await expect(
+      theRailTake(page, "verdict").strip,
+      "the caption froze mid-take instead of composing the ending",
+    ).toHaveText(KEPT.narration[3]);
+  });
+
+  /**
+   * PARKED MEANS AUTHORED TEMPO — the governor may only borrow speed, never
+   * keep it. The take language the owner chose off the lab is a paced
+   * story; a governor bug that leaves the rate above 1 while the visitor
+   * is still would compress the very performance the rails exist for, and
+   * nothing else on this page would notice: every beat still renders, in
+   * order, pinned. So the clock is timed: parked at the pin, the dissolve
+   * (authored at raw+6.8s) must not arrive early. The floor is 0.8 of
+   * authored — rAF jitter only ever makes a clock LATE, so the only thing
+   * that can arrive early is a rate above 1.
+   *
+   * MUTATION (its own `next build && next start`, watched red 2026-08-20
+   * via the design-side twin; suite run owed): the governor's rate floor
+   * raised from 1 to 3 — the parked dissolve arrives at ~2.3s against an
+   * authored 6.8s and the timing assertion reds.
+   */
+  test("a parked verdict take plays at the authored tempo", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    // Park a breath past the pin start and stay there.
+    await page.evaluate(() => {
+      const box = document.querySelector<HTMLElement>("[data-rail='verdict']")!;
+      const cell = box.parentElement!;
+      const stickyTop = parseFloat(getComputedStyle(box).top);
+      window.scrollTo(0, cell.getBoundingClientRect().top + window.scrollY - stickyTop + 8);
+    });
+    const rail = theRailTake(page, "verdict");
+    await expect(rail.strip).toHaveText(KEPT.narration[0], { timeout: 10_000 });
+    const t0 = Date.now();
+    await expect(rail.strip).toHaveText(KEPT.narration[2], { timeout: 15_000 });
+    const elapsed = Date.now() - t0;
+    expect(
+      elapsed,
+      `the dissolve arrived ${(elapsed / 1000).toFixed(1)}s after the raw beat against an authored 6.8s — the governor is accelerating a parked take`,
+    ).toBeGreaterThanOrEqual(0.8 * 6800);
   });
 
   /**

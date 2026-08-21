@@ -321,7 +321,24 @@ export function ProductClip({
           </button>
         </div>
       </div>
-      <figcaption className="text-[0.8125rem] leading-relaxed text-muted xl:pt-1">
+      {/* Stacked captions wrap at a CAPPED measure rather than the frame's
+          width. Two reasons, one visual and one structural: a caption run out
+          to a 44rem frame is a longer line than any prose on the page, and —
+          the load-bearing one — the rails' centring constants (`--exhibit` in
+          `ClaimsDescent`) treat the frame's chrome as a constant plus a term
+          linear in width, which is only true if the caption's line count
+          cannot change as the fluid rail grows. 36rem, not the standard
+          rail's 30rem floor: both shipped captions hold two lines anywhere
+          in 30–36rem, and a 30rem cap was MEASURED (2026-08-20, production
+          build) giving the rules caption a third line — 21px of chrome that
+          ran the big rail's transport 2.3px under a 600px fold. At 1024
+          nothing moves: every rail is at or under 36rem there. */}
+      <figcaption
+        className={cn(
+          "text-[0.8125rem] leading-relaxed text-muted xl:pt-1",
+          stack && "max-w-[36rem]",
+        )}
+      >
         {caption}
       </figcaption>
     </figure>

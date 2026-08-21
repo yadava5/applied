@@ -1,16 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { BenchmarkFigure } from "./BenchmarkFigure";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, HELD, HELD_TAKE, KEPT, PRIVACY, REVIEW, ROW } from "./copy";
-import type { TakeClock } from "./director";
 import { CLIPS } from "./footage";
 import { HeldExhibit } from "./HeldExhibit";
 import { ProductClip } from "./ProductClip";
-import { RailTake } from "./RailTake";
+import { RailTake, type RailBeat } from "./RailTake";
 import { latch, trackProgress } from "./scrub";
 import { VerdictEmail, type VerdictStage } from "./VerdictEmail";
 import { VerdictTally } from "./VerdictTally";
@@ -45,9 +44,12 @@ import { VerdictTally } from "./VerdictTally";
  * THEY RAN AS TAKES — narrated, autoplaying, pausable — and the rebuild
  * that turned them into reversible scroll states discarded the thing he
  * picked, twice. The precedent is his own and already on this page: both
- * bookends pin and PLAY. The rails now do the same (`RailTake`), with the
- * scroll still holding one job on them — the clock freezes when the rail
- * leaves the viewport, so nothing finishes unwatched. The flow exhibits
+ * bookends pin and PLAY. The rails now do the same (`RailTake`), and scroll
+ * holds exactly the jobs a band can honestly hold over a clock it does not
+ * drive: the take starts at the pin, freezes when the rail leaves the
+ * viewport (nothing finishes unwatched), compresses under a governor when
+ * the visitor outpaces it so the beats land while the rail still holds, and
+ * composes its ending if even that is outrun — never a scrub. The flow exhibits
  * (the benchmark draw, the kept record's collapse) remain scroll-driven:
  * they sit IN the reading column, where the reader's own descent is the
  * honest clock.
@@ -59,13 +61,50 @@ import { VerdictTally } from "./VerdictTally";
  * carries an inline snapshot of its artifact at a legible state — a layout
  * decision, not a fallback.
  *
- * SIZING (the owner's edit, 2026-08-20): the flowing prose is set smaller
- * and narrower than the exhibits it argues for (`Claim` — 0.9375rem on a
- * 26rem measure), and ONE box is materially bigger: the rules recording's
- * rail is 36rem, which renders the densest clip on the page at the encode's
- * native 2x width (576 CSS px of a 1152 encode) — the one exhibit that
- * earns the room, because it is the only one whose type was measurably
- * degraded at the old 30rem (0.41x of authored size).
+ * SIZING (the owner's second edit, 2026-08-20 — "we have that much of space,
+ * use it"): THE WHOLE SPREAD IS FLUID between the two widths he works at.
+ * The first sizing round fixed one box at 36rem and left 350px of dead
+ * margin at 1512 (`max-w-6xl` capped the grid at 1152 and simply stopped);
+ * this round scales the composition instead of one number in it. Three vars
+ * on the section, all linear in vw from the SAME 1024 geometry the fold and
+ * pin gates were measured against, so 1024 renders byte-identical to the
+ * gated build and every wider window gets the same composition, larger:
+ *
+ *   --rail      30rem at 1024 → 40rem at 1512+ (the four standard rails).
+ *               40rem is the honest ceiling for the clip rails: the encodes
+ *               are 1152 physical px wide, so 640 CSS px on a 2x screen is a
+ *               1.11x upscale — the width `ProductClip` already argued sharp
+ *               for the in-flow figure — and past it the recording starts
+ *               being pixels the camera never captured.
+ *   --rail-big  36rem at 1024 → 44rem at 1512+, AND capped against the
+ *               viewport's height: the rules exhibit pins at 5rem with py-6,
+ *               so its foot — the transport, which WCAG 2.2.2 says must stay
+ *               reachable — clears a fold H only while the exhibit is under
+ *               H − 8rem. Inverted through the exhibit formula below (chrome
+ *               139.3px at xl, an 8px margin kept), that is width ≤
+ *               (100dvh − 17.25rem) × 1152/630; at 600 tall it holds the box
+ *               to ~592px (still past the old 576, foot 9.7px clear —
+ *               measured), and above ~660 tall the vw term is the binding
+ *               one. 44rem (704 CSS, 1.22x on a 2x screen) is this clip's
+ *               ceiling rather than 40rem because it is the page's one BIG
+ *               box and the one whose 11–14px recorded product type the
+ *               owner twice called illegible; the extra scale buys
+ *               legibility everywhere and costs sharpness only on 2x
+ *               screens, mildly, in motion — a 1x screen still downscales.
+ *   --measure   26rem at 1024 → 30rem at 1512+, with the body size running
+ *               0.9375rem → 1.0625rem on the same ramp (`Claim`). The prose
+ *               grows ~13% while the exhibits grow ~33%: the owner's
+ *               hierarchy — the exhibits are the page; the prose annotates —
+ *               gets STRONGER with width, not renegotiated.
+ *
+ * The ramps are (w − 1024)/(1512 − 1024) restated as vw + a px intercept,
+ * clamped at both ends: below 1024 the grid is single-column anyway, and
+ * past 1512 the composition holds its 1512 form inside the page's 85rem
+ * gutter (`app/page.tsx` says why the container caps there). This is what
+ * "it runs at the best zoom for everyone" honestly means: the page fits
+ * ITSELF to the window across the whole design range — it never touches
+ * `transform`, never rasterizes text, and never overrides the visitor's own
+ * browser zoom, which stays theirs.
  */
 
 /**
@@ -141,16 +180,18 @@ function Claim({
     >
       {eyebrow && <p className="label-caps mb-4">{eyebrow}</p>}
       {headline && (
-        <h2 className="max-w-xl text-balance text-2xl font-medium tracking-tight text-strong sm:text-3xl">
+        <h2 className="max-w-xl text-balance text-2xl font-medium tracking-tight text-strong sm:text-3xl xl:text-4xl">
           {headline}
         </h2>
       )}
       {/* The owner's sizing edit (2026-08-20): the scrolling text steps DOWN
-          from the exhibits — 0.9375rem on a 26rem measure, where it was
-          16px on 36rem. The exhibits are the page; the prose annotates. */}
+          from the exhibits — 0.9375rem on a 26rem measure at 1024, riding the
+          section's fluid ramp to 1.0625rem on 30rem at 1512+ (the section
+          docblock derives it). The exhibits are the page; the prose
+          annotates, at every width. */}
       <div
         className={cn(
-          "max-w-[26rem] space-y-4 text-[0.9375rem] leading-relaxed text-muted",
+          "max-w-[var(--measure)] space-y-4 text-[length:clamp(0.9375rem,0.41vw_+_0.675rem,1.0625rem)] leading-relaxed text-muted",
           headline && "mt-5",
         )}
       >
@@ -229,20 +270,15 @@ export function ClaimsDescent() {
   const [verdictStage, setVerdictStage] = useState(1);
   const VERDICT_STAGES: readonly VerdictStage[] = ["raw", "split", "dissolve", "retained"];
 
-  const verdictTake = useCallback(async (clock: TakeClock) => {
-    setVerdictStage(0);
-    clock.say(KEPT.narration[0]);
-    await clock.hold(3000);
-    setVerdictStage(1);
-    clock.say(KEPT.narration[1]);
-    await clock.hold(3800);
-    setVerdictStage(2);
-    clock.say(KEPT.narration[2]);
-    await clock.hold(2800);
-    setVerdictStage(3);
-    clock.say(KEPT.narration[3]);
-    await clock.hold(800);
-  }, []);
+  const verdictBeats = useMemo<readonly RailBeat[]>(
+    () => [
+      { enter: () => setVerdictStage(0), line: KEPT.narration[0], hold: 3000 },
+      { enter: () => setVerdictStage(1), line: KEPT.narration[1], hold: 3800 },
+      { enter: () => setVerdictStage(2), line: KEPT.narration[2], hold: 2800 },
+      { enter: () => setVerdictStage(3), line: KEPT.narration[3], hold: 800 },
+    ],
+    [],
+  );
 
   /**
    * The held rail's two beats — the owner's 08c pick ("where it waits"), as
@@ -251,16 +287,16 @@ export function ClaimsDescent() {
    * needs); the take winds it back.
    */
   const [settled, setSettled] = useState(true);
-  const heldTake = useCallback(async (clock: TakeClock) => {
-    setSettled(false);
-    clock.say(HELD_TAKE.narration[0]);
-    await clock.hold(2600);
-    setSettled(true);
-    clock.say(HELD_TAKE.narration[1]);
-    await clock.hold(3000);
-    clock.say(HELD_TAKE.narration[2]);
-    await clock.hold(800);
-  }, []);
+  const heldBeats = useMemo<readonly RailBeat[]>(
+    () => [
+      { enter: () => setSettled(false), line: HELD_TAKE.narration[0], hold: 2600 },
+      { enter: () => setSettled(true), line: HELD_TAKE.narration[1], hold: 3000 },
+      // The gate line is a beat of its own — no state change, the settled
+      // queue is the image it narrates over.
+      { enter: () => {}, line: HELD_TAKE.narration[2], hold: 800 },
+    ],
+    [],
+  );
 
   /**
    * The retention flow exhibit's stage. `true` — the record — is the SSR
@@ -290,12 +326,18 @@ export function ClaimsDescent() {
   }, []);
 
   return (
-    <section className="border-t border-line-soft">
+    /* The fluid spread's three vars — the section docblock derives every
+       number. Slopes are (target − base)/(1512 − 1024) as vw with a px
+       intercept, chosen so 1024 lands EXACTLY on the geometry the fold and
+       pin gates were measured against. `--rail-big`'s min() term is the
+       fold fit: the transport at the frame's foot must clear a 100dvh fold
+       from a 5rem pin with py-6 — see the sizing paragraph. */
+    <section className="border-t border-line-soft [--rail:clamp(30rem,32.787vw_+_9.016rem,40rem)] [--rail-big:clamp(36rem,min(26.23vw_+_19.213rem,(100dvh_-_17.25rem)*1.8286),44rem)] [--measure:clamp(26rem,13.115vw_+_17.606rem,30rem)]">
       {/* ---- 1 · VERDICT, rail RIGHT: the merged claim's two micro-beats,
               with the 02b take riding beside them. The take opens on `raw`
               as the rail pins — the same beat the first paragraph argues —
               and runs to the kept record on its own clock. -------------- */}
-      <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+      <div className="mx-auto grid w-full max-w-[85rem] gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,var(--rail))]">
         <div>
           <Claim
             eyebrow={CLAIMS.verdict.eyebrow}
@@ -356,7 +398,7 @@ export function ClaimsDescent() {
             className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
           >
             <RailTake
-              take={verdictTake}
+              beats={verdictBeats}
               label={KEPT.label}
               opening={KEPT.opening}
               resting={KEPT.resting}
@@ -370,25 +412,34 @@ export function ClaimsDescent() {
       {/* ---- 2 · RULES, rail LEFT — the spine's first handoff, and the
               page's ONE BIG BOX. The recording was an in-flow figure here;
               it is the phase's exhibit now, promoted to its own rail at
-              36rem: 576 CSS px is the 1152 encode's native 2x width, so the
-              densest clip on the page — the sandbox, its scores, the line
-              where the rules answer alone — renders at the recorded UI's own
-              scale instead of 0.41x of it. The flow keeps the benchmark,
-              drawn under the reader's descent: figure and footage argue the
-              same sentence from two sides of the gutter. ---------------- */}
+              `--rail-big` (36rem at 1024 → 44rem at 1512+, height-fitted):
+              the densest clip on the page — the sandbox, its scores, the
+              line where the rules answer alone — renders at or past the
+              recorded UI's own scale instead of 0.41x of it. The flow keeps
+              the benchmark, drawn under the reader's descent: figure and
+              footage argue the same sentence from two sides of the
+              gutter. --------------------------------------------------- */}
       <div className="border-t border-line-soft">
-        <div className="mx-auto grid w-full max-w-6xl gap-x-12 px-6 lg:grid-cols-[minmax(0,36rem)_minmax(0,1fr)]">
+        <div className="mx-auto grid w-full max-w-[85rem] gap-x-12 px-6 lg:grid-cols-[minmax(0,var(--rail-big))_minmax(0,1fr)]">
           <div className="hidden lg:block">
             {/* Box hugs its exhibit; the sticky offset centres it in the
                 free viewport and `mb-14` lands its release on the phase's
-                closing line. `--exhibit` is the exhibit's MEASURED height —
-                measured on `next build && next start`, because `next dev`
-                cannot measure this page. A dropped constant is loud
-                (`calc()` over an undefined var un-pins the rail and the pin
-                walk reds); a stale one shifts the pin by half its error. */}
+                closing line. `--exhibit` is now a FORMULA of the same var
+                that sets the rail's width — picture (the encode's 630:1152
+                aspect over the frame's inner width) plus the frame's chrome,
+                a CONSTANT because the stacked caption wraps at a capped
+                measure (`ProductClip`) — so the centring tracks the fluid
+                width continuously instead of going stale between
+                breakpoints. The chrome constants are MEASURED against the
+                rendered exhibit on `next build && next start` (2026-08-20,
+                this restaging), because `next dev` cannot measure this page;
+                the xl step is the figcaption's `xl:pt-1`. A dropped var is
+                loud (`calc()` over an undefined var un-pins the rail and the
+                pin walk reds); a stale constant shifts the pin by half its
+                error. */}
             <div
               data-rail="rules"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:28.125rem] xl:[--exhibit:28.3125rem]"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail-big)_-_2px)*0.546875_+_8.46rem)] xl:[--exhibit:calc((var(--rail-big)_-_2px)*0.546875_+_8.71rem)]"
             >
               <ProductClip
                 stack
@@ -427,7 +478,7 @@ export function ClaimsDescent() {
               The 08c take rides here: Cedar's note, then its settle into
               the real review queue, the product stating its own gate. --- */}
       <div className="border-t border-line-soft">
-        <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+        <div className="mx-auto grid w-full max-w-[85rem] gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,var(--rail))]">
           <div>
             <Claim
               eyebrow={REVIEW.eyebrow}
@@ -452,7 +503,7 @@ export function ClaimsDescent() {
               className="sticky top-[4.5rem] flex min-h-[calc(100dvh-4.5rem)] flex-col justify-center"
             >
               <RailTake
-                take={heldTake}
+                beats={heldBeats}
                 label={HELD_TAKE.label}
                 opening={HELD_TAKE.opening}
                 resting={HELD_TAKE.resting}
@@ -470,11 +521,13 @@ export function ClaimsDescent() {
               move. The camera move is disclosed in the clip's own words
               (`FOOTAGE.letter`), per the footage covenant. -------------- */}
       <div className="border-t border-line-soft">
-        <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+        <div className="mx-auto grid w-full max-w-[85rem] gap-x-16 px-6 lg:grid-cols-[minmax(0,var(--rail))_minmax(0,1fr)]">
           <div className="hidden lg:block">
+            {/* `--exhibit` = picture (310:1152 over the inner width) + the
+                same measured chrome constants the rules rail derives. */}
             <div
               data-rail="row"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:16.5rem] xl:[--exhibit:16.75rem]"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.46rem)] xl:[--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.71rem)]"
             >
               <ProductClip
                 stack
@@ -515,7 +568,7 @@ export function ClaimsDescent() {
               the reader crosses the sentence that says the body is
               discarded, the body is discarded. ------------------------- */}
       <div className="border-t border-line-soft">
-        <div className="mx-auto grid w-full max-w-6xl gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+        <div className="mx-auto grid w-full max-w-[85rem] gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,var(--rail))]">
           <div>
             <Claim
               eyebrow={PRIVACY.eyebrow}
@@ -578,7 +631,7 @@ export function ClaimsDescent() {
           <div className="hidden lg:block">
             <div
               data-rail="retention"
-              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:16.5rem] xl:[--exhibit:16.75rem]"
+              className="sticky top-[max(5rem,calc(5rem_+_(100dvh_-_8rem_-_var(--exhibit))/2))] mb-14 py-6 [--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.46rem)] xl:[--exhibit:calc((var(--rail)_-_2px)*0.269097_+_8.71rem)]"
             >
               <ProductClip
                 stack
