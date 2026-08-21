@@ -149,7 +149,25 @@ const LINK =
 
 /** A machine value quoted inside prose: a scope, a column, an endpoint. */
 function M({ children }: { children: React.ReactNode }) {
-  return <code className="font-mono text-[0.9em] text-strong">{children}</code>;
+  // `[overflow-wrap:anywhere]`, and it is a layout fix rather than a nicety.
+  // The longest token this component renders is the path
+  // `backend/tests/test_body_is_never_persisted.py`, whose min-content width
+  // measures 389px — wider than the 327px this page gives its column at a
+  // 375px viewport. A grid item's default `min-width: auto` sizes the track
+  // to that min-content, so ONE unbreakable string made the whole policy
+  // page scroll sideways on every phone (scrollWidth 437 vs innerWidth 375).
+  //
+  // `anywhere` and not `break-word`: only `anywhere` participates in
+  // min-content sizing, so only it shrinks the track. `break-word` would
+  // wrap the glyphs and leave the overflow exactly where it was.
+  //
+  // The landing already reached this conclusion for the same string —
+  // `components/marketing/sections.tsx` renders `PRIVACY.testPath` with
+  // `break-all`. This page rendered the path bare, which is why the policy
+  // overflowed and the landing did not.
+  return (
+    <code className="font-mono text-[0.9em] text-strong [overflow-wrap:anywhere]">{children}</code>
+  );
 }
 
 function P({ children }: { children: React.ReactNode }) {
