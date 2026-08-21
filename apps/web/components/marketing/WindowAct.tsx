@@ -128,14 +128,35 @@ export function WindowAct() {
             surface of the page: the frame IS the page's widest exhibit, and
             it was the one box already argued full-width. At 1024 nothing
             moves; the stage's height budget is untouched either way. */}
-        <div className="mx-auto w-full max-w-[85rem] px-4 pb-1.5 sm:px-6">
+        {/* `hidden lg:block`: BELOW `lg` THERE IS NO TAKE TO NARRATE. The
+            frame is `hidden lg:block` and `BoardStill` renders instead, so
+            `caption` never leaves `ACT.opening` — a phone reader got a
+            permanent, `truncate`d description of a continuous working
+            session the page was never going to play for them (532px of
+            sentence in a 358px box, so it ended mid-clause at "open…").
+            Narration belongs to the surface that narrates. */}
+        <div className="mx-auto hidden w-full max-w-[85rem] px-4 pb-1.5 sm:px-6 lg:block">
           <p aria-live="polite" className="min-h-6 truncate text-[0.9375rem] leading-6 text-muted">
             {strip}
           </p>
         </div>
         <div className="mx-auto w-full max-w-[85rem] px-4 sm:px-6">
           <div className="overflow-clip rounded-2xl border border-line bg-surface shadow-[0_24px_60px_-30px_rgb(0_0_0/0.55)]">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2 sm:px-5">
+            {/* `hidden lg:flex`, AND THE REASON IS A FALSE CLAIM, not
+                clutter. This strip resolves `armed ? BOARD.take :
+                BOARD.live`, and below `lg` the stage is never armed — so a
+                phone reader was told "Not a video: drag a card, open a row"
+                directly above a static capture where neither gesture
+                exists, while `BoardStill`'s own figcaption said the true
+                thing ("A still of the board. The interactive board needs a
+                wider screen") 200px further down. Two captions, contra-
+                dicting each other, the false one first and `truncate`d.
+                The still is a self-contained `<figure>` carrying that
+                caption AND the same `/demo` link this strip offers, so
+                below `lg` the strip was duplicating everything it did not
+                get wrong. The transport it also holds is `armed`-gated and
+                therefore already absent there. */}
+            <div className="hidden flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line-soft px-4 py-2 sm:px-5 lg:flex">
               <span className="label-caps flex min-w-0 items-center gap-2">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-live" aria-hidden />
                 <span className="truncate">{armed ? BOARD.take : BOARD.live}</span>

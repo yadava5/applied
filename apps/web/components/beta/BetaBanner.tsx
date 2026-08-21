@@ -48,6 +48,20 @@ const HIDE_ON = [
   // The landing candidates: a fixed app toast floating over a sales page's
   // hero board is app chrome leaking into marketing — access is the page's
   // own Access section there, not a pill's.
+  //
+  // `/` IS THAT LANDING NOW. Candidate B was promoted out of `/landing-b`
+  // into `app/page.tsx`, and this list did not follow it, so the rule above
+  // has been true of three routes nobody visits and false of the only one a
+  // stranger loads. At 390px the cost is not theoretical: the pill is
+  // `position: fixed inset-x-0 bottom-3`, so it spans the viewport and lands
+  // on whatever is at the foot of the screen — hit-testing its centre on the
+  // landing returned the board's own "Software Engineer, Simulation" row.
+  //
+  // Exact-match only, and the matcher below already guarantees that: `"/"`
+  // hits the `pathname === p` arm, and its `startsWith("//")` arm cannot
+  // match a real path. Add nothing shorter — a bare prefix here would hide
+  // the pill everywhere.
+  "/",
   "/landing-a",
   "/landing-b",
   "/landing-c",
