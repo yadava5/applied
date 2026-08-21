@@ -56,6 +56,37 @@ export const DEFAULT_MESSAGE_CAP = 400;
 const MAX_BODY_CHARS = 8000;
 const SNIPPET_CHARS = 180;
 
+/**
+ * Upper bound on the `From:` header, and the ONLY thing standing between a
+ * visitor and a frozen tab.
+ *
+ * `parseFrom`'s address pattern is `/^(.*?)<([^>]+)>\s*$/`. A lazy `.*?`
+ * followed by a literal that never satisfies the anchor makes the engine
+ * restart the scan at every position, so a header of N unmatched `<`
+ * characters costs O(N²). The body was already capped at MAX_BODY_CHARS; the
+ * header never was, so the cheapest input was the header alone.
+ *
+ * MEASURED on this machine, before the cap, by handing `parseFrom` a header
+ * of `"<"×N + "a"×N` and timing the call:
+ *
+ *   N =  8000  (16 KB header)      373 ms
+ *   N = 16000  (32 KB)           1,498 ms
+ *   N = 32000  (64 KB)           5,935 ms
+ *   N = 64000  (128 KB)         23,842 ms
+ *
+ * Four times the cost per doubling, which is the quadratic in the open. A
+ * 128 KB file froze the whole tab for 24 seconds: `/import` parses on the
+ * main thread, there is no progress and no cancel, and `/import` needs no
+ * account, so the file could arrive from anywhere. It does not crash, which
+ * is worse, because a hang looks like the product being slow.
+ *
+ * 1024 is generous rather than tight. RFC 5322 caps a header line at 998
+ * octets, and a real `From:` is a display name plus an address. At 1024 the
+ * same pathological input costs under a millisecond, and the cap is applied
+ * BEFORE any decoding so an encoded-word bomb cannot expand past it either.
+ */
+const MAX_FROM_CHARS = 1024;
+
 // ---------------------------------------------------------------------------
 // Format detection
 // ---------------------------------------------------------------------------
@@ -171,7 +202,9 @@ export function decodeEncodedWords(value: string): string {
 
 /** Parse a `From:` value into a display name + bare email address. */
 export function parseFrom(value: string): { name: string | null; email: string } {
-  const decoded = decodeEncodedWords(value).trim();
+  // Bound FIRST. See MAX_FROM_CHARS: everything below this line is quadratic
+  // in the length of `value`, and nothing upstream limits a header.
+  const decoded = decodeEncodedWords(value.slice(0, MAX_FROM_CHARS)).trim();
   const angle = decoded.match(/^(.*?)<([^>]+)>\s*$/);
   if (angle) {
     let name = angle[1].trim().replace(/^"(.*)"$/, "$1").trim();
