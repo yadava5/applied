@@ -881,24 +881,38 @@ test.describe("landing (/)", () => {
    *   3. CONTINUOUS — everything else (the pane's mount, the clear beat's
    *      regrowth, the skeleton's handoff) is absorbed by the reframe as
    *      an eased move (`director.ts`, the tracking thresholds). The
-   *      assertion is a per-frame speed limit on the rendered camera, in
-   *      dt-normalised units so a janky frame lowers rather than raises
-   *      the reading — but the dt is CLAMPED to a 120Hz floor, because
-   *      that premise is exactly inverted for SHORT frames. Measured
-   *      2026-08-21: at 1512x949 the rAF ticks bunch (minDt 1.10ms against
-   *      a 8.40ms median, dtP99 18.3ms), and a full frame's delta divided
-   *      by 1.4ms read 24.29 scale/s and 16,000 px/s — a red on a camera
-   *      whose largest single-frame move was 0.034 of scale, the SAME
-   *      delta the passing 1024 corner produces. Unnormalised deltas were
-   *      the other candidate and were rejected: a runner that drops to
-   *      10fps legitimately covers 3-4x the distance in one frame, which
-   *      is real motion, not a cut. The clamp keeps both properties — a
-   *      long frame still lowers the reading, a bunched one can no longer
-   *      raise it — and leaves the 1024 reading at 3.90 untouched.
-   *      Clamped, authored tweens measure ≤4.1 scale/s and ≤2688 px/s
-   *      across both viewports; the cuts measured ~100 scale/s and
-   *      ~55,000 px/s, and the CONTINUITY mutation ~17 scale/s. The
-   *      bounds sit between, with roughly 2x to each side.
+   *      assertion is a per-frame DISPLACEMENT limit on the rendered
+   *      camera: how far it moved between two adjacent rendered frames,
+   *      full stop, with no division by anything.
+   *
+   *      It was a dt-normalised RATE for one commit, on the premise that
+   *      a janky frame should lower rather than raise the reading. That
+   *      premise holds for long frames and is exactly inverted for short
+   *      ones, and the inversion is not hypothetical: at 1512x949 the rAF
+   *      ticks bunch (minDt 1.10ms against an 8.40ms median), and an
+   *      ordinary eased frame divided by 1.4ms read 24.29 scale/s against
+   *      a bound of 6 — a red on a camera whose actual movement was
+   *      0.034, the same displacement the passing 1024 corner produces.
+   *      Clamping the divisor to 120Hz fixed that red but left the metric
+   *      conflating "how fast the camera is allowed to move" with "did it
+   *      jump", and the surviving window at 1512 was 1.23x on the green
+   *      side. Displacement is the face-value question and is dt-free, so
+   *      the bunching mechanism cannot recur in any form.
+   *
+   *      MEASURED, n=15 runs per viewport, 2026-08-21. Authored tweens
+   *      reach 0.054 of scale per frame at 1512x949 and 0.073 at
+   *      1024x1120 (one unexplained outlier; the other 15 runs sat at
+   *      ≤0.034). The CONTINUITY defect displaces 0.192 at 1512 and 0.364
+   *      at 1024, stable 3/3, and the historical cuts displaced 0.81. The
+   *      physical window between authored motion and the smallest defect
+   *      is only 3.6x, so the bound cannot have an order of magnitude to
+   *      each side the way the earlier prose claimed — 0.12 is the
+   *      balance point at 1.64x over authored and 1.60x under the defect,
+   *      and that narrowness is a property of the shot, not a slack
+   *      threshold. Frame times run 8.4ms median against an 18.3ms p99,
+   *      so a dropped frame inflates authored displacement by ~2.2x at
+   *      worst; the argmax pairs sit at the SHORT end (rawDt 1.3-1.4ms),
+   *      which is why that inflation is not what sets the bound.
    *
    * 1024x1120 because it is the discriminating corner for all three: the
    * establishing fit clamps to 1.000 (so an unseeded camera is invisible
@@ -1037,29 +1051,27 @@ test.describe("landing (/)", () => {
         true,
       );
 
-      // 3 — CONTINUOUS: the rendered camera's per-frame speed limit.
-      let maxScaleRate = 0;
-      let maxPanRate = 0;
+      // 3 — CONTINUOUS: how far the rendered camera moves between two
+      // adjacent frames. Displacement, not a rate — see the docblock for
+      // why dividing by dt was the defect and not the measurement.
+      let maxScaleStep = 0;
+      let maxPanStep = 0;
       for (let i = 1; i < samples.length; i++) {
         const a = samples[i - 1]!;
         const b = samples[i]!;
         if (a.s === null || b.s === null || Number.isNaN(a.s) || Number.isNaN(b.s)) continue;
-        // 120Hz floor. See the docblock: sub-millisecond rAF bunching turns
-        // an ordinary eased frame into a fake cut, and no threshold nudge
-        // fixes a divisor that can approach zero.
-        const dt = Math.max((b.t - a.t) / 1000, 1 / 120);
         if (b.t <= a.t) continue;
-        maxScaleRate = Math.max(maxScaleRate, Math.abs(b.s - a.s) / dt);
-        maxPanRate = Math.max(maxPanRate, Math.abs(b.x! - a.x!) / dt, Math.abs(b.y! - a.y!) / dt);
+        maxScaleStep = Math.max(maxScaleStep, Math.abs(b.s - a.s));
+        maxPanStep = Math.max(maxPanStep, Math.abs(b.x! - a.x!), Math.abs(b.y! - a.y!));
       }
       expect(
-        maxScaleRate,
-        `the camera's scale moved at ${maxScaleRate.toFixed(1)}/s within one frame — a cut, not a move (reframe's absorb)`,
-      ).toBeLessThanOrEqual(8);
+        maxScaleStep,
+        `the camera's scale jumped ${maxScaleStep.toFixed(3)} between two frames — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(0.12);
       expect(
-        maxPanRate,
-        `the camera panned at ${maxPanRate.toFixed(0)}px/s within one frame — a cut, not a move (reframe's absorb)`,
-      ).toBeLessThanOrEqual(5500);
+        maxPanStep,
+        `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
+      ).toBeLessThanOrEqual(100);
     });
   }
 
