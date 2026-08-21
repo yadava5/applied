@@ -3,7 +3,7 @@ import { COLORS, FONTS, TYPE } from "../theme";
 
 /**
  * A single large metric — mono, tabular, on one of the metric tiers. Used for
- * hero numbers (0.979, 22.8 MB, 201). Label sits below in mono uppercase.
+ * hero numbers (0.979, 22.8 MB, 219). Label sits below in mono uppercase.
  */
 export const StatBig: React.FC<{
   value: string;

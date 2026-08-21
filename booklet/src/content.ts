@@ -12,7 +12,8 @@
  *     plainly "e5 embedding similarity — semantic match".)
  *   · The ONLY fine-tuned model is the SetFit head, contrastively trained on
  *     `paraphrase-MiniLM-L6-v2` (6-layer MiniLM) — that fine-tuned body is
- *     what is exported to int8 ONNX for the browser. (training_metadata.json)
+ *     what WAS exported to int8 ONNX for the browser — that build was
+ *     withdrawn on 2026-08-15. (training_metadata.json)
  *
  * Illustrative decision-traces are labeled as such; they demonstrate the
  * mechanism (mirroring the app's own DEMO_REVIEW_QUEUE fixture), not a
@@ -47,13 +48,12 @@ export const BRAND = {
 
 export const MASTHEAD = {
   volume: "Vol. 01 · System Card",
-  kicker: "A 3-layer email classifier, its confidence gate, and the model that runs in your browser.",
-  colophonLines: [
-    "© 2026 · Ayush Yadav",
-    "3-layer email classifier · web",
-    "Applied is proprietary · all rights reserved",
-    "Model runs in-browser via ONNX",
-  ],
+  kicker: "A 3-layer email classifier, its confidence gate, and the model that ran in a browser tab.",
+  // A `colophonLines` field lived here until 2026-08-19 and rendered NOWHERE:
+  // MASTHEAD is imported only by CoverPage and EndpaperPage, and only `.volume`
+  // and `.kicker` are ever dereferenced. It silently swallowed a licence
+  // correction (fc477ad), so it is deleted rather than maintained. The two
+  // colophons that DO render are `TOC.colophon` and `BACK_COVER.colophon`.
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ export const MASTHEAD = {
 export const ABSTRACT = {
   greeting: "Welcome.",
   body:
-    "Every job application resolves in your inbox — a rejection, an interview, an offer, an assessment link. The verdict already exists; it is just buried. Applied reads it at the source with a three-layer cascade — 201 regex rules, e5 embedding similarity, a SetFit few-shot head — behind a 0.85 confidence gate. Below the gate, a human decides. The learned head ships as int8 ONNX and runs entirely in your browser.",
+    "Every job application resolves in your inbox — a rejection, an interview, an offer, an assessment link. The verdict already exists; it is just buried. Applied reads it at the source with a three-layer cascade — 219 regex rules, e5 embedding similarity, a SetFit few-shot head — behind a 0.85 confidence gate. Below the gate, a human decides. The hosted app runs layer 1; the learned head was exported to int8 ONNX and ran in a browser tab.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ export const TOC = {
   chapterTaglines: {
     WHY: "the verdict is already in the inbox",
     HOW: "rules → e5 → SetFit → the gate",
-    INSIDE: "int8 ONNX, zero servers",
+    INSIDE: "int8 ONNX, zero servers — withdrawn",
     PROOF: "0.979 macro-F1 (rules stage), CI-gated",
     SECURITY: "no LLM · on-device · least-privilege",
     BUILD: "train · register · export · ship",
@@ -109,9 +109,9 @@ export const TOC = {
     { key: "Diagrams only", val: "the cascade (p.09), the trace (p.21)." },
   ],
   atAGlance: [
-    { key: "3 layers", val: "201 rules · e5 similarity · SetFit head." },
+    { key: "3 layers", val: "219 rules · e5 similarity · SetFit head." },
     { key: "0.85 gate", val: "below it, a human decides — not the model." },
-    { key: "22.8 MB", val: "int8 ONNX, running entirely in the browser." },
+    { key: "22.8 MB", val: "int8 ONNX — ran in the browser, withdrawn." },
   ],
   glossary: [
     { term: "Cascade", def: "cheap-certain layers first, learned last." },
@@ -138,13 +138,18 @@ export const TOC = {
 // Thresholds from hybrid.py / config.py. Accents map to apps/web globals.css.
 // ---------------------------------------------------------------------------
 
+// NOTE 2026-08-19: `.blurb` is dereferenced NOWHERE (grep: 3 definitions, 0
+// reads) — the rendered layer prose is HOW.rules / .embeddings / .setfit.
+// Unlike MASTHEAD.colophonLines it IS still emitted into the bundle, because
+// LAYERS is indexed dynamically, so it is dead COPY rather than dead code:
+// a correction made only here changes bytes but nothing a reader sees.
 export const LAYERS = [
   {
     id: "rules",
     n: "1",
     label: "Rules",
     accentKey: "02_HOW" as SectionKey, // cyan
-    model: "201 regex patterns · 14 ATS domains",
+    model: "219 regex patterns · 15 ATS domains",
     note: "instant, deterministic",
     accept: "accept ≥ 0.90",
     blurb:
@@ -170,43 +175,56 @@ export const LAYERS = [
     note: "the learned call",
     accept: "accept ≥ 0.70",
     blurb:
-      "The only trained model in the stack: a SetFit few-shot classifier, contrastively fine-tuned on paraphrase-MiniLM-L6-v2 from 5–10 examples per category. It is the learned call for the genuinely ambiguous email — and the model that ships to the browser.",
+      "The only trained model in the stack: a SetFit few-shot classifier, contrastively fine-tuned on paraphrase-MiniLM-L6-v2 from 5–10 examples per category. It is the learned call for the genuinely ambiguous email — and the model that was shipped to the browser.",
   },
 ] as const;
 
-/** Per-layer accept thresholds — the cascade's fallthrough rule. */
+/** Per-layer accept thresholds — the cascade's fallthrough rule.
+ *
+ * NOTE 2026-08-19: nothing imports THRESHOLDS. It is dereferenced in no TSX and
+ * is dropped from the bundle entirely — the same shape as the deleted
+ * MASTHEAD.colophonLines (#345). The thresholds a reader actually sees are the
+ * `accept` strings on LAYERS and HOW.cascade.steps. Values here are kept
+ * correct, but a correction made ONLY here ships nothing. */
 export const THRESHOLDS = {
   rules: "0.90",
   embeddings: "0.85",
   setfit: "0.70",
   gate: "0.85",
-  source: "source · hybrid.py:123–124, 248, 333 · config.py:208–212",
+  source: "source · hybrid.py:167–168, 292, 384, 424 · config.py:324–331",
 } as const;
 
 // ---------------------------------------------------------------------------
 // The 9 categories — 8 model-predicted + needs_review (human-review bucket).
-// Rule counts from ml/browser/site/rules.json (sum = 201).
+// Rule counts from ml/browser/site/rules.json: strong + weak + negative
+// (sum = 219 scoring patterns). The 40 `veto` patterns are not scored —
+// they cap a category at zero — so they are deliberately not in this sum.
 // ---------------------------------------------------------------------------
 
 export const CATEGORIES = [
-  { id: "applied", label: "applied", rules: 36, predicted: true, gloss: "confirmation your application landed." },
+  { id: "applied", label: "applied", rules: 35, predicted: true, gloss: "confirmation your application landed." },
   { id: "pending_application", label: "pending_application", rules: 21, predicted: true, gloss: "saved / in-progress, not yet submitted." },
-  { id: "interview", label: "interview", rules: 39, predicted: true, gloss: "a recruiter wants to talk." },
-  { id: "rejection", label: "rejection", rules: 34, predicted: true, gloss: "“we’ve decided to move forward with…”" },
-  { id: "offer", label: "offer", rules: 32, predicted: true, gloss: "the email you were waiting for." },
-  { id: "assessment", label: "assessment", rules: 21, predicted: true, gloss: "a take-home or coding screen." },
+  { id: "interview", label: "interview", rules: 40, predicted: true, gloss: "a recruiter wants to talk." },
+  { id: "rejection", label: "rejection", rules: 47, predicted: true, gloss: "“we’ve decided to move forward with…”" },
+  { id: "offer", label: "offer", rules: 31, predicted: true, gloss: "the email you were waiting for." },
+  { id: "assessment", label: "assessment", rules: 27, predicted: true, gloss: "a take-home or coding screen." },
   { id: "follow_up", label: "follow_up", rules: 18, predicted: true, gloss: "nudges, scheduling, status pings." },
   { id: "other", label: "other", rules: 0, predicted: true, gloss: "not job-related — filtered out." },
   { id: "needs_review", label: "needs_review", rules: 0, predicted: false, gloss: "below the gate — routed to a human." },
 ] as const;
 
+// NOTE 2026-08-19: only `total`, `predicted` and `ruleTotal` are read
+// (ProofClassesPage). `note` and `source` are dereferenced NOWHERE and are
+// dropped from the bundle — the same shape as the deleted MASTHEAD.colophonLines
+// (#345). The rendered source note on that page is `PROOF.classes.source`.
+// Correct THAT one; a fix here ships nothing.
 export const CATEGORIES_META = {
   total: 9,
   predicted: 8,
-  ruleTotal: 201,
+  ruleTotal: 219,
   ruleCategories: 7,
   note: "8 categories are model-predicted; needs_review is a routing bucket, not a trained label — it is the confidence gate's output.",
-  source: "source · database/models.py:94–105 · rules.json (201 patterns / 7 categories)",
+  source: "source · database/models.py:126–138 · rules.json (219 scoring patterns / 7 categories)",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -290,25 +308,26 @@ export const HOW = {
     lede:
       "One email enters the top. Each layer tries to decide; if it clears its accept threshold, the cascade stops and files. If not, it falls through to a smarter, costlier layer — and finally to a gate.",
     body:
-      "The order is deliberate: a free, deterministic regex is tried before a 384-dimension embedding lookup, which is tried before the trained SetFit head. Most email is decided by the cheap layers; only the genuinely ambiguous message reaches the model — and only a confident model auto-files.",
+      "The order is deliberate: a free, deterministic regex is tried before a 384-dimension embedding lookup, which is tried before the trained SetFit head. Most email is decided by the cheap layers; only the genuinely ambiguous message reaches the model — and only a confident model auto-files. Scope: the hosted deployment runs layer 1 alone — the serverless entrypoint pins cloud mode, and cloud mode never constructs layers 2 and 3. The full cascade is the desktop and evaluation path.",
     steps: [
       { n: "1", label: "Rules", detail: "regex + ATS domains", accept: "≥ 0.90", accentKey: "02_HOW" },
       { n: "2", label: "e5 similarity", detail: "cosine 1-NN", accept: "≥ 0.85", accentKey: "03_INSIDE" },
       { n: "3", label: "SetFit head", detail: "few-shot learned", accept: "≥ 0.70", accentKey: "04_PROOF" },
       { n: "◇", label: "Gate", detail: "human review", accept: "< 0.85", accentKey: "01_WHY" },
     ],
-    source: "source · classifier/hybrid.py:210–474 (classify order + thresholds)",
+    source: "source · classifier/hybrid.py:254–571 (classify order + thresholds) · :199–200 + api/index.py:35 (cloud ⇒ rules only)",
   },
 
-  // Per-layer detail pages pull from LAYERS + THRESHOLDS above.
+  // Per-layer detail pages pull from LAYERS above (NOT from THRESHOLDS —
+  // LayerDetailPages imports { HOW, LAYERS } only; see the note on THRESHOLDS).
   rules: {
     eyebrow: "§02 · LAYER 1",
-    headline: "201 rules that never guess.",
+    headline: "219 rules that never guess.",
     body: [
-      "The first layer is 201 regular expressions across seven outcome categories, plus 14 known applicant-tracking-system sender domains. It is free, instant, and completely auditable — you can read exactly why any email was filed.",
+      "The first layer is 219 scoring regular expressions across seven outcome categories, plus 15 known applicant-tracking-system sender domains. It is free, instant, and completely auditable — you can read exactly why any email was filed.",
       "Rules only auto-accept above 0.90 confidence. A rule that is merely plausible defers to the layers below rather than risk a wrong, silent file.",
     ],
-    stat: { value: "201", label: "regex patterns · 7 categories" },
+    stat: { value: "219", label: "regex patterns · 7 categories" },
     stat2: { value: "0.90", label: "auto-accept threshold" },
     note: "A regex is a promise you can inspect. That is why it goes first.",
   },
@@ -328,7 +347,7 @@ export const HOW = {
     headline: "The one model that learns.",
     body: [
       "The last layer is a SetFit few-shot classifier — contrastively fine-tuned on a paraphrase-MiniLM-L6-v2 body from just 5–10 examples per category. SetFit needs no giant labeled set; it learns the shape of each outcome from a handful.",
-      "It is the learned call for the genuinely ambiguous email, and the only trained model in the stack. This is the body that gets exported to ONNX and shipped to the browser.",
+      "It is the learned call for the genuinely ambiguous email, and the only trained model in the stack. This is the body that was exported to ONNX and shipped to a browser tab — a build withdrawn on 2026-08-15.",
     ],
     stat: { value: "5–10", label: "examples / category (few-shot)" },
     stat2: { value: "0.70", label: "accept threshold" },
@@ -364,52 +383,52 @@ export const INSIDE = {
     eyebrow: "§03 · ARCHITECTURE",
     headline: "One pipeline, and what it records.",
     body:
-      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. Nothing retrains on them automatically — retraining is an operator command, not a loop, and it is default-deny: refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted. Your mail is never pooled with anyone else's. Every training entry point requires a user id, the corpus is filtered by it, and the loaded rows are re-checked, so a corpus spanning two users raises instead of training.",
+      "The classifier is a hybrid pipeline in backend/jobtracker/classifier: a content guard, then rules, then embedding similarity, then SetFit, then a fallback that is always safe (needs_review rather than a wrong guess). Corrections write to training_data and flag the email user_corrected; embeddings persist in email_embeddings. The hosted deployment runs the guard and the rules only; layers 2 and 3 are never constructed under cloud mode, so the drawing below is the desktop and evaluation path. Nothing retrains on corrections automatically — retraining is an operator command, not a loop, and it is default-deny: refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted. Your mail is never pooled with anyone else's. Every training entry point requires a user id, the corpus is filtered by it, and the loaded rows are re-checked, so a corpus spanning two users raises instead of training.",
     flow: [
       { stage: "guard", detail: "force non-job → other" },
-      { stage: "rules", detail: "201 regex · ≥ 0.90" },
+      { stage: "rules", detail: "219 regex · ≥ 0.90" },
       { stage: "e5", detail: "cosine 1-NN · ≥ 0.85" },
       { stage: "setfit", detail: "few-shot · ≥ 0.70" },
       { stage: "gate", detail: "0.85 → auto / human" },
       { stage: "record", detail: "correction → training_data" },
     ],
-    source: "source · classifier/hybrid.py · docs/ARCHITECTURE.md:36–60",
+    source: "source · classifier/hybrid.py:189–200, 254–571 · docs/ARCHITECTURE.md:80–90",
   },
 
   onnx: {
     eyebrow: "§03 · THE EXPORT",
     headline: "90 megabytes down to 23.",
     lede:
-      "The fine-tuned SetFit body is exported to ONNX and dynamically quantized to int8 — the weights drop from float32 to 8-bit integers with no accuracy floor breached.",
+      "The fine-tuned SetFit body was exported to ONNX and dynamically quantized to int8 — the weights dropped from float32 to 8-bit integers with no accuracy floor breached.",
     body:
-      "The full-precision ONNX graph is 90.4 MB. Dynamic int8 quantization compresses it roughly four-fold to 22.8 MB — small enough to download once and run on a laptop’s CPU, in a browser tab, with no GPU and no backend.",
+      "The full-precision ONNX graph was 90.4 MB. Dynamic int8 quantization compressed it roughly four-fold to 22.8 MB — small enough to download once and run on a laptop’s CPU, in a browser tab, with no GPU and no backend. The weights were withdrawn on 2026-08-15; the export script still produces them from a checkpoint.",
     before: { value: "90.4 MB", label: "float32 ONNX" },
     after: { value: "22.8 MB", label: "int8 quantized" },
     ratio: "≈ 4× smaller",
     exact: "22,843,695 bytes",
-    source: "source · ml/browser/export_onnx.py · ls -la model_quantized.onnx",
+    source: "source · ml/browser/export_onnx.py · artifact sizes recorded in 1efb0b3, the commit that removed them",
   },
 
   browser: {
     eyebrow: "§03 · ZERO SERVERS",
-    headline: "It runs in your browser.",
+    headline: "It ran in your browser.",
     body: [
-      "The quantized model is loaded by Transformers.js (3.5.2) over onnxruntime-web, executing in WebAssembly on the client. allowRemoteModels is false and the model path is local — the tab fetches the weights once and never phones home.",
-      "There is no inference server, no per-request cost, and no data leaving the page. The classifier the backend runs in Python, the web app runs on your own CPU.",
+      "The quantized model was loaded by Transformers.js (3.5.2) over onnxruntime-web, executing in WebAssembly on the client. allowRemoteModels was false and the model path local — the tab fetched the weights once and never phoned home.",
+      "It ran in a Hugging Face Space, never on getapplied.vercel.app: this app’s strict CSP forbids the WASM eval Transformers.js needs. The Space went private and the weights left the repository on 2026-08-15.",
     ],
     facts: [
       { k: "RUNTIME", v: "Transformers.js 3.5.2 · onnxruntime-web (WASM)" },
-      { k: "SERVERS", v: "zero · client-side inference only" },
+      { k: "STATUS", v: "withdrawn 2026-08-15 · weights unpublished" },
       { k: "MODEL", v: "int8 ONNX · 22.8 MB · fetched once" },
-      { k: "PRIVACY", v: "allowRemoteModels = false · nothing leaves the tab" },
+      { k: "PRIVACY", v: "allowRemoteModels = false · nothing left the tab" },
     ],
     parity: {
       claim: "6 / 6",
       label: "output-agreement suite vs the Python pipeline",
       honest:
-        "Stated on the model card and landing page (app.js:12) as a code-verified claim; there is no committed automated parity test in the repo — so we print it as documented, not as a benchmark we re-ran.",
+        "Stated on the model card and the Space’s landing page (app.js:12–13) as a code-verified claim; no automated parity test was ever committed, and the weights it refers to are no longer published — so we print it as documented history, not a benchmark we re-ran.",
     },
-    source: "source · ml/browser/site/app.js:12–19 · index.html",
+    source: "source · ml/browser/site/app.js:12–13, 16, 18–20 · site/README.md (Space private, weights withdrawn)",
   },
 } as const;
 
@@ -432,7 +451,7 @@ export const PROOF = {
     ciLabel: "CI floor — the merge blocks below it",
     ciBody:
       "The score is not a one-time screenshot. Two GitHub Actions gates re-run the evaluation on every backend change and fail the build if macro-F1 drops below 0.95. The number is load-bearing.",
-    source: "source · baseline_hybrid_v3.json:115 · backend-ci.yml:84,96 (--min-macro-f1 0.95)",
+    source: "source · baseline_hybrid_v3.json:114–115 · backend-ci.yml:143,155 (--min-macro-f1 0.95)",
   },
 
   classes: {
@@ -441,7 +460,7 @@ export const PROOF = {
     lede:
       "The classifier files into nine categories. Eight are model-predicted outcomes; the ninth, needs_review, is not a label the model emits — it is where the pipeline puts what it will not file unaided: everything below the gate, and confident mail whose employer it cannot name.",
     note: "needs_review is a routing decision, not a trained class — which is the whole safety story in one row.",
-    source: "source · database/models.py:94–105",
+    source: "source · database/models.py:126–138",
   },
 
   trace: {
@@ -487,10 +506,11 @@ export const PROOF = {
 // calls, both grounded in the code rather than a marketing line:
 //
 //   · The on-device MAIL IMPORT classifies with the deterministic LAYER-1
-//     rules live in the tab (lib/demo/rulesLayer.ts). The full three-layer
-//     int8 model (e5 + SetFit) runs in the in-browser classifier Space, which
-//     apps/web's strict CSP keeps out of its own tab. We say "rules in the
-//     tab", not "the full model in the tab".
+//     rules live in the tab (lib/demo/rulesLayer.ts). That is the ONLY in-tab
+//     classification Applied ships. The full three-layer int8 model (e5 +
+//     SetFit) RAN in a Hugging Face Space — private since 2026-08-15, when
+//     the weights were withdrawn — and never in apps/web's own tab, whose
+//     strict CSP forbids the WASM eval it needs.
 //   · Disconnect REVOKES at Google (POST oauth2.googleapis.com/revoke) and is
 //     best-effort: confirmed when Google returns 2xx; the local encrypted row
 //     is deleted either way. We print it as "revokes, and confirms on 2xx",
@@ -507,7 +527,7 @@ export const SECURITY = {
     lede:
       "The classifier is not a prompt to somebody else's model. It is a three-layer cascade you can read line by line — no third-party LLM ever sees the inbox.",
     body:
-      "Classification runs entirely on code that ships in this repo: 201 regex rules, then cosine similarity against a pretrained e5 embedding, then the fine-tuned SetFit head. There is no OpenAI, Anthropic, or Gemini call anywhere in the classify path — the classifier module imports no LLM API at all.",
+      "Classification runs entirely on code that ships in this repo: 219 regex rules, then cosine similarity against a pretrained e5 embedding, then the fine-tuned SetFit head — and the hosted deployment runs the rules alone. There is no OpenAI, Anthropic, or Gemini call anywhere in the classify path — the classifier module imports no LLM API at all.",
     path: [
       { n: "1", label: "regex rules", note: "deterministic · auditable", accentKey: "02_HOW" as SectionKey },
       { n: "2", label: "e5 similarity", note: "cosine 1-NN · pretrained", accentKey: "03_INSIDE" as SectionKey },
@@ -523,7 +543,7 @@ export const SECURITY = {
       { k: "EMBEDDING", v: "intfloat/e5-small-v2 · loaded locally" },
       { k: "AUDITABILITY", v: "every layer is code you can read" },
     ],
-    source: "source · classifier/hybrid.py:246,322,372 · embeddings.py:36,154 · no LLM import in classifier/",
+    source: "source · classifier/hybrid.py:292,384,424 · embeddings.py:78,99 · no LLM import in classifier/",
   },
 
   // Page 25 — on-device: in-browser model + on-device import.
@@ -531,14 +551,14 @@ export const SECURITY = {
     eyebrow: "§05 · ON-DEVICE",
     headline: "It can run with zero servers.",
     lede:
-      "Two ways to classify without your mail ever leaving the machine — one uses the full model in the browser, one needs no account at all.",
+      "Two ways to classify without your mail ever leaving the machine — one needs no account at all and ships today; one ran the full model in a browser tab, and was withdrawn.",
     modes: [
       {
-        tag: "IN-BROWSER MODEL",
-        title: "The int8 ONNX classifier runs in the tab.",
+        tag: "IN-BROWSER MODEL · WITHDRAWN",
+        title: "The int8 ONNX classifier ran in the tab.",
         body:
-          "The 22.8 MB quantized model loads over Transformers.js + onnxruntime-web (WASM) with allowRemoteModels = false and a local path. It fetches the weights once and never phones home.",
-        checks: ["allowRemoteModels = false", "22.8 MB · fetched once", "WebAssembly · your CPU"],
+          "The 22.8 MB quantized model loaded over Transformers.js + onnxruntime-web (WASM) with allowRemoteModels = false and a local path. It fetched the weights once and never phoned home. The weights were withdrawn on 2026-08-15.",
+        checks: ["allowRemoteModels = false", "22.8 MB · fetched once", "withdrawn · 2026-08-15"],
         accentKey: "03_INSIDE" as SectionKey,
       },
       {
@@ -552,8 +572,8 @@ export const SECURITY = {
     ],
     formats: ["Google Takeout MBOX", ".eml (RFC-822)", "JSON batch"],
     honest:
-      "Honest scope: the import classifies with the deterministic rules layer live in your tab. The full three-layer int8 model runs in the in-browser classifier Space — apps/web's strict CSP deliberately keeps WASM/ONNX out of its own tab.",
-    source: "source · ml/browser/site/app.js:17–19 · apps/web/components/import/ImportMail.tsx:305 · lib/import/parseMail.ts:41",
+      "Honest scope: the import classifies with the deterministic rules layer live in your tab — the only in-tab classification Applied ships. The full three-layer int8 model ran in a Hugging Face Space, private since 2026-08-15 when the weights were withdrawn; apps/web's strict CSP always kept WASM/ONNX out of its own tab.",
+    source: "source · ml/browser/site/app.js:18–20 · site/README.md · import/ImportMail.tsx:6,118–120 · parseMail.ts:41,63",
   },
 
   // Page 26 — Gmail: least-privilege, encrypted, revocable, invite-gated.
@@ -586,7 +606,7 @@ export const SECURITY = {
       seats: "100",
       seatsNote: "Google's test-user cap — the real limit, not a marketing number",
     },
-    source: "source · cloud/gmail_oauth.py:90,338,607,632 · credentials/cloud.py:187,209 · DEPLOY.md:114 · beta/constants.ts:16",
+    source: "source · gmail_oauth.py:126,527,695,1303 · config.py:293 · credentials/cloud.py:107,275 · DEPLOY.md:121 · beta/constants.ts:16",
   },
 } as const;
 
@@ -605,33 +625,35 @@ export const BUILD = {
     subLeft:
       "SetFit trains on the labeled corpus; the run logs to MLflow and the model is registered — promoted to the “production” alias only once it clears the 0.95 floor.",
     subRight:
-      "The registered body is exported to int8 ONNX, published to a Hugging Face Space, and served by the Next.js 16 web app on Vercel — inference on the client.",
+      "The registered body was exported to int8 ONNX and published to a Hugging Face Space — inference on the client, until the Space went private in August 2026.",
     stages: [
       { n: "1", label: "TRAIN", detail: "SetFit · MiniLM-L6 body", accentKey: "04_PROOF" },
       { n: "2", label: "MLflow", detail: "log + register · gate 0.95", accentKey: "06_BUILD" },
       { n: "3", label: "ONNX", detail: "export · int8 · 22.8 MB", accentKey: "03_INSIDE" },
-      { n: "4", label: "HF SPACE", detail: "static · in-browser", accentKey: "02_HOW" },
+      { n: "4", label: "HF SPACE", detail: "static · withdrawn", accentKey: "02_HOW" },
       { n: "5", label: "WEB", detail: "Next.js 16 · Vercel", accentKey: "01_WHY" },
     ],
     registry:
       "MLflow model “jobtracker-hybrid-classifier” · alias “production” set only past the 0.95 macro-F1 floor.",
-    source: "source · ml/track_run.py:31,111–120 · ml/browser/export_onnx.py",
+    // NOT RENDERED: SpreadPage reads only .registry/.stages/.headline*/.sub*, so
+    // this note is dropped from the bundle (#345 shape). Kept correct anyway.
+    source: "source · ml/track_run.py:30–31,124,131 · ml/browser/export_onnx.py",
   },
 
   stack: {
     eyebrow: "§05 · THE STACK",
     headline: "What it is built on.",
     lede:
-      "A native macOS app and a FastAPI backend where the model was born; a Next.js 16 web app and a portable ONNX model where it ships.",
+      "A native macOS app and a FastAPI backend where the model was born; a Next.js 16 web app where it ships, and a portable ONNX model that once ran in a tab.",
     rows: [
-      { area: "WEB", tech: "Next.js 16.2.11 · React 19 · Vercel", note: "the hosted product + live demo" },
-      { area: "IN-BROWSER ML", tech: "Transformers.js 3.5.2 · onnxruntime-web", note: "int8 ONNX on the client, no server" },
-      { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 201 regex", note: "the 3-layer hybrid cascade" },
+      { area: "WEB", tech: "Next.js 16.3.0 · React 19 · Vercel", note: "the hosted product + live demo" },
+      { area: "IN-BROWSER ML", tech: "Transformers.js 3.5.2 · onnxruntime-web", note: "int8 ONNX on the client — withdrawn 2026-08-15" },
+      { area: "CLASSIFIER", tech: "e5-small-v2 · SetFit / MiniLM-L6 · 219 regex", note: "the 3-layer hybrid cascade — hosted runs layer 1" },
       { area: "TRAINING", tech: "MLflow registry · CI-gated ≥ 0.95", note: "log, register, promote to production" },
-      { area: "BACKEND", tech: "FastAPI · SQLModel · SQLite", note: "sync, classify, review queue" },
+      { area: "BACKEND", tech: "FastAPI · SQLModel · Postgres", note: "sync, classify, review queue — SQLite on desktop" },
       { area: "DESKTOP", tech: "SwiftUI macOS app", note: "the original native client — de-scoped 2026-08-12" },
     ],
-    source: "source · ml/browser/site/app.js:15 · ml/track_run.py · pyproject.toml",
+    source: "source · apps/web/package.json:27 · ml/browser/site/app.js:16 · ml/track_run.py · backend/pyproject.toml",
   },
 
   // Page 31 — Try it. The reader's exit into the live product: the QR lives
@@ -639,14 +661,14 @@ export const BUILD = {
   closing: {
     eyebrow: "TRY IT",
     headline: "Run it yourself.",
-    tagline: "Scan to open the live app — or send a real email through all three layers, past the gate, in your browser.",
+    tagline: "Scan to open the live app — or drop a mail export and watch the rules layer classify it, past the gate, in your browser.",
     qrTarget: "https://getapplied.vercel.app",
     qrCaption: "scan to open the live web app",
     liveLabel: "LIVE WEB APP",
     liveUrl: "getapplied.vercel.app",
     spaceLabel: "IN-BROWSER CLASSIFIER",
     spaceUrl: "getapplied.vercel.app/import",
-    spaceNote: "201 rules · zero servers · runs entirely in the tab",
+    spaceNote: "219 rules · zero servers · runs entirely in the tab",
     leftArrowLabel: "open it",
     rightArrowLabel: "classify",
     microNote: "three layers · one gate · zero servers",
@@ -668,6 +690,6 @@ export const BACK_COVER = {
   colophon: [
     "Applied · System Card · Vol. 01",
     "Ayush Yadav · 2026 · all rights reserved",
-    "Applied is proprietary · model runs in-browser via ONNX",
+    "Applied is proprietary · classify at the source",
   ],
 } as const;

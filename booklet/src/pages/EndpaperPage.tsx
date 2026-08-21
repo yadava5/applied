@@ -113,7 +113,7 @@ export const EndpaperPage: React.FC<{
       >
         <Fact value="3" unit="layers" note="rules · e5 · SetFit" accent={COLORS.RULES_DEEP} />
         <Fact value="0.85" unit="gate" note="below it, a human decides" accent={COLORS.GATE_DEEP} first={false} />
-        <Fact value="22.8" unit="MB · in-browser" note="int8 ONNX · zero servers" accent={COLORS.E5_DEEP} first={false} />
+        <Fact value="22.8" unit="MB · browser build" note="int8 ONNX · withdrawn" accent={COLORS.E5_DEEP} first={false} />
       </div>
 
       {/* Kicker */}

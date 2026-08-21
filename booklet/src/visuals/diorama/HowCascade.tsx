@@ -6,7 +6,7 @@ import { SceneFrame, FlowChannel, Marker, iso } from "./primitives";
  * HOW — the 3-layer classifier cascade (the hero diorama). One envelope
  * enters at the top and threads down through three stacked isometric slabs:
  *
- *   L1 · RULES    201 regex rules      (cyan edge)
+ *   L1 · RULES    219 regex rules      (cyan edge)
  *   L2 · e5       pretrained e5 embeddings · cosine similarity (violet edge)
  *   L3 · SetFit   few-shot head        (green edge)
  *
