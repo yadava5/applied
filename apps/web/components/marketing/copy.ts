@@ -159,6 +159,54 @@ export const HERO = {
     "An interview invite lands at 2am, under sixty other things, and never surfaces again. Applied moves the row for you. No AI reads your mail, and the message body is never stored.",
 } as const;
 
+/**
+ * THE LINK PREVIEW: the words drawn into `public/og.png`, plus the accessible
+ * name `app/layout.tsx` gives it.
+ *
+ * THEY LIVE HERE BECAUSE PIXELS ARE OUTSIDE EVERY GATE. This is the fourth
+ * instance of the one shape that keeps beating the copy sweeps: text that
+ * reaches a reader from outside the landing's module set. First a filmed
+ * component, where the words were inside a video. Then `app/layout.tsx`,
+ * which Next composes and no import walk reaches. Then `BetaBanner.HIDE_ON`,
+ * a plain string list no import graph can see. Now an image. A card built
+ * from strings typed into a render script would repeat it exactly: no scan
+ * can read a PNG, so the only defence is that the words are drawn FROM a
+ * scanned file. `scripts/og/render.mjs` imports these and draws nothing else.
+ *
+ * The same argument makes `alt` a member of this object rather than a literal
+ * in `layout.tsx`. Until 2026-08-21 that alt described a DIFFERENT PICTURE:
+ *
+ *   "Applied system-card cover: the Applied wordmark over a dark field of
+ *    envelope icons on a confidence line, tagline 'The inbox already holds
+ *    the verdict. Classify it at the source.'"
+ *
+ * The card was the System Card's cover, so the one image every share, every
+ * search result and every message preview carried announced Applied as a
+ * project document, in a serif the product does not use, over a byline the
+ * footer had already dropped on 2026-08-19. A screen-reader user got the
+ * volume number. Binding the description to the drawn strings is what stops
+ * the two drifting apart again.
+ *
+ * `line` is `HERO.headline` deliberately, not a preview-specific rewrite. The
+ * sentence a stranger meets before the click and the first sentence they meet
+ * after it are then the same sentence, which is the cheapest continuity a
+ * preview can offer.
+ */
+export const OG = {
+  wordmark: "Applied",
+  line: HERO.headline,
+  /** The two auditable claims, in the same two clauses the OpenGraph
+   *  description uses. Retention, not request: see the privacy page. */
+  foot: "No AI reads your mail. The message body is never stored.",
+  /**
+   * WRITTEN AGAINST THE RENDER, not against the intent. The first draft said
+   * "over the rising three point mark" and the composition puts the wordmark
+   * and the mark side by side. An alt describing a picture that is nearly the
+   * shipped one is the same defect as the alt this replaces, only smaller.
+   */
+  alt: "Applied: the wordmark at top left, and at right a mark of three points climbing a set of lanes with the last one filled, above the words 'You don't lose the offer. You lose the email.'",
+} as const;
+
 /** The board embed's provenance line — shown with every live mount. */
 export const BOARD = {
   /**
@@ -563,27 +611,35 @@ export const CLAIMS = {
     chipPreviewNote: "reads as a routine acknowledgment. Wrong.",
     chipBodyNote: "the invitation, found",
     /**
-     * Shown ONLY when the engine returns the same confidence for both runs,
-     * and the component decides that by comparing the two live results — it
-     * is never assumed. Today it does: preview scores applied 6 against
-     * interview 0, the whole body scores interview 9 against applied 6, and
-     * both land in the same band (`rulesLayer` maps score and margin onto
-     * 0.6 / 0.7 / 0.8 / 0.9 / 0.95, so a wider gap and a stronger winner can
-     * share a number).
+     * The preview chip's note WHEN BOTH READINGS RETURN THE SAME CONFIDENCE,
+     * chosen by comparing the two live results rather than assumed. Today
+     * they do tie: the preview scores applied 6 against interview 0, the
+     * whole body scores interview 9 against applied 6, and both land in the
+     * same band (`rulesLayer` maps score and margin onto 0.6 / 0.7 / 0.8 /
+     * 0.9 / 0.95, so a wider gap and a stronger winner can share a number).
      *
      * The owner read the two 0.90s as a defect on 2026-08-21, and a visitor
      * would too: identical figures beside "Wrong." and "found" look like the
      * page contradicting itself. The figures are right. What was missing is
      * that being equally confident and still wrong is the ENTIRE argument for
-     * reading the whole body — a wrong verdict that announced its own doubt
-     * would need no second reading.
+     * reading the whole body, because a wrong verdict that announced its own
+     * doubt would need no second reading.
+     *
+     * WHY IT IS A LONGER NOTE AND NOT ITS OWN LINE. The first fix was a
+     * sentence in its own paragraph under the chips, and it broke the fold
+     * gate at 1024x600 by exactly 36.875px: the paragraph measured 42.3px
+     * plus an 8px grid gap, and the exhibit's headroom was 13.4px. No
+     * separate line fits, at any wording. This chip's note is already the
+     * tallest thing in its row at two lines of 16px, and 193px of note holds
+     * 60 characters in those two lines (measured on the production build
+     * against ten candidate strings), so saying it HERE costs nothing at all.
+     * The right place for the sentence was the figure it is about.
      *
      * Written to survive `rules.json` moving: if the two ever land on
-     * different numbers this line simply stops rendering, and nothing here
-     * states a figure that would then be stale.
+     * different numbers the note reverts on its own, and nothing here states
+     * a figure that would then be stale.
      */
-    chipTie:
-      "Both readings land on the same confidence, and one of them is wrong. That is what the second reading is for.",
+    chipPreviewNoteTied: "reads as a routine acknowledgment. Just as sure, and wrong.",
     tallyNote:
       "Two readings of one mail, and only the text differs. A phrase can only count toward a verdict if the reading can see it, which is why these two columns do not agree.",
   },

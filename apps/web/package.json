@@ -14,7 +14,8 @@
     "e2e:ui": "playwright test --ui",
     "api:gen": "../../scripts/generate_api_schema.sh",
     "api:gen:local": "../../scripts/generate_api_schema.sh",
-    "footage": "./scripts/footage/render.sh"
+    "footage": "./scripts/footage/render.sh",
+    "og": "node --experimental-strip-types --no-warnings scripts/og/render.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.3",

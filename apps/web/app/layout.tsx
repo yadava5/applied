@@ -5,6 +5,7 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { BetaBanner } from "@/components/beta/BetaBanner";
 import { BootOverlay } from "@/components/boot/BootOverlay";
+import { OG } from "@/components/marketing/copy";
 import { BOOT_INIT_SCRIPT } from "@/lib/boot/flag";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
@@ -39,6 +40,18 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+/**
+ * The name a link preview prints in bold above everything else, and until
+ * 2026-08-21 the OpenGraph and Twitter cards spent it on the bare word
+ * "Applied".
+ *
+ * That is a common English adjective. In a Slack unfurl or a LinkedIn feed it
+ * is the largest text on the card and it told the reader nothing, while the
+ * page title two lines away in the same document already carried the promise.
+ * There is no reason for the two to differ, so there is now one string.
+ */
+const SOCIAL_TITLE = "Applied · your inbox, made legible";
 
 export const metadata: Metadata = {
   // Absolute base so the relative og:image below resolves to a full https
@@ -80,13 +93,13 @@ export const metadata: Metadata = {
    * preview can carry, and it is the same call that took the maker's byline
    * out of the footer on 2026-08-19.
    */
-  title: { default: "Applied · your inbox, made legible", template: "%s · Applied" },
+  title: { default: SOCIAL_TITLE, template: "%s · Applied" },
   description:
     "Applied reads your job-search mail and moves each application forward for you, so an interview invite never sits unread under sixty other things.",
   openGraph: {
     type: "website",
     url: "https://getapplied.vercel.app",
-    title: "Applied",
+    title: SOCIAL_TITLE,
     description:
       "Applied reads your job-search mail and moves each application forward for you. No AI reads your mail, and the message body is never stored.",
     images: [
@@ -94,13 +107,18 @@ export const metadata: Metadata = {
         url: "/og.png",
         width: 1200,
         height: 630,
-        alt: "Applied system-card cover: the Applied wordmark over a dark field of envelope icons on a confidence line, tagline 'The inbox already holds the verdict. Classify it at the source.'",
+        // NOT a literal. `OG.alt` sits beside the strings the card is drawn
+        // from, so the description and the picture cannot drift apart again;
+        // the one it replaces described the System Card's cover, which had
+        // not been the shipped image's subject for some time. See the OG
+        // block in components/marketing/copy.ts.
+        alt: OG.alt,
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Applied",
+    title: SOCIAL_TITLE,
     description:
       "Applied reads your job-search mail and moves each application forward for you. No AI reads your mail, and the message body is never stored.",
     images: ["/og.png"],

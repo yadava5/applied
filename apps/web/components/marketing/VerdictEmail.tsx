@@ -231,11 +231,29 @@ export function VerdictEmail({
             on this exhibit that reads "the verdicts are open". */}
         <div data-verdict-chips className="min-h-0 overflow-hidden">
           <div className="grid gap-2 border-t border-line-soft px-4 py-3 sm:grid-cols-2">
+            {/* MEASURED, never assumed: the two runs are compared, and the
+                longer note is used only while they genuinely tie.
+                `rulesLayer` maps score and margin onto bands, so a stronger
+                winner with a narrower margin can share a number with a weaker
+                one — which is exactly today's case and reads as the page
+                contradicting itself until it is named. If the engine ever
+                separates them the note reverts on its own and no stale claim
+                is left behind.
+
+                IT IS A NOTE AND NOT A LINE OF ITS OWN because the exhibit has
+                13.4px of headroom at 1024x600 and a paragraph costs 50.3px;
+                see the copy.ts block for the measurement. This note is the
+                row's tallest element either way, so the longer wording is
+                free. */}
             <Chip
               source="preview only"
               category={fromPreview.category}
               confidence={fromPreview.confidence}
-              note={CLAIMS.verdict.chipPreviewNote}
+              note={
+                fromPreview.confidence === fromBody.confidence
+                  ? CLAIMS.verdict.chipPreviewNoteTied
+                  : CLAIMS.verdict.chipPreviewNote
+              }
             />
             <Chip
               source="whole body"
@@ -244,18 +262,6 @@ export function VerdictEmail({
               note={CLAIMS.verdict.chipBodyNote}
               fired
             />
-            {/* MEASURED, never assumed: the two runs are compared, and this
-                line exists only while they genuinely tie. `rulesLayer` maps
-                score and margin onto bands, so a stronger winner with a
-                narrower margin can share a number with a weaker one — which
-                is exactly today's case and reads as a contradiction until it
-                is named. If the engine ever separates them, this disappears
-                on its own and no stale figure is left behind. */}
-            {fromPreview.confidence === fromBody.confidence && (
-              <p className="text-[0.8125rem] leading-relaxed text-dim sm:col-span-2">
-                {CLAIMS.verdict.chipTie}
-              </p>
-            )}
           </div>
         </div>
       </div>
