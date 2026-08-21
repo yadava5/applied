@@ -4,6 +4,7 @@ import { classifyWithRules } from "@/lib/demo/rulesLayer";
 
 import { cn } from "@/lib/utils";
 import { buildTraceView, segments, segmentsBetween, type TraceView } from "./traceEvidence";
+import { CLAIMS } from "./copy";
 import { PREVIEW_CHARS, VERDICT_EMAIL } from "./verdictEmailData";
 
 /**
@@ -234,15 +235,27 @@ export function VerdictEmail({
               source="preview only"
               category={fromPreview.category}
               confidence={fromPreview.confidence}
-              note="reads as a routine acknowledgment. Wrong."
+              note={CLAIMS.verdict.chipPreviewNote}
             />
             <Chip
               source="whole body"
               category={fromBody.category}
               confidence={fromBody.confidence}
-              note="the invitation, found"
+              note={CLAIMS.verdict.chipBodyNote}
               fired
             />
+            {/* MEASURED, never assumed: the two runs are compared, and this
+                line exists only while they genuinely tie. `rulesLayer` maps
+                score and margin onto bands, so a stronger winner with a
+                narrower margin can share a number with a weaker one — which
+                is exactly today's case and reads as a contradiction until it
+                is named. If the engine ever separates them, this disappears
+                on its own and no stale figure is left behind. */}
+            {fromPreview.confidence === fromBody.confidence && (
+              <p className="text-[0.8125rem] leading-relaxed text-dim sm:col-span-2">
+                {CLAIMS.verdict.chipTie}
+              </p>
+            )}
           </div>
         </div>
       </div>

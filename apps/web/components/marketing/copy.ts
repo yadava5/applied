@@ -555,6 +555,35 @@ export const CLAIMS = {
     tallyLabel: "The tally behind each verdict",
     tallyPreview: "preview only",
     tallyBody: "whole body",
+    /**
+     * The two chip notes, which lived as string literals inside
+     * `VerdictEmail.tsx` until 2026-08-21. They are claims about what the
+     * reader is looking at, and claims live here.
+     */
+    chipPreviewNote: "reads as a routine acknowledgment. Wrong.",
+    chipBodyNote: "the invitation, found",
+    /**
+     * Shown ONLY when the engine returns the same confidence for both runs,
+     * and the component decides that by comparing the two live results — it
+     * is never assumed. Today it does: preview scores applied 6 against
+     * interview 0, the whole body scores interview 9 against applied 6, and
+     * both land in the same band (`rulesLayer` maps score and margin onto
+     * 0.6 / 0.7 / 0.8 / 0.9 / 0.95, so a wider gap and a stronger winner can
+     * share a number).
+     *
+     * The owner read the two 0.90s as a defect on 2026-08-21, and a visitor
+     * would too: identical figures beside "Wrong." and "found" look like the
+     * page contradicting itself. The figures are right. What was missing is
+     * that being equally confident and still wrong is the ENTIRE argument for
+     * reading the whole body — a wrong verdict that announced its own doubt
+     * would need no second reading.
+     *
+     * Written to survive `rules.json` moving: if the two ever land on
+     * different numbers this line simply stops rendering, and nothing here
+     * states a figure that would then be stale.
+     */
+    chipTie:
+      "Both readings land on the same confidence, and one of them is wrong. That is what the second reading is for.",
     tallyNote:
       "Two readings of one mail, and only the text differs. A phrase can only count toward a verdict if the reading can see it, which is why these two columns do not agree.",
   },
