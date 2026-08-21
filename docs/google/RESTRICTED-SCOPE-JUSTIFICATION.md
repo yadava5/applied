@@ -393,12 +393,20 @@ disclosed here rather than discovered:
   that package except the package itself, so no hosted request can reach the
   code that writes those columns.
 
-  Stated precisely, because an earlier draft of this document overstated it:
-  that is a fact about the import graph, verifiable by inspection, and **not**
-  an invariant a test enforces. `backend/tests/test_main_cloud.py` runs a
-  subprocess import-hygiene check, but over `keyring`, `aiosqlite`, `torch`,
-  `setfit` and two classifier submodules — it says nothing about
-  `email_clients`. The claim that it did was wrong and is withdrawn.
+  That is enforced rather than asserted, by
+  `test_cloud_app_does_not_import_the_desktop_email_clients`
+  (`backend/tests/test_main_cloud.py`). It imports the deployed app in a clean
+  subprocess and fails if any `jobtracker.email_clients` module has entered
+  `sys.modules`. The test then imports that package **on purpose** and requires
+  the same expression to find it — so a rename, a typo or a package that cannot
+  be imported at all fails the test rather than passing it, which is the way a
+  check of this shape usually rots.
+
+  Recorded because the correction matters: an earlier revision of this document
+  claimed that test already existed. It did not — the file guarded `keyring`,
+  `aiosqlite`, `torch`, `setfit` and two classifier submodules, and said nothing
+  about `email_clients`. The claim was written before the gate. The gate exists
+  now, and the sentence above is true as written.
 - **`training_data.body_text` is populated, and it does not hold a body.** It
   holds a copy of Gmail's snippet. The longest value across every row is 201
   characters. `test_body_is_never_persisted.py:714` pins it to the snippet by
