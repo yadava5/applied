@@ -86,7 +86,14 @@ export function ChangedRow({
   foot = "pointer",
 }: {
   email?: ReceiptEmail;
-  foot?: "pointer" | "bridge";
+  /**
+   * Which hand-off the foot carries. `"none"` is the descent's narrow-width
+   * placement (`ClaimsDescent`'s row phase): both pointers say where to look
+   * NEXT, and there the card is the thing being looked at — the phase's own
+   * wall label above it says what it is. The provenance line stays, because
+   * a fabricated board must declare itself wherever it appears.
+   */
+  foot?: "pointer" | "bridge" | "none";
 }) {
   const stage = movedStage(email);
 
@@ -104,9 +111,11 @@ export function ChangedRow({
           <span className="h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
           {PROVENANCE}
         </span>
-        <span aria-hidden className="text-xs text-dim">
-          {foot === "pointer" ? POINTER : BRIDGE}
-        </span>
+        {foot !== "none" && (
+          <span aria-hidden className="text-xs text-dim">
+            {foot === "pointer" ? POINTER : BRIDGE}
+          </span>
+        )}
       </figcaption>
     </figure>
   );

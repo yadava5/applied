@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { ChangedRow } from "./ChangedRow";
 import { NEW_TAB } from "./chrome";
 import { ARTIFACT, CLAIMS, DECISION, FOOTAGE, HELD, HELD_TAKE, KEPT, PRIVACY, REVIEW, ROW } from "./copy";
 import { CLIPS } from "./footage";
+import { VERDICT_EMAIL } from "./verdictEmailData";
 import { HeldExhibit } from "./HeldExhibit";
 import { ProductClip } from "./ProductClip";
 import { RailTake, type RailBeat } from "./RailTake";
@@ -56,9 +58,33 @@ import { VerdictTally } from "./VerdictTally";
  * Which exhibit rides which rail is decided by what it DOES: the two
  * artifacts that act out a story ride the take rails; the recordings — which
  * loop, and carry their own transport (`ProductClip`) — ride the constant
- * rails. Below `lg` stickiness would fight the reading flow, so each screen
- * carries an inline snapshot of its artifact at a legible state — a layout
- * decision, not a fallback.
+ * rails.
+ *
+ * BELOW `lg` THE PAGE IS A DOCUMENT, AND THAT IS A COMPOSITION, NOT A
+ * FALLBACK (2026-08-21). Stickiness would fight the reading flow in a single
+ * column, so there is no pin and no camera: each phase states its claim and
+ * carries ONE exhibit, once, at a state its column can actually hold. Three
+ * rules decide what that exhibit is, and each of them was a measured defect
+ * before it was a rule:
+ *
+ *   · ONE EXHIBIT PER PHASE, NOT ONE PER BEAT. A take's rungs are the same
+ *     artifact changing; flattened into flow they are the same artifact
+ *     REPEATED, which reads as a page that lost its place. The verdict
+ *     phase's two micro-beats rendered `raw` and `split` a screen apart, and
+ *     those two states differ by two chips and one rule's opacity.
+ *   · AN EXHIBIT MUST BE LEGIBLE AT THE WIDTH IT RENDERS AT. The three
+ *     recordings are composed for a 480 to 704px rail. From `sm` up the
+ *     inline column is wider than that (592px at 640, 718px at 768) and they
+ *     are better off than at 1024; below it they are 340px wide, the recorded
+ *     product's 11px type lands under 4px, and they are decoration that also
+ *     costs a phone three video fetches. They stop at `sm` (`inlineFrom`).
+ *   · A PHASE MAY LOSE ITS STAGING, NEVER ITS CLAIM. Where the copy points AT
+ *     the exhibit ("this is what that looks like"), a width without that
+ *     exhibit gets a witness of its own and the sentence written to it
+ *     (`ROW.bodyReceipt`), never the sentence written to the other one.
+ *
+ * And the bands are sized by their content there: the dvh pacing below is the
+ * PIN'S runway, so it starts at `lg` with the pin (`Claim`).
  *
  * SIZING (the owner's second edit, 2026-08-20 — "we have that much of space,
  * use it"): THE WHOLE SPREAD IS FLUID between the two widths he works at.
@@ -205,6 +231,7 @@ function Claim({
   label,
   children,
   inline,
+  inlineFrom,
   continued,
   paced = true,
 }: {
@@ -216,6 +243,17 @@ function Claim({
   children: React.ReactNode;
   /** The below-`lg` artifact snapshot for this screen, when it has one. */
   inline?: React.ReactNode;
+  /**
+   * The narrowest width the inline snapshot is worth rendering at. `"sm"` for
+   * the three recordings: the inline column is the viewport less the page
+   * gutter, so at 640 it is 592px — wider than the 576px rail the densest clip
+   * gets at 1024, and every clip on the page is legible from there up. Below
+   * it the same clip renders 340px wide, which puts the recorded product's
+   * 11px type under 4px (measured at 390 on the production build), and an
+   * exhibit nobody can read is not evidence. The wrapper carries the gate, not
+   * the clip, so a hidden snapshot spends no margin either.
+   */
+  inlineFrom?: "sm";
   /** A micro-beat of the claim above it: no eyebrow, no headline of its own,
    *  and shorter, because it carries one paragraph and a change of state
    *  rather than a new argument. */
@@ -231,12 +269,31 @@ function Claim({
   paced?: boolean;
 }) {
   return (
+    /* THE PACING IS THE PIN'S RUNWAY, SO IT STARTS WHERE THE PIN DOES. A
+       paced band is held to most of a viewport and centred in it because the
+       flow column is the rail's runway and a dvh band is what keeps the pin
+       share stable as viewports grow tall (the `paced` note above). Below
+       `lg` there is no rail, so every one of those dvh floors was scroll a
+       reader paid for nothing: four bands measured EXACTLY 60vh at 390 (the
+       floor, not the content), and the descent ran 6,950px of a 10,500px
+       page. Below `lg` the band is sized by what is in it, on a rhythm that
+       says where a phase starts: 56px above a phase opener, 24px above a
+       micro-beat, 32px below every band. So a micro-beat sits 56px from the
+       claim it continues and the next phase opens 88px AND a rule away —
+       the rule does most of that work, and the two gaps have to differ
+       enough that it is not doing all of it. Longhands on both sides of the
+       breakpoint deliberately: `py-16` is `padding-block`, and a shorthand
+       cannot be relied on to lose to a longhand set earlier in the sheet. */
     <div
       className={cn(
         "flex flex-col",
         paced
-          ? cn("justify-center py-16", continued ? "min-h-[60vh]" : "min-h-[80vh]")
-          : "py-20",
+          ? cn(
+              continued ? "pt-6" : "pt-14",
+              "pb-8 lg:justify-center lg:pb-16 lg:pt-16",
+              continued ? "lg:min-h-[60vh]" : "lg:min-h-[80vh]",
+            )
+          : "pb-8 pt-8 lg:pb-20 lg:pt-20",
       )}
     >
       {eyebrow && <p className="label-caps mb-4">{eyebrow}</p>}
@@ -259,7 +316,7 @@ function Claim({
         {children}
       </div>
       {inline && (
-        <div className="mt-8 lg:hidden">
+        <div className={cn("mt-8 lg:hidden", inlineFrom === "sm" && "hidden sm:block")}>
           {label && <p className="label-caps mb-2">{label}</p>}
           {inline}
         </div>
@@ -376,12 +433,18 @@ export function ClaimsDescent() {
               and runs to the kept record on its own clock. -------------- */}
       <div className="mx-auto grid w-full max-w-[85rem] gap-x-16 px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,var(--rail))]">
         <div>
-          <Claim
-            eyebrow={CLAIMS.verdict.eyebrow}
-            headline={CLAIMS.verdict.headline}
-            label={ARTIFACT.labels[0]}
-            inline={<VerdictEmail stage="raw" />}
-          >
+          {/* NO INLINE SNAPSHOT ON THE FIRST MICRO-BEAT, and it is the
+              defect the below-`lg` pass was opened for. `raw` and `split`
+              differ by exactly two things — the two verdict chips, and the
+              opacity of the preview rule — so below `lg`, where the ladder
+              has no pin to run on, the two beats rendered the SAME 500px of
+              email one screen apart and a phone reader met the same exhibit
+              twice without being able to tell it was meant to be one thing
+              changing. What `raw` teaches is where Gmail stops reading, and
+              `split` draws that same rule at full strength while also
+              carrying what the stopping costs. One exhibit, the more
+              demonstrative one, and the claim below is untouched. */}
+          <Claim eyebrow={CLAIMS.verdict.eyebrow} headline={CLAIMS.verdict.headline}>
             <p>{CLAIMS.verdict.raw}</p>
           </Claim>
 
@@ -501,6 +564,7 @@ export function ClaimsDescent() {
             <Claim
               eyebrow={DECISION.eyebrow}
               headline={DECISION.headline}
+              inlineFrom="sm"
               inline={
                 <ProductClip
                   stack
@@ -600,22 +664,48 @@ export function ClaimsDescent() {
             </div>
           </div>
           <div>
+            {/* THE ONE PHASE THAT MAY NOT LOSE ITS EXHIBIT. Its copy is
+                deictic — "this is what that looks like" — so a width where
+                the recording does not render needs something for "this" to
+                be. Below `sm` that is the receipt for the descent's OWN
+                mail: the invitation the reader has just watched two verdicts
+                disagree over, filed, with the move it produced printed on
+                it. Live, like every other narrow-width exhibit here — the
+                stage chip is `classifyWithRules` at render, not a typed
+                word — and legible at 342px, which the recording is not.
+                `ROW.bodyReceipt` is the claim written to that witness. */}
             <Claim
               eyebrow={ROW.eyebrow}
               headline={ROW.headline}
               inline={
-                <ProductClip
-                  stack
-                  clip={CLIPS.oneLetter}
-                  name={FOOTAGE.letter.name}
-                  caption={FOOTAGE.letter.caption}
-                />
+                <>
+                  <div className="hidden sm:block">
+                    <ProductClip
+                      stack
+                      clip={CLIPS.oneLetter}
+                      name={FOOTAGE.letter.name}
+                      caption={FOOTAGE.letter.caption}
+                    />
+                  </div>
+                  <div className="sm:hidden">
+                    <p className="label-caps mb-2">{ROW.receipt}</p>
+                    <ChangedRow email={VERDICT_EMAIL} foot="none" />
+                  </div>
+                </>
               }
             >
-              <p>{ROW.body}</p>
+              {/* One wrapper, two widths: a bare pair of siblings would make
+                  the claim column's `space-y-4` pay a gap for whichever one
+                  is not rendering. */}
+              <div>
+                <p className="hidden sm:block">{ROW.body}</p>
+                <p className="sm:hidden">{ROW.bodyReceipt}</p>
+              </div>
             </Claim>
             <Claim continued>
-              <p>{ROW.aside}</p>
+              <p>
+                {ROW.aside} <span className="hidden sm:inline">{ROW.trail}</span>
+              </p>
               <p className="text-strong">{ROW.payoff}</p>
             </Claim>
           </div>
@@ -636,6 +726,7 @@ export function ClaimsDescent() {
             <Claim
               eyebrow={PRIVACY.eyebrow}
               headline={PRIVACY.headline}
+              inlineFrom="sm"
               inline={
                 <ProductClip
                   stack

@@ -823,8 +823,32 @@ export const ROW = {
   headline: "The mail becomes the move.",
   body:
     "An assessment invitation, already read, and the row it left behind: already sitting in the board's assessment group, carrying the deadline the message named. Applied moves the row for you, and this is what that looks like.",
+  /**
+   * THE SAME CLAIM WITH A DIFFERENT WITNESS, for the narrowest widths, where
+   * the recording does not render (`ClaimsDescent`'s `inlineFrom`) and this
+   * phase's exhibit is the receipt for the descent's own mail instead.
+   *
+   * `body` above is deictic: "this is what that looks like" points at the
+   * recording, and every specific in it — an assessment invitation, the
+   * assessment group, the deadline the message named — is a description of
+   * that clip's frames. Rendered where no clip renders, it describes an
+   * exhibit that is not there. This one describes the one that is: the
+   * invitation the reader has already watched two verdicts disagree over, and
+   * the row it moved. The deadline is NOT claimed here, because the receipt
+   * does not carry one. Same claim, one witness each, neither borrowed.
+   */
+  bodyReceipt:
+    "The same invitation, already read, and the row it left behind: out of applied and into the board's interviewing group, on what the message said. Applied moves the row for you, and this is what that looks like.",
+  /** The receipt's wall label, the device every below-`lg` snapshot on this
+   *  page carries. It names the artifact, which is what a wall label owes the
+   *  reader (see `KEPT.label` for the same correction). */
+  receipt: "The row that mail left behind",
   aside:
-    "The mail that moved it stays one click away, behind the row it moved. That is the trail this recording opens on.",
+    "The mail that moved it stays one click away, behind the row it moved.",
+  /** The second half of `aside`, and it is SPLIT rather than duplicated: it
+   *  names the recording, so it renders exactly where the recording does. At
+   *  `sm` and up the paragraph reads as it always has, word for word. */
+  trail: "That is the trail this recording opens on.",
   /** The payoff, in the reader's own arithmetic. "Sixty threads" is the
    *  hero's "sixty other things" collected back up, which is what makes it a
    *  close rather than a new claim. */
