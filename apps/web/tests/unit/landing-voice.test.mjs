@@ -285,9 +285,27 @@ function isCodeLiteral(literal) {
   if (/\b(cubic-bezier|calc|translate[A-Z3]?|scaleX?|rgba?|oklch|oklab|matrix)\(/.test(literal)) {
     return true;
   }
-  // A class list: only lowercase words, digits and the separators Tailwind
-  // uses, and carrying at least one of those separators.
-  if (/^[a-z0-9\s:/[\]._-]+$/.test(literal) && /[/[]|-/.test(literal)) return true;
+  // A class list. THE TOKEN RATIO IS THE POINT, and the first version of this
+  // branch got it wrong in a way worth recording, because the wrong version
+  // looks obviously right: it accepted any all-lowercase string carrying a
+  // single hyphen anywhere. Four of the highest-risk banned terms are exactly
+  // that shape, so
+  //
+  //     "scored on a held-out set of ninety six emails"
+  //
+  // was classified as CSS and skipped, and the mutation proving it stayed
+  // green while the ban list contained the very word in the sentence. The
+  // eight mutations run at introduction all missed it: each one carried a
+  // capital or a full stop, so none of them had this shape.
+  //
+  // What actually separates Tailwind from prose is not "contains a hyphen",
+  // it is that ALMOST EVERY token carries a separator. `mt-4 text-muted` is
+  // 2 of 2; a sentence with a compound adjective in it is 1 of 9.
+  if (/^[a-z0-9\s:/[\]._-]+$/.test(literal)) {
+    const tokens = literal.trim().split(/\s+/);
+    const cssish = tokens.filter((t) => /[-:/[\]]/.test(t)).length;
+    if (cssish >= Math.max(1, Math.ceil(tokens.length * 0.6))) return true;
+  }
   return false;
 }
 

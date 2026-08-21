@@ -52,7 +52,13 @@ export function AccessPhase() {
           <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
             {ACCESS.headline}
           </h2>
-          <p className="mt-5 text-muted">{ACCESS.cap}</p>
+          {/* The ask's payoff sits ABOVE its evidence, which is the one place
+              on the page a payoff line may. Every other phase earns its payoff
+              from the exhibit beside it; this phase's evidence is the whole
+              page above it, so the sentence that says what a seat is FOR
+              belongs before the sentence about Google's cap. */}
+          <p className="mt-5 text-strong">{ACCESS.payoff}</p>
+          <p className="mt-4 text-muted">{ACCESS.cap}</p>
           <p className="mt-4 text-muted">{ACCESS.noSeat}</p>
           <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
             <a

@@ -99,7 +99,10 @@ export function AccessSection() {
         <h2 className="text-balance text-3xl font-medium tracking-tight text-strong sm:text-4xl">
           {ACCESS.headline}
         </h2>
-        <p className="mt-5 text-muted">{ACCESS.cap}</p>
+        {/* Above its evidence, for `AccessPhase`'s reason. The variants differ
+            in staging and never in what they claim. */}
+        <p className="mt-5 text-strong">{ACCESS.payoff}</p>
+        <p className="mt-4 text-muted">{ACCESS.cap}</p>
         <p className="mt-4 text-muted">{ACCESS.noSeat}</p>
         <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
           <a

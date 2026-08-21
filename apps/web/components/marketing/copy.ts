@@ -271,10 +271,18 @@ export const DECISION = {
    *  can account for. No new capability — the mail behind a row is the ROW
    *  phase's own exhibit, two phases down. */
   payoff: "So when a row moves on your board, you can see exactly what moved it.",
-  /** Not an imperative: the reader is not commanded off the page. The demo
-   *  is stated as a thing that exists and what it will do for them. */
+  /** Not an imperative: the reader is not commanded off the page. The demo is
+   *  stated as a thing that exists and what it will do for them.
+   *
+   *  SCOPED TO THE SANDBOX, not to the demo page. "That same reading" is a
+   *  sameness claim and it is true of exactly one component: the sandbox
+   *  calls `classifyWithRules` (SampleInbox.tsx:277), the same module the
+   *  landing's own `VerdictEmail` calls. The rest of the demo page shows
+   *  precomputed verdicts and, further down, a layer visualiser. A draft of
+   *  this line said "the demo page" and would have claimed sameness for all
+   *  of it. */
   proof:
-    "The demo page runs that same reading in your own browser, and you can hand it any mail you like.",
+    "The sandbox on the demo page runs that same reading in your own browser, and you can hand it any mail you like.",
 } as const;
 
 export const PRIVACY = {
