@@ -45,15 +45,50 @@ export const metadata: Metadata = {
   // URL for crawlers (LinkedIn/Slack/iMessage/Discord) — the correct
   // App Router idiom, and what makes "/og.png" become an absolute tag.
   metadataBase: new URL("https://getapplied.vercel.app"),
-  title: { default: "Applied — your inbox, made legible", template: "%s · Applied" },
+  /**
+   * THE MOST PUBLIC SENTENCES APPLIED HAS, and until 2026-08-21 they were the
+   * worst. This block renders into every search result, every link preview
+   * and the head of every page including the landing, and it read:
+   *
+   *   "Email-powered job application tracking. A 3-layer classifier — rules,
+   *    e5 embeddings, SetFit — reads your applications out of your inbox; the
+   *    rules stage alone scores 0.9791 macro-F1, CI-gated at 0.95."
+   *
+   * That is the architecture, two model names, a self-graded score, the CI
+   * threshold and two em dashes, in the one sentence Google prints. The whole
+   * landing was swept clean of exactly those things in #394 and this survived
+   * it, because a scan of the landing's import graph does not reach
+   * `app/layout.tsx` — the same shape as the internals that were surviving
+   * inside a video. `tests/unit/landing-voice.test.mjs` scans this file now.
+   *
+   * IT IS ALSO WHERE THE CATEGORY BELONGS. The landing deliberately refuses
+   * to open on "job tracker" (copy.ts says why: the category is a commodity
+   * with a graveyard behind it, and leading with it files Applied under every
+   * tool the reader already abandoned). But declining to LEAD with the
+   * category is not the same as never saying it, and here the reader meets it
+   * BEFORE the click, where it is orientation rather than positioning. So the
+   * description names the job search plainly and the page still opens on the
+   * loss.
+   *
+   * LENGTH IS A CONSTRAINT: Google truncates around 155 characters and the
+   * description is 143. The OpenGraph and Twitter cards get more room, so
+   * they carry the two auditable privacy claims as well.
+   *
+   * THE OG AND TWITTER DESCRIPTIONS USED TO OPEN "A Next.js job-search
+   * tool", which named the framework in the first three words of every link
+   * anyone shared. That is the loudest "somebody's side project" signal a
+   * preview can carry, and it is the same call that took the maker's byline
+   * out of the footer on 2026-08-19.
+   */
+  title: { default: "Applied · your inbox, made legible", template: "%s · Applied" },
   description:
-    "Email-powered job application tracking. A 3-layer classifier — rules, e5 embeddings, SetFit — reads your applications out of your inbox; the rules stage alone scores 0.9791 macro-F1, CI-gated at 0.95.",
+    "Applied reads your job-search mail and moves each application forward for you, so an interview invite never sits unread under sixty other things.",
   openGraph: {
     type: "website",
     url: "https://getapplied.vercel.app",
     title: "Applied",
     description:
-      "A Next.js job-search tool: connect Gmail, fetch your inbox, and a classifier turns it into a live dashboard of your real applications.",
+      "Applied reads your job-search mail and moves each application forward for you. No AI reads your mail, and the message body is never stored.",
     images: [
       {
         url: "/og.png",
@@ -67,7 +102,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Applied",
     description:
-      "A Next.js job-search tool: connect Gmail, fetch your inbox, and a classifier turns it into a live dashboard of your real applications.",
+      "Applied reads your job-search mail and moves each application forward for you. No AI reads your mail, and the message body is never stored.",
     images: ["/og.png"],
   },
 };
