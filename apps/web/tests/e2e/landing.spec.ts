@@ -183,25 +183,36 @@ const PIN_LEAD = 120;
  * which is inert on this page anyway); this suite's own run is owed and is
  * the canonical reading:
  *
- *   1024x600    0.570  0.354  0.371  0.543  0.756
- *   1024x768    0.547  0.469  0.335  0.647  0.768
- *   1512x600    0.583  0.312  0.371  0.486  0.725
- *   1512x949    0.531  0.524  0.325  0.686  0.763
- *   1512x1080   0.533  0.571  0.333  0.714  0.784
- *   1024x1120   0.525  0.643  0.321  0.765  0.812
+ *   1024x600    0.570  0.354  0.371  0.314  0.742
+ *   1024x768    0.547  0.469  0.335  0.357  0.768
+ *   1512x600    0.583  0.312  0.371  0.314  0.725
+ *   1512x949    0.531  0.524  0.325  0.415  0.764
+ *   1512x1080   0.533  0.571  0.333  0.492  0.784
+ *   1024x1120   0.525  0.643  0.321  0.566  0.812
  *
- * Reading the minimum FROM the table, nothing else: REVIEW 0.321 at
- * 1024x1120, then review 0.325 at 1512x949 — the viewport-tall take rail
- * over two paced beats, the same dvh-paced shape whose asymptote the old
- * decision rail measured at ~0.29 beyond range — with the RULES rail's
- * short edge now 0.312 at 1512x600: the fluid width grows that exhibit
- * ~57px at the wide-short corner (height-capped, so its transport keeps the
- * fold) while its band barely moves, which is the whole 0.341 → 0.312. A
+ * RE-RECORDED 2026-08-21 from the suite's own canonical run. The ROW
+ * column moved by -0.172 to -0.290 and nothing else moved at all (four
+ * columns identical to 0.000; retention at 1024x600 is -0.014, about 21px
+ * of `pinned`, inside one 24px PIN_STEP — stride granularity, not drift).
+ * The cause is known and intended: that rail's clip was re-captured at 4:3
+ * (1408x1056) to become the big left-hand box, so the exhibit grew taller
+ * and ate its own runway.
+ *
+ * Reading the minimum FROM the table, nothing else: RULES 0.312 at
+ * 1512x600, then ROW 0.314 at two corners, then review 0.321 at 1024x1120.
+ * The rules rail's short edge is 0.312 because the fluid width grows that
+ * exhibit ~57px at the wide-short corner (height-capped, so its transport
+ * keeps the fold) while its band barely moves. The row rail arrives second
+ * for the recapture reason above, and it did not appear in this sentence
+ * at all until the canonical run put it there. A
  * caution that is now part of this table's method: this prose has named
- * the wrong corner THREE times, most recently when the previous staging's
- * design-side walk put its minimum at 1024x1120 while the suite's own
- * canonical run put it at 1512x1080 (review, 0.333) — the two instruments
- * agree to ~0.01 and that is enough to move the argmin between corners. So
+ * the wrong corner FOUR times now. The fourth: after the 4:3 recapture the
+ * design-side walk reported "row 0.314/0.415, others within 0.02" and did
+ * not re-record the table, so this prose kept naming review as the minimum
+ * while a whole column sat stale by up to 0.290 and the true argmin had
+ * already moved to rules. The lesson is not "measure more carefully", it
+ * is that a summary sentence and the table under it drift apart the moment
+ * one is updated without the other. So
  * the sentence above is derived from the table each time the table is
  * re-measured, never carried forward, and the corner it names is a summary
  * of THIS table, not a fact about the page. The floor keeps more clearance
@@ -693,64 +704,78 @@ test.describe("landing (/)", () => {
    * presses stayed negative — this gate reds alone. Restored and watched
    * green the same way (gaps -20 / -153 / -38 / -31 at 1024x600).
    */
-  test("every press lands inside the frame: the camera frames what the pointer clicks", async ({
-    page,
-  }) => {
-    await page.setViewportSize(DESKTOP_1024);
-    await page.addInitScript(() => {
-      interface Press {
-        label: string;
-        gap: number;
-      }
-      const presses: Press[] = [];
-      (window as unknown as { __presses: Press[] }).__presses = presses;
-      document.addEventListener(
-        "pointerdown",
-        (event) => {
-          // The visitor's hand is trusted; the take's pointer is not. Only
-          // the synthesized presses are this gate's subject.
-          if (event.isTrusted) return;
-          const el = event.target instanceof HTMLElement ? event.target : null;
-          const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
-          if (!el || !frame || !frame.contains(el)) return;
-          const r = el.getBoundingClientRect();
-          const f = frame.getBoundingClientRect();
-          const gap = Math.max(
-            f.left - r.left,
-            r.right - f.right,
-            f.top - r.top,
-            r.bottom - f.bottom,
-          );
-          presses.push({
-            label: el.getAttribute("aria-label") ?? (el.textContent ?? "").slice(0, 40),
-            gap: Math.round(gap * 10) / 10,
-          });
-        },
-        true,
+  /**
+   * BOTH VIEWPORTS, because the exempt one is not the one that matters.
+   * The gate ran at 1024x600 alone for a commit. At 1024x1120 the whole
+   * board fits and the camera provably never pans, so containment there is
+   * structural rather than earned — but 1512x949, the owner's own screen,
+   * is neither exempt nor was it gated, and the camera demonstrably travels
+   * there. Canonical gaps: -20 / -153 / -38 / -31 at 1024x600, and
+   * -20 / -191 / -230 / -124.5 at 1512x949.
+   */
+  for (const [pressLabel, pressViewport] of [
+    ["1024x600", DESKTOP_1024],
+    ["1512x949", DESKTOP_1512],
+  ] as const) {
+    test(`every press lands inside the frame at ${pressLabel}: the camera frames what the pointer clicks`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(pressViewport);
+      await page.addInitScript(() => {
+        interface Press {
+          label: string;
+          gap: number;
+        }
+        const presses: Press[] = [];
+        (window as unknown as { __presses: Press[] }).__presses = presses;
+        document.addEventListener(
+          "pointerdown",
+          (event) => {
+            // The visitor's hand is trusted; the take's pointer is not. Only
+            // the synthesized presses are this gate's subject.
+            if (event.isTrusted) return;
+            const el = event.target instanceof HTMLElement ? event.target : null;
+            const frame = document.querySelector<HTMLElement>("[data-cam-scale]");
+            if (!el || !frame || !frame.contains(el)) return;
+            const r = el.getBoundingClientRect();
+            const f = frame.getBoundingClientRect();
+            const gap = Math.max(
+              f.left - r.left,
+              r.right - f.right,
+              f.top - r.top,
+              r.bottom - f.bottom,
+            );
+            presses.push({
+              label: el.getAttribute("aria-label") ?? (el.textContent ?? "").slice(0, 40),
+              gap: Math.round(gap * 10) / 10,
+            });
+          },
+          true,
+        );
+      });
+      await page.goto("/");
+      await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+      // The whole take, at authored tempo: the last narration line is the
+      // script's own "done", and every press has happened by the time it shows.
+      const act = theAct(page);
+      await expect(act.strip).toHaveText(ACT.narration[6], { timeout: 45_000 });
+
+      const presses = await page.evaluate(
+        () => (window as unknown as { __presses: { label: string; gap: number }[] }).__presses,
       );
-    });
-    await page.goto("/");
-    await expect(page.getByTestId("pipeline-board")).toBeVisible();
-
-    // The whole take, at authored tempo: the last narration line is the
-    // script's own "done", and every press has happened by the time it shows.
-    const act = theAct(page);
-    await expect(act.strip).toHaveText(ACT.narration[6], { timeout: 45_000 });
-
-    const presses = await page.evaluate(
-      () => (window as unknown as { __presses: { label: string; gap: number }[] }).__presses,
-    );
-    expect(
-      presses.length,
-      `only ${presses.length} synthesized press(es) were recorded — the listener measured little or nothing, so zero violations is not evidence`,
-    ).toBeGreaterThanOrEqual(4);
-    for (const press of presses) {
       expect(
-        press.gap,
-        `"${press.label}" was pressed ${press.gap}px outside the frame — the camera did not frame the press before the pointer landed it`,
-      ).toBeLessThanOrEqual(1);
-    }
-  });
+        presses.length,
+        `only ${presses.length} synthesized press(es) were recorded — the listener measured little or nothing, so zero violations is not evidence`,
+      ).toBeGreaterThanOrEqual(4);
+      for (const press of presses) {
+        expect(
+          press.gap,
+          `"${press.label}" was pressed ${press.gap}px outside the frame — the camera did not frame the press before the pointer landed it`,
+        ).toBeLessThanOrEqual(1);
+      }
+    });
+  }
 
   /**
    * THE CAMERA IS SEEDED AND IT NEVER CUTS. Two of the three clauses the
@@ -780,23 +805,45 @@ test.describe("landing (/)", () => {
    * longer exists. Its mutation evidence lives in git history with the
    * machinery (`Director.brace`, `filteredCover`, `COVER_MAX`).
    *
-   * WHAT THE NUMBERS READ NOW, measured on the recut (design-side twin,
-   * production build, 2026-08-21): scale displacement is exactly 0.000 at
-   * both viewports — `data-cam-scale` is the constant 1.000 by contract —
-   * and the pan bound is what still does the work. The per-viewport scale
-   * bounds are kept at their zoom-era values (0.18 / 0.115) deliberately:
-   * they are ceilings a scale-locked camera sits 100% under, and any
-   * reading above 0.0 at all now means a zoom came back without this
-   * docblock hearing about it.
+   * THE SCALE BOUND IS ZERO, and the zoom-era ceilings (0.18 / 0.115) are
+   * gone. They were kept for one commit on the reasoning that a
+   * scale-locked camera sits 100% under them, which was true and useless:
+   * canonical measurement reads scale displacement of exactly 0.0000 at
+   * both viewports, so a ceiling of 0.18 would have let a returning zoom
+   * of up to 0.18 per frame through in silence. The docblock claimed "any
+   * reading above 0.0 at all now means a zoom came back" while the
+   * assertion said otherwise; the assertion was wrong, and this is what
+   * that sentence always meant. `data-cam-scale` is the constant 1.000 by
+   * contract, so the honest assertion is equality.
+   *
+   * THE PAN BOUND IS NOW TWO ASSERTIONS, because a single ceiling went
+   * vacuous at one corner. At 1024x1120 the whole board fits the frame and
+   * the minimal-move camera correctly never stirs: canonical reads
+   * maxPanStep of exactly 0.0 over 1970 frames, so `<= 100` was comparing
+   * zero against a hundred — a check that cannot fail, introduced by the
+   * recut itself. That corner now asserts the property it actually has
+   * (the camera does not move at all), and 1512x949, where the camera
+   * demonstrably does pan, asserts BOTH that it moved and that it never
+   * jumped. `pans` in the tuple is which contract the shot is under.
+   *
+   * AND THE WATCHER HAS A POSITIVE CONTROL AT LAST. Mutating its
+   * camera-finding predicate so it could never locate the element was
+   * measured GREEN on all three assertions across 1972 samples: `unseeded`
+   * is false when `camera` is null, and the displacement loop `continue`s
+   * on a null scale, so a watcher that measured nothing passed. That hole
+   * predates the recut and is the same one closed in the void watcher.
+   * `located` is the fix, and it is a RATIO for the reason recorded there:
+   * a bare frame count floors the runner's frame rate, which has nothing
+   * to do with the defect.
    *
    * TWO VIEWPORTS, unchanged reasoning: every camera number is a function
    * of the frame's dimensions, and the fluid composition widens the frame
    * by up to ~208px above 1280 — 1512x949 measures the camera on a width
    * where 1024 contributes nothing.
    */
-  for (const [label, viewport, maxStep] of [
-    ["1024x1120", DESKTOP_1024_TALL, 0.18],
-    ["1512x949", DESKTOP_1512, 0.115],
+  for (const [label, viewport, pans] of [
+    ["1024x1120", DESKTOP_1024_TALL, false],
+    ["1512x949", DESKTOP_1512, true],
   ] as const) {
     test(`the camera is seeded and continuous at ${label}`, async ({ page }) => {
       await page.setViewportSize(viewport);
@@ -856,6 +903,14 @@ test.describe("landing (/)", () => {
       );
 
       // 1 — SEEDED: no frame ever renders the camera untransformed.
+      // The watcher's own positive control, before anything it measured is
+      // trusted. See the docblock: a blind watcher passed all three.
+      const located = samples.filter((r) => r.s !== null).length;
+      expect(
+        located,
+        `the watcher located the camera on ${located} of ${samples.length} sample(s) — it measured nothing, so its zeroes are not evidence`,
+      ).toBeGreaterThan(samples.length * 0.8);
+
       const unseeded = samples.filter((r) => r.unseeded).length;
       expect(
         unseeded,
@@ -877,12 +932,28 @@ test.describe("landing (/)", () => {
       }
       expect(
         maxScaleStep,
-        `the camera's scale jumped ${maxScaleStep.toFixed(3)} between two frames, over this shot's ${maxStep} — a cut, not a move (reframe's absorb)`,
-      ).toBeLessThanOrEqual(maxStep);
-      expect(
-        maxPanStep,
-        `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
-      ).toBeLessThanOrEqual(100);
+        `the camera's scale moved ${maxScaleStep.toFixed(4)} — the oner is scale-locked at 1.000, so any movement at all is a zoom coming back`,
+      ).toBe(0);
+      if (pans) {
+        // The camera demonstrably travels here, so both halves are real: it
+        // moved, and it never jumped. Canonical readings run 1.9 to 4.1px.
+        expect(
+          maxPanStep,
+          `the camera never panned at this viewport — the pan bound below has nothing to measure, so its pass is not evidence`,
+        ).toBeGreaterThan(0);
+        expect(
+          maxPanStep,
+          `the camera jumped ${maxPanStep.toFixed(0)}px between two frames — a cut, not a move (reframe's absorb)`,
+        ).toBeLessThanOrEqual(100);
+      } else {
+        // The board fits the frame here, so the minimal-move camera should
+        // never stir. Asserting the property it HAS beats a ceiling it sits
+        // infinitely far under.
+        expect(
+          maxPanStep,
+          `the camera panned ${maxPanStep.toFixed(1)}px at a viewport where the whole board fits the frame — minimal-move means it should not have stirred`,
+        ).toBe(0);
+      }
     });
   }
 
