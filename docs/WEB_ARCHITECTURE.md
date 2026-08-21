@@ -54,15 +54,24 @@ What used to be the divergence:
   email+password for a JWT which is then attached as
   `Authorization: Bearer <JWT>` on every request to the cloud
   FastAPI backend.
-- **Token format.** HS256 JWT signed with `SUPABASE_JWT_SECRET` (the
-  project-wide Supabase signing key, configured as
-  `JOBTRACKER_SUPABASE_JWT_SECRET` on Vercel). Supabase default
+- **Token format.** A Supabase JWT, signed either ES256 with the
+  project's asymmetric signing key (the default for projects created
+  since 2025, and what this project uses) or HS256 with the shared
+  secret (`JOBTRACKER_SUPABASE_JWT_SECRET` on Vercel). Supabase default
   claims: `sub` (UUID of `auth.users.id`), `aud` = `"authenticated"`,
   plus `exp` / `iat` / `role`.
 - **Verification.** `backend/jobtracker/auth/supabase_jwt.py` decodes
-  the token with `pyjwt[crypto]`, pinned to `algorithms=["HS256"]`
-  (rejects `alg: none` and `alg: RS256`), with
-  `audience="authenticated"` and `require=["exp", "sub", "aud"]`.
+  the token with `pyjwt[crypto]` against a two-algorithm whitelist. It
+  dispatches on the unverified header `alg`: `ES256` verifies against
+  the key fetched from `JOBTRACKER_SUPABASE_JWKS_URL`, anything else
+  against the shared secret with `algorithms=["HS256"]`. The header only
+  selects a fully-verified path and never relaxes verification, each
+  branch carries its own key material, and the list handed to
+  `jwt.decode` holds exactly one algorithm. So `alg: none` and
+  `alg: RS256` are still rejected, and an ES256 token is refused
+  outright when no JWKS URL is configured rather than falling back to
+  the secret. Verification also applies `audience="authenticated"` and
+  `require=["exp", "sub", "aud"]`.
   The `sub` claim is parsed as `uuid.UUID` and returned by the
   `current_user` dependency.
 - **Router contract, and its two exceptions.** Every router lives

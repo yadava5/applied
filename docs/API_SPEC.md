@@ -28,8 +28,10 @@ Cloud requests must include a Supabase-issued JWT:
 Authorization: Bearer <supabase-jwt>
 ```
 
-- **Signing.** HS256 with the Supabase project JWT secret
-  (`JOBTRACKER_SUPABASE_JWT_SECRET` on the backend).
+- **Signing.** ES256 with the project's asymmetric signing key, which is
+  what this project uses and what its JWKS publishes, or HS256 with the
+  shared secret (`JOBTRACKER_SUPABASE_JWT_SECRET` on the backend). The
+  verifier accepts those two and nothing else, one algorithm per branch.
 - **Claims.** The backend requires `sub` (user UUID), `aud` =
   `"authenticated"`, and a non-expired `exp`. Other Supabase
   claims (`role`, `iat`, `session_id`) are accepted but not checked.
