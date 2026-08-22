@@ -1,8 +1,18 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
+import { QuietEnvelope } from "@/components/boot/QuietEnvelope";
+import { QuietLine } from "@/components/boot/QuietLine";
 import { cn } from "@/lib/utils";
 import { BoardStill } from "./BoardStill";
 import { NEW_TAB } from "./chrome";
@@ -514,26 +524,89 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
   return near;
 }
 
+/** How many silhouette rows the skeleton stands, and the classify wave's
+ *  per-row step. The step is sized so the row count fits the 4.8 s period the
+ *  `boot-quiet-*` keyframes run on — the dashboard's loading.tsx documents
+ *  the rule: the delay is modular, so a step whose total overruns the period
+ *  puts the last rows back in phase with the first and the wave reads as two
+ *  fronts instead of one. 5 × 0.9 s = 4.5 s, inside the period with the same
+ *  slack the dashboard's nine rows keep. */
+const SKELETON_ROWS = 5;
+const SKELETON_ROW_STEP = "0.9s";
+
 /**
- * What the server renders into the reservation: the board's silhouette.
- * Pulses only for visitors who have not asked motion to stop. Exported for
- * the window act, whose stage fills the same reservation before its take's
- * chunk lands.
+ * What the server renders into the reservation: the board's silhouette, in
+ * the product's own pending vocabulary — the quiet form (`QuietEnvelope` /
+ * `QuietLine`, the same instrument the shipped app's loading skeletons use).
+ * The window act's whole claim is that this is the shipped app in a frame,
+ * so its first painted seconds must speak the pending state the app actually
+ * ships, not generic pulse blobs. Each row's envelope takes its turn under
+ * the rules hue with a verdict-dot flash; under reduced motion the wave
+ * freezes and the first row keeps its verdict as a still poster (the
+ * site-wide `boot-quiet-*` rules in globals.css own both behaviours).
+ *
+ * Hairline outlines, not `surface-2` plates: the fills were the "blank
+ * theme-colored blobs" the quiet form exists to replace, and the outlines
+ * read against the stage's `surface` ground the same way the loaded board's
+ * own `border-line-soft` cards do. Same boxes, same heights as the plates
+ * they replace — the header line boxes are `text-sm leading-5` struts (20px,
+ * the old `h-5`) and the rows keep `h-20` — so the fold budget is untouched.
+ * Exported for the window act, whose stage fills the same reservation before
+ * its take's chunk lands.
  */
 export function StageSkeleton() {
   return (
-    <div aria-hidden className="flex h-full flex-col gap-4 motion-safe:animate-pulse">
+    <div
+      aria-hidden
+      className="flex h-full flex-col gap-4"
+      style={{ "--boot-quiet-step": SKELETON_ROW_STEP } as CSSProperties}
+    >
+      {/* The board's head: the summary sentence left, the provenance pill
+          right — one text line each, stood in at its own strut height. */}
       <div className="flex items-center justify-between gap-4">
-        <div className="h-5 w-44 rounded bg-surface-2" />
-        <div className="h-5 w-56 rounded bg-surface-2" />
+        <span className="text-sm leading-5">
+          <QuietLine className="w-44 border-line-strong" />
+        </span>
+        <span className="text-sm leading-5">
+          <QuietLine className="w-56" />
+        </span>
       </div>
       <div className="flex min-h-0 flex-1 gap-5">
-        {/* `surface-2` plates: the stage ground is `surface` now (WindowAct,
-            #392), so a `surface` silhouette would vanish into it. */}
-        <div className="hidden w-56 shrink-0 rounded-xl bg-surface-2 lg:block" />
+        {/* The stage spine's box, outlined at its own geometry: a short run
+            of stage labels with counts, quiet until the real lens mounts. */}
+        <div className="hidden w-56 shrink-0 rounded-xl border border-line-soft p-4 lg:block">
+          <div className="flex flex-col gap-4">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="flex items-baseline justify-between gap-2">
+                <span className="label-caps">
+                  <QuietLine className="w-16" />
+                </span>
+                <span className="text-xs">
+                  <QuietLine className="w-4" />
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
         <div className="flex min-w-0 flex-1 flex-col gap-3">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="h-20 rounded-xl border border-line-soft bg-surface-2" />
+          {Array.from({ length: SKELETON_ROWS }, (_, i) => (
+            <div
+              key={i}
+              className="flex h-20 items-center gap-3 rounded-xl border border-line-soft px-4"
+            >
+              <QuietEnvelope index={i} lit={i === 0} className="h-[13px] w-[18px]" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm leading-snug">
+                  <QuietLine className="w-2/5 border-line-strong" />
+                </p>
+                <p className="text-[13px] leading-snug">
+                  <QuietLine className="w-1/4" />
+                </p>
+              </div>
+              {/* The row's stage control, outlined at the loaded control's
+                  own box. */}
+              <span className="h-6 w-24 shrink-0 rounded-md border border-line-soft" />
+            </div>
           ))}
         </div>
       </div>
