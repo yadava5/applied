@@ -56,6 +56,19 @@
  * (`child.stdout.length` was 116,487 and did contain the failing test's name).
  * The bytes died on the way out, not on the way in.
  *
+ * AND IT ONLY EVER FIRED WHEN THERE WAS EVIDENCE TO LOSE. The old script had no
+ * `process.exit()` on its success path — it fell off the end, Node drained the
+ * stream, and a green run kept its whole log. Every `process.exit()` sat on a
+ * failure path. Measured both ways on node:22/Linux, same tree, same gate:
+ *
+ *     suite passing:      3153 lines, 117,355 bytes, complete
+ *     one failing test:   1737 lines,  65,536 bytes, cut mid-word
+ *
+ * So the gate logged perfectly right up until the moment a log was worth
+ * having, which is why this survived so long: every green run looked like proof
+ * the output was fine. If you are ever tempted to reintroduce a bulk replay
+ * here, that asymmetry is the thing to remember.
+ *
  * THE CONTROL THAT MISSED IT. #433 records an earlier attempt to reproduce this
  * that came back clean — `writeSync` and `process.stdout.write` both produced
  * 696 lines with the failing name intact — and the theory was dropped as
