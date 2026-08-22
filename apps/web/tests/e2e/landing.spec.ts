@@ -509,6 +509,86 @@ async function centreOnText(page: Page, text: RegExp): Promise<void> {
   await page.waitForTimeout(150);
 }
 
+/** `top-[4.5rem]` at a 16px root — the offset the verdict rail pins to. */
+const PIN_TOP = 72;
+
+/**
+ * How many re-centres `parkOnPin` may spend, and the canary above it.
+ *
+ * MEASURED, not chosen: under `Emulation.setCPUThrottlingRate {rate:10}` — which
+ * is the only way this race reproduces off CI — 11 of 24 runs engaged the loop
+ * and EVERY ONE recovered 216 -> 72 in a single re-centre. Not one run ever
+ * needed a second. Unthrottled the loop never engages at all (0 attempts, 5/5).
+ *
+ * So the limit is generous on purpose and the canary is the real instrument.
+ * A bound of 10 against a worst observed 1 means the page could regress to
+ * needing 5 re-centres and CI would stay green with nobody the wiser — the loop
+ * would be quietly absorbing a worse race. `PARK_CANARY` is what makes that
+ * visible: it is not a correctness gate (the pin assertion is), it is the
+ * tripwire that says the race got harder.
+ */
+const PARK_LIMIT = 10;
+const PARK_CANARY = 3;
+
+/**
+ * Drive the descent until the verdict rail is ON its pin, and report where it
+ * ended up.
+ *
+ * ISSUE #453. `centreOnText` establishes an ABSOLUTE scroll offset and the test
+ * then assumes it holds until the assertion. It does not. The page mounts its
+ * board and descent from effects that run after `load`, so the first scroll is
+ * computed against a layout that is still growing — it asks for 1108 where the
+ * settled answer is ~2179 — and Chromium's scroll anchoring then drags the
+ * viewport back on its own. Where it stops is a race: 1682 / 1969 / 2179 / 2257
+ * across runs on one build. Three of those pass; at 1682 the rail is 144px
+ * behind its pin and every geometry read below it is taken against a page still
+ * in motion.
+ *
+ * That anchoring and not page code does the moving was established rather than
+ * assumed: `window.scrollTo/scroll/scrollBy`, `Element.prototype.scrollIntoView`
+ * and `Element.prototype.scrollTo` were patched before `goto` and every call
+ * logged with a stack. Across four runs there was exactly ONE scroll call in the
+ * whole page lifetime — the test's own.
+ *
+ * WHY THIS DRIVES A PREDICATE INSTEAD OF WAITING FOR THE PAGE TO SETTLE. The
+ * first attempt at this polled `document.documentElement.scrollHeight` until
+ * two samples agreed, and was INERT: measured under throttle it returned 7311
+ * where the settled height is 10029, because the mount staircase
+ * (600 → 2586 → 6236 → 7311 → 8958 → 10029) has a tread at 7311 that is
+ * 958–1070ms wide, and the helper only needed ~300ms of agreement. The scroll
+ * offset it produced was byte-identical to the unfixed one in 6/6 runs. Raising
+ * the sample count only tunes a magic number against machine speed and breaks
+ * again on a slower runner.
+ *
+ * So this settles on the quantity the assertion actually depends on — the
+ * rail's pin state — rather than on a proxy for it. Re-centring recomputes the
+ * offset against whatever layout now exists, so each attempt is aimed better
+ * than the last; by the time this is called the take is paused and the exhibit's
+ * height has settled, so the page is static and the position sticks.
+ *
+ * Bounded, and returns rather than throws: the caller asserts. A rail that will
+ * not come back to its pin is a real failure and must red with that said out
+ * loud, not be retried forever or swallowed here.
+ */
+async function parkOnPin(
+  page: Page,
+  text: RegExp,
+): Promise<{ y: number; attempts: number }> {
+  const railTop = () =>
+    page.evaluate(
+      (sel) => document.querySelector(sel)?.getBoundingClientRect().top ?? Number.NaN,
+      "[data-rail='verdict']",
+    );
+  let y = await railTop();
+  let attempts = 0;
+  while (attempts < PARK_LIMIT && !(y <= PIN_TOP + 1)) {
+    attempts += 1;
+    await centreOnText(page, text);
+    y = await railTop();
+  }
+  return { y, attempts };
+}
+
 async function settledHeight(page: Page, selector: string): Promise<number> {
   const read = () =>
     page.evaluate(
@@ -1575,6 +1655,47 @@ test.describe("landing (/)", () => {
     await expect(chips.body).toHaveCount(1);
 
     await settledHeight(page, "[data-rail='verdict'] > div");
+
+    // THE RAIL IS AT ITS PIN, asserted before anything is measured against it.
+    //
+    // #453 did not make the exhibit taller — its composed height was
+    // bit-identical in the passing and failing states (515.625 both). It made
+    // the exhibit RIDE 144px LOWER, because the sticky column was still 144px
+    // short of its `top-[4.5rem]` pin when the fold was read. Every geometry
+    // claim below this line is about the pinned state, so reading them against
+    // an unpinned rail measures a page that is still moving and reports it as a
+    // design defect.
+    //
+    // `pinProgress` lives inside `RailTake` and is not in the DOM, but the pin
+    // is directly observable: pinned means the rail's top IS the sticky offset.
+    // Measured 72 pinned, 216 not.
+    //
+    // This is a separate failure from the one below it and says so, rather than
+    // folding into the fold message. The take is paused and the height has
+    // settled by now, so the page is static: an unpinned rail here is the
+    // instrument having lost its position, not the design being wrong.
+    const parked = await parkOnPin(page, /^So Applied reads it twice/);
+    const railY = parked.y;
+    expect(
+      railY,
+      `the verdict rail is ${railY - PIN_TOP}px behind its sticky pin and would ` +
+        "not come back to it. The exhibit is therefore not in the state the " +
+        "fold guarantee is about, so measuring it would report the instrument's " +
+        "own scroll position as a design defect (#453). Do not 'fix' this by " +
+        "moving the exhibit.",
+    ).toBeLessThanOrEqual(PIN_TOP + 1);
+    // The canary, and deliberately NOT the correctness gate above. Worst
+    // measured is 1 re-centre under a 10x CPU throttle; this reds well before
+    // the limit is reached, so a race that has grown harder is seen while the
+    // test is still green rather than after it starts failing.
+    expect(
+      parked.attempts,
+      `it took ${parked.attempts} re-centres to park the rail on its pin ` +
+        `(worst measured is 1, under a 10x CPU throttle). The page still ` +
+        "parked, so this is not a broken fold — it is the scroll race of #453 " +
+        "having got materially worse, and the loop absorbing it silently is " +
+        "exactly what this exists to prevent.",
+    ).toBeLessThanOrEqual(PARK_CANARY);
 
     const provenance = rail.self.getByText(PROVENANCE);
     await expect(provenance).toHaveCount(1);
