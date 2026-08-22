@@ -894,6 +894,78 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     });
   }
 
+  /**
+   * ONE ATS THREAD, SEVERAL APPLICATIONS — issue #454.
+   *
+   * The review queue keys on (conversation, application) rather than on the
+   * conversation alone, so it legitimately holds rows whose SUBJECT and SENDER
+   * are byte-identical: an applicant tracking system sends every
+   * acknowledgement for an employer under one subject from one no-reply
+   * address, and Gmail threads on subject plus sender. Two fixture seeds carry
+   * that shape.
+   *
+   * Which makes the ACCESSIBLE NAME load-bearing. `ReviewQueue`'s `sr-only`
+   * label exists because "three selects all announcing 'Classify this email'
+   * were indistinguishable to a screen reader"; identical subjects and senders
+   * are that defect returning, and the role is the only thing separating them.
+   *
+   * `?review=7` and not `?review=4`, which is what every other state here uses
+   * and is exactly why this needed writing: the fixture cycles its seeds, the
+   * two colliding ones are indices 5 and 6, and no route in this suite reached
+   * past index 3. The 5 -> 7 seed change was invisible to every assertion in
+   * the file — `toHaveCount(4)` returned the same four elements before and
+   * after it. Measured 2026-08-22.
+   */
+  test("one ATS thread: identical subjects, and every queue entry still asks its own question", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/demo/shell?review=7&queue=after");
+    await expect(pageHeading(page)).toBeVisible();
+
+    // The queue collapses past four, and the colliding pair sits beyond that.
+    await page.getByRole("button", { name: /show all 7/ }).click();
+    const labels = page.locator("#needs-classification label.sr-only");
+    await expect(labels).toHaveCount(7);
+
+    const names = await labels.allInnerTexts();
+    const normalized = names.map((t) => t.replace(/\s+/g, " ").trim());
+
+    // THE COLLISION FIRST, and the order is deliberate. The distinct-count
+    // assertion below can go red for a reason that has nothing to do with this
+    // test — the fixture cycles its seeds, so removing the Verkada pair makes
+    // indices 5 and 6 redraw seeds 0 and 1, and those repeats are themselves
+    // byte-identical (the label carries no date). Measured: that reads as
+    // "5 unique of 7" and never reaches the lines below. Asserting the shape
+    // exists before asserting it is separable makes the failure say which
+    // happened.
+    const collided = normalized.filter((t) => t.includes("Thank you for applying to Verkada"));
+    expect(
+      collided,
+      `the fixture no longer contains two entries sharing one subject and sender, ` +
+        `so this test measures nothing:\n${normalized.join("\n")}`,
+    ).toHaveLength(2);
+    expect(collided[0]).toContain("Backend Engineer, Alarms");
+    expect(collided[1]).toContain("Frontend Engineer - Access Control");
+
+    expect(
+      new Set(normalized).size,
+      `two queue entries announce the same thing:\n${normalized.join("\n")}`,
+    ).toBe(7);
+
+    // The role is on the visible row too, not only in the accessible name — a
+    // sighted reader faces the same two identical rows.
+    await expect(
+      page.getByText("Verkada · Frontend Engineer - Access Control"),
+    ).toBeVisible();
+
+    // The lock still holds with three more rows in the subtree; this is the
+    // #149 guard, which is what the seeds were added under.
+    const doc = await docHeights(page);
+    expect(doc.scroll).toBeLessThanOrEqual(doc.client + 1);
+    await expectNoHorizontalOverflow(page);
+  });
+
   test("light theme: still locked, still no horizontal overflow at 375", async ({ page }) => {
     // `jt-theme` is THEME_STORAGE_KEY (lib/theme.ts) — hardcoded here because
     // the e2e specs deliberately import nothing from the app source tree.
