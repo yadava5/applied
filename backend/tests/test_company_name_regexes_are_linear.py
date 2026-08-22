@@ -52,18 +52,62 @@ OLD_EMPLOYER_AT_SIGN = re.compile(r"@\s*(" + p._COMPANY_CAPTURE + r")\s*[!?.]*\s
 OLD_NAME_IS_ADDRESS = re.compile(r"^\S+@\S+\.\S+$")
 
 #: Long enough that the quadratic term dominates, short enough that the slow
-#: half of each test stays well under a second. At 5,000 the old ``_VIA_TAIL``
-#: takes ~415 ms and the new one ~0.2 ms, so the budget below has three orders
-#: of magnitude of headroom in the direction that could flake (a loaded runner
-#: only ever makes the SLOW assertion safer).
+#: half of each test stays well under a second.
 BLOWUP_N = 5_000
+
+#: What the NEW pattern must come in under. This is the guarantee the file
+#: exists to make, and it is an absolute number on purpose: a request pays wall
+#: time, not a ratio. A loaded runner only ever makes this assertion harder,
+#: which is the safe direction.
 BUDGET_MS = 50.0
 
-#: ``_NAME_IS_ADDRESS`` has the mildest of the three quadratics — it needs a
-#: longer string before the old pattern crosses the budget at all (45 ms at
-#: 5,000, 180 ms at 10,000). Sized so the control fails loudly if the pattern
-#: is ever quietly restored.
+#: What the CONTROL must see between the old pattern and the new one.
+#:
+#: THIS USED TO BE ``old_ms > BUDGET_MS`` AND THAT WAS MACHINE-DEPENDENT. The
+#: note here claimed "three orders of magnitude of headroom ... a loaded runner
+#: only ever makes the SLOW assertion safer". Both halves were wrong. The
+#: headroom is three orders of magnitude for the ``_VIA_TAIL`` cases and was
+#: generalised to all of them; measured, the old timings at ``BLOWUP_N`` are:
+#:
+#:     clean: whitespace run             414 ms
+#:     clean: name then whitespace       417 ms
+#:     name is address                   184 ms
+#:     employer at-sign                   87 ms   <-- 1.7x the budget
+#:     clean: open parens non-final       63 ms   <-- 1.3x the budget
+#:
+#: And it is a FAST runner, not a loaded one, that breaks a "this must be slow"
+#: assertion. On 2026-08-21 a GitHub runner ran the last two in 43.80 ms and
+#: 37.64 ms and both controls failed, on a PR that touches neither pattern.
+#:
+#: A RATIO cannot have that failure mode: both halves are timed on the same
+#: machine in the same run, so machine speed divides out. The ratios at
+#: ``BLOWUP_N`` are 1,112x (the smallest) to 30,898x, so 50x leaves more than
+#: twenty times the margin while still failing loudly — a restored quadratic
+#: brings the ratio to roughly 1.
+MIN_SLOWDOWN = 50.0
+
+#: ``_NAME_IS_ADDRESS`` has the mildest of the three quadratics and needs a
+#: longer string before the difference is unambiguous (45 ms at 5,000, 180 ms
+#: at 10,000). Sized so the control fails loudly if the pattern is ever quietly
+#: restored.
 ADDR_N = 10_000
+
+
+def _assert_control(label: str, old_ms: float, new_ms: float) -> None:
+    """The control: this comparison can still tell fast from slow.
+
+    Expressed as a RATIO because both halves are timed on the same machine in
+    the same run, so machine speed divides out — see :data:`MIN_SLOWDOWN` for
+    the flake this replaced.
+    """
+
+    ratio = old_ms / new_ms if new_ms > 0 else float("inf")
+    assert ratio > MIN_SLOWDOWN, (
+        f"{label}: the old pattern was only {ratio:.0f}x the new one "
+        f"({old_ms:.2f} ms vs {new_ms:.3f} ms). Below {MIN_SLOWDOWN:.0f}x this "
+        "comparison can no longer tell a quadratic from a linear one, so the "
+        "assertion below would pass whether or not the fix is still in place."
+    )
 
 
 def _elapsed_ms(fn, *args) -> float:
@@ -124,10 +168,7 @@ def test_clean_company_display_is_linear(label: str, payload: str) -> None:
     old_ms = _elapsed_ms(_old_clean_company_display, payload)
     new_ms = _elapsed_ms(p._clean_company_display, payload)
 
-    assert old_ms > BUDGET_MS, (
-        f"the OLD cleaner was supposed to blow up on {label} and took only "
-        f"{old_ms:.2f} ms — this test can no longer tell fast from slow"
-    )
+    _assert_control(label, old_ms, new_ms)
     assert new_ms < BUDGET_MS, f"{label}: {new_ms:.2f} ms, budget {BUDGET_MS} ms"
 
 
@@ -139,7 +180,7 @@ def test_employer_at_sign_is_linear() -> None:
     old_ms = _elapsed_ms(OLD_EMPLOYER_AT_SIGN.search, payload)
     new_ms = _elapsed_ms(p._EMPLOYER_AT_SIGN.search, payload)
 
-    assert old_ms > BUDGET_MS, f"OLD pattern took {old_ms:.2f} ms; control broken"
+    _assert_control("employer at-sign", old_ms, new_ms)
     assert new_ms < BUDGET_MS, f"{new_ms:.2f} ms, budget {BUDGET_MS} ms"
 
 
@@ -151,7 +192,7 @@ def test_name_is_address_is_linear() -> None:
     old_ms = _elapsed_ms(OLD_NAME_IS_ADDRESS.match, payload)
     new_ms = _elapsed_ms(p._NAME_IS_ADDRESS.match, payload)
 
-    assert old_ms > BUDGET_MS, f"OLD pattern took {old_ms:.2f} ms; control broken"
+    _assert_control("name is address", old_ms, new_ms)
     assert new_ms < BUDGET_MS, f"{new_ms:.2f} ms, budget {BUDGET_MS} ms"
 
 
