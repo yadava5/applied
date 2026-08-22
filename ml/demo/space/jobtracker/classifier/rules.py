@@ -464,7 +464,6 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"next steps.{0,30}hear from us",
             r"application.{0,20}(for|to).{0,40}(position|role|job)",
             r"applied.{0,20}(for|to).{0,40}(position|role|job)",
-            r"thank you for your interest.{0,40}(position|role|career)",
             r"application was sent to",
             r"application.{0,20}is in",
         ],

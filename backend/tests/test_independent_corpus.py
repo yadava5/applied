@@ -41,9 +41,9 @@ CORPUS_SIZE = 16780
 RECORDED = {
     "size": 16780,
     "companies": 9120,
-    "correct": 15358,
-    "wrong": 421,
-    "abstained": 1001,
+    "correct": 15359,
+    "wrong": 401,
+    "abstained": 1020,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
@@ -55,8 +55,8 @@ RECORDED = {
     # other 2 are `ats-relay-noise` minting cards from a profile-completion
     # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
     # here. See #455 and #451.
-    "auto_filed_wrong": 139,
-    "cards": 9179,
+    "auto_filed_wrong": 119,
+    "cards": 9177,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -88,7 +88,7 @@ RECORDED = {
     # One application over several cards. Was 0 until the observed families
     # landed; all 7 are #459 and none of them is an update on the wrong card,
     # which is the strictly worse failure and is still 0.
-    "splits": 7,
+    "splits": 5,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
@@ -202,7 +202,7 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-rejection",
-            42,
+            41,
             "REAL rejection wordings, half of them delivered as Gmail's snippet "
             "because that is what production receives when no body part can be "
             "extracted. Measured: these six wordings score 6/6 on the full body "
@@ -212,26 +212,12 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-pending",
-            63,
+            58,
             "a real 'please verify your email' and a real 'keep track of your "
             "application' both read as `applied`. The second is worse than a "
             "miscategorisation: it is a SECOND notification about an "
             "application that already has a card, so filing it as a fresh "
             "confirmation is what produces the 7 SPLITs. See #459.",
-        ),
-        (
-            "rejection-past-the-snippet",
-            14,
-            "ISSUE #455, and the most damaging instance of #451 found so far. "
-            "The full body says 'we have decided not to move forward' and the "
-            "classifier MATCHES it — the pattern is in `matched_patterns` — yet "
-            "files the message as `applied` at exactly the auto-file gate, "
-            "because `thank you for your interest.{0,40}(position|role|career)` "
-            "reaches the word 'Career' inside the JOB TITLE. The title names "
-            "WHICH application; it must not decide WHAT HAPPENED to it. Same "
-            "body with the title 'Embedded Software Engineer, Access Control' "
-            "scores `rejection` 0.75 and is queued, which is correct. The owner "
-            "has four open applications titled 'Early Career'.",
         ),
         (
             "ats-relay-noise",
@@ -304,15 +290,15 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # seeded, and several of these defects fire on one or the other. Measured
     # 42/42/44 and 63/66/61 at the three seeds.
     obs_rej = score.by_family["observed-rejection"]["wrong"]
-    assert 40 <= obs_rej <= 46, (
+    assert 40 <= obs_rej <= 44, (
         f"{obs_rej} real rejections stated as fact at this seed, outside the "
-        "measured band of 40..46. These are transcribed wordings, so a move "
+        "measured band of 40..44. These are transcribed wordings, so a move "
         "here is the product changing, never the corpus."
     )
     obs_pend = score.by_family["observed-pending"]["wrong"]
-    assert 58 <= obs_pend <= 70, (
+    assert 55 <= obs_pend <= 66, (
         f"{obs_pend} real action-required messages read as confirmations at "
-        "this seed, outside the measured band of 58..70. See #459."
+        "this seed, outside the measured band of 55..66. See #459."
     )
     # The closure wording NEVER lands, at any seed, and that steadiness is the
     # point: "your application is no longer active" is not a wording problem
@@ -339,11 +325,11 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # would be dishonest to pin it exactly at one seed and call that structural.
     # A fix takes the whole band to 0.
     past_snippet = score.by_family["rejection-past-the-snippet"]["wrong"]
-    assert 12 <= past_snippet <= 14, (
-        f"{past_snippet} truncated rejections were stated as fact at this seed, "
-        "outside the measured band of 12..14 (#455). Below it, say what fixed "
-        "it and move the band; above it, the reference text is reaching further "
-        "into the verdict than it was."
+    assert past_snippet == 0, (
+        f"{past_snippet} truncated rejections were stated as fact at this seed. "
+        "This is 0 at every seed since #455, and it is EXACT rather than a band "
+        "because the fix removed a cause rather than shifting a score: the "
+        "trigger was a pattern, not a threshold."
     )
 
     # This WAS a band (150..185), because it moved with the seed: 164, 171,
@@ -363,9 +349,9 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # profile nudge in `ats-relay-noise` — both fire on a drawn role title, so
     # both move with the seed. Measured 116 / 112 / 113 at the three seeds.
     # Everything that was structural before this is still asserted exactly.
-    assert 132 <= score.auto_filed_wrong <= 139, (
+    assert 115 <= score.auto_filed_wrong <= 119, (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed, outside the measured band of 132..139. The number that reaches "
+        "seed, outside the measured band of 115..119. The number that reaches "
         "the board without anyone being asked is the one worth watching across "
         "a re-sample."
     )
@@ -415,31 +401,36 @@ def test_the_seeds_are_actually_different() -> None:
 
 
 def test_abstention_is_where_truncation_lands(verdicts) -> None:
-    """Mostly the safe failure — and 14 messages where it is not.
+    """The safe failure, restored — and this test has now been on both sides of it.
 
     A rejection whose verdict sits past Gmail's ~186-character snippet is
     usually not read as a confirmation; it is not read at all, and the message
     abstains below ``REVIEW_FLOOR``. Silent rather than wrong.
 
-    THIS TEST ASSERTED THAT OF ALL 350 UNTIL 2026-08-22, and the claim was an
-    artefact of the corpus carrying one rejection wording. It now carries two,
-    both transcribed from the owner's mailbox, and the second one breaks the
-    claim: 14 of these are scored ``applied`` at the auto-file gate and stated
-    to the user as fact. See #455 — the trigger is the word ``career`` inside
-    the JOB TITLE falling within the window of
-    ``thank you for your interest.{0,40}(position|role|career)``.
+    IT ASSERTED 350/0 ON A CORPUS THAT COULD NOT DISPROVE IT, then 336/14 when
+    the transcribed wordings arrived and did, and it is 350/0 again now that the
+    cause is gone. The middle reading is the one that mattered: 14 of these were
+    scored ``applied`` at exactly the auto-file gate because the word ``career``
+    inside the JOB TITLE fell within the window of
+    ``thank you for your interest.{0,40}(position|role|career)``, so the title —
+    which says WHICH application — decided WHAT HAPPENED to it. #455.
+
+    That pattern is gone from ``applied.strong``, and the evidence for removing
+    it was that it points the wrong way: across the transcribed wordings,
+    "thank you for your interest" opens **67% of rejections and 22% of
+    confirmations**. It was never confirmation evidence.
 
     Pinned at both numbers rather than relaxed to an inequality, because the
-    split between them is the whole point: 336 silent is the designed outcome
-    and 14 wrong is a defect, and a single assertion over their sum would let
-    either eat the other without a word.
+    split between them is the whole point: 350 silent is the designed outcome
+    and any number wrong is a defect, and a single assertion over their sum
+    would let either eat the other without a word.
     """
 
     score = score_classifier(verdicts)
-    assert score.by_family["rejection-past-the-snippet"]["abstained"] == 336
-    assert score.by_family["rejection-past-the-snippet"]["wrong"] == 14, (
-        "the truncated rejections that are stated as FACT rather than left "
-        "silent. A fix for #455 takes this to 0 and the abstained count to 350."
+    assert score.by_family["rejection-past-the-snippet"]["abstained"] == 350
+    assert score.by_family["rejection-past-the-snippet"]["wrong"] == 0, (
+        "a truncated rejection was stated to the user as FACT rather than left "
+        "silent. This was 14 (#455) and is the regression guard for that fix."
     )
 
 
