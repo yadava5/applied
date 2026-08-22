@@ -437,6 +437,19 @@ export interface RebuildOutcome {
   stoppedBy: string;
   /** Gmail's approximate match count, when it offered one. */
   estimate: number | null;
+  /**
+   * Messages the classifier called a job-application category and the pipeline
+   * then discarded for scoring too low to file OR to queue. Zero on a healthy
+   * sync.
+   *
+   * It is on the receipt because of what the receipt used to say without it.
+   * On 2026-08-21 four Microsoft confirmations were thrown away by that drop
+   * and the owner was shown `nothing changed - N scanned - every filed
+   * application matched`, whose last clause was simply untrue. "We found
+   * nothing" and "we discarded four of your applications" have to be different
+   * sentences.
+   */
+  dropped: number;
 }
 
 function count(value: unknown): number {
@@ -465,6 +478,7 @@ export function readRebuildOutcome(body: unknown): RebuildOutcome {
     updated: count(data.updated),
     scanned: count(data.scanned),
     purged: count(data.purged),
+    dropped: count(data.dropped),
     removed,
     stoppedBy: end.stoppedBy,
     estimate: end.estimate,
@@ -474,14 +488,30 @@ export function readRebuildOutcome(body: unknown): RebuildOutcome {
 /**
  * The receipt's body line: `41 filed · 2 updated · 512 scanned`, or the
  * explicit nothing-changed sentence when a rebuild confirmed the board.
+ *
+ * THE NOTHING-CHANGED SENTENCE IS A CLAIM, and it may only be made when the
+ * sync really did account for everything it read. `every filed application
+ * matched` was shown to the owner on a run that had just discarded four
+ * Microsoft application confirmations, which is how a real product defect
+ * reached him as "the sync works, you must not have applied". A run with
+ * anything in `dropped` takes the itemised branch instead and names the number.
  */
 export function receiptBodyLine(outcome: RebuildOutcome): string {
-  if (outcome.created === 0 && outcome.updated === 0 && outcome.purged === 0) {
+  const boardUnchanged =
+    outcome.created === 0 && outcome.updated === 0 && outcome.purged === 0;
+  if (boardUnchanged && outcome.dropped === 0) {
     return `nothing changed · ${formatCount(outcome.scanned)} scanned · every filed application matched`;
   }
   const parts: string[] = [];
   if (outcome.created > 0) parts.push(`${formatCount(outcome.created)} filed`);
   if (outcome.updated > 0) parts.push(`${formatCount(outcome.updated)} updated`);
   parts.push(`${formatCount(outcome.scanned)} scanned`);
+  // Last, and worded as what it is: mail that looked like it was about a job
+  // application and did not make it onto the board or into the queue. Not
+  // "skipped" (which reads as deliberate) and not "failed" (which reads as an
+  // error the user caused).
+  if (outcome.dropped > 0) {
+    parts.push(`${formatCount(outcome.dropped)} too unclear to file`);
+  }
   return parts.join(" · ");
 }

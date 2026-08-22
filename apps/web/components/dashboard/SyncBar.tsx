@@ -1215,7 +1215,7 @@ function RebuildReceipt({
   const border =
     endKind === "broken"
       ? "border-reject/40"
-      : endKind === "partial" || outcome.purged > 0
+      : endKind === "partial" || outcome.purged > 0 || outcome.dropped > 0
         ? "border-review/40"
         : "border-line-soft";
   return (
