@@ -214,6 +214,7 @@ class _Builder:
         note: str = "",
         expect_review: bool = False,
         day: int | None = None,
+        thread: str | None = None,
     ) -> None:
         self._n += 1
         mid = f"m{self._n:04d}"
@@ -228,7 +229,7 @@ class _Builder:
                     sender_name=sender_name,
                     received_at=when,
                     confidence=conf,
-                    thread_id=f"t{self._n:04d}",
+                    thread_id=thread or f"t{self._n:04d}",
                     snippet=snippet,
                 ),
                 axis=axis,
@@ -423,15 +424,22 @@ def _axis_no_role_anywhere(b: _Builder) -> None:
       review queue — guessing would settle the wrong application terminally.
     """
 
-    # Sole application at this employer: role-less mail must JOIN it.
+    # ONE confirmation, then role-less updates: all of it is one application.
+    #
+    # This used to carry TWO confirmations under one identity, on the reasoning
+    # that one row is the honest floor when the mail draws no distinction. The
+    # owner overruled that on 2026-08-21 and the mailbox agrees — see
+    # ``_axis_repeat_anonymous_applications`` — so the second confirmation moved
+    # there and what is left here is the case that was always unambiguous: a
+    # confirmation and the updates that report on it.
     for _ in range(2):
         display, token = b.employer()
         ident = f"{token}|__norole__"
         for cat, subj, snip in (
             ("applied", f"Thanks for applying to {display}",
              "We have received your application. Our team will be in touch."),
-            ("applied", f"{display} application received",
-             "Thanks for your interest. We review every application carefully."),
+            ("assessment", f"Next step with {display}",
+             "Please complete the exercise linked below within five days."),
             ("rejection", f"An update from {display}",
              "We have decided not to move forward at this time. We wish you the best."),
         ):
@@ -1024,6 +1032,126 @@ def _axis_req_id_identity(b: _Builder) -> None:
     )
 
 
+def _axis_repeat_anonymous_applications(b: _Builder) -> None:
+    """Applying MORE THAN ONCE to an employer whose mail names no role.
+
+    Reported from live use on 2026-08-21 and measured against the owner's real
+    mailbox. Google sends one confirmation per application, all of them
+    identical — subject "Thanks for applying to Google", no role anywhere in the
+    body, no requisition number, no job link. Three arrived over ten days and
+    folded onto one card dated the first, so a sync that classified every
+    message correctly showed a board that had not moved. Supabase is the same
+    shape at two, from two different ATS templates.
+
+    THE RULE THE CASES ENCODE. A confirmation ASSERTS an application; a
+    rejection, assessment, interview or offer REPORTS on one that already
+    exists. So repeated anonymous confirmations are separate applications, and
+    anything else that names no role is an update to one.
+
+    Two things are deliberately measured here that no other axis reaches:
+
+    * a SECOND confirmation at an employer that has no key at all — the merge
+      that hid two thirds of a real board;
+    * an UPDATE arriving in the conversation one of those applications started,
+      which must land on it rather than open a card of its own.
+
+    Also the direction the fix must NOT push: a single anonymous confirmation is
+    ordinary mail that names no role, not evidence of a second application. That
+    case lives in ``_axis_no_role_anywhere`` and this axis is scored against it.
+    """
+
+    # ── the Google shape: three identical confirmations, three applications ──
+    display, token = b.employer()
+    for n in range(3):
+        b.add(
+            axis="repeat-anonymous", category="applied",
+            sender="noreply@" + token + ".test", sender_name=f"{display} Recruiting",
+            subject=f"Thanks for applying to {display}",
+            snippet=(
+                f"Hi Ayush, Thanks for applying to {display}! There are a ton of great "
+                "companies out there, so we appreciate your interest in joining our "
+                "team. While we are not able to reach out to every applicant, our "
+                "recruiting team will contact you if your skills are a strong match."
+            ),
+            identity=f"{token}|__apply{n}__", employer=token, role=None,
+            day=n * 5,
+            note="byte-identical confirmation, one per application — nothing to tell them apart",
+        )
+
+    # ── the Supabase shape: two ATS templates, two applications ──────────────
+    display, token = b.employer()
+    for n, (subj, snip) in enumerate(
+        (
+            (f"Thanks for applying to {display}",
+             f"Hi Ayush, Thanks for applying to {display}. We are really glad you are "
+             "interested in what we are building. We review every application carefully."),
+            (f"Thank you for applying to {display}!",
+             f"Hey Ayush, Thanks for your interest in a role with {display}; we confirm "
+             "your application has been received. We respond to all candidates."),
+        )
+    ):
+        b.add(
+            axis="repeat-anonymous", category="applied",
+            sender="no-reply@ashbyhq.com", sender_name=f"{display} Talent Team",
+            subject=subj, snippet=snip,
+            identity=f"{token}|__apply{n}__", employer=token, role=None,
+            day=n,
+            note="two job posts, each firing its own confirmation template",
+        )
+
+    # ── an update lands on the application whose conversation it is in ───────
+    #
+    # Thread is used for THIS and nothing else. It is not an identity: the four
+    # Microsoft confirmations of 21 August share one thread and are four
+    # applications (``_axis_req_id_identity`` covers that side). Here it is the
+    # only structure the mail still carries, and using it is what keeps a
+    # follow-up from opening a card.
+    display, token = b.employer()
+    for n in range(2):
+        thread = f"conv-{token}-{n}"
+        b.add(
+            axis="repeat-anonymous", category="applied",
+            sender="no-reply@hire.lever.co", sender_name=f"{display} via Lever",
+            subject="Your application has been received!",
+            snippet=f"Thanks for applying to {display}. Our team will review your application.",
+            identity=f"{token}|__apply{n}__", employer=token, role=None,
+            day=n, thread=thread,
+        )
+        b.add(
+            axis="repeat-anonymous", category="assessment",
+            sender="no-reply@hire.lever.co", sender_name=f"{display} via Lever",
+            subject=f"Next step in your {display} application",
+            snippet="Please complete the take-home exercise linked below within five days.",
+            identity=f"{token}|__apply{n}__", employer=token, role=None,
+            day=n + 6, thread=thread,
+            note="an update in the conversation its application started — must not open a card",
+        )
+
+    # ── an update in a thread holding TWO applications is ambiguous ──────────
+    display, token = b.employer()
+    shared = f"conv-{token}-shared"
+    for n in range(2):
+        b.add(
+            axis="repeat-anonymous", category="applied",
+            sender="donotreply@careers." + token + ".test",
+            sender_name=f"{display} Careers",
+            subject="Thank you for your application!",
+            snippet=f"Hi Ayush, thank you for taking the time to submit your application to {display}.",
+            identity=f"{token}|__apply{n}__", employer=token, role=None,
+            day=n, thread=shared,
+        )
+    b.add(
+        axis="repeat-anonymous", category="rejection",
+        sender="donotreply@careers." + token + ".test",
+        sender_name=f"{display} Careers",
+        subject=f"An update on your application to {display}",
+        snippet="After careful consideration we have decided to move forward with other candidates.",
+        identity=None, employer=token, role=None, expect_review=True,
+        day=9, thread=shared,
+        note="one thread, two applications: the conversation names no single card — REVIEW",
+    )
+
+
 _AXES = (
     _axis_employer_name_in_role,
     _axis_multiple_keyword_occurrences,
@@ -1039,6 +1167,7 @@ _AXES = (
     _axis_hostile_text,
     _axis_lifecycle_noun_subjects,
     _axis_req_id_identity,
+    _axis_repeat_anonymous_applications,
 )
 
 

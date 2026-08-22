@@ -2297,12 +2297,28 @@ async def test_incremental_delta_never_downgrades_an_advanced_row(
 
     from jobtracker.cloud.gmail_client import HistoryPage
 
+    def _applied_to_role(message_id: str, day: int) -> Any:
+        # NAMES THE ROLE, unlike ``_applied_msg``. This test is about status,
+        # not identity, and since a second role-less confirmation at one
+        # employer became a second application (2026-08-21) a role-less delta
+        # would mint a card here and the assertions below would be reading a
+        # different row than the one they mean. Keying both messages on the same
+        # title keeps the subject of the test the rollup, not the resolver.
+        return _msg(
+            message_id,
+            subject="We received your application to Cedartech",
+            sender="careers@cedartech.com",
+            snippet="Thank you for applying to the Platform Engineer position at Cedartech.",
+            day=day,
+            name="Cedartech",
+        )
+
     await _connect_gmail(USER_A)
     calls = _install_gmail_stubs(
         monkeypatch,
-        full_messages=[_applied_msg("m1", day=1), _interview_msg("m2", day=10)],
+        full_messages=[_applied_to_role("m1", day=1), _interview_msg("m2", day=10)],
         # The delta carries ONLY an older "applied" message.
-        history_results=[HistoryPage(messages=[_applied_msg("m3", day=2)])],
+        history_results=[HistoryPage(messages=[_applied_to_role("m3", day=2)])],
         profile_ids=["9001", "9100"],
     )
 

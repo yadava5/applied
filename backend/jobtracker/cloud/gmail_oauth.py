@@ -2086,8 +2086,10 @@ async def gmail_sync(
     from jobtracker.cloud import pipeline
     from jobtracker.cloud.applications import (
         ScanCoverage,
+        employers_with_several_applications,
         purge_and_rebuild_gmail_pipeline,
         sync_gmail_pipeline_additive,
+        threads_naming_one_application,
     )
     from jobtracker.cloud.sync_state import (
         acquire_gmail_sync_lease,
@@ -2208,10 +2210,6 @@ async def gmail_sync(
         # (explicit Re-sync). Manual / user-corrected rows are preserved either
         # way. An empty incremental delta is NOT short-circuited — it still runs
         # the merge so reconciliation happens.
-        rolled = pipeline.roll_up_applications(items)
-        dropped_verdicts: list[pipeline.DroppedVerdict] = []
-        review = pipeline.collect_review_items(items, dropped_verdicts)
-
         from sqlalchemy import func as sa_func
         from sqlmodel import select as sm_select
 
@@ -2219,6 +2217,22 @@ async def gmail_sync(
         from jobtracker.database.models import Application
 
         async with get_session() as session:
+            # WHAT THE BOARD ALREADY HOLDS. Rolling up needs it, so it is read
+            # first and inside the session rather than before it. A delta is
+            # usually one message, and from inside the pipeline an employer with
+            # four cards and one role-less rejection in today's mail looks like
+            # an employer with one — so that rejection was filed against
+            # whichever card sorted first. Since a terminal status is final,
+            # that freezes a live application against every later interview and
+            # offer. With this, a delta routes it to the queue exactly as a
+            # rebuild does.
+            known_multi = await employers_with_several_applications(session, user_id)
+            known_threads = await threads_naming_one_application(session, user_id)
+            rolled = pipeline.roll_up_applications(items, known_multi, known_threads)
+            dropped_verdicts: list[pipeline.DroppedVerdict] = []
+            review = pipeline.collect_review_items(
+                items, dropped_verdicts, known_multi, known_threads
+            )
             if rebuild:
                 # What this scan can honestly be said to have READ. The rebuild
                 # may only remove a row this coverage contradicts; it is built

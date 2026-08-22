@@ -523,6 +523,11 @@ REVIEW_FLOOR = 0.70  # [floor, gate) → needs human review; below → dropped
 # Sort sentinel for undated mail (kept aware so mixed aware/naive never raises).
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
+# The same instant without a zone. ``to_naive_utc`` returns naive datetimes, and
+# comparing one against ``_EPOCH`` raises, so a sort that falls back for undated
+# mail needs this one rather than the aware constant above.
+_NAIVE_EPOCH = datetime(1970, 1, 1)
+
 # EmailCategory → lifecycle stage rank. Higher = further along.
 #
 # ``follow_up`` is deliberately absent. :func:`_qualifies_for_hard_row` drops
@@ -537,6 +542,13 @@ _STAGE_RANK: dict[str, int] = {
     "interview": 3,
     "offer": 4,
 }
+
+# The categories that ASSERT a new application rather than report on an existing
+# one. A confirmation is the only mail that says "I applied"; everything else
+# (assessment, interview, offer, rejection) is a later message ABOUT an
+# application that already exists. :func:`partition_applications` leans on that
+# asymmetry to tell a second application from a second message.
+APPLIED_SIGNAL_CATEGORIES: frozenset[str] = frozenset({"applied", "pending_application"})
 
 # Application lifecycle status (ApplicationStatus values) by ascending progress.
 # Used to advance monotonically (:func:`advance_application_status`).
@@ -1943,6 +1955,8 @@ class _Cluster:
 
 def partition_applications(
     items: Iterable[PipelineItem],
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
 ) -> tuple[list[_Cluster], list[PipelineItem]]:
     """Split gated mail into per-application clusters, plus what it cannot place.
 
@@ -1982,6 +1996,18 @@ def partition_applications(
     ``(company, None)`` cluster — which is exactly the old behaviour, so an
     employer that genuinely never names a role (Supabase, Twitch, Together AI in
     the live corpus) still gets one honest row.
+
+    ``known_multi`` — employer tokens the BOARD already holds several
+    applications for. A real sync rolls up a delta, usually one message, so this
+    function alone can only see what arrived in that batch: an employer with
+    four cards and one role-less rejection in today's mail looks, from here,
+    exactly like an employer with one application. It is not, and the difference
+    is not cosmetic — ``advance_application_status`` treats a terminal status as
+    final, so filing that rejection against whichever card sorted first freezes a
+    live application against every later interview and offer. With the caller
+    supplying what the board holds, the review-queue rule above applies to a
+    delta exactly as it applies to a rebuild. Defaults to empty, which is the
+    pure over-the-batch behaviour every existing caller had.
     """
 
     by_company: dict[str, list[tuple[PipelineItem, str, str | None, str | None, str | None]]] = {}
@@ -2045,7 +2071,62 @@ def partition_applications(
 
         anonymous = [e[0] for e in entries if e[2] is None and e[3] is None]
         if anonymous:
-            if not keyed:
+            # A NEW CONFIRMATION IS A NEW APPLICATION. AN UPDATE IS NOT.
+            #
+            # That is the whole rule, and ``APPLIED_SIGNAL_CATEGORIES`` is what
+            # draws the line: a confirmation ASSERTS an application, while a
+            # rejection, assessment, interview or offer REPORTS on one that
+            # already exists. So a confirmation with no identity gets its own
+            # card, and an update with no identity never mints one — it lands on
+            # the application it is about.
+            #
+            # Google is why. Subject "Thanks for applying to Google", no role
+            # anywhere in the body, no requisition number, no job link — three of
+            # them arrived on 11, 13 and 21 August 2026 and all three folded onto
+            # one card dated the 11th. A sync that classified every message
+            # correctly showed the user a board that had not moved. Supabase is
+            # the same shape at two.
+            #
+            # THREAD IS NOT AN IDENTITY, and is deliberately not used as one. The
+            # four Microsoft confirmations of 21 August share a single Gmail
+            # thread and are four separate applications; Gmail threaded them
+            # because the sender and subject are byte-identical, which is a fact
+            # about delivery and none about what the mail is. Thread is used
+            # BELOW, and only below: to route an update to the right one of an
+            # employer's applications, which is the case where a conversation
+            # really does say "more about this one".
+            #
+            # Palantir is the control on the asymmetry — an anonymous
+            # confirmation plus an anonymous rejection three days later stays one
+            # application, and would have become two under a blanket split.
+            #
+            # The failure direction is deliberate and it is the one
+            # :func:`_may_join` already argues for: an employer that sends two
+            # confirmations for a SINGLE application, naming no role in either,
+            # mints two cards — visible, and a user can merge them. The merge
+            # they replace destroyed the record silently.
+            anchors = sorted(
+                (i for i in anonymous if i.category in APPLIED_SIGNAL_CATEGORIES),
+                # Oldest first, message id breaking a tie, so cluster order — and
+                # therefore which of them adopts a pre-existing row — never
+                # depends on the order Gmail happened to return the mail in.
+                key=lambda i: (to_naive_utc(i.received_at) or _NAIVE_EPOCH, i.message_id),
+            )
+
+            # SEVERAL of them, or none of this applies. One anonymous
+            # confirmation is not evidence of a second application — it is the
+            # ordinary case of mail that names no role, and rule 3 below has
+            # always been right about it. Roblox is why: its email-verification
+            # message ("thank you for submitting your application for a position
+            # at Roblox") reads as a confirmation, carries no role, and belongs
+            # to the application whose real confirmation named one. Splitting on
+            # a single anonymous confirmation would mint it a card of its own.
+            if len(anchors) < 2:
+                anchors = []
+
+            anchored_ids = {i.message_id for i in anchors}
+            first_anchor_index = len(keyed)
+            for item in anchors:
                 keyed.append(
                     _Cluster(
                         company_token=token,
@@ -2053,31 +2134,115 @@ def partition_applications(
                         req_id=None,
                         role_token=None,
                         role=None,
-                        items=list(anonymous),
+                        items=[item],
                     )
                 )
-            elif len(keyed) == 1:
-                keyed[0].items.extend(anonymous)
-            else:
-                unplaced.extend(anonymous)
+
+            # THE UPDATES. Everything left names no role and asserts no new
+            # application, so none of it may mint. A conversation that names
+            # exactly one of the applications above places it — that is the
+            # "don't open a new card for an update" half, and the only thing
+            # thread is trusted for. Ambiguous or unthreaded, it falls to rule 3
+            # unchanged: ``keyed`` now counts the anchors, so a lone confirmation
+            # still adopts its employer's follow-ups exactly as before, and an
+            # employer with several applications still sends them to the review
+            # queue for the user to assign rather than guessing which one.
+            by_conversation: dict[str, int | None] = {}
+            for offset, item in enumerate(anchors):
+                if item.thread_id:
+                    # None marks a thread that holds MORE THAN ONE application —
+                    # the Microsoft shape. It names no single row, so an update
+                    # arriving in it is as ambiguous as an unthreaded one.
+                    by_conversation[item.thread_id] = (
+                        None
+                        if item.thread_id in by_conversation
+                        else first_anchor_index + offset
+                    )
+
+            unclaimed: list[PipelineItem] = []
+            for item in (i for i in anonymous if i.message_id not in anchored_ids):
+                index = by_conversation.get(item.thread_id) if item.thread_id else None
+                if index is None:
+                    unclaimed.append(item)
+                else:
+                    keyed[index].items.append(item)
+
+            if unclaimed:
+                if token in known_multi and len(keyed) != 1:
+                    # The board already holds several applications here. There
+                    # is no "the employer's only cluster" to join even when this
+                    # batch contains one message, so asking is the only honest
+                    # move — the same answer a rebuild gives for the same mail.
+                    #
+                    # TWO KINDS OF MAIL ARE NOT AMBIGUOUS AND MUST NOT BE ASKED
+                    # ABOUT. A confirmation asserts an application, so "which of
+                    # these is it about?" is the wrong question entirely — it is
+                    # about a new one, and sending it to the queue is how the
+                    # user's second application to an employer stops appearing
+                    # at all. And an update whose Gmail conversation already
+                    # names exactly one stored card belongs to that card;
+                    # ``known_threads`` carries only the unambiguous ones, so a
+                    # thread holding two applications still gets asked about.
+                    # Both become their own clusters and the resolver places
+                    # them — which is the same order a rebuild uses.
+                    for item in unclaimed:
+                        if (
+                            item.category in APPLIED_SIGNAL_CATEGORIES
+                            or (item.thread_id and item.thread_id in known_threads)
+                        ):
+                            keyed.append(
+                                _Cluster(
+                                    company_token=token,
+                                    company_display=display,
+                                    req_id=None,
+                                    role_token=None,
+                                    role=None,
+                                    items=[item],
+                                )
+                            )
+                        else:
+                            unplaced.append(item)
+                elif not keyed:
+                    keyed.append(
+                        _Cluster(
+                            company_token=token,
+                            company_display=display,
+                            req_id=None,
+                            role_token=None,
+                            role=None,
+                            items=list(unclaimed),
+                        )
+                    )
+                elif len(keyed) == 1:
+                    keyed[0].items.extend(unclaimed)
+                else:
+                    unplaced.extend(unclaimed)
 
         clusters.extend(keyed)
 
     return clusters, unplaced
 
 
-def unplaceable_message_ids(items: Iterable[PipelineItem]) -> set[str]:
+def unplaceable_message_ids(
+    items: Iterable[PipelineItem],
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
+) -> set[str]:
     """Message ids that name no role at an employer holding several applications.
 
     :func:`collect_review_items` promotes these into the queue so the user can
     say which application they belong to, rather than the pipeline picking one.
     """
 
-    _clusters, unplaced = partition_applications(items)
+    _clusters, unplaced = partition_applications(items, known_multi, known_threads)
     return {item.message_id for item in unplaced}
 
 
-def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
+def roll_up_applications(
+    items: Iterable[PipelineItem],
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
+) -> list[RolledApplication]:
     """Group high-confidence lifecycle mail into one row per real APPLICATION.
 
     Only messages that clear the precision gate (:func:`_qualifies_for_hard_row`)
@@ -2109,7 +2274,7 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
     which is what makes the downstream upsert idempotent.
     """
 
-    clusters, _unplaced = partition_applications(items)
+    clusters, _unplaced = partition_applications(items, known_multi, known_threads)
 
     rolled: list[RolledApplication] = []
     for cluster in clusters:
@@ -2235,6 +2400,8 @@ def is_ats_sender(sender_email: str | None) -> bool:
 def collect_review_items(
     items: Iterable[PipelineItem],
     dropped_out: list[DroppedVerdict] | None = None,
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
 ) -> list[ReviewItem]:
     """Return the uncertain lifecycle verdicts that need a human decision.
 
@@ -2278,7 +2445,7 @@ def collect_review_items(
     # real application row" — but there is no single row it belongs to, and
     # picking one would settle the wrong application (see
     # :func:`partition_applications`). Asking is the only honest move.
-    unplaceable = unplaceable_message_ids(items)
+    unplaceable = unplaceable_message_ids(items, known_multi, known_threads)
 
     best: dict[str, ReviewItem] = {}
     for item in items:
