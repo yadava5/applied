@@ -7,20 +7,29 @@ user-visible in the other:
 corpus at once. This is what one scan of a mailbox does. It catches identity
 errors that exist purely in the extractor.
 
-**Layer 2 — incremental.** The user-visible layer, and where the reported bug
-actually bit. Real syncs are incremental (``gmail_oauth`` rolls up a *delta*,
-not the whole mailbox), so mail arrives days apart and each delta is resolved
-against rows already stored. Layer 2 replays the corpus one message at a time
-through :func:`pipeline.roll_up_applications` and the REAL
-:func:`applications._pick_application`, against an in-memory store of real
-``Application`` model instances. A confirmation whose role extracted one way
-and a rejection whose role extracted another produce a match in layer 1 (they
-land in one cluster keyed on whichever token won) but a MISS in layer 2 — which
-mints the second card the user saw.
+**Layer 2 — incremental, against the real database.** The user-visible layer,
+and where the reported bug actually bit. Real syncs are incremental
+(``gmail_oauth`` rolls up a *delta*, not the whole mailbox), so mail arrives
+days apart and each delta is resolved against rows already stored. Layer 2
+replays the corpus one message at a time through
+:func:`pipeline.roll_up_applications` and the REAL
+:func:`applications.upsert_applications_for_user`, against a real session, and
+then reads the cards back out of the ``applications`` and ``emails`` tables. A
+confirmation whose role extracted one way and a rejection whose role extracted
+another produce a match in layer 1 (they land in one cluster keyed on whichever
+token won) but a MISS in layer 2 — which mints the second card the user saw.
 
-What layer 2 deliberately does NOT model: status advance, reopen-after-
-rejection, dismissal and resurrection. Those are orthogonal to identity, and
-including them would let a status bug masquerade as an identity failure.
+THIS LAYER USED TO BE A HAND-WRITTEN MIRROR of ``_pick_application`` over an
+in-memory list of ``Application`` instances, and the mirror is why it is gone.
+On 2026-08-21 the resolver learned to tell an employer's anonymous applications
+apart by the ``message → application`` links already stored
+(``_anonymous_homes``), and none of that lives in ``_pick_application``. The
+mirror reported five MERGEs for behaviour the product had just fixed: it was
+measuring a twin that had drifted, which is the failure this harness exists to
+catch in the product. Everything now runs through the real function, so
+anything the sync does — home resolution, the sibling guard in
+``_persist_message_refs``, status advance, dismissal of an emptied row — is in
+the numbers rather than approximated beside them.
 
 Scoring
 -------
@@ -51,11 +60,15 @@ import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
+from sqlmodel import select
+
 from jobtracker.cloud import pipeline
 from jobtracker.cloud.applications import (
-    SOURCE_GMAIL_AUTO,
     Application,
-    _pick_application,
+    Email,
+    employers_with_several_applications,
+    threads_naming_one_application,
+    upsert_applications_for_user,
 )
 
 from .generator import Case
@@ -63,88 +76,65 @@ from .generator import Case
 _USER = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
 
 
-# ── layer 2: an in-memory mirror of the persistent resolver ──────────────────
+# ── layer 2: the real persistence path ───────────────────────────────────────
 
 
-class RowStore:
-    """The rows a board would hold, ordered exactly as ``_company_rows`` does.
+async def replay_persisted(session, cases: list[Case]) -> list[tuple[str, list[str]]]:
+    """Replay the corpus as successive one-message syncs against a real session.
 
-    Ordering matters and is not cosmetic: ``_pick_application`` rule 4 returns
-    ``rows[0]`` for an identity-less cluster. An unordered store changes which
-    row that is and every number downstream with it. ``_company_rows`` orders
-    live-first, then ``created_at`` ascending, then ``id`` ascending; nothing
-    here is ever dismissed, so insertion order IS that order.
+    Each message is rolled up on its own and handed to the REAL
+    :func:`upsert_applications_for_user`, exactly as an incremental Gmail sync
+    delivers a delta. Returns the board as ``(card label, message ids)`` read
+    back out of the database, which is the only place the answer actually is.
+
+    Ordered by receive time, message id breaking a tie: the corpus is meant to
+    arrive the way mail does, and a replay whose order changed between runs
+    could not be a regression gate.
     """
 
-    def __init__(self) -> None:
-        self.rows: list[Application] = []
-        self._next_id = 1
-        # row id -> the message ids filed against it
-        self.filed: dict[int, list[str]] = defaultdict(list)
-
-    def company_rows(self, token: str) -> list[Application]:
-        """Faithful to ``_company_rows``: exact OR leading-word, unioned.
-
-        The union is the part that matters — the early-return version of this
-        query is what grew six rows for one employer, and a harness that only
-        did the exact match would never see that class of bug.
-        """
-
-        return [
-            row
-            for row in self.rows
-            if pipeline.normalize_company_name(row.company) == token
-            or pipeline.matches_company_token(row.company, token)
-        ]
-
-    def mint(self, rolled: pipeline.RolledApplication) -> Application:
-        row = Application(
-            user_id=_USER,
-            company=rolled.company_display,
-            status=rolled.status,
-            source=SOURCE_GMAIL_AUTO,
-            req_id=rolled.req_id,
-            role_token=rolled.role_token,
-        )
-        row.id = self._next_id
-        self._next_id += 1
-        row.dismissed_at = None
-        self.rows.append(row)
-        return row
-
-
-def replay_incremental(cases: list[Case]) -> RowStore:
-    """Replay the corpus as successive one-message syncs.
-
-    Mirrors ``upsert_applications_for_user``'s identity half: resolve against
-    stored rows, mint on a miss, and stamp whichever half of the identity the
-    landed-on row was missing. Nothing else.
-    """
-
-    store = RowStore()
     ordered = sorted(cases, key=lambda c: (c.item.received_at, c.item.message_id))
     for case in ordered:
-        rolled = pipeline.roll_up_applications([case.item])
-        for r in sorted(rolled, key=lambda x: (x.company_token, x.applied_at or _MAX)):
-            rows = store.company_rows(r.company_token)
-            existing = _pick_application(rows, r.req_id, r.role_token)
-            if existing is None:
-                existing = store.mint(r)
-            else:
-                # The upsert stamps the half the row lacked — that is how a
-                # pre-identity row is migrated in place rather than duplicated.
-                if existing.req_id is None and r.req_id is not None:
-                    existing.req_id = r.req_id
-                if existing.role_token is None and r.role_token is not None:
-                    existing.role_token = r.role_token
-            for ref in r.messages:
-                store.filed[existing.id].append(ref.message_id)
-    return store
+        # Exactly what ``gmail_oauth`` does per delta, in the same order: read
+        # what the board already holds, then roll up against it. Without the
+        # first line the roll-up cannot tell an employer with four cards from an
+        # employer with one — a delta of one message looks the same either way —
+        # and a role-less rejection is filed against whichever card sorts first
+        # instead of being queued.
+        known_multi = await employers_with_several_applications(session, _USER)
+        known_threads = await threads_naming_one_application(session, _USER)
+        rolled = pipeline.roll_up_applications([case.item], known_multi, known_threads)
+        if not rolled:
+            continue
+        await upsert_applications_for_user(session, _USER, rolled)
+        await session.commit()
 
+    rows = (
+        await session.exec(
+            select(Application)
+            .where(Application.user_id == _USER)
+            .order_by(Application.id)
+        )
+    ).all()
+    emails = (
+        await session.exec(
+            select(Email).where(
+                Email.user_id == _USER, Email.application_id.is_not(None)
+            )
+        )
+    ).all()
+    filed: dict[int, list[str]] = defaultdict(list)
+    for email in emails:
+        filed[email.application_id].append(email.message_id)
 
-from datetime import datetime as _dt  # noqa: E402  (used only for the sort key)
-
-_MAX = _dt.max
+    # A dismissed row is not on the board. Counting one would report a card the
+    # user cannot see, and ``_dismiss_rows_left_without_mail`` dismisses exactly
+    # the rows a re-resolution emptied — which is a real outcome worth NOT
+    # scoring as a card.
+    return [
+        (f"row{row.id}:{row.company}", sorted(filed.get(row.id, [])))
+        for row in rows
+        if row.dismissed_at is None
+    ]
 
 
 # ── scoring ──────────────────────────────────────────────────────────────────
@@ -169,6 +159,10 @@ class Score:
     gated_items: int = 0
     cards: int = 0
     failures: list[Failure] = field(default_factory=list)
+    #: (card label, message ids) exactly as scored. Kept so the two layers can
+    #: be compared to each other and not only to ground truth — see
+    #: ``test_a_rebuild_and_a_delta_produce_the_same_board``.
+    groups: list[tuple[str, list[str]]] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -192,7 +186,12 @@ def _score_grouping(
     the two numbers are computed by identical logic and can be compared.
     """
 
-    score = Score(layer=layer, gated_items=gated_items, cards=len(groups))
+    score = Score(
+        layer=layer,
+        gated_items=gated_items,
+        cards=len(groups),
+        groups=[(label, list(mids)) for label, mids in groups],
+    )
 
     # Where did each ground-truth identity end up?
     ident_cards: dict[str, set[str]] = defaultdict(set)
@@ -315,18 +314,14 @@ def score_in_scan(cases: list[Case]) -> Score:
     return score
 
 
-def score_incremental(cases: list[Case]) -> Score:
-    """Layer 2 — successive incremental syncs against stored rows."""
+async def score_incremental(session, cases: list[Case]) -> Score:
+    """Layer 2 — successive incremental syncs against a real database."""
 
     by_mid = {c.item.message_id: c for c in cases}
-    store = replay_incremental(cases)
+    groups = await replay_persisted(session, cases)
     gated = sum(
         1 for c in cases if pipeline._qualifies_for_hard_row(c.item) is not None
     )
-    groups = [
-        (f"row{row.id}:{row.company}", store.filed.get(row.id, []))
-        for row in store.rows
-    ]
     return _score_grouping("incremental", groups, by_mid, gated)
 
 

@@ -64,19 +64,51 @@ def test_corpus_actually_reaches_the_clusterer(cases) -> None:
     assert gated > 120, f"only {gated} of {len(cases)} messages cleared the gate"
 
 
-def test_no_two_applications_collapse_onto_one_card(cases) -> None:
+async def test_no_two_applications_collapse_onto_one_card(cases, test_session) -> None:
     """MERGE is the strictly worse failure: it destroys a record silently.
 
     Nothing on the board says a second application ever existed, so the user
     cannot even know to look. A split leaves two cards to merge by hand.
     """
 
-    for score in (score_in_scan(cases), score_incremental(cases)):
+    for score in (score_in_scan(cases), await score_incremental(test_session, cases)):
         merges = [f for f in score.failures if f.mode == "MERGE"]
         assert score.merges == 0, (
             f"{score.layer}: {score.merges} merge(s): "
             + "; ".join(f.detail for f in merges)
         )
+
+
+async def test_a_rebuild_and_a_delta_produce_the_same_board(cases, test_session) -> None:
+    """The two layers must agree, and nothing else here checks that.
+
+    Both are scored against ground truth, so each can be judged correct on its
+    own while they disagree with each other — and they did. The split shipped
+    working on a REBUILD (one scan over the whole mailbox, where
+    ``partition_applications`` can see an employer's second confirmation beside
+    its first) and doing nothing on a DELTA, which is how every real sync runs:
+    one message at a time, resolved against stored rows, where that comparison
+    is impossible. Layer 1 read clean and layer 2 held five merges on identical
+    input.
+
+    So the property is stated directly. Same mail, same board, whichever way it
+    arrived — because a user who reconnects a mailbox and a user who syncs
+    daily are looking at the same product.
+    """
+
+    in_scan = score_in_scan(cases)
+    incremental = await score_incremental(test_session, cases)
+
+    def board(score) -> set[frozenset[str]]:
+        return {frozenset(mids) for _label, mids in score.groups if mids}
+
+    rebuilt, delta = board(in_scan), board(incremental)
+    only_rebuild = sorted(sorted(g) for g in rebuilt - delta)
+    only_delta = sorted(sorted(g) for g in delta - rebuilt)
+    assert rebuilt == delta, (
+        f"a rebuild and a delta disagree about {len(only_rebuild)} card(s). "
+        f"rebuild only: {only_rebuild[:4]}; delta only: {only_delta[:4]}"
+    )
 
 
 def test_differing_req_ids_at_one_employer_stay_two_applications() -> None:
@@ -176,7 +208,7 @@ def test_a_requisition_code_is_never_an_employer() -> None:
     assert p._valid_company_token("northwind robotics") is True
 
 
-def test_noise_and_sub_gate_mail_never_reaches_a_card(cases) -> None:
+async def test_noise_and_sub_gate_mail_never_reaches_a_card(cases, test_session) -> None:
     """Mail with no lifecycle verdict, or below the gate, mints nothing.
 
     Scoped honestly: these cases are stamped ``other`` / sub-gate confidence,
@@ -184,7 +216,7 @@ def test_noise_and_sub_gate_mail_never_reaches_a_card(cases) -> None:
     ``tests/corpus/generator.py::_axis_non_job_mail``.
     """
 
-    for score in (score_in_scan(cases), score_incremental(cases)):
+    for score in (score_in_scan(cases), await score_incremental(test_session, cases)):
         assert score.minted_from_noise == 0, score.layer
 
 

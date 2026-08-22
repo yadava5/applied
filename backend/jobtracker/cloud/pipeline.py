@@ -1955,6 +1955,8 @@ class _Cluster:
 
 def partition_applications(
     items: Iterable[PipelineItem],
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
 ) -> tuple[list[_Cluster], list[PipelineItem]]:
     """Split gated mail into per-application clusters, plus what it cannot place.
 
@@ -1994,6 +1996,18 @@ def partition_applications(
     ``(company, None)`` cluster — which is exactly the old behaviour, so an
     employer that genuinely never names a role (Supabase, Twitch, Together AI in
     the live corpus) still gets one honest row.
+
+    ``known_multi`` — employer tokens the BOARD already holds several
+    applications for. A real sync rolls up a delta, usually one message, so this
+    function alone can only see what arrived in that batch: an employer with
+    four cards and one role-less rejection in today's mail looks, from here,
+    exactly like an employer with one application. It is not, and the difference
+    is not cosmetic — ``advance_application_status`` treats a terminal status as
+    final, so filing that rejection against whichever card sorted first freezes a
+    live application against every later interview and offer. With the caller
+    supplying what the board holds, the review-queue rule above applies to a
+    delta exactly as it applies to a rebuild. Defaults to empty, which is the
+    pure over-the-batch behaviour every existing caller had.
     """
 
     by_company: dict[str, list[tuple[PipelineItem, str, str | None, str | None, str | None]]] = {}
@@ -2154,7 +2168,41 @@ def partition_applications(
                     keyed[index].items.append(item)
 
             if unclaimed:
-                if not keyed:
+                if token in known_multi and len(keyed) != 1:
+                    # The board already holds several applications here. There
+                    # is no "the employer's only cluster" to join even when this
+                    # batch contains one message, so asking is the only honest
+                    # move — the same answer a rebuild gives for the same mail.
+                    #
+                    # TWO KINDS OF MAIL ARE NOT AMBIGUOUS AND MUST NOT BE ASKED
+                    # ABOUT. A confirmation asserts an application, so "which of
+                    # these is it about?" is the wrong question entirely — it is
+                    # about a new one, and sending it to the queue is how the
+                    # user's second application to an employer stops appearing
+                    # at all. And an update whose Gmail conversation already
+                    # names exactly one stored card belongs to that card;
+                    # ``known_threads`` carries only the unambiguous ones, so a
+                    # thread holding two applications still gets asked about.
+                    # Both become their own clusters and the resolver places
+                    # them — which is the same order a rebuild uses.
+                    for item in unclaimed:
+                        if (
+                            item.category in APPLIED_SIGNAL_CATEGORIES
+                            or (item.thread_id and item.thread_id in known_threads)
+                        ):
+                            keyed.append(
+                                _Cluster(
+                                    company_token=token,
+                                    company_display=display,
+                                    req_id=None,
+                                    role_token=None,
+                                    role=None,
+                                    items=[item],
+                                )
+                            )
+                        else:
+                            unplaced.append(item)
+                elif not keyed:
                     keyed.append(
                         _Cluster(
                             company_token=token,
@@ -2175,18 +2223,26 @@ def partition_applications(
     return clusters, unplaced
 
 
-def unplaceable_message_ids(items: Iterable[PipelineItem]) -> set[str]:
+def unplaceable_message_ids(
+    items: Iterable[PipelineItem],
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
+) -> set[str]:
     """Message ids that name no role at an employer holding several applications.
 
     :func:`collect_review_items` promotes these into the queue so the user can
     say which application they belong to, rather than the pipeline picking one.
     """
 
-    _clusters, unplaced = partition_applications(items)
+    _clusters, unplaced = partition_applications(items, known_multi, known_threads)
     return {item.message_id for item in unplaced}
 
 
-def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplication]:
+def roll_up_applications(
+    items: Iterable[PipelineItem],
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
+) -> list[RolledApplication]:
     """Group high-confidence lifecycle mail into one row per real APPLICATION.
 
     Only messages that clear the precision gate (:func:`_qualifies_for_hard_row`)
@@ -2218,7 +2274,7 @@ def roll_up_applications(items: Iterable[PipelineItem]) -> list[RolledApplicatio
     which is what makes the downstream upsert idempotent.
     """
 
-    clusters, _unplaced = partition_applications(items)
+    clusters, _unplaced = partition_applications(items, known_multi, known_threads)
 
     rolled: list[RolledApplication] = []
     for cluster in clusters:
@@ -2344,6 +2400,8 @@ def is_ats_sender(sender_email: str | None) -> bool:
 def collect_review_items(
     items: Iterable[PipelineItem],
     dropped_out: list[DroppedVerdict] | None = None,
+    known_multi: frozenset[str] = frozenset(),
+    known_threads: frozenset[str] = frozenset(),
 ) -> list[ReviewItem]:
     """Return the uncertain lifecycle verdicts that need a human decision.
 
@@ -2387,7 +2445,7 @@ def collect_review_items(
     # real application row" — but there is no single row it belongs to, and
     # picking one would settle the wrong application (see
     # :func:`partition_applications`). Asking is the only honest move.
-    unplaceable = unplaceable_message_ids(items)
+    unplaceable = unplaceable_message_ids(items, known_multi, known_threads)
 
     best: dict[str, ReviewItem] = {}
     for item in items:

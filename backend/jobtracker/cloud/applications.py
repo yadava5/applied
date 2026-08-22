@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import NamedTuple
@@ -870,6 +871,99 @@ async def _company_rows(session, user_id: uuid.UUID, token: str) -> list[Applica
     )
 
 
+async def employers_with_several_applications(
+    session, user_id: uuid.UUID
+) -> frozenset[str]:
+    """Normalized employer tokens whose board already holds more than one card.
+
+    What a sync knows that :func:`pipeline.partition_applications` cannot. A
+    delta is usually one message, so from inside the pipeline an employer with
+    four applications and one role-less rejection in today's mail is
+    indistinguishable from an employer with one. Handing it this set makes the
+    review-queue rule — never guess which of several applications a role-less
+    message is about — apply to an incremental sync exactly as it applies to a
+    rebuild.
+
+    LIVE rows only, and the count is of rows a user can see: a dismissed
+    duplicate is not on the board, and letting one push an employer over the
+    threshold would send mail to the queue on the strength of a card that no
+    longer exists.
+    """
+
+    companies = [
+        company
+        for company in (
+            await session.exec(
+                select(Application.company).where(
+                    Application.user_id == user_id,
+                    Application.dismissed_at.is_(None),
+                )
+            )
+        ).all()
+        if company
+    ]
+
+    # COUNTED IN THE TOKEN SPACE THE PIPELINE ACTUALLY USES, which is not the
+    # normalized company name. ``resolve_employer`` returns the sender's domain
+    # brand or the LEADING WORD of a display name — "Cobalt Ridge" arrives as
+    # ``cobalt`` — and ``_company_rows`` matches a stored row on either. Keying
+    # this set on the full name instead produced a set that never contained the
+    # token being looked up, so the rule silently did nothing: a check that
+    # cannot fire, and one that reads as passing.
+    candidates: set[str] = set()
+    for company in companies:
+        token = pipeline.normalize_company_name(company)
+        if token:
+            candidates.add(token)
+            candidates.add(token.split()[0])
+    return frozenset(
+        token
+        for token in candidates
+        if sum(
+            1
+            for company in companies
+            if pipeline.normalize_company_name(company) == token
+            or pipeline.matches_company_token(company, token)
+        )
+        > 1
+    )
+
+
+async def threads_naming_one_application(session, user_id: uuid.UUID) -> frozenset[str]:
+    """Gmail thread ids whose filed mail sits on exactly ONE application.
+
+    The other half of what a delta cannot see. An update that names no role is
+    ambiguous at an employer with several cards — unless its own conversation
+    already names one of them, which is the ordinary shape of an employer
+    replying inside its own confirmation. Without this, every follow-up at a
+    multi-application employer went to the review queue, including the ones the
+    mail answers by itself.
+
+    UNAMBIGUOUS ONLY, and that restriction is the whole safety of it. A thread
+    whose filed mail spans two applications names no single card — the four
+    Microsoft confirmations of 21 August share one thread and are four
+    applications — so it is left out and the update it carries is asked about,
+    which is the same answer :func:`pipeline.partition_applications` gives for
+    the same shape in one scan.
+    """
+
+    rows = (
+        await session.exec(
+            select(Email.thread_id, Email.application_id).where(
+                Email.user_id == user_id,
+                Email.thread_id.is_not(None),
+                Email.application_id.is_not(None),
+            )
+        )
+    ).all()
+    by_thread: dict[str, set[int]] = defaultdict(set)
+    for thread_id, application_id in rows:
+        by_thread[thread_id].add(application_id)
+    return frozenset(
+        thread_id for thread_id, apps in by_thread.items() if thread_id and len(apps) == 1
+    )
+
+
 async def _misspelled_employer(session, user_id: uuid.UUID, token: str) -> str | None:
     """The employer on the board that a NEW ``token`` is probably a typo of.
 
@@ -969,8 +1063,127 @@ async def _resolve_application(
             found = next((row for row in rows if row.id == home), None)
             if found is not None:
                 return found
+        # A CONFIRMATION IS NEVER ROUTED BY ITS THREAD. It asserts an
+        # application, so it opens a card or lands on its own stored one and
+        # nothing else; only an update asks "which of these is this about?".
+        # The order is what keeps this path agreeing with
+        # :func:`pipeline.partition_applications`, which does the same: anchors
+        # are placed before threads are consulted, so a second confirmation
+        # arriving inside the first one's conversation is two applications on a
+        # rebuild and two applications on a delta.
+        if any(m.category in pipeline.APPLIED_SIGNAL_CATEGORIES for m in rolled.messages):
+            if await _is_a_further_application(session, user_id, rolled, rows):
+                return None
+        else:
+            conversation = await _application_in_conversation(session, user_id, rolled, rows)
+            if conversation is not None:
+                return conversation
         rows = [row for row in rows if row.id not in blocked]
     return _pick_application(rows, rolled.req_id, rolled.role_token)
+
+
+async def _application_in_conversation(
+    session,
+    user_id: uuid.UUID,
+    rolled: pipeline.RolledApplication,
+    rows: list[Application],
+) -> Application | None:
+    """The row a filed message of this cluster's own Gmail thread already sits on.
+
+    "More about this one." A thread is how mail was DELIVERED and is never an
+    identity — the four Microsoft confirmations of 21 August share one thread
+    and are four applications — but where the mail carries no key at all, the
+    conversation is the only structure left, and an employer replying inside its
+    own confirmation is talking about that application. This is what keeps an
+    update from opening a card, and it is the reason a duplicate confirmation
+    (the same one re-sent into the same thread) does not mint a second one.
+
+    Ambiguity is refused rather than guessed: a thread whose filed mail spans
+    more than one of this employer's rows names no single card, so it falls
+    through to the cascade like any other role-less message. Same rule as
+    :func:`pipeline.partition_applications` applies in-scan, and the two must
+    agree or a delta and a rebuild produce different boards.
+    """
+
+    threads = {m.thread_id for m in rolled.messages if m.thread_id}
+    if not threads:
+        return None
+    by_id = {row.id: row for row in rows if row.id is not None}
+    if not by_id:
+        return None
+    found = (
+        await session.exec(
+            select(Email.application_id).where(
+                Email.user_id == user_id,
+                Email.thread_id.in_(sorted(threads)),
+                Email.application_id.in_(sorted(by_id)),
+            )
+        )
+    ).all()
+    candidates = {application_id for application_id in found if application_id is not None}
+    if len(candidates) != 1:
+        return None
+    return by_id[candidates.pop()]
+
+
+async def _is_a_further_application(
+    session,
+    user_id: uuid.UUID,
+    rolled: pipeline.RolledApplication,
+    rows: list[Application],
+) -> bool:
+    """Does this cluster ASSERT an application the board does not have yet?
+
+    The incremental half of the rule :func:`pipeline.partition_applications`
+    applies in-scan, and it has to exist separately because the two halves see
+    different things. A real sync rolls up a DELTA — one message, usually — so
+    the partitioner never sees an employer's second confirmation beside its
+    first and its "two or more anonymous confirmations" test can never fire.
+    Without this, the split worked on a rebuild and did nothing on the syncs
+    that actually run, which is how the reported bug survived its first fix.
+
+    A STORED ROW PLAYS THE PART OF THE FIRST ANCHOR. Three things must hold:
+
+    * the cluster carries a confirmation — a rejection or interview invite
+      reports on an application, it does not assert one, so it never mints;
+    * the employer's board is entirely anonymous — where some row names a role
+      or a requisition number, a role-less confirmation is far more likely the
+      supporting message rule 3 was written for (Roblox's email-verification
+      mail) than a second application;
+    * one of those anonymous rows already holds a confirmation of its own —
+      without this, a rejection that minted a row would make the confirmation
+      following it look like a SECOND application and split one card in two,
+      which is the same defect pointing the other way.
+
+    All three together make the claim literally true: this employer has an
+    application whose confirmation is on the board, and here is another
+    confirmation that is not.
+    """
+
+    if not any(m.category in pipeline.APPLIED_SIGNAL_CATEGORIES for m in rolled.messages):
+        return False
+    if not rows:
+        return False  # nothing to be a FURTHER application than; mint normally
+    anonymous = [
+        row for row in rows if row.req_id is None and row.role_token is None
+    ]
+    if len(anonymous) != len(rows):
+        return False
+    ids = [row.id for row in anonymous if row.id is not None]
+    if not ids:
+        return False
+    held = (
+        await session.exec(
+            select(Email.id).where(
+                Email.user_id == user_id,
+                Email.application_id.in_(ids),
+                Email.classified_as.in_(
+                    [EmailCategory(c) for c in sorted(pipeline.APPLIED_SIGNAL_CATEGORIES)]
+                ),
+            )
+        )
+    ).all()
+    return bool(held)
 
 
 async def _anonymous_homes(

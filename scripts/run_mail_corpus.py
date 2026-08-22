@@ -14,6 +14,8 @@ which pins the counts so a regression cannot land silently.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -22,6 +24,10 @@ _BACKEND = Path(__file__).resolve().parent.parent / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
+# The models bind to an in-memory SQLite when the environment says test, and
+# layer 2 stands one up. Set before the app is imported, exactly as conftest does.
+os.environ.setdefault("JOBTRACKER_ENVIRONMENT", "test")
+
 from tests.corpus.generator import generate  # noqa: E402
 from tests.corpus.harness import (  # noqa: E402
     Score,
@@ -29,6 +35,34 @@ from tests.corpus.harness import (  # noqa: E402
     score_in_scan,
     score_incremental,
 )
+
+
+async def _incremental(cases) -> Score:
+    """Layer 2 needs a database, because layer 2 IS the database.
+
+    The harness stopped mirroring ``_pick_application`` in memory on 2026-08-21
+    — the mirror had drifted and was reporting merges the product no longer had
+    — so this instrument now stands up the same in-memory SQLite the test suite
+    uses and drives the real ``upsert_applications_for_user`` through it.
+    """
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import SQLModel
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            return await score_incremental(session, cases)
+    finally:
+        await engine.dispose()
 
 
 def _report(score: Score, cases_n: int, verbose: bool) -> None:
@@ -95,7 +129,7 @@ def main() -> int:
     for axis, n in sorted(by_axis.items()):
         print(f"  {axis:<28} {n:>4}")
 
-    for score in (score_in_scan(cases), score_incremental(cases)):
+    for score in (score_in_scan(cases), asyncio.run(_incremental(cases))):
         # The self-check the whole report rests on. A corpus that never clears
         # the gate produces zero failures and looks perfect; this estate has a
         # documented history of gates that could not fire.
