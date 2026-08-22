@@ -840,11 +840,22 @@ FACTS: dict[str, dict] = {
         "describe": f"RECORDED['cards'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("cards"),
         "sites": [
-            r"misrouted review \| \*\*([\d,]+) / 0 / 0 / \d+ / 0\*\*",
+            # merges stays a literal 0 on purpose: it is the failure that destroys a
+            # record silently, and if it ever moves this pattern SHOULD stop matching.
+            r"misrouted review \| \*\*([\d,]+) / \d+ / 0 / \d+ / 0\*\*",
             {
                 "re": r"wrong card: ([\d,]+) cards, 0 splits",
                 "file": BOOKLET_CONTENT,
             },
+        ],
+    },
+    "corpusSplits": {
+        "kind": "static",
+        "describe": f"RECORDED['splits'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("splits"),
+        "sites": [
+            r"misrouted review \| \*\*[\d,]+ / ([\d,]+) / 0 / \d+ / 0\*\*",
+            r"\*\*([\d,]+) applications did end up on two cards each\*\*",
         ],
     },
     "corpusNoiseOnCard": {
@@ -852,7 +863,7 @@ FACTS: dict[str, dict] = {
         "describe": f"RECORDED['noise_on_card'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("noise_on_card"),
         "sites": [
-            r"misrouted review \| \*\*[\d,]+ / 0 / 0 / ([\d,]+) / 0\*\*",
+            r"misrouted review \| \*\*[\d,]+ / \d+ / 0 / ([\d,]+) / 0\*\*",
             r"\*\*([A-Za-z]+|[\d,]+) messages did MINT a card that should not exist\*\*",
         ],
     },
