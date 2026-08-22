@@ -13,8 +13,9 @@
  * the control also drops the whole cookie jar), and the rest is a
  * cross-function hop to the FastAPI project plus four serial statements
  * against the pooler. Connection reuse is already on — `db_connect;desc="n=0"`
- * on every sample taken, warm and cold alike — so the old ~216 ms NullPool tax
- * is not in this number and must not be re-litigated.
+ * on every WARM sample — so the old ~216 ms NullPool tax is not in this number
+ * and must not be re-litigated. (A fresh backend instance does still pay one
+ * connect, measured once at `n=1`, 105 ms; see the linked issue.)
  *
  * So the win is not a faster request — it is the same request, taken earlier.
  * The next card a reader opens is nearly always a neighbour: ↑/↓ traverse
