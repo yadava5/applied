@@ -1055,17 +1055,23 @@ def generate(seed: int = 20260822) -> list[Case]:
 class Stats:
     """What the corpus IS, counted by the builder rather than read back off it.
 
-    Derived at build time on purpose. Recomputing the employer count from
+    Derived at build time on purpose. Recomputing the count from
     ``{c.employer for c in cases}`` reads the same number off the mail, and a
     static analyser cannot tell a count of invented company names from a count
     of real ones — CodeQL flagged printing it as clear-text logging of private
     data, correctly in the general case. It is also simply the better number:
-    the builder knows how many employers it handed out, including the forged
-    ones the impersonation family mints and never files under.
+    the builder knows how many it handed out, including the forged ones the
+    impersonation family mints and deliberately never files under.
+
+    The field is ``companies`` rather than ``employers`` for the same reason
+    and it is the more accurate word: CodeQL classifies ``employ*`` as private
+    information about a PERSON (employment status is PII), which is exactly
+    right for a field naming somebody's employer and exactly wrong for a count
+    of invented corporate names. Naming it for what it counts settles both.
     """
 
     messages: int
-    employers: int
+    companies: int
     adversarial: int
 
 
@@ -1075,7 +1081,7 @@ def stats(seed: int = 20260822) -> Stats:
         family(b, n)
     return Stats(
         messages=len(b.cases),
-        employers=b.employers.used,
+        companies=b.employers.used,
         adversarial=sum(1 for c in b.cases if c.adversarial),
     )
 
@@ -1123,6 +1129,6 @@ if __name__ == "__main__":  # pragma: no cover - human inspection aid
     st = stats()
     print(f"{st.messages} messages, digest {digest(cases)[:16]}")
     print(f"{st.adversarial} adversarial ({st.adversarial / st.messages:.1%})")
-    print(f"{st.employers} employers\n")
+    print(f"{st.companies} companies\n")
     for family, n in sorted(Counter(c.family for c in cases).items()):
         print(f"  {family:30s} {n:5d}")

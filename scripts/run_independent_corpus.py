@@ -93,7 +93,7 @@ def main() -> int:
     print(f"  digest            {digest(cases)[:16]}")
     print(f"  adversarial       {st.adversarial} ({st.adversarial / st.messages:.1%}) — "
           "written to defeat the classifier, not merely hard")
-    print(f"  employers         {st.employers}, no two sharing a leading word")
+    print(f"  companies         {st.companies}, no two sharing a leading word")
 
     t0 = time.time()
     verdicts = classify_all(cases)
