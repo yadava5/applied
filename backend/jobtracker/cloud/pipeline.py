@@ -816,9 +816,25 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     # DoorDash-shaped: "...applying to DoorDash's <ROLE> position!" — the employer
     # sits between the verb and the title, so no article anchors the capture.
+    #
+    # WHICH IS WHY IT USED TO TAKE THE EMPLOYER WITH IT. With nothing to anchor
+    # on, the capture began at the first capitalised word after the verb, and
+    # for a possessive employer that is the employer:
+    #
+    #   "applying to <Employer>'s Frontend Engineer position!"
+    #      -> "<Employer>'s Frontend Engineer"
+    #
+    # while the same application's rejection said "apply for the Frontend
+    # Engineer opening at <Employer>" and yielded "Frontend Engineer". Two
+    # tokens, two cards, one application — and the title there is SEVENTEEN
+    # characters, so this was never about length. See #466.
+    #
+    # A job title never contains "<Word>'s "; an employer's possessive does.
+    # Forbidding it INSIDE the capture is what makes the capture start after it,
+    # and it leaves every non-possessive wording untouched.
     re.compile(
         r"\b(?:applying|applied|application)\b[^.!?\n]{0,40}?"
-        r"(?P<role>[A-Z][^.!?\n]{3,90}?)\s+(?:position|role)\b",
+        r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)\s+(?:position|role)\b",
     ),
     # Microsoft-shaped: "submit your application for Software Engineer II
     # (Job number: 200045485)." No article before the title and no trailing
@@ -828,13 +844,26 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # THE PARENTHESISED REQUISITION IS THE TERMINATOR, and that is what makes
     # this safe to add. The other patterns end on a common noun that can also
     # appear mid-sentence; this one ends on an employer explicitly labelling a
-    # requisition, immediately after the title. The capture excludes "(" so it
-    # cannot run past the label, and the label alternation is the same set
-    # `_REQ_ID_PATTERNS` accepts, so a wording either yields both a role and an
-    # id or neither, rather than one of the two.
+    # requisition, immediately after the title. The label alternation is the
+    # same set `_REQ_ID_PATTERNS` accepts, so a wording either yields both a
+    # role and an id or neither, rather than one of the two.
+    #
+    # THE CAPTURE USED TO EXCLUDE "(" TOO, on the stated reasoning that this is
+    # what stops it running past the label. That reasoning was wrong — the
+    # LABEL is what stops it, and it still does. Excluding the character only
+    # meant a title containing an ordinary parenthesis produced NO ROLE AT ALL:
+    #
+    #   "...application for Software Engineer I, Entry-Level
+    #    (Graduation Date: Fall 2025-Summer 2026) (Job number: 200045485)."
+    #      -> role = None
+    #
+    # which is a real DoorDash title. That confirmation carried a requisition id
+    # and no role while its own rejection carried a role and no id, so nothing
+    # joined them and the application opened a second card. `Software Engineer
+    # II (Job number: 200045485)` is the control and is unchanged. See #466.
     re.compile(
         r"\b(?:application|applying|applied)\s+(?:for|to)\s+"
-        r"(?P<role>[^.!?\n(]{3,90}?)\s*"
+        r"(?P<role>[^.!?\n]{3,120}?)\s*"
         r"\(\s*(?:job|requisition|req|posting|position|vacancy)\s*"
         r"(?:number|no\.?|id|code|ref(?:erence)?)\b",
         re.IGNORECASE,
@@ -2553,6 +2582,27 @@ def is_ats_sender(sender_email: str | None) -> bool:
 #: 633/633 with zero noise — and it would be transcribing one sender's sentence
 #: into the product, which is the closed loop ``observed.py`` exists to break.
 #: The wording is not a category, it is a phrase. Left open and pinned instead.
+# THE SPAN BETWEEN THE ANCHOR AND THE KEYWORD IS A JOB TITLE, so the only safe
+# bound on it is a CLAUSE. It used to be `[\w,\ \-/]{0,60}`, a character class
+# holding no `(`, `)`, `:` or `#`, and real titles carry all four:
+#
+#   Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer 2026)
+#   Software Engineer, Agentic AI Harness & Quality - <Product>
+#   Software Engineer, C#
+#
+# So the #447 floor — which exists precisely to stop mail about a real
+# application reaching nothing — could not see the mail whose title carried
+# punctuation the class forgot. 5 messages per corpus run, on title shapes taken
+# from the owner's mailbox. See #466.
+#
+# EXTENDING THE CHARACTER CLASS WAS THE OBVIOUS FIX AND IS THE WRONG ONE. `C#`
+# already needed a character nobody anticipated; the next real title needs
+# another. `[^.!?\n]` says what is actually true — a title sits inside one
+# clause — which is the same assumption `_ROLE_PATTERNS` above already makes.
+#
+# The widening is bounded by the corpus's 400 `ats-relay-noise` messages, which
+# are relayed by the same domains and reference no application of the reader's:
+# zero of them enter the queue with this in place.
 _APPLICATION_REFERENCE = re.compile(
     r"""(?xi)
       your\ application\b
@@ -2560,9 +2610,9 @@ _APPLICATION_REFERENCE = re.compile(
     | \b(?:your|the)\ offer\b
     | your\ (?:assessment|interview)s?\b
     | your\ interest\ in\ (?:the\ |this\ |our\ )?
-      [\w,\ \-/]{0,60}?(?:opportunity|position|role|opening)\b
+      [^.!?\n]{0,80}?(?:opportunity|position|role|opening)\b
     | \bappl(?:y|ied|ying)\ (?:for|to)\ (?:the\ |a\ |an\ )?
-      [\w,\ \-/]{0,60}?(?:opportunity|position|role|opening)\b
+      [^.!?\n]{0,80}?(?:opportunity|position|role|opening)\b
     """
 )
 
