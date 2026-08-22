@@ -43,7 +43,7 @@ if str(_BACKEND) not in sys.path:
 # board half stands one up. Set before the app is imported, as conftest does.
 os.environ.setdefault("JOBTRACKER_ENVIRONMENT", "test")
 
-from tests.corpus_independent.generate import digest, generate  # noqa: E402
+from tests.corpus_independent.generate import digest, generate, stats  # noqa: E402
 from tests.corpus_independent.harness import (  # noqa: E402
     classify_all,
     rank,
@@ -85,15 +85,15 @@ def main() -> int:
     args = parser.parse_args()
 
     cases = generate(args.seed)
-    adversarial = sum(1 for c in cases if c.adversarial)
-    employers = len({c.employer for c in cases if c.employer})
+    # From the BUILDER, not read back off the mail. See ``generate.Stats``.
+    st = stats(args.seed)
     print(f"\n{'=' * 74}")
     print(f"independent corpus — {len(cases)} invented emails, seed {args.seed}")
     print(f"{'=' * 74}")
     print(f"  digest            {digest(cases)[:16]}")
-    print(f"  adversarial       {adversarial} ({adversarial / len(cases):.1%}) — "
+    print(f"  adversarial       {st.adversarial} ({st.adversarial / st.messages:.1%}) — "
           "written to defeat the classifier, not merely hard")
-    print(f"  employers         {employers}, no two sharing a leading word")
+    print(f"  employers         {st.employers}, no two sharing a leading word")
 
     t0 = time.time()
     verdicts = classify_all(cases)

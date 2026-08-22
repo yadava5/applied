@@ -1051,6 +1051,35 @@ def generate(seed: int = 20260822) -> list[Case]:
     return b.cases
 
 
+@dataclass(frozen=True)
+class Stats:
+    """What the corpus IS, counted by the builder rather than read back off it.
+
+    Derived at build time on purpose. Recomputing the employer count from
+    ``{c.employer for c in cases}`` reads the same number off the mail, and a
+    static analyser cannot tell a count of invented company names from a count
+    of real ones — CodeQL flagged printing it as clear-text logging of private
+    data, correctly in the general case. It is also simply the better number:
+    the builder knows how many employers it handed out, including the forged
+    ones the impersonation family mints and never files under.
+    """
+
+    messages: int
+    employers: int
+    adversarial: int
+
+
+def stats(seed: int = 20260822) -> Stats:
+    b = _Builder(seed)
+    for _name, family, n in _FAMILIES:
+        family(b, n)
+    return Stats(
+        messages=len(b.cases),
+        employers=b.employers.used,
+        adversarial=sum(1 for c in b.cases if c.adversarial),
+    )
+
+
 def digest(cases: list[Case]) -> str:
     """A stable hash of the whole corpus, for the determinism gate.
 
@@ -1091,9 +1120,9 @@ if __name__ == "__main__":  # pragma: no cover - human inspection aid
     from collections import Counter
 
     cases = generate()
-    print(f"{len(cases)} messages, digest {digest(cases)[:16]}")
-    adversarial = sum(1 for c in cases if c.adversarial)
-    print(f"{adversarial} adversarial ({adversarial / len(cases):.1%})")
-    print(f"{cases and len({c.employer for c in cases if c.employer})} employers\n")
+    st = stats()
+    print(f"{st.messages} messages, digest {digest(cases)[:16]}")
+    print(f"{st.adversarial} adversarial ({st.adversarial / st.messages:.1%})")
+    print(f"{st.employers} employers\n")
     for family, n in sorted(Counter(c.family for c in cases).items()):
         print(f"  {family:30s} {n:5d}")
