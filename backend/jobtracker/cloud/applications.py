@@ -205,7 +205,11 @@ class ScanCoverage:
         return self.oldest <= moment <= self.newest
 
 
-def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> bool:
+def _scan_contradicts(
+    emails: list[Email],
+    coverage: ScanCoverage | None,
+    unsure: frozenset[str] = frozenset(),
+) -> bool:
     """Did this scan READ a row's own evidence and disagree with it?
 
     The one honest test for "this application is stale". The caller has already
@@ -216,7 +220,7 @@ def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> boo
     row was filed from and no longer concluding an application from them — a
     classifier correction, which is the case the rebuild exists to clean up.
 
-    Three ways a row survives, each one a thing the scan cannot prove:
+    Four ways a row survives, each one a thing the scan cannot prove:
 
     1. No coverage at all (an empty scan) — it observed nothing.
     2. No linked email — there is no evidence to re-read, so staleness is
@@ -226,6 +230,30 @@ def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> boo
        test is MEMBERSHIP, not dates: a scan that read one of a row's messages
        has read one of a row's messages, and the rest are as unobserved as they
        would be after an empty scan.
+    4. ANY linked email the scan sent to the REVIEW QUEUE. See below.
+
+    Unsure is not disproven
+    -----------------------
+
+    A message is absent from the rolled set for two very different reasons, and
+    only one of them is a correction. The classifier may now say the message is
+    NOT an application — that is the case this function exists for. Or its
+    confidence may simply have fallen under the 0.85 gate, in which case the
+    pipeline routes it to the review queue and the rollup never sees it. The
+    second is the scan saying "I do not know", and the caller's premise —
+    "no longer concluding an application" — is then false.
+
+    FOUND ON PRODUCTION, 2026-08-22. A rebuild took the owner's Microsoft
+    application off the board while the very message it was filed from sat in
+    the review queue at 80%, four points under the gate. Nothing had disproved
+    it; the classifier had become less certain, and less certain removed a card.
+    That is the archived-mail defect one level up: there, silence was read as
+    absence, and here, hesitation is.
+
+    The receipt made it recoverable and not silent, which is the only reason
+    this was a defect and not a repeat of 2026-08-10. It still must not happen:
+    the whole point of a review queue is that an uncertain verdict costs the
+    user a decision, not an application.
 
     Why membership rather than the date span
     ----------------------------------------
@@ -246,6 +274,8 @@ def _scan_contradicts(emails: list[Email], coverage: ScanCoverage | None) -> boo
     """
 
     if coverage is None or not emails:
+        return False
+    if any(e.message_id in unsure for e in emails):
         return False
     if not all(e.message_id in coverage.message_ids for e in emails):
         return False
@@ -2533,6 +2563,9 @@ async def purge_and_rebuild_gmail_pipeline(
     """
 
     keep_tokens = {r.company_token for r in rolled}
+    # The messages this scan could not settle. A row holding one of these is
+    # unproven, not stale — see :func:`_scan_contradicts`.
+    unsure = frozenset(item.message_id for item in review)
 
     auto_rows = (
         await session.exec(
@@ -2562,8 +2595,8 @@ async def purge_and_rebuild_gmail_pipeline(
                 )
             )
         ).all()
-        if not _scan_contradicts(list(linked), coverage):
-            continue  # unseen, not disproven — the row stays
+        if not _scan_contradicts(list(linked), coverage, unsure):
+            continue  # unseen, unsure, or not disproven — the row stays
         row.dismissed_at = now
         row.dismissed_reason = DISMISSED_BY_RESYNC
         session.add(row)

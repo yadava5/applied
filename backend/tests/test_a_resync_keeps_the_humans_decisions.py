@@ -146,7 +146,11 @@ async def _resync(
         USER,
         rolled,
         review,
-        ScanCoverage(message_ids={m for m, _d in THREE}),
+        # from_items, not the bare constructor: coverage with no date span
+        # fails the contradiction test outright, so a removal path tested
+        # against it can never fire and the archived-mail case below would
+        # pass for the wrong reason.
+        ScanCoverage.from_items(items),
     )
     await session.commit()
 
