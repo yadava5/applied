@@ -835,6 +835,9 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("auto_filed_wrong"),
         "sites": [
             r"\| \*\*Wrong AND stated to the user as fact\*\* \| \*\*([\d,]+)\*\* \|",
+            # Prose restating the figure. It read 119 while the number was 72,
+            # because only the table entry above was registered.
+            r"Wrong verdicts stated as fact went [\d,]+ to ([\d,]+)\.",
             {"re": r"point: ([\d,]+) of the [\d,]+ wrong verdicts sit above", "file": BOOKLET_CONTENT},
             {"re": r"than [\d,]+ with ([\d,]+) auto-filed", "file": BOOKLET_CONTENT},
         ],
@@ -873,7 +876,7 @@ FACTS: dict[str, dict] = {
             # record silently, and if it ever moves this pattern SHOULD stop matching.
             r"misrouted review \| \*\*([\d,]+) / \d+ / 0 / \d+ / 0\*\*",
             {
-                "re": r"card: ([\d,]+) cards, 0 splits",
+                "re": r"card: ([\d,]+) cards, 0 merges",
                 "file": BOOKLET_CONTENT,
             },
         ],
@@ -885,6 +888,13 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"misrouted review \| \*\*[\d,]+ / ([\d,]+) / 0 / \d+ / 0\*\*",
             r"\*\*([\d,]+) applications did end up on two cards each\*\*",
+            # The System Card said "0 splits" in prose while this was 2. Same
+            # gap as the "0 noise" sentence beside it: the board ROW was
+            # registered, the sentence restating it was not.
+            {
+                "re": r"([\d,]+) applications are split across two cards",
+                "file": BOOKLET_CONTENT,
+            },
         ],
     },
     "corpusNoiseOnCard": {

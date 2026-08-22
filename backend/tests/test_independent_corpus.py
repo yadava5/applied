@@ -29,7 +29,7 @@ from tests.corpus_independent.harness import (
 
 #: Recorded 2026-08-22. A corpus that differs between runs cannot be a gate, and
 #: a digest is the only way to say "the same mail" without shipping 24MB.
-CORPUS_DIGEST = "417bc49058d5da5e"
+CORPUS_DIGEST = "0754a8432accafcd"
 CORPUS_SIZE = 17020
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
@@ -47,9 +47,9 @@ RECORDED = {
     # 24 against a real 35 — because nothing recomputed it. Now something does.
     "families": 35,
     "companies": 9180,
-    "correct": 15657,
-    "wrong": 343,
-    "abstained": 1020,
+    "correct": 15696,
+    "wrong": 311,
+    "abstained": 1013,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
@@ -61,8 +61,8 @@ RECORDED = {
     # other 2 are `ats-relay-noise` minting cards from a profile-completion
     # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
     # here. See #455 and #451.
-    "auto_filed_wrong": 102,
-    "cards": 9172,
+    "auto_filed_wrong": 72,
+    "cards": 9134,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -84,13 +84,13 @@ RECORDED = {
     # queue. It must stay 0: a message about a real application reaching
     # NOTHING is the one outcome indistinguishable from a mailbox that never
     # received it.
-    "lost": 8,
-    "dropped": 72,
+    "lost": 16,
+    "dropped": 54,
     # Noise that MINTED A CARD. Was 0 and is 2 as of 2026-08-22 — not a
     # regression, but the first time the corpus contained ATS mail that is not
     # about the user at all. Both are a profile-completion nudge scoring
     # `assessment` at 0.90. See `ats-relay-noise`.
-    "noise_on_card": 2,
+    "noise_on_card": 0,
     # One application over several cards. Was 0, then 7 when the observed
     # families landed, then 5 after #455, and is 0 again now that #459 is fixed.
     #
@@ -101,12 +101,12 @@ RECORDED = {
     # — was 0 throughout and still is, which is the assertion that says the fix
     # folded the update onto the right card instead of collapsing two
     # applications into one.
-    "splits": 0,
+    "splits": 2,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
     # designed answer, and it moves with the seed: 351 at 20260822.
-    "update_held": 360,
+    "update_held": 371,
 }
 
 
@@ -216,7 +216,7 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-rejection",
-            41,
+            39,
             "REAL rejection wordings, half of them delivered as Gmail's snippet "
             "because that is what production receives when no body part can be "
             "extracted. Measured: these six wordings score 6/6 on the full body "
@@ -239,20 +239,26 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "ats-relay-noise",
-            2,
-            "a profile-completion nudge — 'your candidate profile is missing a "
-            "few details' — scores `assessment` at 0.90 and MINTS A CARD for an "
-            "application that does not exist. This family exists as the control "
-            "for the #447 ATS floor and caught a second defect on the way in. "
-            "Noise minting a card is the failure that ruled out widening the "
-            "floor on the sender alone.",
+            0,
+            "WAS 2 AND IS NOW 0, and not because anything was fixed — the "
+            "corpus started drawing realistic job titles (#466) and every case "
+            "re-drew, so the profile-completion nudge that used to score "
+            "`assessment` at 0.90 and MINT A CARD no longer draws the title "
+            "that got it there. That is the honest reading and the reason this "
+            "stays pinned at 0 rather than being deleted: the defect it named "
+            "is not demonstrably gone, it is out of this sample. A number above "
+            "0 here is noise minting a card, which is the failure that ruled "
+            "out widening the #447 floor on the sender alone.",
         ),
         (
             "hostile-zero-width",
-            100,
+            72,
             "a zero-width space inside 'moving' defeats the rejection pattern "
             "while rendering identically. #424 is the sender-name half of this "
-            "gap; this is the body half.",
+            "gap; this is the body half. WAS AN EXACT 100 AND IS NOW 72 with 28 "
+            "abstaining: once the corpus drew realistic titles the same attack "
+            "stopped landing on every message, so its size became a property of "
+            "the drawn title. Banded in the seed test for that reason.",
         ),
     ],
 )
@@ -302,15 +308,23 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
         "quoted-history is 200 of 400 at every seed tried. A change here means "
         "the defect became wording-sensitive, which is a different bug."
     )
-    assert score.by_family["hostile-zero-width"]["wrong"] == 100
+    # BANDED SINCE #466, and the width is the finding. This was an exact 100 at
+    # every seed while every title in the corpus was short. With realistic ones
+    # drawn it is 72 / 72 / 81 — the zero-width attack still lands, but on how
+    # many messages now depends on the title each case drew.
+    zw = score.by_family["hostile-zero-width"]["wrong"]
+    assert 70 <= zw <= 83, (
+        f"{zw} zero-width rejections read as something else at this seed, "
+        "outside the measured band of 70..83."
+    )
     # OBSERVED REJECTIONS, banded. It moves with the seed for the same reason
     # the #455 band does: which real wording and which role title a case draws
     # is seeded, and the defect fires on one or the other. Measured 42/42/44 at
     # the three seeds.
     obs_rej = score.by_family["observed-rejection"]["wrong"]
-    assert 40 <= obs_rej <= 44, (
+    assert 36 <= obs_rej <= 44, (
         f"{obs_rej} real rejections stated as fact at this seed, outside the "
-        "measured band of 40..44. These are transcribed wordings, so a move "
+        "measured band of 36..44. These are transcribed wordings, so a move "
         "here is the product changing, never the corpus."
     )
     # WAS A BAND OF 55..66 AND IS NOW EXACTLY ZERO, at every seed — which is
@@ -372,14 +386,17 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # profile nudge in `ats-relay-noise` — both fire on a drawn role title, so
     # both move with the seed.
     #
-    # 115..119 BEFORE #459, 100..102 AFTER, and the drop is the point of that
-    # fix rather than a side effect: 17 real "please verify your email" messages
-    # per seed were being auto-filed as fresh confirmations, so the board minted
-    # a rival card for an application it already held and never asked. Measured
-    # 102 / 100 / 101 at the three seeds.
-    assert 100 <= score.auto_filed_wrong <= 102, (
+    # 115..119 BEFORE #459, 100..102 AFTER, and 70..84 since #466 put realistic
+    # job titles in the corpus. The #459 drop was the point of that fix — 17
+    # real "please verify your email" messages per seed were auto-filed as fresh
+    # confirmations. The #466 drop is NOT a fix: every case re-drew its title,
+    # and several patterns stop matching when the title is long, so mail that
+    # used to be confidently wrong now abstains. Fewer wrong verdicts stated as
+    # fact, reached by understanding less. Measured 72 / 72 / 82 at the three
+    # seeds.
+    assert 70 <= score.auto_filed_wrong <= 84, (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed, outside the measured band of 100..102. The number that reaches "
+        "seed, outside the measured band of 70..84. The number that reaches "
         "the board without anyone being asked is the one worth watching across "
         "a re-sample."
     )
@@ -400,10 +417,13 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # correctly, the spread closed: 13,630 at all three. Equality is the
     # stronger statement and the evidence now supports it, so the band is
     # history rather than a hedge.
-    assert abs(score.correct - RECORDED["correct"]) <= 25, (
+    assert abs(score.correct - RECORDED["correct"]) <= 45, (
         f"correct moved to {score.correct}, more than a wording draw explains. "
-        f"The measured spread is 13,492 / 13,497 / 13,499 at three seeds: an "
-        "update whose wording abstains at one seed is answered at another."
+        "The measured spread is 15,696 / 15,685 / 15,726 at three seeds. The "
+        "tolerance was 25 and is 45 since #466 put realistic job titles in the "
+        "corpus: a long title pushes a verdict past a bounded window at one "
+        "seed and not at another, so the sample varies more than a wording "
+        "draw alone did."
     )
     assert score.correct + score.wrong + score.abstained == RECORDED["size"], (
         "the three buckets must still account for every message, whatever the "
@@ -509,11 +529,24 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     assert score.splits == RECORDED["splits"], [
         f.detail for f in score.failures if f.mode == "SPLIT"
     ][:3]
-    assert {f.family for f in score.failures if f.mode == "SPLIT"} == set(), (
-        "the corpus produces no split at all now; any family appearing here is "
-        "a new defect, and `observed-pending` appearing here again means #459 "
-        "regressed"
-    )
+    # WAS `set()` AND IS NOW `observed-rejection`, and this is #466 rather than
+    # a regression in anything that shipped. Once the corpus drew realistic job
+    # titles, the role EXTRACTOR started disagreeing with itself between a
+    # confirmation and its own rejection:
+    #
+    #   confirmation  "...applying to <Employer>'s Frontend Engineer position!"
+    #                 role = "<Employer>'s Frontend Engineer"
+    #   rejection     "...apply for the Frontend Engineer opening at <Employer>."
+    #                 role = "Frontend Engineer"
+    #
+    # Two tokens, two cards, one application. The title there is 17 characters,
+    # so this is NOT about length — it is the DoorDash-shaped pattern, which is
+    # documented as having no article to anchor on, taking a possessive employer
+    # into the title. `observed-pending` appearing here again would mean #459
+    # regressed; this entry is #466 and must move when that is fixed.
+    assert {f.family for f in score.failures if f.mode == "SPLIT"} == {
+        "observed-rejection"
+    }, "a split from a family other than the known one is a new defect"
     # NOISE ON A CARD WAS 0 AND IS NOW 2, and the honest thing is to pin it
     # rather than relax the assertion. Both are `ats-relay-noise`, the family
     # added as the control for the #447 ATS floor: a profile-completion nudge
@@ -526,12 +559,13 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     assert score.noise_on_card == RECORDED["noise_on_card"], [
         f.detail for f in score.failures if f.mode == "NOISE-ON-CARD"
     ][:3]
-    assert {f.family for f in score.failures if f.mode == "NOISE-ON-CARD"} == {
-        "ats-relay-noise"
-    }, (
-        "noise reached a card from a family that is not the known one. The 2 "
-        "pinned above are a profile nudge scoring `assessment`; anything else "
-        "minting a card is a new defect, not this one."
+    assert {f.family for f in score.failures if f.mode == "NOISE-ON-CARD"} == set(), (
+        "noise reached a card. This was 2 — an `ats-relay-noise` profile nudge "
+        "scoring `assessment` at 0.90 — and is 0 since #466 re-drew every job "
+        "title, so the nudge no longer draws the wording that got it onto a "
+        "card. Pinned at empty rather than deleted, and NOT read as a fix: the "
+        "defect is out of this sample, not demonstrably gone. Any family here "
+        "is mail that must mint nothing, on a card."
     )
     assert score.wrong_review == 0, [
         f.detail for f in score.failures if "REVIEW" in f.mode
@@ -795,23 +829,38 @@ async def test_every_application_mail_is_addressed(
     # received it.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
     assert dict(lost) == {
-        # #458. The snippet cuts one character before "with your application",
-        # leaving "thank you so much for your interest in <Employer> and for the
-        # time and effort you have invested in our process" — which does not say
-        # it is about an application. Closing these needs `invested in our
-        # process` in the reference signal, and that is a sender's SENTENCE
-        # rather than a category, so it was declined. Pinned instead.
-        "observed-rejection": 8,
+        # TWO DEFECTS SHARE THIS FAMILY AND THIS NUMBER: 11 are #458 and 5 are
+        # #466. The split was measured, not apportioned — widening the
+        # reference class to a clause bound takes this to 11 and every one of
+        # those 11 carries "invested in our process", so the #466 half is
+        # exactly 5. 11 of them are #458:
+        # the snippet cuts one character before "with your application", leaving
+        # "thank you so much for your interest in <Employer> and for the time
+        # and effort you have invested in our process" — which does not say it
+        # is about an application. Closing those needs `invested in our process`
+        # in the reference signal, a sender's SENTENCE rather than a category,
+        # so it was declined and pinned.
+        #
+        # The other 5 are #466 and arrived when the corpus began drawing
+        # realistic job titles. A real DoorDash title is
+        # "Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer
+        # 2026)", and `pipeline._APPLICATION_REFERENCE` spans the title with
+        # `[\w,\ \-/]{0,60}?` — a character class with no `(`, `)` or `:` in
+        # it. So the #447 floor, which exists precisely to stop mail reaching
+        # nothing, cannot see the mail whose title carries punctuation the class
+        # forgot. That is a bound assuming what sits in the gap, the same shape
+        # as the width in #459, expressed as a character set instead of a count.
+        "observed-rejection": 16,
     }, dict(lost)
 
-    # 84 updates from the company's own domain rather than the ATS relay,
+    # 54 updates from the company's own domain rather than the ATS relay,
     # scored `applied` at 0.60 and dropped under the review floor. The product
     # NAMES these, so they are recoverable by someone who goes looking, which is
     # the whole difference from the 610 that used to sit above. Not closed by
     # #447: the reference clause floors ATS-relayed mail, and by construction
     # this family does not arrive on an ATS relay. See #451.
     dropped = Counter(f.family for f in score.failures if f.mode == "DROPPED")
-    assert dict(dropped) == {"update-from-another-domain": 72}, dict(dropped)
+    assert dict(dropped) == {"update-from-another-domain": 54}, dict(dropped)
 
     # THE CONTROL FOR THE FIX ABOVE, and the reason `lost == 0` means anything.
     #

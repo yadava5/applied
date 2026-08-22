@@ -196,26 +196,26 @@ that greeting opens **67% of rejections and 22% of confirmations**. Wrong verdic
 went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
-**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 91.99%
+**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 92.22%
 on the same engine, because the corpus stopped being written entirely by the author of the
 classifier. Measured before that change: **100.0% of the 13,730 lifecycle messages contained an
 engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
 wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 91.99% is the first number here that was
+by recruiting teams with no knowledge of this repository. 92.22% is the first number here that was
 not partly graded by the person who set the exam.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **15,657 of 17,020 — 91.99%** |
-| Wrong | **343** |
-| **Wrong AND stated to the user as fact** | **102** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **1,020** |
-| Board: cards / splits / merges / noise / misrouted review | **9,172 / 0 / 0 / 2 / 0** |
+| Correct | **15,696 of 17,020 — 92.22%** |
+| Wrong | **311** |
+| **Wrong AND stated to the user as fact** | **72** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **1,013** |
+| Board: cards / splits / merges / noise / misrouted review | **9,134 / 2 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
-| Mail about a real application that reached nothing | **8 lost**, 72 dropped |
+| Mail about a real application that reached nothing | **16 lost**, 72 dropped |
 
 **No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 16,780
 messages and 9,177 cards — the half that could destroy a record, because a rejection filed onto a
@@ -225,20 +225,24 @@ applicant tracking systems send every acknowledgement for an employer under one 
 address, so Gmail files four different roles as one conversation, and the board still gives each its
 own card. Thread is a delivery grouping here, never an identity.
 
-**0 applications did end up on two cards each**, and the real wording that causes it is ordinary: an
-applicant tracking system sends a second notification for an application it has already acknowledged
-("Keep track of your application"), and where the acknowledgement named no role and the follow-up
-does, nothing joins them. It is the strictly milder failure — the user sees one application twice and
-can act on it, where a merge loses a record silently — which is why the two are asserted separately
-and never as one number. [#459](https://github.com/yadava5/applied/issues/459).
+**2 applications did end up on two cards each**, and the cause is the role EXTRACTOR disagreeing with
+itself between a confirmation and its own rejection. One says "applying to Northwind's Frontend
+Engineer position" and the other "apply for the Frontend Engineer opening at Northwind"; the first
+takes the employer into the title, so the two carry different identities and nothing joins them. The
+title there is seventeen characters, so this is not a length problem — it is a pattern with no article
+to anchor on. It is the strictly milder failure: the user sees one application twice and can act on
+it, where a merge loses a record silently, which is why the two are asserted separately and never as
+one number. [#466](https://github.com/yadava5/applied/issues/466).
 
-**2 messages did MINT a card that should not exist**, and that is the one non-zero above. Both are
-a profile-completion nudge relayed by an ATS, scored `assessment` at 0.90. They come from
-`ats-relay-noise`, a family added on 2026-08-22 as the control on the review floor — the product's
-behaviour on ATS mail that is not about you was not good before and simply was not measured. It is
-pinned at 2, so a fix moves it and a widening is loud.
+**0 messages did MINT a card that should not exist**, and that number is not a fix — read it with the
+caveat rather than without. It was 2, both a profile-completion nudge relayed by an ATS and scored
+`assessment` at 0.90, and it reached 0 when the corpus began drawing realistic job titles and every
+case re-drew its wording. The nudge no longer draws what got it onto a card; nothing about the
+product changed. They come from `ats-relay-noise`, a family added on 2026-08-22 as the control on the
+review floor — the product's behaviour on ATS mail that is not about you was not good before and
+simply was not measured. It stays pinned at 0, so anything minting a card here is loud.
 
-**Wrong verdicts stated as fact went 464 to 119.** There was no such thing as a wrong-but-hedged
+**Wrong verdicts stated as fact went 464 to 72.** There was no such thing as a wrong-but-hedged
 verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
 never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
@@ -255,7 +259,7 @@ invented ones, so it is filed rather than shipped.
 The last row is the one that is still bad. Until 2026-08-22 the replay ran only the rollup and never
 the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
 precisely the blind spot that let four Microsoft applications disappear on 2026-08-21 with every gate
-green. It went from 610 to 0 on that day, and **8 messages about real applications
+green. It went from 610 to 0 on that day, and **16 messages about real applications
 now reach no card, no queue and no counter**
 ([#447](https://github.com/yadava5/applied/issues/447), then
 [#458](https://github.com/yadava5/applied/issues/458)). They scored
