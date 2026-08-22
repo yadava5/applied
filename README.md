@@ -168,10 +168,10 @@ That comparison is now a measurement rather than a citation. `scripts/cascade_ga
 
 What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9791 generalizes, and 96 examples is a small sample under any reading.
 
-### The 14,540-message adversarial corpus
+### The 15,180-message adversarial corpus
 
-The answer to the paragraph above. `backend/tests/corpus_independent/` invents **14,540 messages
-across 24 families over 7,670 companies**, none of them real, and drives them through the whole
+The answer to the paragraph above. `backend/tests/corpus_independent/` invents **15,180 messages
+across 26 families over 8,130 companies**, none of them real, and drives them through the whole
 sync end to end: classify, roll up, upsert, persist the review queue, then read the board back out
 of the tables. It is replayed
 in day-sized batches because that is what a real sync is — a delta, usually of one message — and a
@@ -186,21 +186,30 @@ accuracy a user would see on their own inbox.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **13,497 of 14,540 — 92.83%** |
-| Wrong | **300** |
-| **Wrong AND stated to the user as fact** | **100** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **743** |
-| Board: cards / splits / merges / noise / misrouted review | **8,020 / 0 / 0 / 0 / 0** |
+| Correct | **14,125 of 15,180 — 93.05%** |
+| Wrong | **316** |
+| **Wrong AND stated to the user as fact** | **116** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **739** |
+| Board: cards / splits / merges / noise / misrouted review | **8,262 / 0 / 0 / 2 / 0** |
 | Updates that reached the wrong card | **0** |
-| Updates held for a person because the classifier was unsure | 358 |
-| Mail about a real application that reached nothing | **610 lost**, 73 dropped |
+| Updates held for a person because the classifier was unsure | 351 |
+| Mail about a real application that reached nothing | **0 lost**, 84 dropped |
 
 **No message has ever landed on the wrong card.** Zero splits, zero merges, zero misrouted updates
-over 14,540 messages and 7,920 cards — the half that could destroy a record, because a rejection
+over 15,180 messages and 8,262 cards — the half that could destroy a record, because a rejection
 filed onto a sibling application settles it terminally and `advance_application_status` will never
-let it leave.
+let it leave. That claim survived the corpus growing to include applications that share one Gmail
+thread: real applicant tracking systems send every acknowledgement for an employer under one subject
+from one address, so Gmail files four different roles as one conversation, and the board still gives
+each its own card. Thread is a delivery grouping here, never an identity.
 
-**Wrong verdicts stated as fact went 464 to 100.** There was no such thing as a wrong-but-hedged
+**2 messages did MINT a card that should not exist**, and that is the one non-zero above. Both are
+a profile-completion nudge relayed by an ATS, scored `assessment` at 0.90. They come from
+`ats-relay-noise`, a family added on 2026-08-22 as the control on the review floor — the product's
+behaviour on ATS mail that is not about you was not good before and simply was not measured. It is
+pinned at 2, so a fix moves it and a widening is loud.
+
+**Wrong verdicts stated as fact went 464 to 116.** There was no such thing as a wrong-but-hedged
 verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
 never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
@@ -217,8 +226,15 @@ invented ones, so it is filed rather than shipped.
 The last row is the one that is still bad. Until 2026-08-22 the replay ran only the rollup and never
 the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
 precisely the blind spot that let four Microsoft applications disappear on 2026-08-21 with every gate
-green. **610 messages about real applications still reach no card, no queue and no counter**
-([#447](https://github.com/yadava5/applied/issues/447)).
+green. That gap is now closed, and the ratchet holds it shut: **0 messages about real applications
+now reach no card, no queue and no counter** — it was 610
+([#447](https://github.com/yadava5/applied/issues/447)). They scored
+`other` at 0.50 — not a lifecycle category, so neither the ATS floor nor the drop counter could see
+them. `pipeline.references_an_application` floors a message an ATS relayed into the review queue when
+its own text speaks about an application the reader made, and only then: the corpus carries 400
+`ats-relay-noise` messages from the same relay domains scoring the same `other`, and none of them is
+queued. The two assertions are each other's control, because reaching zero lost by queueing
+everything an ATS sends would pass the first one alone.
 
 Every defect below is pinned at its measured size rather than excluded, because a corpus that
 asserts only what already passes is a check that cannot fail — and this repository has a ledger of

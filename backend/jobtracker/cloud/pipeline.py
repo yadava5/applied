@@ -2397,6 +2397,74 @@ def is_ats_sender(sender_email: str | None) -> bool:
     return _rules_is_ats_sender(sender_email)
 
 
+#: Text in which this message speaks about the READER'S OWN place in a hiring
+#: process, rather than about jobs in general.
+#:
+#: ISSUE #447. This answers "is this mail about an application of yours?" and
+#: deliberately never answers "what happened to it". Those are different
+#: questions and conflating them is the defect #451 tracks: reference text
+#: saying WHICH application a message concerns must never outrank report text
+#: saying WHAT HAPPENED. Nothing here contributes to a category or a score. It
+#: decides one thing — whether a human is asked — and the human supplies the
+#: verdict.
+#:
+#: Why it is needed at all. An ATS rejection spends Gmail's whole ~186-character
+#: snippet on a polite preamble, so when no body part can be extracted the
+#: classifier sees only the thank-you and scores ``other`` at 0.50. ``other`` is
+#: not a lifecycle category, so the ATS floor below did not reach it and the
+#: message left through the terminal drop: no row, no queue entry, no counter.
+#: 610 messages in the 15k corpus, and the residual ``pipeline`` already named
+#: and declined to cover ("an ATS message that scores NOTHING in any category is
+#: ``other`` and still drops").
+#:
+#: Why not simply queue everything an ATS relays. That is the widening declined
+#: there, and ``tests/corpus_independent`` now has ``ats-relay-noise`` to make
+#: the difference measurable: 400 job alerts, talent-community blasts, profile
+#: nudges, surveys and referral asks, all from real relay domains, none about an
+#: application the reader made. Sender alone queues all 400.
+#:
+#: EVERY ALTERNATIVE IS ONE OF THE FIVE PHRASES BELOW, and each was checked
+#: against the four real rejections in the owner's mailbox (2026-08-22), which
+#: between them use FOUR DIFFERENT ONES:
+#:   · Anthropic  — "went into your application"
+#:   · Palantir   — "proceeding with your candidacy"
+#:   · Verkada    — "your interest in the Embedded Software Engineer ...
+#:                  opportunity" — and it never uses the word "application"
+#:   · TogetherAI — "taking the time to apply for the ... opening"
+#: A signal measured against only the first would have looked perfect on a
+#: corpus and missed a quarter of the real cases. The corpus family carries the
+#: Verkada wording alongside the Together AI one for exactly this reason.
+#:
+#: The offer clause covers the rescinded-offer shape, where the sender's own
+#: words are "we have had to withdraw the offer for this position" and the word
+#: application never appears either.
+_APPLICATION_REFERENCE = re.compile(
+    r"""(?xi)
+      your\ application\b
+    | your\ candidacy\b
+    | \b(?:your|the)\ offer\b
+    | your\ interest\ in\ (?:the\ |this\ |our\ )?
+      [\w,\ \-/]{0,60}?(?:opportunity|position|role|opening)\b
+    | \bappl(?:y|ied|ying)\ (?:for|to)\ (?:the\ |a\ |an\ )?
+      [\w,\ \-/]{0,60}?(?:opportunity|position|role|opening)\b
+    """
+)
+
+
+def references_an_application(subject: str, snippet: str) -> bool:
+    """Does this message speak about an application the reader made?
+
+    Subject and snippet only, because that is all a cloud scan is guaranteed to
+    have: the body is read in flight when one can be extracted and is not
+    retained, and the messages this exists for are precisely the ones where no
+    body part could be extracted.
+
+    Carries no verdict. See :data:`_APPLICATION_REFERENCE`.
+    """
+
+    return bool(_APPLICATION_REFERENCE.search(f"{subject} {snippet}"))
+
+
 def collect_review_items(
     items: Iterable[PipelineItem],
     dropped_out: list[DroppedVerdict] | None = None,
@@ -2486,11 +2554,56 @@ def collect_review_items(
         #     transactional relays. Ordinary company and personal mail below the
         #     floor is dropped exactly as before.
         #
-        # Known residual, stated rather than hidden: an ATS message that scores
-        # NOTHING in any category is ``other`` and still drops. Covering that
-        # means queueing mail on the strength of its sender alone, which is a
-        # wider decision than #166 needs.
-        ats_floor = is_lifecycle and is_ats_sender(item.sender_email)
+        # Known residual as of #166, stated rather than hidden: an ATS message
+        # that scores NOTHING in any category is ``other`` and still drops.
+        # Covering that means queueing mail on the strength of its sender alone,
+        # which is a wider decision than #166 needs.
+        #
+        # THAT RESIDUAL IS NOW COVERED — see the clause below and #447. It was
+        # not theoretical: it was 610 messages in the 15k corpus, every one about
+        # a real application, reaching no card, no queue and no counter. What
+        # made covering it safe was finding a signal narrower than the sender,
+        # which is ``references_an_application``.
+        # #447 WIDENS THIS BY ONE CLAUSE, and only one. A message an ATS relayed
+        # that scores no lifecycle category at all is queued when — and only
+        # when — its own text refers to an application the reader made. That is
+        # the residual named four paragraphs up, and the clause is what keeps
+        # covering it from becoming "queue on the sender alone": the corpus's
+        # 400 ``ats-relay-noise`` messages are relayed by the same domains,
+        # score the same ``other`` 0.50, and reference nothing of the reader's,
+        # so they still drop.
+        #
+        # Still routes to the HUMAN QUEUE and nothing else: everything the
+        # paragraph above says about not filing a row, not asserting a status
+        # and not writing a verdict holds unchanged, because
+        # ``_qualifies_for_hard_row`` is untouched and still wants
+        # ``AUTO_FILE_GATE``. A referenced message cannot make the board wrong;
+        # it can only get a person asked.
+        # SCOPED TO ``other``, and that scope is load-bearing rather than tidy.
+        # The three shapes #166 deliberately drops each drop for their own
+        # reason, and only ONE of them is what #447 is about:
+        #
+        #   · ``other`` — a classifier miss. THIS is the 610, and the reference
+        #     clause is what separates them from the ATS noise that also lands
+        #     here.
+        #   · ``follow_up`` — excluded from filing AND from the queue by design,
+        #     above the floor as well as below it. It is the user's own chasing
+        #     mail; queueing it asks them to classify themselves.
+        #   · a category outside the canonical vocabulary — a BUG, whose
+        #     contract is that it is LOGGED rather than turned into a queue
+        #     entry. Queueing it would hide the bug behind a plausible row.
+        #
+        # An earlier draft of this wrote ``is_lifecycle or references(...)``,
+        # which reversed the second and third as a side effect and was caught by
+        # `test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped`
+        # — the test for #166 doing its job on #447's change.
+        ats_floor = is_ats_sender(item.sender_email) and (
+            is_lifecycle
+            or (
+                item.category == "other"
+                and references_an_application(item.subject, item.snippet)
+            )
+        )
         if (
             not is_needs_review
             and not ats_floor
@@ -2573,9 +2686,15 @@ def collect_review_items(
                 )
             continue
 
+        # Named for the queue whenever the message got here on a job-mail
+        # signal — a lifecycle verdict, or the #447 reference clause. Gating this
+        # on ``is_lifecycle`` alone would have put every referenced ``other``
+        # into the queue with no company against it, which is a worse row to
+        # hand a person than the one they get now: the whole point of queueing
+        # these is that a human can act on them.
         employer = (
             resolve_employer(item.sender_email, item.subject, item.sender_name)
-            if is_lifecycle
+            if (is_lifecycle or ats_floor)
             else None
         )
         candidate = ReviewItem(
