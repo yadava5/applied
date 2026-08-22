@@ -149,6 +149,34 @@ def test_a_tracking_url_does_not_defeat_the_mask(rules) -> None:
     ), "the same message classified differently depending on how its links were shaped"
 
 
+def test_an_abbreviation_inside_a_conditional_does_not_end_it() -> None:
+    """THE ASSERTION THAT EARNS THE CAPITAL-LETTER GUARD.
+
+    Sentences are split on ``(?<=[.!?])\\s+`` and a fragment that does not begin
+    like a sentence is glued back on. Drop that second step and the dot in an
+    abbreviation ends the sentence early — so a conditional's marker lands in
+    one fragment and the phrase it governs in the next, the mask cannot reach
+    the phrase, and the message goes back to reading as a rejection.
+
+    This test exists because mutation testing found the guard unheld: removing
+    it left every other test in this file green. Two other pieces of
+    "defensive" machinery in this same fix were deleted for exactly that reason
+    (a URL strip, and a claim about dot-laden links). This one is kept because
+    it can now fail.
+    """
+
+    body = (
+        "Thank you for submitting your application. If the status changes e.g. "
+        "to inactive, that means the position is closed or you were not "
+        "selected for the role."
+    )
+    masked = asserted_text(body)
+    assert "not selected" not in masked, (
+        "an abbreviation ended the conditional early, so the phrase it governs "
+        f"escaped the mask: {masked!r}"
+    )
+
+
 def test_the_same_clause_asserted_is_still_a_rejection(rules) -> None:
     """THE CONTROL.
 

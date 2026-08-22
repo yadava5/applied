@@ -814,7 +814,7 @@ ATS_DOMAINS = [
 # confident comment beside it is precisely how this codebase has shipped checks
 # that cannot fail, so the machinery went and this note stayed.
 #
-# ``_SENTENCE_END`` still requires whitespace and a following capital. That is
+# The boundary test still requires whitespace and a following capital. That is
 # ordinary care against abbreviations, not a defence against the above, and it
 # is not claimed as one.
 #
@@ -834,10 +834,36 @@ _CONDITIONAL = re.compile(
     re.IGNORECASE,
 )
 
-#: Sentence boundary. Requires whitespace AND a following capital or quote, so
-#: neither an abbreviation nor a dot inside a URL splits a sentence in half.
-#: Both halves of that are load-bearing — see the note above.
-_SENTENCE_END = re.compile("(?<=[.!?])\\s+(?=[\"\u201c(A-Z])")
+#: Sentence boundary, in two deterministic steps rather than one regex.
+#:
+#: The obvious single pattern is ``(?<=[.!?])\s+(?=["\u201c(A-Z])``. It is a
+#: POLYNOMIAL REDOS and CodeQL is right to flag it: the greedy ``\s+`` is
+#: followed by a lookahead that can fail, so on a run of N spaces the engine
+#: retries every shorter run at every starting offset — quadratic, on a body
+#: that arrives from whoever emailed the user.
+#:
+#: Splitting on ``\s+`` with nothing after it cannot backtrack (a greedy run
+#: with no following constraint always succeeds at its maximum), and the
+#: capital-letter test then happens in ordinary code. Same boundaries, linear.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_STARTS_SENTENCE = re.compile("^[\"\u201c(A-Z]")
+
+
+def _sentences(body: str) -> list[str]:
+    """Split ``body`` into sentences without a backtracking regex.
+
+    A fragment that does not begin like a sentence is glued back onto the one
+    before it, which is what the old lookahead expressed: an abbreviation, a
+    version number or a dot inside a URL is not a boundary.
+    """
+
+    out: list[str] = []
+    for part in _SENTENCE_SPLIT.split(body):
+        if out and not _STARTS_SENTENCE.match(part):
+            out[-1] = f"{out[-1]} {part}"
+        else:
+            out.append(part)
+    return out
 
 
 def asserted_text(body: str) -> str:
@@ -856,7 +882,7 @@ def asserted_text(body: str) -> str:
         return body
 
     out: list[str] = []
-    for sentence in _SENTENCE_END.split(body):
+    for sentence in _sentences(body):
         marker = _CONDITIONAL.search(sentence)
         # Keep everything up to the marker; the marker's scope runs to the end
         # of the sentence, so the remainder is hypothetical.

@@ -126,9 +126,36 @@ const NOISE_NEGATIVES: ReadonlySet<string> = new Set([
   "your course",
 ]);
 
-const URL_RE = /https?:\/\/\S+|www\.\S+/gi;
 const CONDITIONAL_RE = /\b(?:if|should you|in the event(?:\s+that)?|unless|in case)\b/i;
-const SENTENCE_END_RE = /(?<=[.!?])\s+(?=["\u201c(A-Z])/;
+
+/**
+ * Sentence boundary, in two deterministic steps rather than one regex.
+ *
+ * The obvious single pattern is `/(?<=[.!?])\s+(?=["\u201c(A-Z])/`. It is a
+ * polynomial ReDoS: the greedy `\s+` is followed by a lookahead that can fail,
+ * so a run of N spaces is retried at every offset. The body arrives from
+ * whoever emailed the user, and on this surface it is not even length-capped
+ * the way the server's is.
+ *
+ * Splitting on `\s+` with nothing after it cannot backtrack, and the
+ * capital-letter test then happens in ordinary code. Same boundaries, and it
+ * matches `_SENTENCE_SPLIT` / `_sentences` in the Python original line for
+ * line.
+ */
+const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+/;
+const STARTS_SENTENCE_RE = /^["\u201c(A-Z]/;
+
+function sentences(body: string): string[] {
+  const out: string[] = [];
+  for (const part of body.split(SENTENCE_SPLIT_RE)) {
+    if (out.length > 0 && !STARTS_SENTENCE_RE.test(part)) {
+      out[out.length - 1] = `${out[out.length - 1]} ${part}`;
+    } else {
+      out.push(part);
+    }
+  }
+  return out;
+}
 
 /**
  * The part of a body the sender is ASSERTING.
@@ -145,11 +172,6 @@ const SENTENCE_END_RE = /(?<=[.!?])\s+(?=["\u201c(A-Z])/;
  * production that scored `rejection` at 0.60 and the message was discarded
  * without a trace; it cost the owner four applications on 2026-08-21.
  *
- * URLs go first and that is load-bearing, not tidying: the real message puts a
- * tracking link full of base64 dots immediately before the conditional, so
- * splitting sentences on a bare `.` shatters it and the mask misses the exact
- * message it was written for.
- *
  * The mask runs from the conditional marker to the END of its sentence, never
  * over the whole sentence: "You were not selected for the role, and if you
  * would like feedback please ask" is a real rejection whose verdict sits before
@@ -159,9 +181,7 @@ const SENTENCE_END_RE = /(?<=[.!?])\s+(?=["\u201c(A-Z])/;
  */
 export function assertedText(body: string): string {
   if (!body) return body;
-  const text = body.replace(URL_RE, " ");
-  return text
-    .split(SENTENCE_END_RE)
+  return sentences(body)
     .map((sentence) => {
       const marker = CONDITIONAL_RE.exec(sentence);
       return marker ? sentence.slice(0, marker.index) : sentence;
