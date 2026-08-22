@@ -4,10 +4,11 @@ import { COLORS, FONTS, TYPE, SECTION_INK } from "../theme";
 import { PROOF } from "../content";
 import { PullQuote } from "../primitives/PullQuote";
 
-/** Page 22 — the backend suite, all passing + a merge-blocking CI gate.
- *  The COUNT lives in content.ts (PROOF.tests) and nowhere else; it moved from
- *  305 to 1,240 between 2026-08-06 and 2026-08-21, and a number duplicated in a
- *  comment is a number that goes stale silently. */
+/** Page 22 — the backend suite and the adversarial corpus, plus a
+ *  merge-blocking CI gate. Every COUNT on this page lives in content.ts
+ *  (PROOF.tests) and nowhere else: the test figure has moved three times since
+ *  2026-08-06, and a number duplicated into a comment is a number that goes
+ *  stale silently — this comment used to carry one. */
 export const ProofTestsPage: React.FC<{
   parity: "recto" | "verso";
   pageNumber: number;
