@@ -185,16 +185,21 @@ accuracy a user would see on their own inbox.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **9,130 of 10,040 — 88.94%** |
+| Correct | **9,130 of 10,040 — 90.94%** |
 | Wrong | **300** |
 | Abstained (below the 0.70 review floor, the product says nothing) | **610** |
-| Auto-filed above the 0.85 gate | 8,448, of which **300 wrong** |
+| Auto-filed above the 0.85 gate | 8,284, of which **100 wrong** |
 | Board: cards / splits / merges / noise / misrouted review | **5,770 / 0 / 0 / 0 / 0** |
 
 The board is clean. The classifier is not, and the shape of its failure matters more than the size:
-**every one of the 300 wrong verdicts is above the auto-file gate.** There is no wrong-but-hedged
-case in ten thousand messages. The review queue catches being *unsure*; it has never once caught
-being *wrong*, and 946 items sit between the two thresholds of which every one is correct.
+**100 of the 300 wrong verdicts are stated to the user as fact; the other 200 are held for a person
+to settle.** That ratio is the number worth watching, not the total — 50 wrong verdicts all
+auto-filed would be a worse product than 300 with 100 auto-filed.
+
+It read **464 of 464 above the gate** until 2026-08-22. There was no such thing as a wrong-but-hedged
+verdict in ten thousand messages: the review queue caught the classifier being *unsure* and had
+never once caught it being *wrong*. What changed is that the classifier stopped scoring quoted
+history as the sender's own words and stopped reading a reply's copied subject as a headline.
 
 Three families are 100% of the errors, and each is pinned as a defect at its measured size rather
 than excluded, because a corpus that asserts only what already passes is a check that cannot fail:

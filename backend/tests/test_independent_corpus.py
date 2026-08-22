@@ -44,6 +44,9 @@ RECORDED = {
     "correct": 9130,
     "wrong": 300,
     "abstained": 610,
+    # The number that matters more than `wrong`: how many wrong verdicts are
+    # stated to the user as fact rather than held for them to settle.
+    "auto_filed_wrong": 100,
     "cards": 5770,
 }
 
@@ -112,7 +115,7 @@ def test_most_wrong_verdicts_no_longer_reach_the_board(verdicts) -> None:
 
     score = score_classifier(verdicts)
     assert score.wrong == RECORDED["wrong"]
-    assert score.auto_filed_wrong == 100, (
+    assert score.auto_filed_wrong == RECORDED["auto_filed_wrong"], (
         f"{score.auto_filed_wrong} wrong verdicts were stated as fact. Every "
         "one of these reaches the board without asking, so a rise here is "
         "worse news than a rise in `wrong`."
@@ -217,7 +220,7 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     )
 
     # The shape of the failure is seed-independent even where its size is not.
-    assert score.auto_filed_wrong == 100, (
+    assert score.auto_filed_wrong == RECORDED["auto_filed_wrong"], (
         f"{score.auto_filed_wrong} wrong verdicts were stated as fact at this "
         "seed. The number that reaches the board without asking is the one "
         "worth holding steady across a re-sample."
