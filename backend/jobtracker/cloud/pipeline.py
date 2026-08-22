@@ -546,7 +546,21 @@ _STAGE_RANK: dict[str, int] = {
 # (assessment, interview, offer, rejection) is a later message ABOUT an
 # application that already exists. :func:`partition_applications` leans on that
 # asymmetry to tell a second application from a second message.
-APPLIED_SIGNAL_CATEGORIES: frozenset[str] = frozenset({"applied", "pending_application"})
+#
+# ``pending_application`` USED TO BE IN HERE, and the sentence above is why it
+# no longer is — it enumerated one member while the set held two, and the code
+# followed the set. A "please verify your email before we can review your
+# application" is an outstanding STEP in an application that already exists; it
+# reports, it does not assert. Leaving it in meant an employer's confirmation
+# and its own verification mail read as two anonymous confirmations and minted
+# two cards. Issue #459.
+#
+# It does NOT stop such mail getting a card. An employer whose only message is a
+# pending_application still mints one through the "no other cluster" branch of
+# :func:`partition_applications`, and ``EmailCategory.PENDING_APPLICATION`` still
+# maps to ``ApplicationStatus.APPLIED``. What changes is narrower and is the
+# whole point: it is no longer EVIDENCE OF A SECOND application.
+APPLIED_SIGNAL_CATEGORIES: frozenset[str] = frozenset({"applied"})
 
 # Application lifecycle status (ApplicationStatus values) by ascending progress.
 # Used to advance monotonically (:func:`advance_application_status`).

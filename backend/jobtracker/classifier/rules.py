@@ -535,7 +535,23 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"continue your application",
             r"application.{0,20}(incomplete|not complete)",
             r"your application is incomplete",
-            r"action required.{0,30}(application|submit)",
+            # {0,60} AND NOT {0,30}, because the gap sits where the EMPLOYER'S
+            # NAME goes. "[Action Required] Your <Employer> Application" is one
+            # sentence, and at 30 it fired for Stripe and Notion (gap 12) and
+            # not for "Hollowburygrove Analytics" (31) or "Bramfieldstead
+            # Analytics" (30). A rule whose verdict depends on how long a
+            # company's name is has no semantics; 60 fits a real employer name
+            # and the phrase still has to be one clause.
+            r"action required.{0,60}(application|submit)",
+            # A STEP YOU MUST TAKE BEFORE THE APPLICATION COUNTS. Email
+            # verification is a standard applicant-tracking gate rather than one
+            # sender's wording — the resolver already cites Roblox's for exactly
+            # this shape — and it belongs here for the same reason "complete
+            # your application" does: the application exists and is not
+            # finished. Deliberately NOT anchored to the word "application",
+            # because the sentence that asks for it usually does not contain
+            # one ("Please click here to verify your email address").
+            r"(verify|confirm) your e.?mail",
             r"complete additional steps",
             r"additional information.{0,20}(required|needed)",
             r"please complete.{0,30}(application|profile)",
