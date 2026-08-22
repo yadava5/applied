@@ -302,3 +302,38 @@ def test_a_strong_subject_alone_does_not_outrank_a_genre_filter(rules) -> None:
         f"scores={result.scores}; a subject line alone must not be able to "
         "overrule a genre filter that read the body"
     )
+
+
+def test_the_body_still_counts_when_the_subject_says_it_too(rules) -> None:
+    """A strong pattern matching BOTH may not silence the body.
+
+    ``has_strong_body`` decides whether a genre filter — "unsubscribe",
+    "manage preferences" — can be outranked, and the question it asks is "does
+    the BODY state this plainly?". That has nothing to do with whether the
+    subject happens to say it as well.
+
+    The scoring walk asked both questions with one ``if/elif``, so a pattern
+    matching subject AND body scored the subject and left ``has_strong_body``
+    False. The message below states its verdict in the body in so many words
+    and carries an ordinary marketing footer; it survived only because a
+    SECOND, weaker-looking pattern happened to match the body too. Remove that
+    accident and a plain confirmation loses to its own footer.
+
+    Found while measuring a change that removed exactly that accidental second
+    match: three tests went red at once and all three had been passing for a
+    reason nobody had chosen.
+    """
+
+    body = (
+        "Hi there,\n\nWe have received your application and our team will be in "
+        "touch if there is a match.\n\nRecruiting\n\nUnsubscribe or manage "
+        "preferences.\n"
+    )
+    result = rules.classify("We have received your application", body, SENDER)
+
+    assert result.category is EmailCategory.APPLIED
+    assert result.confidence >= AUTO_FILE_GATE, (
+        f"a plain confirmation scored {result.confidence} because its only "
+        "body-stated evidence was checked against the subject first, and the "
+        f"marketing footer then outranked it. scores={result.scores}"
+    )

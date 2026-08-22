@@ -168,11 +168,12 @@ That comparison is now a measurement rather than a citation. `scripts/cascade_ga
 
 What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9791 generalizes, and 96 examples is a small sample under any reading.
 
-### The 10,040-message adversarial corpus
+### The 14,540-message adversarial corpus
 
-The answer to the paragraph above. `backend/tests/corpus_independent/` invents **10,040 messages
-across 18 families over 5,670 companies**, none of them real, and drives them through the product
-end to end: classify, roll up, upsert, then read the board back out of the tables. It is replayed
+The answer to the paragraph above. `backend/tests/corpus_independent/` invents **14,540 messages
+across 24 families over 7,670 companies**, none of them real, and drives them through the whole
+sync end to end: classify, roll up, upsert, persist the review queue, then read the board back out
+of the tables. It is replayed
 in day-sized batches because that is what a real sync is — a delta, usually of one message — and a
 rebuild that only works when it can see the whole mailbox at once is not the thing that runs in
 production. `scripts/run_independent_corpus.py` is the instrument;
@@ -185,33 +186,52 @@ accuracy a user would see on their own inbox.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **9,130 of 10,040 — 90.94%** |
+| Correct | **13,497 of 14,540 — 92.83%** |
 | Wrong | **300** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **610** |
-| Auto-filed above the 0.85 gate | 8,284, of which **100 wrong** |
-| Board: cards / splits / merges / noise / misrouted review | **5,770 / 0 / 0 / 0 / 0** |
+| **Wrong AND stated to the user as fact** | **100** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **743** |
+| Board: cards / splits / merges / noise / misrouted review | **8,020 / 0 / 0 / 0 / 0** |
+| Updates that reached the wrong card | **0** |
+| Updates held for a person because the classifier was unsure | 358 |
+| Mail about a real application that reached nothing | **610 lost**, 73 dropped |
 
-The board is clean. The classifier is not, and the shape of its failure matters more than the size:
-**100 of the 300 wrong verdicts are stated to the user as fact; the other 200 are held for a person
-to settle.** That ratio is the number worth watching, not the total — 50 wrong verdicts all
-auto-filed would be a worse product than 300 with 100 auto-filed.
+**No message has ever landed on the wrong card.** Zero splits, zero merges, zero misrouted updates
+over 14,540 messages and 7,920 cards — the half that could destroy a record, because a rejection
+filed onto a sibling application settles it terminally and `advance_application_status` will never
+let it leave.
 
-It read **464 of 464 above the gate** until 2026-08-22. There was no such thing as a wrong-but-hedged
-verdict in ten thousand messages: the review queue caught the classifier being *unsure* and had
-never once caught it being *wrong*. What changed is that the classifier stopped scoring quoted
-history as the sender's own words and stopped reading a reply's copied subject as a headline.
+**Wrong verdicts stated as fact went 464 to 100.** There was no such thing as a wrong-but-hedged
+verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
+never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
+as a fact about their own job search. Two thirds of them now land in the queue instead, because the
+classifier stopped scoring quoted history and a reply's copied subject as the message's own words.
 
-Three families are 100% of the errors, and each is pinned as a defect at its measured size rather
-than excluded, because a corpus that asserts only what already passes is a check that cannot fail:
+The remaining 100 have a known cause and a known fix whose cost is not yet acceptable:
+[#451](https://github.com/yadava5/applied/issues/451). A *reference* to an application ties with a
+*report* about one, and the tie breaks on enum declaration order. Demoting the reference pattern
+takes this figure to **0**, the dropped count to 0 and misrouted updates to 0 while leaving correctly
+auto-filed verdicts at exactly 12,256 — and it also drops a real rejection from the owner's own
+mailbox below the review floor, from queued to lost. One real message outranks several hundred
+invented ones, so it is filed rather than shipped.
+
+The last row is the one that is still bad. Until 2026-08-22 the replay ran only the rollup and never
+the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
+precisely the blind spot that let four Microsoft applications disappear on 2026-08-21 with every gate
+green. **610 messages about real applications still reach no card, no queue and no counter**
+([#447](https://github.com/yadava5/applied/issues/447)).
+
+Every defect below is pinned at its measured size rather than excluded, because a corpus that
+asserts only what already passes is a check that cannot fail — and this repository has a ledger of
+those. When one is fixed its number moves and the gate has to say so:
 
 - **`quoted-history`, 200 of 200.** Every follow-up that quotes its own confirmation reads as
   `applied`, so an interview invite never advances the card it belongs to. The widest of the three
   and the mechanism behind the next one.
-- **`rescinded-offer`, 164 of 260** ([#417](https://github.com/yadava5/applied/issues/417)). A
-  withdrawal that quotes the original offer scores the quoted text, so the board shows an offer the
-  person does not have. The only error here that asserts something false about someone's life
-  rather than leaving them where they were. The issue reports 60 of 60; the corpus measures 164 of
-  260, and the issue has been corrected.
+- **`rescinded-offer`, 0 wrong and 260 lost** ([#417](https://github.com/yadava5/applied/issues/417)).
+  It measured 164 of 260 confidently wrong until the classifier stopped scoring quoted history, and
+  the board no longer shows an offer the person does not have. It is not yet right: all 260 now
+  abstain below the review floor, which means they reach no screen at all. That is a better failure
+  and still a failure, and it is half of #447.
 - **`hostile-zero-width`, 100 of 100** ([#424](https://github.com/yadava5/applied/issues/424) is
   the sender-name half). A zero-width space inside "moving" defeats the rejection pattern while
   rendering identically to the eye.
@@ -634,7 +654,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 991 `test_*` functions across 87 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 996 `test_*` functions across 87 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 

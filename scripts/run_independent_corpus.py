@@ -68,10 +68,10 @@ async def _board(verdicts, cases):
         await conn.run_sync(SQLModel.metadata.create_all)
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session:
-            groups = await replay(session, verdicts)
+            replayed = await replay(session, verdicts)
     finally:
         await engine.dispose()
-    return score_board(groups, cases)
+    return score_board(replayed, cases)
 
 
 def main() -> int:
@@ -124,6 +124,10 @@ def main() -> int:
     print(f"  MERGE             {bs.merges:6d}  several applications on one card")
     print(f"  NOISE ON A CARD   {bs.noise_on_card:6d}  mail that must mint nothing, on a card")
     print(f"  SHOULD BE REVIEW  {bs.wrong_review:6d}  role-less mail at a multi-application employer, guessed")
+    print(f"  UPDATE STRANDED   {bs.update_opened_a_card:6d}  an update that never reached the card it belongs to")
+    print(f"  WRONG STAGE       {bs.wrong_status:6d}  the right card, showing the wrong stage")
+    print(f"  LOST              {bs.lost:6d}  about a real application, and reached NOTHING")
+    print(f"  DROPPED           {bs.dropped:6d}  under the review floor; counted, but on no screen")
     if bs.total:
         print("\n  ranked:")
         for mode, family, n in rank(bs)[:15]:
@@ -137,7 +141,8 @@ def main() -> int:
             print(f"    [{f.mode}] family={f.family}\n      {f.detail}\n"
                   f"      messages: {', '.join(f.message_ids[:5])}")
     else:
-        print("\n  nothing. Every application landed on exactly its own card.")
+        print("\n  nothing. Every application landed on exactly its own card, and\n"
+              "  every message about one reached a card or the queue.")
     return 0
 
 

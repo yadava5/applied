@@ -131,7 +131,45 @@ class Case:
     #: unplaceable. Scored in its own bucket so designed behaviour does not read
     #: as failure.
     expect_review: bool = False
+    #: The message this one must end up sharing a CARD with.
+    #:
+    #: "If it is an update, it updates the existing card" stated per message
+    #: rather than inferred. ``identity`` already catches the case where an
+    #: update mints a second card at the same identity — it shows as a SPLIT —
+    #: but SPLIT is a shape, not a diagnosis, and the failure a user actually
+    #: reports is "a second Google appeared". Naming the join makes the report
+    #: say which message opened the card it should have joined.
+    joins: str | None = None
+    #: What the card must READ once this message has been filed.
+    #:
+    #: The other half of "an update updates the existing card". Landing on the
+    #: right card is necessary and not sufficient: a rejection that files onto
+    #: the right row and leaves it at ``applied`` has updated nothing a user
+    #: can see. Set on the LAST message of a scenario, because a status is a
+    #: property of the card after everything has arrived, not of one message.
+    card_status: str | None = None
+    #: This message must be ADDRESSED: a card, or the review queue. Mail that
+    #: must mint nothing leaves it False. See ``BoardScore.lost``.
+    #:
+    #: DERIVED IN ``__post_init__`` and not by the builder, which is where it
+    #: started. A field the builder fills is a field that is wrong for every
+    #: ``Case`` constructed any other way — the branch probe in
+    #: ``test_independent_corpus.py`` builds cases directly, got ``False`` for
+    #: all of them, and its LOST/DROPPED assertions silently exercised nothing.
+    must_be_addressed: bool = False
     note: str = ""
+
+    def __post_init__(self) -> None:
+        # A message that names an application IS about an application, and one
+        # that must go to the queue is about one too — it is only unplaceable,
+        # not unrelated. Derived rather than passed so a family cannot forget
+        # to opt in, which is how a coverage check quietly stops covering.
+        if not self.must_be_addressed:
+            object.__setattr__(
+                self,
+                "must_be_addressed",
+                self.identity is not None or self.expect_review,
+            )
 
 
 def snippet_of(body: str) -> str:
@@ -212,6 +250,8 @@ class _Builder:
         day: int | None = None,
         adversarial: bool = False,
         expect_review: bool = False,
+        joins: str | None = None,
+        card_status: str | None = None,
         note: str = "",
     ) -> Case:
         self._n += 1
@@ -234,6 +274,9 @@ class _Builder:
             employer=employer,
             adversarial=adversarial,
             expect_review=expect_review,
+            joins=joins,
+            card_status=card_status,
+            # `must_be_addressed` is derived in Case.__post_init__.
             note=note,
         )
         self.cases.append(case)
@@ -1022,6 +1065,382 @@ def _hostile_text(b: _Builder, n: int) -> None:
             )
 
 
+# ── new card, or update to an existing one ───────────────────────────────────
+#
+# The product's whole job in one sentence: a new application gets a card, and
+# everything that follows lands ON that card. Six families, and the last two
+# are controls — without them "always join" passes every test above and is the
+# merge bug the assert/report rule exists to prevent. A wrong split is visible
+# and fixable; a wrong merge destroys the record silently, because
+# ``advance_application_status`` treats ``rejected`` as terminal and one
+# requisition's rejection settles every application hiding behind it.
+
+
+#: ``(category, subject, body, stage the card must read once it is filed)``.
+#:
+#: The fourth element is the half of "an update updates the existing card" that
+#: a message-to-card mapping cannot express. A rejection that lands on the
+#: right row and leaves it reading ``applied`` has updated nothing a user can
+#: see, and every assertion about WHERE it landed passes.
+#:
+#: ``assessment`` maps to itself: it is both a category and a stage, decided
+#: 2026-08-12 on the owner's own mail (see ``CATEGORY_TO_STATUS``).
+_UPDATES: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "rejection",
+        "Update on your application to {e}",
+        "Hi Ayush, After careful consideration we have decided not to move "
+        "forward. We appreciate the time you invested with us.",
+        "rejected",
+    ),
+    (
+        "interview",
+        "Next steps with {e}",
+        "Hi Ayush, We would like to invite you to interview. Please choose a "
+        "time from the scheduling link below.",
+        "interviewing",
+    ),
+    (
+        "assessment",
+        "Your {e} take-home",
+        "Hi Ayush, Please complete the take-home exercise linked below within "
+        "five days to move to the next stage.",
+        "assessment",
+    ),
+    (
+        "offer",
+        "An offer from {e}",
+        "Hi Ayush, We are delighted to extend you an offer to join us. The "
+        "written terms are attached for your review.",
+        "offer",
+    ),
+)
+
+
+def _confirmation_body(display: str, role: str) -> str:
+    return (
+        f"Hi Ayush, Thank you for applying to the {role} position at {display}. "
+        "Your application has been received and is being reviewed."
+    )
+
+
+def _update_joins_one_application(b: _Builder, n: int) -> None:
+    """THE COMMON CASE, and it was not covered until 2026-08-22.
+
+    You apply to a company once. Weeks later: "Update on your application."
+    It names no role, because there is only one and the sender knows it. It
+    must land on the card that already exists.
+
+    If it opens a second card the user sees a phantom application they never
+    made, at an employer they did apply to, which is the hardest kind of wrong
+    to disbelieve. Every other family here tests a HARD case; this one tests
+    the ordinary one, and the ordinary one is most of a real mailbox.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role()
+        first = b.add(
+            family="update-joins-one-application",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"one-{token}",
+            day=i % 50,
+        )
+        category, subject, body, stage = b.pick(_UPDATES)
+        b.add(
+            family="update-joins-one-application",
+            subject=subject.format(e=display),
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=body,
+            expected_category=category,
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"one-{token}",
+            day=(i % 50) + 9,
+            joins=first.message_id,
+            card_status=stage,
+            note="names no role because there is only one; must join, not open",
+        )
+
+
+def _update_before_confirmation(b: _Builder, n: int) -> None:
+    """The update arrives FIRST, and the board still ends with one card.
+
+    Not exotic. A scan window that starts mid-conversation sees the rejection
+    before it ever sees the acknowledgement, and the corpus replays in
+    day-sized batches precisely so ordering is a real variable rather than an
+    artefact of one big sort. The rebuild path sees everything at once and
+    would hide this entirely.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role()
+        category, subject, body, stage = b.pick(_UPDATES)
+        first = b.add(
+            family="update-before-confirmation",
+            subject=subject.format(e=display),
+            sender=b.ats(),
+            sender_name=f"{display} Talent",
+            body=body,
+            expected_category=category,
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"early-{token}",
+            day=i % 50,
+            # THE STAGE RIDES ON THE UPDATE, not on the confirmation that
+            # follows it, and the placement is the whole point: an expectation
+            # attached to a message the product FILED is skipped when that
+            # message is held for review instead, and an expectation attached
+            # to a different message is not. 77 offers arriving before their
+            # confirmation sit in the queue at 0.75 while the card correctly
+            # reads `applied`; labelling the confirmation made that read as 77
+            # defects.
+            #
+            # `applied` for the rejection variant, because this family dates
+            # the confirmation AFTER the verdict and the product treats a
+            # confirmation newer than the newest dated rejection as a new
+            # journey segment — one row, reopened, keeping its first filing
+            # date (``test_reopen_after_rejection.py``). The other three stages
+            # outrank `applied` and are forward-only, so they keep their own.
+            card_status="applied" if category == "rejection" else stage,
+        )
+        b.add(
+            family="update-before-confirmation",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"early-{token}",
+            day=(i % 50) + 6,
+            joins=first.message_id,
+            note="the acknowledgement arrives after the verdict; still one card",
+        )
+
+
+def _update_from_another_domain(b: _Builder, n: int) -> None:
+    """The confirmation comes from the ATS; the update comes from the company.
+
+    This is what a real pipeline looks like — Greenhouse acknowledges, then a
+    recruiter writes from their own address. The employer is the same and the
+    application is the same, and nothing about the sender may split them.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role()
+        first = b.add(
+            family="update-from-another-domain",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} via Relay",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50,
+        )
+        category, subject, body, stage = b.pick(_UPDATES)
+        b.add(
+            family="update-from-another-domain",
+            subject=subject.format(e=display),
+            sender=f"talent@{token}.example",
+            sender_name=f"{display} Talent",
+            body=f"{body} Regarding your application for the {role} position.",
+            expected_category=category,
+            identity=f"{token}|{role}",
+            employer=token,
+            day=(i % 50) + 11,
+            joins=first.message_id,
+            card_status=stage,
+            note="ATS acknowledges, the company follows up; one application",
+        )
+
+
+def _update_outside_the_thread(b: _Builder, n: int) -> None:
+    """The update carries a DIFFERENT conversation, and still belongs.
+
+    The mirror of the Microsoft case. There, one thread held four
+    applications and the thread had to stop acting as identity. Here the same
+    application is spread over two threads, and the ABSENCE of a shared thread
+    must not be read as evidence of a second application either. A thread is a
+    delivery grouping: it is not identity, and neither is its absence.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role()
+        first = b.add(
+            family="update-outside-the-thread",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"ack-{token}",
+            day=i % 50,
+        )
+        category, subject, body, stage = b.pick(_UPDATES)
+        b.add(
+            family="update-outside-the-thread",
+            subject=subject.format(e=display),
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=f"{body} This concerns your {role} application.",
+            expected_category=category,
+            identity=f"{token}|{role}",
+            employer=token,
+            # A different conversation entirely, which is what a recruiter
+            # composing a fresh message rather than replying produces.
+            thread=f"followup-{token}",
+            day=(i % 50) + 13,
+            joins=first.message_id,
+            card_status=stage,
+            note="same application, two conversations; one card",
+        )
+
+
+def _reopen_after_rejection(b: _Builder, n: int) -> None:
+    """Apply, get rejected, apply again months later. ONE card, reopened.
+
+    I WROTE THIS FAMILY WITH THE WRONG GROUND TRUTH and the corpus reported
+    250 merges against a product that was behaving exactly as designed. The
+    expectation was two cards, on the reasoning that two applications are two
+    applications. The product deliberately gives that up, and says so:
+    ``test_reopen_after_rejection.py`` states "what this deliberately gives up
+    is a second CARD ... two applications to one requisition are one row whose
+    ``applied_date`` keeps the FIRST filing", because ``partition_applications``
+    keys clusters with no temporal dimension and a full rebuild would merge
+    both applications' mail into one cluster anyway.
+
+    So the ground truth is one card — and the assertion that carries the weight
+    is the STATUS. A settled card must REOPEN when a fresh confirmation arrives
+    after its rejection. If it does not, the board says the person was rejected
+    for a job they are currently being considered for, and
+    ``advance_application_status`` will never let it leave ``rejected``.
+
+    That is what makes this a control on the four families above rather than
+    another instance of them: "an update joins the existing card" is satisfied
+    completely by a product that joins everything, and joining everything is
+    the merge the identity rule exists to prevent. Here joining is correct and
+    the failure mode moves to the stage. ``update-picks-between-two`` is the
+    other half of the control, where minting really is required.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role()
+        first = b.add(
+            family="reopen-after-rejection",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"round1-{token}",
+            day=i % 40,
+        )
+        b.add(
+            family="reopen-after-rejection",
+            subject=f"Update on your application to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=(
+                "Hi Ayush, After careful consideration we have decided not to "
+                "move forward with your candidacy at this time."
+            ),
+            expected_category="rejection",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"round1-{token}",
+            day=(i % 40) + 8,
+            joins=first.message_id,
+        )
+        b.add(
+            family="reopen-after-rejection",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Recruiting",
+            body=_confirmation_body(display, role),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            # A new conversation, because it is a new application — and the
+            # card still has to be the same one.
+            thread=f"round2-{token}",
+            day=(i % 40) + 130,
+            joins=first.message_id,
+            card_status="applied",
+            note="applied again months later; the settled card must REOPEN",
+        )
+
+
+def _update_picks_between_two(b: _Builder, n: int) -> None:
+    """The other control: two live applications, and an update that says which.
+
+    ``ambiguous-update`` covers the update that names NEITHER and must be
+    asked about. This covers the one that names ONE, which must land on that
+    one and not on its sibling, and not in the queue — asking a question the
+    mail already answers is its own failure.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        first_role, second_role = b.rng.sample(ROLES, 2)
+        b.add(
+            family="update-picks-between-two",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Careers",
+            body=_confirmation_body(display, first_role),
+            expected_category="applied",
+            identity=f"{token}|{first_role}",
+            employer=token,
+            day=i % 40,
+        )
+        target = b.add(
+            family="update-picks-between-two",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(),
+            sender_name=f"{display} Careers",
+            body=_confirmation_body(display, second_role),
+            expected_category="applied",
+            identity=f"{token}|{second_role}",
+            employer=token,
+            day=(i % 40) + 2,
+        )
+        category, subject, body, stage = b.pick(_UPDATES)
+        b.add(
+            family="update-picks-between-two",
+            subject=subject.format(e=display),
+            sender=b.ats(),
+            sender_name=f"{display} Careers",
+            body=f"{body} This concerns your application for the {second_role} position.",
+            expected_category=category,
+            identity=f"{token}|{second_role}",
+            employer=token,
+            day=(i % 40) + 15,
+            joins=target.message_id,
+            card_status=stage,
+            note="names one of two; landing on the sibling is a MERGE, "
+            "and the queue is a question the mail already answered",
+        )
+
+
 def _employer_spelling(b: _Builder, n: int) -> None:
     """One employer, several spellings across its own mail.
 
@@ -1073,6 +1492,14 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("bare-relay", _bare_relay, 200),
     ("hostile-text", _hostile_text, 300),
     ("employer-spelling", _employer_spelling, 150),
+    # New card, or update to an existing one. The last two are the controls;
+    # see the block comment above ``_update_joins_one_application``.
+    ("update-joins-one-application", _update_joins_one_application, 600),
+    ("update-before-confirmation", _update_before_confirmation, 300),
+    ("update-from-another-domain", _update_from_another_domain, 300),
+    ("update-outside-the-thread", _update_outside_the_thread, 300),
+    ("reopen-after-rejection", _reopen_after_rejection, 250),
+    ("update-picks-between-two", _update_picks_between_two, 250),
 )
 
 
