@@ -61,9 +61,9 @@ def _mint() -> tuple[tuple[str, str], ...]:
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     n = 0
-    for m, mid in enumerate(_MIDS):
-        for i, head in enumerate(_HEADS):
-            for j, tail in enumerate(_TAILS):
+    for mid in _MIDS:
+        for head in _HEADS:
+            for tail in _TAILS:
                 suffix = _SUFFIXES[n % len(_SUFFIXES)]
                 n += 1
                 lead = f"{head}{mid}{tail}"

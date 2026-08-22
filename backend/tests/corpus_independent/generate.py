@@ -914,10 +914,8 @@ def _bare_relay(b: _Builder, n: int) -> None:
 def _hostile_text(b: _Builder, n: int) -> None:
     """Text engineered to read as one thing and be another.
 
-    Bidi overrides and zero-width joiners in a sender's display name (#424): the
-    board renders a forged employer byte-identically to the real one. Hidden
-    preheader text: markup the reader never sees and the classifier scores.
-    Neither is exotic — both are one paste away in any mail client.
+    Three separate attacks, each its own family in the report so a fix to one
+    cannot be read as progress on the others.
     """
 
     for i in range(n):
@@ -925,25 +923,36 @@ def _hostile_text(b: _Builder, n: int) -> None:
         role = b.role(i)
         kind = i % 3
         if kind == 0:
-            # A right-to-left override inside the display name. Rendered, this
-            # reads as an ordinary name.
+            # A RIGHT-TO-LEFT OVERRIDE plus a zero-width space in the sender's
+            # display name, so the rendered name is byte-for-byte what the real
+            # employer's would be (#424). The mail is genuinely from
+            # ``forged``, and the assertion is that the board says so: the
+            # DOMAIN wins and the display name does not get to impersonate an
+            # employer the user really applied to.
+            #
+            # Ground truth deliberately names the forged employer rather than
+            # nobody. The first version of this case expected no card at all,
+            # which is a stricter claim than the product makes and than it
+            # should: a confirmation from a real domain is a real application at
+            # that domain's employer. It reported a hundred false failures.
+            forged_display, forged_token = b.employer()
             b.add(
-                family="hostile-text",
+                family="hostile-bidi-sender",
                 subject=f"Thank you for applying to {display}",
-                sender="no-reply@lookalike.test",
-                sender_name=f"{display}‮​ Careers",
+                sender=f"no-reply@{forged_token.split()[0]}.test",
+                sender_name=f"{display}\u202e\u200b Careers",
                 body=f"Hi Ayush, Thank you for applying to the {role} role at {display}.",
                 expected_category="applied",
-                identity=None,
-                employer=None,
+                identity=f"{forged_token.split()[0]}|{role}",
+                employer=forged_token.split()[0],
                 adversarial=True,
-                note="bidi override in the sender name; must not resolve to the real employer",
+                note=f"display name impersonates {display}; must file under the domain",
             )
         elif kind == 1:
-            # Preheader text: the first thing the classifier reads and the last
-            # thing a person sees.
+            # PREHEADER TEXT: the first thing the classifier reads and the last
+            # thing a person sees. Here it asserts the opposite of the mail.
             b.add(
-                family="hostile-text",
+                family="hostile-preheader",
                 subject=f"Update on your application to {display}",
                 sender=b.ats(i),
                 sender_name=f"{display} Careers",
@@ -957,17 +966,18 @@ def _hostile_text(b: _Builder, n: int) -> None:
                 identity=f"{token}|{role}",
                 employer=token,
                 adversarial=True,
-                note="a hidden preheader asserts the opposite of the mail",
+                note="a hidden preheader asserts the opposite of the mail's own words",
             )
         else:
-            # A zero-width space inside the verdict phrase.
+            # A ZERO-WIDTH SPACE inside the verdict phrase. Renders identically
+            # and defeats a literal pattern.
             b.add(
-                family="hostile-text",
+                family="hostile-zero-width",
                 subject=f"Update on your application to {display}",
                 sender=b.ats(i),
                 sender_name=f"{display} Careers",
                 body=(
-                    f"Hi Ayush, We will not be mov​ing forward with your "
+                    f"Hi Ayush, We will not be mov\u200bing forward with your "
                     f"application for the {role} role at {display}."
                 ),
                 expected_category="rejection",

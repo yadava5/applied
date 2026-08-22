@@ -87,7 +87,29 @@ def classify_all(cases: list[Case]) -> list[Verdict]:
         result = _CLASSIFIER.classify(case.subject, case.delivered, case.sender)
         category = result.category.value
         confidence = result.confidence
-        if confidence < pipeline.REVIEW_FLOOR:
+        # NOISE IS SCORED ON ITS CONTRACT, NOT ITS LABEL. For mail that must
+        # never become an application (``identity is None``), the product's job
+        # is to do nothing, and saying nothing IS doing nothing — an abstention
+        # below ``REVIEW_FLOOR`` and a confident ``other`` are the same correct
+        # outcome from the user's side. Scoring the abstention as neither right
+        # nor wrong put 700 messages the product handles perfectly into a
+        # neutral bucket and understated accuracy by seven points.
+        #
+        # The strict half is still checked, and by the half that can see it:
+        # whether any of this mail reached a card is the BOARD score's
+        # NOISE-ON-CARD, which is where a failure here would actually hurt.
+        # Keyed on the EXPECTED CATEGORY, not on ``identity is None``. Those are
+        # different claims and conflating them cost 200 false failures: a bare
+        # ATS relay carries a genuine confirmation and ``applied`` is the right
+        # verdict for it — what it cannot do is name an employer, which is a
+        # BOARD question and is scored as one.
+        if case.expected_category == "other":
+            bucket = (
+                CORRECT
+                if confidence < pipeline.REVIEW_FLOOR or category == "other"
+                else WRONG
+            )
+        elif confidence < pipeline.REVIEW_FLOOR:
             bucket = ABSTAINED
         elif category == case.expected_category:
             bucket = CORRECT
