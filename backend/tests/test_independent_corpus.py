@@ -29,8 +29,8 @@ from tests.corpus_independent.harness import (
 
 #: Recorded 2026-08-22. A corpus that differs between runs cannot be a gate, and
 #: a digest is the only way to say "the same mail" without shipping 24MB.
-CORPUS_DIGEST = "6ae95972164def9b"
-CORPUS_SIZE = 14540
+CORPUS_DIGEST = "c773f477ba5fe376"
+CORPUS_SIZE = 15180
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -39,24 +39,48 @@ CORPUS_SIZE = 14540
 #: not literals inside the asserts. A published number that nothing recomputes
 #: is a claim, and this repository has a ledger of those.
 RECORDED = {
-    "size": 14540,
-    "companies": 7670,
-    "correct": 13497,
-    "wrong": 300,
-    "abstained": 743,
+    "size": 15180,
+    "companies": 8130,
+    "correct": 14125,
+    "wrong": 316,
+    "abstained": 739,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
-    "auto_filed_wrong": 100,
-    "cards": 8020,
+    #
+    # 116 ENCODES A KNOWN, OPEN DEFECT and is not a target. 14 of these are #455:
+    # a rejection whose full body says "we have decided not to move forward" is
+    # scored `applied` at exactly the auto-file gate because the JOB TITLE
+    # contains the word "Career", so the title — reference text, naming which
+    # application — supplies the points that decide what happened to it. The
+    # other 2 are `ats-relay-noise` minting cards from a profile-completion
+    # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
+    # here. See #455 and #451.
+    "auto_filed_wrong": 116,
+    "cards": 8262,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
-    "lost": 610,
-    "dropped": 73,
+    #
+    # LOST IS 0, and that is the whole of #447. It was 610: rejections whose
+    # verdict sits past Gmail's snippet, and withdrawals whose own words never
+    # say "application", both scoring `other` at 0.50. `other` is not a
+    # lifecycle category, so the ATS floor did not reach them and they left
+    # through the terminal drop with no card, no queue entry and no counter.
+    # `pipeline.references_an_application` now floors them into the review
+    # queue. It must stay 0: a message about a real application reaching
+    # NOTHING is the one outcome indistinguishable from a mailbox that never
+    # received it.
+    "lost": 0,
+    "dropped": 84,
+    # Noise that MINTED A CARD. Was 0 and is 2 as of 2026-08-22 — not a
+    # regression, but the first time the corpus contained ATS mail that is not
+    # about the user at all. Both are a profile-completion nudge scoring
+    # `assessment` at 0.90. See `ats-relay-noise`.
+    "noise_on_card": 2,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
-    # designed answer, and it moves with the seed: 358 at 20260822.
-    "update_held": 358,
+    # designed answer, and it moves with the seed: 351 at 20260822.
+    "update_held": 351,
 }
 
 
@@ -164,6 +188,30 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
             "interview invite never advances the card it belongs to.",
         ),
         (
+            "rejection-past-the-snippet",
+            14,
+            "ISSUE #455, and the most damaging instance of #451 found so far. "
+            "The full body says 'we have decided not to move forward' and the "
+            "classifier MATCHES it — the pattern is in `matched_patterns` — yet "
+            "files the message as `applied` at exactly the auto-file gate, "
+            "because `thank you for your interest.{0,40}(position|role|career)` "
+            "reaches the word 'Career' inside the JOB TITLE. The title names "
+            "WHICH application; it must not decide WHAT HAPPENED to it. Same "
+            "body with the title 'Embedded Software Engineer, Access Control' "
+            "scores `rejection` 0.75 and is queued, which is correct. The owner "
+            "has four open applications titled 'Early Career'.",
+        ),
+        (
+            "ats-relay-noise",
+            2,
+            "a profile-completion nudge — 'your candidate profile is missing a "
+            "few details' — scores `assessment` at 0.90 and MINTS A CARD for an "
+            "application that does not exist. This family exists as the control "
+            "for the #447 ATS floor and caught a second defect on the way in. "
+            "Noise minting a card is the failure that ruled out widening the "
+            "floor on the sender alone.",
+        ),
+        (
             "hostile-zero-width",
             100,
             "a zero-width space inside 'moving' defeats the rejection pattern "
@@ -219,9 +267,25 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
         "the defect became wording-sensitive, which is a different bug."
     )
     assert score.by_family["hostile-zero-width"]["wrong"] == 100
-    assert score.by_family["rejection-past-the-snippet"]["wrong"] == 0, (
-        "truncation must keep failing SAFE at every seed. This is the control "
-        "on the three defects above: a board that is silent, not wrong."
+    # THIS ASSERTED ZERO UNTIL 2026-08-22, on the belief that truncation always
+    # fails SAFE — silent rather than wrong. That belief was an artefact of the
+    # corpus carrying only ONE rejection wording. Adding the second real one
+    # (Verkada/Ashby, transcribed from the owner's mailbox) disproved it: 12 to
+    # 14 of these are now scored `applied` at the auto-file gate and stated to
+    # the user as fact. See #455.
+    #
+    # A BAND, not a number, and the width is the finding rather than noise. Every
+    # one of these fires because the drawn ROLE TITLE contains `career`, `role`
+    # or `position`, which the `thank you for your interest.{0,40}(...)` window
+    # reaches. So the count is a function of which titles the seed drew, and it
+    # would be dishonest to pin it exactly at one seed and call that structural.
+    # A fix takes the whole band to 0.
+    past_snippet = score.by_family["rejection-past-the-snippet"]["wrong"]
+    assert 12 <= past_snippet <= 14, (
+        f"{past_snippet} truncated rejections were stated as fact at this seed, "
+        "outside the measured band of 12..14 (#455). Below it, say what fixed "
+        "it and move the band; above it, the reference text is reaching further "
+        "into the verdict than it was."
     )
 
     # This WAS a band (150..185), because it moved with the seed: 164, 171,
@@ -235,10 +299,17 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     )
 
     # The shape of the failure is seed-independent even where its size is not.
-    assert score.auto_filed_wrong == RECORDED["auto_filed_wrong"], (
+    #
+    # THIS WAS EXACT AND IS NOW A BAND, for the same reason as #455 above and no
+    # other: the two families that moved it — truncated rejections and the
+    # profile nudge in `ats-relay-noise` — both fire on a drawn role title, so
+    # both move with the seed. Measured 116 / 112 / 113 at the three seeds.
+    # Everything that was structural before this is still asserted exactly.
+    assert 112 <= score.auto_filed_wrong <= 116, (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed. The number that reaches the board without anyone being asked is "
-        "the one worth holding steady across a re-sample."
+        "seed, outside the measured band of 112..116. The number that reaches "
+        "the board without anyone being asked is the one worth watching across "
+        "a re-sample."
     )
     # ``correct`` WAS exactly equal at every seed, and stopped being so when the
     # update-routing families landed. That is honest rather than a regression:
@@ -286,17 +357,32 @@ def test_the_seeds_are_actually_different() -> None:
 
 
 def test_abstention_is_where_truncation_lands(verdicts) -> None:
-    """The safe failure, and the control on the dangerous ones above.
+    """Mostly the safe failure — and 14 messages where it is not.
 
-    A rejection whose verdict sits past Gmail's ~186-character snippet is not
-    read as a confirmation — it is not read at all, and the message abstains
-    below ``REVIEW_FLOOR``. That is the difference between a board that is
-    silent and a board that is wrong, and it must not quietly become the latter.
+    A rejection whose verdict sits past Gmail's ~186-character snippet is
+    usually not read as a confirmation; it is not read at all, and the message
+    abstains below ``REVIEW_FLOOR``. Silent rather than wrong.
+
+    THIS TEST ASSERTED THAT OF ALL 350 UNTIL 2026-08-22, and the claim was an
+    artefact of the corpus carrying one rejection wording. It now carries two,
+    both transcribed from the owner's mailbox, and the second one breaks the
+    claim: 14 of these are scored ``applied`` at the auto-file gate and stated
+    to the user as fact. See #455 — the trigger is the word ``career`` inside
+    the JOB TITLE falling within the window of
+    ``thank you for your interest.{0,40}(position|role|career)``.
+
+    Pinned at both numbers rather than relaxed to an inequality, because the
+    split between them is the whole point: 336 silent is the designed outcome
+    and 14 wrong is a defect, and a single assertion over their sum would let
+    either eat the other without a word.
     """
 
     score = score_classifier(verdicts)
-    assert score.by_family["rejection-past-the-snippet"]["abstained"] == 350
-    assert score.by_family["rejection-past-the-snippet"]["wrong"] == 0
+    assert score.by_family["rejection-past-the-snippet"]["abstained"] == 336
+    assert score.by_family["rejection-past-the-snippet"]["wrong"] == 14, (
+        "the truncated rejections that are stated as FACT rather than left "
+        "silent. A fix for #455 takes this to 0 and the abstained count to 350."
+    )
 
 
 @pytest.mark.asyncio
@@ -319,9 +405,25 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
         f"terminally. {[f.detail for f in score.failures if f.mode == 'MERGE'][:3]}"
     )
     assert score.splits == 0, [f.detail for f in score.failures if f.mode == "SPLIT"][:3]
-    assert score.noise_on_card == 0, [
+    # NOISE ON A CARD WAS 0 AND IS NOW 2, and the honest thing is to pin it
+    # rather than relax the assertion. Both are `ats-relay-noise`, the family
+    # added as the control for the #447 ATS floor: a profile-completion nudge
+    # ("your candidate profile is missing a few details") scores `assessment` at
+    # 0.90 and mints a card for an application that does not exist.
+    #
+    # Nothing regressed to produce this — the corpus simply had no ATS noise in
+    # it before, so the product's behaviour on that mail was unmeasured rather
+    # than good. Pinned at 2 so a fix moves it and a widening is loud.
+    assert score.noise_on_card == RECORDED["noise_on_card"], [
         f.detail for f in score.failures if f.mode == "NOISE-ON-CARD"
     ][:3]
+    assert {f.family for f in score.failures if f.mode == "NOISE-ON-CARD"} == {
+        "ats-relay-noise"
+    }, (
+        "noise reached a card from a family that is not the known one. The 2 "
+        "pinned above are a profile nudge scoring `assessment`; anything else "
+        "minting a card is a new defect, not this one."
+    )
     assert score.wrong_review == 0, [
         f.detail for f in score.failures if "REVIEW" in f.mode
     ][:3]
@@ -563,35 +665,52 @@ async def test_every_application_mail_is_addressed(
 
     from collections import Counter
 
-    # PINNED AS DEFECTS AT THEIR MEASURED SIZE. See #447 and #448.
+    # NOTHING IS LOST, and that is #447 closed. It was 610 — 350
+    # `rejection-past-the-snippet` and 260 `rescinded-offer` — every one about a
+    # real application, reaching no card, no queue entry, no counter and no log
+    # line. They scored `other` at 0.50; `other` is not a lifecycle category, so
+    # the ATS floor did not reach them and `DroppedVerdict` never fired either.
     #
-    # The corpus called these "the safe failure" before this run: the board is
-    # SILENT rather than wrong. That reading does not survive the requirement
-    # actually asked of the product. A rejection the user never sees leaves a
-    # card reading `applied` forever, which is not silence — it is the board
-    # asserting something false by omission.
+    # `pipeline.references_an_application` now floors them into the review
+    # queue. This assertion is the empty dict on purpose: a family appearing
+    # here at ANY size is mail the product received and did nothing with, which
+    # is the one outcome a user cannot tell apart from a mailbox that never
+    # received it.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
-    assert dict(lost) == {
-        # The verdict sits past Gmail's ~186-character snippet, so the
-        # classifier reads a courteous preamble, answers a non-lifecycle
-        # category under the floor, and `DroppedVerdict` never fires because
-        # that only names LIFECYCLE verdicts. No row, no queue entry, no
-        # counter, no log line.
-        "rejection-past-the-snippet": 350,
-        # Same shape: the withdrawal abstains, and abstaining below the floor
-        # is invisible. #441 took this family from 164 CONFIDENTLY WRONG to 0,
-        # which was the right direction and is not the end of it.
-        "rescinded-offer": 260,
-    }, dict(lost)
+    assert dict(lost) == {}, dict(lost)
 
-    # 73 updates from the company's own domain rather than the ATS relay,
+    # 84 updates from the company's own domain rather than the ATS relay,
     # scored `applied` at 0.60 and dropped under the review floor. The product
-    # NAMES these, so they are recoverable by someone who goes looking, which
-    # is the whole difference from the 610 above. See #451: demoting the
-    # reference pattern takes them to `offer` at 0.75 and closes this, at a
-    # cost measured on real mail that is not acceptable yet.
+    # NAMES these, so they are recoverable by someone who goes looking, which is
+    # the whole difference from the 610 that used to sit above. Not closed by
+    # #447: the reference clause floors ATS-relayed mail, and by construction
+    # this family does not arrive on an ATS relay. See #451.
     dropped = Counter(f.family for f in score.failures if f.mode == "DROPPED")
-    assert dict(dropped) == {"update-from-another-domain": 73}, dict(dropped)
+    assert dict(dropped) == {"update-from-another-domain": 84}, dict(dropped)
+
+    # THE CONTROL FOR THE FIX ABOVE, and the reason `lost == 0` means anything.
+    #
+    # The cheap way to reach zero LOST is to queue everything a known ATS
+    # relayed. That is the widening `pipeline` explicitly declined to make, it
+    # would pass every assertion above, and it would fill the queue with mail
+    # that has nothing to do with the user. So the corpus carries 400
+    # `ats-relay-noise` messages — job alerts, talent-community blasts, profile
+    # nudges, surveys, referral asks — from the SAME relay domains, scoring the
+    # SAME `other` at 0.50, differing only in that they reference no application
+    # the reader made.
+    #
+    # Sender-only queues all 400. `references_an_application` queues none. This
+    # pair is each other's control: the assertion above says the fix reaches far
+    # enough, this one says it does not reach too far, and neither is meaningful
+    # alone.
+    noise = {c.message_id for c in cases if c.family == "ats-relay-noise"}
+    queued_noise = noise & replayed.reviewed
+    assert queued_noise == set(), (
+        f"{len(queued_noise)} of {len(noise)} ATS-relayed messages that are "
+        "about no application of the user's were put in front of them to "
+        "classify. The #447 floor has widened to the SENDER, which is the "
+        "decision `collect_review_items` declined to make."
+    )
 
     # The distinction is the whole reason these are two numbers. Both are
     # unaddressed; only LOST is invisible, and invisible is the defect class

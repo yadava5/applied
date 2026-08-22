@@ -548,17 +548,27 @@ def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() ->
     Each is dropped for its own reason, and each is the reason the floor is
     scoped to lifecycle categories rather than to the sender alone:
 
-    - ``other`` — what a classifier miss and ATS job-alert noise both produce.
-      Queueing it would put every promotional mail an ATS relays in front of the
-      user, which is the flood this fix must not cause.
     - ``follow_up`` — excluded from filing AND from the queue by design, above
-      the floor as well as below it. The floor must not quietly reverse that.
+      the floor as well as below it. It is the user's own chasing mail, and
+      queueing it asks them to classify themselves.
     - a category outside the canonical vocabulary — a BUG, and the pipeline's
       contract is that it is logged rather than turned into a queue entry.
+      Queueing it would hide the bug behind a plausible-looking row.
+
+    ``other`` USED TO BE ON THIS LIST and is not any more. That is #447: the
+    reason given here was that queueing it "would put every promotional mail an
+    ATS relays in front of the user", and the message this very test uses as its
+    payload is a REAL Together AI rejection — one of the 610 that reached no
+    card, no queue and no counter. The flood was the right worry and the wrong
+    conclusion; the fix was to find a signal narrower than the sender rather
+    than to keep dropping. ``other`` now has its own pair of cases below.
+
+    This test caught a genuine defect in that change, which is why the two
+    survivors stay in a loop of their own: the first draft of the #447 clause
+    read ``is_lifecycle or references(...)`` and reversed BOTH of these as a
+    side effect.
     """
     for category, confidence in (
-        ("other", 0.0),
-        ("other", 0.5),
         ("follow_up", 0.90),
         ("rejected", 0.95),  # note: not "rejection" — non-canonical
     ):
@@ -574,6 +584,61 @@ def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() ->
             snippet=TOGETHER_SNIPPET_PREAMBLE,
         )
         assert pipeline.collect_review_items([item]) == [], (category, confidence)
+
+
+def test_an_other_verdict_is_queued_only_when_it_speaks_about_your_application() -> None:
+    """The #447 floor, and the control that stops it becoming "queue the sender".
+
+    Both messages are ``other`` at the same confidence, from the same real
+    Greenhouse relay, below every gate. The ONLY difference is whether the text
+    speaks about an application the reader made. One is a real Together AI
+    rejection whose verdict sits past the snippet cut; the other is a job-alert
+    digest of the kind an ATS relays constantly.
+
+    These two are each other's control and neither means anything alone. The
+    first alone passes for a floor that queues everything an ATS sends — the
+    widening this module declined to make. The second alone passes for the
+    pre-#447 code, which dropped both.
+    """
+
+    def item(message_id: str, subject: str, snippet: str) -> pipeline.PipelineItem:
+        return pipeline.PipelineItem(
+            message_id=message_id,
+            category="other",
+            sender_email=GREENHOUSE,
+            subject=subject,
+            sender_name=None,
+            received_at=None,
+            confidence=0.5,
+            thread_id=None,
+            snippet=snippet,
+        )
+
+    rejection = item("real-rejection", TOGETHER_SUBJECT, TOGETHER_SNIPPET_PREAMBLE)
+    queued = pipeline.collect_review_items([rejection])
+    assert [r.message_id for r in queued] == ["real-rejection"], (
+        "a REAL rejection, relayed by a real ATS, whose verdict sits past "
+        "Gmail's snippet cut. Before #447 this reached no card, no queue entry "
+        "and no counter — indistinguishable from a mailbox that never received "
+        "it. It must reach a person."
+    )
+    assert queued[0].company_display == "Together AI", (
+        "queued with no employer against it is a row nobody can act on, which "
+        "defeats the point of queueing it."
+    )
+
+    alert = item(
+        "job-alert",
+        "New roles at Together AI this week",
+        "Hi Ayush, here are the latest openings at Together AI: Systems "
+        "Research Engineer, and several more on our careers page. Set up an "
+        "alert to hear about new roles first.",
+    )
+    assert pipeline.collect_review_items([alert]) == [], (
+        "an ATS job alert is not about any application of the user's and must "
+        "still drop. If this queues, the floor has widened to the SENDER and "
+        "the guarantee above is worthless."
+    )
 
 
 # ===========================================================================

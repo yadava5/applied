@@ -231,6 +231,19 @@ class _Builder:
     def role(self, _i: int = 0) -> str:
         return self.pick(ROLES)
 
+    def roles(self, k: int) -> list[str]:
+        """``k`` DISTINCT roles, from the seed.
+
+        ``role()`` draws with replacement, which is right when each case is
+        independent. It is wrong when one case needs several roles that must
+        stay apart: two colliding draws would silently make a family about
+        distinguishing applications into a family about merging duplicates, and
+        the collision rate would be a property of ``len(ROLES)`` rather than of
+        anything the product does.
+        """
+
+        return self.rng.sample(ROLES, k)
+
     def ats(self, _i: int = 0) -> str:
         return self.pick(ATS_SENDERS)
 
@@ -386,13 +399,30 @@ def _rejections_past_the_snippet(b: _Builder, n: int) -> None:
     for i in range(n):
         display, token = b.employer()
         role = b.role(i)
-        body = (
-            f"Hi Ayush, Thank you so much for taking the time to apply for the "
-            f"{role} opening at {display}. We know a lot of thought and "
-            f"consideration went into your application, and the team genuinely "
-            f"appreciates your interest in what we are building here. "
-            f"After careful review we have decided not to move forward with your "
-            f"candidacy at this time. We wish you the very best."
+        # TWO REAL WORDINGS, because they fail differently. Both are transcribed
+        # from rejections in the owner's mailbox (2026-08-22) and the difference
+        # between them is load-bearing: Together AI's preamble says "your
+        # application", so anything keying on that phrase reaches it, while
+        # Verkada's says "your interest in the {role} opportunity" and never
+        # uses the word application at all. A signal measured only against the
+        # first would look perfect and miss one of the four real cases.
+        body = b.pick(
+            (
+                # Together AI, thread 19ff7393d56eccfb.
+                f"Hi Ayush, Thank you so much for taking the time to apply for "
+                f"the {role} opening at {display}. We know a lot of thought and "
+                f"consideration went into your application, and the team "
+                f"genuinely appreciates your interest in what we are building "
+                f"here. After careful review we have decided not to move forward "
+                f"with your candidacy at this time. We wish you the very best.",
+                # Verkada, thread 19ffc2cae1b51518.
+                f"Hi Ayush, Thank you for your interest in the {role} "
+                f"opportunity. It means a lot to us that you would consider "
+                f"joining our mission here at {display}, and we were glad to "
+                f"spend time with what you sent us. Although your background is "
+                f"impressive, we have decided not to move forward at this time. "
+                f"We hope you will keep an eye on our openings.",
+            )
         )
         b.add(
             family="rejection-past-the-snippet",
@@ -875,6 +905,128 @@ def _req_id_same_title(b: _Builder, n: int) -> None:
                 thread=thread,
                 day=(i % 40) + k,
                 note="same title, different requisition — and ONE Gmail thread",
+            )
+
+
+def _ats_relay_noise(b: _Builder, n: int) -> None:
+    """Mail from a known ATS relay that is NOT about an application of yours.
+
+    THE CONTROL FOR THE ATS FLOOR, and it is invented rather than drawn from
+    life — say so plainly. Of 201 messages from ``rules.ATS_DOMAINS`` in the
+    owner's mailbox over six months (2026-08-22), every single one was about one
+    of his own applications; this mailbox contains no counter-example to sample.
+    That is a fact about one job seeker, not about the domains, and a floor that
+    routes on the sender needs something that can push back on it or it is a
+    gate that cannot fail.
+
+    So these are the shapes an ATS relay sends that are not yours: a job-alert
+    digest, a talent-community blast, a profile-completion nudge, a candidate
+    survey, a referral ask. Every one is transactional mail from a real relay
+    domain, and none of them references an application the recipient made.
+
+    That last clause is the whole point. These must stay OUT of the review
+    queue, and the only thing separating them from the 610 messages that must go
+    IN is whether the text speaks about the reader's own application. If a fix
+    for #447 queues these too, it has widened the floor to "sender alone" — the
+    exact widening ``pipeline`` declined to make — and this family is what says
+    so out loud.
+    """
+
+    shapes = (
+        (
+            "New roles at {display} this week",
+            "Hi Ayush, here are the latest openings at {display}: {role}, and "
+            "several more on our careers page. Set up an alert to hear first.",
+        ),
+        (
+            "Join the {display} talent community",
+            "Hi Ayush, we are building a community of engineers interested in "
+            "{display}. Join to hear about openings like {role} before they are "
+            "posted publicly.",
+        ),
+        (
+            "Complete your {display} candidate profile",
+            "Hi Ayush, your candidate profile is missing a few details. Adding "
+            "them helps our recruiters find you for roles such as {role}.",
+        ),
+        (
+            "A quick survey from {display} recruiting",
+            "Hi Ayush, we are asking engineers what matters most when choosing "
+            "a team. Two minutes, and it helps us hire better.",
+        ),
+        (
+            "Know someone for {role} at {display}?",
+            "Hi Ayush, we are hiring a {role} and referrals are how we find the "
+            "best people. Pass this along to anyone who would be a fit.",
+        ),
+    )
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        subject, body = b.pick(shapes)
+        b.add(
+            family="ats-relay-noise",
+            subject=subject.format(display=display, role=role),
+            sender=b.ats(i),
+            sender_name=f"{display} Talent",
+            body=body.format(display=display, role=role),
+            expected_category="other",
+            identity=None,
+            employer=None,
+            day=i % 60,
+            adversarial=True,
+            note="a real ATS relay, and nothing to do with any application of yours",
+        )
+
+
+def _one_thread_many_roles(b: _Builder, n: int) -> None:
+    """Four applications, four roles, ONE Gmail thread. Drawn from life.
+
+    Applicant tracking systems send every acknowledgement for an employer under
+    one subject line — "Thank you for applying to Verkada" — from one no-reply
+    address. Gmail threads on subject plus sender, so it files four unrelated
+    applications as one conversation. Measured in the owner's mailbox
+    (2026-08-22): thread ``19ff36237eef1ef3`` holds five Verkada messages
+    covering four distinct roles, and thread ``19fed820cd93d18e`` holds two
+    Anthropic applications. The same shape is already verified in production on
+    Amazon, where three Annapurna Labs roles share one thread.
+
+    This is the OTHER direction of the thread mistake, and the reason the rule
+    here is "thread is a delivery grouping, never identity" rather than "thread
+    is unreliable". A thread's ABSENCE never means two applications; this family
+    says a thread's PRESENCE never means one.
+
+    Nothing but the role separates them, and the role is in the body of each.
+    ``_req_id_same_title`` is the nearest existing family and does not cover
+    this: there the two applications share a title and are separated by a
+    requisition number, where here the titles genuinely differ and it is the
+    THREAD that is lying about them being one thing.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        sender = b.ats(i)
+        thread = f"ats-blanket-{token}"
+        for k, role in enumerate(b.roles(4)):
+            b.add(
+                family="one-thread-many-roles",
+                subject=f"Thank you for applying to {display}",
+                sender=sender,
+                sender_name=f"{display} Careers",
+                body=(
+                    f"Hi Ayush, Thank you so much for applying to the {role} role "
+                    f"at {display}! We are always looking for great talent and we "
+                    f"are excited to receive your application. We will review it "
+                    f"as soon as possible."
+                ),
+                expected_category="applied",
+                identity=f"{token}|{role}",
+                employer=token,
+                thread=thread,
+                day=(i % 40) + k,
+                adversarial=True,
+                note="one ATS subject line collapses four roles into one Gmail thread",
             )
 
 
@@ -1477,6 +1629,8 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
     ("rejection-past-the-snippet", _rejections_past_the_snippet, 350),
+    ("one-thread-many-roles", _one_thread_many_roles, 60),
+    ("ats-relay-noise", _ats_relay_noise, 400),
     ("interview", _interviews, 350),
     ("assessment", _assessments, 330),
     ("offer", _offers, 220),

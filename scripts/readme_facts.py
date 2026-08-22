@@ -816,7 +816,7 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("lost"),
         "sites": [
             r"\| \*\*([\d,]+) lost\*\*, [\d,]+ dropped \|",
-            r"\*\*([\d,]+) messages about real applications still reach no card",
+            r"\*\*([\d,]+) messages about real applications\s+now reach no card",
             {
                 "re": r"([\d,]+) messages about real applications reach no card",
                 "file": BOOKLET_CONTENT,
@@ -840,11 +840,20 @@ FACTS: dict[str, dict] = {
         "describe": f"RECORDED['cards'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("cards"),
         "sites": [
-            r"misrouted review \| \*\*([\d,]+) / 0 / 0 / 0 / 0\*\*",
+            r"misrouted review \| \*\*([\d,]+) / 0 / 0 / \d+ / 0\*\*",
             {
                 "re": r"wrong card: ([\d,]+) cards, 0 splits",
                 "file": BOOKLET_CONTENT,
             },
+        ],
+    },
+    "corpusNoiseOnCard": {
+        "kind": "static",
+        "describe": f"RECORDED['noise_on_card'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("noise_on_card"),
+        "sites": [
+            r"misrouted review \| \*\*[\d,]+ / 0 / 0 / ([\d,]+) / 0\*\*",
+            r"\*\*([A-Za-z]+|[\d,]+) messages did MINT a card that should not exist\*\*",
         ],
     },
     # ── the rules engine ──
