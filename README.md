@@ -50,7 +50,7 @@ honest record of where they applied.
 - **Application linking** — related messages are grouped into one tracked application and relinked when new signals arrive
 - **Human-in-the-loop review** — anything below `CONFIDENCE_AUTO = 0.85` (`classifier/hybrid.py`) lands in a review queue; corrections persist to `training_data` and flag the email `user_corrected`, so a later sync leaves your answer alone. Nothing retrains on them — the deployed classifier is rules-only. The training machinery ships in the repository, but no hosted path reaches it
 - **Pipeline views** — Feature Cards, Compact Rows, or a Status Board, filterable by unreviewed and unlinked
-- **Fixture demo** — the full UI on synthetic data at [`/demo`](https://getapplied.vercel.app/demo), no login. Layer 1 recomputes **live in the browser** there via `apps/web/lib/demo/rulesLayer.ts`, a port of the same 221 patterns; layers 2 and 3 are precomputed, because the app's CSP forbids the WASM eval and CDN fetch Transformers.js needs.
+- **Fixture demo** — the full UI on synthetic data at [`/demo`](https://getapplied.vercel.app/demo), no login. Layer 1 recomputes **live in the browser** there via `apps/web/lib/demo/rulesLayer.ts`, a port of the same 220 patterns; layers 2 and 3 are precomputed, because the app's CSP forbids the WASM eval and CDN fetch Transformers.js needs.
 - **Weekly ML operations** — candidate mining for sparse labels, drift and confidence monitoring, and an alert-issue path, all scripted (`scripts/weekly_labeling_cycle.sh`, `scripts/monitoring_cycle.sh`). These are operator commands run by hand against a local backend; neither runs in CI, and the hosted app does not run them
 
 ### The three-layer cascade
@@ -65,7 +65,7 @@ flowchart TB
     CF -->|"matched"| Out1["category · method=content_filter"]
     CF -->|"pass"| R
 
-    R{{"1 · rules<br/>221 regex patterns over 7 categories<br/>130 strong · 30 weak · 61 negative<br/>hand-written · classifier/rules.py"}}
+    R{{"1 · rules<br/>220 regex patterns over 7 categories<br/>129 strong · 30 weak · 61 negative<br/>hand-written · classifier/rules.py"}}
     R -->|"scores a category"| Out2["category · method=rules"]
     R -->|"nothing scored"| CLOUD
 
@@ -90,7 +90,7 @@ flowchart TB
     G -->|"no"| Review["needs_review queue<br/>correction → training_data"]
 ```
 
-Thresholds are `CONFIDENCE_AUTO = 0.85` and `CONFIDENCE_MIN_CLASSIFICATION = 0.70`, both defined in `backend/jobtracker/classifier/hybrid.py`. The 221 patterns are counted at their definition site — the `PATTERNS` dict in `classifier/rules.py` — not at any call site.
+Thresholds are `CONFIDENCE_AUTO = 0.85` and `CONFIDENCE_MIN_CLASSIFICATION = 0.70`, both defined in `backend/jobtracker/classifier/hybrid.py`. The 220 patterns are counted at their definition site — the `PATTERNS` dict in `classifier/rules.py` — not at any call site.
 
 ---
 
@@ -147,7 +147,7 @@ checker can no longer find it fails too. Where each number terminates is in [Ver
   to a single end user, with no co-mingling; the deployed classifier is rules-only, and
   `backend/tests/test_training_is_single_user.py` pins the corpus read to one `user_id` and
   raises on a corpus that spans two.
-- **A metric that names its stage.** The **rules layer** — 221 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
+- **A metric that names its stage.** The **rules layer** — 220 regex patterns, no model — scores **0.9791 macro-F1** on the 96-example v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json`. `backend-ci.yml` fails any merge that drops below a **0.95** floor. That number belongs to the rules layer and not to the full cascade; the difference, and why the filenames mislead, is spelled out in [Classifier evaluation](#classifier-evaluation).
 - **Cost measured per layer, not averaged.** SetFit costs roughly **100×** the rules layer at p50 — 17.649 ms against 0.176 ms — and the rules layer answers 174 of the 288 classifications in the benchmark run. That is the cascade justifying itself as a measurement rather than an assertion. See [Performance](#performance).
 - **Tenant isolation enforced by Postgres, live in production.** Eight tenant tables carry `ENABLE` + `FORCE ROW LEVEL SECURITY` with four policies each, and a ninth (`gmail_sync_enrollment`) carries three — **35 policies** — and production connects as `jobtracker_app`, a `NOSUPERUSER NOBYPASSRLS` role. 21 tests drive the real connection machinery against a real Postgres, and CI fails the build if they *skip*.
 - **The trained model exports to something a browser can run.** The SetFit head quantized from 90,362,391 bytes of float32 to a **22,843,695-byte int8 ONNX** file, measured on the export produced by `ml/browser/export_onnx.py` on 2026-08-03. **Those weights are no longer published, and this repository no longer carries them** — see [The published checkpoint was withdrawn](#the-published-checkpoint-was-withdrawn). The export pipeline still ships; the artifact it produces stays local.
@@ -158,7 +158,7 @@ checker can no longer find it fails too. Where each number terminates is in [Ver
 
 **The 0.9791 belongs to the rules layer. It is not a whole-system accuracy figure, and the filenames actively mislead on this point.**
 
-The **rules layer** — 221 regex patterns and no model — scores **0.9791 macro-F1** (accuracy 0.9792, 2 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
+The **rules layer** — 220 regex patterns and no model — scores **0.9791 macro-F1** (accuracy 0.9792, 2 of 96 misclassified) on the v3 evaluation set, committed at `backend/data/evaluation/baseline_rules_v3.json` over `classifier_eval_v3.jsonl`, and `backend-ci.yml` fails any merge below a **0.95** floor. The **full three-layer cascade** scores **0.9583** on that same set (accuracy 0.9583, 4 misclassified), recorded in `docs/ML_EXECUTION_TRACKER.md` Cycle H.
 
 The trap is that `baseline_hybrid_v3.json` reports 0.9791 too. It does so because it was regenerated under the evaluator's `deterministic` hybrid profile, which calls `set_lite_mode(True)` and blanks `_known_embeddings` — so it measures the deterministic path, which is the regexes. Every metric block in the two files is identical, including both mismatch records; only the `meta` block differs, by `mode`, `hybrid_profile` and timestamp. `benchmark_history.md` says this in its own header. CI runs that profile on purpose, because a gate that consults a stochastic model is a gate that goes red for reasons unrelated to the change under test.
 
@@ -184,6 +184,16 @@ number here describes the same mail it was measured on.
 defeat the classifier, not mail that happens to be hard — so this is a stress figure and not the
 accuracy a user would see on their own inbox.
 
+**A rejection is no longer filed as an active application because of a word in the job title.** The
+same body, differing only in the role: `Software Engineer, Early Career` scored `applied` at exactly
+the 0.85 auto-file gate while `Embedded Software Engineer, Access Control` scored `rejection` and was
+queued. `thank you for your interest.{0,40}(position|role|career)` was strong evidence for `applied`
+and its window reached inside the job title, so the text naming WHICH application decided WHAT
+HAPPENED to it. Removed, on evidence that it points the wrong way: across the transcribed wordings
+that greeting opens **67% of rejections and 22% of confirmations**. Wrong verdicts stated as fact
+went 139 to 119 with no confirmation family losing a single message
+([#455](https://github.com/yadava5/applied/issues/455)).
+
 **And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 91.53%
 on the same engine, because the corpus stopped being written entirely by the author of the
 classifier. Measured before that change: **100.0% of the 13,730 lifecycle messages contained an
@@ -196,24 +206,24 @@ not partly graded by the person who set the exam.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **15,358 of 16,780 — 91.53%** |
-| Wrong | **421** |
-| **Wrong AND stated to the user as fact** | **139** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **1,001** |
-| Board: cards / splits / merges / noise / misrouted review | **9,179 / 7 / 0 / 2 / 0** |
+| Correct | **15,359 of 16,780 — 91.53%** |
+| Wrong | **401** |
+| **Wrong AND stated to the user as fact** | **119** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **1,020** |
+| Board: cards / splits / merges / noise / misrouted review | **9,177 / 5 / 0 / 2 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
 | Mail about a real application that reached nothing | **8 lost**, 72 dropped |
 
 **No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 16,780
-messages and 9,179 cards — the half that could destroy a record, because a rejection filed onto a
+messages and 9,177 cards — the half that could destroy a record, because a rejection filed onto a
 sibling application settles it terminally and `advance_application_status` will never let it leave.
 That claim survived the corpus growing to include applications that share one Gmail thread: real
 applicant tracking systems send every acknowledgement for an employer under one subject from one
 address, so Gmail files four different roles as one conversation, and the board still gives each its
 own card. Thread is a delivery grouping here, never an identity.
 
-**7 applications did end up on two cards each**, and the real wording that causes it is ordinary: an
+**5 applications did end up on two cards each**, and the real wording that causes it is ordinary: an
 applicant tracking system sends a second notification for an application it has already acknowledged
 ("Keep track of your application"), and where the acknowledgement named no role and the follow-up
 does, nothing joins them. It is the strictly milder failure — the user sees one application twice and
@@ -226,7 +236,7 @@ a profile-completion nudge relayed by an ATS, scored `assessment` at 0.90. They 
 behaviour on ATS mail that is not about you was not good before and simply was not measured. It is
 pinned at 2, so a fix moves it and a widening is loud.
 
-**Wrong verdicts stated as fact went 464 to 139.** There was no such thing as a wrong-but-hedged
+**Wrong verdicts stated as fact went 464 to 119.** There was no such thing as a wrong-but-hedged
 verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
 never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
@@ -418,7 +428,7 @@ Being precise about this is the point.
 
 ### Implemented — hand-written in this repo
 
-- **The rules engine.** 221 regex patterns across 7 categories (130 strong, 30 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 30 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
+- **The rules engine.** 220 regex patterns across 7 categories (129 strong, 30 weak, 61 negative), the scoring weights (strong +3, +6 in subject; weak +1, +2; negative −5), the margin-to-confidence tiers, and the ATS-domain boost. Ported byte-for-byte to JavaScript in `apps/web/lib/demo/rulesLayer.ts` and to `ml/browser/site/app.js`. A further 40 **veto** patterns sit outside that count, because they score nothing: a veto caps its category at zero, which is the only way to overrule a strong subject match — +6 survives a negative's −5, so "Complete your self-assessment" read as an `assessment` invitation for as long as the negative was the strongest tool available. Two categories declare vetoes. `assessment` has 10, for the senses of the noun that are not a candidate test (risk, self, needs, impact, performance, damages). `follow_up` has 30 — the decision sentences, repeated verbatim from `rejection`'s strong list, because a message that states the hiring decision is not a nudge whatever its subject line reads. They name no marketing vocabulary on purpose: that belongs to the content guard which runs *ahead* of the rules layer, and a veto would apply it to message bodies at a threshold of one, suppressing every real invitation with an unsubscribe footer.
 - **The cascade and its gate** — layer ordering, escalation conditions, the 0.85 auto-classify threshold and the 0.70 minimum for trusting a semantic layer, the `needs_review` routing, and the path that writes a correction into `training_data`. That path stops at the write: the row is recorded against its own user's account, and **nothing in the hosted app reads it back to train**. The retrain code exists in the repository and is reachable only as an operator command against a local backend — never on a request path, and default-deny since #357 (refused unless the corpus is entirely synthetic or its single owner is explicitly allowlisted).
 - **The SetFit head is the one model trained here.** Fine-tuned on `sentence-transformers/paraphrase-MiniLM-L6-v2` over 8 labels, with a provenance contract (`training_metadata.json`) that is schema-versioned and validated *before* it is written, covering label counts, source counts, split sizes and exact `label_to_id` / `id_to_label` inversion.
 - **The evaluation harness** — `evaluate_classifier.py` with its `deterministic` and `full` hybrid profiles, baseline comparison with tolerance, the macro-F1 floor, and `benchmark_classifier_latency.py`.
@@ -681,7 +691,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 | Category | Technologies |
 | --- | --- |
-| **Layer 1** | Hand-written regex engine, 221 patterns across 7 categories |
+| **Layer 1** | Hand-written regex engine, 220 patterns across 7 categories |
 | **Layer 2** | `intfloat/e5-small-v2` (pretrained, downloaded, not trained here) |
 | **Layer 3** | SetFit fine-tuned in this repo on `sentence-transformers/paraphrase-MiniLM-L6-v2`, 8 labels |
 | **Export** | int8 ONNX + Transformers.js (`ml/browser/`), Gradio Space (`ml/demo/`), BentoML service (`ml/bento_service.py`) |
@@ -822,7 +832,7 @@ applied/
 │
 ├── backend/
 │   ├── jobtracker/          # the one package
-│   │   ├── classifier/      # rules.py (221 patterns) · embeddings.py · setfit_model.py · hybrid.py
+│   │   ├── classifier/      # rules.py (220 patterns) · embeddings.py · setfit_model.py · hybrid.py
 │   │   ├── cloud/           # every router the app mounts, require_user() at the router level
 │   │   ├── main_cloud.py    # the only app builder
 │   │   ├── auth/            # supabase_jwt.py — ES256/HS256 whitelist, one per branch
