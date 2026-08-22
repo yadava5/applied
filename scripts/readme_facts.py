@@ -873,7 +873,7 @@ FACTS: dict[str, dict] = {
             # record silently, and if it ever moves this pattern SHOULD stop matching.
             r"misrouted review \| \*\*([\d,]+) / \d+ / 0 / \d+ / 0\*\*",
             {
-                "re": r"wrong card: ([\d,]+) cards, 0 splits",
+                "re": r"card: ([\d,]+) cards, 0 splits",
                 "file": BOOKLET_CONTENT,
             },
         ],
@@ -894,6 +894,15 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"misrouted review \| \*\*[\d,]+ / \d+ / 0 / ([\d,]+) / 0\*\*",
             r"\*\*([A-Za-z]+|[\d,]+) messages did MINT a card that should not exist\*\*",
+            # The System Card said "0 noise" in prose while this number was 2,
+            # and nothing checked it — the board figures were registered from
+            # the README's table only. A claim the gate cannot see is a claim
+            # nobody is keeping.
+            {
+                "re": r"(\w+) messages that should mint nothing do mint a card",
+                "file": BOOKLET_CONTENT,
+                "word": True,
+            },
         ],
     },
     # ── the rules engine ──

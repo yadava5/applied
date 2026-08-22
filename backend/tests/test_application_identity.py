@@ -201,6 +201,79 @@ def test_two_role_less_confirmations_are_two_applications():
     assert all(r.role is None and r.role_token is None for r in rolled)
 
 
+def test_an_outstanding_step_is_not_a_second_application():
+    """"Complete your application" reports on one; it does not assert a new one.
+
+    ``pending_application`` used to sit in ``APPLIED_SIGNAL_CATEGORIES`` while
+    the comment above that set enumerated only the confirmation. So a nudge to
+    finish an application counted as an ANCHOR: two anonymous "assertions" at
+    one employer, two cards, and the second is a card for an application that
+    does not exist.
+
+    This is not the same message as the one #459 was reported for. That one is
+    an email verification and now scores 0.80, under the auto-file gate, so it
+    is held for a person and cannot mint anything. These wordings clear the gate
+    — measured 0.90 for "complete your application", 0.95 for "finish your
+    application" and for "your application is incomplete" — so for them the
+    anchor set is the only thing standing between the user and a rival card,
+    and the corpus does not contain the shape.
+    """
+
+    confirmation = item(
+        "n1",
+        "Thank you for applying to Northwind",
+        "no-reply@us.greenhouse-mail.io",
+        "Hi Ayush, thank you for applying to Northwind. Our team will review "
+        "your application.",
+    )
+    unfinished = item(
+        "n2",
+        "Complete your application to Northwind",
+        "no-reply@us.greenhouse-mail.io",
+        "Hi Ayush, you started an application with Northwind. Please complete "
+        "your application to be considered.",
+        category="pending_application",
+        confidence=0.90,
+        minutes=60,
+    )
+
+    rolled = p.roll_up_applications([confirmation, unfinished])
+
+    assert len(rolled) == 1, [
+        {m.message_id for m in r.messages} for r in rolled
+    ]
+    assert {m.message_id for m in rolled[0].messages} == {"n1", "n2"}
+    # It still counts as an application signal for the STATUS — the card reads
+    # `applied`, which is what `EmailCategory.PENDING_APPLICATION` maps to. The
+    # change is narrower than "pending mail stops mattering".
+    assert rolled[0].status == "applied"
+
+
+def test_an_outstanding_step_alone_still_gets_its_own_card():
+    """The control, and the failure this change must not cause.
+
+    An employer whose only mail is "complete your application" has no other
+    cluster to join, so it mints one through the "no other cluster" branch. If
+    this ever goes to zero rows, the fix above has stopped mail reaching the
+    board instead of stopping it minting a DUPLICATE.
+    """
+
+    unfinished = item(
+        "u1",
+        "Complete your application to Cedar Labs",
+        "no-reply@us.greenhouse-mail.io",
+        "Hi Ayush, you started an application with Cedar Labs. Please complete "
+        "your application to be considered.",
+        category="pending_application",
+        confidence=0.90,
+    )
+
+    rolled = p.roll_up_applications([unfinished])
+
+    assert len(rolled) == 1
+    assert {m.message_id for m in rolled[0].messages} == {"u1"}
+
+
 def test_one_role_less_confirmation_still_keeps_exactly_one_row():
     """The control on the split above, and the rule Roblox depends on.
 

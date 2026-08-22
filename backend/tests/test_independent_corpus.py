@@ -47,8 +47,8 @@ RECORDED = {
     # 24 against a real 35 — because nothing recomputed it. Now something does.
     "families": 35,
     "companies": 9180,
-    "correct": 15599,
-    "wrong": 401,
+    "correct": 15657,
+    "wrong": 343,
     "abstained": 1020,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
@@ -61,8 +61,8 @@ RECORDED = {
     # other 2 are `ats-relay-noise` minting cards from a profile-completion
     # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
     # here. See #455 and #451.
-    "auto_filed_wrong": 119,
-    "cards": 9177,
+    "auto_filed_wrong": 102,
+    "cards": 9172,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -91,10 +91,17 @@ RECORDED = {
     # about the user at all. Both are a profile-completion nudge scoring
     # `assessment` at 0.90. See `ats-relay-noise`.
     "noise_on_card": 2,
-    # One application over several cards. Was 0 until the observed families
-    # landed; all 7 are #459 and none of them is an update on the wrong card,
-    # which is the strictly worse failure and is still 0.
-    "splits": 5,
+    # One application over several cards. Was 0, then 7 when the observed
+    # families landed, then 5 after #455, and is 0 again now that #459 is fixed.
+    #
+    # BACK TO ZERO BY FIXING THE CAUSE, not by loosening the check. The five
+    # were a real 'please verify your email' scored as a fresh confirmation
+    # beside the confirmation it belongs to. MERGE — the strictly worse failure,
+    # because it destroys a record silently rather than visibly duplicating one
+    # — was 0 throughout and still is, which is the assertion that says the fix
+    # folded the update onto the right card instead of collapsing two
+    # applications into one.
+    "splits": 0,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
@@ -219,12 +226,16 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-pending",
-            58,
-            "a real 'please verify your email' and a real 'keep track of your "
-            "application' both read as `applied`. The second is worse than a "
-            "miscategorisation: it is a SECOND notification about an "
-            "application that already has a card, so filing it as a fresh "
-            "confirmation is what produces the 7 SPLITs. See #459.",
+            0,
+            "#459, FIXED and kept here as its own control. It was 58: a real "
+            "'please verify your email' read as `applied` 0.95, auto-filed, "
+            "and minted a rival card beside the confirmation it belongs to. "
+            "THIS number is closed by the `(verify|confirm) your e.?mail` "
+            "pattern specifically — measured, that pattern alone moves the "
+            "verdict from `applied` 0.75 to `pending_application` 0.80, and "
+            "removing it brings all 58 back while SPLIT stays 0. The SPLITs "
+            "are closed by the separate `action required` gap widening; the "
+            "two are not the same fix and they are asserted apart.",
         ),
         (
             "ats-relay-noise",
@@ -292,20 +303,25 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
         "the defect became wording-sensitive, which is a different bug."
     )
     assert score.by_family["hostile-zero-width"]["wrong"] == 100
-    # OBSERVED FAMILIES, banded. Both move with the seed for the same reason the
-    # #455 band does: which real wording and which role title a case draws is
-    # seeded, and several of these defects fire on one or the other. Measured
-    # 42/42/44 and 63/66/61 at the three seeds.
+    # OBSERVED REJECTIONS, banded. It moves with the seed for the same reason
+    # the #455 band does: which real wording and which role title a case draws
+    # is seeded, and the defect fires on one or the other. Measured 42/42/44 at
+    # the three seeds.
     obs_rej = score.by_family["observed-rejection"]["wrong"]
     assert 40 <= obs_rej <= 44, (
         f"{obs_rej} real rejections stated as fact at this seed, outside the "
         "measured band of 40..44. These are transcribed wordings, so a move "
         "here is the product changing, never the corpus."
     )
+    # WAS A BAND OF 55..66 AND IS NOW EXACTLY ZERO, at every seed — which is
+    # the stronger statement and the reason it stopped being a band. The 55..66
+    # width came from which of the two real wordings each case drew; now both
+    # are read correctly, so there is nothing left for the seed to vary. #459.
     obs_pend = score.by_family["observed-pending"]["wrong"]
-    assert 55 <= obs_pend <= 66, (
+    assert obs_pend == 0, (
         f"{obs_pend} real action-required messages read as confirmations at "
-        "this seed, outside the measured band of 55..66. See #459."
+        "this seed. This was 58 and is fixed; a number here means #459 came "
+        "back, and a rival card comes back with it."
     )
     # The closure wording NEVER lands, at any seed, and that steadiness is the
     # point: "your application is no longer active" is not a wording problem
@@ -354,11 +370,16 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # THIS WAS EXACT AND IS NOW A BAND, for the same reason as #455 above and no
     # other: the two families that moved it — truncated rejections and the
     # profile nudge in `ats-relay-noise` — both fire on a drawn role title, so
-    # both move with the seed. Measured 116 / 112 / 113 at the three seeds.
-    # Everything that was structural before this is still asserted exactly.
-    assert 115 <= score.auto_filed_wrong <= 119, (
+    # both move with the seed.
+    #
+    # 115..119 BEFORE #459, 100..102 AFTER, and the drop is the point of that
+    # fix rather than a side effect: 17 real "please verify your email" messages
+    # per seed were being auto-filed as fresh confirmations, so the board minted
+    # a rival card for an application it already held and never asked. Measured
+    # 102 / 100 / 101 at the three seeds.
+    assert 100 <= score.auto_filed_wrong <= 102, (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed, outside the measured band of 115..119. The number that reaches "
+        "seed, outside the measured band of 100..102. The number that reaches "
         "the board without anyone being asked is the one worth watching across "
         "a re-sample."
     )
@@ -460,23 +481,39 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
         "a rejection landing on the wrong card settles a live application "
         f"terminally. {[f.detail for f in score.failures if f.mode == 'MERGE'][:3]}"
     )
-    # SPLIT WAS 0 UNTIL THE OBSERVED FAMILIES LANDED, and 7 is the first time
-    # this corpus has produced one. Every one is `observed-pending`: a real ATS
-    # sends a SECOND notification for an application it has already
-    # acknowledged ("Keep track of your application"), and where the
-    # acknowledgement named no role and the follow-up does, the board cannot see
-    # they are one application and opens a rival card. #459.
+    # SPLIT WAS 0, THEN 7 WHEN THE OBSERVED FAMILIES LANDED, THEN 5 AFTER #455,
+    # AND IS 0 AGAIN. Every one of them was `observed-pending`: a real ATS
+    # acknowledgement followed by a real "please verify your email", both read
+    # as fresh confirmations, so the board opened a rival card beside the one
+    # the second message belongs to. #459.
+    #
+    # WHAT CLOSED THIS, precisely, because it is not the same change that closed
+    # the family's wrong count above. The `action required` window was
+    # `.{0,30}`, and the gap it spans is where the EMPLOYER'S NAME goes: it
+    # fired for "Stripe" (12) and not for "Hollowburygrove Analytics" (31), so
+    # the same sentence scored 0.75 or 0.95 depending on how long the company's
+    # name is. At 0.95 it cleared the auto-file gate and minted the rival card.
+    # Widening to 60 drops it to 0.75, under the gate, held for a person — and
+    # that alone takes SPLIT to 0 while leaving all 58 verdicts still wrong.
+    #
+    # Back to zero by fixing the cause, not by widening the check. And the
+    # `merges == 0` assertion above is what makes this one mean something: the
+    # cheap way to remove a split is to let the two cards collapse into one,
+    # which trades a visible duplicate for a silently destroyed record. Both
+    # assertions are each other's control and neither may be read alone.
     #
     # Pinned rather than relaxed to an inequality, and NOT folded in with
-    # `merges` above: a split shows one application twice, which is visible and
+    # `merges`: a split shows one application twice, which is visible and
     # correctable, where a merge destroys a record silently. They are different
     # severities and must not share an assertion.
     assert score.splits == RECORDED["splits"], [
         f.detail for f in score.failures if f.mode == "SPLIT"
     ][:3]
-    assert {f.family for f in score.failures if f.mode == "SPLIT"} == {
-        "observed-pending"
-    }, "a split from a family other than the known one is a new defect"
+    assert {f.family for f in score.failures if f.mode == "SPLIT"} == set(), (
+        "the corpus produces no split at all now; any family appearing here is "
+        "a new defect, and `observed-pending` appearing here again means #459 "
+        "regressed"
+    )
     # NOISE ON A CARD WAS 0 AND IS NOW 2, and the honest thing is to pin it
     # rather than relax the assertion. Both are `ats-relay-noise`, the family
     # added as the control for the #447 ATS floor: a profile-completion nudge
