@@ -1207,7 +1207,6 @@ async def _persist_message_refs(
                 existing.suggested_category = suggestion
                 existing.classification_confidence = ref.confidence
                 existing.classification_method = "rules"
-            existing.thread_id = ref.thread_id
             session.add(existing)
         else:
             created = Email(
