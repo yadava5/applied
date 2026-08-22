@@ -21,6 +21,10 @@ import { matchesPulseFilter, type PulseFilter } from "@/lib/dashboard/pulseFilte
 import { elsewhereLabel, groupByEmployer } from "@/lib/dashboard/employerGroups";
 import { cn } from "@/lib/utils";
 import { type Application, STAGES, stageOf, type StageKey } from "@/lib/dashboard/summary";
+import {
+  NEIGHBOUR_WARM_DELAY_MS,
+  neighbourIdsToWarm,
+} from "@/lib/dashboard/neighbourWarm";
 import { liveBoardTransport, type BoardTransport } from "@/lib/dashboard/transport";
 
 /**
@@ -756,6 +760,41 @@ export function PipelineBoard({
   }
   const detailIndex =
     detailApp === null ? -1 : orderedVisible.findIndex((a) => a.id === detailApp.id);
+
+  /** The ids ↑ and ↓ would land on, joined into one primitive key. The effect
+   *  below must depend on the IDS, not on `orderedVisible` — that array is
+   *  rebuilt every render, so depending on it would re-arm the timer on every
+   *  render and the warm would never fire. */
+  const neighbourKey = neighbourIdsToWarm(orderedVisible, detailIndex).join(",");
+
+  /**
+   * Warm the open card's neighbours (#203 §7, the remaining half).
+   *
+   * The pane itself already answers the click with no network at all: company,
+   * role, stage, filed date and deadline all come off the row this board is
+   * already holding. The ONE thing that waits is "the mail behind this card".
+   * `lib/dashboard/neighbourWarm.ts` carries the measurements and the reason
+   * this is a prefetch rather than an attempt to make the request faster.
+   *
+   * `transport.detail` is the entire mechanism — it reads `detailCache` first
+   * and writes it on success — so a warmed row costs the reader zero requests
+   * and is never fetched twice. Every invalidation path already covers what
+   * lands here: row mutations drop the row, a sync/rebuild clears the cache
+   * whole, and the 30 s TTL bounds the rest. Nothing can go stale here that
+   * could not already go stale on a reopen.
+   *
+   * `interactive` gates it so the landing embeds and the locked board never
+   * speculate; `/demo` passes a fixture transport, whose `detail` is in-memory
+   * and touches no network, so this is inert there by construction.
+   */
+  useEffect(() => {
+    if (!interactive || neighbourKey === "") return;
+    const ids = neighbourKey.split(",").map(Number);
+    const timer = window.setTimeout(() => {
+      for (const id of ids) void transport.detail(id);
+    }, NEIGHBOUR_WARM_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [interactive, neighbourKey, transport]);
 
   /** ↑/↓ from the detail: move to the neighbouring visible card, clamped at
    *  the ends. Landing on a member of a collapsed employer set opens the set
