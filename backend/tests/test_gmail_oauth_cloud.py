@@ -3750,6 +3750,74 @@ async def test_one_ats_thread_is_asked_about_once_per_application(
     ).json()["needs_review"] == 3
 
 
+async def test_answering_one_application_does_not_bury_its_thread_siblings(
+    client: AsyncClient,
+) -> None:
+    """The cross-sync half of #454, which the single-sync test cannot reach.
+
+    ``_persist_review_items_additive`` keeps a conversation the user has already
+    decided about out of the queue, so a later message on it does not ask the
+    same question twice. Keyed on the thread alone, answering ONE of Verkada's
+    four applications suppressed the other three on every subsequent sync — the
+    within-sync fix cannot help a message that is filtered out before it is
+    persisted.
+
+    Two syncs on purpose: the first three arrive, one is answered, and only then
+    does the fourth turn up. That is the ordinary shape of a delta.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    first, second = _VERKADA_THREAD[:3], _VERKADA_THREAD[4:]
+
+    assert (
+        await client.post(
+            "/gmail/sync",
+            json={
+                "items": [
+                    _verkada_item(mid, role, f"2026-08-12T0{i}:00:00+00:00")
+                    for i, (mid, role) in enumerate(first)
+                ]
+            },
+            headers=headers,
+        )
+    ).status_code == 200
+
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    assert queue["total"] == 3
+    answered = queue["items"][0]
+    assert (
+        await client.post(
+            f"/applications/review/{answered['message_id']}/classify",
+            json={"category": "applied"},
+            headers=headers,
+        )
+    ).status_code == 200
+
+    # A LATER SYNC, carrying the fourth application of the same conversation.
+    assert (
+        await client.post(
+            "/gmail/sync",
+            json={
+                "items": [
+                    _verkada_item(mid, role, "2026-08-12T05:00:00+00:00")
+                    for mid, role in second
+                ]
+            },
+            headers=headers,
+        )
+    ).status_code == 200
+
+    remaining = (await client.get("/applications/review", headers=headers)).json()
+    # The two still-unanswered ones from the first sync, plus the new one. The
+    # answered application does not come back, which is what the settled filter
+    # is for and is unchanged.
+    assert sorted(i["role"] for i in remaining["items"]) == sorted(
+        [r for _m, r in first if r != answered["role"]]
+        + [r for _m, r in second]
+    ), [i["role"] for i in remaining["items"]]
+    assert remaining["total"] == 3
+
+
 # =============================================================================
 # What ``scanned`` is allowed to imply
 # =============================================================================
