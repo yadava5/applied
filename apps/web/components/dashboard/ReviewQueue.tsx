@@ -30,6 +30,15 @@ export interface ReviewItem {
   snippet?: string | null;
   confidence?: number | null;
   gmail_link?: string | null;
+  /**
+   * Which application this entry is about, when the mail names one.
+   *
+   * An applicant tracking system sends every acknowledgement for an employer
+   * under one subject from one no-reply address, so several entries here can
+   * carry a byte-identical subject and sender and still be four different
+   * applications. This is the only field that tells them apart.
+   */
+  role?: string | null;
 }
 
 /**
@@ -159,7 +168,10 @@ function ReviewRow({
           {item.received_at ? shortDate(item.received_at) : ""}
         </span>
       </div>
-      <p className="truncate text-xs text-muted">{sender}</p>
+      <p className="truncate text-xs text-muted">
+        {sender}
+        {item.role ? <span className="text-dim"> · {item.role}</span> : null}
+      </p>
       {/* WHY this email is here, in the classifier's own numbers: its
           confidence drawn against the auto-file gate. Most held mail sits
           under the gate; a confident verdict in this queue was held because
@@ -187,9 +199,16 @@ function ReviewRow({
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {/* Unique per row: three selects all announcing "Classify this email"
-            were indistinguishable to a screen reader. */}
+            were indistinguishable to a screen reader.
+            The ROLE is part of that name and not decoration. Since the queue
+            began keying on (conversation, application) rather than on the
+            conversation alone, one ATS thread produces several rows whose
+            subject AND sender are byte-identical — four "Thank you for applying
+            to Verkada" from one no-reply address — and without the role the
+            accessible names collide again. */}
         <label className="sr-only" htmlFor={`cat-${item.message_id}`}>
           Classify &ldquo;{truncate(item.subject || "(no subject)")}&rdquo; from {sender}
+          {item.role ? `, ${item.role}` : ""}
         </label>
         <select
           id={`cat-${item.message_id}`}

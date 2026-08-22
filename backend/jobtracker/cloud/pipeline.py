@@ -425,9 +425,7 @@ def flag_follow_ups(
     materialized = list(items)
 
     def sub_key(item: PipelineItem) -> str | None:
-        return extract_req_id(item.subject, item.snippet) or normalize_role_token(
-            role_from_message(item.subject, item.snippet)
-        )
+        return application_sub_key(item.subject, item.snippet)
 
     # Group every message by company so we can ask "did THIS company respond?",
     # then narrow to the specific application inside the loop.
@@ -1207,6 +1205,92 @@ def normalize_role_token(role: str | None) -> str | None:
         return None
     token = _ROLE_TOKEN_STRIP.sub(" ", role.lower()).strip()
     return token or None
+
+
+def application_sub_key(subject: str, snippet: str = "") -> str | None:
+    """WHICH application, within one employer, this message is about — or None.
+
+    The identity cascade the whole module already uses, in one place:
+    requisition id first (the employer's own key, and the only thing that tells
+    two same-titled openings apart), then the normalized role token, then
+    nothing — which is honest rather than empty. Plenty of real mail names no
+    application at all: "Crusoe | Application Received" carries no role in its
+    subject and no body to extract one from.
+
+    None is a VALUE here, not a failure. Two messages that both name nothing are
+    the same unknown, and callers that key on this rely on that: it is what
+    keeps one employer's two identical acknowledgements a single decision.
+    """
+
+    return extract_req_id(subject, snippet) or normalize_role_token(
+        role_from_message(subject, snippet)
+    )
+
+
+#: The width a snippet is STORED at — ``Email.body_snippet`` is
+#: ``max_length=500`` and every writer truncates to it. The review key has to be
+#: computed from the same text on both sides of a decision or the decision
+#: cannot settle the row it was made about, so :func:`review_dedup_key`
+#: truncates here too rather than trusting its caller to have done it.
+#:
+#: Not hypothetical. The pipeline keys on ``PipelineItem.snippet``, which the
+#: sync endpoint accepts up to 2000 characters, while the persisted row holds
+#: the first 500. A message whose role sits past character 500 was queued under
+#: ``(thread, "backend engineer alarms")`` and settled against
+#: ``(thread, None)`` — measured 2026-08-22, before this line existed. It would
+#: have left the row unlinked and un-reviewed, re-queued on every sync forever.
+STORED_SNIPPET_CHARS = 500
+
+
+def review_dedup_key(
+    *,
+    message_id: str,
+    thread_id: str | None,
+    subject: str,
+    snippet: str,
+) -> tuple[str, str | None] | str:
+    """The unit of ONE DECISION in the review queue — issue #454.
+
+    A Gmail conversation is one decision only when it is about one application,
+    and an ATS thread routinely is not: every acknowledgement an employer sends
+    goes out under one subject from one no-reply address, and Gmail threads on
+    subject plus sender. Measured in the owner's mailbox on 2026-08-22, thread
+    ``19ff36237eef1ef3`` holds five Verkada messages naming FOUR different
+    roles, and ``19fed820cd93d18e`` holds two Anthropic applications. Keyed on
+    the thread alone the queue asked about one of the four and the other three
+    reached no card, no entry and no counter.
+
+    So the key is the thread PLUS which application the message names, using the
+    same :func:`application_sub_key` the filing path
+    (:func:`partition_applications`) has used for months. On the real Verkada
+    thread that is four distinct tokens, with the duplicate acknowledgement of
+    "Backend Engineer, Alarms" folding back into one: five messages, four
+    decisions.
+
+    THE CRUSOE CASE IS THE CONTROL AND IS UNCHANGED. Its two messages ("Crusoe |
+    Application Received", emails 58 and 73 of thread ``19fed7e0706ee704``)
+    carry no body, so both sub-keys are ``None`` — equal, one entry, one
+    decision, exactly as before. Widening the key by identity can never narrow
+    this: mail that names no application still collides with every other
+    nameless message of its thread.
+
+    NO THREAD, NO WIDENING. Unthreaded mail returns the bare ``message_id``
+    rather than a ``(None, sub_key)`` pair, which would collide two different
+    employers' "software engineer" mail into one entry. A message id is unique
+    and cannot.
+
+    Lives here, and is called from every place that decides how many decisions a
+    set of messages is, because those places must not be able to disagree: the
+    pipeline that builds the queue, the additive persist that keeps a settled
+    conversation out of it, the endpoint that renders it, the classify that
+    settles its siblings, and the summary tile that counts it. Four of those
+    five said "thread" and the fifth had to as well; a fix at fewer than all
+    five is invisible, because the rows exist and the screen still shows one.
+    """
+
+    if not thread_id:
+        return message_id
+    return (thread_id, application_sub_key(subject, snippet[:STORED_SNIPPET_CHARS]))
 
 
 @dataclass(frozen=True)
@@ -2517,11 +2601,13 @@ def collect_review_items(
     ``dropped_out`` is an out-parameter rather than a second return value so
     every existing caller keeps unpacking a plain list.
 
-    Deduplicated by THREAD (newest message wins), falling back to ``message_id``
-    for mail with no thread id. One Gmail conversation is one decision: the
-    owner's queue asked them to classify "Crusoe | Application Received" twice
-    (emails 58 and 73 — two messages, one thread ``19fed7e0706ee704``), while
-    the filing path had grouped the same shape correctly for months. Newest-
+    Deduplicated by THREAD AND WHICH APPLICATION the message names (newest
+    wins), falling back to ``message_id`` for mail with no thread id. One Gmail
+    conversation is one decision *per application*: the owner's queue asked them
+    to classify "Crusoe | Application Received" twice (emails 58 and 73 — two
+    messages, one thread ``19fed7e0706ee704``), and keying on the thread alone
+    fixed that by losing three of the four applications in Verkada's thread
+    ``19ff36237eef1ef3``. See #454 and the comment at the key itself. Newest-
     first overall.
     """
 
@@ -2533,7 +2619,7 @@ def collect_review_items(
     # :func:`partition_applications`). Asking is the only honest move.
     unplaceable = unplaceable_message_ids(items, known_multi, known_threads)
 
-    best: dict[str, ReviewItem] = {}
+    best: dict[tuple[str, str | None] | str, ReviewItem] = {}
     for item in items:
         if item.message_id not in unplaceable and _qualifies_for_hard_row(item) is not None:
             continue  # already a real application row
@@ -2728,7 +2814,12 @@ def collect_review_items(
             company_display=employer[1] if employer else None,
             snippet=item.snippet,
         )
-        key = item.thread_id or item.message_id
+        key = review_dedup_key(
+            message_id=item.message_id,
+            thread_id=item.thread_id,
+            subject=item.subject,
+            snippet=item.snippet,
+        )
         current = best.get(key)
         if current is None or _review_sort_key(candidate) >= _review_sort_key(current):
             best[key] = candidate

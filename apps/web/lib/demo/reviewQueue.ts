@@ -47,13 +47,26 @@ interface HeldSeed {
   confidence: number;
   /** Whole days before "today" the message arrived. */
   receivedDaysAgo: number;
+  /** Which application the mail names, where it names one. Null is the common
+   *  case and is the row's no-role branch. */
+  role?: string | null;
 }
 
 /**
- * Five held messages, cycled to whatever length the harness asks for. Four sit
- * in the uncertain band under the gate; the fifth cleared it and is held for a
+ * Seven held messages, cycled to whatever length the harness asks for. Most sit
+ * in the uncertain band under the gate; one cleared it and is held for a
  * missing employer name, which is the branch the amber/green split in the row's
  * confidence line exists to distinguish.
+ *
+ * The last TWO are one shape and belong together: an applicant tracking system
+ * sends every acknowledgement for an employer under one subject from one
+ * no-reply address, so the queue can hold several entries whose subject and
+ * sender are byte-identical and which are nevertheless different applications.
+ * Since the queue began keying on (conversation, application) rather than the
+ * conversation alone, that is a state a real reader reaches, and the only thing
+ * telling the two rows apart is the role. Seeding it here is what keeps the
+ * twin from being a strict subset of the page it stands in for — the omission
+ * this file's header is about, in its next form.
  */
 const HELD_SEEDS: HeldSeed[] = [
   {
@@ -99,6 +112,28 @@ const HELD_SEEDS: HeldSeed[] = [
     confidence: 0.92,
     receivedDaysAgo: 8,
   },
+  {
+    subject: "Thank you for applying to Verkada",
+    senderName: "Verkada",
+    senderEmail: "no-reply@us.greenhouse-mail.io",
+    snippet:
+      "Thank you so much for applying to the Backend Engineer, Alarms role at Verkada. We are excited to receive your application and will review it as soon as we can.",
+    confidence: 0.78,
+    receivedDaysAgo: 9,
+    role: "Backend Engineer, Alarms",
+  },
+  {
+    // Byte-identical subject and sender to the row above, and a DIFFERENT
+    // application. Without the role these two are one question asked twice.
+    subject: "Thank you for applying to Verkada",
+    senderName: "Verkada",
+    senderEmail: "no-reply@us.greenhouse-mail.io",
+    snippet:
+      "Thank you so much for applying to the Frontend Engineer - Access Control role at Verkada. We are excited to receive your application and will review it as soon as we can.",
+    confidence: 0.78,
+    receivedDaysAgo: 9,
+    role: "Frontend Engineer - Access Control",
+  },
 ];
 
 /**
@@ -132,6 +167,7 @@ export function demoReviewQueueAsApi(count: number, today: string = todayISO()):
       snippet: seed.snippet,
       confidence: seed.confidence,
       gmail_link: null,
+      role: seed.role ?? null,
     };
   });
 }

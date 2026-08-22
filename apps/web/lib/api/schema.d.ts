@@ -1552,6 +1552,8 @@ export interface components {
             gmail_link?: string | null;
             /** Suggested Category */
             suggested_category?: string | null;
+            /** Role */
+            role?: string | null;
         };
         /**
          * ReviewQueueResponse

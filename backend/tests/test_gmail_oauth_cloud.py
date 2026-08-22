@@ -3654,6 +3654,170 @@ async def test_classifying_a_thread_settles_every_message_in_it(
     assert {e.application_id for e in rows} == {app_id}
 
 
+def _verkada_item(message_id: str, role: str, received_at: str) -> dict:
+    """One message of the real Verkada thread, uncertain enough for the queue.
+
+    Thread ``19ff36237eef1ef3``, read from the owner's mailbox 2026-08-22: five
+    Greenhouse acknowledgements for FOUR roles, all under one subject from one
+    no-reply address, which is exactly why Gmail threaded them. Snippets are
+    Gmail's own. Scored under the auto-file gate because the queue is the path
+    under test — mail that clears the gate never reaches it.
+    """
+
+    return {
+        "message_id": message_id,
+        "category": "applied",
+        "sender_email": "no-reply@us.greenhouse-mail.io",
+        "sender_name": "Verkada",
+        "subject": "Thank you for applying to Verkada",
+        "snippet": (
+            f"Hi Ayush, Thank you so much for applying to the {role} role at "
+            "Verkada! We are always looking for great talent and we are excited "
+            "to receive your application. We will review it as"
+        ),
+        "confidence": 0.78,
+        "thread_id": "19ff36237eef1ef3",
+        "received_at": received_at,
+    }
+
+
+_VERKADA_THREAD = (
+    ("19ff36237eef1ef3", "Backend Engineer, Alarms"),
+    ("19ff39a08b3bc051", "Frontend Engineer - Access Control"),
+    ("19ff39afaed0fc1d", "Backend Engineer - Connectivity"),
+    ("19ff3c8bf80031ab", "Backend Engineer, Alarms"),
+    ("19ff3c8c90a8650d", "Embedded Software Engineer, Access Control"),
+)
+
+
+async def test_one_ats_thread_is_asked_about_once_per_application(
+    client: AsyncClient,
+) -> None:
+    """Four applications in one Gmail thread, and the user is asked four times.
+
+    The whole cycle, because a fix at fewer than every site is invisible: the
+    pipeline can queue four rows and the endpoint still render one. Sync, queue,
+    the summary tile the queue is linked from, and then classifying one entry —
+    which must settle its own duplicate and NOTHING else. Issue #454.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    resp = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                _verkada_item(mid, role, f"2026-08-12T0{i}:00:00+00:00")
+                for i, (mid, role) in enumerate(_VERKADA_THREAD)
+            ]
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    # Five messages, four applications: the two "Backend Engineer, Alarms"
+    # acknowledgements are ONE decision, and the other three are their own.
+    assert queue["total"] == 4, [i["snippet"][:60] for i in queue["items"]]
+    # And the four are TELLABLE APART. Subject and sender are byte-identical
+    # across all of them — that is why Gmail threaded them — so the entry has to
+    # carry which application it is about or the queue asks the same question
+    # four times with no way to answer differently.
+    assert sorted(i["role"] for i in queue["items"]) == [
+        "Backend Engineer - Connectivity",
+        "Backend Engineer, Alarms",
+        "Embedded Software Engineer, Access Control",
+        "Frontend Engineer - Access Control",
+    ]
+    assert len({i["subject"] for i in queue["items"]}) == 1
+    # The tile the queue is reached from must agree with it.
+    summary = (await client.get("/applications/summary", headers=headers)).json()
+    assert summary["needs_review"] == 4
+
+    # Classifying one settles that application and leaves the other three.
+    representative = queue["items"][0]["message_id"]
+    classified = await client.post(
+        f"/applications/review/{representative}/classify",
+        json={"category": "applied"},
+        headers=headers,
+    )
+    assert classified.status_code == 200, classified.text
+
+    remaining = (await client.get("/applications/review", headers=headers)).json()
+    assert remaining["total"] == 3
+    assert (
+        await client.get("/applications/summary", headers=headers)
+    ).json()["needs_review"] == 3
+
+
+async def test_answering_one_application_does_not_bury_its_thread_siblings(
+    client: AsyncClient,
+) -> None:
+    """The cross-sync half of #454, which the single-sync test cannot reach.
+
+    ``_persist_review_items_additive`` keeps a conversation the user has already
+    decided about out of the queue, so a later message on it does not ask the
+    same question twice. Keyed on the thread alone, answering ONE of Verkada's
+    four applications suppressed the other three on every subsequent sync — the
+    within-sync fix cannot help a message that is filtered out before it is
+    persisted.
+
+    Two syncs on purpose: the first three arrive, one is answered, and only then
+    does the fourth turn up. That is the ordinary shape of a delta.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    first, second = _VERKADA_THREAD[:3], _VERKADA_THREAD[4:]
+
+    assert (
+        await client.post(
+            "/gmail/sync",
+            json={
+                "items": [
+                    _verkada_item(mid, role, f"2026-08-12T0{i}:00:00+00:00")
+                    for i, (mid, role) in enumerate(first)
+                ]
+            },
+            headers=headers,
+        )
+    ).status_code == 200
+
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    assert queue["total"] == 3
+    answered = queue["items"][0]
+    assert (
+        await client.post(
+            f"/applications/review/{answered['message_id']}/classify",
+            json={"category": "applied"},
+            headers=headers,
+        )
+    ).status_code == 200
+
+    # A LATER SYNC, carrying the fourth application of the same conversation.
+    assert (
+        await client.post(
+            "/gmail/sync",
+            json={
+                "items": [
+                    _verkada_item(mid, role, "2026-08-12T05:00:00+00:00")
+                    for mid, role in second
+                ]
+            },
+            headers=headers,
+        )
+    ).status_code == 200
+
+    remaining = (await client.get("/applications/review", headers=headers)).json()
+    # The two still-unanswered ones from the first sync, plus the new one. The
+    # answered application does not come back, which is what the settled filter
+    # is for and is unchanged.
+    assert sorted(i["role"] for i in remaining["items"]) == sorted(
+        [r for _m, r in first if r != answered["role"]]
+        + [r for _m, r in second]
+    ), [i["role"] for i in remaining["items"]]
+    assert remaining["total"] == 3
+
+
 # =============================================================================
 # What ``scanned`` is allowed to imply
 # =============================================================================
