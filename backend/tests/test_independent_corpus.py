@@ -6,7 +6,7 @@ the rules or the resolver has to move it deliberately rather than silently.
 
 Read the headline with its corpus. This one is 18% adversarial by construction —
 mail written to defeat the classifier, not mail that happens to be hard — so
-88.94% describes behaviour on a stress corpus and not the accuracy a user would
+90.94% describes behaviour on a stress corpus and not the accuracy a user would
 see on their own inbox. The families are reported separately for that reason.
 
 The known defects are pinned AS DEFECTS, at their measured size, rather than
@@ -41,10 +41,13 @@ CORPUS_SIZE = 10040
 RECORDED = {
     "size": 10040,
     "companies": 5670,
-    "correct": 8930,
-    "wrong": 464,
-    "abstained": 646,
-    "cards": 5693,
+    "correct": 9130,
+    "wrong": 300,
+    "abstained": 610,
+    # The number that matters more than `wrong`: how many wrong verdicts are
+    # stated to the user as fact rather than held for them to settle.
+    "auto_filed_wrong": 100,
+    "cards": 5770,
 }
 
 
@@ -90,17 +93,33 @@ def test_classifier_accuracy_has_not_regressed(verdicts) -> None:
     assert score.abstained == RECORDED["abstained"], f"abstained moved to {score.abstained}"
 
 
-def test_every_wrong_verdict_is_confidently_wrong(verdicts) -> None:
+def test_most_wrong_verdicts_no_longer_reach_the_board(verdicts) -> None:
     """The shape of the failure, which matters more than its size.
 
-    There is no such thing here as a wrong-but-hedged verdict: every one clears
-    ``AUTO_FILE_GATE`` and are filed without review. The review queue is
-    therefore not a safety net for being WRONG — it catches being UNSURE, and
-    the classifier is never unsure and wrong at the same time.
+    THIS ASSERTION USED TO READ ``auto_filed_wrong == wrong == 464``, and it
+    was the worst number in the file: there was no such thing as a
+    wrong-but-hedged verdict, so the review queue caught being UNSURE and never
+    once caught being WRONG. Every mistake the classifier made, it made
+    confidently, and the user saw it as a fact about their own job search.
+
+    #441 changed that. Quoted history no longer scores as this message's own
+    words and a reply's subject no longer counts as a headline, so 200 of the
+    remaining wrong verdicts fall under the gate and land in the queue where a
+    human settles them. What is left above the gate is the zero-width family,
+    which is a different bug (#424) with a different fix.
+
+    Pinned as a RATIO of the two, not just as a total, because the total can
+    improve while the shape gets worse — 50 wrong verdicts all auto-filed is a
+    worse product than 300 with 100 auto-filed.
     """
 
     score = score_classifier(verdicts)
-    assert score.auto_filed_wrong == score.wrong == RECORDED["wrong"]
+    assert score.wrong == RECORDED["wrong"]
+    assert score.auto_filed_wrong == RECORDED["auto_filed_wrong"], (
+        f"{score.auto_filed_wrong} wrong verdicts were stated as fact. Every "
+        "one of these reaches the board without asking, so a rise here is "
+        "worse news than a rise in `wrong`."
+    )
 
 
 @pytest.mark.parametrize(
@@ -108,15 +127,19 @@ def test_every_wrong_verdict_is_confidently_wrong(verdicts) -> None:
     [
         (
             "rescinded-offer",
-            164,
+            0,
             "issue #417. A withdrawal that quotes the original offer scores the "
             "QUOTED text, so the board shows an offer the person does not have. "
             "The only error here that asserts something false about a user's "
-            "life rather than leaving them where they were. Measured at 164 of "
-            "260 withdrawals, not the 60 of 60 the issue reports — and it is the "
-            "one defect here that MOVES with the seed (164/171/170 at three), "
-            "because which withdrawal wording a case draws decides whether the "
-            "quoted offer or the withdrawal reaches the classifier first.",
+            "life rather than leaving them where they were. FIXED by #441 and "
+            "pinned at zero to keep it fixed: the offer language lives in "
+            "QUOTED HISTORY, and the scoring walk no longer reads history as "
+            "this message's own words. It was 164 of 260 withdrawals here "
+            "(not the 60 of 60 #417 reports), and it moved with the seed "
+            "(164/171/170) because which withdrawal wording a case drew "
+            "decided which text reached the classifier first. It is now 0 at "
+            "every seed. Not yet CORRECT, though — see the abstention test: "
+            "all 260 now abstain rather than reading as rejections.",
         ),
         (
             "quoted-history",
@@ -186,16 +209,21 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
         "on the three defects above: a board that is silent, not wrong."
     )
 
-    # Statistical, and stated as a band because it genuinely moves: 164, 171,
-    # 170 across the three seeds. A band and not a ceiling — the number falling
-    # out of the bottom is a fix worth noticing, not a pass.
-    assert 150 <= score.by_family["rescinded-offer"]["wrong"] <= 185
+    # This WAS a band (150..185), because it moved with the seed: 164, 171,
+    # 170. The band did its job — #441 landed and the floor went red, which is
+    # what a floor is for. It is now structural like the rest.
+    assert score.by_family["rescinded-offer"]["wrong"] == 0
+    assert score.by_family["rescinded-offer"]["abstained"] == 260, (
+        "the withdrawals must still be UNSETTLED rather than quietly correct. "
+        "Reading them as rejections would be the real fix and this number is "
+        "how anyone would notice it happened."
+    )
 
     # The shape of the failure is seed-independent even where its size is not.
-    assert score.auto_filed_wrong == score.wrong, (
-        "a wrong-but-hedged verdict appeared at this seed and at none of the "
-        "others. That would be the review queue finally earning its keep, and "
-        "it should be recorded rather than absorbed."
+    assert score.auto_filed_wrong == RECORDED["auto_filed_wrong"], (
+        f"{score.auto_filed_wrong} wrong verdicts were stated as fact at this "
+        "seed. The number that reaches the board without asking is the one "
+        "worth holding steady across a re-sample."
     )
     assert score.correct == RECORDED["correct"], (
         f"correct moved to {score.correct}. It has been exactly "

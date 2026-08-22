@@ -778,12 +778,16 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("wrong"),
         "sites": [
             r"\| Wrong \| \*\*([\d,]+)\*\* \|",
-            r"of which \*\*([\d,]+) wrong\*\*",
-            r"every one of the ([\d,]+) wrong verdicts is above",
-            {"re": r"correct \(88\.94%\), ([\d,]+) wrong", "file": BOOKLET_CONTENT},
+            r"\*\*[\d,]+ of the ([\d,]+) wrong verdicts are stated to the user",
+            r"than ([\d,]+) with [\d,]+ auto-filed",
+            {"re": r"correct \(90\.94%\), ([\d,]+) wrong", "file": BOOKLET_CONTENT},
             {"re": r'note: "([\d,]+) wrong · [\d,]+ abstained"', "file": BOOKLET_CONTENT},
             {
-                "re": r"every one of the ([\d,]+) wrong verdicts sits above",
+                "re": r"[\d,]+ of the ([\d,]+) wrong verdicts sit above",
+                "file": BOOKLET_CONTENT,
+            },
+            {
+                "re": r"than ([\d,]+) with [\d,]+ auto-filed",
                 "file": BOOKLET_CONTENT,
             },
         ],
@@ -796,6 +800,18 @@ FACTS: dict[str, dict] = {
             r"the product says nothing\) \| \*\*([\d,]+)\*\* \|",
             {"re": r"wrong, ([\d,]+) abstained\.", "file": BOOKLET_CONTENT},
             {"re": r'note: "[\d,]+ wrong · ([\d,]+) abstained"', "file": BOOKLET_CONTENT},
+        ],
+    },
+    "corpusAutoFiledWrong": {
+        "kind": "static",
+        "describe": f"RECORDED['auto_filed_wrong'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("auto_filed_wrong"),
+        "sites": [
+            r"of which \*\*([\d,]+) wrong\*\*",
+            r"\*\*([\d,]+) of the [\d,]+ wrong verdicts are stated",
+            r"than [\d,]+ with ([\d,]+) auto-filed",
+            {"re": r"([\d,]+) of the [\d,]+ wrong verdicts sit above", "file": BOOKLET_CONTENT},
+            {"re": r"than [\d,]+ with ([\d,]+) auto-filed", "file": BOOKLET_CONTENT},
         ],
     },
     "corpusCards": {
