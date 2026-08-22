@@ -910,22 +910,27 @@ async def employers_with_several_applications(
     # this set on the full name instead produced a set that never contained the
     # token being looked up, so the rule silently did nothing: a check that
     # cannot fire, and one that reads as passing.
+    #
+    # COUNTED BY LEADING WORD, in one pass. ``matches_company_token`` accepts a
+    # full match OR a match on the leading word, and a full match implies the
+    # leading words are equal too — so the whole predicate reduces to "same
+    # leading word", and a histogram answers it. The obvious version (for each
+    # candidate token, scan every company) is quadratic in the size of the
+    # user's board and runs on every sync; the ten-thousand-message corpus is
+    # what made that visible, at 4,770 employers, but the growth is the same
+    # shape for a real person who applies a lot.
+    counts: Counter[str] = Counter()
     candidates: set[str] = set()
     for company in companies:
         token = pipeline.normalize_company_name(company)
-        if token:
-            candidates.add(token)
-            candidates.add(token.split()[0])
+        if not token:
+            continue
+        lead = token.split()[0]
+        counts[lead] += 1
+        candidates.add(token)
+        candidates.add(lead)
     return frozenset(
-        token
-        for token in candidates
-        if sum(
-            1
-            for company in companies
-            if pipeline.normalize_company_name(company) == token
-            or pipeline.matches_company_token(company, token)
-        )
-        > 1
+        token for token in candidates if counts[token.split()[0]] > 1
     )
 
 

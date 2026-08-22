@@ -719,7 +719,68 @@ def file_bytes(rel: str) -> int:
 # the Hugging Face Space's app.js; a number repeated in a second file is a
 # number that gets corrected in one file and not the other.
 
+CORPUS_GATE = "backend/tests/test_independent_corpus.py"
+
+
+def corpus_recorded(key: str) -> int:
+    """One number out of the corpus gate's ``RECORDED`` dict.
+
+    The README quotes the run; this makes the quote checkable. Reading the
+    gate's own dict rather than re-running the corpus is deliberate: the run
+    takes minutes and a --check has to be cheap enough that nobody is tempted
+    to skip it. The gate is what proves the numbers still describe the product;
+    this only proves the README still describes the gate.
+    """
+
+    node = _assigned(CORPUS_GATE, "RECORDED")
+    return int(ast.literal_eval(node)[key])
+
+
 FACTS: dict[str, dict] = {
+    # ── the ten-thousand-message adversarial corpus ──
+    "corpusSize": {
+        "kind": "static",
+        "describe": f"RECORDED['size'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("size"),
+        "sites": [
+            r"invents \*\*([\d,]+) messages\n?",
+            r"Correct \| \*\*[\d,]+ of ([\d,]+) —",
+        ],
+    },
+    "corpusCompanies": {
+        "kind": "static",
+        "describe": f"RECORDED['companies'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("companies"),
+        "sites": [r"families over ([\d,]+) companies"],
+    },
+    "corpusCorrect": {
+        "kind": "static",
+        "describe": f"RECORDED['correct'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("correct"),
+        "sites": [r"Correct \| \*\*([\d,]+) of [\d,]+ —"],
+    },
+    "corpusWrong": {
+        "kind": "static",
+        "describe": f"RECORDED['wrong'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("wrong"),
+        "sites": [
+            r"\| Wrong \| \*\*([\d,]+)\*\* \|",
+            r"of which \*\*([\d,]+) wrong\*\*",
+            r"every one of the ([\d,]+) wrong verdicts is above",
+        ],
+    },
+    "corpusAbstained": {
+        "kind": "static",
+        "describe": f"RECORDED['abstained'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("abstained"),
+        "sites": [r"the product says nothing\) \| \*\*([\d,]+)\*\* \|"],
+    },
+    "corpusCards": {
+        "kind": "static",
+        "describe": f"RECORDED['cards'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("cards"),
+        "sites": [r"misrouted review \| \*\*([\d,]+) / 0 / 0 / 0 / 0\*\*"],
+    },
     # ── the rules engine ──
     "rulesPatterns": {
         "kind": "static",
