@@ -1942,6 +1942,28 @@ DATE_SITE = re.compile(
 )
 
 
+def substitute_at_group(text: str, match: "re.Match[str]", want: str) -> str:
+    """Replace ONLY the captured group, by its span.
+
+    This used to be `match.group(0).replace(found, want, 1)`, which replaces the
+    first occurrence of that STRING anywhere in the match — not necessarily the
+    number being corrected. On a line carrying several facts it is reliably the
+    wrong one:
+
+        | ... misrouted review | **9,134 / 2 / 0 / 0 / 0** |
+          cards  9,134 -> 9,132   ->  **9,132 / 2 / ...
+          splits     2 -> 0       ->  **9,130 / 2 / ...
+
+    The "2" it replaced was the last digit of 9,132. 9,130 appears nowhere in
+    the run; the writer manufactured it. `--check` catches it so it cannot
+    ship, but `--write` is the command this tool's own failure message tells you
+    to run, and it produced a plausible wrong number twice on 2026-08-22. #468.
+    """
+
+    start, end = match.span(1)
+    return text[:start] + want + text[end:]
+
+
 def run(mode: str) -> None:
     values, artifact = resolve_facts()
     problems: list[str] = []
@@ -1985,8 +2007,8 @@ def run(mode: str) -> None:
                     continue
                 want = render(found, expected, word)
                 if mode == "write":
-                    replaced = m.group(0).replace(found, want, 1)
-                    entry["text"] = entry["text"][: m.start()] + replaced + entry["text"][m.end():]
+                    # By the group's SPAN — see `substitute_at_group`. #468.
+                    entry["text"] = substitute_at_group(entry["text"], m, want)
                     entry["dirty"] = True
                     rewrites += 1
                 else:
