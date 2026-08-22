@@ -913,6 +913,8 @@ async def _resolve_application(
     session,
     user_id: uuid.UUID,
     rolled: pipeline.RolledApplication,
+    home: int | None = None,
+    blocked: frozenset[int] = frozenset(),
 ) -> Application | None:
     """Which stored application, if any, this rolled cluster is — or None to mint.
 
@@ -936,10 +938,116 @@ async def _resolve_application(
     Live rows are preferred over dismissed ones throughout (``_company_rows``
     orders them first), so a dismissed duplicate can never shadow the row that is
     actually on the board.
+
+    RULE 0, AHEAD OF EVERYTHING: A MESSAGE ALREADY HAS A HOME. ``home`` is the
+    row one of this cluster's own messages is already filed against, worked out
+    for the whole pass by :func:`_anonymous_homes` before any of it is resolved.
+    Since :func:`pipeline.partition_applications` began giving each anonymous
+    confirmation its own application, an employer like Google — three
+    confirmations, no role, no requisition number, ten days apart — arrives here
+    as three clusters that are IDENTICAL under ``(req_id, role_token)``, which is
+    every input the cascade below has. The stored link is the only thing left
+    that tells them apart, and it is what makes a re-sync idempotent instead of
+    filing three more cards.
+
+    ``blocked`` carries the rows that are spoken for: taken by an earlier cluster
+    in this pass, or reserved as some other cluster's ``home``. Rule 4 returns
+    the employer's oldest row, so without this every anonymous cluster would
+    resolve onto the same one and the split would be undone a line after it was
+    made. Reserving matters on its own: when a sync's scan window reaches mail an
+    earlier one missed, the oldest cluster is no longer the one holding the
+    oldest row, and rule 4 would hand it a row that belongs to a different
+    application.
+
+    Both are ignored for an identified cluster — it has a real key and does not
+    need to guess.
     """
 
     rows = await _company_rows(session, user_id, rolled.company_token)
+    if rolled.req_id is None and rolled.role_token is None:
+        if home is not None:
+            found = next((row for row in rows if row.id == home), None)
+            if found is not None:
+                return found
+        rows = [row for row in rows if row.id not in blocked]
     return _pick_application(rows, rolled.req_id, rolled.role_token)
+
+
+async def _anonymous_homes(
+    session,
+    user_id: uuid.UUID,
+    clusters: list[pipeline.RolledApplication],
+) -> dict[int, int]:
+    """Which stored row each anonymous cluster already owns, by list index.
+
+    Resolved for the whole pass UP FRONT, and that is the point rather than an
+    optimisation: a cluster with no link must not be able to take a row that a
+    cluster later in the list is already the home of. Doing it inside the loop
+    makes the answer depend on position, which is exactly the fragility the link
+    exists to remove — an employer whose rows were minted in a different order
+    than its mail was received would have its cards silently swap applications.
+
+    A row is the home of AT MOST ONE cluster: where two claim it, the earlier
+    index wins and the other mints, so the row that has been on the board stays
+    with the application it was about.
+    """
+
+    homes: dict[int, int] = {}
+    taken: set[int] = set()
+    by_token: dict[str, set[int]] = {}
+    for index, rolled in enumerate(clusters):
+        if rolled.req_id is not None or rolled.role_token is not None:
+            continue
+        if rolled.company_token not in by_token:
+            by_token[rolled.company_token] = {
+                row.id
+                for row in await _company_rows(session, user_id, rolled.company_token)
+                if row.id is not None
+            }
+        at_employer = by_token[rolled.company_token]
+        linked = await _linked_application_ids(
+            session, user_id, [m.message_id for m in rolled.messages]
+        )
+        for application_id in linked:
+            if application_id in at_employer and application_id not in taken:
+                homes[index] = application_id
+                taken.add(application_id)
+                break
+    return homes
+
+
+async def _linked_application_ids(
+    session,
+    user_id: uuid.UUID,
+    message_ids: list[str],
+) -> list[int]:
+    """Applications these stored messages are already filed against, oldest first.
+
+    Scoped to ``user_id`` like every other read here. Chunked on the same bound
+    as :func:`_persist_message_refs` so a first sync's whole scan target cannot
+    walk into Postgres's bind-parameter ceiling.
+    """
+
+    ids = [m for m in message_ids if m]
+    if not ids:
+        return []
+    found: list[int] = []
+    for start in range(0, len(ids), _MESSAGE_LOOKUP_CHUNK):
+        chunk = ids[start : start + _MESSAGE_LOOKUP_CHUNK]
+        rows = (
+            await session.exec(
+                select(Email.application_id)
+                .where(
+                    Email.user_id == user_id,
+                    Email.message_id.in_(chunk),
+                    Email.application_id.is_not(None),
+                )
+            )
+        ).all()
+        found.extend(row for row in rows if row is not None)
+    # Stable and deterministic: the same messages always propose the same row
+    # first, whatever order the database returned them in.
+    return sorted(dict.fromkeys(found))
 
 
 def _pick_application(
@@ -1033,9 +1141,30 @@ async def _resolve_application_for_email(
     token: str,
     email: Email,
 ) -> Application | None:
-    """Resolve the application ONE stored message belongs to, or None to mint."""
+    """Resolve the application ONE stored message belongs to, or None to mint.
+
+    THE MESSAGE'S OWN LINK COMES FIRST. Both callers are answering a human — the
+    review queue's "what is this?" and the orphan catch-up — and both used to go
+    straight to the cascade, which for a message that names no role returns the
+    employer's oldest row (rule 4). That was a tie-break with one row to break
+    between; now that an employer's anonymous confirmations get a row each it is
+    a coin toss between three, and losing it files a person's own decision onto
+    an application they were not talking about. A message already filed against
+    a row of this employer's is not a guess, so it is consulted before anything
+    that is.
+
+    The residual is stated rather than fixed: an UNLINKED anonymous message at an
+    employer holding several rows still lands on the oldest by rule 4. Minting
+    instead would answer "which of your three Google applications?" by inventing
+    a fourth, which is worse, and the review queue already asks the user directly
+    (:func:`_chosen_application`) on the path where the question can be put.
+    """
 
     rows = await _company_rows(session, user_id, token)
+    if email.application_id is not None:
+        linked = next((row for row in rows if row.id == email.application_id), None)
+        if linked is not None:
+            return linked
     subject = email.subject or ""
     snippet = email.body_snippet or ""
     return _pick_application(
@@ -1063,6 +1192,7 @@ async def _persist_message_refs(
     application_id: int | None,
     refs,
     siblings: frozenset[int] = frozenset(),
+    anchored: frozenset[str] = frozenset(),
 ) -> dict[int, set[int]]:
     """Upsert metadata-only Email rows for a set of message refs (no bodies).
 
@@ -1095,6 +1225,17 @@ async def _persist_message_refs(
     was then dismissed — 22 times over two days, on employers that never left
     the board. Cross-employer re-pointing is untouched: that one is a change of
     evidence about who the message is from, not a tie-break.
+
+    ``anchored`` — the message ids that GAVE this cluster its identity, which for
+    an anonymous cluster is the single confirmation
+    :func:`pipeline.partition_applications` built it around. Those are exempt
+    from the sibling guard above, and they have to be: splitting Google's three
+    confirmations into three rows means two of those messages must LEAVE the row
+    they were folded onto, and the guard exists to stop exactly that move. The
+    distinction the guard is really drawing is between a message a cluster
+    merely guessed at and one it is defined by; before the split existed no
+    anonymous cluster had the latter, so the two were the same thing. Empty for
+    every identified cluster, which never passes ``siblings`` either.
 
     RETURNS which applications it moved an email away from, and WHERE each one
     went: ``{source_id: {destination_id, ...}}``. Re-pointing is right — the
@@ -1176,7 +1317,7 @@ async def _persist_message_refs(
             if application_id is not None:
                 current = existing.application_id
                 if current is not None and current != application_id:
-                    if current in siblings:
+                    if current in siblings and ref.message_id not in anchored:
                         # An identity-less cluster asking for a message that is
                         # already filed against another application at this same
                         # employer. It knows nothing this link does not; leave it.
@@ -1510,8 +1651,26 @@ async def upsert_applications_for_user(
     # adopts it — so the row that has been on the board (and any status the user
     # set on it) stays with the application it was actually about, and the later
     # ones are minted fresh. Across companies the order is irrelevant.
-    for r in sorted(rolled, key=lambda x: (x.company_token, x.applied_at or datetime.max)):
-        existing = await _resolve_application(session, user_id, r)
+    order = sorted(rolled, key=lambda x: (x.company_token, x.applied_at or datetime.max))
+    # Which row each anonymous cluster already owns. Worked out over the whole
+    # list before anything is resolved, so a cluster with no link cannot take a
+    # row that a later one is the home of — see :func:`_anonymous_homes`.
+    homes = await _anonymous_homes(session, user_id, order)
+    reserved = frozenset(homes.values())
+    # Rows taken as this pass goes, minted ones included.
+    claimed: set[int] = set()
+    for index, r in enumerate(order):
+        anonymous_cluster = r.req_id is None and r.role_token is None
+        home = homes.get(index)
+        existing = await _resolve_application(
+            session,
+            user_id,
+            r,
+            home,
+            frozenset(claimed | (reserved - {home})) if anonymous_cluster else frozenset(),
+        )
+        if anonymous_cluster and existing is not None and existing.id is not None:
+            claimed.add(existing.id)
         deeplink = _rolled_deeplink(r)
 
         # A cluster that carries no identity of its own lands on the employer's
@@ -1520,11 +1679,19 @@ async def upsert_applications_for_user(
         # may file NEW messages there; it may not take one off a sibling. Only
         # such a cluster pays for this lookup.
         siblings: frozenset[int] = frozenset()
-        if r.req_id is None and r.role_token is None:
+        anchored: frozenset[str] = frozenset()
+        if anonymous_cluster:
             siblings = frozenset(
                 row.id
                 for row in await _company_rows(session, user_id, r.company_token)
                 if row.id is not None
+            )
+            # The confirmation this cluster IS. It may leave the row it was
+            # folded onto; nothing else in the cluster may.
+            anchored = frozenset(
+                m.message_id
+                for m in r.messages
+                if m.category in pipeline.APPLIED_SIGNAL_CATEGORIES
             )
 
         if existing is not None:
@@ -1617,7 +1784,7 @@ async def upsert_applications_for_user(
             _merge_moves(
                 moved,
                 await _persist_message_refs(
-                    session, user_id, existing.id, r.messages, siblings
+                    session, user_id, existing.id, r.messages, siblings, anchored
                 ),
             )
             updated += 1
@@ -1637,10 +1804,18 @@ async def upsert_applications_for_user(
             )
             session.add(app)
             await session.flush()
+            # A row this pass MINTED is claimed too. Only the first of an
+            # employer's anonymous clusters finds no row and mints; without this
+            # the second one would resolve straight onto what the first just
+            # created — rule 4 returns the employer's oldest row and a row three
+            # lines old still qualifies — and the three Google confirmations
+            # would land back on one card having briefly been three.
+            if anonymous_cluster and app.id is not None:
+                claimed.add(app.id)
             _merge_moves(
                 moved,
                 await _persist_message_refs(
-                    session, user_id, app.id, r.messages, siblings
+                    session, user_id, app.id, r.messages, siblings, anchored
                 ),
             )
             created += 1

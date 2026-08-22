@@ -155,11 +155,23 @@ def test_roblox_verification_mail_does_not_mint_a_second_application():
     assert {m.message_id for m in rolled[0].messages} == {"r1", "r2"}
 
 
-def test_an_employer_that_names_no_role_keeps_exactly_one_row():
+def test_two_role_less_confirmations_are_two_applications():
     """Supabase confirms twice, two hours apart, naming no role either time.
 
-    Ambiguous by construction. One row is the honest floor — inventing two would
-    assert a distinction the mail does not make.
+    THIS TEST USED TO ASSERT ONE ROW, on the reasoning that one row is the honest
+    floor when the mail draws no distinction. The mailbox says otherwise and the
+    owner overruled it on 2026-08-21: the two messages sit in TWO Gmail threads
+    and are two different Ashby templates (Supabase's own copy, then the generic
+    "we confirm your application has been received"), which is what an ATS does
+    when two job posts each fire their own confirmation. One row for them is not
+    a floor, it is a wrong answer that looks like a cautious one.
+
+    Google is the case that forced it: the same shape at three. Three
+    confirmations on 11, 13 and 21 August folded onto one card dated the 11th,
+    so a sync that classified all three correctly showed the user a board that
+    had not moved. A merge is invisible and destroys the record; a split is
+    visible and a person can fix it. That asymmetry is the same one
+    ``pipeline._may_join`` already documents for requisition ids.
     """
 
     first = item(
@@ -180,11 +192,48 @@ def test_an_employer_that_names_no_role_keeps_exactly_one_row():
 
     rolled = p.roll_up_applications([first, second])
 
-    assert len(rolled) == 1
+    assert len(rolled) == 2
+    assert [{m.message_id for m in r.messages} for r in rolled] == [{"s1"}, {"s2"}]
     # "interest in a" is prose sitting between the anchors, not a job title. If
-    # it were accepted it would key an application and split this employer in two.
-    assert rolled[0].role is None
-    assert rolled[0].role_token is None
+    # it were accepted it would key an application — which is a different reason
+    # to reach two rows than the one under test, and would make this pass for
+    # the wrong reason.
+    assert all(r.role is None and r.role_token is None for r in rolled)
+
+
+def test_one_role_less_confirmation_still_keeps_exactly_one_row():
+    """The control on the split above, and the rule Roblox depends on.
+
+    A single role-less confirmation is the ordinary case — mail that names no
+    role — not evidence of a second application. Only two or more of them at one
+    employer make the claim that there are two applications, so this employer
+    keeps the one row it has always had and its later mail keeps landing on it.
+    Without this pairing the split would be free to fire on every anonymous
+    confirmation in the mailbox and nothing here would notice.
+    """
+
+    confirmation = item(
+        "t1",
+        "Thank you for applying to Together AI",
+        "no-reply@us.greenhouse-mail.io",
+        "Hi Ayush, thank you for applying to Together AI. Our team will review "
+        "your application.",
+    )
+    rejection = item(
+        "t2",
+        "Important information about your application to Together AI",
+        "no-reply@us.greenhouse-mail.io",
+        "Thank you again for your interest in Together AI. Unfortunately we are "
+        "not moving forward.",
+        category="rejection",
+        minutes=2880,
+    )
+
+    rolled = p.roll_up_applications([confirmation, rejection])
+
+    assert len(rolled) == 1
+    assert {m.message_id for m in rolled[0].messages} == {"t1", "t2"}
+    assert rolled[0].status == "rejected"
 
 
 # --- what a rejection may and may not settle ----------------------------------
