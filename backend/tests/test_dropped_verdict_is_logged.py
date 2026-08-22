@@ -153,12 +153,37 @@ def test_a_non_canonical_category_is_logged_too(caplog: pytest.LogCaptureFixture
 
 
 def test_ordinary_inbox_noise_does_not_flood_the_log(caplog: pytest.LogCaptureFixture) -> None:
-    """The auto-file gate is what keeps this instrument usable.
+    """``other`` is what keeps this instrument usable — NOT the confidence gate.
 
     The cloud rules classifier returns ``other`` at confidence 0.0, and the bulk
     of any real scan is ``other``. Logging every dropped item unconditionally
     would put a line per junk email into the deployment log, which is how an
-    instrument gets ignored and then removed. Below the gate: dropped, silent.
+    instrument gets ignored and then removed. So ``other`` is dropped silently,
+    and that half of this test is unchanged.
+
+    WHAT CHANGED, 2026-08-21, AND WHY THIS TEST WAS DEFENDING A BUG
+    ---------------------------------------------------------------
+    This test used to assert that the weak LIFECYCLE verdict below was dropped
+    silently too, on the reasoning that the auto-file gate is what bounds the
+    volume. That reasoning was wrong, and it was load-bearing: it made "a
+    rejection the classifier scored at 0.42 disappears without a trace" a pinned
+    guarantee of this suite.
+
+    Four Microsoft application confirmations then did exactly that in
+    production. Each scored ``rejection`` at 0.60 off a conditional clause in
+    the body, each was under ``REVIEW_FLOOR``, and each left through this drop
+    with no row, no queue entry, no counter and no log line. The user's report
+    was "I'm not getting anything" and there was nothing to look at; diagnosing
+    it took a mailbox read and a local reproduction of the pipeline.
+
+    The gate is now "is this a LIFECYCLE verdict", not "was the classifier
+    confident" — which is the right axis, because the confident drops are the
+    DESIGNED ones (``follow_up``, asserted above) and the unconfident ones are
+    the accidents. Volume stays bounded by ``other`` taking the silent path,
+    which is what the first half of this test pins.
+
+    See ``tests/test_lifecycle_drop_is_counted.py`` for the four real messages
+    and ``pipeline.DroppedVerdict`` for the count the sync now returns.
     """
 
     noise = [
@@ -195,7 +220,24 @@ def test_ordinary_inbox_noise_does_not_flood_the_log(caplog: pytest.LogCaptureFi
     with caplog.at_level(logging.WARNING, logger="jobtracker.cloud.pipeline"):
         assert p.collect_review_items([*noise, weak]) == []
 
-    assert [r for r in caplog.records if r.name == "jobtracker.cloud.pipeline"] == []
+    records = [r for r in caplog.records if r.name == "jobtracker.cloud.pipeline"]
+
+    # The volume bound: twenty-five newsletters must still cost zero lines.
+    assert [r for r in records if "noise-" in r.getMessage()] == [], (
+        "``other`` is the bulk of every scan and must stay silent, or the log "
+        "becomes unreadable and the instrument gets removed"
+    )
+
+    # The repair: the one LIFECYCLE verdict is reported. Paired with the
+    # assertion above as its control — together they say "bound the volume by
+    # category, not by confidence", which is the whole change.
+    lifecycle = [r for r in records if "weak-1" in r.getMessage()]
+    assert len(lifecycle) == 1, (
+        "a rejection the classifier scored at 0.42 is mail it believed was "
+        "about a job application, and dropping it in silence is what cost the "
+        "owner four Microsoft applications on 2026-08-21"
+    )
+    assert "BELOW the review floor" in lifecycle[0].getMessage()
 
 
 def test_the_ats_floor_rescues_the_weak_ats_rejection() -> None:

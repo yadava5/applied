@@ -1760,6 +1760,11 @@ export interface components {
              * @default []
              */
             removed: components["schemas"]["RemovedApplicationOut"][];
+            /**
+             * Dropped
+             * @default 0
+             */
+            dropped: number;
         };
         /** ValidationError */
         ValidationError: {

@@ -417,6 +417,20 @@ class SyncResponse(BaseModel):
     # 2 removed (MotherDuck, Supabase)" and offer an undo, since a removal is a
     # dismissal that ``POST /applications/{id}/restore`` reverses.
     removed: list[RemovedApplicationOut] = []
+    # Messages the classifier called a job-application category and the pipeline
+    # then DISCARDED for scoring below ``pipeline.REVIEW_FLOOR`` — no row, no
+    # queue entry. Zero on a healthy sync.
+    #
+    # It exists because "0 created, 0 updated" is the same sentence whether the
+    # mailbox was quiet or the pipeline threw four confirmations away, and on
+    # 2026-08-21 it was the second one: four Microsoft applications scored
+    # ``rejection`` at 0.60 off a conditional clause in the body and left
+    # without a trace. See ``pipeline.DroppedVerdict``.
+    #
+    # A COUNT, not the messages. What was dropped is in the logs, keyed by
+    # message id; a response that listed them would be re-deriving the review
+    # queue with a different name and no way to act on it.
+    dropped: int = 0
 
 
 # =============================================================================
@@ -2195,7 +2209,8 @@ async def gmail_sync(
         # way. An empty incremental delta is NOT short-circuited — it still runs
         # the merge so reconciliation happens.
         rolled = pipeline.roll_up_applications(items)
-        review = pipeline.collect_review_items(items)
+        dropped_verdicts: list[pipeline.DroppedVerdict] = []
+        review = pipeline.collect_review_items(items, dropped_verdicts)
 
         from sqlalchemy import func as sa_func
         from sqlmodel import select as sm_select
@@ -2379,4 +2394,5 @@ async def gmail_sync(
         removed=[
             RemovedApplicationOut(id=r.id, company=r.company) for r in merged.removed
         ],
+        dropped=len(dropped_verdicts),
     )
