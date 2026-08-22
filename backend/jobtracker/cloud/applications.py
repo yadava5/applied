@@ -3453,6 +3453,15 @@ async def _settle_thread_siblings(
     # to that one application, which both loses three applications and files
     # their mail on the wrong card. The Crusoe pair still settle each other —
     # neither names an application, so both keys are ``None``.
+    #
+    # KNOWN RESIDUAL, stated rather than hidden: a sibling whose stored
+    # ``body_snippet`` is empty has sub-key ``None`` and so is NOT settled by a
+    # decision on a sibling that names a role. It stays in the queue and gets
+    # asked about again. That is the better direction — before #454 it was
+    # settled by being linked to whichever of four applications the user
+    # happened to pick — and it is bounded, because ``_persist_message_refs``
+    # refuses to blank a snippet it already holds. See #462 for the measurement
+    # and what persisting the identity would cost.
     decided = pipeline.review_dedup_key(
         message_id=email.message_id,
         thread_id=email.thread_id,
