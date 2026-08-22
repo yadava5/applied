@@ -119,6 +119,8 @@ test("the receipt reads only what the response said, and drops malformed rows", 
     updated: 2,
     scanned: 512,
     purged: 2,
+    // Absent from this response, so zero: the receipt never invents a number.
+    dropped: 0,
     removed: [
       { id: 7, company: "MotherDuck" },
       { id: 9, company: "Supabase" },
@@ -137,6 +139,7 @@ test("the receipt reads only what the response said, and drops malformed rows", 
     updated: 0,
     scanned: 0,
     purged: 0,
+    dropped: 0,
     removed: [],
     stoppedBy: "complete",
     estimate: null,
@@ -324,6 +327,62 @@ test("a rebuild that changed nothing says so outright", () => {
     receiptBodyLine(outcome),
     "nothing changed · 512 scanned · every filed application matched",
   );
+});
+
+/**
+ * THE CONTROL FOR THE SENTENCE ABOVE, and the reason it needed one.
+ *
+ * On 2026-08-21 a sync discarded four Microsoft application confirmations and
+ * reported `nothing changed · N scanned · every filed application matched`. The
+ * board really had not changed, so the first clause was true and the test above
+ * was green. The last clause was false, and it was the clause the owner read:
+ * the product told him his mail had been accounted for while it was throwing it
+ * away, so the bug reached him as "the sync works, you must not have applied".
+ *
+ * These two tests are each other's control. The one above pins the claim for
+ * the run that earns it; this one pins that a run with anything dropped is not
+ * that run.
+ */
+test("a sync that discarded application mail may not claim everything matched", () => {
+  const outcome = readRebuildOutcome({
+    created: 0,
+    updated: 0,
+    scanned: 512,
+    purged: 0,
+    dropped: 4,
+  });
+
+  assert.equal(outcome.dropped, 4);
+  const line = receiptBodyLine(outcome);
+  assert.equal(line, "512 scanned · 4 too unclear to file");
+  assert.ok(
+    !line.includes("every filed application matched"),
+    `a run that threw four messages away claimed it accounted for all of them: ${line}`,
+  );
+  assert.ok(
+    !line.includes("nothing changed"),
+    `something did change: four messages were read and discarded. Got: ${line}`,
+  );
+});
+
+test("the dropped count is read defensively, like every other field", () => {
+  // Absent (an older backend), malformed, or negative must all read as zero
+  // rather than putting an invented number in front of the user.
+  assert.equal(readRebuildOutcome({ created: 1, scanned: 9 }).dropped, 0);
+  assert.equal(readRebuildOutcome({ dropped: "four" }).dropped, 0);
+  assert.equal(readRebuildOutcome({ dropped: -3 }).dropped, 0);
+  assert.equal(readRebuildOutcome({ dropped: 2.7 }).dropped, 2);
+});
+
+test("dropped rides alongside a normal receipt without displacing it", () => {
+  const outcome = readRebuildOutcome({
+    created: 41,
+    updated: 2,
+    scanned: 512,
+    purged: 0,
+    dropped: 3,
+  });
+  assert.equal(receiptBodyLine(outcome), "41 filed · 2 updated · 512 scanned · 3 too unclear to file");
 });
 
 test("rebuild memory is a measured past fact — malformed records are no record", () => {

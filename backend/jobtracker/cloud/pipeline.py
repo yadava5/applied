@@ -1282,6 +1282,42 @@ class ReviewItem:
     snippet: str = ""
 
 
+@dataclass(frozen=True)
+class DroppedVerdict:
+    """A lifecycle verdict this pipeline threw away, named so it can be counted.
+
+    THE DROP THAT COST A USER FOUR APPLICATIONS. On 2026-08-21 four Microsoft
+    confirmations arrived within five minutes of each other. Each scored
+    ``rejection`` at 0.60 — below :data:`REVIEW_FLOOR` — because the body
+    carries a CONDITIONAL explainer ("if you see the job moved to an inactive
+    state, that means ... you were not selected for the role"), and the sender's
+    domain is not on ``rules.ATS_DOMAINS`` so the ATS floor did not catch them
+    either. All four left by the terminal drop below. They produced no
+    application row, no queue entry, no counter and — because the log was gated
+    at ``AUTO_FILE_GATE`` and 0.60 is nowhere near it — no log line.
+
+    The user's report was "I applied to 4 new Microsoft and a Google
+    application, but when I sync it in the app, I'm not getting anything", and
+    from the product's side that is indistinguishable from a quiet mailbox.
+    Finding out which it was took a session, a mailbox read and a local
+    reproduction, because nothing the running system emitted said "four
+    messages that looked like application mail were discarded".
+
+    So the drop is now COUNTED and NAMED. This carries no verdict and changes
+    no routing; it exists so ``GET/POST /gmail/sync`` can answer the one
+    question the product could not: did we see nothing, or did we throw
+    something away?
+
+    The sender's address deliberately does not ride along — it is the user's
+    correspondent, and ``message_id`` already names the message. Same reasoning
+    as ``_warn_if_capped`` in ``cloud/applications.py``.
+    """
+
+    message_id: str
+    category: str
+    confidence: float
+
+
 def _rank_to_status(rank: int) -> str:
     """Roll a ``_STAGE_RANK`` value (a mail CATEGORY's rank) up to a status.
 
@@ -2196,7 +2232,10 @@ def is_ats_sender(sender_email: str | None) -> bool:
     return _rules_is_ats_sender(sender_email)
 
 
-def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
+def collect_review_items(
+    items: Iterable[PipelineItem],
+    dropped_out: list[DroppedVerdict] | None = None,
+) -> list[ReviewItem]:
     """Return the uncertain lifecycle verdicts that need a human decision.
 
     An item is review-worthy when it is NOT a hard-row contributor and either:
@@ -2207,11 +2246,23 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
       - it is a lifecycle verdict (not follow-up) relayed by a known ATS, at ANY
         confidence — the ATS floor, see below.
 
-    Anything below the review floor, or plain ``other`` noise, is omitted — and
-    an omission the classifier was confident about (at/above ``AUTO_FILE_GATE``)
-    is LOGGED on the way out. That drop is terminal: it is the one path through
-    this module that leaves no row, no queue entry and no counter behind, so the
-    log line is the only evidence it happened.
+    Anything below the review floor, or plain ``other`` noise, is omitted. That
+    drop is terminal — the one path through this module that leaves no row and
+    no queue entry behind — so it reports itself two ways:
+
+      - a LIFECYCLE verdict under the floor is always logged AND appended to
+        ``dropped_out`` when the caller passes a list. This is mail the
+        classifier believed was about a job application and the pipeline threw
+        away; it is the failure case, not the designed one, and it is what lets
+        a sync say "4 discarded" instead of nothing at all. See
+        :class:`DroppedVerdict` for the four applications that were lost to its
+        previous silence.
+      - anything else is logged only when the classifier was CONFIDENT
+        (at/above ``AUTO_FILE_GATE``) — a confident ``follow_up``, dropped by
+        design, or a category outside the canonical vocabulary, which is a bug.
+
+    ``dropped_out`` is an out-parameter rather than a second return value so
+    every existing caller keeps unpacking a plain list.
 
     Deduplicated by THREAD (newest message wins), falling back to ``message_id``
     for mail with no thread id. One Gmail conversation is one decision: the
@@ -2301,7 +2352,44 @@ def collect_review_items(items: Iterable[PipelineItem]) -> list[ReviewItem]:
             # Bounded and cheap, but do not read a repeated line as a new drop.
             #
             # Reporting only. Nothing below this line changes what is returned.
-            if item.confidence >= AUTO_FILE_GATE:
+            #
+            # A LIFECYCLE verdict leaving here is an ACCIDENT and is always
+            # logged and always counted. It is mail the classifier itself
+            # believed was about a job application, discarded for scoring below
+            # ``REVIEW_FLOOR``. The old gate was ``>= AUTO_FILE_GATE``, which is
+            # backwards for this purpose: the CONFIDENT drops are the designed
+            # ones (``follow_up``), and the unconfident ones are the failures.
+            # Four of them cost the owner four Microsoft applications in
+            # silence; see :class:`DroppedVerdict`.
+            #
+            # Volume stays bounded because this is the lifecycle branch only.
+            # ``other`` — inbox noise, and the bulk of every scan — takes the
+            # ``elif`` and stays silent unless it was confident, exactly as
+            # before. A lifecycle verdict under the floor is rare by
+            # construction: it needs a real category AND a score too weak to
+            # queue.
+            if is_lifecycle:
+                if dropped_out is not None:
+                    dropped_out.append(
+                        DroppedVerdict(
+                            message_id=item.message_id,
+                            category=item.category,
+                            confidence=item.confidence,
+                        )
+                    )
+                logger.warning(
+                    "Pipeline dropped a lifecycle verdict BELOW the review "
+                    "floor: category=%s confidence=%.2f message_id=%s. It "
+                    "scored under %.2f and its sender is not a known ATS relay, "
+                    "so it produced no application row and no review-queue "
+                    "entry. This is mail the classifier thought was about a job "
+                    "application.",
+                    item.category,
+                    item.confidence,
+                    item.message_id,
+                    REVIEW_FLOOR,
+                )
+            elif item.confidence >= AUTO_FILE_GATE:
                 # Category, confidence and message id — the three facts the
                 # brief above asks for. The sender's ADDRESS used to ride along
                 # and no longer does: it is the user's correspondent, it is
