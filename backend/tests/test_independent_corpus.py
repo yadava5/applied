@@ -62,7 +62,7 @@ RECORDED = {
     # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
     # here. See #455 and #451.
     "auto_filed_wrong": 72,
-    "cards": 9134,
+    "cards": 9132,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -84,7 +84,7 @@ RECORDED = {
     # queue. It must stay 0: a message about a real application reaching
     # NOTHING is the one outcome indistinguishable from a mailbox that never
     # received it.
-    "lost": 16,
+    "lost": 11,
     "dropped": 54,
     # Noise that MINTED A CARD. Was 0 and is 2 as of 2026-08-22 — not a
     # regression, but the first time the corpus contained ATS mail that is not
@@ -101,7 +101,7 @@ RECORDED = {
     # — was 0 throughout and still is, which is the assertion that says the fix
     # folded the update onto the right card instead of collapsing two
     # applications into one.
-    "splits": 2,
+    "splits": 0,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
@@ -529,24 +529,23 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     assert score.splits == RECORDED["splits"], [
         f.detail for f in score.failures if f.mode == "SPLIT"
     ][:3]
-    # WAS `set()` AND IS NOW `observed-rejection`, and this is #466 rather than
-    # a regression in anything that shipped. Once the corpus drew realistic job
-    # titles, the role EXTRACTOR started disagreeing with itself between a
-    # confirmation and its own rejection:
+    # BACK TO EMPTY. It was `observed-rejection` for one commit, when realistic
+    # job titles arrived and the role EXTRACTOR began disagreeing with itself
+    # between a confirmation and its own rejection. Two separate bounds caused
+    # it, both fixed in #466:
     #
-    #   confirmation  "...applying to <Employer>'s Frontend Engineer position!"
-    #                 role = "<Employer>'s Frontend Engineer"
-    #   rejection     "...apply for the Frontend Engineer opening at <Employer>."
-    #                 role = "Frontend Engineer"
+    #   "...applying to <Employer>'s Frontend Engineer position!"
+    #        took the employer into the title — a 17-character title, so this
+    #        was never about length
+    #   "...application for <Title> (Graduation Date: ...) (Job number: ...)"
+    #        yielded NO role, because the capture excluded "(" on the mistaken
+    #        reasoning that this is what stops it running past the label
     #
-    # Two tokens, two cards, one application. The title there is 17 characters,
-    # so this is NOT about length — it is the DoorDash-shaped pattern, which is
-    # documented as having no article to anchor on, taking a possessive employer
-    # into the title. `observed-pending` appearing here again would mean #459
-    # regressed; this entry is #466 and must move when that is fixed.
-    assert {f.family for f in score.failures if f.mode == "SPLIT"} == {
-        "observed-rejection"
-    }, "a split from a family other than the known one is a new defect"
+    # `observed-pending` appearing here means #459 regressed; `observed-rejection`
+    # means #466 did.
+    assert {f.family for f in score.failures if f.mode == "SPLIT"} == set(), (
+        "the corpus produces no split at all; any family here is a new defect"
+    )
     # NOISE ON A CARD WAS 0 AND IS NOW 2, and the honest thing is to pin it
     # rather than relax the assertion. Both are `ats-relay-noise`, the family
     # added as the control for the #447 ATS floor: a profile-completion nudge
@@ -829,11 +828,10 @@ async def test_every_application_mail_is_addressed(
     # received it.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
     assert dict(lost) == {
-        # TWO DEFECTS SHARE THIS FAMILY AND THIS NUMBER: 11 are #458 and 5 are
-        # #466. The split was measured, not apportioned — widening the
-        # reference class to a clause bound takes this to 11 and every one of
-        # those 11 carries "invested in our process", so the #466 half is
-        # exactly 5. 11 of them are #458:
+        # ALL 11 ARE #458 NOW, and that is a measurement rather than a
+        # simplification: this was 16 with two causes behind it, and closing the
+        # #466 half took it to exactly 11, every one of which carries "invested
+        # in our process". #458 is:
         # the snippet cuts one character before "with your application", leaving
         # "thank you so much for your interest in <Employer> and for the time
         # and effort you have invested in our process" — which does not say it
@@ -841,16 +839,14 @@ async def test_every_application_mail_is_addressed(
         # in the reference signal, a sender's SENTENCE rather than a category,
         # so it was declined and pinned.
         #
-        # The other 5 are #466 and arrived when the corpus began drawing
-        # realistic job titles. A real DoorDash title is
-        # "Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer
-        # 2026)", and `pipeline._APPLICATION_REFERENCE` spans the title with
-        # `[\w,\ \-/]{0,60}?` — a character class with no `(`, `)` or `:` in
-        # it. So the #447 floor, which exists precisely to stop mail reaching
-        # nothing, cannot see the mail whose title carries punctuation the class
-        # forgot. That is a bound assuming what sits in the gap, the same shape
-        # as the width in #459, expressed as a character set instead of a count.
-        "observed-rejection": 16,
+        # The 5 that used to sit here were #466: `_APPLICATION_REFERENCE`
+        # spanned the job title with `[\w,\ \-/]{0,60}?`, a character class
+        # holding no `(`, `)` or `:`, so a real DoorDash title made the #447
+        # floor blind to a message it exists to catch. Fixed by bounding on the
+        # CLAUSE instead — extending the character class was the obvious move
+        # and the wrong one, because "Software Engineer, C#" already needed a
+        # character nobody had anticipated.
+        "observed-rejection": 11,
     }, dict(lost)
 
     # 54 updates from the company's own domain rather than the ATS relay,

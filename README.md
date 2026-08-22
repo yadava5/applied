@@ -212,10 +212,10 @@ not partly graded by the person who set the exam.
 | Wrong | **311** |
 | **Wrong AND stated to the user as fact** | **72** |
 | Abstained (below the 0.70 review floor, the product says nothing) | **1,013** |
-| Board: cards / splits / merges / noise / misrouted review | **9,134 / 2 / 0 / 0 / 0** |
+| Board: cards / splits / merges / noise / misrouted review | **9,132 / 0 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
-| Mail about a real application that reached nothing | **16 lost**, 72 dropped |
+| Mail about a real application that reached nothing | **11 lost**, 72 dropped |
 
 **No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 16,780
 messages and 9,177 cards — the half that could destroy a record, because a rejection filed onto a
@@ -225,14 +225,16 @@ applicant tracking systems send every acknowledgement for an employer under one 
 address, so Gmail files four different roles as one conversation, and the board still gives each its
 own card. Thread is a delivery grouping here, never an identity.
 
-**2 applications did end up on two cards each**, and the cause is the role EXTRACTOR disagreeing with
-itself between a confirmation and its own rejection. One says "applying to Northwind's Frontend
-Engineer position" and the other "apply for the Frontend Engineer opening at Northwind"; the first
-takes the employer into the title, so the two carry different identities and nothing joins them. The
-title there is seventeen characters, so this is not a length problem — it is a pattern with no article
-to anchor on. It is the strictly milder failure: the user sees one application twice and can act on
-it, where a merge loses a record silently, which is why the two are asserted separately and never as
-one number. [#466](https://github.com/yadava5/applied/issues/466).
+**0 applications did end up on two cards each**, and it was 2 for one commit — long enough to name what
+caused it. The role extractor disagreed with itself between a confirmation and its own rejection: one
+said "applying to Northwind's Frontend Engineer position" and took the employer into the title, while
+the other said "apply for the Frontend Engineer opening at Northwind" and did not. Two identities, two
+cards, one application — and that title is seventeen characters, so it was never a length problem. A
+second wording lost the role entirely, because the pattern that reads a requisition-numbered title
+excluded the "(" that a real title like "Software Engineer I, Entry-Level (Graduation Date: Fall
+2025-Summer 2026)" contains. Both are fixed. Split is kept as its own number because it is the milder
+failure — the user sees one application twice and can act on it, where a merge loses a record
+silently. [#466](https://github.com/yadava5/applied/issues/466).
 
 **0 messages did MINT a card that should not exist**, and that number is not a fix — read it with the
 caveat rather than without. It was 2, both a profile-completion nudge relayed by an ATS and scored
@@ -259,7 +261,7 @@ invented ones, so it is filed rather than shipped.
 The last row is the one that is still bad. Until 2026-08-22 the replay ran only the rollup and never
 the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
 precisely the blind spot that let four Microsoft applications disappear on 2026-08-21 with every gate
-green. It went from 610 to 0 on that day, and **16 messages about real applications
+green. It went from 610 to 0 on that day, and **11 messages about real applications
 now reach no card, no queue and no counter**
 ([#447](https://github.com/yadava5/applied/issues/447), then
 [#458](https://github.com/yadava5/applied/issues/458)). They scored
@@ -712,7 +714,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1005 `test_*` functions across 87 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1011 `test_*` functions across 87 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 

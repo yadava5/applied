@@ -836,3 +836,96 @@ def test_a_lookalike_sender_earns_no_confidence_bonus() -> None:
         spoofed = CLASSIFIER.classify(subject, body, sender)
         assert spoofed.confidence == pytest.approx(0.80), (sender, spoofed.scores)
         assert spoofed.confidence < pipeline.AUTO_FILE_GATE, sender
+
+
+# ===========================================================================
+# 7. A BOUND MUST NOT ASSUME WHAT SITS IN THE GAP — issue #466
+# ===========================================================================
+#
+# Three patterns bounded a span that holds a JOB TITLE, and each bound encoded
+# an assumption about titles that real ones break. They are tested together
+# because they are one defect wearing three costumes, and apart because each
+# has its own control.
+#
+# Every title below is a real shape from the owner's mailbox, with employer
+# sub-brands and product names replaced by invented ones of the same length —
+# the rule `tests/corpus_independent/observed.py` follows.
+
+#: The longest real title measured, 2026-08-22. It carries a comma, a
+#: parenthesis and a colon, and it is 72 characters.
+LONG_TITLE = "Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer 2026)"
+
+
+def test_a_title_with_punctuation_still_reads_as_an_application_reference() -> None:
+    """`[\\w,\\ \\-/]` held no `(`, `)`, `:` or `#`, and real titles carry all four.
+
+    This is what the #447 floor rides on, so a title the class could not span
+    meant a message about a real application reached no card, no queue and no
+    counter.
+    """
+    for title in (LONG_TITLE, "Software Engineer, C#",
+                  "Software Engineer, Agentic AI Harness & Quality - Talonflow"):
+        text = f"Thank you for taking the time to apply to the {title} role here at Northwind."
+        assert pipeline.references_an_application("Thank You from Northwind", text), title
+
+
+def test_a_job_advert_is_still_not_a_reference_to_your_application() -> None:
+    """The control on the widening, and the reason it is a CLAUSE bound.
+
+    Widening what counts as "about an application you made" widens what reaches
+    the review queue, so the failure mode is a queue full of recruiter mail.
+    None of these names an application the reader made.
+    """
+    for text in (
+        "Apply to the roles below before they close — 14 new openings this week.",
+        "Ready to apply? Browse the position listings on our careers page.",
+        "Apply to a company you love. New roles added daily.",
+        "Thousands apply to the biggest names in tech every day; here is how to stand out.",
+        "You can apply to the newsletter settings page to change how often we email you.",
+    ):
+        assert not pipeline.references_an_application("New roles for you", text), text
+
+
+def test_the_employers_possessive_is_not_part_of_the_job_title() -> None:
+    """"applying to <Employer>'s <Title> position" — the capture took both.
+
+    The role token IS the application identity, so a confirmation that said
+    "<Employer>'s Frontend Engineer" and a rejection that said "Frontend
+    Engineer" were two applications. The title here is 17 characters: this was
+    never about length.
+    """
+    confirmation = "Hi Ayush, Thank you for applying to Northwind Analytics's Frontend Engineer position!"
+    rejection = "Hi Ayush, Thank you so much for taking the time to apply for the Frontend Engineer opening at Northwind Analytics."
+
+    a = pipeline.role_from_message("Thank you for applying", confirmation)
+    b = pipeline.role_from_message("Important information", rejection)
+    assert a == "Frontend Engineer", a
+    assert pipeline.normalize_role_token(a) == pipeline.normalize_role_token(b)
+
+
+def test_a_role_named_without_a_possessive_is_unchanged() -> None:
+    """The control on the guard above: it must only remove an employer."""
+    text = "Thank you for applying to the Backend Engineer, Payments position at Northwind."
+    assert pipeline.role_from_message("Thanks", text) == "Backend Engineer, Payments"
+
+
+def test_a_parenthesised_title_still_yields_a_role() -> None:
+    """The requisition capture excluded `(`, so a real title yielded NO role.
+
+    The stated reason for excluding it was to stop the capture running past the
+    requisition label. The LABEL does that, and still does. Excluding the
+    character only lost the role — and a confirmation carrying a requisition id
+    and no role does not join its own rejection, which carries a role and no id.
+    """
+    text = (
+        "Hi Ayush, Thank you for taking the time to submit your application for "
+        f"{LONG_TITLE} (Job number: 200045485)."
+    )
+    assert pipeline.role_from_message("Thank you for your application!", text) == LONG_TITLE
+
+
+def test_the_requisition_label_is_still_what_ends_the_title() -> None:
+    """The control: an unlabelled parenthesis must not terminate the capture,
+    and a plain title must be unaffected."""
+    plain = "Hi Ayush, submit your application for Software Engineer II (Job number: 200045485)."
+    assert pipeline.role_from_message("Thanks", plain) == "Software Engineer II"
