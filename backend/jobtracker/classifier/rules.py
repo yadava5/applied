@@ -768,6 +768,151 @@ ATS_DOMAINS = [
 ]
 
 
+# =============================================================================
+# What the message is ASSERTING, as opposed to what it merely contains
+# =============================================================================
+#
+# Every pattern in this module answers "does this phrase appear". None of them
+# ask WHERE it appears, and a phrase can appear in a message without the sender
+# asserting it. The clearest case, and the one that cost the owner four real
+# applications on 2026-08-21:
+#
+#     Thank you for taking the time to submit your application for Software
+#     Engineer II (Job number: 200045485). ... If you see the job moved to an
+#     inactive state, that means the position is either no longer open, you
+#     withdrew from consideration, or you were not selected for the role.
+#
+# Nothing has been decided. It is a confirmation explaining what the dashboard
+# would show if things later went badly. Two STRONG rejection patterns fired on
+# "you were not selected for the role", the message scored ``rejection`` at
+# 0.60, and — being under ``pipeline.REVIEW_FLOOR`` from a sender that is not a
+# known ATS relay — it was discarded with no card, no queue entry and no trace.
+# Four of them, at one employer, inside five minutes.
+#
+# So the body is masked ONCE, here, and every pass in ``classify`` sees the
+# masked text. Doing it per-pass is how the strong/weak passes and the veto pass
+# drift apart on a later edit, and a category that cannot be scored by a phrase
+# but can still be VETOED by it is a bug waiting on the next commit.
+#
+# ONE HAZARD LOOKED FOR AND NOT FOUND, recorded so nobody spends the afternoon
+# on it twice. The real mail puts a tracking link immediately before the
+# conditional:
+#
+#     ... Action Center[](https://microsoft.eightfold.ai/vsimp?d=.eJwViTEOgCAQ
+#     wP5ys5LzDhCY_...Lj6ZStc7Wcyj5J3xAbkRi1vnryo&n=https%3A%2F%2F...). If you
+#     see the job moved to an inactive state, ...
+#
+# That base64 is full of dots, so the obvious worry is that splitting sentences
+# shatters it and separates the ``If`` from the phrase it governs. A first
+# version therefore stripped URLs before splitting, with a confident comment
+# saying why.
+#
+# It was removed. Mutation testing showed no test could tell whether the strip
+# was there, and the test written to earn it then reported that a bare-dot split
+# ALSO keeps the marker and the phrase in one fragment — there is no dot between
+# them. The hazard is not real for this shape. Unproven machinery with a
+# confident comment beside it is precisely how this codebase has shipped checks
+# that cannot fail, so the machinery went and this note stayed.
+#
+# ``_SENTENCE_END`` still requires whitespace and a following capital. That is
+# ordinary care against abbreviations, not a defence against the above, and it
+# is not claimed as one.
+#
+# SCOPE, deliberately narrow:
+#   - BODY ONLY. A subject is short and a conditional subject is not a real
+#     shape; masking there would buy nothing and risk a lot.
+#   - The mask runs from the conditional marker to the END OF ITS SENTENCE, not
+#     over the whole sentence. "You were not selected for the role, and if you
+#     would like feedback please ask" is a real rejection whose verdict sits
+#     BEFORE the marker, and it must survive.
+
+#: Markers that open a hypothetical scope running to the end of the sentence.
+#: Kept small on purpose. Each one earns its place by appearing in real mail
+#: ahead of a lifecycle phrase that is not being asserted.
+_CONDITIONAL = re.compile(
+    r"\b(?:if|should you|in the event(?:\s+that)?|unless|in case)\b",
+    re.IGNORECASE,
+)
+
+#: Sentence boundary. Requires whitespace AND a following capital or quote, so
+#: neither an abbreviation nor a dot inside a URL splits a sentence in half.
+#: Both halves of that are load-bearing — see the note above.
+_SENTENCE_END = re.compile("(?<=[.!?])\\s+(?=[\"\u201c(A-Z])")
+
+
+def asserted_text(body: str) -> str:
+    """Return ``body`` with the spans it does not assert removed.
+
+    Today that is exactly one thing: text inside a conditional clause. The
+    function is named for the general idea because the same seam is where
+    quoted replies and hidden preheaders belong (issue #430), and because a
+    caller should be reading "the part of the message the sender is claiming",
+    not "the body minus if-clauses".
+
+    Idempotent, and returns text unchanged when it holds no conditional.
+    """
+
+    if not body:
+        return body
+
+    out: list[str] = []
+    for sentence in _SENTENCE_END.split(body):
+        marker = _CONDITIONAL.search(sentence)
+        # Keep everything up to the marker; the marker's scope runs to the end
+        # of the sentence, so the remainder is hypothetical.
+        out.append(sentence[: marker.start()] if marker else sentence)
+    return " ".join(out)
+
+
+# =============================================================================
+# Which negatives a strong signal may outrank
+# =============================================================================
+#
+# The ``negative`` lists hold two different kinds of claim, and only one of them
+# should ever lose to strong positive evidence.
+#
+# GENRE FILTERS say "this is not job mail at all" — a receipt, a promotion, a
+# security alert, a mailing list. They are listed here.
+#
+# SEMANTIC REFUTATIONS say "this IS job mail, and it is not THIS category":
+# ``unfortunately`` and ``regret to inform`` on ``offer``, ``pleased to offer``
+# on ``applied``, ``not (moving|proceeding)`` on ``applied``. These are the
+# whole reason a rescission does not read as an offer, and they must keep their
+# full weight however strong the positive evidence is. Letting a strong match
+# outrank them takes c0029 in the corpus — "we must withdraw the offer of
+# employment extended to you" — from wrong-and-uncertain to wrong AND
+# AUTO-FILED, which is strictly worse than the bug being fixed. Measured, not
+# assumed; see issue #417.
+#
+# WHY A SEPARATE FROZENSET RATHER THAN A FIELD ON ``CategoryPatterns``. Three
+# things read the PATTERNS literals and cannot see through a restructure:
+# ``scripts/readme_facts.py`` parses this file statically for the counts the
+# README and two web surfaces publish, ``ml/demo/space/.../rules.py`` is a
+# byte-identical copy, and ``apps/web/lib/demo/rules.json`` enumerates every
+# pattern for the browser port. Naming the subset alongside leaves all three
+# untouched.
+#
+# Membership is by EXACT pattern string, so a pattern that is edited in PATTERNS
+# and not here silently returns to full weight rather than silently keeping the
+# exemption. That is the safer direction to fail.
+_NOISE_NEGATIVES = frozenset(
+    {
+        r"\b(unsubscribe|manage preferences|newsletter|digest)\b",
+        r"subscribe|unsubscribe",
+        r"newsletter",
+        r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer|flash sale)\b",
+        r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer)\b",
+        r"discount|promo|sale|off\b",
+        r"\b(order|purchase|shipment|tracking number)\b",
+        r"\b(shop|buy|cart|checkout|order|purchase|shipment|tracking number)\b",
+        r"\b(security alert|verification code|otp|one[- ]time (passcode|password|code)|sign[- ]in|login)\b",
+        r"open.{0,20}account",
+        r"premium.{0,20}(free|gift)",
+        r"your course",
+    }
+)
+
+
 def is_ats_sender(sender_email: Optional[str]) -> bool:
     """Is this address a known Applicant Tracking System relay?
 
@@ -921,6 +1066,11 @@ class RulesClassifier:
         scores: dict[str, int] = {cat.value: 0 for cat in EmailCategory}
         matched_patterns: list[str] = []
 
+        # ONCE, before any pattern sees it. Every ``pattern.search(body)`` below
+        # is searching what the sender ASSERTS — see :func:`asserted_text`. The
+        # subject is left alone by design.
+        body = asserted_text(body)
+
         # Check if sender is from a known ATS domain
         is_ats_email = is_ats_sender(sender_email)
 
@@ -930,12 +1080,18 @@ class RulesClassifier:
             category_matches: list[str] = []
 
             # Check strong patterns (+3, 2x for subject)
+            # Tracked separately from the subject case on purpose — see the
+            # genre-filter rule in the negative pass below. A subject is a
+            # headline and is the cheapest part of a message to make look like
+            # job mail; the body is what the message actually is.
+            has_strong_body = False
             for pattern in compiled["strong"]:
                 if pattern.search(subject):
                     category_score += 6  # 3 * 2 for subject
                     category_matches.append(f"[STRONG-SUBJECT] {pattern.pattern}")
                 elif pattern.search(body):
                     category_score += 3
+                    has_strong_body = True
                     category_matches.append(f"[STRONG] {pattern.pattern}")
 
             # Check weak patterns (+1, 2x for subject)
@@ -947,11 +1103,52 @@ class RulesClassifier:
                     category_score += 1
                     category_matches.append(f"[WEAK] {pattern.pattern}")
 
-            # Check negative patterns (-5)
+            # Check negative patterns (-5), unless STRONG evidence outranks them.
+            #
+            # A negative says "this only RESEMBLES the category". Strong evidence
+            # says it does more than resemble it, and the two are not equal
+            # claims — so a negative may not fire against a category that
+            # matched a strong pattern in this message.
+            #
+            # WHAT THIS FIXES. The marketing negative
+            # ``\b(unsubscribe|manage preferences|newsletter|digest)\b`` sits on
+            # the negative list of applied, rejection, offer AND follow_up, and
+            # every transactional ATS mail ends with an unsubscribe link. It
+            # therefore hits each candidate equally and never changes the
+            # WINNER — only the absolute score, which is what
+            # ``confidence`` is computed from. On the message that lost the
+            # owner four applications it was worth exactly this:
+            #
+            #     with the footer     applied -1, rejection  1  ->  0.60
+            #     without the footer  applied  4, rejection  6  ->  0.80
+            #
+            # 0.60 is under ``pipeline.REVIEW_FLOOR`` and 0.80 is over it, which
+            # is the difference between a queue entry and silent destruction. A
+            # footer is the last thing in a message and the least of what it
+            # says; it must not be able to erase what the message is about.
+            #
+            # It cannot re-admit the mail the negatives were written for: a job
+            # alert matches no strong lifecycle pattern, so it is penalised
+            # exactly as before. ``P11-marketing`` in the corpus is that
+            # control, and c0031 is its explicit regression anchor.
+            #
+            # A STRONG SUBJECT MATCH DOES NOT COUNT, and that restriction was
+            # earned rather than designed. Letting it count took the fixture in
+            # ``test_safety_net_is_dead_253.py`` — subject "Thanks for
+            # applying", body "your course is unfortunately over" — from OTHER
+            # to APPLIED, because a +6 subject hit outranked the ``your course``
+            # genre filter that had correctly identified it as course mail. The
+            # subject is the one part of a message that is trivially made to
+            # look like anything; a genre filter reading the body outranks it,
+            # not the other way round.
             for pattern in compiled["negative"]:
-                if pattern.search(subject) or pattern.search(body):
-                    category_score -= 5
-                    category_matches.append(f"[NEGATIVE] {pattern.pattern}")
+                if not (pattern.search(subject) or pattern.search(body)):
+                    continue
+                if has_strong_body and pattern.pattern in _NOISE_NEGATIVES:
+                    category_matches.append(f"[NEGATIVE-OUTRANKED] {pattern.pattern}")
+                    continue
+                category_score -= 5
+                category_matches.append(f"[NEGATIVE] {pattern.pattern}")
 
             # Check veto patterns. Tagged "[VETO]" and not "[NEGATIVE]" on
             # purpose: hybrid.py reads the "[NEGATIVE]" tag to decide whether

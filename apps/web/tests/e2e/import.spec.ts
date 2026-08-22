@@ -202,3 +202,145 @@ test.describe("import your mail", () => {
     await expectNoHorizontalOverflow(page);
   });
 });
+
+/**
+ * A PHRASE IN A CONDITIONAL IS NOT A VERDICT — through the real page.
+ *
+ * Reported from live use on 2026-08-21: four application confirmations were
+ * discarded by the Gmail sync and the owner was told nothing had changed. Each
+ * carried this near the end of an otherwise ordinary confirmation:
+ *
+ *   "If you see the job moved to an inactive state, that means the position is
+ *    either no longer open, you withdrew from consideration, or you were not
+ *    selected for the role."
+ *
+ * Nothing has been decided. Two strong rejection patterns fired on it anyway.
+ *
+ * The fix landed in `backend/jobtracker/classifier/rules.py` AND in
+ * `lib/demo/rulesLayer.ts`, because this page is the surface that runs the
+ * second one — in the tab, with no account, which is where the landing page
+ * sends people. A fix on only one layer is half a fix.
+ *
+ * It is asserted here rather than as a unit test because `rulesLayer.ts`
+ * imports `rules.json` without an import attribute and so cannot be loaded by
+ * `node --test`; driving the page runs the same code through the real bundler,
+ * which is the stronger evidence in any case.
+ *
+ * The body is RECONSTRUCTED. The real message carries the owner's name, his
+ * address and per-message tracking tokens, none of which belong in a committed
+ * fixture. What is faithful is the shape — including the dot-laden tracking
+ * link immediately before the conditional, which is what defeats a sentence
+ * split on a bare `.` and would leave a clean-prose fixture passing while the
+ * real mail stayed broken.
+ */
+test.describe("a conditional explainer is not a rejection", () => {
+  const CONDITIONAL =
+    "If you see the job moved to an inactive state, that means the position is " +
+    "either no longer open, you withdrew from consideration, or you were not " +
+    "selected for the role.";
+
+  const TRACKING_LINK =
+    "https://example-ats.test/vsimp?d=.eJwViTEOgCAQwP5ys5LzDhCY_IkhSIQoOmBcjH8Xly" +
+    "ZtHyh1nfMCDq2RbFk3DJJJdRCLzzs48LEmIVkQT-ufRDgLtH3H42o77DlszY.Lj6ZStc7Wcyj5J3x";
+
+  const CONFIRMATION =
+    "Hi there, Thank you for taking the time to submit your application for " +
+    "Software Engineer II (Job number: 200045485). We are glad you are interested " +
+    "in a career here. You may not receive feedback on your application directly, " +
+    "but please know that it is being evaluated. Updates regarding your " +
+    `application status can be viewed through your Action Center (${TRACKING_LINK}). ` +
+    `${CONDITIONAL} We encourage you to check back frequently. Thank you, ` +
+    "Recruiting. This email was sent to you by us. Unsubscribe.";
+
+  test("the confirmation that was thrown away reads as an application", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "conditional.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify([
+          {
+            subject: "Thank you for your application!",
+            from: "Careers <donotreply@email.careers.example>",
+            body: CONFIRMATION,
+          },
+        ]),
+        "utf-8",
+      ),
+    });
+
+    await expect(page.getByTestId("import-row")).toHaveCount(1);
+    const results = page.getByTestId("import-results");
+    await expect(
+      results.getByText("applied", { exact: true }).first(),
+      "an application confirmation was read as something else; the only negative " +
+        "language in it is a conditional explaining what an inactive dashboard " +
+        "state would mean",
+    ).toBeVisible();
+    await expect(results.getByText("rejection", { exact: true })).toHaveCount(0);
+  });
+
+  /**
+   * THE CONTROL. A fix that suppresses the PHRASE rather than its MOOD passes
+   * the test above and silently stops the product ever detecting a rejection.
+   */
+  test("the same clause asserted is still a rejection", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "asserted.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify([
+          {
+            subject: "Update on your application",
+            from: "Talent <talent@acme.example>",
+            body:
+              "Hi there, Thank you for your interest in the Software Engineer II " +
+              "position and for the time you spent with our team. After careful " +
+              "consideration, you were not selected for the role. We had a number " +
+              "of strong candidates and the decision was a difficult one. We wish " +
+              "you the very best in your search.",
+          },
+        ]),
+        "utf-8",
+      ),
+    });
+
+    await expect(page.getByTestId("import-row")).toHaveCount(1);
+    await expect(
+      page.getByTestId("import-results").getByText("rejection", { exact: true }).first(),
+      "suppressing the phrase rather than its mood would break exactly this",
+    ).toBeVisible();
+  });
+
+  /**
+   * THE GENRE-FILTER CONTROL. Relaxing the marketing negatives so a footer can
+   * no longer erase a real verdict must not re-admit the marketing they were
+   * written for.
+   */
+  test("a job alert carrying the whole vocabulary is still not an application", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "alert.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify([
+          {
+            subject: "5 new Software Engineer jobs for you",
+            from: "Job Alerts <alerts@jobboard.example>",
+            body:
+              "New jobs matching your alert. Ironvale is interviewing now. Apply " +
+              "today and get an offer faster. Unsubscribe from job alerts.",
+          },
+        ]),
+        "utf-8",
+      ),
+    });
+
+    await expect(page.getByTestId("import-row")).toHaveCount(1);
+    await expect(
+      page.getByTestId("import-results").getByText("review", { exact: true }).first(),
+      "a job alert must not be filed as a lifecycle verdict",
+    ).toBeVisible();
+  });
+});
