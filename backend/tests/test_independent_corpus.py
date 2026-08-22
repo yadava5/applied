@@ -829,7 +829,11 @@ async def test_every_application_mail_is_addressed(
     # received it.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
     assert dict(lost) == {
-        # TWO DEFECTS SHARE THIS FAMILY AND THIS NUMBER. 8 of them are #458:
+        # TWO DEFECTS SHARE THIS FAMILY AND THIS NUMBER: 11 are #458 and 5 are
+        # #466. The split was measured, not apportioned — widening the
+        # reference class to a clause bound takes this to 11 and every one of
+        # those 11 carries "invested in our process", so the #466 half is
+        # exactly 5. 11 of them are #458:
         # the snippet cuts one character before "with your application", leaving
         # "thank you so much for your interest in <Employer> and for the time
         # and effort you have invested in our process" — which does not say it
@@ -837,7 +841,7 @@ async def test_every_application_mail_is_addressed(
         # in the reference signal, a sender's SENTENCE rather than a category,
         # so it was declined and pinned.
         #
-        # The other 8 are #466 and arrived when the corpus began drawing
+        # The other 5 are #466 and arrived when the corpus began drawing
         # realistic job titles. A real DoorDash title is
         # "Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer
         # 2026)", and `pipeline._APPLICATION_REFERENCE` spans the title with
