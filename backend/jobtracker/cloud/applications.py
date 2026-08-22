@@ -540,6 +540,17 @@ class ReviewItemResponse(BaseModel):
     # an opinion whose content it did not have. None means the row predates the
     # column or genuinely carries no proposal; it is not "unknown category".
     suggested_category: str | None = None
+    # WHICH APPLICATION this entry is about, when the mail names one — issue
+    # #454. The queue now shows one entry per (conversation, application), so an
+    # ATS thread legitimately produces several rows whose SUBJECT and SENDER are
+    # byte-identical: "Thank you for applying to Verkada", four times. Without
+    # this the four are indistinguishable in the accessible name, which is the
+    # exact defect the `sr-only` label on the category select was added to fix,
+    # returning in a new form.
+    #
+    # Derived from the same text the dedup key reads, so the row cannot display
+    # one application and be filed under another.
+    role: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -4000,6 +4011,10 @@ async def review_queue_cloud(
                 confidence=e.classification_confidence,
                 suggested_category=(
                     e.suggested_category.value if e.suggested_category else None
+                ),
+                role=pipeline.role_from_message(
+                    e.subject or "",
+                    (e.body_snippet or "")[: pipeline.STORED_SNIPPET_CHARS],
                 ),
                 gmail_link=pipeline.gmail_deeplink(
                     thread_id=e.thread_id,

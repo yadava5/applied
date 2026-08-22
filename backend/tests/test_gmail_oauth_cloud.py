@@ -3719,6 +3719,17 @@ async def test_one_ats_thread_is_asked_about_once_per_application(
     # Five messages, four applications: the two "Backend Engineer, Alarms"
     # acknowledgements are ONE decision, and the other three are their own.
     assert queue["total"] == 4, [i["snippet"][:60] for i in queue["items"]]
+    # And the four are TELLABLE APART. Subject and sender are byte-identical
+    # across all of them — that is why Gmail threaded them — so the entry has to
+    # carry which application it is about or the queue asks the same question
+    # four times with no way to answer differently.
+    assert sorted(i["role"] for i in queue["items"]) == [
+        "Backend Engineer - Connectivity",
+        "Backend Engineer, Alarms",
+        "Embedded Software Engineer, Access Control",
+        "Frontend Engineer - Access Control",
+    ]
+    assert len({i["subject"] for i in queue["items"]}) == 1
     # The tile the queue is reached from must agree with it.
     summary = (await client.get("/applications/summary", headers=headers)).json()
     assert summary["needs_review"] == 4
