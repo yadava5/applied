@@ -90,8 +90,17 @@ class EmployerPool:
     the harness's own fault and nobody would know which.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, rng=None) -> None:
         self._taken = 0
+        # Drawn in a seeded order, not in pool order. Without this the seed
+        # cannot change WHICH companies appear, and two corpora at different
+        # seeds share their whole employer list — the leading-word collisions
+        # that the board's grouping is most sensitive to would then be the same
+        # collisions every run. Order only; the set drawn from is unchanged and
+        # disjointness still comes from the counter.
+        self._order = list(range(len(POOL)))
+        if rng is not None:
+            rng.shuffle(self._order)
 
     def take(self) -> tuple[str, str]:
         if self._taken >= len(POOL):
@@ -99,7 +108,7 @@ class EmployerPool:
                 f"invented-employer pool exhausted at {len(POOL)}; widen "
                 "_HEADS or _TAILS rather than reusing a name"
             )
-        pair = POOL[self._taken]
+        pair = POOL[self._order[self._taken]]
         self._taken += 1
         return pair
 

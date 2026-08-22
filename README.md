@@ -186,15 +186,15 @@ accuracy a user would see on their own inbox.
 | | measured 2026-08-22 |
 | --- | --- |
 | Correct | **8,930 of 10,040 — 88.94%** |
-| Wrong | **473** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **637** |
-| Auto-filed above the 0.85 gate | 8,437, of which **473 wrong** |
-| Board: cards / splits / merges / noise / misrouted review | **5,687 / 0 / 0 / 0 / 0** |
+| Wrong | **464** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **646** |
+| Auto-filed above the 0.85 gate | 8,448, of which **464 wrong** |
+| Board: cards / splits / merges / noise / misrouted review | **5,693 / 0 / 0 / 0 / 0** |
 
 The board is clean. The classifier is not, and the shape of its failure matters more than the size:
-**every one of the 473 wrong verdicts is above the auto-file gate.** There is no wrong-but-hedged
+**every one of the 464 wrong verdicts is above the auto-file gate.** There is no wrong-but-hedged
 case in ten thousand messages. The review queue catches being *unsure*; it has never once caught
-being *wrong*, and 966 items sit between the two thresholds of which every one is correct.
+being *wrong*, and 946 items sit between the two thresholds of which every one is correct.
 
 Three families are 100% of the errors, and each is pinned as a defect at its measured size rather
 than excluded, because a corpus that asserts only what already passes is a check that cannot fail:
@@ -202,14 +202,28 @@ than excluded, because a corpus that asserts only what already passes is a check
 - **`quoted-history`, 200 of 200.** Every follow-up that quotes its own confirmation reads as
   `applied`, so an interview invite never advances the card it belongs to. The widest of the three
   and the mechanism behind the next one.
-- **`rescinded-offer`, 173 of 260** ([#417](https://github.com/yadava5/applied/issues/417)). A
+- **`rescinded-offer`, 164 of 260** ([#417](https://github.com/yadava5/applied/issues/417)). A
   withdrawal that quotes the original offer scores the quoted text, so the board shows an offer the
   person does not have. The only error here that asserts something false about someone's life
-  rather than leaving them where they were. The issue reports 60 of 60; the corpus measures 173 of
+  rather than leaving them where they were. The issue reports 60 of 60; the corpus measures 164 of
   260, and the issue has been corrected.
 - **`hostile-zero-width`, 100 of 100** ([#424](https://github.com/yadava5/applied/issues/424) is
   the sender-name half). A zero-width space inside "moving" defeats the rejection pattern while
   rendering identically to the eye.
+
+**Re-seeded, three times.** The seed varies which company, role, sender and wording every case
+draws; it never varies the family sizes or the ground truth, so a re-seed is a different sample of
+the same population rather than a different question. `quoted-history` is 200 of 400 at all three
+seeds, `hostile-zero-width` 100 of 100 at all three, truncation wrong 0 times at all three, and
+`correct` is exactly 8,930 at all three — the errors are structural. The one number that moves is
+`rescinded-offer`, at 164, 171 and 170, because which withdrawal wording a case draws decides
+whether the quoted offer or the withdrawal reaches the classifier first. That is asserted as a band
+rather than a point.
+
+The seed did nothing at all until 2026-08-22: `_Builder` constructed a `random.Random` and never
+drew from it, so three seeds produced one byte-identical corpus and "we ran it three times" would
+have meant one run reported three times. `test_the_seeds_are_actually_different` is the control
+that keeps the re-seeding honest.
 
 The one family that fails safely is the control on those three: a rejection whose verdict sits past
 Gmail's ~186-character snippet abstains 350 times and is wrong zero times. Truncation makes the
@@ -615,7 +629,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 971 `test_*` functions across 85 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 973 `test_*` functions across 85 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 

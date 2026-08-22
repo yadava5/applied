@@ -147,20 +147,54 @@ def snippet_of(body: str) -> str:
 
 
 class _Builder:
+    """Builds the corpus. Every VARIABLE choice comes from ``self.rng``.
+
+    THE SEED USED TO BE DEAD. ``random.Random(seed)`` was constructed here and
+    never called once: every choice in the file was ``[i % len(...)]``, so all
+    three seeds produced a byte-identical 10,040 messages and a run at three
+    seeds measured the same corpus three times. It read as reassurance and was
+    a check that could not fail — this file's own docstring claimed "every
+    choice derives from the seed and the case index" while nothing did.
+
+    What is seeded and what is not is the load-bearing distinction. The seed
+    varies WHICH employer, role, ATS sender and wording a case gets. It never
+    varies how many cases a family has, what category each is, or what the
+    board should look like — those are the ground truth, and a corpus whose
+    expectations move with its seed measures nothing. So a re-seed is a
+    different sample of the same population, which is exactly what makes
+    running three of them worth the minutes.
+
+    Determinism is unaffected: one ``Random`` drawn from in a fixed order, so
+    the same seed still gives byte-identical output and the digest gate still
+    holds.
+    """
+
     def __init__(self, seed: int) -> None:
         self.rng = random.Random(seed)
-        self.employers = EmployerPool()
+        self.employers = EmployerPool(self.rng)
         self.cases: list[Case] = []
         self._n = 0
 
     def employer(self) -> tuple[str, str]:
         return self.employers.take()
 
-    def role(self, i: int) -> str:
-        return ROLES[i % len(ROLES)]
+    def pick(self, options):
+        """One of ``options``, from the seed.
 
-    def ats(self, i: int) -> str:
-        return ATS_SENDERS[i % len(ATS_SENDERS)]
+        Replaces ``options[i % len(options)]``. The round-robin was not merely
+        unseeded, it also locked wording to position: every third confirmation
+        got template 3 forever, so a defect that only fires on one wording was
+        pinned to exactly n/3 across every run and looked like a property of
+        the product.
+        """
+
+        return options[self.rng.randrange(len(options))]
+
+    def role(self, _i: int = 0) -> str:
+        return self.pick(ROLES)
+
+    def ats(self, _i: int = 0) -> str:
+        return self.pick(ATS_SENDERS)
 
     def add(
         self,
@@ -233,7 +267,7 @@ def _confirmations(b: _Builder, n: int) -> None:
     for i in range(n):
         display, token = b.employer()
         role = b.role(i)
-        subject, body = templates[i % len(templates)]
+        subject, body = b.pick(templates)
         b.add(
             family="confirmation",
             subject=subject.format(e=display, r=role),
@@ -263,7 +297,7 @@ def _rejections_plain(b: _Builder, n: int) -> None:
     for i in range(n):
         display, token = b.employer()
         role = b.role(i)
-        subject, body = templates[i % len(templates)]
+        subject, body = b.pick(templates)
         # The confirmation first, so the rejection has an application to settle.
         b.add(
             family="rejection-plain",
@@ -496,7 +530,7 @@ def _rescinded_offers(b: _Builder, n: int) -> None:
             thread=thread,
             day=i % 60,
         )
-        withdrawal = withdrawals[i % len(withdrawals)]
+        withdrawal = b.pick(withdrawals)
         b.add(
             family="rescinded-offer",
             subject=f"Re: Your offer from {display}",
@@ -856,7 +890,7 @@ def _ambiguous_update(b: _Builder, n: int) -> None:
 
     for i in range(n):
         display, token = b.employer()
-        for k, role in enumerate((ROLES[i % len(ROLES)], ROLES[(i + 1) % len(ROLES)])):
+        for k, role in enumerate(b.rng.sample(ROLES, 2)):
             b.add(
                 family="ambiguous-update",
                 subject=f"Thank you for applying to {display}",
@@ -897,7 +931,7 @@ def _bare_relay(b: _Builder, n: int) -> None:
         b.add(
             family="bare-relay",
             subject="Your application has been received",
-            sender=ATS_SENDERS[i % len(ATS_SENDERS)],
+            sender=b.ats(),
             sender_name=None,
             body=(
                 "Hi Ayush, Your application has been received. The hiring team will "
