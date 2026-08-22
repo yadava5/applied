@@ -745,19 +745,32 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"invents \*\*([\d,]+) messages\n?",
             r"Correct \| \*\*[\d,]+ of ([\d,]+) —",
+            # printed in the System Card booklet, page 22
+            {"re": r"([\d,]+) invented messages across", "file": BOOKLET_CONTENT},
+            {
+                "re": r'value: "([\d,]+)", label: "messages · adversarial corpus"',
+                "file": BOOKLET_CONTENT,
+            },
         ],
     },
     "corpusCompanies": {
         "kind": "static",
         "describe": f"RECORDED['companies'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("companies"),
-        "sites": [r"families over ([\d,]+) companies"],
+        "sites": [
+            r"families over ([\d,]+) companies",
+            {"re": r"families over ([\d,]+) companies", "file": BOOKLET_CONTENT},
+            {"re": r'note: "18 families · ([\d,]+) companies"', "file": BOOKLET_CONTENT},
+        ],
     },
     "corpusCorrect": {
         "kind": "static",
         "describe": f"RECORDED['correct'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("correct"),
-        "sites": [r"Correct \| \*\*([\d,]+) of [\d,]+ —"],
+        "sites": [
+            r"Correct \| \*\*([\d,]+) of [\d,]+ —",
+            {"re": r"([\d,]+) come out correct", "file": BOOKLET_CONTENT},
+        ],
     },
     "corpusWrong": {
         "kind": "static",
@@ -765,21 +778,50 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("wrong"),
         "sites": [
             r"\| Wrong \| \*\*([\d,]+)\*\* \|",
-            r"of which \*\*([\d,]+) wrong\*\*",
-            r"every one of the ([\d,]+) wrong verdicts is above",
+            r"\*\*[\d,]+ of the ([\d,]+) wrong verdicts are stated to the user",
+            r"than ([\d,]+) with [\d,]+ auto-filed",
+            {"re": r"correct \(90\.94%\), ([\d,]+) wrong", "file": BOOKLET_CONTENT},
+            {"re": r'note: "([\d,]+) wrong · [\d,]+ abstained"', "file": BOOKLET_CONTENT},
+            {
+                "re": r"[\d,]+ of the ([\d,]+) wrong verdicts sit above",
+                "file": BOOKLET_CONTENT,
+            },
+            {
+                "re": r"than ([\d,]+) with [\d,]+ auto-filed",
+                "file": BOOKLET_CONTENT,
+            },
         ],
     },
     "corpusAbstained": {
         "kind": "static",
         "describe": f"RECORDED['abstained'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("abstained"),
-        "sites": [r"the product says nothing\) \| \*\*([\d,]+)\*\* \|"],
+        "sites": [
+            r"the product says nothing\) \| \*\*([\d,]+)\*\* \|",
+            {"re": r"wrong, ([\d,]+) abstained\.", "file": BOOKLET_CONTENT},
+            {"re": r'note: "[\d,]+ wrong · ([\d,]+) abstained"', "file": BOOKLET_CONTENT},
+        ],
+    },
+    "corpusAutoFiledWrong": {
+        "kind": "static",
+        "describe": f"RECORDED['auto_filed_wrong'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("auto_filed_wrong"),
+        "sites": [
+            r"of which \*\*([\d,]+) wrong\*\*",
+            r"\*\*([\d,]+) of the [\d,]+ wrong verdicts are stated",
+            r"than [\d,]+ with ([\d,]+) auto-filed",
+            {"re": r"([\d,]+) of the [\d,]+ wrong verdicts sit above", "file": BOOKLET_CONTENT},
+            {"re": r"than [\d,]+ with ([\d,]+) auto-filed", "file": BOOKLET_CONTENT},
+        ],
     },
     "corpusCards": {
         "kind": "static",
         "describe": f"RECORDED['cards'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("cards"),
-        "sites": [r"misrouted review \| \*\*([\d,]+) / 0 / 0 / 0 / 0\*\*"],
+        "sites": [
+            r"misrouted review \| \*\*([\d,]+) / 0 / 0 / 0 / 0\*\*",
+            {"re": r"The board is clean: ([\d,]+) cards, 0 splits", "file": BOOKLET_CONTENT},
+        ],
     },
     # ── the rules engine ──
     "rulesPatterns": {

@@ -483,16 +483,16 @@ export const PROOF = {
 
   tests: {
     eyebrow: "§04 · THE GUARANTEE",
-    headline: "1,240 tests and a gate that blocks merges.",
+    headline: "1,309 tests, and 10,040 messages written to break the classifier.",
     body:
-      "Correctness is not asserted, it is enforced. The backend ships a 1,240-test suite — all 1,240 passing, including the twenty-one Postgres row-level-security tests, which provision their own postgres:16 through testcontainers instead of skipping; two CI gates re-run the classifier evaluation on every change and refuse to merge if macro-F1 falls below 0.95. Below the confidence gate at runtime, the same conservatism applies — the model hands off to a human rather than file a guess.",
+      "Correctness is not asserted, it is enforced. The backend suite runs 1,309 tests, all passing — including the twenty-one Postgres row-level-security tests, which provision their own postgres:16 through testcontainers instead of skipping — and two CI gates re-run the classifier evaluation on every change, refusing to merge if macro-F1 falls below 0.95. A suite only checks what somebody thought to check, so there is a second instrument: 10,040 invented messages across 18 families over 5,670 companies, 18% of them adversarial by construction, driven end to end — classify, roll up, upsert, then read the board back out of the tables, replayed in day-sized batches because a real sync is a delta and not a whole mailbox. 9,130 come out correct (90.94%), 300 wrong, 610 abstained. The board is clean: 5,770 cards, 0 splits, 0 merges, 0 noise, 0 misrouted review.",
     stats: [
-      { value: "1,240", label: "tests · backend suite", note: "pytest tests -q" },
-      { value: "2", label: "CI gates · rules + hybrid", note: "backend-ci.yml" },
-      { value: "0.95", label: "macro-F1 merge floor", note: "--min-macro-f1" },
+      { value: "1,309", label: "tests · backend suite", note: "0 failed · 2026-08-22" },
+      { value: "10,040", label: "messages · adversarial corpus", note: "18 families · 5,670 companies" },
+      { value: "90.94%", label: "correct · stress corpus", note: "300 wrong · 610 abstained" },
     ],
     honest:
-      "Provenance: 1,240 is what `pytest tests -q` collects from backend/, all of them passing, run 2026-08-21 on Python 3.11.14 with a Docker daemon available. The twenty-one Postgres row-level-security tests start their own postgres:16 container through testcontainers, so database-level tenant isolation is demonstrated rather than described — without Docker and without JOBTRACKER_TEST_PG_ADMIN_URL those twenty-one skip, and that isolation is simply unverified on such a run. A hedge about a figure is worth nothing when the hedge is itself unchecked, so this row names a command, and the condition under which the command gives a different answer. The figure was 305 on 2026-08-06; the suite has grown, it has not been re-scoped.",
+      "Provenance: 1,309 is what `PYTHONPATH=. pytest tests -q --ignore=tests/test_setfit_model.py --ignore=tests/test_evaluate_classifier.py` passes from backend/, run 2026-08-22 on Python 3.11.14 with a Docker daemon available — without Docker and without JOBTRACKER_TEST_PG_ADMIN_URL the twenty-one row-level-security tests skip, and database-level tenant isolation is then simply unverified on that run. The corpus figure carries the worse condition, and printing it is the whole point: 100 of the 300 wrong verdicts sit above the 0.85 auto-file gate and are stated to the reader as fact, while 200 fall below it and are held for a person to settle. That ratio is the number worth watching, not the total — 50 wrong verdicts all auto-filed would be a worse product than 300 with 100 auto-filed. It read 464 of 464 above the gate until 2026-08-22, when the classifier stopped scoring quoted history as the sender's own words. And 18% of that mail is adversarial by construction, so 90.94% is behaviour under stress, not the accuracy an inbox would produce. The test figure was 305 on 2026-08-06; the suite has grown, it has not been re-scoped.",
     handoffQuote:
       "A classifier that knows when to stop is worth more than one that is always sure.",
   },

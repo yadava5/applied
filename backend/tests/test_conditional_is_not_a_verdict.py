@@ -112,18 +112,41 @@ def test_the_confirmation_that_was_thrown_away_reads_as_an_application(rules) ->
     )
 
 
-def test_the_ceiling_is_the_review_queue_not_the_board(rules) -> None:
-    """Stated as an assertion so nobody reads the fix as more than it is.
+def test_this_confirmation_now_files_itself(rules) -> None:
+    """THE DECISION THIS TEST ASKED FOR, made on purpose.
 
-    This message reaches a human. It does not file itself. If a later change
-    pushes it over ``AUTO_FILE_GATE`` that is a real product decision and this
-    test is where it gets made deliberately rather than by accident.
+    Until #441 this asserted the opposite: ``REVIEW_FLOOR <= confidence <
+    AUTO_FILE_GATE``, with the note "this message reaches a human, it does not
+    file itself — if a later change pushes it over ``AUTO_FILE_GATE`` that is a
+    real product decision and this test is where it gets made deliberately
+    rather than by accident."
+
+    This is that change, and the decision is yes. #431 stopped the message
+    being destroyed; it still could not reach the board, because nothing in the
+    rules matched Microsoft's actual wording — not the subject "Thank you for
+    your application!", not the body "Thank you for taking the time to submit
+    your application for X". It scored 0.80 on the strength of a generic
+    pattern, four points under the gate, so all five Microsoft confirmations in
+    the owner's real mailbox sat in the review queue and none of them ever
+    became a card. The report was "I applied to 4 new Microsoft and a Google
+    application, but when I sync it in the app, I'm not getting anything."
+
+    A confirmation naming the act, the role AND the requisition number is not a
+    message a person should have to confirm by hand. It files.
+
+    The conditional explainer inside it is untouched: the mask is what keeps
+    ``not selected for the role`` from scoring, and the negatives above still
+    show up in ``matched_patterns``. What changed is only that the positive
+    evidence is now counted at all.
     """
 
     result = rules.classify(SUBJECT, confirmation(), SENDER)
-    assert REVIEW_FLOOR <= result.confidence < AUTO_FILE_GATE, (
-        f"confidence is {result.confidence}; the fix was measured and reported "
-        f"as landing in [{REVIEW_FLOOR}, {AUTO_FILE_GATE}) — the review queue"
+    assert result.category is EmailCategory.APPLIED
+    assert result.confidence >= AUTO_FILE_GATE, (
+        f"confidence is {result.confidence}, under the {AUTO_FILE_GATE} gate. "
+        "This is the owner's real Microsoft confirmation and it names the "
+        "requisition number; leaving it for a human to confirm is the defect, "
+        "not the safeguard."
     )
 
 

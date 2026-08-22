@@ -437,6 +437,22 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"application.{0,20}received",
             r"application complete",
             r"thank(s| you) for applying",
+            # MICROSOFT'S WORDING, and the reason five of the owner's real
+            # applications have never once auto-filed. Nothing above matches
+            # either the subject "Thank you for your application!" or the body
+            # "Thank you for taking the time to submit your application for
+            # Pre-Training (Job number: 200007619)", so a plain, unambiguous,
+            # requisition-bearing confirmation scored 0.80 — under the 0.85
+            # gate — and sat in the review queue forever. It was reported as
+            # "I applied to 4 new Microsoft and a Google application, but when
+            # I sync it in the app, I'm not getting anything", and the identity
+            # work that followed fixed how those four would be TOLD APART
+            # without fixing whether any of them arrives at all.
+            #
+            # Both are taken from the mailbox, not invented: message ids
+            # 1a023464635139a1, 1a023453e5cd359d, 1a023443b385563f,
+            # 1a02341f84f11426 and 19ff98d36594296d.
+            r"thank(s| you) for (taking the time to )?submit(ting)? your application",
             r"successfully submitted",
             r"confirm(ing)? receipt",
             r"application.{0,30}has been (received|submitted)",
@@ -453,6 +469,18 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"application.{0,20}is in",
         ],
         weak=[
+            # WEAK AND NOT STRONG, for the same reason as the entry below it,
+            # and measured rather than assumed. "Thank you for your
+            # application" is a COURTESY OPENER, not a verdict: it prefixes
+            # rejections, interview invitations and offers exactly as happily
+            # as it prefixes confirmations. Tried at `strong` first, where a
+            # subject match is worth +6 and swamps whatever the body says — it
+            # turned a genuine offer, a genuine interview invitation and a
+            # genuine assessment request all into `applied`. At weak it
+            # contributes without deciding, which is what a courtesy is worth,
+            # and Microsoft's confirmation still clears the gate because its
+            # BODY carries the specific act ("submit your application").
+            r"thank(s| you) for your application",
             # DEMOTED FROM `strong` (#348). "Your application for <Role> at
             # <Company>" is a THREAD SUBJECT, not a verdict: it says which
             # application the mail concerns, and every reply in the thread
@@ -866,20 +894,111 @@ def _sentences(body: str) -> list[str]:
     return out
 
 
-def asserted_text(body: str) -> str:
-    """Return ``body`` with the spans it does not assert removed.
+#: Where a reply stops speaking and starts repeating.
+#:
+#: Three shapes, and all three are anchored to the START OF A LINE, which is
+#: what keeps them from firing inside prose. "On Thursday, the team wrote:" is
+#: an attribution when it opens a line and a sentence fragment when it does not,
+#: and a rejection that reads "we wrote to you on Tuesday" must not lose its
+#: verdict to a loose match.
+#:
+#:   · the attribution line every major client writes above the quote
+#:     ("On Tuesday, X wrote:", "On 21 Aug 2026 at 09:14, X <a@b> wrote:")
+#:   · Outlook's and Apple Mail's divider ("-----Original Message-----",
+#:     "Begin forwarded message:")
+#:   · the first ``>`` quote line, for clients that write no attribution at all
+_QUOTE_BOUNDARY = re.compile(
+    r"""^(?:
+          [ \t]*>                                  # a quoted line
+        | [ \t]*-{2,}\s*(?:original\s+message|forwarded\s+message)\s*-{2,}
+        | [ \t]*begin\s+forwarded\s+message\s*:
+        | [ \t]*on\b[^\n]{0,200}?\bwrote\s*:    # attribution
+        | [ \t]*from\s*:[^\n]{0,200}\n[ \t]*sent\s*:   # Outlook header block
+    )""",
+    re.IGNORECASE | re.MULTILINE | re.VERBOSE,
+)
 
-    Today that is exactly one thing: text inside a conditional clause. The
-    function is named for the general idea because the same seam is where
-    quoted replies and hidden preheaders belong (issue #430), and because a
-    caller should be reading "the part of the message the sender is claiming",
-    not "the body minus if-clauses".
+#: Below this many characters, a reply's own words are treated as no words at
+#: all and the quote is scored after all.
+#:
+#: NOT a tuning knob — it is the answer to "what does a bare forward mean?".
+#: Someone forwarding a rejection to themselves with "fyi" above it has written
+#: nothing the classifier can read, and scoring the eleven characters they did
+#: write means scoring nothing, which abstains on a message whose verdict is
+#: sitting right there in the quote. So a reply that adds no substance falls
+#: back to the whole body, and only a reply that SAYS something gets to speak
+#: over its history.
+_MIN_ASSERTED_CHARS = 40
 
-    Idempotent, and returns text unchanged when it holds no conditional.
+#: A subject that belongs to the CONVERSATION rather than to this message.
+#:
+#: Mail clients keep the original subject on every reply, so "Re: Thank you for
+#: applying to X" is what an interview invitation, a rejection and a scheduling
+#: note in that thread all look like from the outside. Scoring it at subject
+#: weight tells the classifier the message is a confirmation before it has read
+#: a word the sender wrote.
+#: Bounded on every quantifier, and the optional counter carries its own
+#: trailing space. The obvious form is ``^\s*(?:re|fw|fwd)\s*(?:\[\d+\])?\s*:``
+#: and it is a polynomial ReDoS: when the counter does not match, the two
+#: ``\s*`` sit adjacent and a run of N spaces after "Re" is re-partitioned at
+#: every offset. Subjects come from whoever emailed the user. CodeQL caught
+#: this one; the same reasoning is already written up for the sentence splitter
+#: in the TypeScript port.
+_REPLY_SUBJECT = re.compile(
+    r"^[ \t]{0,8}(?:re|fw|fwd)[ \t]{0,8}(?:\[\d{1,4}\][ \t]{0,8})?:",
+    re.IGNORECASE,
+)
+
+
+def strip_quoted_history(body: str) -> str:
+    """Return only the part of ``body`` this message wrote itself.
+
+    ISSUE #441. The scoring walk had no notion of whose words it was reading,
+    so a follow-up that quoted its own confirmation scored the QUOTE: 200 of
+    200 such messages in the adversarial corpus read as ``applied``, and an
+    interview invitation never advanced the card it belonged to. It is also the
+    mechanism behind #417 — a withdrawal that quotes the offer it is
+    withdrawing scores the offer.
+
+    WHAT THIS MUST NOT BREAK, and it is the reason the function is separate
+    from the caller: the quote is often the only place the ROLE appears. A
+    reply saying "we would love to set up a conversation" names no job. Role
+    and requisition extraction read the raw snippet through
+    ``pipeline.role_from_message`` and never come through here, so identity
+    keeps the whole message and only SCORING loses the history. Anything that
+    moves extraction behind this seam re-breaks grouping to fix classification.
+
+    Returns ``body`` unchanged when there is no quote, and when what remains is
+    too thin to be an assertion (see :data:`_MIN_ASSERTED_CHARS`).
     """
 
     if not body:
         return body
+    marker = _QUOTE_BOUNDARY.search(body)
+    if marker is None:
+        return body
+    own = body[: marker.start()].strip()
+    return body if len(own) < _MIN_ASSERTED_CHARS else own
+
+
+def asserted_text(body: str) -> str:
+    """Return ``body`` with the spans it does not assert removed.
+
+    Two things now, in order: history this message merely quotes, then text
+    inside a conditional clause. A caller should be reading "the part of the
+    message the sender is claiming", not "the body minus if-clauses".
+
+    Quotes are removed FIRST and the order matters: a conditional inside quoted
+    history is not this message's hypothesis and should never have been walked
+    sentence by sentence in the first place.
+
+    Idempotent, and returns text unchanged when it holds neither.
+    """
+
+    if not body:
+        return body
+
+    body = strip_quoted_history(body)
 
     out: list[str] = []
     for sentence in _sentences(body):
@@ -1094,8 +1213,35 @@ class RulesClassifier:
 
         # ONCE, before any pattern sees it. Every ``pattern.search(body)`` below
         # is searching what the sender ASSERTS — see :func:`asserted_text`. The
-        # subject is left alone by design.
+        # subject's TEXT is left alone by design; what changes below is only how
+        # much a match in it is worth.
         body = asserted_text(body)
+
+        # A REPLY'S SUBJECT IS ABOUT THE THREAD, NOT ABOUT THIS MESSAGE.
+        #
+        # The subject doubler exists because a subject is a headline: a sender
+        # who puts the verdict there means it. That reasoning does not survive
+        # a reply, where the client copied the headline from a message someone
+        # else wrote weeks ago. "Re: Thank you for applying to X" is what the
+        # interview invitation, the rejection and the scheduling note in that
+        # thread ALL look like, and doubling it hands every one of them to
+        # ``applied`` before a word of the body is read.
+        #
+        # Demoted rather than discarded (issue #441). The thread's subject is
+        # still evidence — a reply inside an offer thread is more likely to be
+        # about an offer than a random message is — it is just not headline
+        # evidence about THIS message. Discarding it outright loses the only
+        # signal a bare "Re: Your application" carries.
+        #
+        # BELOW body weight, not equal to it, and that is measured rather than
+        # tidy. At equal weight a copied subject still ties with what the
+        # sender actually wrote, and a recruiter replying to their own
+        # acknowledgement to invite someone to interview came out `applied` on
+        # the tie-break — the exact message this exists to fix. What the
+        # message says about itself has to outrank what its thread is called.
+        strong_subject, weak_subject = (
+            (2, 1) if _REPLY_SUBJECT.match(subject or "") else (6, 2)
+        )
 
         # Check if sender is from a known ATS domain
         is_ats_email = is_ats_sender(sender_email)
@@ -1113,7 +1259,7 @@ class RulesClassifier:
             has_strong_body = False
             for pattern in compiled["strong"]:
                 if pattern.search(subject):
-                    category_score += 6  # 3 * 2 for subject
+                    category_score += strong_subject
                     category_matches.append(f"[STRONG-SUBJECT] {pattern.pattern}")
                 elif pattern.search(body):
                     category_score += 3
@@ -1123,7 +1269,7 @@ class RulesClassifier:
             # Check weak patterns (+1, 2x for subject)
             for pattern in compiled["weak"]:
                 if pattern.search(subject):
-                    category_score += 2  # 1 * 2 for subject
+                    category_score += weak_subject
                     category_matches.append(f"[WEAK-SUBJECT] {pattern.pattern}")
                 elif pattern.search(body):
                     category_score += 1

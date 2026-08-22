@@ -8,7 +8,7 @@
  * weights of a checkpoint fitted partly on a real mailbox (iCloud IMAP, not
  * Gmail). This port is
  * unaffected — it carries no weights and never did.
- * Same 219 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
+ * Same 221 patterns, same weights (strong +3 / +6-in-subject, weak +1 / +2,
  * negative −5), same veto cap, same margin→confidence tiers, same ATS-domain
  * boost.
  *
@@ -93,10 +93,15 @@ export interface RulesTrace {
 }
 
 /** Points per tier and field — the numbers in `score`'s branches, named once
- *  so the trace cannot quote a different weight than the walk applied. */
+ *  so the trace cannot quote a different weight than the walk applied.
+ *
+ *  `replySubject` is the same match in a subject the mail client COPIED from
+ *  the message being replied to (#441). Below body weight, not equal to it: at
+ *  equal weight a copied headline still ties with what this sender actually
+ *  wrote. */
 const POINTS = {
-  strong: { subject: 6, body: 3 },
-  weak: { subject: 2, body: 1 },
+  strong: { subject: 6, replySubject: 2, body: 3 },
+  weak: { subject: 2, replySubject: 1, body: 1 },
 } as const;
 
 /**
@@ -158,6 +163,85 @@ function sentences(body: string): string[] {
 }
 
 /**
+ * Where a reply stops speaking and starts repeating.
+ *
+ * Four client shapes, all anchored to the start of a line, which is what keeps
+ * them out of prose. "We wrote to you on Tuesday" is not an attribution, and a
+ * rejection must not lose its verdict to a loose match.
+ *
+ *   1. `>` — a quoted line, for clients that write no attribution at all.
+ *   2. `----- Original Message -----` / `----- Forwarded message -----`.
+ *   3. `Begin forwarded message:` — Apple Mail.
+ *   4. `On <anything> wrote:` — the attribution every major client writes.
+ *
+ * The Outlook `From: … \n Sent: …` header block is the one shape the Python
+ * side matches and this does not: it needs a multi-line alternative, and the
+ * cases it catches are already caught by 2 in practice. Noted rather than
+ * silently dropped — see #427 on parity.
+ *
+ * Written as one alternation with `m` rather than Python's VERBOSE form,
+ * because JavaScript has no verbose flag. The bounded `{0,200}` on the
+ * attribution is deliberate and matches the original: an unbounded `.*?`
+ * before `wrote:` scans the whole body on every non-matching line.
+ *
+ * Mirrors `_QUOTE_BOUNDARY` in `backend/jobtracker/classifier/rules.py`.
+ */
+const QUOTE_BOUNDARY_RE =
+  /^(?:[ \t]*>|[ \t]*-{2,}\s*(?:original\s+message|forwarded\s+message)\s*-{2,}|[ \t]*begin\s+forwarded\s+message\s*:|[ \t]*on\b[^\n]{0,200}?\bwrote\s*:)/im;
+
+/**
+ * Below this many characters, a reply's own words are treated as no words at
+ * all and the quote is scored after all.
+ *
+ * Not a tuning knob. Someone forwarding a rejection to themselves with "fyi"
+ * above it has written nothing a classifier can read, and scoring the eleven
+ * characters they did write means scoring nothing — which abstains on a
+ * message whose verdict is sitting right there in the quote. So a reply that
+ * adds no substance falls back to the whole body, and only a reply that SAYS
+ * something gets to speak over its history.
+ *
+ * Mirrors `_MIN_ASSERTED_CHARS` in the Python original.
+ */
+const MIN_ASSERTED_CHARS = 40;
+
+/**
+ * Only the part of `body` this message wrote itself.
+ *
+ * ISSUE #441. The scoring walk had no notion of whose words it was reading, so
+ * a follow-up that quoted its own confirmation scored the QUOTE: every such
+ * message read as `applied`, and an interview invitation never advanced the
+ * card it belonged to. It is also the mechanism behind #417 — a withdrawal
+ * that quotes the offer it is withdrawing scores the offer.
+ *
+ * The quote is often the only place the ROLE appears, so this must never sit
+ * in front of identity extraction: only scoring loses the history.
+ *
+ * Mirrors `strip_quoted_history` in the Python original.
+ */
+export function stripQuotedHistory(body: string): string {
+  if (!body) return body;
+  const marker = QUOTE_BOUNDARY_RE.exec(body);
+  if (marker === null) return body;
+  const own = body.slice(0, marker.index).trim();
+  return own.length < MIN_ASSERTED_CHARS ? body : own;
+}
+
+/**
+ * A subject that belongs to the CONVERSATION rather than to this message.
+ *
+ * Bounded on every quantifier, and the optional counter carries its own
+ * trailing space. The obvious form is `/^\s*(?:re|fw|fwd)\s*(?:\[\d+\])?\s*:/`
+ * and it is a polynomial ReDoS for the same reason `SENTENCE_SPLIT_RE` above
+ * is written the way it is: with the counter absent the two `\s*` sit
+ * adjacent, so a run of N spaces after "Re" is re-partitioned at every offset.
+ * Subjects come from whoever emailed the user, and on this surface they are
+ * not length-capped the way the server's are.
+ *
+ * Mirrors `_REPLY_SUBJECT` in the Python original.
+ */
+const REPLY_SUBJECT_RE = /^[ \t]{0,8}(?:re|fw|fwd)[ \t]{0,8}(?:\[\d{1,4}\][ \t]{0,8})?:/i;
+
+/**
  * The part of a body the sender is ASSERTING.
  *
  * A phrase can appear in a message without being claimed. The case this exists
@@ -181,7 +265,11 @@ function sentences(body: string): string[] {
  */
 export function assertedText(body: string): string {
   if (!body) return body;
-  return sentences(body)
+  // Quotes first, then conditionals, and the order matters: a conditional
+  // inside quoted history is not this message's hypothesis and should never
+  // have been walked sentence by sentence in the first place.
+  const own = stripQuotedHistory(body);
+  return sentences(own)
     .map((sentence) => {
       const marker = CONDITIONAL_RE.exec(sentence);
       return marker ? sentence.slice(0, marker.index) : sentence;
@@ -204,9 +292,26 @@ function score(
   const scores: Record<string, number> = {};
 
   // ONCE, before any pattern sees it. Every `re.test(body)` below is testing
-  // what the sender ASSERTS. The subject is left alone by design: it is short,
-  // and a conditional subject is not a real shape.
+  // what the sender ASSERTS. The subject's TEXT is left alone by design: it is
+  // short, and a conditional subject is not a real shape. What changes below is
+  // only how much a match in it is worth.
   body = assertedText(body);
+
+  // A REPLY'S SUBJECT IS ABOUT THE THREAD, NOT ABOUT THIS MESSAGE (#441).
+  //
+  // The doubler exists because a subject is a headline: a sender who puts the
+  // verdict there means it. Clients copy the headline onto every reply, so
+  // "Re: Thank you for applying to X" is what the interview invitation, the
+  // rejection and the scheduling note in that thread ALL look like.
+  //
+  // Demoted, not discarded — a bare "Re: Your application" carries the thread's
+  // subject as its only signal. And demoted BELOW body weight rather than to
+  // it: at equal weight a copied subject still ties with what the sender
+  // actually wrote, and the tie-break sent a genuine interview invitation to
+  // `applied`.
+  const isReply = REPLY_SUBJECT_RE.test(subject ?? "");
+  const strongSubject = isReply ? POINTS.strong.replySubject : POINTS.strong.subject;
+  const weakSubject = isReply ? POINTS.weak.replySubject : POINTS.weak.subject;
 
   let isAts = false;
   if (sender && sender.includes("@")) {
@@ -234,8 +339,8 @@ function score(
     let hasStrongBody = false;
     for (const re of g.strong) {
       if (re.test(subject)) {
-        s += POINTS.strong.subject;
-        at(cat, "strong", "subject", POINTS.strong.subject, re);
+        s += strongSubject;
+        at(cat, "strong", "subject", strongSubject, re);
       } else if (re.test(body)) {
         s += POINTS.strong.body;
         hasStrongBody = true;
@@ -244,8 +349,8 @@ function score(
     }
     for (const re of g.weak) {
       if (re.test(subject)) {
-        s += POINTS.weak.subject;
-        at(cat, "weak", "subject", POINTS.weak.subject, re);
+        s += weakSubject;
+        at(cat, "weak", "subject", weakSubject, re);
       } else if (re.test(body)) {
         s += POINTS.weak.body;
         at(cat, "weak", "body", POINTS.weak.body, re);
