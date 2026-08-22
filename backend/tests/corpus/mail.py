@@ -91,8 +91,13 @@ CATEGORIES = ("applied", "interview", "offer", "rejection", "assessment", "other
 WEIGHTING: dict[str, int] = {
     "interview": 110,
     "offer": 85,
-    "rejection": 75,
-    "applied": 50,
+    # +2 each on 2026-08-21 for the P12 axis: an application confirmation whose
+    # body explains, CONDITIONALLY, what a rejection would look like. The
+    # corpus scored applied 50/50 while that exact shape was losing the owner
+    # four real applications, so "no regression" from this instrument meant
+    # nothing about it. See _axis_p12_conditional_explainer.
+    "rejection": 77,
+    "applied": 52,
     "assessment": 45,
     "other": 35,
 }
@@ -1239,6 +1244,124 @@ def _axis_p10_rescission(b: Builder) -> None:
         f"we had on Tuesday.\n\nYour annual base salary will be $190,000 and the option "
         f"grant has been increased. This offer expires on 22 August 2026.\n\n"
         f"Sincerely,\n{name}\n",
+    )
+
+
+def _axis_p12_conditional_explainer(b: Builder) -> None:
+    """P12 — a phrase that appears in the mail but is not being asserted.
+
+    THE SHAPE THAT COST FOUR REAL APPLICATIONS on 2026-08-21. A large employer's
+    application confirmation explains, in a conditional, what the candidate
+    would see if things went badly:
+
+        "if you see the job moved to an inactive state, that means the position
+         is either no longer open, you withdrew from consideration, or you were
+         not selected for the role"
+
+    Nothing has been decided. The message is a confirmation, and a human reads
+    it as one. The classifier matched "you were not selected" and returned
+    ``rejection``; the marketing footer every ATS confirmation carries then took
+    5 off every category, so the winner's absolute score was low enough that the
+    verdict fell under ``REVIEW_FLOOR`` and the message was dropped entirely —
+    no card, no queue entry, no trace. Four of them, at one employer, in five
+    minutes.
+
+    Written from the mail, not from ``rules.py``. The employer is invented, as
+    every fixture here is; the SHAPE is the real one. Four cases, two minimal
+    pairs, and the pairs are the point:
+
+      * conditional vs asserted — the same clause, once hypothetical and once a
+        decision. A fix that suppresses the phrase everywhere passes the first
+        and fails the second, which is exactly what must not ship.
+      * footer vs no footer — an unsubscribe link in a transactional
+        confirmation, and the same link under a genuine rejection. A fix that
+        stops the footer suppressing ``applied`` must not also stop it where the
+        verdict really is negative.
+    """
+
+    display, _ = b.employer()
+    role = b.role()
+    footer = (
+        "This email was sent to candidate@example.test. Your privacy is "
+        "important to us. Unsubscribe or manage preferences."
+    )
+
+    _plain(
+        b,
+        axis="P12-conditional",
+        expected="applied",
+        subject="Thank you for your application!",
+        sender=b.company_sender(display, 0),
+        provenance="COLLECTED",
+        pair="P12",
+        defects=("shape:applied/conditional-explainer",),
+        note="a confirmation that explains what a rejection WOULD look like",
+        body=f"Hi {CANDIDATE},\n\nThank you for taking the time to submit your "
+        f"application for {role} (Job number: 200045485). We're glad you're "
+        f"interested in a career at {display}, and we're here to help you find your "
+        f"next role.\n\nYou may not receive feedback from us on your application "
+        f"directly, but please know that it's being evaluated, and you'll hear from "
+        f"us as soon as the review process is complete. If you're selected for an "
+        f"interview, you'll be notified by the recruiting team.\n\nUpdates regarding "
+        f"your application status can be viewed through your Action Center. If you "
+        f"see the job moved to an inactive state, that means the position is either "
+        f"no longer open, you withdrew from consideration, or you were not selected "
+        f"for the role.\n\nThank you,\n{display} Recruiting\n\n{footer}\n",
+    )
+
+    display2, _ = b.employer()
+    _plain(
+        b,
+        axis="P12-conditional",
+        expected="rejection",
+        subject="Update on your application",
+        sender=b.human_sender(display2),
+        provenance="COLLECTED",
+        pair="P12",
+        note="THE CONTROL: the same clause asserted, not hypothesised. A fix "
+        "that suppresses the phrase rather than its MOOD breaks here.",
+        body=f"Hi {CANDIDATE},\n\nThank you for your interest in the {role} position "
+        f"at {display2} and for the time you spent with our team.\n\nAfter careful "
+        f"consideration, you were not selected for the role. We had a number of "
+        f"strong candidates and the decision was a difficult one.\n\nWe wish you "
+        f"the very best in your search.\n\nRegards,\n{display2} Talent\n",
+    )
+
+    display3, _ = b.employer()
+    role3 = b.role()
+    _plain(
+        b,
+        axis="P12-conditional",
+        expected="applied",
+        subject="We have received your application",
+        sender=b.human_sender(display3),
+        provenance="COLLECTED",
+        pair="P13",
+        defects=("shape:applied/marketing-footer",),
+        note="an ordinary confirmation carrying the unsubscribe footer that "
+        "every transactional ATS mail carries",
+        body=f"Hi {CANDIDATE},\n\nWe have received your application for the {role3} "
+        f"position at {display3}. Our team reviews every application and will be in "
+        f"touch if there is a match.\n\nThank you for your interest.\n\n"
+        f"{display3} Recruiting\n\n{footer}\n",
+    )
+
+    display4, _ = b.employer()
+    role4 = b.role()
+    _plain(
+        b,
+        axis="P12-conditional",
+        expected="rejection",
+        subject="Your application at " + display4,
+        sender=b.human_sender(display4),
+        provenance="COLLECTED",
+        pair="P13",
+        note="THE OTHER CONTROL: the same footer under a real rejection. "
+        "Relaxing the footer penalty must not rescue this into a confirmation.",
+        body=f"Hi {CANDIDATE},\n\nThank you for applying for the {role4} position at "
+        f"{display4}.\n\nAfter reviewing your application we have decided not to move "
+        f"forward with your candidacy at this time. We appreciate the time you took "
+        f"to apply.\n\nBest wishes,\n{display4} Recruiting\n\n{footer}\n",
     )
 
 
@@ -2428,6 +2551,7 @@ AXES = (
     _axis_p9_someone_elses_outcome,
     _axis_p10_rescission,
     _axis_p11_marketing,
+    _axis_p12_conditional_explainer,
     _axis_encodings,
     _axis_html,
     _axis_subjects,

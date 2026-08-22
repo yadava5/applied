@@ -100,6 +100,96 @@ const POINTS = {
 } as const;
 
 /**
+ * Genre filters: the negatives that say "this is not job mail at all" (a
+ * receipt, a promotion, a security alert, a mailing list) as opposed to the
+ * ones that say "this IS job mail and it is not THIS category". Only the first
+ * kind yields to strong body evidence.
+ *
+ * Kept in lockstep with `_NOISE_NEGATIVES` in
+ * `backend/jobtracker/classifier/rules.py`, membership by exact source string.
+ * A pattern edited on one side and not the other silently returns to full
+ * weight rather than silently keeping the exemption, which is the safer
+ * direction to fail.
+ */
+const NOISE_NEGATIVES: ReadonlySet<string> = new Set([
+  "\\b(unsubscribe|manage preferences|newsletter|digest)\\b",
+  "subscribe|unsubscribe",
+  "newsletter",
+  "\\b(discount|promo(?:tion)?|coupon|sale|limited time offer|flash sale)\\b",
+  "\\b(discount|promo(?:tion)?|coupon|sale|limited time offer)\\b",
+  "discount|promo|sale|off\\b",
+  "\\b(order|purchase|shipment|tracking number)\\b",
+  "\\b(shop|buy|cart|checkout|order|purchase|shipment|tracking number)\\b",
+  "\\b(security alert|verification code|otp|one[- ]time (passcode|password|code)|sign[- ]in|login)\\b",
+  "open.{0,20}account",
+  "premium.{0,20}(free|gift)",
+  "your course",
+]);
+
+const CONDITIONAL_RE = /\b(?:if|should you|in the event(?:\s+that)?|unless|in case)\b/i;
+
+/**
+ * Sentence boundary, in two deterministic steps rather than one regex.
+ *
+ * The obvious single pattern is `/(?<=[.!?])\s+(?=["\u201c(A-Z])/`. It is a
+ * polynomial ReDoS: the greedy `\s+` is followed by a lookahead that can fail,
+ * so a run of N spaces is retried at every offset. The body arrives from
+ * whoever emailed the user, and on this surface it is not even length-capped
+ * the way the server's is.
+ *
+ * Splitting on `\s+` with nothing after it cannot backtrack, and the
+ * capital-letter test then happens in ordinary code. Same boundaries, and it
+ * matches `_SENTENCE_SPLIT` / `_sentences` in the Python original line for
+ * line.
+ */
+const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+/;
+const STARTS_SENTENCE_RE = /^["\u201c(A-Z]/;
+
+function sentences(body: string): string[] {
+  const out: string[] = [];
+  for (const part of body.split(SENTENCE_SPLIT_RE)) {
+    if (out.length > 0 && !STARTS_SENTENCE_RE.test(part)) {
+      out[out.length - 1] = `${out[out.length - 1]} ${part}`;
+    } else {
+      out.push(part);
+    }
+  }
+  return out;
+}
+
+/**
+ * The part of a body the sender is ASSERTING.
+ *
+ * A phrase can appear in a message without being claimed. The case this exists
+ * for is an application confirmation that explains, conditionally, what a
+ * rejection would look like:
+ *
+ *   "... If you see the job moved to an inactive state, that means the position
+ *    is either no longer open, you withdrew from consideration, or you were not
+ *    selected for the role."
+ *
+ * Nothing has been decided, but two strong rejection patterns fire on it. In
+ * production that scored `rejection` at 0.60 and the message was discarded
+ * without a trace; it cost the owner four applications on 2026-08-21.
+ *
+ * The mask runs from the conditional marker to the END of its sentence, never
+ * over the whole sentence: "You were not selected for the role, and if you
+ * would like feedback please ask" is a real rejection whose verdict sits before
+ * the marker.
+ *
+ * Mirrors `asserted_text` in `backend/jobtracker/classifier/rules.py`.
+ */
+export function assertedText(body: string): string {
+  if (!body) return body;
+  return sentences(body)
+    .map((sentence) => {
+      const marker = CONDITIONAL_RE.exec(sentence);
+      return marker ? sentence.slice(0, marker.index) : sentence;
+    })
+    .join(" ");
+}
+
+/**
  * The one scoring walk. `classifyWithRules` runs it bare; `traceRules` passes
  * a recorder. Splitting the walk from the wrappers is what keeps the trace
  * honest by construction: there is no second reading of the rules that could
@@ -112,6 +202,11 @@ function score(
   record?: (hit: RuleHit) => void,
 ): RulesVerdict {
   const scores: Record<string, number> = {};
+
+  // ONCE, before any pattern sees it. Every `re.test(body)` below is testing
+  // what the sender ASSERTS. The subject is left alone by design: it is short,
+  // and a conditional subject is not a real shape.
+  body = assertedText(body);
 
   let isAts = false;
   if (sender && sender.includes("@")) {
@@ -131,12 +226,19 @@ function score(
 
   for (const [cat, g] of Object.entries(CATS)) {
     let s = 0;
+    // Tracked apart from the subject case: a subject is a headline and the
+    // cheapest part of a message to make look like job mail, so it does NOT
+    // outrank a genre filter reading the body. Earned, not designed — letting
+    // it count turned "Thanks for applying" / "your course is unfortunately
+    // over" from other into applied.
+    let hasStrongBody = false;
     for (const re of g.strong) {
       if (re.test(subject)) {
         s += POINTS.strong.subject;
         at(cat, "strong", "subject", POINTS.strong.subject, re);
       } else if (re.test(body)) {
         s += POINTS.strong.body;
+        hasStrongBody = true;
         at(cat, "strong", "body", POINTS.strong.body, re);
       }
     }
@@ -150,10 +252,15 @@ function score(
       }
     }
     for (const re of g.negative) {
-      if (re.test(subject) || re.test(body)) {
-        s -= 5;
-        at(cat, "negative", re.test(subject) ? "subject" : "body", -5, re);
-      }
+      if (!(re.test(subject) || re.test(body))) continue;
+      // A negative says "this only RESEMBLES the category". Strong body
+      // evidence says it does more than resemble it — but only a GENRE filter
+      // may be outranked. A semantic refutation ("regret to inform" on offer)
+      // keeps its full weight however strong the positive evidence, which is
+      // what stops a rescinded offer reading as an offer.
+      if (hasStrongBody && NOISE_NEGATIVES.has(re.source)) continue;
+      s -= 5;
+      at(cat, "negative", re.test(subject) ? "subject" : "body", -5, re);
     }
     for (const re of g.veto) {
       if (re.test(subject) || re.test(body)) {
