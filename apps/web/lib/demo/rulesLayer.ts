@@ -229,9 +229,17 @@ export function stripQuotedHistory(body: string): string {
 /**
  * A subject that belongs to the CONVERSATION rather than to this message.
  *
+ * Bounded on every quantifier, and the optional counter carries its own
+ * trailing space. The obvious form is `/^\s*(?:re|fw|fwd)\s*(?:\[\d+\])?\s*:/`
+ * and it is a polynomial ReDoS for the same reason `SENTENCE_SPLIT_RE` above
+ * is written the way it is: with the counter absent the two `\s*` sit
+ * adjacent, so a run of N spaces after "Re" is re-partitioned at every offset.
+ * Subjects come from whoever emailed the user, and on this surface they are
+ * not length-capped the way the server's are.
+ *
  * Mirrors `_REPLY_SUBJECT` in the Python original.
  */
-const REPLY_SUBJECT_RE = /^\s*(?:re|fw|fwd)\s*(?:\[\d+\])?\s*:/i;
+const REPLY_SUBJECT_RE = /^[ \t]{0,8}(?:re|fw|fwd)[ \t]{0,8}(?:\[\d{1,4}\][ \t]{0,8})?:/i;
 
 /**
  * The part of a body the sender is ASSERTING.

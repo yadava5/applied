@@ -937,7 +937,17 @@ _MIN_ASSERTED_CHARS = 40
 #: note in that thread all look like from the outside. Scoring it at subject
 #: weight tells the classifier the message is a confirmation before it has read
 #: a word the sender wrote.
-_REPLY_SUBJECT = re.compile(r"^\s*(?:re|fw|fwd)\s*(?:\[\d+\])?\s*:", re.IGNORECASE)
+#: Bounded on every quantifier, and the optional counter carries its own
+#: trailing space. The obvious form is ``^\s*(?:re|fw|fwd)\s*(?:\[\d+\])?\s*:``
+#: and it is a polynomial ReDoS: when the counter does not match, the two
+#: ``\s*`` sit adjacent and a run of N spaces after "Re" is re-partitioned at
+#: every offset. Subjects come from whoever emailed the user. CodeQL caught
+#: this one; the same reasoning is already written up for the sentence splitter
+#: in the TypeScript port.
+_REPLY_SUBJECT = re.compile(
+    r"^[ \t]{0,8}(?:re|fw|fwd)[ \t]{0,8}(?:\[\d{1,4}\][ \t]{0,8})?:",
+    re.IGNORECASE,
+)
 
 
 def strip_quoted_history(body: str) -> str:
