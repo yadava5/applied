@@ -37,7 +37,7 @@ CASES = generate()
 
 
 def test_corpus_is_the_declared_size_and_shape() -> None:
-    assert len(CASES) == TOTAL == 400
+    assert len(CASES) == TOTAL == 404
     for category, want in WEIGHTING.items():
         got = sum(1 for c in CASES if c.expected == category)
         assert got == want, f"{category}: {got} cases, budgeted {want}"
@@ -60,17 +60,23 @@ def test_no_two_cases_are_the_same_message() -> None:
 
 
 def test_every_confusion_pair_is_present_and_none_rests_on_flavour() -> None:
-    """P1-P11 must all exist, and none may be built from INFERRED text alone.
+    """P1-P13 must all exist, and none may be built from INFERRED text alone.
 
     An INFERRED-only pair would let a number derived from invented flavour be
     cited later as evidence about real mail.
+
+    P12 and P13 landed on 2026-08-21 with the ``P12-conditional`` axis. P12 is
+    the conditional/asserted pair for "you were not selected"; P13 is the same
+    marketing footer under a confirmation and under a real rejection. Both are
+    COLLECTED — the shape came from real mail that cost the owner four
+    applications, reproduced under an invented employer.
     """
 
     by_pair: dict[str, set[str]] = {}
     for case in CASES:
         if case.pair:
             by_pair.setdefault(case.pair, set()).add(case.provenance)
-    assert sorted(by_pair, key=lambda p: int(p[1:])) == [f"P{i}" for i in range(1, 12)]
+    assert sorted(by_pair, key=lambda p: int(p[1:])) == [f"P{i}" for i in range(1, 14)]
     for pair, provenances in by_pair.items():
         assert provenances - {"INFERRED"}, f"{pair} rests on INFERRED text alone"
 
