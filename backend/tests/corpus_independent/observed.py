@@ -226,6 +226,26 @@ OBSERVED_CONFIRMATIONS: tuple[Template, ...] = (
 
 #: Rejections. NOT ONE of these leads with its verdict; every one spends the
 #: opening on courtesy, which is why the snippet families exist.
+#: The one observed rejection that is classified CORRECTLY and still scores
+#: under the auto-file gate — ``rejection`` at 0.75, on the full body and on the
+#: snippet alike (measured 2026-08-22). Named because a family that needs to
+#: exercise the REVIEW QUEUE needs exactly this: mail the product understands
+#: and is not confident enough to file. Mail that clears the gate goes straight
+#: to a card and never reaches the queue at all, which is why
+#: ``one-thread-many-roles`` could not red on #454.
+#:
+#: Its confidence is a property of the rules and may move. The corpus test
+#: therefore asserts that the family built on it actually reaches the queue,
+#: rather than trusting this note to stay true.
+UNDER_THE_GATE: Template = (
+    "Thank you for your interest in {display}, Ayush",
+    "Hi Ayush, Thank you for your interest in the {role} opportunity. It "
+    "means a lot to us that you would consider joining our mission here at "
+    "{display}. Although your background is impressive, we have decided not "
+    "to move forward at this time.",
+    "Greenhouse, thread 19ffc2cae1b51518 — never uses the word application",
+)
+
 OBSERVED_REJECTIONS: tuple[Template, ...] = (
     (
         "Thank you from {display} - Ayush Yadav - {role}",
@@ -243,14 +263,7 @@ OBSERVED_REJECTIONS: tuple[Template, ...] = (
         "your application at this time.",
         "in-house, thread 1a0007799088bec6 — verdict past the snippet",
     ),
-    (
-        "Thank you for your interest in {display}, Ayush",
-        "Hi Ayush, Thank you for your interest in the {role} opportunity. It "
-        "means a lot to us that you would consider joining our mission here at "
-        "{display}. Although your background is impressive, we have decided not "
-        "to move forward at this time.",
-        "Greenhouse, thread 19ffc2cae1b51518 — never uses the word application",
-    ),
+    UNDER_THE_GATE,
     (
         "Thank You from {display}",
         "Hi Ayush, Thank you for taking the time to apply to the {role} role "

@@ -3654,6 +3654,91 @@ async def test_classifying_a_thread_settles_every_message_in_it(
     assert {e.application_id for e in rows} == {app_id}
 
 
+def _verkada_item(message_id: str, role: str, received_at: str) -> dict:
+    """One message of the real Verkada thread, uncertain enough for the queue.
+
+    Thread ``19ff36237eef1ef3``, read from the owner's mailbox 2026-08-22: five
+    Greenhouse acknowledgements for FOUR roles, all under one subject from one
+    no-reply address, which is exactly why Gmail threaded them. Snippets are
+    Gmail's own. Scored under the auto-file gate because the queue is the path
+    under test — mail that clears the gate never reaches it.
+    """
+
+    return {
+        "message_id": message_id,
+        "category": "applied",
+        "sender_email": "no-reply@us.greenhouse-mail.io",
+        "sender_name": "Verkada",
+        "subject": "Thank you for applying to Verkada",
+        "snippet": (
+            f"Hi Ayush, Thank you so much for applying to the {role} role at "
+            "Verkada! We are always looking for great talent and we are excited "
+            "to receive your application. We will review it as"
+        ),
+        "confidence": 0.78,
+        "thread_id": "19ff36237eef1ef3",
+        "received_at": received_at,
+    }
+
+
+_VERKADA_THREAD = (
+    ("19ff36237eef1ef3", "Backend Engineer, Alarms"),
+    ("19ff39a08b3bc051", "Frontend Engineer - Access Control"),
+    ("19ff39afaed0fc1d", "Backend Engineer - Connectivity"),
+    ("19ff3c8bf80031ab", "Backend Engineer, Alarms"),
+    ("19ff3c8c90a8650d", "Embedded Software Engineer, Access Control"),
+)
+
+
+async def test_one_ats_thread_is_asked_about_once_per_application(
+    client: AsyncClient,
+) -> None:
+    """Four applications in one Gmail thread, and the user is asked four times.
+
+    The whole cycle, because a fix at fewer than every site is invisible: the
+    pipeline can queue four rows and the endpoint still render one. Sync, queue,
+    the summary tile the queue is linked from, and then classifying one entry —
+    which must settle its own duplicate and NOTHING else. Issue #454.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    resp = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                _verkada_item(mid, role, f"2026-08-12T0{i}:00:00+00:00")
+                for i, (mid, role) in enumerate(_VERKADA_THREAD)
+            ]
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    queue = (await client.get("/applications/review", headers=headers)).json()
+    # Five messages, four applications: the two "Backend Engineer, Alarms"
+    # acknowledgements are ONE decision, and the other three are their own.
+    assert queue["total"] == 4, [i["snippet"][:60] for i in queue["items"]]
+    # The tile the queue is reached from must agree with it.
+    summary = (await client.get("/applications/summary", headers=headers)).json()
+    assert summary["needs_review"] == 4
+
+    # Classifying one settles that application and leaves the other three.
+    representative = queue["items"][0]["message_id"]
+    classified = await client.post(
+        f"/applications/review/{representative}/classify",
+        json={"category": "applied"},
+        headers=headers,
+    )
+    assert classified.status_code == 200, classified.text
+
+    remaining = (await client.get("/applications/review", headers=headers)).json()
+    assert remaining["total"] == 3
+    assert (
+        await client.get("/applications/summary", headers=headers)
+    ).json()["needs_review"] == 3
+
+
 # =============================================================================
 # What ``scanned`` is allowed to imply
 # =============================================================================

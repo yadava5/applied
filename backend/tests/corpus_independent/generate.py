@@ -909,6 +909,65 @@ def _req_id_same_title(b: _Builder, n: int) -> None:
             )
 
 
+def _one_thread_many_roles_in_the_queue(b: _Builder, n: int) -> None:
+    """The same lie about a thread, on the path that ASKS instead of filing.
+
+    ``one-thread-many-roles`` covers the filing half and cannot cover this one:
+    every message in it clears the auto-file gate, so it becomes a card and
+    never reaches ``collect_review_items`` at all. That is exactly why #454
+    shipped — the queue keyed on the thread alone for months with a green
+    corpus behind it, and one ATS conversation collapsed to a single entry.
+
+    So this family is the same shape at a confidence that reaches the QUEUE:
+    four rejections, four roles, one Gmail thread, all drawn from
+    ``observed.UNDER_THE_GATE`` — the one transcribed wording the classifier
+    reads correctly and is not confident enough to file. Under the old key the
+    queue asked about one of the four and the other three were LOST: no card, no
+    entry, no counter.
+
+    Four rejections and no confirmations is not the whole story of an
+    application and does not need to be. What is being measured here is how many
+    DECISIONS a conversation becomes, and adding an acknowledgement ahead of
+    each one would file the card the rejection then joins, which is a different
+    question that ``update-joins-one-application`` already asks.
+    """
+
+    subject_t, body_t, _note = observed.UNDER_THE_GATE
+    for i in range(n):
+        display, token = b.employer()
+        sender = b.ats(i)
+        # One subject, one sender — which is the whole reason Gmail threads
+        # them, and the reason the rejections of four different applications
+        # arrive looking like one conversation.
+        thread = f"ats-verdict-{token}"
+        for k, role in enumerate(b.roles(4)):
+            fill = {"display": display, "role": role, "req": f"R-{700000 + i}"}
+            b.add(
+                family="one-thread-many-roles-in-the-queue",
+                subject=subject_t.format(**fill),
+                sender=sender,
+                sender_name=f"{display} Recruiting",
+                body=body_t.format(**fill),
+                expected_category="rejection",
+                identity=f"{token}|{role}",
+                employer=token,
+                thread=thread,
+                # ALL FOUR ON ONE DAY, and that is not cosmetic. The harness
+                # replays in day-sized batches because that is what a sync is,
+                # so a thread spread over four days is four syncs of one message
+                # each and the collapse being measured cannot even arise. The
+                # first draft of this family did exactly that and stayed green
+                # under a deliberately reverted fix. The real thread arrived
+                # inside two hours.
+                day=i % 40,
+                adversarial=True,
+                note=(
+                    "four applications, one Gmail thread, one sync — and none "
+                    "of them confident enough to file, so the QUEUE holds four"
+                ),
+            )
+
+
 def _ats_relay_noise(b: _Builder, n: int) -> None:
     """Mail from a known ATS relay that is NOT about an application of yours.
 
@@ -1903,6 +1962,11 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("update-outside-the-thread", _update_outside_the_thread, 300),
     ("reopen-after-rejection", _reopen_after_rejection, 250),
     ("update-picks-between-two", _update_picks_between_two, 250),
+    # APPENDED LAST, deliberately. The builder shares one seeded RNG across
+    # families, so inserting a family anywhere else re-draws every employer,
+    # role and wording after it and the whole recorded run moves at once. At
+    # the end, the delta is this family and nothing else.
+    ("one-thread-many-roles-in-the-queue", _one_thread_many_roles_in_the_queue, 60),
 )
 
 

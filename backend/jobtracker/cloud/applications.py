@@ -2392,11 +2392,15 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
     those are excluded up front so a subsequent low-confidence re-scan cannot
     un-link them. Returns the number of dated items surfaced this pass.
 
-    Settled is judged per THREAD as well as per message. A conversation the user
-    has already decided about must not come back to the queue because a later
-    message arrived on it — that is the same "classify this application twice"
-    the thread grouping in :func:`pipeline.collect_review_items` removes, only
-    spread across two syncs instead of one.
+    Settled is judged per (THREAD, APPLICATION) as well as per message. A
+    conversation the user has already decided about must not come back to the
+    queue because a later message arrived on it — that is the same "classify
+    this application twice" the grouping in
+    :func:`pipeline.collect_review_items` removes, only spread across two syncs
+    instead of one. It carries the same identity component for the same reason
+    that one does (#454): an ATS thread holds several applications, and settling
+    by thread alone would let one answered rejection suppress the other three
+    forever.
     """
 
     refs = [
@@ -2428,7 +2432,12 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
     if scoped:
         rows = (
             await session.exec(
-                select(Email.message_id, Email.thread_id).where(
+                select(
+                    Email.message_id,
+                    Email.thread_id,
+                    Email.subject,
+                    Email.body_snippet,
+                ).where(
                     Email.user_id == user_id,
                     or_(*scoped),
                     or_(
@@ -2438,15 +2447,35 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                 )
             )
         ).all()
-        settled_messages = {message_id for message_id, _thread_id in rows}
-        settled_threads = {
-            thread_id for _message_id, thread_id in rows if thread_id
+        settled_messages = {row[0] for row in rows}
+        # SETTLED PER (THREAD, APPLICATION) — the cross-sync twin of the key in
+        # :func:`pipeline.collect_review_items`, and #454 is only half fixed
+        # without it. Settling by thread alone means the user classifying ONE of
+        # Verkada's four rejections permanently suppresses the other three: they
+        # are filtered out here on every later sync, so the within-sync fix
+        # cannot reach them. Same :func:`pipeline.review_dedup_key` as every
+        # other site, computed from the stored subject and snippet.
+        settled_applications = {
+            pipeline.review_dedup_key(
+                message_id=message_id,
+                thread_id=thread_id,
+                subject=subject or "",
+                snippet=snippet or "",
+            )
+            for message_id, thread_id, subject, snippet in rows
+            if thread_id
         }
         refs = [
             r
             for r in refs
             if r.message_id not in settled_messages
-            and (r.thread_id is None or r.thread_id not in settled_threads)
+            and pipeline.review_dedup_key(
+                message_id=r.message_id,
+                thread_id=r.thread_id,
+                subject=r.subject or "",
+                snippet=r.snippet or "",
+            )
+            not in settled_applications
         ]
 
     await _persist_message_refs(session, user_id, None, refs)
@@ -3395,7 +3424,7 @@ async def _settle_thread_siblings(
     if not email.thread_id:
         return 0
 
-    siblings = (
+    conversation = (
         await session.exec(
             select(Email).where(
                 Email.user_id == user_id,
@@ -3406,6 +3435,30 @@ async def _settle_thread_siblings(
             )
         )
     ).all()
+    # SAME THREAD IS NOT ENOUGH — issue #454. A sibling is settled by this
+    # decision only when it is about the SAME APPLICATION, which for an ATS
+    # thread is not everything in the conversation: classifying one of Verkada's
+    # four acknowledgements used to mark the other three reviewed and link them
+    # to that one application, which both loses three applications and files
+    # their mail on the wrong card. The Crusoe pair still settle each other —
+    # neither names an application, so both keys are ``None``.
+    decided = pipeline.review_dedup_key(
+        message_id=email.message_id,
+        thread_id=email.thread_id,
+        subject=email.subject or "",
+        snippet=email.body_snippet or "",
+    )
+    siblings = [
+        s
+        for s in conversation
+        if pipeline.review_dedup_key(
+            message_id=s.message_id,
+            thread_id=s.thread_id,
+            subject=s.subject or "",
+            snippet=s.body_snippet or "",
+        )
+        == decided
+    ]
 
     for sibling in siblings:
         sibling.is_reviewed = True
@@ -3764,27 +3817,46 @@ async def application_summary_cloud(
             )
         ).one()
 
-        # Counted per THREAD, exactly like the queue this number links to —
-        # otherwise the tile says "2 need classification" for one conversation
-        # the queue shows once, and the two disagree in the UI.
-        needs_review = (
+        # Counted by the same key as the queue this number links to — otherwise
+        # the tile says "2 need classification" for one conversation the queue
+        # shows once, and the two disagree in the UI.
+        #
+        # NOT `COUNT(DISTINCT COALESCE(thread_id, message_id))`, which is what
+        # this was until #454. That expression can only see the thread, and the
+        # queue no longer keys on the thread alone: Verkada's four applications
+        # share one, so the tile read 1 where the queue now lists 4. The key
+        # needs the subject and snippet, which SQL here cannot parse, so the
+        # rows come back and :func:`pipeline.review_dedup_key` counts them —
+        # the same function the endpoint uses, so the two cannot drift.
+        #
+        # Bounded by the queue itself: unlinked, un-reviewed ``needs_review``
+        # rows only, and four columns of each.
+        pending = (
             await session.exec(
                 select(
-                    func.count(
-                        func.distinct(
-                            func.coalesce(Email.thread_id, Email.message_id)
-                        )
-                    )
-                )
-                .select_from(Email)
-                .where(
+                    Email.message_id,
+                    Email.thread_id,
+                    Email.subject,
+                    Email.body_snippet,
+                ).where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
                     Email.application_id.is_(None),
                     Email.is_reviewed == False,  # noqa: E712
                 )
             )
-        ).one()
+        ).all()
+        needs_review = len(
+            {
+                pipeline.review_dedup_key(
+                    message_id=message_id,
+                    thread_id=thread_id,
+                    subject=subject or "",
+                    snippet=snippet or "",
+                )
+                for message_id, thread_id, subject, snippet in pending
+            }
+        )
 
     status_counts: dict[str, int] = {}
     total = 0
@@ -3902,10 +3974,17 @@ async def review_queue_cloud(
         account_email = await _connected_account_email(user_id, session)
 
     items: list[ReviewItemResponse] = []
-    seen_threads: set[str] = set()
+    seen_threads: set[tuple[str, str | None] | str] = set()
     for e in rows:
-        # Mail with no thread id stands alone under its own message id.
-        key = e.thread_id or e.message_id
+        # One entry per (conversation, application) — see
+        # :func:`pipeline.review_dedup_key`. Mail with no thread id stands alone
+        # under its own message id.
+        key = pipeline.review_dedup_key(
+            message_id=e.message_id,
+            thread_id=e.thread_id,
+            subject=e.subject or "",
+            snippet=e.body_snippet or "",
+        )
         if key in seen_threads:
             continue
         seen_threads.add(key)

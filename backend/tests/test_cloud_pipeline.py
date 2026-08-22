@@ -583,6 +583,168 @@ def test_review_items_include_uncertain_band_and_needs_review() -> None:
     assert [r.company_token for r in p.roll_up_applications(items)] == ["acme"]
 
 
+# --- one ATS thread, several applications (#454) ------------------------------
+
+#: Thread ``19ff36237eef1ef3`` of the owner's mailbox, read 2026-08-22. Five
+#: Greenhouse acknowledgements for FOUR Verkada roles, all under one subject
+#: from one no-reply address, which is why Gmail threaded them. Snippets are
+#: Gmail's own, verbatim; only the message ids are the real ones too.
+_VERKADA_THREAD = (
+    ("19ff36237eef1ef3", "Backend Engineer, Alarms"),
+    ("19ff39a08b3bc051", "Frontend Engineer - Access Control"),
+    ("19ff39afaed0fc1d", "Backend Engineer - Connectivity"),
+    ("19ff3c8bf80031ab", "Backend Engineer, Alarms"),
+    ("19ff3c8c90a8650d", "Embedded Software Engineer, Access Control"),
+)
+
+
+def _verkada(mid: str, role: str, minute: int) -> p.PipelineItem:
+    """One message of that thread, scored UNDER the auto-file gate.
+
+    Under the gate on purpose: the queue is the path being tested, and mail that
+    clears the gate never reaches it. The corpus family ``one-thread-many-roles``
+    covers the confident half and cannot red on this — every one of its messages
+    files a card and skips ``collect_review_items`` entirely.
+    """
+
+    return p.PipelineItem(
+        message_id=mid,
+        category="applied",
+        sender_email="no-reply@us.greenhouse-mail.io",
+        sender_name="Verkada",
+        subject="Thank you for applying to Verkada",
+        snippet=(
+            f"Hi Ayush, Thank you so much for applying to the {role} role at "
+            "Verkada! We are always looking for great talent and we are excited "
+            "to receive your application. We will review it as"
+        ),
+        received_at=NOW - timedelta(minutes=minute),
+        confidence=0.78,
+        thread_id="19ff36237eef1ef3",
+    )
+
+
+def test_one_ats_thread_asks_about_every_application_in_it() -> None:
+    """Four applications share one Gmail thread; the queue must hold four.
+
+    An ATS sends every acknowledgement for an employer under one subject from
+    one address, and Gmail threads on subject plus sender. Keyed on the thread
+    alone the queue held ONE entry and the other three applications reached no
+    card, no queue and no counter.
+
+    The duplicate is the other half of the assertion: two of the five messages
+    name the same role, and they must still be ONE decision. Five messages,
+    four entries — not five, and not one.
+    """
+
+    items = [
+        _verkada(mid, role, minute)
+        for minute, (mid, role) in enumerate(_VERKADA_THREAD)
+    ]
+    review = p.collect_review_items(items)
+
+    roles = sorted(
+        p.application_sub_key(r.subject, r.snippet) for r in review
+    )
+    assert roles == [
+        "backend engineer alarms",
+        "backend engineer connectivity",
+        "embedded software engineer access control",
+        "frontend engineer access control",
+    ]
+    assert len(review) == 4
+
+
+def test_a_thread_naming_no_application_is_still_one_decision() -> None:
+    """The control, and the case the thread key was added for.
+
+    Emails 58 and 73 of thread ``19fed7e0706ee704`` — "Crusoe | Application
+    Received", twice, with no body to extract a role from. Both sub-keys are
+    ``None``, so widening the key by identity must not widen this: the owner is
+    asked once, exactly as before #454.
+    """
+
+    def crusoe(mid: str, minute: int) -> p.PipelineItem:
+        return p.PipelineItem(
+            message_id=mid,
+            category="applied",
+            sender_email="no-reply@ashbyhq.com",
+            sender_name="Crusoe",
+            subject="Crusoe | Application Received",
+            received_at=NOW - timedelta(minutes=minute),
+            confidence=0.78,
+            thread_id="19fed7e0706ee704",
+        )
+
+    review = p.collect_review_items(
+        [crusoe("19fed7e0706ee704", 0), crusoe("19fedeb77e1accb3", 1)]
+    )
+    assert [r.message_id for r in review] == ["19fed7e0706ee704"]
+
+
+def test_unthreaded_mail_is_keyed_by_message_and_never_by_role() -> None:
+    """No thread id, no widening.
+
+    Two employers, no threads, and mail that normalizes to the same role token.
+    A ``(None, sub_key)`` key would make these one entry and lose an
+    application; the bare ``message_id`` fallback cannot.
+    """
+
+    def loose(mid: str, company: str) -> p.PipelineItem:
+        return p.PipelineItem(
+            message_id=mid,
+            category="applied",
+            sender_email=f"careers@{company}.com",
+            sender_name=company.title(),
+            subject=f"Your application to {company.title()}",
+            snippet=(
+                "Thank you for applying to the Software Engineer role. We have "
+                "received your application and will review it shortly."
+            ),
+            received_at=NOW,
+            confidence=0.78,
+        )
+
+    review = p.collect_review_items([loose("m1", "acme"), loose("m2", "globex")])
+    assert {r.message_id for r in review} == {"m1", "m2"}
+
+
+def test_the_review_key_is_computed_from_the_text_that_is_stored() -> None:
+    """A decision has to settle the row it was made about.
+
+    The pipeline keys on ``PipelineItem.snippet``, which ``POST /gmail/sync``
+    accepts up to 2000 characters. The row it becomes holds
+    ``Email.body_snippet``, which is 500. Every later site — the queue endpoint,
+    the summary tile, the sibling settle, the additive persist — recomputes the
+    key from the STORED text, so a role sitting past character 500 gave one key
+    at sync and a different one at settle: the row could never be settled and
+    came back on every sync.
+
+    Both directions are asserted. The short snippet is the control: truncating
+    must not be a blanket "ignore the snippet", which would pass the first
+    assertion by making every key ``(thread, None)``.
+    """
+
+    subject = "Thank you for applying to Verkada"
+    filler = "We appreciate the time you invested in our process. " * 10
+    late = f"Hi Ayush, {filler} We received your application for the Backend Engineer, Alarms role."
+    assert len(late) > p.STORED_SNIPPET_CHARS
+
+    def key(snippet: str):
+        return p.review_dedup_key(
+            message_id="m", thread_id="t", subject=subject, snippet=snippet
+        )
+
+    assert key(late) == key(late[: p.STORED_SNIPPET_CHARS])
+
+    early = (
+        "Hi Ayush, Thank you so much for applying to the Backend Engineer, "
+        "Alarms role at Verkada! We will review it as soon as we can."
+    )
+    assert len(early) < p.STORED_SNIPPET_CHARS
+    assert key(early) == ("t", "backend engineer alarms")
+
+
 # --- gmail_deeplink ----------------------------------------------------------
 
 

@@ -6,7 +6,7 @@ the rules or the resolver has to move it deliberately rather than silently.
 
 Read the headline with its corpus. This one is 18% adversarial by construction —
 mail written to defeat the classifier, not mail that happens to be hard — so
-92.83% describes behaviour on a stress corpus and not the accuracy a user would
+91.65% describes behaviour on a stress corpus and not the accuracy a user would
 see on their own inbox. The families are reported separately for that reason.
 
 The known defects are pinned AS DEFECTS, at their measured size, rather than
@@ -29,8 +29,8 @@ from tests.corpus_independent.harness import (
 
 #: Recorded 2026-08-22. A corpus that differs between runs cannot be a gate, and
 #: a digest is the only way to say "the same mail" without shipping 24MB.
-CORPUS_DIGEST = "9916bf7d5ef4fe90"
-CORPUS_SIZE = 16780
+CORPUS_DIGEST = "417bc49058d5da5e"
+CORPUS_SIZE = 17020
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -39,9 +39,15 @@ CORPUS_SIZE = 16780
 #: not literals inside the asserts. A published number that nothing recomputes
 #: is a claim, and this repository has a ledger of those.
 RECORDED = {
-    "size": 16780,
-    "companies": 9120,
-    "correct": 15359,
+    "size": 17020,
+    # DISTINCT FAMILY LABELS in the generated corpus, which is 35 and not the
+    # 33 generators in ``_FAMILIES``: two generators emit a second label of
+    # their own (``hostile-zero-width``, ``hostile-homoglyph``). The README and
+    # the System Card both print a family count and both had drifted — 32 and
+    # 24 against a real 35 — because nothing recomputed it. Now something does.
+    "families": 35,
+    "companies": 9180,
+    "correct": 15599,
     "wrong": 401,
     "abstained": 1020,
     # The number that matters more than `wrong`: how many wrong verdicts are
@@ -109,6 +115,7 @@ def verdicts(cases):
 
 def test_the_corpus_is_the_same_corpus(cases) -> None:
     assert CORPUS_SIZE == RECORDED["size"]
+    assert len({c.family for c in cases}) == RECORDED["families"]
     assert len(cases) == CORPUS_SIZE
     assert digest(cases)[:16] == CORPUS_DIGEST, (
         "the corpus changed. That is allowed — but every number in this file "
@@ -791,6 +798,29 @@ async def test_every_application_mail_is_addressed(
         "about no application of the user's were put in front of them to "
         "classify. The #447 floor has widened to the SENDER, which is the "
         "decision `collect_review_items` declined to make."
+    )
+
+    # THE #454 FAMILY HAS TO REACH THE QUEUE, or it measures nothing.
+    #
+    # It is built on the one transcribed wording that is classified correctly
+    # and still scores under the auto-file gate (``observed.UNDER_THE_GATE``,
+    # `rejection` at 0.75). Confidence is a property of the rules and can move:
+    # if that wording ever clears the gate, all 240 file cards instead, every
+    # assertion above still passes, and the queue collapse stops being covered
+    # — which is exactly how `one-thread-many-roles` sat green through #454 for
+    # months.
+    #
+    # 240 of 240, not "more than zero". Under the old thread-only key this read
+    # 60 and the other 180 were LOST; measured by reverting the key.
+    in_the_queue = {
+        c.message_id
+        for c in cases
+        if c.family == "one-thread-many-roles-in-the-queue"
+    }
+    assert len(in_the_queue & replayed.reviewed) == 240, (
+        f"{len(in_the_queue & replayed.reviewed)} of {len(in_the_queue)} — the "
+        "family that exercises the review queue's dedup key is no longer "
+        "reaching the review queue, so #454 is uncovered whatever it reports."
     )
 
     # The distinction is the whole reason these are two numbers. Both are

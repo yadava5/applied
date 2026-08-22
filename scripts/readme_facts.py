@@ -746,11 +746,40 @@ FACTS: dict[str, dict] = {
             r"invents \*\*([\d,]+) messages\n?",
             r"Correct \| \*\*[\d,]+ of ([\d,]+) —",
             # printed in the System Card booklet, page 22
-            {"re": r"([\d,]+) invented messages across", "file": BOOKLET_CONTENT},
+            {"re": r"([\d,]+) generated messages across", "file": BOOKLET_CONTENT},
             {
                 "re": r'value: "([\d,]+)", label: "messages · adversarial corpus"',
                 "file": BOOKLET_CONTENT,
             },
+        ],
+    },
+    "corpusFamilies": {
+        "kind": "static",
+        "describe": f"RECORDED['families'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("families"),
+        "sites": [
+            r"across (\d+) families over",
+            {"re": r"across (\d+) families over", "file": BOOKLET_CONTENT},
+            {"re": r'note: "(\d+) families · [\d,]+ companies"', "file": BOOKLET_CONTENT},
+        ],
+    },
+    # THE PERCENTAGE, and not only the two counts it is derived from. Both
+    # already had sites here and both were rewritten correctly on 2026-08-22 —
+    # while the sentence beside them still said 92.83%, because a percentage is
+    # prose to a checker that only looks for integers. Same shape as the
+    # "Two"-versus-2 slip the gate caught earlier. Derived rather than recorded,
+    # so it cannot disagree with its own numerator and denominator.
+    "corpusAccuracy": {
+        "kind": "static",
+        "describe": f"RECORDED['correct'] / RECORDED['size'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("correct") * 100 / corpus_recorded("size"),
+        "sites": [
+            r"Correct \| \*\*[\d,]+ of [\d,]+ — ([\d.]+)%\*\*",
+            r"and is ([\d.]+)%\n?on the same engine",
+            r"\. ([\d.]+)% is the first number here",
+            {"re": r"correct \(([\d.]+)%\)", "file": BOOKLET_CONTENT},
+            {"re": r'value: "([\d.]+)%", label: "correct · stress corpus"', "file": BOOKLET_CONTENT},
+            {"re": r"so ([\d.]+)% is behaviour under stress", "file": BOOKLET_CONTENT},
         ],
     },
     "corpusCompanies": {
