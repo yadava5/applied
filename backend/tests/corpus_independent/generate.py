@@ -87,6 +87,33 @@ ROLES: tuple[str, ...] = (
     "Product Engineer",
     "Associate Software Engineer",
     "Software Engineer, Early Career",
+    # THE LONG TAIL, and it is not decoration — every title above is at most 31
+    # characters, and that is why no gate in this repo had ever exercised a
+    # bounded window against a realistic one. Measured in the owner's mailbox
+    # 2026-08-22, real titles run to 78:
+    #
+    #   78  Software Development Engineer I - AI/ML Network Infra..., <Sub-brand>
+    #   72  Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer 2026)
+    #   66  Software Development Engineer I, ML Infra Services, <Sub-brand>
+    #   58  Software Engineer, Agentic AI Harness & Quality - <Product>
+    #   47  Associate Software Engineer, Operator Experience
+    #
+    # SHAPES ARE REAL, NAMES ARE NOT, the same rule `observed.py` follows: the
+    # employer sub-brands and product names in the originals are replaced with
+    # invented ones of the same length, because which companies the owner
+    # applied to is career-sensitive and the LENGTH is the whole point.
+    #
+    # `_ROLE_PATTERNS` bounds its capture at 90 characters and a real Amazon
+    # confirmation puts the requisition id between the title and the word
+    # "position" — 92 characters — so the regex backtracked and returned a
+    # PARTIAL title, silently dropping the first word. The role token is the
+    # application identity, so the confirmation and a later update disagreed
+    # about which application they were. See #466.
+    "Software Development Engineer I - AI/ML Network Infrastructure, Kestrel Labs",
+    "Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer 2026)",
+    "Software Development Engineer I, ML Infra Services, Kestrel Labs",
+    "Software Engineer, Agentic AI Harness & Quality - Talonflow",
+    "Associate Software Engineer, Operator Experience",
 )
 
 #: Relay domains, borrowed as SHAPES. Every employer sending through them is
