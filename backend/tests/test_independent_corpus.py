@@ -32,6 +32,21 @@ from tests.corpus_independent.harness import (
 CORPUS_DIGEST = "b05addb692c9a048"
 CORPUS_SIZE = 10040
 
+#: THE RECORDED RUN, in one place, because the README quotes it.
+#:
+#: ``scripts/readme_facts.py`` registers these and fails the build when the
+#: README and this dict disagree, which is the whole reason they are a dict and
+#: not literals inside the asserts. A published number that nothing recomputes
+#: is a claim, and this repository has a ledger of those.
+RECORDED = {
+    "size": 10040,
+    "companies": 5670,
+    "correct": 8930,
+    "wrong": 473,
+    "abstained": 637,
+    "cards": 5687,
+}
+
 
 @pytest.fixture(scope="module")
 def cases():
@@ -44,6 +59,7 @@ def verdicts(cases):
 
 
 def test_the_corpus_is_the_same_corpus(cases) -> None:
+    assert CORPUS_SIZE == RECORDED["size"]
     assert len(cases) == CORPUS_SIZE
     assert digest(cases)[:16] == CORPUS_DIGEST, (
         "the corpus changed. That is allowed — but every number in this file "
@@ -69,9 +85,9 @@ def test_the_corpus_actually_reaches_the_product(cases, verdicts) -> None:
 
 def test_classifier_accuracy_has_not_regressed(verdicts) -> None:
     score = score_classifier(verdicts)
-    assert score.correct == 8930, f"correct moved to {score.correct}"
-    assert score.wrong == 473, f"wrong moved to {score.wrong}"
-    assert score.abstained == 637, f"abstained moved to {score.abstained}"
+    assert score.correct == RECORDED["correct"], f"correct moved to {score.correct}"
+    assert score.wrong == RECORDED["wrong"], f"wrong moved to {score.wrong}"
+    assert score.abstained == RECORDED["abstained"], f"abstained moved to {score.abstained}"
 
 
 def test_every_wrong_verdict_is_confidently_wrong(verdicts) -> None:
@@ -84,7 +100,7 @@ def test_every_wrong_verdict_is_confidently_wrong(verdicts) -> None:
     """
 
     score = score_classifier(verdicts)
-    assert score.auto_filed_wrong == score.wrong == 473
+    assert score.auto_filed_wrong == score.wrong == RECORDED["wrong"]
 
 
 @pytest.mark.parametrize(
@@ -167,4 +183,4 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
     assert score.wrong_review == 0, [
         f.detail for f in score.failures if "REVIEW" in f.mode
     ][:3]
-    assert score.cards == 5687, f"the board came out at {score.cards} cards"
+    assert score.cards == RECORDED["cards"], f"the board came out at {score.cards} cards"
