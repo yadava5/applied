@@ -42,11 +42,17 @@ _TAILS: tuple[str, ...] = (
 )
 
 #: A middle particle, so the pool is big enough without anyone hand-writing
-#: thousands of names. It has to widen the FIRST WORD and not add a second one:
+#: thousands of names. Widened from six to nine on 2026-08-22 when the
+#: update-routing families were added: ``EmployerPool.take()`` RAISES rather
+#: than wrapping, so a family that outruns the pool fails as a harness error
+#: and not as a product finding, and reading that failure correctly costs a
+#: session. Nine mids leaves headroom rather than a fit. It has to widen the FIRST WORD and not add a second one:
 #: ``matches_company_token`` accepts a match on the leading word, so
 #: "Alderbourne" and "Alderbourne Labs" are the same employer to the product and
 #: a pool built by adding suffixes would be full of accidental collisions.
-_MIDS: tuple[str, ...] = ("", "field", "mont", "wick", "bury", "holt")
+_MIDS: tuple[str, ...] = (
+    "", "field", "mont", "wick", "bury", "holt", "combe", "stow", "thwaite",
+)
 
 #: Suffixes that make a NAME rather than a token — the resolver's leading-word
 #: rule means "Cobalt Ridge" arrives as ``cobalt``, so a corpus of single-word

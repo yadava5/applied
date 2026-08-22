@@ -1258,12 +1258,33 @@ class RulesClassifier:
             # job mail; the body is what the message actually is.
             has_strong_body = False
             for pattern in compiled["strong"]:
-                if pattern.search(subject):
+                in_subject = bool(pattern.search(subject))
+                # ASKED SEPARATELY FROM THE SCORE, and that is the whole point.
+                #
+                # `has_strong_body` decides whether a genre filter ("unsubscribe",
+                # "manage preferences") may be outranked, and the question it is
+                # asking is "does the BODY state this plainly?" — which has
+                # nothing to do with whether the subject happens to say it too.
+                #
+                # The `elif` used to answer both questions at once, so a pattern
+                # matching subject AND body scored the subject and left
+                # `has_strong_body` False. A confirmation reading "We have
+                # received your application for the Software Engineer position"
+                # under the subject "We have received your application" then lost
+                # to its own marketing footer, because the one pattern that
+                # proved the body was checked against the subject first.
+                #
+                # Found by the corpus: demoting a reference pattern out of
+                # `strong` removed the ONLY body match those messages had, and
+                # three tests that had passed for the wrong reason went red.
+                in_body = bool(pattern.search(body))
+                if in_body:
+                    has_strong_body = True
+                if in_subject:
                     category_score += strong_subject
                     category_matches.append(f"[STRONG-SUBJECT] {pattern.pattern}")
-                elif pattern.search(body):
+                elif in_body:
                     category_score += 3
-                    has_strong_body = True
                     category_matches.append(f"[STRONG] {pattern.pattern}")
 
             # Check weak patterns (+1, 2x for subject)

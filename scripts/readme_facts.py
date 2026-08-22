@@ -760,7 +760,7 @@ FACTS: dict[str, dict] = {
         "sites": [
             r"families over ([\d,]+) companies",
             {"re": r"families over ([\d,]+) companies", "file": BOOKLET_CONTENT},
-            {"re": r'note: "18 families · ([\d,]+) companies"', "file": BOOKLET_CONTENT},
+            {"re": r'note: "\d+ families · ([\d,]+) companies"', "file": BOOKLET_CONTENT},
         ],
     },
     "corpusCorrect": {
@@ -778,9 +778,7 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("wrong"),
         "sites": [
             r"\| Wrong \| \*\*([\d,]+)\*\* \|",
-            r"\*\*[\d,]+ of the ([\d,]+) wrong verdicts are stated to the user",
-            r"than ([\d,]+) with [\d,]+ auto-filed",
-            {"re": r"correct \(90\.94%\), ([\d,]+) wrong", "file": BOOKLET_CONTENT},
+            {"re": r"correct \(\d+\.\d+%\), ([\d,]+) wrong", "file": BOOKLET_CONTENT},
             {"re": r'note: "([\d,]+) wrong · [\d,]+ abstained"', "file": BOOKLET_CONTENT},
             {
                 "re": r"[\d,]+ of the ([\d,]+) wrong verdicts sit above",
@@ -807,11 +805,34 @@ FACTS: dict[str, dict] = {
         "describe": f"RECORDED['auto_filed_wrong'] in {CORPUS_GATE}",
         "compute": lambda: corpus_recorded("auto_filed_wrong"),
         "sites": [
-            r"of which \*\*([\d,]+) wrong\*\*",
-            r"\*\*([\d,]+) of the [\d,]+ wrong verdicts are stated",
-            r"than [\d,]+ with ([\d,]+) auto-filed",
-            {"re": r"([\d,]+) of the [\d,]+ wrong verdicts sit above", "file": BOOKLET_CONTENT},
+            r"\| \*\*Wrong AND stated to the user as fact\*\* \| \*\*([\d,]+)\*\* \|",
+            {"re": r"point: ([\d,]+) of the [\d,]+ wrong verdicts sit above", "file": BOOKLET_CONTENT},
             {"re": r"than [\d,]+ with ([\d,]+) auto-filed", "file": BOOKLET_CONTENT},
+        ],
+    },
+    "corpusLost": {
+        "kind": "static",
+        "describe": f"RECORDED['lost'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("lost"),
+        "sites": [
+            r"\| \*\*([\d,]+) lost\*\*, [\d,]+ dropped \|",
+            r"\*\*([\d,]+) messages about real applications still reach no card",
+            {
+                "re": r"([\d,]+) messages about real applications reach no card",
+                "file": BOOKLET_CONTENT,
+            },
+            {
+                "re": r"([\d,]+) of those messages are about real applications",
+                "file": BOOKLET_CONTENT,
+            },
+        ],
+    },
+    "corpusStranded": {
+        "kind": "static",
+        "describe": f"RECORDED['update_stranded'] in {CORPUS_GATE}",
+        "compute": lambda: corpus_recorded("update_stranded"),
+        "sites": [
+            r"\| Updates that reached the wrong card \| \*\*([\d,]+)\*\* \|",
         ],
     },
     "corpusCards": {
@@ -820,7 +841,10 @@ FACTS: dict[str, dict] = {
         "compute": lambda: corpus_recorded("cards"),
         "sites": [
             r"misrouted review \| \*\*([\d,]+) / 0 / 0 / 0 / 0\*\*",
-            {"re": r"The board is clean: ([\d,]+) cards, 0 splits", "file": BOOKLET_CONTENT},
+            {
+                "re": r"wrong card: ([\d,]+) cards, 0 splits",
+                "file": BOOKLET_CONTENT,
+            },
         ],
     },
     # ── the rules engine ──
