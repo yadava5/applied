@@ -1205,12 +1205,29 @@ async def _anonymous_homes(
     with the application it was about.
     """
 
+    anonymous = [
+        (index, rolled)
+        for index, rolled in enumerate(clusters)
+        if rolled.req_id is None and rolled.role_token is None
+    ]
+    if not anonymous:
+        return {}
+
+    # ONE lookup for the whole pass, not one per cluster. A rebuild rolls up the
+    # entire mailbox and can hand this a dozen anonymous clusters; the sync
+    # already pays ~216ms per database call, so a per-cluster query would put
+    # seconds onto the slowest path in the product for no information a single
+    # `IN` cannot return.
+    linked = await _linked_applications_by_message(
+        session,
+        user_id,
+        [m.message_id for _index, rolled in anonymous for m in rolled.messages],
+    )
+
     homes: dict[int, int] = {}
     taken: set[int] = set()
     by_token: dict[str, set[int]] = {}
-    for index, rolled in enumerate(clusters):
-        if rolled.req_id is not None or rolled.role_token is not None:
-            continue
+    for index, rolled in anonymous:
         if rolled.company_token not in by_token:
             by_token[rolled.company_token] = {
                 row.id
@@ -1218,10 +1235,16 @@ async def _anonymous_homes(
                 if row.id is not None
             }
         at_employer = by_token[rolled.company_token]
-        linked = await _linked_application_ids(
-            session, user_id, [m.message_id for m in rolled.messages]
+        # Deterministic: the same messages always propose the same row first,
+        # whatever order the database returned them in.
+        proposed = sorted(
+            {
+                linked[m.message_id]
+                for m in rolled.messages
+                if m.message_id in linked
+            }
         )
-        for application_id in linked:
+        for application_id in proposed:
             if application_id in at_employer and application_id not in taken:
                 homes[index] = application_id
                 taken.add(application_id)
@@ -1229,38 +1252,38 @@ async def _anonymous_homes(
     return homes
 
 
-async def _linked_application_ids(
+async def _linked_applications_by_message(
     session,
     user_id: uuid.UUID,
     message_ids: list[str],
-) -> list[int]:
-    """Applications these stored messages are already filed against, oldest first.
+) -> dict[str, int]:
+    """The application each of these stored messages is already filed against.
 
     Scoped to ``user_id`` like every other read here. Chunked on the same bound
     as :func:`_persist_message_refs` so a first sync's whole scan target cannot
-    walk into Postgres's bind-parameter ceiling.
+    walk into Postgres's bind-parameter ceiling — the number is not the point,
+    the fact that there IS a bound is.
     """
 
-    ids = [m for m in message_ids if m]
+    ids = sorted({m for m in message_ids if m})
     if not ids:
-        return []
-    found: list[int] = []
+        return {}
+    found: dict[str, int] = {}
     for start in range(0, len(ids), _MESSAGE_LOOKUP_CHUNK):
         chunk = ids[start : start + _MESSAGE_LOOKUP_CHUNK]
         rows = (
             await session.exec(
-                select(Email.application_id)
-                .where(
+                select(Email.message_id, Email.application_id).where(
                     Email.user_id == user_id,
                     Email.message_id.in_(chunk),
                     Email.application_id.is_not(None),
                 )
             )
         ).all()
-        found.extend(row for row in rows if row is not None)
-    # Stable and deterministic: the same messages always propose the same row
-    # first, whatever order the database returned them in.
-    return sorted(dict.fromkeys(found))
+        for message_id, application_id in rows:
+            if application_id is not None:
+                found[message_id] = application_id
+    return found
 
 
 def _pick_application(
