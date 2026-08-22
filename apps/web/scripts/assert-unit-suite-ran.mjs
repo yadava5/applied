@@ -87,7 +87,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Well under the real count, so this fires on lost FILES, not on churn. */
 const MIN_TESTS = 400;
@@ -100,6 +101,19 @@ const MIN_TESTS = 400;
  */
 const MAX_FAILURES_REPORTED = 25;
 const MAX_PAYLOAD_LINES = 30;
+
+/**
+ * How much of the raw TAP to dump when we cannot attribute a failure to a named
+ * test — a runner that died mid-suite, or a summary we could not read.
+ *
+ * WHY THIS EXISTS AT ALL. The TAP lives in a temp dir that this script deletes
+ * on the way out, and on CI the whole runner is thrown away seconds later, so
+ * printing the file's *path* preserves nothing. If the evidence is not on
+ * stderr before we return, it is gone — which is #433's failure mode wearing a
+ * different hat, and it is candidate (3) from that issue (a genuine crash
+ * mid-suite) landing in the one branch that has no names to print.
+ */
+const MAX_TAIL_LINES = 40;
 
 /**
  * Pull every failing test out of a TAP 13 stream, with its diagnostic payload.
@@ -180,6 +194,29 @@ const reportFailures = (failures) => {
   console.error(parts.join("\n"));
 };
 
+/**
+ * Last resort: dump the tail of the raw TAP when no failing test could be
+ * named. Where `reportFailures` answers "which test", this answers "how far did
+ * it get before it stopped", which is the only question left when the runner
+ * dies partway through and never writes a summary.
+ */
+const reportTapTail = (tap, why) => {
+  const lines = tap.split("\n").filter((line) => line.length > 0);
+  const tail = lines.slice(-MAX_TAIL_LINES);
+  const parts = [
+    "",
+    "=".repeat(72),
+    `assert-unit-suite-ran: ${why}`,
+    `Last ${tail.length} line(s) of the run's TAP, which is all the evidence there is:`,
+    "=".repeat(72),
+  ];
+  if (tail.length === 0) parts.push("(the runner wrote no TAP at all)");
+  else for (const line of tail) parts.push(`    ${line}`);
+  parts.push("=".repeat(72));
+
+  console.error(parts.join("\n"));
+};
+
 const main = () => {
   const tapDir = mkdtempSync(join(tmpdir(), "assert-unit-suite-"));
   const tapPath = join(tapDir, "run.tap");
@@ -236,17 +273,39 @@ const main = () => {
     // A missing summary is itself a failure: it means the output shape changed
     // and every number below would silently read as null. Never treat that as a
     // pass.
+    // A missing summary has two causes and both need their evidence kept: the
+    // reporter's shape changed (so the regexes above read null), or the runner
+    // died before it could write a summary at all. Print whatever failures the
+    // partial stream does contain, then the tail of it, BEFORE returning —
+    // `finally` deletes the file and CI deletes the machine.
     if (tests === null || pass === null || fail === null) {
+      reportFailures(parseFailures(tap));
+      reportTapTail(tap, "could not read the run summary from `node --test`.");
       console.error(
         "\nassert-unit-suite-ran: could not read the run summary from `node --test`.\n" +
-          "The reporter's output shape changed, so this gate can no longer see the counts.\n" +
-          "Fix the parse rather than removing the check.",
+          "Either the reporter's output shape changed, so this gate can no longer see the\n" +
+          "counts, or the runner exited before writing a summary — the tail above says\n" +
+          "which. Fix the parse rather than removing the check.",
       );
       return 1;
     }
 
     if (child.status !== 0 || fail > 0) {
-      reportFailures(parseFailures(tap));
+      const failures = parseFailures(tap);
+
+      // The runner can exit non-zero while reporting `fail 0` — an uncaught
+      // exception after the last test, a worker that died. That combination
+      // used to print `0 failing test(s).` and nothing else, which is exactly
+      // the unattributable red #433 was about.
+      if (failures.length === 0) {
+        reportTapTail(
+          tap,
+          `the runner exited ${child.status} but named no failing test (summary says fail ${fail}).`,
+        );
+      } else {
+        reportFailures(failures);
+      }
+
       console.error(`\nassert-unit-suite-ran: ${fail} failing test(s).`);
       return child.status === 0 ? 1 : child.status;
     }
@@ -270,7 +329,22 @@ const main = () => {
   }
 };
 
-// Deliberately NOT process.exit(): see the #433 note above. Setting the code
-// and falling off the end lets Node flush stdout and stderr first, which is the
-// difference between a reported failure and an unattributable one.
-process.exitCode = main();
+// Exported so the failure-report parser can be tested by the very suite this
+// script guards — see tests/unit/assert-unit-suite-gate.test.mjs. A gate whose
+// reporting has never been exercised is the shape #433 was made of, and the
+// only way to know this one still names a failing test is to assert it.
+export { parseFailures };
+
+// Run only when invoked as a script, so importing it for those tests does not
+// launch the whole suite recursively. `import.meta.main` would say this in one
+// word but landed after Node 22, which is the version CI pins.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  // Deliberately NOT process.exit(): see the #433 note above. Setting the code
+  // and falling off the end lets Node flush stdout and stderr first, which is
+  // the difference between a reported failure and an unattributable one.
+  process.exitCode = main();
+}
