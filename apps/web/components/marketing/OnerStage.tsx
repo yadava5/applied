@@ -52,12 +52,30 @@ const RUN_THRESHOLD = 0.35;
 
 /** The tallest day bar in the momentum panel — the fixture's heavy evening.
  *  Chosen by measurement, not by index, so a fixture reshuffle cannot make
- *  the take click an empty day. */
+ *  the take click an empty day.
+ *
+ *  QUERY, NOT FIND, AND THE DISTINCTION IS LOAD-BEARING (#423). This function
+ *  is a LIVE TARGET: the beat below hands it to `panTo`, which records it as
+ *  the director's held shot, and the shot OUTLIVES the tween — `reframe`
+ *  re-resolves it from a ResizeObserver every time the stage changes size.
+ *  The very next beat presses this bar, which swaps the momentum panel for
+ *  the filter band and collapses the board in one layout pass, so the
+ *  observer fires with the panel already gone. Through `find` that resolution
+ *  threw, synchronously, inside the observer's callback — outside the take's
+ *  promise chain, so the runner below never saw it and the page carried the
+ *  uncaught error instead (measured at 5.78s on an idle 1024x600 landing, and
+ *  within 100ms of that at every desktop width tried — 1024x768, 1440x900,
+ *  1512x949; 2026-08-21). A live target's honest answer to "the
+ *  subject is gone" is `null`, which is what `Target` is typed for and what
+ *  `reframe` documents itself as handling: it releases the pan toward home.
+ *  Nothing is lost by asking softly here — the panel's existence is already
+ *  asserted loudly, one beat above, by a `waitFor` that throws inside the
+ *  chain where the runner catches it. */
 function tallestDayBar(d: Director): HTMLElement | null {
+  const panel = d.query('[data-testid="pulse-detail"]');
+  if (!panel) return null;
   const bars = Array.from(
-    d
-      .find('[data-testid="pulse-detail"]')
-      .querySelectorAll<HTMLElement>('button[aria-label$="show these on the board"]'),
+    panel.querySelectorAll<HTMLElement>('button[aria-label$="show these on the board"]'),
   );
   let best: HTMLElement | null = null;
   for (const bar of bars) {
@@ -102,7 +120,10 @@ const take = async (d: Director) => {
   // The filter collapses the board in one layout pass; the camera's own
   // reframe absorbs whatever that leaves out of clamp, and this pan seats
   // the survivors' head — the filter band and the rows that answered.
-  await d.panTo(() => d.find('[data-testid="worklist-pane"]'), "top");
+  // `query`, for the reason `tallestDayBar` states at length: every closure
+  // handed to `panTo` is a live target that the camera's reframe re-resolves
+  // from a ResizeObserver, and a throw on that path escapes the take.
+  await d.panTo(() => d.query('[data-testid="worklist-pane"]'), "top");
   await d.hold(1900);
 
   const kestrel = () => d.query('button[aria-label^="Open Kestrel Dynamics"]');
@@ -112,7 +133,10 @@ const take = async (d: Director) => {
   d.say(ACT.narration[4]);
   // Top-aligned: the pane is taller than most frames, and the beat's line
   // names its head — the assessment, its deadline — not its middle.
-  await d.panTo(() => d.find('[data-testid="application-detail"]'), "top");
+  // Same rule, and here the loud assertion is three lines up: that `waitFor`
+  // has already established the pane inside the take's own chain, so a
+  // second, throwing address of it bought nothing but the escape route.
+  await d.panTo(() => d.query('[data-testid="application-detail"]'), "top");
   await d.hold(2600);
 
   const clear = () => d.query('[data-testid="pulse-filter-band"] button');

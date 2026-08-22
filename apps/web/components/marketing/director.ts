@@ -49,7 +49,16 @@ export class TakeError extends Error {}
 
 /** A live target: re-resolved whenever it is measured, so a take can point
  *  at an element that does not exist yet (a pane about to dock) or one the
- *  board is still gliding into place. */
+ *  board is still gliding into place.
+ *
+ *  A RESOLVER MAY NOT THROW — it returns `null` and means it. The signature
+ *  says so, and #423 is what it costs to ignore: a resolver that reached its
+ *  subject through {@link Director.find} threw once the subject was gone, and
+ *  because the held shot is re-resolved from the ResizeObserver (`reframe`),
+ *  that throw left the take's promise chain entirely and landed on the page
+ *  as an uncaught error on the public landing. `null` is not a failure here;
+ *  it is the answer `reframe` is built around (the pan releases toward home)
+ *  and the answer a target that has not mounted yet gives every frame. */
 export type Target = HTMLElement | (() => HTMLElement | null);
 
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -266,6 +275,10 @@ export class Director extends TakeClock {
     return Array.from(this.stage.querySelectorAll<HTMLElement>(selector));
   }
 
+  /** A ONE-SHOT authored assertion, and only that: it throws where the script
+   *  is standing, which is inside the take's promise chain, where the runner
+   *  turns it into a failed take rather than a broken page. NEVER call it from
+   *  inside a {@link Target} resolver — see that type's note. */
   find(selector: string): HTMLElement {
     const el = this.query(selector);
     if (!el) throw new TakeError(`nothing on stage matches ${selector}`);

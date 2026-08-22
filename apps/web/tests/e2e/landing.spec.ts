@@ -121,6 +121,14 @@ const DESKTOP_1512_1080 = { width: 1512, height: 1080 };
 const DESKTOP_1024_TALL = { width: 1024, height: 1120 };
 const TABLET_768 = { width: 768, height: 1024 };
 
+/** How long the idle-landing watch keeps listening after the take's last
+ *  narration line. The line is the SCRIPT's end, not the page's: the closing
+ *  beat's glide home and the reframes the board's re-expansion fires all
+ *  happen after it, and #423's throw came out of exactly that kind of
+ *  post-beat reframe. Two seconds covers the longest of those moves (a 1.1s
+ *  `panHome`, a 450ms absorb behind it) with a margin. */
+const IDLE_SETTLE = 2_000;
+
 /**
  * The exhibit's closing sentence — the honesty guarantee, matched on the two
  * clauses that carry it rather than on the whole sentence, so a wording tweak
@@ -654,6 +662,80 @@ test.describe("landing (/)", () => {
     await expect(page.locator("section.act")).toHaveCount(1);
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
+  });
+
+  /**
+   * NOTHING UNCAUGHT REACHES THE VISITOR — the landing watched from load to
+   * the take's last line, doing nothing.
+   *
+   * WHY IT IS ITS OWN TEST, when the one above already asserts a clean
+   * console. The missing thing was never the WIRING: `startConsoleWatch`
+   * (`helpers.ts`) has listened on `page.on("pageerror")` all along, and the
+   * test above asserts on it. What was missing is the DWELL. That test reads
+   * four headings and settles in about a second; #423's throw arrives at
+   * 5.8s, four seconds after the only check that could have seen it had
+   * already passed. The same blind spot found the defect's own investigation:
+   * a sweep of every route reported zero page errors because it waited 600ms.
+   * Any check shorter than this page's own timeline will keep calling it
+   * clean while it throws.
+   *
+   * So this one is timed by the CHOREOGRAPHY, not by a number a later edit
+   * can outgrow: it waits for the oner's last narration line — the script's
+   * own "done", the same handle the press gate uses — and then settles past
+   * the beats that land after it. Measured on this build (production,
+   * 2026-08-21, at 1024x600 and 1024x768, both within ~100ms of each other):
+   * the seven beats land at 0.2 / 0.6 / 3.3 / 4.9 / 6.0 / 9.0 / 12.5 / 14.3s.
+   * The take is a ~14.5-second subject, so the 30s default test timeout is
+   * not the headroom it looks like once a serial CI runner is in between.
+   *
+   * NOTHING HERE SCROLLS OR CLICKS, and that is the experiment, not laziness:
+   * the take runs only while its frame is ≥35% in view and its clock freezes
+   * when it is not, so a scroll is a different page. #423 reproduced on the
+   * idle desktop landing and NOT on the scrolled one, which is exactly what a
+   * stranger meeting the page for the first time gets.
+   *
+   * UNFILTERED, deliberately. `pageerror` carries uncaught exceptions and
+   * rejections only — there is no benign one — so an allowlist here would be
+   * the first step toward the check that cannot fail. If a second, unrelated
+   * error ever turns this red, that is a finding, not noise to be excluded.
+   */
+  test("the idle landing raises nothing uncaught, from load to the take's last line", async ({
+    page,
+  }) => {
+    // The ceiling, which must sit above the subject's own clock (~14.5s) with
+    // room for a loaded runner. The wait below does the actual timing.
+    test.setTimeout(90_000);
+
+    /** The stack, not just the message: the message alone ("nothing on stage
+     *  matches …") survived three reproductions of #423 without naming a
+     *  cause, and the frame that did — the ResizeObserver the throw escaped
+     *  through — is only in the stack. */
+    const uncaught: string[] = [];
+    page.on("pageerror", (err) => uncaught.push(err.stack ?? err.message));
+
+    await page.setViewportSize(DESKTOP_1024);
+    await page.goto("/");
+    await expect(page.getByTestId("pipeline-board")).toBeVisible();
+
+    const act = theAct(page);
+    try {
+      await expect(act.strip).toHaveText(ACT.narration[6], { timeout: 45_000 });
+      // The last line is not the last thing that happens. The closing beat's
+      // `panHome`, and the reframes the board's own re-expansion fires as the
+      // day filter clears, all land after it — and a post-beat reframe is
+      // precisely where #423 threw.
+      await page.waitForTimeout(IDLE_SETTLE);
+    } finally {
+      // In `finally` ON PURPOSE. If an uncaught error is what stopped the
+      // take, the strip's wait is what fails first, and it fails as "locator
+      // never settled" — the wrong finding, and the one that invites
+      // loosening the locator instead of asking what threw. A throw from here
+      // supersedes that one, so what the failure says is what the visitor got.
+      expect(
+        uncaught,
+        `the idle landing raised ${uncaught.length} uncaught error(s):\n\n${uncaught.join("\n\n")}`,
+      ).toEqual([]);
+    }
   });
 
   /**
