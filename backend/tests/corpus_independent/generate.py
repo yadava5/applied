@@ -63,6 +63,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from . import observed
 from .employers import EmployerPool
 
 #: Day zero. Everything is dated forward from here so the replay can batch by
@@ -1625,12 +1626,260 @@ def _employer_spelling(b: _Builder, n: int) -> None:
 #: worth, which is one to three messages depending on the family — the counts
 #: below are chosen so the corpus lands near ten thousand messages with roughly
 #: a third of them adversarial by construction.
+# ===========================================================================
+# OBSERVED FAMILIES — wordings transcribed from real mail, not invented.
+#
+# See ``observed.py`` for why these exist. In one line: every other family here
+# was written by the author of ``rules.py``, and 100.0% of the invented
+# lifecycle messages contain an engine pattern verbatim, so the corpus could
+# only ever confirm the pattern list against itself.
+#
+# These are scored exactly like any other family and are deliberately NOT
+# excused. Where they fail, the product fails on mail that actually arrived.
+# ===========================================================================
+
+
+def _observed_confirmations(b: _Builder, n: int) -> None:
+    """Real acknowledgement wordings, one application each.
+
+    Twenty-three templates from Greenhouse, Lever, Ashby, iCIMS,
+    SmartRecruiters, Rippling and seven in-house systems. Several never use the
+    words this product keys on: one says only "your details have been added to
+    our database", another "thank you for beginning your application process",
+    a third names no role at all.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        subject, body, _ = b.pick(observed.OBSERVED_CONFIRMATIONS)
+        fill = {"display": display, "role": role, "req": f"R-{100000 + i}"}
+        b.add(
+            family="observed-confirmation",
+            subject=subject.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=body.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 60,
+        )
+
+
+def _observed_rejections(b: _Builder, n: int) -> None:
+    """A real acknowledgement, then a real rejection for the same application.
+
+    HALF ARE DELIVERED AS SNIPPETS, because that is what production receives
+    when no body part can be extracted, and because it is the difference that
+    matters: measured 2026-08-22, these six wordings score 6/6 correct on the
+    full body and 2/6 on the snippet. Not one of them leads with its verdict.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        csubj, cbody, _ = b.pick(observed.OBSERVED_CONFIRMATIONS)
+        rsubj, rbody, _ = b.pick(observed.OBSERVED_REJECTIONS)
+        fill = {"display": display, "role": role, "req": f"R-{200000 + i}"}
+        b.add(
+            family="observed-rejection",
+            subject=csubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=cbody.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50,
+        )
+        body = rbody.format(**fill)
+        truncated = i % 2 == 0
+        b.add(
+            family="observed-rejection",
+            subject=rsubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=body,
+            delivered=snippet_of(body) if truncated else None,
+            expected_category="rejection",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50 + 24,
+            adversarial=truncated,
+            note=(
+                "a real rejection, delivered as Gmail's snippet"
+                if truncated
+                else "a real rejection, whole body"
+            ),
+        )
+
+
+def _observed_assessments(b: _Builder, n: int) -> None:
+    """An assessment invitation and the reminders that chase it.
+
+    Three real wordings for one stage. The third never says "assessment
+    invitation" — it says the team noticed you have not had a chance to
+    complete yours — and it is an UPDATE to an application that already exists,
+    so it must reach that card rather than open one.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        csubj, cbody, _ = b.pick(observed.OBSERVED_CONFIRMATIONS)
+        fill = {"display": display, "role": role, "req": f"R-{300000 + i}"}
+        b.add(
+            family="observed-assessment",
+            subject=csubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=cbody.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50,
+        )
+        asubj, abody, _ = b.pick(observed.OBSERVED_ASSESSMENTS)
+        b.add(
+            family="observed-assessment",
+            subject=asubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=abody.format(**fill),
+            expected_category="assessment",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50 + 9,
+            note="an update to an application that already exists",
+        )
+
+
+def _observed_closures(b: _Builder, n: int) -> None:
+    """The application is OVER, and nothing in the mail says so in the usual way.
+
+    "The assessments for your application have expired and as a result, your
+    application is no longer active." No regret, no decline, no not-moving-
+    forward — and the card must not go on reading `applied` forever. Scored as
+    a rejection because that is what it is from the user's side: this
+    application is finished and no further mail about it will arrive.
+
+    The sharpest wording in ``observed.py`` and the one the classifier has
+    least chance with, which is exactly why it is here.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        csubj, cbody, _ = b.pick(observed.OBSERVED_CONFIRMATIONS)
+        fill = {"display": display, "role": role, "req": f"R-{400000 + i}"}
+        b.add(
+            family="observed-closure",
+            subject=csubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=cbody.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50,
+        )
+        xsubj, xbody, _ = b.pick(observed.OBSERVED_CLOSURES)
+        b.add(
+            family="observed-closure",
+            subject=xsubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=xbody.format(**fill),
+            expected_category="rejection",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50 + 30,
+            adversarial=True,
+            note="the application is closed and the mail never says a rejection word",
+        )
+
+
+def _observed_pending(b: _Builder, n: int) -> None:
+    """Action-required mail on an application that is not finished.
+
+    Both real. One asks the candidate to verify their email before the
+    application counts; the other is a SECOND notification about an application
+    already acknowledged, which must update that card rather than open a rival.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = b.role(i)
+        csubj, cbody, _ = b.pick(observed.OBSERVED_CONFIRMATIONS)
+        fill = {"display": display, "role": role, "req": f"R-{500000 + i}"}
+        b.add(
+            family="observed-pending",
+            subject=csubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=cbody.format(**fill),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50,
+        )
+        psubj, pbody, _ = b.pick(observed.OBSERVED_PENDING)
+        b.add(
+            family="observed-pending",
+            subject=psubj.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Recruiting",
+            body=pbody.format(**fill),
+            expected_category="pending_application",
+            identity=f"{token}|{role}",
+            employer=token,
+            day=i % 50 + 2,
+            adversarial=True,
+            note="action required on an application that already has a card",
+        )
+
+
+def _observed_not_applications(b: _Builder, n: int) -> None:
+    """Real job-adjacent mail that must mint nothing.
+
+    A careers-portal verification code. It says "Career" three times and is not
+    a career event, which is the same confusion #455 turns on from the other
+    direction.
+    """
+
+    for i in range(n):
+        display, _token = b.employer()
+        subject, body, _ = b.pick(observed.OBSERVED_NOT_APPLICATIONS)
+        fill = {"display": display, "role": b.role(i), "req": f"R-{600000 + i}"}
+        b.add(
+            family="observed-not-application",
+            subject=subject.format(**fill),
+            sender=b.ats(i),
+            sender_name=f"{display} Accounts",
+            body=body.format(**fill),
+            expected_category="other",
+            identity=None,
+            employer=None,
+            day=i % 60,
+            adversarial=True,
+            note="real job-adjacent mail that is not about an application",
+        )
+
+
 _FAMILIES: tuple[tuple[str, object, int], ...] = (
     ("confirmation", _confirmations, 1100),
     ("rejection-plain", _rejections_plain, 550),
     ("rejection-past-the-snippet", _rejections_past_the_snippet, 350),
     ("one-thread-many-roles", _one_thread_many_roles, 60),
     ("ats-relay-noise", _ats_relay_noise, 400),
+    # OBSERVED — real wordings, transcribed. See ``observed.py``.
+    ("observed-confirmation", _observed_confirmations, 300),
+    ("observed-rejection", _observed_rejections, 220),
+    ("observed-assessment", _observed_assessments, 150),
+    ("observed-closure", _observed_closures, 120),
+    ("observed-pending", _observed_pending, 120),
+    ("observed-not-application", _observed_not_applications, 80),
     ("interview", _interviews, 350),
     ("assessment", _assessments, 330),
     ("offer", _offers, 220),

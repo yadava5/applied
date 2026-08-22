@@ -168,10 +168,10 @@ That comparison is now a measurement rather than a citation. `scripts/cascade_ga
 
 What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset itself: **96 examples, 12 per label across 8 labels**, grouped as 65 core-positive, 17 edge-noise, 8 historical-miss and 6 core-negative, with confusion-pair tagging. The rows carry `subject`, `body_text`, `label`, `sender_email`, `scenario_group` and `confusion_pair` — and **no provenance field**, so the dataset does not record how many examples came from a real inbox versus a generator. That is a real limit on how far 0.9791 generalizes, and 96 examples is a small sample under any reading.
 
-### The 15,180-message adversarial corpus
+### The 16,780-message adversarial corpus
 
-The answer to the paragraph above. `backend/tests/corpus_independent/` invents **15,180 messages
-across 26 families over 8,130 companies**, none of them real, and drives them through the whole
+The answer to the paragraph above. `backend/tests/corpus_independent/` invents **16,780 messages
+across 32 families over 9,120 companies**, none of them real, and drives them through the whole
 sync end to end: classify, roll up, upsert, persist the review queue, then read the board back out
 of the tables. It is replayed
 in day-sized batches because that is what a real sync is — a delta, usually of one message — and a
@@ -184,24 +184,41 @@ number here describes the same mail it was measured on.
 defeat the classifier, not mail that happens to be hard — so this is a stress figure and not the
 accuracy a user would see on their own inbox.
 
+**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 91.53%
+on the same engine, because the corpus stopped being written entirely by the author of the
+classifier. Measured before that change: **100.0% of the 13,730 lifecycle messages contained an
+engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
+in that state cannot find a gap — it can only confirm the pattern list against itself, and its
+headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
+wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
+by recruiting teams with no knowledge of this repository. 91.53% is the first number here that was
+not partly graded by the person who set the exam.
+
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **14,125 of 15,180 — 93.05%** |
-| Wrong | **316** |
-| **Wrong AND stated to the user as fact** | **116** |
-| Abstained (below the 0.70 review floor, the product says nothing) | **739** |
-| Board: cards / splits / merges / noise / misrouted review | **8,262 / 0 / 0 / 2 / 0** |
+| Correct | **15,358 of 16,780 — 91.53%** |
+| Wrong | **421** |
+| **Wrong AND stated to the user as fact** | **139** |
+| Abstained (below the 0.70 review floor, the product says nothing) | **1,001** |
+| Board: cards / splits / merges / noise / misrouted review | **9,179 / 7 / 0 / 2 / 0** |
 | Updates that reached the wrong card | **0** |
-| Updates held for a person because the classifier was unsure | 351 |
-| Mail about a real application that reached nothing | **0 lost**, 84 dropped |
+| Updates held for a person because the classifier was unsure | 360 |
+| Mail about a real application that reached nothing | **8 lost**, 72 dropped |
 
-**No message has ever landed on the wrong card.** Zero splits, zero merges, zero misrouted updates
-over 15,180 messages and 8,262 cards — the half that could destroy a record, because a rejection
-filed onto a sibling application settles it terminally and `advance_application_status` will never
-let it leave. That claim survived the corpus growing to include applications that share one Gmail
-thread: real applicant tracking systems send every acknowledgement for an employer under one subject
-from one address, so Gmail files four different roles as one conversation, and the board still gives
-each its own card. Thread is a delivery grouping here, never an identity.
+**No message has ever landed on the wrong card.** Zero merges, zero misrouted updates over 16,780
+messages and 9,179 cards — the half that could destroy a record, because a rejection filed onto a
+sibling application settles it terminally and `advance_application_status` will never let it leave.
+That claim survived the corpus growing to include applications that share one Gmail thread: real
+applicant tracking systems send every acknowledgement for an employer under one subject from one
+address, so Gmail files four different roles as one conversation, and the board still gives each its
+own card. Thread is a delivery grouping here, never an identity.
+
+**7 applications did end up on two cards each**, and the real wording that causes it is ordinary: an
+applicant tracking system sends a second notification for an application it has already acknowledged
+("Keep track of your application"), and where the acknowledgement named no role and the follow-up
+does, nothing joins them. It is the strictly milder failure — the user sees one application twice and
+can act on it, where a merge loses a record silently — which is why the two are asserted separately
+and never as one number. [#459](https://github.com/yadava5/applied/issues/459).
 
 **2 messages did MINT a card that should not exist**, and that is the one non-zero above. Both are
 a profile-completion nudge relayed by an ATS, scored `assessment` at 0.90. They come from
@@ -209,7 +226,7 @@ a profile-completion nudge relayed by an ATS, scored `assessment` at 0.90. They 
 behaviour on ATS mail that is not about you was not good before and simply was not measured. It is
 pinned at 2, so a fix moves it and a widening is loud.
 
-**Wrong verdicts stated as fact went 464 to 116.** There was no such thing as a wrong-but-hedged
+**Wrong verdicts stated as fact went 464 to 139.** There was no such thing as a wrong-but-hedged
 verdict on the morning of 2026-08-22: the review queue caught the classifier being *unsure* and had
 never once caught it being *wrong*, so every mistake it made it made confidently, and a user read it
 as a fact about their own job search. Two thirds of them now land in the queue instead, because the
@@ -226,15 +243,24 @@ invented ones, so it is filed rather than shipped.
 The last row is the one that is still bad. Until 2026-08-22 the replay ran only the rollup and never
 the review path, so "held for a person to settle" and "vanished entirely" produced identical scores —
 precisely the blind spot that let four Microsoft applications disappear on 2026-08-21 with every gate
-green. That gap is now closed, and the ratchet holds it shut: **0 messages about real applications
-now reach no card, no queue and no counter** — it was 610
-([#447](https://github.com/yadava5/applied/issues/447)). They scored
+green. It went from 610 to 0 on that day, and **8 messages about real applications
+now reach no card, no queue and no counter**
+([#447](https://github.com/yadava5/applied/issues/447), then
+[#458](https://github.com/yadava5/applied/issues/458)). They scored
 `other` at 0.50 — not a lifecycle category, so neither the ATS floor nor the drop counter could see
 them. `pipeline.references_an_application` floors a message an ATS relayed into the review queue when
 its own text speaks about an application the reader made, and only then: the corpus carries 400
 `ats-relay-noise` messages from the same relay domains scoring the same `other`, and none of them is
 queued. The two assertions are each other's control, because reaching zero lost by queueing
 everything an ATS sends would pass the first one alone.
+
+**The 0 became 8 when the transcribed wordings arrived, and that is the honest reading rather than a
+regression.** 0 was measured on a corpus written by the author of the classifier; against real mail
+the same guarantee leaked 66, and completing the reference category with `your assessment` and `your
+interview` closed 58 of them. The last 8 are one sender's rejection whose snippet stops one character
+before "with your application". Closing those needs that sender's sentence copied into the product,
+which would rebuild the closed loop `observed.py` exists to break — so they are pinned and open, not
+quietly fixed.
 
 Every defect below is pinned at its measured size rather than excluded, because a corpus that
 asserts only what already passes is a check that cannot fail — and this repository has a ledger of

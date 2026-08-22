@@ -29,8 +29,8 @@ from tests.corpus_independent.harness import (
 
 #: Recorded 2026-08-22. A corpus that differs between runs cannot be a gate, and
 #: a digest is the only way to say "the same mail" without shipping 24MB.
-CORPUS_DIGEST = "c773f477ba5fe376"
-CORPUS_SIZE = 15180
+CORPUS_DIGEST = "9916bf7d5ef4fe90"
+CORPUS_SIZE = 16780
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -39,11 +39,11 @@ CORPUS_SIZE = 15180
 #: not literals inside the asserts. A published number that nothing recomputes
 #: is a claim, and this repository has a ledger of those.
 RECORDED = {
-    "size": 15180,
-    "companies": 8130,
-    "correct": 14125,
-    "wrong": 316,
-    "abstained": 739,
+    "size": 16780,
+    "companies": 9120,
+    "correct": 15358,
+    "wrong": 421,
+    "abstained": 1001,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
@@ -55,12 +55,21 @@ RECORDED = {
     # other 2 are `ats-relay-noise` minting cards from a profile-completion
     # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
     # here. See #455 and #451.
-    "auto_filed_wrong": 116,
-    "cards": 8262,
+    "auto_filed_wrong": 139,
+    "cards": 9179,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
-    # LOST IS 0, and that is the whole of #447. It was 610: rejections whose
+    # LOST IS 8, AND IT WAS 0 BEFORE THE OBSERVED FAMILIES LANDED. That is not
+    # a regression; it is the first honest reading. #447 took the INVENTED
+    # corpus to 0, and `observed.py` then measured the same guarantee against
+    # wordings the author of `rules.py` did not write — where 66 messages
+    # reached nothing. Extending the reference signal to `your assessment` and
+    # `your interview` (completing the category, not chasing a wording) took
+    # that to 8. See #458 for the 8 that remain and why closing them was
+    # declined rather than overlooked.
+    #
+    # The history below is kept because the mechanism has not changed: it was 610: rejections whose
     # verdict sits past Gmail's snippet, and withdrawals whose own words never
     # say "application", both scoring `other` at 0.50. `other` is not a
     # lifecycle category, so the ATS floor did not reach them and they left
@@ -69,18 +78,22 @@ RECORDED = {
     # queue. It must stay 0: a message about a real application reaching
     # NOTHING is the one outcome indistinguishable from a mailbox that never
     # received it.
-    "lost": 0,
-    "dropped": 84,
+    "lost": 8,
+    "dropped": 72,
     # Noise that MINTED A CARD. Was 0 and is 2 as of 2026-08-22 — not a
     # regression, but the first time the corpus contained ATS mail that is not
     # about the user at all. Both are a profile-completion nudge scoring
     # `assessment` at 0.90. See `ats-relay-noise`.
     "noise_on_card": 2,
+    # One application over several cards. Was 0 until the observed families
+    # landed; all 7 are #459 and none of them is an update on the wrong card,
+    # which is the strictly worse failure and is still 0.
+    "splits": 7,
     # Updates that never reached the card they belong to; see #448.
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
     # designed answer, and it moves with the seed: 351 at 20260822.
-    "update_held": 351,
+    "update_held": 360,
 }
 
 
@@ -188,6 +201,25 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
             "interview invite never advances the card it belongs to.",
         ),
         (
+            "observed-rejection",
+            42,
+            "REAL rejection wordings, half of them delivered as Gmail's snippet "
+            "because that is what production receives when no body part can be "
+            "extracted. Measured: these six wordings score 6/6 on the full body "
+            "and 2/6 on the snippet. None of them leads with its verdict. This "
+            "is the honest size of the truncation problem, on text the author "
+            "of `rules.py` did not write.",
+        ),
+        (
+            "observed-pending",
+            63,
+            "a real 'please verify your email' and a real 'keep track of your "
+            "application' both read as `applied`. The second is worse than a "
+            "miscategorisation: it is a SECOND notification about an "
+            "application that already has a card, so filing it as a fresh "
+            "confirmation is what produces the 7 SPLITs. See #459.",
+        ),
+        (
             "rejection-past-the-snippet",
             14,
             "ISSUE #455, and the most damaging instance of #451 found so far. "
@@ -267,6 +299,32 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
         "the defect became wording-sensitive, which is a different bug."
     )
     assert score.by_family["hostile-zero-width"]["wrong"] == 100
+    # OBSERVED FAMILIES, banded. Both move with the seed for the same reason the
+    # #455 band does: which real wording and which role title a case draws is
+    # seeded, and several of these defects fire on one or the other. Measured
+    # 42/42/44 and 63/66/61 at the three seeds.
+    obs_rej = score.by_family["observed-rejection"]["wrong"]
+    assert 40 <= obs_rej <= 46, (
+        f"{obs_rej} real rejections stated as fact at this seed, outside the "
+        "measured band of 40..46. These are transcribed wordings, so a move "
+        "here is the product changing, never the corpus."
+    )
+    obs_pend = score.by_family["observed-pending"]["wrong"]
+    assert 58 <= obs_pend <= 70, (
+        f"{obs_pend} real action-required messages read as confirmations at "
+        "this seed, outside the measured band of 58..70. See #459."
+    )
+    # The closure wording NEVER lands, at any seed, and that steadiness is the
+    # point: "your application is no longer active" is not a wording problem
+    # that some employers avoid, it is a shape the classifier has no answer for.
+    assert score.by_family["observed-closure"]["abstained"] == 120, (
+        "the closures must keep abstaining rather than quietly becoming "
+        "correct. If this moves, say what taught the classifier to read them."
+    )
+    # And the acknowledgements must stay perfect. 23 real wordings from 10 ATS
+    # platforms, and this is the shape every later update is filed against.
+    assert score.by_family["observed-confirmation"]["wrong"] == 0
+    assert score.by_family["observed-not-application"]["wrong"] == 0
     # THIS ASSERTED ZERO UNTIL 2026-08-22, on the belief that truncation always
     # fails SAFE — silent rather than wrong. That belief was an artefact of the
     # corpus carrying only ONE rejection wording. Adding the second real one
@@ -305,9 +363,9 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # profile nudge in `ats-relay-noise` — both fire on a drawn role title, so
     # both move with the seed. Measured 116 / 112 / 113 at the three seeds.
     # Everything that was structural before this is still asserted exactly.
-    assert 112 <= score.auto_filed_wrong <= 116, (
+    assert 132 <= score.auto_filed_wrong <= 139, (
         f"{score.auto_filed_wrong} wrong verdict(s) were stated as fact at this "
-        "seed, outside the measured band of 112..116. The number that reaches "
+        "seed, outside the measured band of 132..139. The number that reaches "
         "the board without anyone being asked is the one worth watching across "
         "a re-sample."
     )
@@ -404,7 +462,23 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
         "a rejection landing on the wrong card settles a live application "
         f"terminally. {[f.detail for f in score.failures if f.mode == 'MERGE'][:3]}"
     )
-    assert score.splits == 0, [f.detail for f in score.failures if f.mode == "SPLIT"][:3]
+    # SPLIT WAS 0 UNTIL THE OBSERVED FAMILIES LANDED, and 7 is the first time
+    # this corpus has produced one. Every one is `observed-pending`: a real ATS
+    # sends a SECOND notification for an application it has already
+    # acknowledged ("Keep track of your application"), and where the
+    # acknowledgement named no role and the follow-up does, the board cannot see
+    # they are one application and opens a rival card. #459.
+    #
+    # Pinned rather than relaxed to an inequality, and NOT folded in with
+    # `merges` above: a split shows one application twice, which is visible and
+    # correctable, where a merge destroys a record silently. They are different
+    # severities and must not share an assertion.
+    assert score.splits == RECORDED["splits"], [
+        f.detail for f in score.failures if f.mode == "SPLIT"
+    ][:3]
+    assert {f.family for f in score.failures if f.mode == "SPLIT"} == {
+        "observed-pending"
+    }, "a split from a family other than the known one is a new defect"
     # NOISE ON A CARD WAS 0 AND IS NOW 2, and the honest thing is to pin it
     # rather than relax the assertion. Both are `ats-relay-noise`, the family
     # added as the control for the #447 ATS floor: a profile-completion nudge
@@ -466,7 +540,15 @@ async def test_an_update_updates_the_card_it_belongs_to(
         f.detail for f in score.failures if f.mode == "UPDATE-OPENED-A-CARD"
     ][:5]
     assert score.merges == 0
-    assert score.splits == 0
+    # SPLIT IS NOT 0 ANY MORE, and the distinction this test is about survives
+    # it. No update reached the WRONG card — that is the assertion above and it
+    # still holds completely. These 7 reached NO card, because the board could
+    # not see the second notification was the same application: `observed-pending`
+    # is a real "Keep track of your application" following a real acknowledgement
+    # that named no role. #459.
+    assert score.splits == RECORDED["splits"], [
+        f.detail for f in score.failures if f.mode == "SPLIT"
+    ][:3]
 
     assert score.update_opened_a_card == RECORDED["update_stranded"]
 
@@ -677,7 +759,15 @@ async def test_every_application_mail_is_addressed(
     # is the one outcome a user cannot tell apart from a mailbox that never
     # received it.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
-    assert dict(lost) == {}, dict(lost)
+    assert dict(lost) == {
+        # #458. The snippet cuts one character before "with your application",
+        # leaving "thank you so much for your interest in <Employer> and for the
+        # time and effort you have invested in our process" — which does not say
+        # it is about an application. Closing these needs `invested in our
+        # process` in the reference signal, and that is a sender's SENTENCE
+        # rather than a category, so it was declined. Pinned instead.
+        "observed-rejection": 8,
+    }, dict(lost)
 
     # 84 updates from the company's own domain rather than the ATS relay,
     # scored `applied` at 0.60 and dropped under the review floor. The product
@@ -686,7 +776,7 @@ async def test_every_application_mail_is_addressed(
     # #447: the reference clause floors ATS-relayed mail, and by construction
     # this family does not arrive on an ATS relay. See #451.
     dropped = Counter(f.family for f in score.failures if f.mode == "DROPPED")
-    assert dict(dropped) == {"update-from-another-domain": 84}, dict(dropped)
+    assert dict(dropped) == {"update-from-another-domain": 72}, dict(dropped)
 
     # THE CONTROL FOR THE FIX ABOVE, and the reason `lost == 0` means anything.
     #

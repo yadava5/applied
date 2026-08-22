@@ -2438,11 +2438,29 @@ def is_ats_sender(sender_email: str | None) -> bool:
 #: The offer clause covers the rescinded-offer shape, where the sender's own
 #: words are "we have had to withdraw the offer for this position" and the word
 #: application never appears either.
+#:
+#: ``your assessment|interview`` COMPLETES THE CATEGORY rather than chasing a
+#: wording. Every clause here has the same shape — a hiring-process artefact
+#: that belongs to the READER — and application, candidacy and offer were three
+#: of five. The two that were missing are the two the product has statuses for.
+#: An assessment reminder ("our team noticed you haven't had a chance to
+#: complete your assessments yet") names no application and is unmistakably
+#: about one; 58 of them reached nothing in the 16.8k corpus.
+#:
+#: WHAT WAS DELIBERATELY NOT ADDED, because the line matters. Eight real
+#: rejections still reach nothing: the snippet cuts at "thank you so much for
+#: your interest in <Employer> and for the time and effort you have invested in
+#: our process", one character before "with your application". Adding
+#: ``invested in our process`` or ``in our hiring process`` takes the corpus to
+#: 633/633 with zero noise — and it would be transcribing one sender's sentence
+#: into the product, which is the closed loop ``observed.py`` exists to break.
+#: The wording is not a category, it is a phrase. Left open and pinned instead.
 _APPLICATION_REFERENCE = re.compile(
     r"""(?xi)
       your\ application\b
     | your\ candidacy\b
     | \b(?:your|the)\ offer\b
+    | your\ (?:assessment|interview)s?\b
     | your\ interest\ in\ (?:the\ |this\ |our\ )?
       [\w,\ \-/]{0,60}?(?:opportunity|position|role|opening)\b
     | \bappl(?:y|ied|ying)\ (?:for|to)\ (?:the\ |a\ |an\ )?
