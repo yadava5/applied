@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./helpers";
 
@@ -341,6 +341,117 @@ test.describe("a conditional explainer is not a rejection", () => {
     await expect(
       page.getByTestId("import-results").getByText("review", { exact: true }).first(),
       "a job alert must not be filed as a lifecycle verdict",
+    ).toBeVisible();
+  });
+});
+
+/**
+ * A REPLY SPEAKS FOR ITSELF, IN THE TAB TOO.
+ *
+ * Issue #441 changed two things in the scoring walk, and both had to be ported
+ * from `backend/jobtracker/classifier/rules.py` into `lib/demo/rulesLayer.ts`:
+ * quoted history is no longer scored as this message's own words, and a
+ * reply's subject is no longer scored as a headline. A fix on only one layer
+ * is half a fix — this page is where the second one runs, in the tab, with no
+ * account, which is where the landing page sends people.
+ *
+ * Asserted here rather than as a unit test for the reason the block above
+ * gives: `rulesLayer.ts` imports `rules.json` without an import attribute and
+ * cannot be loaded by `node --test`. Driving the page runs the same code
+ * through the real bundler, which is the stronger evidence anyway.
+ *
+ * The parity numbers these three cases were written from, Python beside
+ * TypeScript on the same inputs:
+ *
+ *     Microsoft confirmation      applied 0.90   applied 0.90   (was 0.80)
+ *     reply quoting its own ack   interview 0.75 interview 0.75 (was applied 0.95)
+ *     withdrawal quoting an offer offer 0.75     offer 0.75     (was offer 0.95)
+ *
+ * The withdrawal is stated as "not auto-filed" rather than "read as a
+ * rejection", because the second is not true yet: stripping the quote stops
+ * the product asserting an offer nobody made and starts it asking. Reading it
+ * correctly needs withdrawal vocabulary the rules do not have, which is what
+ * remains of #417.
+ */
+test.describe("a reply is not its own thread", () => {
+  const QUOTED_INVITE =
+    "Hi Ayush, Following up on the below - we would like to invite you to " +
+    "interview next week. Are you available Thursday?\n\n" +
+    "On Tuesday, Cedarhollow Systems Recruiting wrote:\n" +
+    "> Hi Ayush, Thank you for applying to the Backend Engineer position at\n" +
+    "> Cedarhollow Systems. Your application has been received.\n";
+
+  const MICROSOFT =
+    "Hi Ayush, Thank you for taking the time to submit your application for " +
+    "Pre-Training (Job number: 200007619). We are glad you are interested in a " +
+    "career at Microsoft, and we are here to help";
+
+  async function classify(
+    page: Page,
+    subject: string,
+    from: string,
+    body: string,
+  ) {
+    await page.goto("/import");
+    await page.getByTestId("import-file").setInputFiles({
+      name: "reply.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify([{ subject, from, body }]), "utf-8"),
+    });
+    await expect(page.getByTestId("import-row")).toHaveCount(1);
+    return page.getByTestId("import-results");
+  }
+
+  test("a follow-up quoting its own confirmation is not a confirmation", async ({
+    page,
+  }) => {
+    const results = await classify(
+      page,
+      "Re: Thank you for applying to Cedarhollow Systems",
+      "Recruiting <no-reply@greenhouse.io>",
+      QUOTED_INVITE,
+    );
+    await expect(
+      results.getByText("interview", { exact: true }).first(),
+      "the tab scored the QUOTE. Every invitation a recruiter sends by " +
+        "replying to their own acknowledgement lands on this, and the card " +
+        "never advances past applied.",
+    ).toBeVisible();
+    await expect(results.getByText("applied", { exact: true })).toHaveCount(0);
+  });
+
+  /**
+   * THE CONTROL on the port. A fix that drops the quote unconditionally would
+   * pass the test above and break this one: a bare forward has written nothing
+   * readable, so its own words are not an assertion and the quote is all there
+   * is. `MIN_ASSERTED_CHARS` is what separates the two.
+   */
+  test("a bare forward still reads its quote", async ({ page }) => {
+    const results = await classify(
+      page,
+      "FW: your application",
+      "Talent <talent@acme.example>",
+      "fyi\n\nOn Tuesday, Talent wrote:\n> We regret to inform you that we are " +
+        "not moving forward with your candidacy.\n",
+    );
+    await expect(
+      results.getByText("rejection", { exact: true }).first(),
+      "forwarding a rejection to yourself with 'fyi' over it left the tab " +
+        "with eleven characters to score, which is nothing at all",
+    ).toBeVisible();
+  });
+
+  test("Microsoft's confirmation files itself in the tab", async ({ page }) => {
+    const results = await classify(
+      page,
+      "Thank you for your application!",
+      "Microsoft Careers <donotreply@email.careers.microsoft.com>",
+      MICROSOFT,
+    );
+    await expect(
+      results.getByText("applied", { exact: true }).first(),
+      "the wording of five real confirmations in the owner's mailbox, none of " +
+        "which the product could file before #441",
     ).toBeVisible();
   });
 });
