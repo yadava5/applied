@@ -63,8 +63,9 @@ const RUN_THRESHOLD = 0.35;
  *  observer fires with the panel already gone. Through `find` that resolution
  *  threw, synchronously, inside the observer's callback — outside the take's
  *  promise chain, so the runner below never saw it and the page carried the
- *  uncaught error instead (measured at 5.78s on an idle 1024x600 landing,
- *  every desktop width, 2026-08-21). A live target's honest answer to "the
+ *  uncaught error instead (measured at 5.78s on an idle 1024x600 landing, and
+ *  within 100ms of that at every desktop width tried — 1024x768, 1440x900,
+ *  1512x949; 2026-08-21). A live target's honest answer to "the
  *  subject is gone" is `null`, which is what `Target` is typed for and what
  *  `reframe` documents itself as handling: it releases the pan toward home.
  *  Nothing is lost by asking softly here — the panel's existence is already
@@ -132,9 +133,9 @@ const take = async (d: Director) => {
   d.say(ACT.narration[4]);
   // Top-aligned: the pane is taller than most frames, and the beat's line
   // names its head — the assessment, its deadline — not its middle.
-  // Same rule, and here the loud assertion is literally the line above: the
-  // `waitFor` has already established the pane inside the take's own chain,
-  // so a second, throwing address of it bought nothing but the escape route.
+  // Same rule, and here the loud assertion is three lines up: that `waitFor`
+  // has already established the pane inside the take's own chain, so a
+  // second, throwing address of it bought nothing but the escape route.
   await d.panTo(() => d.query('[data-testid="application-detail"]'), "top");
   await d.hold(2600);
 
