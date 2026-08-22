@@ -23,6 +23,11 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parseFailures } from "../../scripts/assert-unit-suite-ran.mjs";
 
@@ -122,4 +127,38 @@ test("importing the gate does not run the suite — otherwise this file recurses
   // suite from inside the unit suite; this asserts the guard by the fact that
   // the import above returned at all, and pins the export it depends on.
   assert.equal(typeof parseFailures, "function");
+});
+
+test("the gate still RUNS when invoked through a symlink — the other half of the guard", () => {
+  // The import test above only proves the guard can be false. Both halves have
+  // to be asserted or the pair is worthless: a guard stuck false makes this
+  // gate a no-op that exits 0 on every build, which is indistinguishable from
+  // a passing one. The realistic way to get there is a path that crosses a
+  // symlink, because `process.argv[1]` is whatever the caller typed while
+  // `import.meta.url` is always the real path.
+  //
+  // Invoked from a temp cwd the suite glob matches nothing, so this costs a
+  // near-empty runner start rather than a second full suite, and the floor
+  // check is what answers — proving main() ran at all.
+  const dir = mkdtempSync(join(tmpdir(), "gate-symlink-"));
+  const link = join(dir, "gate-via-symlink.mjs");
+
+  try {
+    symlinkSync(fileURLToPath(new URL("../../scripts/assert-unit-suite-ran.mjs", import.meta.url)), link);
+
+    // NODE_TEST_CONTEXT has to go. `node --test` sets it in every test process,
+    // and a nested runner that sees it refuses to run files at all ("run() is
+    // being called recursively within a test file. skipping running files"),
+    // which would make this assert the wrong failure. Found by running it:
+    // the gate reported `wrote no TAP … (ENOENT)` instead of the floor.
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+
+    const run = spawnSync(process.execPath, [link], { cwd: dir, encoding: "utf8", env });
+
+    assert.notEqual(run.status, 0, "a gate that measured nothing must never exit 0");
+    assert.match(run.stderr, /below the floor of 400/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

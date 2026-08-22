@@ -98,7 +98,7 @@
  *      the actual root-cause fix rather than a workaround for it.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -351,9 +351,24 @@ export { parseFailures };
 // Run only when invoked as a script, so importing it for those tests does not
 // launch the whole suite recursively. `import.meta.main` would say this in one
 // word but landed after Node 22, which is the version CI pins.
+// Both sides go through realpath, not just `resolve`. `import.meta.url` is
+// already the real path, while `process.argv[1]` is whatever the caller typed —
+// so a bin symlink, or any path crossing a symlinked directory, makes the two
+// disagree, the guard reads false, and this gate becomes a no-op that exits 0.
+// That is the "check that cannot fail" shape, and it would look exactly like a
+// passing build. `realpathSync` throws on a path that does not exist, hence the
+// fallback to the unresolved value rather than an uncaught crash.
+const realpathOrSelf = (path) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+};
+
 const invokedDirectly =
   process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  realpathOrSelf(process.argv[1]) === realpathOrSelf(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
   // Deliberately NOT process.exit(): see the #433 note above. Setting the code
