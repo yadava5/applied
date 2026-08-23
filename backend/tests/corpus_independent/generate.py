@@ -109,9 +109,9 @@ ROLES: tuple[str, ...] = (
     # PARTIAL title, silently dropping the first word. The role token is the
     # application identity, so the confirmation and a later update disagreed
     # about which application they were. See #466.
-    "Software Development Engineer I - AI/ML Network Infrastructure, Kestrel Labs",
+    "Software Development Engineer I - AI/ML Network Infrastructure, Kestrelan Labs",
     "Software Engineer I, Entry-Level (Graduation Date: Fall 2025-Summer 2026)",
-    "Software Development Engineer I, ML Infra Services, Kestrel Labs",
+    "Software Development Engineer I, ML Infra Services, Kestrelan Labs",
     "Software Engineer, Agentic AI Harness & Quality - Talonflow",
     "Associate Software Engineer, Operator Experience",
 )
@@ -993,6 +993,147 @@ def _one_thread_many_roles_in_the_queue(b: _Builder, n: int) -> None:
                     "of them confident enough to file, so the QUEUE holds four"
                 ),
             )
+
+
+#: The longest title in :data:`ROLES`, and the one this family is built on.
+#: Selected by MEASUREMENT rather than by name so that editing ``ROLES`` cannot
+#: quietly leave the family pointing at a title too short to reach the bound.
+_LONGEST_ROLE: str = max(ROLES, key=len)
+
+#: A requisition id printed the way Amazon prints one — bare ``ID:``, no "job"
+#: in front of it, between the title and the word that terminates it.
+_REQ_SUFFIX_TEMPLATE = " (ID: {req})"
+
+
+#: THE CAPTURE CEILING IS 91, NOT THE 90 THE PATTERN APPEARS TO SAY. The role
+#: group reads ``[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?`` — one leading capital PLUS
+#: three-to-ninety more characters, so a 91-character title fits and a
+#: 92-character one does not.
+#:
+#: Getting this off by one is not academic; it is what made the first draft of
+#: this family measure nothing. The invented sub-brand in ``ROLES`` was two
+#: characters shorter than the real one it mirrors, which put the longest title
+#: at 76 rather than the 78 the comment there states. 76 + " (ID: nnnnnnnn)" is
+#: exactly 91 — it FITS, the capture succeeds whole, and reverting the fix left
+#: the corpus completely green. The real Amazon title is 78, the real span is
+#: 93, and the sub-brand is now 14 characters like the original.
+_ROLE_CAPTURE_CEILING = 91
+
+
+def _role_id_span_crosses_the_bound(role: str, req: str) -> bool:
+    """Does title-plus-id exceed the capture ceiling while the title alone does not?
+
+    This family only measures anything when the answer is yes, so the answer is
+    computed rather than assumed. A fixture that sits on the harmless side of a
+    bound is this estate's recurring defect — a corpus family whose messages
+    never meet in one batch, a fixture past the largest N any test asks for —
+    and it looks exactly like a passing test.
+    """
+
+    bare = len(role)
+    with_id = bare + len(_REQ_SUFFIX_TEMPLATE.format(req=req))
+    return bare <= _ROLE_CAPTURE_CEILING < with_id
+
+
+def _requisition_inside_the_bound(b: _Builder, n: int) -> None:
+    """The requisition id rides inside the title's width bound, and evicts a word.
+
+    Amazon writes the confirmation as
+
+        "...We've received your application for the <TITLE> (ID: 10475660)
+         position."
+
+    and the later verdict as
+
+        "...regarding your application for the <TITLE> position..."
+
+    with no id, because by then the conversation is about a decision rather than
+    a submission. The role capture is bounded at 90 characters and that bound is
+    spent while the id is STILL INSIDE the span, even though ``_clean_role``
+    deletes the id immediately afterwards. On a 76-character title the span is
+    91, the bound cannot be met, and the engine backtracks the preceding gap and
+    restarts the capture one word later — so the confirmation is filed under
+    "Development Engineer I ..." and the verdict arrives naming "Software
+    Development Engineer I ...". Two role tokens, two identities, two cards for
+    one application. Measured on the owner's live board 2026-08-23, applications
+    112 and 126.
+
+    WHY NO EXISTING FAMILY CATCHES IT. ``req-id-same-title`` already pairs a
+    title with a parenthesised requisition, but prints it as ``(R-40001)`` — no
+    ``ID:`` label — which ``_clean_role`` does not strip and which therefore is
+    part of the title on both sides of the conversation, so the two sides still
+    agree. ``ROLES`` grew its long tail on 2026-08-22 for exactly this bound,
+    but no family combined a long title WITH a labelled id, and the whole corpus
+    stayed green through the defect.
+
+    THE ID IS ON THE CONFIRMATION ONLY, and that asymmetry is the point. Put it
+    on both messages and both sides truncate identically, they agree again, and
+    the family measures nothing.
+
+    THE VERDICT ARRIVES ON ITS OWN THREAD, and that is the second thing this
+    family had to be told. The first draft threaded the two messages together
+    and measured NOTHING: reverting the fix left splits at 0 and the board at
+    the same card count, because a shared Gmail thread joins the two messages
+    whatever the role tokens say, and the truncation stays invisible behind it.
+    A separate thread is also the real shape — ``update-outside-the-thread``
+    exists for the same reason, and Amazon's own verdicts do not thread with
+    their acknowledgements — and it leaves the ROLE TOKEN as the only thing that
+    can join them. Which is precisely the thing the bound corrupts.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        role = _LONGEST_ROLE
+        req = f"{10400000 + i}"
+        if not _role_id_span_crosses_the_bound(role, req):  # pragma: no cover
+            raise AssertionError(
+                f"corpus family 'requisition-inside-the-bound' cannot fire: "
+                f"role is {len(role)} chars and the id suffix brings it to "
+                f"{len(role) + len(_REQ_SUFFIX_TEMPLATE.format(req=req))}, "
+                f"which does not straddle the {_ROLE_CAPTURE_CEILING}-character "
+                "capture ceiling"
+            )
+        thread = f"req-bound-{token}"
+        first = b.add(
+            family="requisition-inside-the-bound",
+            subject=f"Thank you for applying to {display}",
+            sender=b.ats(i),
+            sender_name=f"{display} Careers",
+            body=(
+                f"Hi Ayush, Thanks for applying to {display}! We've received your "
+                f"application for the {role}"
+                + _REQ_SUFFIX_TEMPLATE.format(req=req)
+                + " position. What happens next? If we decide to move forward we "
+                "will be in touch."
+            ),
+            expected_category="applied",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=thread,
+            day=i % 40,
+            adversarial=True,
+            note="the id sits between the title and 'position', inside the bound",
+        )
+        b.add(
+            family="requisition-inside-the-bound",
+            subject=f"Update on your application to {display}",
+            sender=b.ats(i),
+            sender_name=f"{display} Careers",
+            body=(
+                f"Hi Ayush, We are writing regarding your application for the {role} "
+                "position. After careful consideration we have decided to move "
+                "forward with other candidates."
+            ),
+            expected_category="rejection",
+            identity=f"{token}|{role}",
+            employer=token,
+            thread=f"{thread}-verdict",
+            day=(i % 40) + 6,
+            joins=first.message_id,
+            card_status="rejected",
+            adversarial=True,
+            note="same title, no id, own thread — the role token must join them",
+        )
 
 
 def _ats_relay_noise(b: _Builder, n: int) -> None:
@@ -1994,6 +2135,7 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # role and wording after it and the whole recorded run moves at once. At
     # the end, the delta is this family and nothing else.
     ("one-thread-many-roles-in-the-queue", _one_thread_many_roles_in_the_queue, 60),
+    ("requisition-inside-the-bound", _requisition_inside_the_bound, 60),
 )
 
 

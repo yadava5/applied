@@ -781,6 +781,35 @@ _ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
 #
 # Ordered most-specific first. Each capture is bounded to one clause (no ``.``,
 # ``!``, ``?`` or newline) so a runaway match cannot swallow the next sentence.
+#: A parenthesised requisition id sitting between the title and the keyword that
+#: terminates it — "…Annapurna Labs (ID: 10475660) position."
+#:
+#: IT MUST NOT COUNT AGAINST THE TITLE'S WIDTH. The role captures below are
+#: bounded (``{3,90}``), and that bound is spent while the id is still inside the
+#: span, even though :func:`_clean_role` deletes the id one line later. So the
+#: bound is measured against text that is by construction not part of the answer.
+#:
+#: Measured, in the owner's mailbox on 2026-08-23. Amazon writes:
+#:
+#:     "...your application for the Software Development Engineer I – AI/ML
+#:      Network Infrastructure, Annapurna Labs (ID: 10475660) position."
+#:
+#: "Software" to " position" is 92 characters WITH the id and 77 WITHOUT it. At
+#: 92 the bound cannot be met, so the engine backtracks the preceding gap and
+#: restarts the capture one word later — and applications 112 and 126 went to the
+#: live board titled "Development Engineer I – AI/ML Network Infrastructure,
+#: Annapurna Labs", each missing the first word of its own job title.
+#:
+#: Not a length problem to be solved by a bigger number: widening 90 to 120 was
+#: measured on 2026-08-22 and made the corpus WORSE (splits 2 -> 3), because a
+#: wider bound also lets prose through. The id is simply not part of what is
+#: being bounded, so it is matched outside the bound instead.
+#:
+#: Optional, and the same label set :func:`_clean_role` strips, so the pattern
+#: and the cleaner cannot disagree about what an id looks like. Case-insensitive
+#: inline because one of the two patterns using it is not.
+_ROLE_TRAILING_REQ = r"(?:\s*\(\s*(?i:(?:job\s*|requisition\s*|req\s*)?id[:\s#])[^)]*\))?"
+
 _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Ashby: "Thank you for applying to our role: Software Engineer I, Storage."
     re.compile(r"\brole:\s*(?P<role>[^.!?\n]{3,90}?)\s*(?=[.!?\n]|$)", re.IGNORECASE),
@@ -810,7 +839,7 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"\b(?:for|in|to|and)\s+(?:the|our|your|a|an)\s+"
         r"(?P<role>(?:(?!\b(?:for|in|to|at|with|and)\s+(?:the|our|your|a|an)\s)"
-        r"[^.!?\n]){3,90}?)\s+"
+        r"[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ + r"\s+"
         r"(?:position|role|opening|opportunity|req)\b",
         re.IGNORECASE,
     ),
@@ -834,7 +863,8 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # and it leaves every non-possessive wording untouched.
     re.compile(
         r"\b(?:applying|applied|application)\b[^.!?\n]{0,40}?"
-        r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)\s+(?:position|role)\b",
+        r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ
+        + r"\s+(?:position|role)\b",
     ),
     # Microsoft-shaped: "submit your application for Software Engineer II
     # (Job number: 200045485)." No article before the title and no trailing

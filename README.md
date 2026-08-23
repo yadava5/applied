@@ -170,8 +170,8 @@ What the v3 set is, exactly, from `classifier_eval_v3_spec.json` and the dataset
 
 ### The 16,780-message adversarial corpus
 
-The answer to the paragraph above. `backend/tests/corpus_independent/` invents **17,020 messages
-across 35 families over 9,180 companies**, every employer and role invented — and six of those
+The answer to the paragraph above. `backend/tests/corpus_independent/` invents **17,140 messages
+across 36 families over 7,960 companies**, every employer and role invented — and six of those
 families phrased in wordings transcribed from mail that actually arrived, so the corpus is not
 graded only on the vocabulary the author of `rules.py` wrote. It drives them through the whole
 sync end to end: classify, roll up, upsert, persist the review queue, then read the board back out
@@ -196,23 +196,23 @@ that greeting opens **67% of rejections and 22% of confirmations**. Wrong verdic
 went 139 to 119 with no confirmation family losing a single message
 ([#455](https://github.com/yadava5/applied/issues/455)).
 
-**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 92.22%
+**And read it knowing the number went DOWN on purpose.** It was 93.05% on 2026-08-22 and is 92.28%
 on the same engine, because the corpus stopped being written entirely by the author of the
 classifier. Measured before that change: **100.0% of the 13,730 lifecycle messages contained an
 engine pattern verbatim**, and **123 of 160 engine patterns were never exercised at all**. A corpus
 in that state cannot find a gap — it can only confirm the pattern list against itself, and its
 headline describes the author's vocabulary rather than the product's reach. `observed.py` holds 36
 wordings transcribed from mail that actually arrived, from ten applicant tracking platforms, written
-by recruiting teams with no knowledge of this repository. 92.22% is the first number here that was
+by recruiting teams with no knowledge of this repository. 92.28% is the first number here that was
 not partly graded by the person who set the exam.
 
 | | measured 2026-08-22 |
 | --- | --- |
-| Correct | **15,696 of 17,020 — 92.22%** |
+| Correct | **15,816 of 17,140 — 92.28%** |
 | Wrong | **311** |
 | **Wrong AND stated to the user as fact** | **72** |
 | Abstained (below the 0.70 review floor, the product says nothing) | **1,013** |
-| Board: cards / splits / merges / noise / misrouted review | **9,132 / 0 / 0 / 0 / 0** |
+| Board: cards / splits / merges / noise / misrouted review | **9,192 / 0 / 0 / 0 / 0** |
 | Updates that reached the wrong card | **0** |
 | Updates held for a person because the classifier was unsure | 360 |
 | Mail about a real application that reached nothing | **11 lost**, 72 dropped |
@@ -714,7 +714,7 @@ Versions are pinned from `apps/web/package.json`, `requirements.txt`, and the CI
 
 ### Testing
 
-**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1014 `test_*` functions across 88 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
+**1076 tests collected, 0 skipped.** These figures were recorded on 2026-08-15 by `python3 scripts/readme_facts.py --record`, which runs `pytest tests -q --cov=jobtracker` in the project's Python 3.11.14 venv and writes `docs/readme-facts.json`; `--check` fails the build when this page and that artifact disagree. The count was first published from commit `37dd805` and corrected in `5b895d8`. It has grown since: a static parse counts 1017 `test_*` functions across 88 modules at HEAD, against 300 across 25 modules at `37dd805` — the tests added with the sync-cursor, recoverable-removal, company-matching, stage-vocabulary, application-identity, RLS, migration-chain and expand-only-gate work, five of which brought their own module (`test_status_vocabulary.py`, `test_application_identity.py`, `test_rls_postgres.py`, `test_migrations_postgres.py`, `test_expand_only_gate.py`). The bold 1076 is the artifact's and moves only on `--record`, while the static parse is recomputed on every `--check`, so between recordings the two drift apart — and parametrization lifts collected above the parse besides. CI reruns the suite with `--cov` on every push, so the current number lands in a public run log rather than resting on this sentence.
 
 The Postgres row-level-security module is the only thing in the repo that can demonstrate the isolation the product claims, and **21 tests** now exercise it. It has not always run: its tests waited on a database URL no workflow set, and a skip is green, so the 10 it held on 2026-08-02 had **never executed anywhere**. Two fixes: `test_rls_postgres.py` now starts its own `postgres:16` via testcontainers when `JOBTRACKER_TEST_PG_ADMIN_URL` is absent and Docker is available, and the `rls-postgres` CI job supplies its own service container. That job then parses the JUnit XML and **fails the build if the suite reports zero tests or any skip**, because a skipped security test and a passing one produce the same green tick.
 
