@@ -58,6 +58,7 @@ from datetime import datetime
 import pytest
 
 from jobtracker.cloud.pipeline import (
+    _ROLE_BODY_PATTERNS,
     _ROLE_TRAILING_REQ,
     PipelineItem,
     _clean_role,
@@ -105,13 +106,13 @@ PALANTIR_REJECTION_SUBJECT = (
 )
 
 
-def test_the_lever_confirmation_names_its_role():
+def test_the_lever_confirmation_names_its_role() -> None:
     assert role_from_message("Your application has been received!", PALANTIR_CONFIRMATION) == (
         "Software Engineer, New Grad"
     )
 
 
-def test_the_confirmation_and_its_rejection_stay_one_application():
+def test_the_confirmation_and_its_rejection_stay_one_application() -> None:
     """The card gains a title WITHOUT its rejection losing its way to it.
 
     This is the regression the rule could plausibly have caused and does not.
@@ -181,7 +182,7 @@ def test_the_confirmation_and_its_rejection_stay_one_application():
         ),
     ],
 )
-def test_the_articles_lever_actually_uses(text: str, expected: str):
+def test_the_articles_lever_actually_uses(text: str, expected: str) -> None:
     assert role_from_message("", text) == expected
 
 
@@ -198,31 +199,86 @@ def test_the_articles_lever_actually_uses(text: str, expected: str):
         "your application to be a Palantir's Software Engineer at Palantir.",
     ],
 )
-def test_it_refuses_what_is_not_an_application(text: str):
+def test_it_refuses_what_is_not_an_application(text: str) -> None:
     assert role_from_message("", text) is None
 
 
-def test_appending_the_rule_changed_no_existing_capture():
-    """It is last, so it can only speak where the others were silent.
+#: Three wordings, each owned by a DIFFERENT earlier pattern. Used twice below:
+#: once to show the new rule did not disturb them, once to show it cannot even
+#: see them.
+OWNED_BY_AN_EARLIER_PATTERN = {
+    # Ashby's explicit label.
+    "Thank you for applying to our role: Software Engineer I, Storage.": (
+        "Software Engineer I, Storage"
+    ),
+    # The article-anchored form, with its innermost-anchor tempering.
+    "Thank you for your interest in SimpliSafe and our Software Engineer I- "
+    "User Systems position.": "Software Engineer I- User Systems",
+    # Microsoft's parenthesised requisition terminator.
+    "submit your application for Software Engineer II (Job number: 200045485).": (
+        "Software Engineer II"
+    ),
+}
 
-    Guards the ordering claim in the module comment: if this rule is ever moved
-    ahead of another, one of these — each of which an EARLIER pattern owns —
-    would start resolving through the new one instead.
+
+def test_appending_the_rule_changed_no_existing_capture() -> None:
+    """Every wording an earlier pattern owns still resolves the same way."""
+
+    for text, expected in OWNED_BY_AN_EARLIER_PATTERN.items():
+        assert role_from_message("", text) == expected
+
+
+def test_the_new_rule_cannot_even_see_what_the_others_own() -> None:
+    """Disjointness, which is the real property — and the one worth testing.
+
+    THIS TEST REPLACES A CLAIM THAT COULD NOT FAIL. The assertion above was
+    written with the docstring "if this rule is ever moved ahead of another, one
+    of these would start resolving through the new one instead". That was
+    wrong: none of the three wordings contains "to be a", so the new pattern
+    cannot match them at ANY position, and the test passed identically with the
+    rule moved to the front. Measured across the whole independent corpus, the
+    order change moves 0 of 17,260 cases.
+
+    So being last is not what makes the rule safe — being DISJOINT is, and that
+    is a stronger property. This asserts it directly: the new pattern matches
+    none of the text the earlier patterns own. Widening its anchor until it
+    overlaps one of them turns this red, which is exactly the change that would
+    make placement start to matter.
     """
 
-    owned_elsewhere = {
-        # Ashby's explicit label.
-        "Thank you for applying to our role: Software Engineer I, Storage.":
-            "Software Engineer I, Storage",
-        # The article-anchored form, with its innermost-anchor tempering.
-        "Thank you for your interest in SimpliSafe and our Software Engineer I- "
-        "User Systems position.": "Software Engineer I- User Systems",
-        # Microsoft's parenthesised requisition terminator.
-        "submit your application for Software Engineer II (Job number: 200045485).":
-            "Software Engineer II",
-    }
-    for text, expected in owned_elsewhere.items():
-        assert role_from_message("", text) == expected
+    new_rule = _ROLE_BODY_PATTERNS[-1]
+    for text in OWNED_BY_AN_EARLIER_PATTERN:
+        assert new_rule.search(text) is None, text
+
+
+def test_when_both_anchors_share_a_sentence_the_earlier_pattern_still_wins() -> None:
+    """The ordering guard, on text constructed to make ordering matter.
+
+    CONSTRUCTED, not observed — no real message has been seen carrying both
+    anchors with two different titles, which is why the disjointness test above
+    is the one that speaks about real mail. This one exists so the tuple's ORDER
+    has a test at all: it is the only input in this file whose answer depends on
+    where the rule sits.
+    """
+
+    both = (
+        "Thank you for applying to our role: Site Reliability Engineer. We have "
+        "logged your application to be a Backend Engineer at Northwind as well."
+    )
+
+    assert role_from_message("", both) == "Site Reliability Engineer"
+
+    reordered = (_ROLE_BODY_PATTERNS[-1], *_ROLE_BODY_PATTERNS[:-1])
+    first_match = next(
+        role
+        for role in (
+            _clean_role(m.group("role"))
+            for m in (p.search(both) for p in reordered)
+            if m is not None
+        )
+        if role is not None
+    )
+    assert first_match == "Backend Engineer"
 
 
 class TestBothGuardsCarryWeight:
@@ -242,7 +298,7 @@ class TestBothGuardsCarryWeight:
         match = pattern.search(text)
         return _clean_role(match.group("role")) if match else None
 
-    def test_without_the_application_verb_an_invitation_becomes_a_job(self):
+    def test_without_the_application_verb_an_invitation_becomes_a_job(self) -> None:
         mutated = re.compile(
             r"\bto\s+be\s+(?:an?|the)\s+" + self.ROLE + _ROLE_TRAILING_REQ + r"\s+at\s+[A-Z]"
         )
@@ -252,7 +308,7 @@ class TestBothGuardsCarryWeight:
         assert self._capture(mutated, invitation) == "Mentor"
         assert role_from_message("", invitation) is None
 
-    def test_without_the_capitalised_employer_the_capture_has_no_end(self):
+    def test_without_the_capitalised_employer_the_capture_has_no_end(self) -> None:
         mutated = re.compile(
             r"\b(?:application|applying|applied)\b[^.!?\n]{0,40}?"
             r"\bto\s+be\s+(?:an?|the)\s+" + self.ROLE + _ROLE_TRAILING_REQ + r"\s+at\s+\w"
