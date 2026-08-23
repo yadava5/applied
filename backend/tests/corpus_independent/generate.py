@@ -906,6 +906,80 @@ def _repeat_anonymous(b: _Builder, n: int) -> None:
             )
 
 
+def _double_acknowledgement(b: _Builder, n: int) -> None:
+    """One submission, acknowledged twice, by two systems that word it differently.
+
+    The shape ``repeat-anonymous`` is NOT. Both families are two-or-more
+    anonymous confirmations from one employer — no role, no requisition, nothing
+    in the mail that tells them apart — and they must come out at different card
+    counts, so each is the other's control:
+
+      repeat-anonymous        same template, days apart  -> one card each
+      double-acknowledgement  two templates, hours apart -> ONE card for both
+
+    Drawn from the owner's mailbox 2026-08-23. Supabase's ATS sent the generic
+    "we confirm your application has been received" at 23:03 and the company's
+    own "thanks for applying, we're glad you're interested" at 21:02, both for
+    one submission. Every anonymous confirmation minted its own card, so the
+    board showed two applications where he had made one — and because
+    ``known_multi`` then treats that employer as holding several, every later
+    role-less message from them goes to the review queue to be assigned to one
+    of two rows that are the same row.
+
+    NEITHER WORDING MAY NAME A ROLE, or the family measures role matching
+    instead of the thing under test. Both templates below are deliberately about
+    the application and never about the job.
+    """
+
+    for i in range(n):
+        display, token = b.employer()
+        sender = b.ats(i)
+        first = b.add(
+            family="double-acknowledgement",
+            subject=f"Thanks for applying to {display}",
+            sender=sender,
+            sender_name=f"{display} Talent Team",
+            body=(
+                f"Hi Ayush, Thanks for applying to {display}. We are really glad you "
+                "are interested in what we are building. We review every application "
+                "carefully and someone from our team will reach out if there is a fit."
+            ),
+            expected_category="applied",
+            identity=f"{token}|__submission__",
+            employer=token,
+            thread=f"ack-a-{token}",
+            day=i % 40,
+            adversarial=True,
+            note="the company's own acknowledgement",
+        )
+        b.add(
+            family="double-acknowledgement",
+            subject=f"Thank you for applying to {display}!",
+            sender=sender,
+            sender_name=f"{display} Hiring",
+            body=(
+                f"Hey Ayush, Thanks for your interest in a role with {display}; we "
+                "confirm your application has been received. What happens next? We "
+                "respond to all candidates and will be in touch."
+            ),
+            expected_category="applied",
+            identity=f"{token}|__submission__",
+            employer=token,
+            # ITS OWN THREAD, because that is how it arrives: two templates from
+            # two emitters do not share a subject, and Gmail threads on subject
+            # plus sender. A shared thread here would let the thread do the
+            # joining and the family would measure nothing.
+            thread=f"ack-b-{token}",
+            # SAME DAY, two hours later. The harness replays day-sized batches,
+            # so a second day would put the two acknowledgements in different
+            # syncs and the merge under test could not arise at all.
+            day=i % 40,
+            joins=first.message_id,
+            adversarial=True,
+            note="the ATS's acknowledgement of the SAME submission, hours later",
+        )
+
+
 def _req_id_same_title(b: _Builder, n: int) -> None:
     """Two openings, one title, different requisition numbers.
 
@@ -2136,6 +2210,7 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
     # the end, the delta is this family and nothing else.
     ("one-thread-many-roles-in-the-queue", _one_thread_many_roles_in_the_queue, 60),
     ("requisition-inside-the-bound", _requisition_inside_the_bound, 60),
+    ("double-acknowledgement", _double_acknowledgement, 60),
 )
 
 
