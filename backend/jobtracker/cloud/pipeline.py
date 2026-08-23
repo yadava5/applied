@@ -218,6 +218,20 @@ class PipelineItem:
     confidence: float = 0.0
     thread_id: str | None = None
     snippet: str = ""
+    # WHICH APPLICATION THIS MESSAGE NAMES, derived by the reader from the
+    # message BODY rather than re-derived here from ``snippet``.
+    #
+    # ``snippet`` is Gmail's own ~200 characters and is all this dataclass used
+    # to carry, so a title printed past character 200 was invisible to every
+    # identity decision while the classifier — which IS handed the body — read
+    # it correctly. Torc's card carried no position for that reason alone.
+    #
+    # NULL/None means "not derived", not "names nothing": the client relay path
+    # carries a snippet and no body, so its items leave these unset and
+    # :func:`item_identity` falls back to reading ``snippet``, which is exactly
+    # what it did before. An empty string means "derived, and it names nothing".
+    identity_role: str | None = None
+    identity_req_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -425,7 +439,7 @@ def flag_follow_ups(
     materialized = list(items)
 
     def sub_key(item: PipelineItem) -> str | None:
-        return application_sub_key(item.subject, item.snippet)
+        return item_identity(item)
 
     # Group every message by company so we can ask "did THIS company respond?",
     # then narrow to the specific application inside the loop.
@@ -1311,6 +1325,64 @@ def normalize_role_token(role: str | None) -> str | None:
     return token or None
 
 
+def sub_key_from_parts(req_id: str | None, role: str | None) -> str | None:
+    """The identity cascade, applied to values somebody ALREADY derived.
+
+    The same order :func:`application_sub_key` uses — requisition id first, then
+    the normalized role token — but reading parts that were extracted once, from
+    the body, and then stored. Empty string is a derived "names nothing" and
+    normalizes to ``None`` exactly like a missing one.
+
+    Exists so that a caller holding derived parts and a caller holding raw text
+    cannot disagree about the order of the cascade. They used to be able to.
+    """
+
+    return (req_id or None) or normalize_role_token(role)
+
+
+def identity_or_derive(
+    *,
+    req_id: str | None,
+    role: str | None,
+    subject: str,
+    snippet: str,
+) -> str | None:
+    """Which application this message names — from a derivation if there is one.
+
+    THE ONE PLACE THAT DECIDES WHETHER TO TRUST A DERIVATION, for the same
+    reason :func:`review_dedup_key` is the one place that decides what a
+    decision is: the callers must not be able to disagree. There are three of
+    them — the queue key, the card builder, and the ghosting sweep — and a rule
+    written out three times is a rule with three answers.
+
+    ``role``/``req_id`` are what the READER extracted, from the message body,
+    and stored. Both ``None`` means no derivation exists for this message, not
+    that it names nothing: a relay item from the client carries a snippet and
+    never had a body, and every row written before the columns existed is in the
+    same position. Those fall back to re-deriving from ``snippet``, which is
+    exactly the old behaviour rather than a second competing answer.
+
+    An empty string is a derived "names nothing" and resolves to ``None``, which
+    stays a VALUE meaning "the same unknown" and not a failure — it is what
+    keeps one employer's two identical acknowledgements a single decision.
+    """
+
+    if role is None and req_id is None:
+        return application_sub_key(subject, snippet)
+    return sub_key_from_parts(req_id, role)
+
+
+def item_identity(item: PipelineItem) -> str | None:
+    """:func:`identity_or_derive` for a message in flight."""
+
+    return identity_or_derive(
+        req_id=item.identity_req_id,
+        role=item.identity_role,
+        subject=item.subject,
+        snippet=item.snippet,
+    )
+
+
 def application_sub_key(subject: str, snippet: str = "") -> str | None:
     """WHICH application, within one employer, this message is about — or None.
 
@@ -1352,6 +1424,8 @@ def review_dedup_key(
     thread_id: str | None,
     subject: str,
     snippet: str,
+    identity_role: str | None = None,
+    identity_req_id: str | None = None,
 ) -> tuple[str, str | None] | str:
     """The unit of ONE DECISION in the review queue — issue #454.
 
@@ -1394,7 +1468,15 @@ def review_dedup_key(
 
     if not thread_id:
         return message_id
-    return (thread_id, application_sub_key(subject, snippet[:STORED_SNIPPET_CHARS]))
+    return (
+        thread_id,
+        identity_or_derive(
+            req_id=identity_req_id,
+            role=identity_role,
+            subject=subject,
+            snippet=snippet[:STORED_SNIPPET_CHARS],
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -1410,6 +1492,13 @@ class MessageRef:
     category: str
     confidence: float
     snippet: str = ""
+    # Carried so the persisted row keeps the identity the reader derived from
+    # the body instead of the persist layer re-deriving a weaker one from the
+    # stored snippet. None means "this pass derived nothing" and the writer
+    # leaves the stored column alone — the same ratchet ``snippet`` itself uses
+    # two fields up.
+    identity_role: str | None = None
+    identity_req_id: str | None = None
     # The classifier's PROPOSAL for a ref that carries no committed category —
     # i.e. a review item, whose ``category`` is the literal ``"needs_review"``.
     # None on the rolled-application path, where ``category`` already IS the
@@ -2075,6 +2164,12 @@ def _message_ref(item: PipelineItem) -> MessageRef:
         category=item.category,
         confidence=item.confidence,
         snippet=item.snippet,
+        # Carried, not re-derived. The persist layer only ever sees the stored
+        # ~200-character snippet, so re-deriving there would write a weaker
+        # identity than the reader already computed from the body — and the two
+        # would then disagree about the same message.
+        identity_role=item.identity_role,
+        identity_req_id=item.identity_req_id,
     )
 
 
@@ -2313,9 +2408,21 @@ def partition_applications(
         if resolved is None:
             continue
         token, display = resolved
-        role = role_from_message(item.subject, item.snippet)
+        # THE CARDS ARE BUILT HERE, so this is the site the user actually sees.
+        # Fixing the queue keys and leaving this re-deriving from ``snippet``
+        # would have fixed the plumbing and not the faucet: the board would go
+        # on showing a blank position for every title printed past Gmail's ~200
+        # characters, which is the whole of what was reported.
+        #
+        # Same fallback rule as everywhere else — a relay item carries no
+        # derivation and is read from its snippet exactly as before.
+        if item.identity_role is None and item.identity_req_id is None:
+            role = role_from_message(item.subject, item.snippet)
+            req = extract_req_id(item.subject, item.snippet)
+        else:
+            role, req = item.identity_role or None, item.identity_req_id or None
         by_company.setdefault(token, []).append(
-            (item, display, extract_req_id(item.subject, item.snippet), normalize_role_token(role), role)
+            (item, display, req, normalize_role_token(role), role)
         )
 
     clusters: list[_Cluster] = []
@@ -3062,6 +3169,8 @@ def collect_review_items(
             thread_id=item.thread_id,
             subject=item.subject,
             snippet=item.snippet,
+            identity_role=item.identity_role,
+            identity_req_id=item.identity_req_id,
         )
         current = best.get(key)
         if current is None or _review_sort_key(candidate) >= _review_sort_key(current):

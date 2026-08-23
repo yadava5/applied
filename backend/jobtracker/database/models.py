@@ -511,6 +511,56 @@ class Email(TimestampMixin, table=True):
         description="First 500 chars for preview",
     )
 
+    # WHICH APPLICATION THIS MESSAGE NAMES, derived once when the message was
+    # read and stored so it is never derived twice from two different texts.
+    #
+    # The classifier is handed the message BODY; identity resolution used to be
+    # handed ``body_snippet``, which is Gmail's own ~200 characters. A title
+    # sitting past that was invisible to the board while the classifier read it
+    # perfectly — Torc's card carried no position for that reason alone, and
+    # against a production-shaped corpus the gap was 50 applications split over
+    # two cards and 452 updates that could not be routed.
+    #
+    # Deriving from the body and NOT storing the result would have been worse
+    # than the bug. ``STORED_SNIPPET_CHARS`` records the failure: a key computed
+    # from one width of text on the queue side and another on the settle side
+    # leaves a row unlinked and un-reviewed, re-queued on every sync forever.
+    # Storing it is what makes both sides read the same value.
+    #
+    # THIS IS NOT THE BODY AND MUST NEVER BECOME IT. A job title and a
+    # requisition number are bounded, and ``applications.position`` /
+    # ``applications.role_token`` / ``applications.req_id`` have stored exactly
+    # this class of value since the beginning. ``/privacy`` says the body is
+    # read in flight and discarded; that stays true, and
+    # ``tests/test_body_is_never_persisted.py`` places its sentinel immediately
+    # after the capture boundary so a capture that ran long would drag it in
+    # here and fail.
+    #
+    # NULL MEANS "NOT DERIVED ON THIS ROW YET" — a row written before this
+    # column existed, or one written by the client relay, which carries a
+    # snippet and no body and so has nothing better to offer than the reader can
+    # compute itself. Empty string means "derived, and the message names
+    # nothing", which is the common and correct case for mail like Google's
+    # acknowledgement. The two are different questions and a single NULL could
+    # not answer both: readers fall back to re-deriving only for NULL, and every
+    # writer ratchets NULL upward and never blanks a value back down.
+    identity_role: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Job title this message names, derived from the body at read time. "
+            "NULL = not derived yet; '' = derived, names none."
+        ),
+    )
+    identity_req_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Requisition id this message names, derived from the body at read "
+            "time. NULL = not derived yet; '' = derived, names none."
+        ),
+    )
+
     # Classification
     classified_as: Optional[EmailCategory] = Field(
         default=None,

@@ -179,6 +179,33 @@ def score_classifier(verdicts: list[Verdict]) -> ClassifierScore:
 # ── the board ────────────────────────────────────────────────────────────────
 
 
+#: What the reader can actually derive an identity FROM, character for
+#: character with production. ``gmail_client._extract_body`` ends
+#: ``_WHITESPACE.sub(" ", text)[:_MAX_BODY_CHARS]``, so every whitespace run is
+#: one space and nothing past 4,000 characters exists as far as the server is
+#: concerned.
+#:
+#: BOTH HALVES WERE MEASURED BEFORE BEING COPIED HERE, because a cap nobody
+#: checks is decoration. Collapsing changes the identity of **0** of 17,260
+#: cases — the generator never splits a role phrase across a line — while the
+#: cap changes **160**, every one of them in ``verdict-past-the-body-cap``,
+#: the family named for it.
+#:
+#: The classifier in this harness still reads the UNCAPPED ``delivered``, which
+#: is a separate instrument defect and is filed rather than fixed here: that
+#: family builds a 7,351-character body with its verdict at ~7,261 to test what
+#: happens when the verdict is out of reach, and hands the classifier all 7,351.
+#: Correcting it moves classifier numbers, not identity ones, and belongs with
+#: its own re-record.
+_MAX_BODY_CHARS = 4000
+
+
+def _readable(case: Case) -> str:
+    """The message body as the server would hold it."""
+
+    return " ".join(case.body.split())[:_MAX_BODY_CHARS]
+
+
 def _item(v: Verdict) -> pipeline.PipelineItem:
     """A verdict as the pipeline receives it.
 
@@ -218,6 +245,17 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
         category=v.category,
         confidence=v.confidence,
         snippet=snippet_of(v.case.body),
+        # WHAT THE READER DERIVED, from the same text it handed the classifier.
+        # ``_classify_messages`` does exactly this, on the body Gmail returned,
+        # and stores the result — which is what lets identity resolution see a
+        # title printed past the snippet without any of the text following it
+        # downstream. ``""`` and not ``None`` when nothing is named: None means
+        # "never derived" and would send the pipeline back to the snippet, which
+        # is the relay path's behaviour and not this one's.
+        identity_role=pipeline.role_from_message(v.case.subject, _readable(v.case))
+        or "",
+        identity_req_id=pipeline.extract_req_id(v.case.subject, _readable(v.case))
+        or "",
     )
 
 
