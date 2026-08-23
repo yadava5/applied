@@ -29,8 +29,8 @@ from tests.corpus_independent.harness import (
 
 #: Recorded 2026-08-22. A corpus that differs between runs cannot be a gate, and
 #: a digest is the only way to say "the same mail" without shipping 24MB.
-CORPUS_DIGEST = "7ee8655d42c05890"
-CORPUS_SIZE = 17140
+CORPUS_DIGEST = "658389ec8da6bb38"
+CORPUS_SIZE = 17260
 
 #: THE RECORDED RUN, in one place, because the README quotes it.
 #:
@@ -39,21 +39,21 @@ CORPUS_SIZE = 17140
 #: not literals inside the asserts. A published number that nothing recomputes
 #: is a claim, and this repository has a ledger of those.
 RECORDED = {
-    "size": 17140,
-    # DISTINCT FAMILY LABELS in the generated corpus, which is 36 and not the
-    # 34 generators in ``_FAMILIES``: two generators emit a second label of
+    "size": 17260,
+    # DISTINCT FAMILY LABELS in the generated corpus, which is 37 and not the
+    # 35 generators in ``_FAMILIES``: two generators emit a second label of
     # their own (``hostile-zero-width``, ``hostile-homoglyph``). The README and
     # the System Card both print a family count and both had drifted — 32 and
     # 24 against a real 35 — because nothing recomputed it. Now something does.
-    "families": 36,
+    "families": 37,
     # DISTINCT EMPLOYER TOKENS, and this entry was decoration until 2026-08-23.
     # It read 9,180 and `readme_facts.py` published it to the README and the
     # Booklet, but no test recomputed it and it matched NO measure of the
     # corpus: employer tokens were 7,900, sender names 8,710, identities 9,410.
     # A published number nothing recomputes is a claim, which is the sentence
     # at the top of this dict, so it is now asserted below like the rest.
-    "companies": 7960,
-    "correct": 15816,
+    "companies": 8020,
+    "correct": 15936,
     "wrong": 311,
     "abstained": 1013,
     # The number that matters more than `wrong`: how many wrong verdicts are
@@ -68,7 +68,7 @@ RECORDED = {
     # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
     # here. See #455 and #451.
     "auto_filed_wrong": 72,
-    "cards": 9192,
+    "cards": 9252,
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
@@ -429,7 +429,7 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
     # history rather than a hedge.
     assert abs(score.correct - RECORDED["correct"]) <= 45, (
         f"correct moved to {score.correct}, more than a wording draw explains. "
-        "The measured spread is 15,816 / 15,805 / 15,846 at three seeds. The "
+        "The measured spread is 15,936 / 15,925 / 15,966 at three seeds. The "
         "tolerance was 25 and is 45 since #466 put realistic job titles in the "
         "corpus: a long title pushes a verdict past a bounded window at one "
         "seed and not at another, so the sample varies more than a wording "

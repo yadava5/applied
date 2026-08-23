@@ -155,23 +155,40 @@ def test_roblox_verification_mail_does_not_mint_a_second_application():
     assert {m.message_id for m in rolled[0].messages} == {"r1", "r2"}
 
 
-def test_two_role_less_confirmations_are_two_applications():
-    """Supabase confirms twice, two hours apart, naming no role either time.
+def test_two_differently_worded_acknowledgements_are_one_application():
+    """Supabase acknowledges twice, two hours apart, naming no role either time.
 
-    THIS TEST USED TO ASSERT ONE ROW, on the reasoning that one row is the honest
-    floor when the mail draws no distinction. The mailbox says otherwise and the
-    owner overruled it on 2026-08-21: the two messages sit in TWO Gmail threads
-    and are two different Ashby templates (Supabase's own copy, then the generic
-    "we confirm your application has been received"), which is what an ATS does
-    when two job posts each fire their own confirmation. One row for them is not
-    a floor, it is a wrong answer that looks like a cautious one.
+    THIS TEST HAS BEEN BOTH WAYS AND THE HISTORY IS THE POINT.
 
-    Google is the case that forced it: the same shape at three. Three
-    confirmations on 11, 13 and 21 August folded onto one card dated the 11th,
-    so a sync that classified all three correctly showed the user a board that
-    had not moved. A merge is invisible and destroys the record; a split is
-    visible and a person can fix it. That asymmetry is the same one
-    ``pipeline._may_join`` already documents for requisition ids.
+    It first asserted ONE row, on the reasoning that one row is the honest floor
+    when the mail draws no distinction. The owner overruled that on 2026-08-21
+    and it became TWO, because Google sends the same shape at three — three
+    confirmations on 11, 13 and 21 August 2026 that folded onto one card dated
+    the 11th, so a sync which classified every message correctly showed a board
+    that had not moved. That was right about Google.
+
+    It generalised from Google to EVERY anonymous confirmation, and that caught
+    Supabase as collateral. The owner reported it on 2026-08-23: "it shows 2 now,
+    but the other mail is just the confirmation for the first". Both of his
+    instructions are satisfiable at once, because the two cases differ in shape
+    even though neither message names an application:
+
+      Supabase   TWO templates, 2h01m apart      -> one submission, acked twice
+      Google     ONE template, 2 and 8 days apart -> three submissions
+
+    So the rule is template AND window, not "every confirmation mints"
+    (:func:`pipeline.group_double_acknowledgements`). The Google half of this
+    decision is asserted directly below and must not be traded away for this one.
+
+    THE ASYMMETRY THE 08-21 DECISION RESTED ON DOES NOT EXIST. It was argued as
+    "a merge is invisible and destroys the record; a split is visible and a
+    person can fix it". Checked on 2026-08-23: `POST /applications/{id}/split`
+    exists and has a UI prompt, and there is **no merge endpoint and no merge
+    control anywhere in this repository**. Over-splitting was not the
+    recoverable error it was documented as. It also poisons the employer's
+    future mail — with two cards, ``known_multi`` sends every later role-less
+    Supabase message to the review queue to ask which of two applications it
+    belongs to, and there is no right answer.
     """
 
     first = item(
@@ -192,13 +209,103 @@ def test_two_role_less_confirmations_are_two_applications():
 
     rolled = p.roll_up_applications([first, second])
 
-    assert len(rolled) == 2
-    assert [{m.message_id for m in r.messages} for r in rolled] == [{"s1"}, {"s2"}]
+    assert len(rolled) == 1
+    assert {m.message_id for m in rolled[0].messages} == {"s1", "s2"}
     # "interest in a" is prose sitting between the anchors, not a job title. If
     # it were accepted it would key an application — which is a different reason
-    # to reach two rows than the one under test, and would make this pass for
-    # the wrong reason.
+    # to reach ONE row than the one under test (both would key the same bogus
+    # token), and would make this pass for the wrong reason.
     assert all(r.role is None and r.role_token is None for r in rolled)
+
+
+def test_the_same_acknowledgement_twice_is_two_applications():
+    """The Google half, and the control that stops the rule above collapsing everything.
+
+    Three "Thanks for applying to Google", byte-identical, no role and no
+    requisition in any of them, on 11, 13 and 21 August 2026. Three real
+    applications. Under a template-only rule they would still be three; under a
+    window-only rule the first two are 2 days apart and would already be safe,
+    but this asserts the shape that matters — SAME template means the submission
+    event happened again, however close together the mail arrives.
+    """
+
+    google = [
+        item(
+            f"g{k}",
+            "Thanks for applying to Google",
+            "noreply@google.com",
+            "Hi Ayush Yadav, Thanks for applying to Google! There are a ton of great "
+            "companies out there, so we appreciate your interest in joining our team.",
+            minutes=minutes,
+        )
+        for k, minutes in enumerate((0, 2 * 24 * 60, 10 * 24 * 60))
+    ]
+
+    rolled = p.roll_up_applications(google)
+
+    assert len(rolled) == 3
+    assert [{m.message_id for m in r.messages} for r in rolled] == [
+        {"g0"},
+        {"g1"},
+        {"g2"},
+    ]
+
+
+def test_the_same_acknowledgement_twice_within_the_window_is_still_two():
+    """The window must not rescue an identical template.
+
+    Two byte-identical acknowledgements twenty minutes apart are two
+    submissions, not one submission acked twice — the ATS emitted its template
+    once per event. Without this, "close together" alone would merge every
+    same-day pair of applications to an employer that names no role, which is
+    exactly what the ``repeat-anonymous`` corpus family is built to catch.
+    """
+
+    pair = [
+        item(
+            f"t{k}",
+            "Thank you for applying to Torc Robotics!",
+            "no-reply@torc.ai",
+            "Hi Ayush, Thank you for beginning your application process with Torc "
+            "Robotics! We are excited to learn more about your interests.",
+            minutes=k * 20,
+        )
+        for k in range(2)
+    ]
+
+    rolled = p.roll_up_applications(pair)
+
+    assert len(rolled) == 2
+
+
+def test_two_templates_far_apart_are_two_applications():
+    """The template must not rescue a wide gap.
+
+    Two differently-worded acknowledgements a month apart are two applications:
+    an employer that reworded its template between them would otherwise lose
+    one silently, and a silent loss is the failure this whole area exists to
+    avoid. Only template-differs AND inside the window merges.
+    """
+
+    early = item(
+        "w1",
+        "Thanks for applying to Northwind Analytics",
+        "no-reply@ashbyhq.com",
+        "Hi Ayush, Thanks for applying to Northwind Analytics. We review every "
+        "application carefully.",
+    )
+    late = item(
+        "w2",
+        "Thank you for applying to Northwind Analytics!",
+        "no-reply@ashbyhq.com",
+        "Hey Ayush, Thanks for your interest in a role with Northwind Analytics; we "
+        "confirm your application has been received.",
+        minutes=30 * 24 * 60,
+    )
+
+    rolled = p.roll_up_applications([early, late])
+
+    assert len(rolled) == 2
 
 
 def test_an_outstanding_step_is_not_a_second_application():

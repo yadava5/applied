@@ -31,7 +31,7 @@ import logging
 import re
 import urllib.parse
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
@@ -2110,6 +2110,115 @@ class _Cluster:
     items: list[PipelineItem]
 
 
+#: How far apart two acknowledgements may sit and still be about ONE submission.
+#:
+#: Not a tuning knob picked to make one mailbox come out right — the two shapes
+#: it separates are an order of magnitude apart on either side, measured in the
+#: owner's real mail on 2026-08-23:
+#:
+#:   ONE submission, two acknowledgements   Supabase, 2h01m apart (21:02 and
+#:                                          23:03 on 10 August). Ashby's generic
+#:                                          note and the Supabase talent team's,
+#:                                          both reacting to the same submit.
+#:   TWO submissions                        Google, 2 days and then 8 days apart
+#:                                          (11, 13 and 21 August).
+#:
+#: Automation reacting to one event fires in minutes or hours. A person applying
+#: again to the same employer, having named no role either time, took days. A day
+#: sits between the two with a full order of magnitude of slack on both sides,
+#: which is the same way DEPLOY_GRACE was chosen.
+DOUBLE_ACK_WINDOW = timedelta(hours=24)
+
+
+def acknowledgement_template(subject: str) -> str:
+    """A subject reduced to the TEMPLATE it came from.
+
+    Case, spacing, punctuation and emoji all vary between an employer's own
+    acknowledgement and its ATS's, and none of them is part of which template
+    fired. What matters is whether two subjects are the same generated string.
+    """
+
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", subject.casefold()).split())
+
+
+def group_double_acknowledgements(
+    anchors: Sequence[PipelineItem],
+) -> list[list[PipelineItem]]:
+    """Group anonymous confirmations that acknowledge ONE submission — issue #480.
+
+    An anonymous confirmation is mail that asserts an application and names
+    nothing: no requisition id, no role, in the subject or the body. Two of them
+    from one employer are genuinely ambiguous — the mail does not contain the
+    answer — and until now every one of them minted its own card.
+
+    THAT IS RIGHT FOR GOOGLE AND WRONG FOR SUPABASE, and the difference is not
+    in what the messages say. Both of Supabase's were pulled in full on
+    2026-08-23 and neither holds a role, a requisition, or a link:
+
+        21:02  "Thanks for applying to Supabase 🚀"
+               "Thanks for applying to Supabase. We're really glad you're
+                interested in what we're building..."
+        23:03  "Thank you for applying to Supabase!"
+               "Thanks for your interest in a role with Supabase; we confirm
+                your application has been received..."
+
+    One submission. Two systems acknowledging it — Ashby's template and the
+    talent team's — two hours apart. Google's three say the SAME sentence under
+    the SAME subject on 11, 13 and 21 August, and are three real applications.
+
+    So the signal is the acknowledgement's SHAPE, not its words. An employer's
+    ATS emits one template per submission event: receiving the same template
+    twice means the event happened twice, while two different templates in one
+    window means two emitters reacted to one event. Both conditions are
+    required, and each one alone would be wrong:
+
+      * template alone — an employer that changes its wording between two
+        applications weeks apart would silently lose one of them;
+      * window alone — two genuine same-day applications, which
+        ``repeat-anonymous`` in the corpus is built from, would collapse.
+
+    WHY THE FAILURE DIRECTION MOVED. The rule this replaces argued that minting
+    two cards was the safe error because "a user can merge them". There is no
+    merge. `POST /applications/{id}/split` exists and has a UI prompt; no merge
+    endpoint and no merge control exist anywhere in this repository. So the old
+    failure was not the visible-and-remediable one it was documented as — it was
+    unrecoverable, and it took the employer's future mail with it:
+    ``known_multi`` makes every later role-less message from a two-card employer
+    ``unplaced``, so it lands in the review queue asking which of two
+    applications it belongs to when there is no right answer. Verified against
+    the shipped code, 2026-08-23.
+
+    THIS IS AN INFERENCE FROM DELIVERY SHAPE AND IT IS STATED AS ONE. Nothing in
+    either Supabase message distinguishes it from the other. Where the mail is
+    silent the product is guessing, and this changes which way it guesses.
+
+    Anchors arrive oldest-first. Deterministic: no set or dict iteration.
+    """
+
+    groups: list[list[PipelineItem]] = []
+    for item in anchors:
+        template = acknowledgement_template(item.subject)
+        joined = False
+        for group in groups:
+            # A group's clock runs from its OLDEST member, not its newest, so a
+            # long chain of differently-worded acknowledgements cannot walk the
+            # window forward indefinitely and swallow a later real application.
+            earliest = to_naive_utc(group[0].received_at)
+            current = to_naive_utc(item.received_at)
+            if earliest is None or current is None:
+                continue
+            if current - earliest > DOUBLE_ACK_WINDOW:
+                continue
+            if any(acknowledgement_template(g.subject) == template for g in group):
+                continue
+            group.append(item)
+            joined = True
+            break
+        if not joined:
+            groups.append([item])
+    return groups
+
+
 def partition_applications(
     items: Iterable[PipelineItem],
     known_multi: frozenset[str] = frozenset(),
@@ -2283,7 +2392,7 @@ def partition_applications(
 
             anchored_ids = {i.message_id for i in anchors}
             first_anchor_index = len(keyed)
-            for item in anchors:
+            for group in group_double_acknowledgements(anchors):
                 keyed.append(
                     _Cluster(
                         company_token=token,
@@ -2291,7 +2400,7 @@ def partition_applications(
                         req_id=None,
                         role_token=None,
                         role=None,
-                        items=[item],
+                        items=list(group),
                     )
                 )
 
@@ -2304,8 +2413,17 @@ def partition_applications(
             # still adopts its employer's follow-ups exactly as before, and an
             # employer with several applications still sends them to the review
             # queue for the user to assign rather than guessing which one.
+            # The mapping is over the CLUSTERS the anchors became, not over the
+            # anchors, because two acknowledgements of one submission arrive in
+            # two threads and are now one cluster: keyed on the anchor's own
+            # position this would have marked both threads ambiguous and sent
+            # every later Supabase update to the review queue.
             by_conversation: dict[str, int | None] = {}
-            for offset, item in enumerate(anchors):
+            for offset, item in (
+                (o, i)
+                for o, cluster in enumerate(keyed[first_anchor_index:])
+                for i in cluster.items
+            ):
                 if item.thread_id:
                     # None marks a thread that holds MORE THAN ONE application —
                     # the Microsoft shape. It names no single row, so an update
