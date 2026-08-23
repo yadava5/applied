@@ -1746,8 +1746,8 @@ async def _classify_messages(
     pattern was missing. The text never arrived.
 
     Against a production-shaped corpus that gap was 50 applications split over
-    two cards, 50 updates opening a rival card, and 452 updates that could not
-    be routed at all.
+    two cards, 50 updates opening a rival card, and 81 further updates pushed
+    into the review queue on top of the 371 that honestly belong there.
 
     Two things make carrying the derivation different from carrying the body:
 

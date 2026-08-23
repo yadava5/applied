@@ -1483,13 +1483,12 @@ def _email_identity_parts(email) -> tuple[str | None, str | None]:
     separately, not just the key that distinguishes them.
     """
 
-    if email.identity_role is None and email.identity_req_id is None:
-        subject, snippet = email.subject or "", email.body_snippet or ""
-        return (
-            pipeline.role_from_message(subject, snippet),
-            pipeline.extract_req_id(subject, snippet),
-        )
-    return (email.identity_role or None, email.identity_req_id or None)
+    return pipeline.identity_parts(
+        req_id=email.identity_req_id,
+        role=email.identity_role,
+        subject=email.subject or "",
+        snippet=email.body_snippet or "",
+    )
 
 
 async def _persist_message_refs(

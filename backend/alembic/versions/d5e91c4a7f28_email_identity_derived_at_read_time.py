@@ -23,8 +23,11 @@ text never arrived.
 
 Measured across the independent corpus once its harness was made
 production-shaped: **50 applications split over two cards, 50 updates that
-opened a rival card beside the one they belong on, and 452 updates that could
-not be routed and were held for review.**
+opened a rival card beside the one they belong on, and 81 further updates
+pushed into the review queue on top of the 371 that belong there.** The 371 is a
+designed floor, not damage: an update that genuinely names nothing, at an
+employer holding several cards, is supposed to be asked about rather than
+guessed at.
 
 Why the value is stored rather than recomputed
 ----------------------------------------------

@@ -1367,15 +1367,58 @@ def identity_or_derive(
     keeps one employer's two identical acknowledgements a single decision.
     """
 
-    if role is None and req_id is None:
-        return application_sub_key(subject, snippet)
+    role, req_id = identity_parts(
+        req_id=req_id, role=role, subject=subject, snippet=snippet
+    )
     return sub_key_from_parts(req_id, role)
+
+
+def identity_parts(
+    *,
+    req_id: str | None,
+    role: str | None,
+    subject: str,
+    snippet: str,
+) -> tuple[str | None, str | None]:
+    """``(role, req_id)`` — the derivation if there is one, else read the text.
+
+    The half of :func:`identity_or_derive` that a caller minting a CARD needs,
+    because a card shows the title itself and not the key that distinguishes it.
+    Both go through here so the board and the queue cannot end up disagreeing
+    about which application a message names — the failure #454 describes, where
+    four of five sites computed a key one way and the fifth another.
+
+    THE TRUST RULE LIVES HERE AND ONLY HERE. This function existed for one
+    revision with the card builder carrying its own copy of the branch, and a
+    mutation that removed the derivation left the card builder's tests green:
+    the duplicate was doing the work, so nothing measured the rule. Both parts
+    ``None`` means no derivation exists and the text is read instead; anything
+    else is used as given, with ``""`` meaning "derived, names nothing".
+    """
+
+    if role is None and req_id is None:
+        return (
+            role_from_message(subject, snippet),
+            extract_req_id(subject, snippet),
+        )
+    return (role or None, req_id or None)
 
 
 def item_identity(item: PipelineItem) -> str | None:
     """:func:`identity_or_derive` for a message in flight."""
 
     return identity_or_derive(
+        req_id=item.identity_req_id,
+        role=item.identity_role,
+        subject=item.subject,
+        snippet=item.snippet,
+    )
+
+
+def item_identity_parts(item: PipelineItem) -> tuple[str | None, str | None]:
+    """:func:`identity_parts` for a message in flight."""
+
+    return identity_parts(
         req_id=item.identity_req_id,
         role=item.identity_role,
         subject=item.subject,
@@ -2416,11 +2459,7 @@ def partition_applications(
         #
         # Same fallback rule as everywhere else — a relay item carries no
         # derivation and is read from its snippet exactly as before.
-        if item.identity_role is None and item.identity_req_id is None:
-            role = role_from_message(item.subject, item.snippet)
-            req = extract_req_id(item.subject, item.snippet)
-        else:
-            role, req = item.identity_role or None, item.identity_req_id or None
+        role, req = item_identity_parts(item)
         by_company.setdefault(token, []).append(
             (item, display, req, normalize_role_token(role), role)
         )

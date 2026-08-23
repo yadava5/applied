@@ -375,8 +375,8 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
               Torc Robotics confirmation names its role at body character 380, and that card sat
               on the board with a blank position while the classifier read the title perfectly.
               Measured against the independent corpus, the gap was 50 applications split across
-              two cards and 452 status updates that could not be routed to the application they
-              were about.
+              two cards, 50 status updates that opened a rival card beside the one they belonged
+              on, and 81 more that had to be handed back to you to sort out by hand.
             </P>
             <P>
               What is kept is bounded and of a kind the app already stored: the same job title and

@@ -22,8 +22,11 @@ it, while the half that decides what KIND of message it is ran on the most.
 
 Measured across the independent corpus once its harness stopped handing the
 identity layer the full body: 50 applications split over two cards, 50 updates
-opening a rival card beside the one they belong on, and 452 updates that could
-not be routed at all.
+opening a rival card beside the one they belong on, and 81 further updates
+pushed into the review queue on top of the 371 that honestly belong there
+(``RECORDED["update_held"]`` is 371, and it is a designed floor: mail that
+genuinely names nothing at an employer with several cards is SUPPOSED to be
+asked about rather than guessed at).
 
 WHY THE ANSWER IS STORED RATHER THAN PASSED. Deriving from the body and keeping
 the result in flight recreates a failure this repository has already measured.

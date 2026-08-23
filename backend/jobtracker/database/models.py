@@ -519,7 +519,8 @@ class Email(TimestampMixin, table=True):
     # sitting past that was invisible to the board while the classifier read it
     # perfectly — Torc's card carried no position for that reason alone, and
     # against a production-shaped corpus the gap was 50 applications split over
-    # two cards and 452 updates that could not be routed.
+    # two cards, 50 updates opening a rival card, and 81 further updates pushed
+    # into the review queue on top of the 371 that belong there.
     #
     # Deriving from the body and NOT storing the result would have been worse
     # than the bug. ``STORED_SNIPPET_CHARS`` records the failure: a key computed
