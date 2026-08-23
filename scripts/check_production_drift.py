@@ -47,11 +47,19 @@ WHAT COUNTS AS "RUNNING"
                    NOT A FAILURE of this check: we fall back to the Vercel API
                    and say so, rather than reporting a miss we did not observe.
 
-  jobtracker-web   has no such endpoint, so the newest READY production
-                   deployment's `meta.githubCommitSha` from the Vercel REST API
-                   is the only available answer. That needs a token.
+  jobtracker-web   `GET /api/version`, since 2026-08-23, and for the same
+                   reason. It HAD no such endpoint, so the newest READY
+                   production deployment's `meta.githubCommitSha` from the
+                   Vercel REST API was the only available answer and that
+                   needed a token -- which is how a credential failure came to
+                   look like a deployment failure. On 2026-08-22 the token
+                   stopped authenticating and every scheduled run went red on
+                   the web half while the api half answered normally through
+                   the identical 403. The Vercel API stays as the fallback, so
+                   a project that stops exposing its commit is still checked,
+                   just not for free.
 
-Where both are available for the api they are cross-checked: Vercel saying a
+Where both are available they are cross-checked: Vercel saying a
 commit is deployed while the live alias serves an older one is the stale-alias
 failure this estate has hit twice, and it is worth its own red.
 
@@ -161,7 +169,24 @@ class Project:
 
 
 PROJECTS = (
-    Project("web", "jobtracker-web", None),
+    Project(
+        "web",
+        "jobtracker-web",
+        # Added 2026-08-23. This project used to carry `None` here and its only
+        # answer came from the Vercel REST API, so it needed a token -- and when
+        # the token stopped authenticating on 2026-08-22 (HTTP 403, SAML
+        # re-auth) the web half went UNKNOWN on every scheduled run while the
+        # api half kept answering through the IDENTICAL 403, because /health
+        # costs no credential. `apps/web/app/api/version/route.ts` closes that
+        # asymmetry.
+        #
+        # THE ASSIGNED PRODUCTION DOMAIN, not `getapplied.vercel.app`. The
+        # assigned domain auto-follows the newest production deployment; a
+        # vanity alias does not, and an alias left pointing at an old
+        # deployment is a DIFFERENT failure that this check should be able to
+        # see rather than quietly inherit as its own baseline.
+        "https://jobtracker-web.vercel.app/api/version",
+    ),
     Project(
         "api",
         "jobtracker-api",
