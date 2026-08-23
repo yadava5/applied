@@ -180,12 +180,33 @@ PROJECTS = (
         # costs no credential. `apps/web/app/api/version/route.ts` closes that
         # asymmetry.
         #
-        # THE ASSIGNED PRODUCTION DOMAIN, not `getapplied.vercel.app`. The
-        # assigned domain auto-follows the newest production deployment; a
-        # vanity alias does not, and an alias left pointing at an old
-        # deployment is a DIFFERENT failure that this check should be able to
-        # see rather than quietly inherit as its own baseline.
-        "https://jobtracker-web.vercel.app/api/version",
+        # `getapplied.vercel.app`, and the host this probes was got WRONG on
+        # first attempt in a way only production could correct.
+        #
+        # The reasoning was that `jobtracker-web.vercel.app` is the project's
+        # assigned domain and so auto-follows the newest production deployment,
+        # while a vanity alias does not. Sound in general, false here. Measured
+        # the moment #477 deployed:
+        #
+        #   getapplied.vercel.app/       200  <title>Applied · your inbox, made legible</title>
+        #   getapplied.vercel.app/api/version
+        #                                200  {"commit":"2239a639...","ref":"main","env":"production"}
+        #   jobtracker-web.vercel.app/   200  <title>Jobtracker</title>
+        #   jobtracker-web.vercel.app/api/version
+        #                                404
+        #
+        # `jobtracker-web` is still the PROJECT name, but that hostname serves
+        # the pre-rename application and did not move when production did. It
+        # is exactly the stale-host failure the module docstring names -- found
+        # by pointing the detector at it and watching it 404 on a route that
+        # had just shipped, which is the only reason it was caught before this
+        # check went permanently UNKNOWN on a host nobody uses.
+        #
+        # Whether that hostname is a frozen alias or belongs to something else
+        # is NOT established here: the Vercel token is dead (#472) so the alias
+        # list cannot be read, and a mechanism nobody has observed does not go
+        # in a comment. Filed separately.
+        "https://getapplied.vercel.app/api/version",
     ),
     Project(
         "api",
