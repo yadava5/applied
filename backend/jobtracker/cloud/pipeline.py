@@ -898,6 +898,37 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(?:number|no\.?|id|code|ref(?:erence)?)\b",
         re.IGNORECASE,
     ),
+    # Lever-shaped: "Thank you for submitting your application to be a Software
+    # Engineer, New Grad at Palantir." The title is named plainly, with no
+    # article anchor before it and no "position"/"role" noun after it, so every
+    # pattern above walks past it — measured against the owner's real mail on
+    # 2026-08-23, where Palantir's card sat with a blank position while both of
+    # its messages spelled the title out.
+    #
+    # THE EMPLOYER IS THE TERMINATOR. "at <Capitalised>" is what ends the
+    # capture, the same way the parenthesised requisition ends the pattern
+    # above: a lowercase "at a company like ..." is not an employer and does not
+    # terminate, so the capture simply fails rather than running to the end of
+    # the sentence.
+    #
+    # ANCHORED ON THE APPLICATION WORD, and that is the whole safety of it.
+    # "to be a <Title> at <Employer>" is an extremely common English shape that
+    # has nothing to do with applying — "we have invited you to be a Mentor at
+    # Palantir University" is the control, and it is refused here and nowhere
+    # else: it is Title-Case and possessive-free, so neither the article
+    # tempering nor the possessive guard above can see anything wrong with it.
+    # Only the missing verb refuses it.
+    #
+    # LAST IN THE TUPLE, deliberately. :func:`role_from_message` returns the
+    # first pattern that yields a clean role, so a rule appended here can only
+    # fire where every other rule already found nothing. It cannot change a
+    # single capture the board already has.
+    re.compile(
+        r"\b(?:application|applying|applied)\b[^.!?\n]{0,40}?"
+        r"\bto\s+be\s+(?:an?|the)\s+"
+        r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ
+        + r"\s+at\s+[A-Z]",
+    ),
 )
 
 # A requisition id, when the employer prints one. DELIBERATELY conservative: a
