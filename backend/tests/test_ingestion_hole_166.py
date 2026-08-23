@@ -929,3 +929,63 @@ def test_the_requisition_label_is_still_what_ends_the_title() -> None:
     and a plain title must be unaffected."""
     plain = "Hi Ayush, submit your application for Software Engineer II (Job number: 200045485)."
     assert pipeline.role_from_message("Thanks", plain) == "Software Engineer II"
+
+
+def test_the_requisition_id_does_not_spend_the_titles_width() -> None:
+    """A bounded capture must not measure text the cleaner is about to delete.
+
+    Amazon prints the requisition between the title and the word that ends it:
+
+        "...your application for the <TITLE> (ID: 10475660) position."
+
+    The role capture is ``[A-Z](?:(?!'s\\s)[^.!?\\n]){3,90}?`` — a 91-character
+    ceiling — and the span from the title's first letter to " position" is 93
+    with the id inside it. So the bound cannot be met, the engine backtracks the
+    preceding gap, and the capture restarts one word later. ``_clean_role``
+    deletes the id on the very next line, which is the point: the bound was
+    spent on characters that were never part of the answer.
+
+    Applications 112 and 126 reached the owner's live board titled "Development
+    Engineer I ...", each missing the first word of its own job title. Measured
+    2026-08-23.
+    """
+    title = "Software Development Engineer I - AI/ML Network Infrastructure, Annapurna Labs"
+    assert len(title) == 78
+    body = (
+        "Amazon.jobs Hi Ayush, Thanks for applying to Amazon! We've received your "
+        f"application for the {title} (ID: 10475660) position. What happens next?"
+    )
+    assert pipeline.role_from_message("Thank you for Applying to Amazon!", body) == title
+
+
+def test_the_same_title_without_a_requisition_is_unchanged() -> None:
+    """The control that says the fix is about the id and not about the length.
+
+    The identical title with no id is 78 characters, inside the ceiling either
+    way, and was always captured whole. If this ever fails alongside the test
+    above, the ceiling moved rather than the id being excluded from it.
+    """
+    title = "Software Development Engineer I - AI/ML Network Infrastructure, Annapurna Labs"
+    body = (
+        "Amazon.jobs Hi Ayush, Thanks for applying to Amazon! We've received your "
+        f"application for the {title} position. What happens next?"
+    )
+    assert pipeline.role_from_message("Thank you for Applying to Amazon!", body) == title
+
+
+def test_an_unlabelled_parenthesis_still_belongs_to_the_title() -> None:
+    """The other control: only a LABELLED id is excluded from the width.
+
+    ``req-id-same-title`` in the corpus prints "(R-40001)", which ``_clean_role``
+    does not strip, so it is part of the title and must stay inside the bound
+    and inside the answer. Excluding every parenthesis instead would silently
+    truncate real titles — DoorDash's "Software Engineer I, Entry-Level
+    (Graduation Date: Fall 2025-Summer 2026)" is one.
+    """
+    body = (
+        "Hi Ayush, Thanks for applying! We have received your application for the "
+        "Backend Engineer (R-40001) position."
+    )
+    assert (
+        pipeline.role_from_message("Thanks", body) == "Backend Engineer (R-40001)"
+    )
