@@ -80,7 +80,7 @@ from jobtracker.cloud.applications import (
     upsert_applications_for_user,
 )
 
-from .generate import Case
+from .generate import Case, snippet_of
 
 _USER = uuid.UUID("00000000-0000-0000-0000-00000000c0de")
 
@@ -186,6 +186,26 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
     the expected category here would measure the identity layer over a mailbox
     the product never sees, and every number would be optimistic by exactly the
     classifier's error rate.
+
+    ``snippet`` IS THE SAME ARGUMENT, one field along, and it was wrong until
+    2026-08-23. This used to pass ``v.case.delivered`` — the text that reaches
+    ``classify()``, which for most families is the FULL BODY. Production never
+    does that. ``_classify_messages`` hands the classifier the body and hands
+    the ``PipelineItem`` ``msg.snippet``, so identity resolution sees Gmail's
+    own ~200 characters and nothing more; every ``emails`` row in the live
+    database has ``body_text IS NULL`` and a ``body_snippet`` between 182 and
+    201 characters long.
+
+    Measured on the day it was corrected: **723 of 17,260 cases resolved to a
+    different application identity** under a production-shaped snippet, 699 of
+    them losing identity entirely and none gaining it. So the instrument was
+    uniformly more generous than the product, and a family written to prove
+    "identity survives when the role is only in the body" passed before any
+    such fix existed. That is the defect shape this repository keeps finding,
+    and the corpus was carrying it.
+
+    The classifier still reads ``delivered``. Only identity is narrowed, and it
+    is narrowed to exactly what production stores.
     """
 
     return pipeline.PipelineItem(
@@ -197,7 +217,7 @@ def _item(v: Verdict) -> pipeline.PipelineItem:
         received_at=v.case.received_at,
         category=v.category,
         confidence=v.confidence,
-        snippet=v.case.delivered,
+        snippet=snippet_of(v.case.body),
     )
 
 
