@@ -60,6 +60,12 @@ export interface PostSignInInput {
   /** Whether Gmail is already linked, or unknowable right now. */
   gmail: GmailLinkState;
   /**
+   * Whether this is the account's FIRST sign-in — i.e. the person is signing
+   * UP, not signing back in. See `isFirstSignInOfAccount` for how it is read
+   * and why the two timestamps can answer it.
+   */
+  isFirstSignIn: boolean;
+  /**
    * The destination the caller asked for, ALREADY through `safeRedirectPath`.
    *
    * `DEFAULT_REDIRECT` means "nothing in particular was asked for", and that
@@ -99,23 +105,99 @@ export interface PostSignInInput {
  *     the test is "is it the default" and not "was it absent".
  *  2. Only the Google button chains. A password sign-in that ended here has
  *     not consented to anything Google-shaped and must not be sent to Google.
- *  3. Only a user who is provably NOT connected chains. `connected` would be
- *     a pointless re-consent, and it would fight the disconnect feature: a
- *     user who deliberately unlinked Gmail would be dragged back into consent
- *     on their next login, every time. `unknown` does not chain — see
- *     `GmailLinkState`.
+ *  3. Only the account's FIRST sign-in chains, and this rule is the whole
+ *     reason #503 exists. Rules 1, 2 and 4 alone say "chain whenever a Google
+ *     user is not connected", which is true on EVERY subsequent login too —
+ *     so a user who connected Gmail and later deliberately disconnected it
+ *     would be pushed at Google's consent screen every single time they signed
+ *     in, forever, with no way to say no that the app would remember. That is
+ *     the original complaint ("no one wants to sign up or log in again and
+ *     again") reintroduced from the other end, and an earlier version of this
+ *     comment claimed rule 4 PREVENTED it. It does not: a deliberately
+ *     disconnected user reads `not_connected`, which is precisely the state
+ *     rule 4 chains on. Rule 4 only rules out the connected user, who was
+ *     never the problem.
+ *
+ *     THE HONEST WAY TO SAY "THEY DISCONNECTED ON PURPOSE" DOES NOT EXIST HERE,
+ *     and that is why the test is first-sign-in rather than intent.
+ *     `/auth/gmail/disconnect` DELETES the credential row and un-enrols the
+ *     mailbox (`cloud/gmail_oauth.py`), so nothing survives a disconnect to
+ *     distinguish "chose to unlink" from "never linked". Recording it would be
+ *     new schema. First-sign-in needs none, and it answers the question the
+ *     product actually asked: offer the mailbox once, at the moment someone
+ *     signs UP, then let them come back to it in Settings.
+ *
+ *     WHAT THIS COSTS, stated rather than hidden: someone who signs up with
+ *     Google and cancels at Google's screen is not offered the chain again
+ *     automatically. They are not stranded — the empty dashboard's "Connect
+ *     Gmail" card and the Settings page both offer it — but the second chance
+ *     is theirs to take, not ours to insist on.
+ *
+ *  4. Only a user who is provably NOT connected chains. `connected` would be a
+ *     pointless re-consent. `unknown` does not chain — a failed probe is not
+ *     evidence of a missing connection; see `GmailLinkState`.
  *
  * Everything else lands on the dashboard, which is the pre-existing behaviour
  * this replaces nothing of.
  */
 export function destinationAfterSignIn(input: PostSignInInput): string {
-  const { provider, gmail, requestedRedirect } = input;
+  const { provider, gmail, isFirstSignIn, requestedRedirect } = input;
 
   if (requestedRedirect !== DEFAULT_REDIRECT) return requestedRedirect;
   if (provider !== "google") return DEFAULT_REDIRECT;
+  if (!isFirstSignIn) return DEFAULT_REDIRECT;
   if (gmail !== "not_connected") return DEFAULT_REDIRECT;
 
   return CHAINED_GMAIL_AUTHORIZE;
+}
+
+/**
+ * How close `last_sign_in_at` must sit to `created_at` to mean "same request".
+ *
+ * Thirty seconds is deliberately loose. The observed gap is sub-second, so
+ * this is not tuned to a measurement — it is tuned to be unmistakably shorter
+ * than a human leaving and coming back, which is the only thing on the other
+ * side of the line.
+ */
+const FIRST_SIGN_IN_WINDOW_MS = 30_000;
+
+/**
+ * Is this the account's first sign-in — is the person signing UP?
+ *
+ * Both timestamps come straight off the Supabase user the code exchange just
+ * returned. GoTrue writes `last_sign_in_at` as part of the very request that
+ * creates the account, so on a signup the two are the same instant to within
+ * the write itself; on a return visit they are separated by however long the
+ * person was away.
+ *
+ * MEASURED, not assumed. On this project's own `auth.users` a Google account
+ * created by signing up shows the pair 0.47 SECONDS apart, while an account
+ * that came back later shows 4h37m. The window below sits between those two
+ * observations by three orders of magnitude in each direction, which is what
+ * makes it a threshold rather than a guess — and the test pins both real
+ * magnitudes so a future edit cannot quietly widen it into "always true".
+ *
+ * A NULL `lastSignInAt` also counts as first, and that branch is not dead
+ * defensiveness: if GoTrue ever hands back the user as it stood BEFORE this
+ * sign-in was recorded, a brand-new account's field is null and the delta test
+ * has nothing to subtract. Either shape answers the same question correctly.
+ *
+ * Unparseable input answers `false` — the safe direction. A false negative
+ * costs one missed offer that Settings still carries; a false positive sends
+ * someone who did not just sign up to Google's consent screen.
+ */
+export function isFirstSignInOfAccount(input: {
+  createdAt: string | null | undefined;
+  lastSignInAt: string | null | undefined;
+}): boolean {
+  const created = Date.parse(input.createdAt ?? "");
+  if (Number.isNaN(created)) return false;
+  if (!input.lastSignInAt) return true;
+
+  const lastSignIn = Date.parse(input.lastSignInAt);
+  if (Number.isNaN(lastSignIn)) return false;
+
+  return lastSignIn - created < FIRST_SIGN_IN_WINDOW_MS;
 }
 
 /**

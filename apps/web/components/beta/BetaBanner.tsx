@@ -6,17 +6,17 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   BETA_CTA_LABEL,
+  BETA_IMPORT_LABEL,
   BETA_MAILTO,
-  BETA_SAMPLE_LABEL,
   BETA_SEATS,
-  SAMPLE_INBOX_HREF,
+  IMPORT_HREF,
 } from "./constants";
 
 /**
  * The slim, site-wide beta pill. Deliberately subtle: it surfaces
  * "Beta · limited access" without redesigning or dominating the landing or
  * demo, and expands into a compact details popover carrying the beta ask
- * (email the admin) plus the sample inbox.
+ * (email the admin) plus the no-connection import path.
  *
  * The sample-inbox action is the ONE thing this popover carries that the rich
  * <BetaCard> deliberately does not (#495) — see the note in `constants.ts`.
@@ -127,7 +127,8 @@ export function BetaBanner() {
   }
 
   if (!mounted || dismissed) return null;
-  if (HIDE_ON.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return null;
+  if (HIDE_ON.some((p) => pathname === p || pathname.startsWith(`${p}/`)))
+    return null;
 
   return (
     <div
@@ -148,9 +149,10 @@ export function BetaBanner() {
               Beta · limited access
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              Applied is under active development. Direct Gmail connection is limited to{" "}
-              <span className="text-strong">{BETA_SEATS} beta testers</span>{" "}— Google&apos;s OAuth
-              test-user cap — while we gather feedback.
+              Applied is under active development. Direct Gmail connection is
+              limited to{" "}
+              <span className="text-strong">{BETA_SEATS} beta testers</span> —
+              Google&apos;s OAuth test-user cap — while we gather feedback.
             </p>
             <div className="mt-3 flex flex-col gap-2">
               <a
@@ -160,17 +162,42 @@ export function BetaBanner() {
                 <span aria-hidden>✉</span>
                 {BETA_CTA_LABEL}
               </a>
+              {/* THE SECOND ACTION IS /import, NOT THE SAMPLE INBOX, and the
+                  swap is the point rather than a copy tweak. This pill is
+                  `position: fixed` ROOT-layout chrome: it renders on every
+                  route its `HIDE_ON` list does not name, and that list names
+                  routes, not sessions. It does not cover `/privacy` — which a
+                  signed-in user reaches from a standing link on the protected
+                  Inbox page and from the Gmail card in Settings, and which
+                  wears the full app shell when they do — and it cannot cover
+                  `not-found`, where any mistyped URL lands. So the argument
+                  that once justified keeping a `/demo/inbox` link here ("the
+                  only people who see this pill are strangers") was false on
+                  two surfaces, and `constants.ts` said in as many words that
+                  the link had to leave the moment that stopped holding.
+
+                  `/import` is the honest replacement rather than nothing: it
+                  is the same offer minus the fiction — the real classifier
+                  over the reader's OWN mail, in their browser, with no
+                  connection and no account — and it is what `BetaCard`, this
+                  pill's in-app sibling, has always linked to. The two
+                  surfaces now carry the same two actions, so there is no
+                  divergence left to justify or to re-litigate. The demo still
+                  exists and is still linked, from the landing page and the
+                  `/demo` routes, where a stranger meets it and a user does
+                  not. */}
               <Link
-                href={SAMPLE_INBOX_HREF}
+                href={IMPORT_HREF}
                 onClick={() => setOpen(false)}
                 className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-accent"
               >
-                {BETA_SAMPLE_LABEL}
+                {BETA_IMPORT_LABEL}
                 <span aria-hidden>→</span>
               </Link>
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-dim">
-              No connection needed for the sample inbox — real classifier, synthetic mail.
+              No connection and no account for the import path — your mail is
+              read in this browser and never uploaded.
             </p>
           </div>
         ) : null}
@@ -185,8 +212,12 @@ export function BetaBanner() {
             className="flex items-center gap-2 rounded-full py-0.5 pr-1 text-xs focus-accent"
           >
             <span className="beta-dot" aria-hidden />
-            <span className="font-mono font-semibold uppercase tracking-widest text-strong">Beta</span>
-            <span className="hidden text-muted sm:inline">· limited access</span>
+            <span className="font-mono font-semibold uppercase tracking-widest text-strong">
+              Beta
+            </span>
+            <span className="hidden text-muted sm:inline">
+              · limited access
+            </span>
             <span className="font-mono text-dim" aria-hidden>
               {open ? "▾" : "▸"}
             </span>

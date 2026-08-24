@@ -38,7 +38,9 @@ const ADMIN_MAILTO =
   /^mailto:aesh\.03\.23@gmail\.com\?subject=Applied%20beta%20access%20request/;
 
 test.describe("beta access notice", () => {
-  test("the beta pill renders and expands into the beta details", async ({ page }) => {
+  test("the beta pill renders and expands into the beta details", async ({
+    page,
+  }) => {
     const watch = startConsoleWatch(page);
     await page.goto(BANNER_ROUTE);
 
@@ -56,7 +58,9 @@ test.describe("beta access notice", () => {
     // feeds the rich <BetaCard> seat panel on the auth-gated /settings & /inbox,
     // where it is rendered as a static server number for the same reason.)
     await expect(panel.getByText(/\b100 beta testers\b/i)).toBeVisible();
-    await expect(panel.getByText(/Google's OAuth test-user cap/i)).toBeVisible();
+    await expect(
+      panel.getByText(/Google's OAuth test-user cap/i),
+    ).toBeVisible();
 
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
@@ -67,45 +71,62 @@ test.describe("beta access notice", () => {
     await page.goto(BANNER_ROUTE);
     await page.getByRole("button", { name: /limited access/i }).click();
 
-    const mailto = page.getByRole("link", { name: "Email admin for beta access" });
+    const mailto = page.getByRole("link", {
+      name: "Email admin for beta access",
+    });
     await expect(mailto).toHaveAttribute("href", ADMIN_MAILTO);
     // It only composes an email — never a live navigation target.
     await expect(mailto).toHaveAttribute("href", /body=/);
   });
 
   /**
-   * THE PRESENT HALF OF A PAIR (#495). Read it with "the signed-in app offers
-   * no route into the demo" at the foot of this file — neither assertion means
-   * anything alone.
+   * THE PRESENT HALF OF A PAIR. Read it with "the signed-in app offers no
+   * route into the demo" at the foot of this file — neither assertion means
+   * anything alone. An absence-only gate would stay green against a build
+   * where the popover's second action had simply been deleted, which is the
+   * over-correction this pair exists to catch.
    *
-   * #495 removed every demo link from inside the product, and the rule it
-   * enforces is about REACHABILITY, not about the word "demo": the banner is
-   * `position: fixed` root-layout chrome whose `HIDE_ON` list excludes
-   * /dashboard, /inbox, /settings, /import, /demo and every landing route, so
-   * the only visitors who can see this popover are signed out — a stranger,
-   * which is precisely who the sample inbox is for. The rich <BetaCard>, which
-   * renders INSIDE the app, deliberately no longer offers it.
+   * WHAT THE SECOND ACTION IS NOW, and why it changed. It used to be "Try the
+   * sample inbox" → /demo/inbox, on the argument that this pill's `HIDE_ON`
+   * list left only signed-out visitors. That argument was wrong, and this test
+   * was standing on it: `HIDE_ON` names ROUTES, and BANNER_ROUTE is /privacy —
+   * a route a SIGNED-IN user reaches from a standing link on the protected
+   * Inbox page and from the Gmail card in Settings, and which wears the full
+   * app shell when they do. This test ran signed out, so it never saw the
+   * other half of its own subject. The pill now carries /import instead: the
+   * real classifier over the reader's own mail, in their browser, no account
+   * and no connection — the same pair `BetaCard` offers inside the app, so
+   * there is no divergence left between the two surfaces to justify.
    *
-   * So an absence-only assertion would be a trap: it would stay green against
-   * a build where this link had been deleted too, which is the over-correction
-   * this pair exists to catch. One test proves the link still works where it
-   * belongs; the other proves it is gone where it does not.
+   * `tests/unit/no-demo-inside-the-app.test.mjs` holds the static half, walks
+   * from the ROOT layout, and executes on every PR — which this spec, behind
+   * `requireSession()`, still does not.
    */
-  test("the signed-out popover still routes to the sample inbox", async ({ page }) => {
+  test("the popover's second action is the import path, not the demo", async ({
+    page,
+  }) => {
     await page.goto(BANNER_ROUTE);
     await page.getByRole("button", { name: /limited access/i }).click();
 
     const panel = page.getByRole("region", { name: /beta access/i });
     // The seat request is the popover's point and must survive alongside it.
-    await expect(panel.getByRole("link", { name: /email admin for beta access/i })).toBeVisible();
+    await expect(
+      panel.getByRole("link", { name: /email admin for beta access/i }),
+    ).toBeVisible();
 
-    await panel.getByRole("link", { name: /try the sample inbox/i }).click();
+    // The absence half, asserted HERE rather than only on a signed-in surface,
+    // because this popover is root-layout chrome: it is the same DOM either
+    // way, and this is the one place the assertion executes.
+    await expect(panel.locator('a[href^="/demo"]')).toHaveCount(0);
 
-    await expect(page).toHaveURL(/\/demo\/inbox$/);
-    await expect(page.getByRole("heading", { name: "Sample inbox" })).toBeVisible();
+    await panel.getByRole("link", { name: /import your own mail/i }).click();
+
+    await expect(page).toHaveURL(/\/import$/);
   });
 
-  test("the banner is dismissible and stays dismissed across reloads", async ({ page }) => {
+  test("the banner is dismissible and stays dismissed across reloads", async ({
+    page,
+  }) => {
     await page.goto(BANNER_ROUTE);
 
     const toggle = page.getByRole("button", { name: /limited access/i });
@@ -120,9 +141,13 @@ test.describe("beta access notice", () => {
     // test would pass on a broken route. It follows BANNER_ROUTE.
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: /What Applied reads, and what it keeps/i }),
+      page.getByRole("heading", {
+        name: /What Applied reads, and what it keeps/i,
+      }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: /limited access/i })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /limited access/i }),
+    ).toHaveCount(0);
   });
 
   test("no console errors and no horizontal overflow at 375px with the popover open", async ({
@@ -135,7 +160,9 @@ test.describe("beta access notice", () => {
     const toggle = page.getByRole("button", { name: /limited access/i });
     await expect(toggle).toBeVisible();
     await toggle.click();
-    await expect(page.getByRole("region", { name: /beta access/i })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /beta access/i }),
+    ).toBeVisible();
 
     await expectNoHorizontalOverflow(page);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
@@ -161,7 +188,6 @@ test.describe("beta access notice", () => {
  * RENDER-TIME gate anywhere in this suite. If the landing ever states them
  * again, gate them again.
  */
-
 
 /**
  * The route rule, gated on both sides.
@@ -191,7 +217,9 @@ test.describe("the beta pill's route rule", () => {
     await page.goto("/");
     // Positive control on the page itself: we are on the landing, not on an
     // error route that trivially has no pill.
-    await expect(page.getByRole("heading", { name: /You lose the email/i })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /You lose the email/i }),
+    ).toBeVisible();
     // The pill mounts on a deferred macrotask, so a bare toHaveCount(0) would
     // pass simply by racing it. Wait for the page to settle first.
     await page.waitForLoadState("networkidle");
@@ -223,8 +251,13 @@ test.describe("the beta pill's route rule", () => {
  * banner half above runs without one and keeps the pair honest meanwhile.
  */
 test.describe("no demo inside the app", () => {
-  test("the signed-in inbox offers no route into the demo", async ({ page }) => {
-    await requireSession(page, "the signed-in inbox carrying no link into /demo");
+  test("the signed-in inbox offers no route into the demo", async ({
+    page,
+  }) => {
+    await requireSession(
+      page,
+      "the signed-in inbox carrying no link into /demo",
+    );
     await page.goto("/inbox");
 
     // Arrival is asserted on the URL, not on a heading: /inbox's own <h1> is
@@ -234,6 +267,8 @@ test.describe("no demo inside the app", () => {
     // route.
     await expect(page).toHaveURL(/\/inbox$/);
     await expect(page.locator('a[href^="/demo"]')).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /sample inbox/i })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /sample inbox/i })).toHaveCount(
+      0,
+    );
   });
 });

@@ -3,12 +3,19 @@ import Link from "next/link";
 import { createServerApiClient } from "@/lib/api/server";
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { DashboardEmptyState, ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
+import { ForwardRoutes } from "@/components/dashboard/DashboardEmptyState";
+import { EmptyBoardBody } from "@/components/dashboard/EmptyBoardBody";
 import { RetryLoadButton } from "@/components/dashboard/RetryLoadButton";
-import { ReviewQueue, type ReviewItem } from "@/components/dashboard/ReviewQueue";
+import {
+  ReviewQueue,
+  type ReviewItem,
+} from "@/components/dashboard/ReviewQueue";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
-import { RebuildWindowButton, SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
-import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
+import { SyncBar, type SyncGmailState } from "@/components/dashboard/SyncBar";
+import {
+  LOCKED_BODY_CLASS,
+  LOCKED_PAGE_CLASS,
+} from "@/components/shell/geometry";
 import { getReviewQueue } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
@@ -27,6 +34,7 @@ import {
 } from "@/lib/dashboard/summary";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
 import { getCurrentUser } from "@/lib/supabase/auth";
+import { cn } from "@/lib/utils";
 
 /**
  * The signed-in product: a work surface, not a metrics poster.
@@ -192,14 +200,17 @@ export default async function DashboardPage() {
     getGmailStatus(),
     getCurrentUser(),
   ]);
-  const notifPrefs = readNotificationPrefs((user?.user_metadata ?? {}) as Record<string, unknown>);
+  const notifPrefs = readNotificationPrefs(
+    (user?.user_metadata ?? {}) as Record<string, unknown>,
+  );
 
   // A failed status probe is UNKNOWN, not disconnected — the SyncBar renders
   // no gmail cluster at all rather than a guessed state.
   const gmail: SyncGmailState | null =
     gmailStatus.kind === "ok"
       ? {
-          connected: gmailStatus.status.configured && gmailStatus.status.connected,
+          connected:
+            gmailStatus.status.configured && gmailStatus.status.connected,
           lastSyncAt: gmailStatus.status.last_sync_at,
           hasCursor: gmailStatus.status.has_cursor === true,
           syncStatus: gmailStatus.status.sync_status ?? null,
@@ -223,7 +234,11 @@ export default async function DashboardPage() {
    * value is for the BODY copy, which has the room to say "we couldn't check".
    */
   const gmailState: "connected" | "disconnected" | "unknown" =
-    gmailStatus.kind !== "ok" ? "unknown" : gmail?.connected === true ? "connected" : "disconnected";
+    gmailStatus.kind !== "ok"
+      ? "unknown"
+      : gmail?.connected === true
+        ? "connected"
+        : "disconnected";
   const connected = gmailState === "connected";
 
   // Has a scan actually COMPLETED? "No application emails detected yet" is a
@@ -262,7 +277,12 @@ export default async function DashboardPage() {
           ? `The backend answered ${state.status}: ${state.message}. That's a fault on our side, not a problem with your session or your account — try again in a moment.`
           : `The backend didn't answer: ${state.message}. Nothing is lost — your board renders the moment it responds.`;
     return (
-      <section className="space-y-8">
+      // Locked like the loaded board (#495 shipped the lock on the populated
+      // branch only). A failure is still the dashboard, and a dashboard that
+      // scrolls its own chrome away only on the days it is broken is the
+      // geometry drifting exactly where the user is least able to tell a
+      // layout bug from the outage it is reporting.
+      <section className={LOCKED_PAGE_CLASS}>
         <SyncBar
           subtitle="connection issue · your data could not be loaded"
           gmail={null}
@@ -271,33 +291,35 @@ export default async function DashboardPage() {
         >
           <AddApplicationForm compact />
         </SyncBar>
-        <div
-          className="rounded-2xl border border-reject/40 bg-surface p-6 sm:p-8"
-          role="alert"
-          aria-live="polite"
-        >
-          <p className="label-caps text-reject-ink">load failed</p>
-          <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
-            {headline}
-          </h2>
-          <p className="mt-2 max-w-xl text-sm text-muted">{detail}</p>
-          <p className="mt-2 max-w-xl text-xs text-dim">
-            This is a loading failure, not an empty board — nothing below is your data, because we
-            have none to show yet.
-          </p>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <RetryLoadButton />
-            {state.kind === "auth" ? (
-              <Link
-                href="/login?redirect=/dashboard"
-                className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
-              >
-                or sign in again →
-              </Link>
-            ) : null}
+        <div className={cn(LOCKED_BODY_CLASS, "space-y-8")}>
+          <div
+            className="rounded-2xl border border-reject/40 bg-surface p-6 sm:p-8"
+            role="alert"
+            aria-live="polite"
+          >
+            <p className="label-caps text-reject-ink">load failed</p>
+            <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
+              {headline}
+            </h2>
+            <p className="mt-2 max-w-xl text-sm text-muted">{detail}</p>
+            <p className="mt-2 max-w-xl text-xs text-dim">
+              This is a loading failure, not an empty board — nothing below is
+              your data, because we have none to show yet.
+            </p>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <RetryLoadButton />
+              {state.kind === "auth" ? (
+                <Link
+                  href="/login?redirect=/dashboard"
+                  className="text-xs text-dim underline-offset-4 hover:text-strong hover:underline"
+                >
+                  or sign in again →
+                </Link>
+              ) : null}
+            </div>
           </div>
+          <ForwardRoutes />
         </div>
-        <ForwardRoutes />
       </section>
     );
   }
@@ -329,66 +351,44 @@ export default async function DashboardPage() {
     const subtitle =
       gmailState === "connected"
         ? `connected · ${
-            scanCompleted ? "no applications detected yet" : "no applications filed yet"
+            scanCompleted
+              ? "no applications detected yet"
+              : "no applications filed yet"
           }${reviewNote}`
         : gmailState === "unknown"
           ? `0 filed · mail connection unknown${reviewNote}`
           : `0 filed · nothing tracked yet${reviewNote}`;
 
     return (
-      <section className="space-y-6">
-        <SyncBar subtitle={subtitle} gmail={gmail} title="Applications" signedIn>
+      // THE LOCK BELONGS HERE MOST OF ALL. This is the first screen of every
+      // new account and of every account whose mail is not connected, and it
+      // was the one dashboard branch that never declared the locked geometry —
+      // so the product a new user met scrolled chrome and all, while the board
+      // they would see once mail arrived did not. Same root as the populated
+      // branch below; the body owns the scrolling.
+      <section className={LOCKED_PAGE_CLASS}>
+        <SyncBar
+          subtitle={subtitle}
+          gmail={gmail}
+          title="Applications"
+          signedIn
+        >
           <AddApplicationForm compact />
         </SyncBar>
 
-        {/* The body card, three ways. A genuinely fresh user gets the scaffold
-            and its routes forward; the other two states are ABOUT the mail
-            connection, and say so here — where there is room for a sentence —
-            rather than in the SyncBar's single line. */}
-        {gmailState === "disconnected" ? (
-          <DashboardEmptyState />
-        ) : (
-          <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
-            <p className="label-caps">
-              {gmailState === "unknown"
-                ? "mail status unavailable"
-                : scanCompleted
-                  ? "connected to gmail"
-                  : "no completed scan yet"}
-            </p>
-            <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
-              {gmailState === "unknown"
-                ? "We couldn't check your mail connection."
-                : scanCompleted
-                  ? "No application emails detected yet."
-                  : "We haven't completed a scan of your mail yet."}
-            </h2>
-            <p className="mt-2 max-w-xl text-sm text-muted">
-              {gmailState === "unknown"
-                ? "The check that tells us whether your mail is connected didn't answer, so we can't say why nothing is filed — that is a fault on our side, not a verdict about your mailbox and not a claim that you never connected. Reload in a moment; nothing has been lost."
-                : scanCompleted
-                  ? "We scan your recent mail when you arrive. If your applications are older than 12 months, rebuild from a wider window."
-                  : scanFailed
-                    ? "Nothing is filed because nothing has been read successfully — this is not a verdict that your mailbox holds no applications. The line above says how the last attempt failed and offers a retry; you can also rebuild from a wider window."
-                    : "Nothing is filed because your mail hasn't been read yet — this is not a verdict that your mailbox holds no applications. Sync, or choose a window, to run the first scan."}
-            </p>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              {/* Offered only when the mailbox is known to be connected: a
-                  rebuild is a Gmail action, and on an unknown status it would
-                  be a control whose precondition we have just said out loud we
-                  could not read. */}
-              {gmailState === "connected" ? <RebuildWindowButton /> : null}
-              <AddApplicationForm align="start" />
-            </div>
-            <div className="mt-6">
-              <ForwardRoutes />
-            </div>
-          </div>
-        )}
-
-        {reviewItems.length > 0 ? (
-          <ReviewQueue items={reviewItems} applications={state.applications} />
-        ) : null}
+        <EmptyBoardBody
+          gmailState={gmailState}
+          scanCompleted={scanCompleted}
+          scanFailed={scanFailed}
+          review={
+            reviewItems.length > 0 ? (
+              <ReviewQueue
+                items={reviewItems}
+                applications={state.applications}
+              />
+            ) : null
+          }
+        />
       </section>
     );
   }

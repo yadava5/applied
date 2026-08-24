@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   destinationAfterSignIn,
+  isFirstSignInOfAccount,
   providerOfThisSignIn,
   type GmailLinkState,
 } from "@/lib/auth/postSignIn";
@@ -97,8 +98,10 @@ export async function GET(request: NextRequest) {
   // this handler only gathers the three inputs.
   //
   // The status probe is asked ONLY when the answer can change the destination:
-  // a non-Google sign-in, or one with a real destination already requested,
-  // skips it and pays nothing. When it is asked, it is asked with the access
+  // a non-Google sign-in, a return visit, or one with a real destination
+  // already requested skips it and pays nothing — which, now that a return
+  // visit is excluded, is every sign-in this app will ever serve except the
+  // handful that are somebody's first. When it is asked, it is asked with the access
   // token the exchange just returned, because the cookies carrying this
   // session are on the response being built and not on the inbound request.
   const provider = providerOfThisSignIn({
@@ -106,9 +109,15 @@ export async function GET(request: NextRequest) {
     appMetadataProvider: data.user?.app_metadata?.provider,
     appMetadataProviders: data.user?.app_metadata?.providers,
   });
+  // #503: only a signup chains, never a return visit. Both timestamps ride on
+  // the user the exchange just returned, so this costs no extra call.
+  const isFirstSignIn = isFirstSignInOfAccount({
+    createdAt: data.user?.created_at,
+    lastSignInAt: data.user?.last_sign_in_at,
+  });
 
   let gmail: GmailLinkState = "unknown";
-  if (provider === "google" && nextPath === DEFAULT_REDIRECT) {
+  if (provider === "google" && isFirstSignIn && nextPath === DEFAULT_REDIRECT) {
     const status = await getGmailStatus(data.session?.access_token);
     // Anything other than a clean answer stays `unknown`, which does not
     // chain. A probe that failed is not evidence of a missing connection.
@@ -120,6 +129,7 @@ export async function GET(request: NextRequest) {
   const destination = destinationAfterSignIn({
     provider,
     gmail,
+    isFirstSignIn,
     requestedRedirect: nextPath,
   });
 

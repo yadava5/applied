@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
+import { EmptyBoardBody } from "@/components/dashboard/EmptyBoardBody";
 import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
 import { ReviewQueue } from "@/components/dashboard/ReviewQueue";
 import { SinceLastLook } from "@/components/dashboard/SinceLastLook";
@@ -11,9 +12,19 @@ import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
 import { DemoFixturePill } from "@/components/shell/SessionControls";
 import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 import { todayISO } from "@/lib/dashboard/age";
-import { buildSubtitle, reviewSlotFor, type ReviewSlot } from "@/lib/dashboard/boardPrefs";
-import { LAST_LOOK_DEMO_KEY, LAST_LOOK_DEMO_SCOPE } from "@/lib/dashboard/lastLook";
-import { noteUserStageChange, toChangeRow } from "@/lib/dashboard/lastLookStore";
+import {
+  buildSubtitle,
+  reviewSlotFor,
+  type ReviewSlot,
+} from "@/lib/dashboard/boardPrefs";
+import {
+  LAST_LOOK_DEMO_KEY,
+  LAST_LOOK_DEMO_SCOPE,
+} from "@/lib/dashboard/lastLook";
+import {
+  noteUserStageChange,
+  toChangeRow,
+} from "@/lib/dashboard/lastLookStore";
 import { isApplicationStatus } from "@/lib/dashboard/status";
 import { summarize, type Application } from "@/lib/dashboard/summary";
 import type { BoardTransport, SyncTransport } from "@/lib/dashboard/transport";
@@ -112,7 +123,10 @@ const DEFAULT_PREFS: NotificationPrefs = { weekly: false, reviewAlerts: false };
 /** The whole fixture store, dated against one day — board and pool alike. */
 function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
   return {
-    apps: pipeline === "early" ? demoEarlySearchAsApi(today) : demoApplicationsAsApi(today),
+    apps:
+      pipeline === "early"
+        ? demoEarlySearchAsApi(today)
+        : demoApplicationsAsApi(today),
     pool: demoUnsyncedAsApi(today),
     touched: [],
   };
@@ -120,6 +134,7 @@ function buildStore(today: string, pipeline: DemoPipeline): DemoBoard {
 
 export function DemoDashboard({
   pipeline = "seed",
+  empty = false,
   variant = "flow",
   needsReview = 0,
   notifications = DEFAULT_PREFS,
@@ -167,6 +182,30 @@ export function DemoDashboard({
    *  (69px narrower, and the difference wraps the row) — both in `SyncBar`,
    *  both keyed off `signedIn`, neither reachable without the knob. */
   sessionEdge?: boolean;
+  /**
+   * Renders the EMPTY board — the real `EmptyBoardBody`, not a copy of it — in
+   * place of the worklist, over the "mail not connected" state.
+   *
+   * FOURTH HARNESS KNOB, and the same argument as the three above: this is the
+   * first screen of every new account and of every account whose Gmail is not
+   * linked, and until now it rendered on no surface any executing test could
+   * reach. The signed-in dashboard needs a session CI does not have (#188), and
+   * this twin could only ever mount the POPULATED board — so when #495 locked
+   * the populated branch's geometry, the empty branch quietly kept the flow
+   * geometry, and nobody could see it. It scrolled chrome and all, which is
+   * what got reported.
+   *
+   * It mounts the component the signed-in page mounts. That is the point: a
+   * twin that RE-CREATED this subtree could drift from it, and this repo has
+   * the scar — three rounds of "the dashboard is fixed" were measured on a
+   * /demo whose composition had silently stopped matching. There is one
+   * `EmptyBoardBody`, so there is nothing left to diverge.
+   *
+   * `/demo/shell?empty=1` is the one caller. Nothing links to it, the route is
+   * `robots: noindex`, and the parse is exact-match. Its form writes on the
+   * fixture transport (`mode="demo"`), like every other control here.
+   */
+  empty?: boolean;
 }) {
   const locked = variant === "locked";
   // The day this demo is rendered against. UTC on the server and through
@@ -180,7 +219,9 @@ export function DemoDashboard({
   // module load is what keeps a long-lived server's HTML and the browser's
   // hydration agreeing on what "16 days ago" means.
   const [datedFor, setDatedFor] = useState(todayISO);
-  const [snapshot, setSnapshot] = useState<DemoBoard>(() => buildStore(datedFor, pipeline));
+  const [snapshot, setSnapshot] = useState<DemoBoard>(() =>
+    buildStore(datedFor, pipeline),
+  );
   /** The pristine fixtures, kept for `restore` — the rows this board began
    *  with, before any drag, dismissal or rebuild touched them. */
   const original = useRef<Application[]>([...snapshot.apps, ...snapshot.pool]);
@@ -323,7 +364,9 @@ export function DemoDashboard({
       async detail(id) {
         await delay(250);
         const app = store.current.apps.find((a) => a.id === id);
-        return app ? { ok: true, body: demoDetailBody(app) } : { ok: false, body: {} };
+        return app
+          ? { ok: true, body: demoDetailBody(app) }
+          : { ok: false, body: {} };
       },
     }),
     [commit],
@@ -345,10 +388,16 @@ export function DemoDashboard({
           // "Rows you corrected by hand are kept" — the stale row is removed
           // only while untouched, exactly the promise the live rebuild makes.
           const stale = s.apps.find(
-            (app) => app.company === STALE_COMPANY && !s.touched.includes(app.id),
+            (app) =>
+              app.company === STALE_COMPANY && !s.touched.includes(app.id),
           );
-          const removed = stale ? [{ id: stale.id, company: stale.company }] : [];
-          const nextApps = [...filed, ...s.apps.filter((app) => app.id !== stale?.id)];
+          const removed = stale
+            ? [{ id: stale.id, company: stale.company }]
+            : [];
+          const nextApps = [
+            ...filed,
+            ...s.apps.filter((app) => app.id !== stale?.id),
+          ];
           commit({ ...s, apps: nextApps, pool: [] });
           const changed = filed.length > 0 || removed.length > 0;
           // A shallow scan that still had work to do stops at its message
@@ -422,7 +471,10 @@ export function DemoDashboard({
   /** The board as the change ledger reads it. `total` is deliberately not
    *  passed below: on this twin the store IS the whole account, so there is no
    *  slice to disclose. */
-  const ledgerRows = useMemo(() => snapshot.apps.map(toChangeRow), [snapshot.apps]);
+  const ledgerRows = useMemo(
+    () => snapshot.apps.map(toChangeRow),
+    [snapshot.apps],
+  );
   // The signed-in page's own builder, not a copy of its format string — the
   // twin used to hand-roll this line WITHOUT the `weekly` fold, so the one
   // pref that is visible on a quiet board rendered on no testable surface.
@@ -503,14 +555,26 @@ export function DemoDashboard({
           "Needs review alerts" pref decides whether held mail interrupts the
           rows or waits under them, and both placements live INSIDE the
           worklist's scroll context so a long queue can never starve it. */}
-      <PipelineBoard
-        variant={locked ? "locked" : "flow"}
-        applications={snapshot.apps}
-        pulse={{ needsReview }}
-        transport={boardTransport}
-        beforeList={slot === "before" ? queue : null}
-        afterList={slot === "after" ? queue : null}
-      />
+      {empty ? (
+        // The signed-in page's own empty body, mounted rather than restated:
+        // `gmailState="disconnected"` is the state a brand-new account is in,
+        // and it is the one the rail agrees with under this knob (see
+        // `DemoShell`) — an empty board under a rail claiming a live mailbox
+        // would be a shape no real account can be in, and measuring geometry
+        // on an impossible state is how a twin starts lying. The held queue
+        // rides in the same slot the live page gives it, so `?empty=1&review=N`
+        // measures the tall case too.
+        <EmptyBoardBody gmailState="disconnected" review={queue} mode="demo" />
+      ) : (
+        <PipelineBoard
+          variant={locked ? "locked" : "flow"}
+          applications={snapshot.apps}
+          pulse={{ needsReview }}
+          transport={boardTransport}
+          beforeList={slot === "before" ? queue : null}
+          afterList={slot === "after" ? queue : null}
+        />
+      )}
     </section>
   );
 }

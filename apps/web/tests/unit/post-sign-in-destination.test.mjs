@@ -29,12 +29,17 @@ import { fileURLToPath } from "node:url";
 import {
   CHAINED_GMAIL_AUTHORIZE,
   destinationAfterSignIn,
+  isFirstSignInOfAccount,
   providerOfThisSignIn,
 } from "../../lib/auth/postSignIn.ts";
 import { DEFAULT_REDIRECT } from "../../lib/auth/redirect.ts";
 
 /** `apps/web` — this file sits at `tests/unit/`. */
-const WEB_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const WEB_ROOT = resolvePath(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 const read = (rel) => readFileSync(resolvePath(WEB_ROOT, rel), "utf8");
 
 /**
@@ -49,6 +54,7 @@ const TABLE = [
     input: {
       provider: "google",
       gmail: "not_connected",
+      isFirstSignIn: true,
       requestedRedirect: DEFAULT_REDIRECT,
     },
     expected: CHAINED_GMAIL_AUTHORIZE,
@@ -61,6 +67,7 @@ const TABLE = [
     input: {
       provider: "google",
       gmail: "unknown",
+      isFirstSignIn: true,
       requestedRedirect: DEFAULT_REDIRECT,
     },
     expected: DEFAULT_REDIRECT,
@@ -70,6 +77,7 @@ const TABLE = [
     input: {
       provider: "google",
       gmail: "connected",
+      isFirstSignIn: true,
       requestedRedirect: DEFAULT_REDIRECT,
     },
     expected: DEFAULT_REDIRECT,
@@ -81,6 +89,7 @@ const TABLE = [
     input: {
       provider: "other",
       gmail: "not_connected",
+      isFirstSignIn: true,
       requestedRedirect: DEFAULT_REDIRECT,
     },
     expected: DEFAULT_REDIRECT,
@@ -90,6 +99,7 @@ const TABLE = [
     input: {
       provider: "other",
       gmail: "unknown",
+      isFirstSignIn: true,
       requestedRedirect: DEFAULT_REDIRECT,
     },
     expected: DEFAULT_REDIRECT,
@@ -99,9 +109,38 @@ const TABLE = [
     input: {
       provider: "other",
       gmail: "connected",
+      isFirstSignIn: true,
       requestedRedirect: DEFAULT_REDIRECT,
     },
     expected: DEFAULT_REDIRECT,
+  },
+
+  // #503. The row this rule was added for: everything the chain wants is true
+  // EXCEPT that the person has been here before. Without the rule they are
+  // sent to Google's consent screen on this login and on every login after it,
+  // which is the complaint the whole feature was built to answer, arriving
+  // from the other direction.
+  {
+    name: "google + not connected + RETURN VISIT -> dashboard, never nagged",
+    input: {
+      provider: "google",
+      gmail: "not_connected",
+      isFirstSignIn: false,
+      requestedRedirect: DEFAULT_REDIRECT,
+    },
+    expected: DEFAULT_REDIRECT,
+  },
+  // Its control. Same account state, same provider, ONLY the visit differs —
+  // so a fix that silently disabled the chain outright cannot pass both.
+  {
+    name: "google + not connected + FIRST sign-in -> still chains",
+    input: {
+      provider: "google",
+      gmail: "not_connected",
+      isFirstSignIn: true,
+      requestedRedirect: DEFAULT_REDIRECT,
+    },
+    expected: CHAINED_GMAIL_AUTHORIZE,
   },
 
   // A stated destination is a stated intent, and outranks the chain even in
@@ -111,6 +150,7 @@ const TABLE = [
     input: {
       provider: "google",
       gmail: "not_connected",
+      isFirstSignIn: true,
       requestedRedirect: "/settings",
     },
     expected: "/settings",
@@ -120,6 +160,7 @@ const TABLE = [
     input: {
       provider: "other",
       gmail: "connected",
+      isFirstSignIn: true,
       requestedRedirect: "/import",
     },
     expected: "/import",
@@ -144,6 +185,98 @@ test("TRIPWIRE: the table is not uniformly the default", () => {
     "no row produces the chained destination — the feature is inert",
   );
   assert.ok(outcomes.size >= 3, "the decision collapsed to too few outcomes");
+});
+
+test("TRIPWIRE: the first-sign-in rule is load-bearing, not decoration", () => {
+  // Deleting `if (!isFirstSignIn)` from the decision would leave every row of
+  // the table above passing except one — and that one is easy to "fix" by
+  // flipping its expectation. This states the property directly: the visit is
+  // the ONLY thing that differs between these two, so they must not agree.
+  const base = {
+    provider: "google",
+    gmail: "not_connected",
+    requestedRedirect: DEFAULT_REDIRECT,
+  };
+  assert.notEqual(
+    destinationAfterSignIn({ ...base, isFirstSignIn: true }),
+    destinationAfterSignIn({ ...base, isFirstSignIn: false }),
+    "a first sign-in and a return visit reach the same destination — " +
+      "the rule that separates them is gone",
+  );
+});
+
+/**
+ * `isFirstSignInOfAccount`, pinned to REAL magnitudes rather than to numbers
+ * chosen to agree with the threshold.
+ *
+ * The trap this avoids: seed `created_at` and `last_sign_in_at` a millisecond
+ * apart for "signup" and a year apart for "return", and the test passes for
+ * ANY window between them — including one so wide it says yes to everybody.
+ * The two anchors below are the pair actually observed in this project's
+ * `auth.users`: a Google account created by signing up (0.47s) and an account
+ * that came back later (4h37m). The window has to sit between those two to be
+ * worth anything, and the boundary rows below say where it sits.
+ */
+test("isFirstSignInOfAccount: the observed pair, and the boundary", () => {
+  const created = "2026-08-24T06:02:58.561Z";
+
+  assert.equal(
+    isFirstSignInOfAccount({
+      createdAt: created,
+      lastSignInAt: "2026-08-24T06:02:59.030Z",
+    }),
+    true,
+    "the real signup pair, 0.47s apart, must read as a first sign-in",
+  );
+
+  assert.equal(
+    isFirstSignInOfAccount({
+      createdAt: "2026-07-17T20:27:38.538Z",
+      lastSignInAt: "2026-07-18T01:04:36.625Z",
+    }),
+    false,
+    "the real return pair, 4h37m apart, must not",
+  );
+
+  // Where the line actually is. Without these two the window could be a day
+  // wide and every assertion above would still hold.
+  assert.equal(
+    isFirstSignInOfAccount({
+      createdAt: created,
+      lastSignInAt: "2026-08-24T06:03:28.000Z",
+    }),
+    true,
+    "29.4s is inside the window",
+  );
+  assert.equal(
+    isFirstSignInOfAccount({
+      createdAt: created,
+      lastSignInAt: "2026-08-24T06:03:29.000Z",
+    }),
+    false,
+    "30.4s is outside it — if this passes as `true` the window has been widened",
+  );
+
+  // A null last-sign-in is a first sign-in: see the note in the source about
+  // GoTrue possibly returning the user as it stood before the write.
+  assert.equal(
+    isFirstSignInOfAccount({ createdAt: created, lastSignInAt: null }),
+    true,
+    "no recorded previous sign-in means this is the first",
+  );
+
+  // Unreadable input fails CLOSED — no chain — rather than sending someone who
+  // did not just sign up to a consent screen.
+  assert.equal(
+    isFirstSignInOfAccount({ createdAt: undefined, lastSignInAt: created }),
+    false,
+    "a missing created_at must not read as a signup",
+  );
+  assert.equal(
+    isFirstSignInOfAccount({ createdAt: created, lastSignInAt: "not a date" }),
+    false,
+    "an unparseable last_sign_in_at must not read as a signup",
+  );
 });
 
 test("providerOfThisSignIn: either signal suffices, neither is required", () => {
@@ -218,6 +351,29 @@ test("WIRING: the callback routes its destination through the decision", () => {
     /return finish\(NextResponse\.redirect\(new URL\(nextPath, origin\)\)\)/,
     "the success exit went back to redirecting straight to nextPath, " +
       "which bypasses the decision entirely",
+  );
+});
+
+test("WIRING: the callback derives the visit and gates the probe on it", () => {
+  const source = read("app/(auth)/callback/route.ts");
+
+  assert.match(
+    source,
+    /isFirstSignInOfAccount\(/,
+    "the callback no longer asks whether this is a first sign-in",
+  );
+  assert.match(
+    source,
+    /isFirstSignIn,/,
+    "the callback computes the visit but does not pass it to the decision",
+  );
+  // The probe is a network round trip to the backend on the auth hot path.
+  // Gating it on the same condition as the chain is what makes a return visit
+  // cost nothing at all rather than cost a call whose answer is discarded.
+  assert.match(
+    source,
+    /provider === "google" && isFirstSignIn &&/,
+    "the gmail status probe is no longer skipped on a return visit",
   );
 });
 
