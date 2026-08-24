@@ -39,8 +39,22 @@ const DEMO_RAIL: RailData = {
   },
 };
 
+/** The rail under `?empty=1`: no mailbox linked, which is what makes the empty
+ *  board's "Connect Gmail" card the coherent thing to be looking at. */
+const EMPTY_RAIL: RailData = {
+  gmail: {
+    connected: false,
+    email: null,
+    lastSyncAt: null,
+    hasCursor: false,
+    syncStatus: null,
+    syncError: null,
+  },
+};
+
 export function DemoShell({
   pipeline = "seed",
+  empty = false,
   needsReview = 0,
   notifications,
   reviewSlot,
@@ -52,6 +66,11 @@ export function DemoShell({
   notifications?: NotificationPrefs;
   reviewSlot?: DemoReviewSlot;
   sessionEdge?: boolean;
+  /** `/demo/shell?empty=1` — the empty board instead of the worklist. The rail
+   *  follows it to `connected: false`, because an empty board under a rail
+   *  claiming a live mailbox is a state no account can be in, and geometry
+   *  measured on an impossible state is not evidence about a real one. */
+  empty?: boolean;
   /** The rail's ambient-mail pref — the demo Settings toggle's cookie, passed
    *  through to `AppShellFrame` exactly as the (app) layout passes the real
    *  account's saved answer. */
@@ -64,13 +83,14 @@ export function DemoShell({
     // profile: one fixture identity, and the one the rail's conversion block
     // ("Sam isn't real…") is talking about.
     <AppShellFrame
-      rail={DEMO_RAIL}
+      rail={empty ? EMPTY_RAIL : DEMO_RAIL}
       userEmail="demo@applied.example"
       userName="Sam Fixture"
       ambient={ambient}
       demo
     >
       <DemoDashboard
+        empty={empty}
         variant="locked"
         pipeline={pipeline}
         needsReview={needsReview}

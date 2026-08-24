@@ -97,7 +97,11 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     { url: "/demo/shell", label: "no held mail", queue: "absent" },
     // Four held verdicts: the fixture queue's collapse threshold, so every row
     // renders and every escaping label is in the tree.
-    { url: "/demo/shell?review=4&queue=after", label: "review queue under the rows", queue: "after" },
+    {
+      url: "/demo/shell?review=4&queue=after",
+      label: "review queue under the rows",
+      queue: "after",
+    },
     {
       url: "/demo/shell?review=4&queue=before",
       label: "review queue above the rows",
@@ -122,7 +126,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
 
         // The knobs must actually build the tree they name — a dead param or a
         // queue in the wrong slot would make two thirds of this loop vacuous.
-        expect(await queuePlacement(page), `${state.url}: queue slot`).toBe(state.queue);
+        expect(await queuePlacement(page), `${state.url}: queue slot`).toBe(
+          state.queue,
+        );
         // …and the subtree that escapes is the labels, so count THEM, not the
         // section. `toHaveCount`, not `toBeVisible`: an `sr-only` box is 1px
         // and clipped, and its visibility is exactly the ambiguity this
@@ -184,14 +190,19 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           ) {
             offenders.push(
               `${el.tagName.toLowerCase()}[${
-                el.getAttribute("data-testid") ?? el.getAttribute("aria-label") ?? el.className
+                el.getAttribute("data-testid") ??
+                el.getAttribute("aria-label") ??
+                el.className
               }] ${el.scrollHeight}>${el.clientHeight}`,
             );
           }
         }
         return offenders;
       });
-      expect(rogue, `inner panes scroll besides the worklist: ${rogue.join(", ")}`).toEqual([]);
+      expect(
+        rogue,
+        `inner panes scroll besides the worklist: ${rogue.join(", ")}`,
+      ).toEqual([]);
 
       // …and the lock is load-bearing, not satisfied by everything fitting:
       // the fixture worklist genuinely overflows and scrolls itself.
@@ -205,6 +216,113 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       ).toBeGreaterThan(list.client + 1);
     });
   }
+
+  /**
+   * THE EMPTY BOARD, which is the first screen of every new account and of
+   * every account whose Gmail is not linked — and which, until `?empty=1`
+   * existed, rendered on no surface any executing test could reach.
+   *
+   * That is not a coverage footnote; it is how the defect shipped. The
+   * signed-in dashboard needs a session CI does not have (#188), so this twin
+   * is where the lock is actually measured — and the twin could only ever
+   * mount the POPULATED board. When #495 locked the populated branch, the empty
+   * branch kept the flow geometry: `<section className="space-y-6">`, no
+   * `page-locked` marker, so `AppShellFrame`'s wrapper kept its content-based
+   * minimum and <main> scrolled the whole thing, SyncBar and all. Every gate in
+   * this file was green throughout, aimed at a branch the defect could not be
+   * in — the same shape as the missing-`ReviewQueue` hole above, one branch
+   * over.
+   *
+   * Both arrangements are driven, and the second is the one that discriminates:
+   * with nothing held, the empty card is short enough that a pane with no lock
+   * at all still fits, so `?empty=1` alone would pass against the broken build.
+   * `?review=4` puts the held queue under the card, and that is what overflows.
+   */
+  const EMPTY_STATES = [
+    { url: "/demo/shell?empty=1", label: "empty board, nothing held" },
+    {
+      url: "/demo/shell?empty=1&review=4",
+      label: "empty board with held mail",
+    },
+  ] as const;
+
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 1024, height: 768 }, // the lg boundary — the width this project is actually used at
+    { width: 1280, height: 720 }, // the tightest common laptop pane
+  ]) {
+    test(`the EMPTY board holds the lock at ${viewport.width}×${viewport.height}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+
+      for (const state of EMPTY_STATES) {
+        await page.goto(state.url);
+        await expect(pageHeading(page)).toBeVisible();
+
+        // The knob took effect: the empty body is mounted and the worklist is
+        // NOT. Without both halves a dead `?empty=` would measure the populated
+        // board and report it as the empty one's geometry.
+        await expect(
+          page.getByRole("heading", { name: /your board is empty/i }),
+          `${state.url}: the empty body did not mount`,
+        ).toBeVisible();
+        await expect(
+          page.getByTestId("worklist-pane"),
+          `${state.url}: the worklist is still mounted, so this is not the empty board`,
+        ).toHaveCount(0);
+
+        // The document never scrolls — the frame's own `h-dvh overflow-hidden`.
+        const doc = await docHeights(page);
+        expect(
+          doc.scroll,
+          `${state.label} — document scrolls: ${doc.scroll} > ${doc.client}`,
+        ).toBeLessThanOrEqual(doc.client + 1);
+
+        // …and neither does <main>, which is the assertion that actually
+        // matches the report. A document lock alone leaves the pane free to
+        // scroll the sync row off the top, which reads to a user as "the
+        // dashboard scrolls" and is exactly what it was doing.
+        const main = await page.locator("main").evaluate((el) => ({
+          scroll: el.scrollHeight,
+          client: el.clientHeight,
+        }));
+        expect(
+          main.scroll,
+          `${state.label} — the shell pane scrolls: ${main.scroll} > ${main.client}`,
+        ).toBeLessThanOrEqual(main.client + 1);
+
+        await expectNoHorizontalOverflow(page);
+      }
+    });
+  }
+
+  /**
+   * The control for the block above, and it is not optional.
+   *
+   * Everything asserted there is an "it fits" claim, and a page whose content
+   * is simply short passes all of it with no lock whatsoever — which is the
+   * state the broken build was in for the `?empty=1` arrangement. So prove the
+   * held-mail arrangement is genuinely taller than the pane: its own scroll
+   * region must overflow. If this ever goes green by the body fitting, the
+   * three tests above stopped discriminating and are measuring nothing.
+   */
+  test("the empty board's held-mail arrangement really does overflow its pane", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/demo/shell?empty=1&review=4");
+    await expect(pageHeading(page)).toBeVisible();
+
+    const body = await page
+      .getByTestId("empty-board-body")
+      .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+    expect(
+      body.scroll,
+      `the empty board's body fits its pane (${body.scroll} <= ${body.client}) — ` +
+        "the lock tests above are asserting against nothing",
+    ).toBeGreaterThan(body.client + 1);
+  });
 
   test("the pulse is the board's full-width band — exactly one copy in the tree", async ({
     page,
@@ -220,12 +338,16 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // measured sidebar overflow). No display-none twin anywhere.
     const pulse = page.getByTestId("pipeline-pulse");
     await expect(pulse).toHaveCount(1);
-    await expect(page.getByTestId("pipeline-board").getByTestId("pipeline-pulse")).toBeVisible();
+    await expect(
+      page.getByTestId("pipeline-board").getByTestId("pipeline-pulse"),
+    ).toBeVisible();
     await expect(
       page.locator('aside[aria-label="Stages"]').getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
     await expect(
-      page.locator('aside:has(nav[aria-label="Primary"])').getByTestId("pipeline-pulse"),
+      page
+        .locator('aside:has(nav[aria-label="Primary"])')
+        .getByTestId("pipeline-pulse"),
     ).toHaveCount(0);
     await expect(pulse.getByTestId("pulse-day")).toHaveCount(30);
 
@@ -291,7 +413,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(panel).toBeHidden();
     const filterBand = page.getByTestId("pulse-filter-band");
     await expect(filterBand).toBeVisible();
-    await filterBand.getByRole("button", { name: /^Stop filtering by/ }).click();
+    await filterBand
+      .getByRole("button", { name: /^Stop filtering by/ })
+      .click();
     await expect(page.getByTestId("pulse-filter-band")).toHaveCount(0);
   });
 
@@ -352,8 +476,12 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expect(panel).toBeHidden();
     const filterBand = page.getByTestId("pulse-filter-band");
     await expect(filterBand).toBeVisible();
-    await expect(filterBand.getByText("overdue", { exact: true })).toBeVisible();
-    await filterBand.getByRole("button", { name: /^Stop filtering by/ }).click();
+    await expect(
+      filterBand.getByText("overdue", { exact: true }),
+    ).toBeVisible();
+    await filterBand
+      .getByRole("button", { name: /^Stop filtering by/ })
+      .click();
 
     // Escape closes without filtering and hands focus back to the trigger —
     // the same lifecycle its three siblings have.
@@ -378,9 +506,16 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // getByText resolves to THREE nodes and strict mode kills the assertion
     // before it can mean anything. Caught by a full-suite run; it had never
     // been green, in any project, on any tree.
-    await expect(page.getByTestId("pipeline-pulse").getByText("Tidewater Labs")).toBeVisible();
-    const captionClip = await caption.evaluate((el) => el.scrollWidth - el.clientWidth);
-    expect(captionClip, "the claim loses characters to the chevron at 1280").toBeLessThanOrEqual(0);
+    await expect(
+      page.getByTestId("pipeline-pulse").getByText("Tidewater Labs"),
+    ).toBeVisible();
+    const captionClip = await caption.evaluate(
+      (el) => el.scrollWidth - el.clientWidth,
+    );
+    expect(
+      captionClip,
+      "the claim loses characters to the chevron at 1280",
+    ).toBeLessThanOrEqual(0);
 
     // A board with nothing due has nothing to open, on the same terms as the
     // three cells that gate on having data at all — and its caption is still
@@ -388,13 +523,17 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/demo/shell?pipeline=early");
     await expect(pageHeading(page)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Deadlines detail" })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Deadlines detail" }),
+    ).toHaveCount(0);
     await expect(
       page.getByTestId("pipeline-pulse").getByTestId("pulse-caption").nth(2),
     ).toHaveText("nothing due · set one in a card");
   });
 
-  test("the rail carries the nav rename and the board's stage lens + search", async ({ page }) => {
+  test("the rail carries the nav rename and the board's stage lens + search", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo/shell");
     await expect(pageHeading(page)).toBeVisible();
@@ -413,8 +552,12 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // navigation, and this is the void the owner pointed at.
     const lens = page.getByRole("group", { name: "Stages" });
     await expect(lens).toBeVisible();
-    await expect(lens.getByRole("button", { name: "applied — 10" })).toBeVisible();
-    await expect(lens.getByRole("searchbox", { name: /search the board/i })).toBeVisible();
+    await expect(
+      lens.getByRole("button", { name: "applied — 10" }),
+    ).toBeVisible();
+    await expect(
+      lens.getByRole("searchbox", { name: /search the board/i }),
+    ).toBeVisible();
     // …and the in-board spine is gone with it: the worklist owns the full
     // measure. (The chip strip still exists for below-`md`, CSS-picked — the
     // same both-in-DOM shape the chips/spine pair always had.)
@@ -422,11 +565,17 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
 
     // Filtering through the rail drives the same board.
     await lens.getByRole("button", { name: "interviewing — 4" }).click();
-    await expect(page.getByRole("region", { name: /interviewing — 4/i })).toBeVisible();
-    await expect(page.getByRole("region", { name: /applied — 10/i })).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: /interviewing — 4/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /applied — 10/i }),
+    ).toHaveCount(0);
   });
 
-  test("a sync reports without moving the board: idle → checking → result", async ({ page }) => {
+  test("a sync reports without moving the board: idle → checking → result", async ({
+    page,
+  }) => {
     // The owner watched the whole page jump when "checking Gmail…" appeared.
     // The status now takes over the subtitle's slot in the header row for
     // exactly as long as it speaks, so the three routine states share one
@@ -450,7 +599,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     const chip = page.getByTestId("since-last-look");
     await expect(chip).toBeVisible();
 
-    await page.getByRole("button", { name: "Sync new mail from Gmail" }).click();
+    await page
+      .getByRole("button", { name: "Sync new mail from Gmail" })
+      .click();
     // The running line names the SCOPE now, not just the fact that something
     // is happening (#160): the fixture carries `hasCursor: true`, so this is
     // the incremental sentence. A cursor-less account reads "first scan · …".
@@ -536,7 +687,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       await page.goto("/demo/shell");
       await expect(pageHeading(page)).toBeVisible();
 
-      const client = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+      const client = await page
+        .getByTestId("worklist-pane")
+        .evaluate((el) => el.clientHeight);
       expect(
         client,
         `the worklist pane shrank to ${client}px (floor ${floor}px) — some chrome above it is spending the list's pixels`,
@@ -568,17 +721,27 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     test(`the docked detail pane holds the lock and the worklist's exact share at ${viewport.width}×${viewport.height}`, async ({
       page,
     }) => {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      });
       await page.goto("/demo/shell");
       await expect(pageHeading(page)).toBeVisible();
 
-      const closed = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
+      const closed = await page
+        .getByTestId("worklist-pane")
+        .evaluate((el) => el.clientHeight);
       const rowSelects = page.locator("select[id^='status-']:visible");
       const closedSelects = await rowSelects.count();
-      expect(closedSelects, "no per-row stage selects on the closed board").toBeGreaterThan(0);
+      expect(
+        closedSelects,
+        "no per-row stage selects on the closed board",
+      ).toBeGreaterThan(0);
 
       await page
-        .getByRole("button", { name: "Open Cedar Labs — Software Engineer, Platform" })
+        .getByRole("button", {
+          name: "Open Cedar Labs — Software Engineer, Platform",
+        })
         .click();
       const detail = page.getByTestId("application-detail");
       await expect(detail).toBeVisible();
@@ -588,7 +751,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       // Presence with the pane open: every row keeps its select where the
       // worklist can hold one, none where it cannot — the pane's own select
       // is the stage path there.
-      await expect(rowSelects).toHaveCount(viewport.keepsRowControls ? closedSelects : 0);
+      await expect(rowSelects).toHaveCount(
+        viewport.keepsRowControls ? closedSelects : 0,
+      );
 
       const doc = await docHeights(page);
       expect(
@@ -596,8 +761,12 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
         `document scrolls with the pane open: scrollHeight=${doc.scroll} > clientHeight=${doc.client}`,
       ).toBeLessThanOrEqual(doc.client + 1);
 
-      const open = await page.getByTestId("worklist-pane").evaluate((el) => el.clientHeight);
-      expect(open, "the docked pane changed the worklist's height").toBe(closed);
+      const open = await page
+        .getByTestId("worklist-pane")
+        .evaluate((el) => el.clientHeight);
+      expect(open, "the docked pane changed the worklist's height").toBe(
+        closed,
+      );
     });
   }
 
@@ -672,7 +841,8 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
         })),
     );
 
-  const BAND_TEXT = '[data-testid="pipeline-pulse"] .truncate:not([data-clip-ok])';
+  const BAND_TEXT =
+    '[data-testid="pipeline-pulse"] .truncate:not([data-clip-ok])';
   const ARRIVAL_TEXT = '[data-testid="since-last-look"] .truncate';
 
   for (const viewport of [
@@ -686,14 +856,20 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
       browser,
     }) => {
       await page.setViewportSize(viewport);
-      for (const route of ["/demo/shell", "/demo/shell?pipeline=early", "/demo/shell?review=3"]) {
+      for (const route of [
+        "/demo/shell",
+        "/demo/shell?pipeline=early",
+        "/demo/shell?review=3",
+      ]) {
         await page.goto(route);
         await expect(pageHeading(page)).toBeVisible();
 
         // The knob must actually flip the branch — a silently dead param
         // would make the third loop a gate that cannot fail.
         if (route.includes("review=")) {
-          await expect(page.getByRole("link", { name: /3 held for review/ })).toBeVisible();
+          await expect(
+            page.getByRole("link", { name: /3 held for review/ }),
+          ).toBeVisible();
         }
 
         // One value line per cell at every width, hidden or not: the deadline
@@ -718,7 +894,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           band.map((node) => node.text),
           `${route} @ ${at}: the band's truncating nodes`,
         ).toContain(deadlineText);
-        expect(band.length, `${route} @ ${at}: too few nodes measured`).toBeGreaterThanOrEqual(4);
+        expect(
+          band.length,
+          `${route} @ ${at}: too few nodes measured`,
+        ).toBeGreaterThanOrEqual(4);
 
         for (const node of band) {
           expect(
@@ -758,7 +937,11 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
         { state: "first run", loads: 1, says: "No earlier visit" },
         { state: "returning", loads: 2, says: "Nothing new" },
       ]) {
-        const context = await browser.newContext({ viewport, baseURL, timezoneId });
+        const context = await browser.newContext({
+          viewport,
+          baseURL,
+          timezoneId,
+        });
         try {
           const own = await context.newPage();
           for (let load = 0; load < loads; load += 1) {
@@ -778,7 +961,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           const measured = await clipped(own, ARRIVAL_TEXT);
           expect(measured.length, `${state} @ ${at}: nothing measured`).toBe(1);
           for (const node of measured) {
-            expect(node.text.length, `${state} @ ${at}: empty line measured`).toBeGreaterThan(0);
+            expect(
+              node.text.length,
+              `${state} @ ${at}: empty line measured`,
+            ).toBeGreaterThan(0);
             expect(
               node.lost,
               `${state} @ ${at}: "${node.text}" renders ${node.client}px of ${node.scroll}px — loses ${node.lost}px to ellipsis`,
@@ -813,7 +999,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           // documented purpose for existing).
           const measureChip = () =>
             own.evaluate(() => {
-              const section = document.querySelector('[data-testid="since-last-look"]');
+              const section = document.querySelector(
+                '[data-testid="since-last-look"]',
+              );
               const chip = section?.querySelector("p, button");
               const main = document.querySelector("main");
               const subtitle = document.querySelector("[data-sync-subtitle]");
@@ -821,18 +1009,26 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
               if (!chip || !main || !subtitle || !cluster) return null;
               const c = chip.getBoundingClientRect();
               const m = main.getBoundingClientRect();
-              const overlaps = (b: DOMRect) => c.top < b.bottom && b.top < c.bottom;
+              const overlaps = (b: DOMRect) =>
+                c.top < b.bottom && b.top < c.bottom;
               const t = subtitle.getBoundingClientRect();
               const k = cluster.getBoundingClientRect();
               return {
-                offCentre: Math.abs((c.left + c.right) / 2 - (m.left + m.right) / 2),
-                fromTotals: overlaps(t) && t.width > 0 ? c.left - t.right : null,
-                fromCluster: overlaps(k) && k.width > 0 ? k.left - c.right : null,
+                offCentre: Math.abs(
+                  (c.left + c.right) / 2 - (m.left + m.right) / 2,
+                ),
+                fromTotals:
+                  overlaps(t) && t.width > 0 ? c.left - t.right : null,
+                fromCluster:
+                  overlaps(k) && k.width > 0 ? k.left - c.right : null,
               };
             });
 
           const furnished = await measureChip();
-          expect(furnished, `${state} @ ${at}: chip geometry unreadable on the twin`).not.toBeNull();
+          expect(
+            furnished,
+            `${state} @ ${at}: chip geometry unreadable on the twin`,
+          ).not.toBeNull();
           if (furnished!.fromTotals !== null) {
             expect(
               furnished!.fromTotals,
@@ -851,7 +1047,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           // both loop iterations land on the quiet branch here — the plate
           // geometry is the same object in every state.
           await own.goto("/demo/shell?session=1");
-          await expect(own.getByTestId("since-last-look")).toContainText("Nothing new");
+          await expect(own.getByTestId("since-last-look")).toContainText(
+            "Nothing new",
+          );
           // The VISIBLE sentence, not textContent: container/media-hidden
           // spans ride in textContent, which is how a lost string can hide
           // behind a green text assertion. The moment must survive on the
@@ -860,7 +1058,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           // scope removed, and the quiet plate has no press to recover it.
           const visible = await own
             .getByTestId("since-last-look")
-            .evaluate((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim());
+            .evaluate((el) =>
+              (el as HTMLElement).innerText.replace(/\s+/g, " ").trim(),
+            );
           // "since {moment}" at the widths that fit the sentence, the loud
           // chip's "· {moment}" stamp at `lg`→`xl` — where " since " plus
           // the WORST clock string ("12:58 am") measured 196.6px against
@@ -871,7 +1071,10 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
             `${state} @ ${at}: the quiet chip renders "${visible}" — the moment is gone from the visible sentence`,
           ).toMatch(/Nothing new (since|·) \S/);
           const signedIn = await measureChip();
-          expect(signedIn, `${state} @ ${at}: chip geometry unreadable signed-in`).not.toBeNull();
+          expect(
+            signedIn,
+            `${state} @ ${at}: chip geometry unreadable signed-in`,
+          ).not.toBeNull();
           expect(
             signedIn!.offCentre,
             `${state} @ ${at}: chip centre sits ${signedIn!.offCentre}px off the bar's on the signed-in row`,
@@ -939,7 +1142,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     // "5 unique of 7" and never reaches the lines below. Asserting the shape
     // exists before asserting it is separable makes the failure say which
     // happened.
-    const collided = normalized.filter((t) => t.includes("Thank you for applying to Verkada"));
+    const collided = normalized.filter((t) =>
+      t.includes("Thank you for applying to Verkada"),
+    );
     expect(
       collided,
       `the fixture no longer contains two entries sharing one subject and sender, ` +
@@ -966,7 +1171,9 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
     await expectNoHorizontalOverflow(page);
   });
 
-  test("light theme: still locked, still no horizontal overflow at 375", async ({ page }) => {
+  test("light theme: still locked, still no horizontal overflow at 375", async ({
+    page,
+  }) => {
     // `jt-theme` is THEME_STORAGE_KEY (lib/theme.ts) — hardcoded here because
     // the e2e specs deliberately import nothing from the app source tree.
     await page.addInitScript(() => {
@@ -994,27 +1201,37 @@ test.describe("app shell — signed out (public)", () => {
     const watch = startConsoleWatch(page);
     await page.goto("/import");
     await expect(page).toHaveURL(/\/import$/);
-    await expect(page.getByRole("heading", { name: "Import your mail" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Import your mail" }),
+    ).toBeVisible();
 
     // No signed-in app chrome for an anonymous visitor.
     await expect(page.locator('nav[aria-label="Primary"]')).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(
+      0,
+    );
 
     // But never a dead end: the header logo goes home.
     const header = page.locator("header");
     // Matches the current brand. This asserted /job.*tracker/i until 2026-08-03,
     // which was the pre-rename name — the product has been "Applied" since, so
     // the test was failing against correct markup.
-    await expect(header.getByRole("link", { name: /applied/i })).toHaveAttribute("href", "/");
+    await expect(
+      header.getByRole("link", { name: /applied/i }),
+    ).toHaveAttribute("href", "/");
     // The header also carried a "sample inbox →" link to /demo/inbox until
     // #495 pulled the demo out of the product's own surfaces. The assertion is
     // inverted rather than deleted: a link that was removed on purpose has to
     // stay removed, and a bare deletion here would let it drift back silently.
-    await expect(header.getByRole("link", { name: /sample inbox/i })).toHaveCount(0);
+    await expect(
+      header.getByRole("link", { name: /sample inbox/i }),
+    ).toHaveCount(0);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
-  test("/privacy renders the standalone document, header and footer intact", async ({ page }) => {
+  test("/privacy renders the standalone document, header and footer intact", async ({
+    page,
+  }) => {
     const watch = startConsoleWatch(page);
     await page.goto("/privacy");
     await expect(page).toHaveURL(/\/privacy$/);
@@ -1026,17 +1243,17 @@ test.describe("app shell — signed out (public)", () => {
     // that must NOT change: the policy is a public document — Google's OAuth
     // reviewer fetches it without a session, and the landing page links to it.
     await expect(page.locator('nav[aria-label="Primary"]')).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(
+      0,
+    );
 
     // Its own chrome carries the way out, at both ends of a long document.
-    await expect(page.locator("header").getByRole("link", { name: /applied/i })).toHaveAttribute(
-      "href",
-      "/",
-    );
-    await expect(page.locator("footer").getByRole("link", { name: "Home" })).toHaveAttribute(
-      "href",
-      "/",
-    );
+    await expect(
+      page.locator("header").getByRole("link", { name: /applied/i }),
+    ).toHaveAttribute("href", "/");
+    await expect(
+      page.locator("footer").getByRole("link", { name: "Home" }),
+    ).toHaveAttribute("href", "/");
 
     // Standalone, the DOCUMENT is the scrollport — the opposite of shell mode
     // below, and the reason the contents rail's sticky offset is mode-aware.
@@ -1079,8 +1296,13 @@ test.describe("app shell — signed in (needs a session)", () => {
     { path: "/inbox", label: "Inbox" },
     { path: "/settings", label: "Settings" },
   ]) {
-    test(`the sidebar marks "${label}" as the current page on ${path}`, async ({ page }) => {
-      await requireSession(page, `the sidebar's active-state indicator on ${path}`);
+    test(`the sidebar marks "${label}" as the current page on ${path}`, async ({
+      page,
+    }) => {
+      await requireSession(
+        page,
+        `the sidebar's active-state indicator on ${path}`,
+      );
       await page.goto(path);
 
       const current = page.locator('a[aria-current="page"]');
@@ -1093,7 +1315,10 @@ test.describe("app shell — signed in (needs a session)", () => {
   test("/import renders inside the shell with 'Import mail' active, and nav can leave it", async ({
     page,
   }) => {
-    await requireSession(page, "/import rendering inside the app shell, with a way back out");
+    await requireSession(
+      page,
+      "/import rendering inside the app shell, with a way back out",
+    );
     await page.goto("/import");
 
     // The app sidebar is present and "Import mail" is the current item.
@@ -1103,7 +1328,9 @@ test.describe("app shell — signed in (needs a session)", () => {
     await expect(current).toContainText("Import mail");
 
     // The import tool itself is here...
-    await expect(page.getByRole("heading", { name: "Import your mail" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Import your mail" }),
+    ).toBeVisible();
     // ...and there is a way back into the rest of the app. `exact`: the brand
     // logo's own aria-label ("…go to your applications") substring-matches
     // the loose form now that the nav item is named "Applications".
@@ -1115,7 +1342,10 @@ test.describe("app shell — signed in (needs a session)", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await requireSession(page, "/privacy rendering inside the shell, scrolling in the pane (#155)");
+    await requireSession(
+      page,
+      "/privacy rendering inside the shell, scrolling in the pane (#155)",
+    );
     await page.goto("/privacy");
 
     // The app chrome is here, and the page's standalone header/footer are not.
@@ -1167,7 +1397,10 @@ test.describe("app shell — signed in (needs a session)", () => {
     page,
   }) => {
     await page.setViewportSize(MOBILE_375);
-    await requireSession(page, "the mobile hamburger revealing the primary nav");
+    await requireSession(
+      page,
+      "the mobile hamburger revealing the primary nav",
+    );
     await page.goto("/dashboard");
 
     // The desktop sidebar is hidden; the menu button is the way in.
@@ -1180,7 +1413,9 @@ test.describe("app shell — signed in (needs a session)", () => {
     const mobileNav = page.locator("#mobile-nav");
     await expect(mobileNav).toBeVisible();
     await expect(mobileNav.getByRole("link", { name: "Inbox" })).toBeVisible();
-    await expect(mobileNav.getByRole("link", { name: "Settings" })).toBeVisible();
+    await expect(
+      mobileNav.getByRole("link", { name: "Settings" }),
+    ).toBeVisible();
 
     await expectNoHorizontalOverflow(page);
 

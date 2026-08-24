@@ -3,8 +3,14 @@ import type { Metadata } from "next";
 
 import { type DemoReviewSlot } from "@/components/demo/DemoDashboard";
 import { DemoShell } from "@/components/demo/DemoShell";
-import { DEMO_AMBIENT_COOKIE, parseDemoAmbientPref } from "@/lib/demo/ambientPref";
-import { DEMO_NOTIFICATIONS_COOKIE, parseDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
+import {
+  DEMO_AMBIENT_COOKIE,
+  parseDemoAmbientPref,
+} from "@/lib/demo/ambientPref";
+import {
+  DEMO_NOTIFICATIONS_COOKIE,
+  parseDemoNotificationPrefs,
+} from "@/lib/demo/notificationPrefs";
 
 export const metadata: Metadata = {
   title: "Live demo — the app shell",
@@ -110,6 +116,16 @@ export const dynamic = "force-dynamic";
  *     nothing: on the board route at `lg`+ TopBar yields to this row
  *     entirely, so the row IS the session edge at both widths under test.
  *
+ * `?empty=1` renders the EMPTY board in place of the worklist: the real
+ * `EmptyBoardBody` — the component `app/(app)/(protected)/dashboard/page.tsx`
+ * mounts, not a restatement of it — with the rail flipped to disconnected so
+ * the two agree. Fourth harness knob, and the case it exists for is the
+ * plainest of the four: the empty board is the FIRST screen of every new
+ * account, and it was the one dashboard branch that never declared the locked
+ * geometry, because this twin could only ever mount the populated one. The
+ * lock passed everywhere it was measured and the empty board scrolled chrome
+ * and all. Pairs with `?review=N` for the tall arrangement.
+ *
  * `?pipeline=early` renders the same locked twin over the early-search
  * projection, exactly as /demo does — the measured production shape (every
  * row at `applied`, no deadlines, roles missing at the real rate). The
@@ -124,10 +140,14 @@ export default async function DemoShellPage({
     review?: string;
     queue?: string;
     session?: string;
+    empty?: string;
   }>;
 }) {
-  const { pipeline, review, queue, session } = await searchParams;
-  const needsReview = Math.min(99, Math.max(0, Number.parseInt(review ?? "", 10) || 0));
+  const { pipeline, review, queue, session, empty } = await searchParams;
+  const needsReview = Math.min(
+    99,
+    Math.max(0, Number.parseInt(review ?? "", 10) || 0),
+  );
   // Exact-match both values, like every knob here, and fall through to
   // UNDEFINED rather than to "after": absent, the slot comes from the
   // preference the Settings twin wrote (#216), whose own default is "after" —
@@ -137,7 +157,9 @@ export default async function DemoShellPage({
   const reviewSlot: DemoReviewSlot | undefined =
     queue === "before" ? "before" : queue === "after" ? "after" : undefined;
   const jar = await cookies();
-  const notifications = parseDemoNotificationPrefs(jar.get(DEMO_NOTIFICATIONS_COOKIE)?.value);
+  const notifications = parseDemoNotificationPrefs(
+    jar.get(DEMO_NOTIFICATIONS_COOKIE)?.value,
+  );
   // The rail's ambient-mail pref, from the cookie the demo Settings toggle
   // writes — read server-side exactly as the (app) layout reads the real
   // metadata, so the twin's rail is the signed-in rail's honest stand-in.
@@ -146,6 +168,13 @@ export default async function DemoShellPage({
   // the twin in its honest default, so a stray `?session=` in a shared link
   // cannot quietly put a sign-out in front of an anonymous visitor.
   const sessionEdge = session === "1";
+  // Fourth knob, same exact-match shape. `?empty=1` mounts the REAL
+  // `EmptyBoardBody` in place of the worklist and flips the rail to
+  // disconnected to match — the state a brand-new account is in, and the one
+  // dashboard branch whose geometry no executing test could reach until now.
+  // Combines with `?review=N`, which is the case worth measuring: held mail
+  // under an empty board is the tall arrangement.
+  const emptyBoard = empty === "1";
 
   // The rail fixture and the "Sam Fixture" identity live in `DemoShell` now,
   // beside the one mount both routes share.
@@ -156,6 +185,7 @@ export default async function DemoShellPage({
       notifications={notifications}
       reviewSlot={reviewSlot}
       sessionEdge={sessionEdge}
+      empty={emptyBoard}
       ambient={ambient}
     />
   );

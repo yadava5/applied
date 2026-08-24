@@ -26,4 +26,30 @@
  * nested scroller helps nobody. The document itself stays locked at every
  * width by the frame's `h-dvh overflow-hidden`.
  */
-export const LOCKED_PAGE_CLASS = "page-locked flex flex-col gap-3 lg:min-h-0 lg:flex-1";
+export const LOCKED_PAGE_CLASS =
+  "page-locked flex flex-col gap-3 lg:min-h-0 lg:flex-1";
+
+/**
+ * The scroll region a locked page's ORDINARY body needs.
+ *
+ * `LOCKED_PAGE_CLASS` only makes the root fill the pane; something inside it
+ * still has to be the thing that moves, or over-tall content pushes back out
+ * through <main> and the whole page scrolls again — the lock passes and the
+ * symptom survives. The populated dashboard satisfies that with its worklist,
+ * which owns its own scroller. Its EMPTY and FAILED branches have no worklist,
+ * so they declare it here instead: header parked, body scrolls, one geometry
+ * either way.
+ *
+ * This existed as a gap rather than a decision. Only the populated board ever
+ * declared the lock (#495 verified it there), so a signed-in user with nothing
+ * filed — every brand-new account, and every account whose mail is not
+ * connected — got the flow geometry: chrome and all scrolling as one block,
+ * which is exactly the "the dashboard doesn't scroll, but the preview does"
+ * report. The empty board is the FIRST screen a new user sees, so it was the
+ * one branch that most needed to look like the product.
+ *
+ * `lg:` to match `LOCKED_PAGE_CLASS` — the lock releases below the desktop
+ * breakpoint, and a nested scroller under a released lock would be a pane
+ * inside a pane.
+ */
+export const LOCKED_BODY_CLASS = "lg:min-h-0 lg:flex-1 lg:overflow-y-auto";

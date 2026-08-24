@@ -3,7 +3,12 @@ import { Mail, Upload, type LucideIcon } from "lucide-react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
 
-const ROUTES: { href: string; title: string; body: string; icon: LucideIcon }[] = [
+const ROUTES: {
+  href: string;
+  title: string;
+  body: string;
+  icon: LucideIcon;
+}[] = [
   {
     href: "/settings",
     title: "Connect Gmail",
@@ -46,8 +51,12 @@ export function ForwardRoutes() {
                 →
               </span>
             </div>
-            <p className="mt-3 text-sm font-medium text-strong">{route.title}</p>
-            <p className="mt-1 text-[12px] leading-snug text-muted">{route.body}</p>
+            <p className="mt-3 text-sm font-medium text-strong">
+              {route.title}
+            </p>
+            <p className="mt-1 text-[12px] leading-snug text-muted">
+              {route.body}
+            </p>
           </Link>
         );
       })}
@@ -68,7 +77,15 @@ export function ForwardRoutes() {
  * demonstration belongs to the landing page and the public `/demo/*` routes,
  * which is where it still lives.
  */
-export function DashboardEmptyState() {
+export function DashboardEmptyState({
+  mode = "live",
+}: {
+  /** Where "file an application" writes. `demo` is for the fixture twin, which
+   *  mounts this component itself so its geometry cannot drift from the
+   *  signed-in page's — see `EmptyBoardBody`. A live form on an auth-free
+   *  route would offer a control whose only outcome is an API error. */
+  mode?: "live" | "demo";
+}) {
   return (
     <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
       <p className="label-caps">nothing filed yet</p>
@@ -76,11 +93,12 @@ export function DashboardEmptyState() {
         Your board is empty — let&apos;s fill it.
       </h2>
       <p className="mt-2 max-w-xl text-sm text-muted">
-        File an application by hand, or connect a mail source and let the classifier build the board
-        for you. Either way, everything below fills in as applications arrive.
+        File an application by hand, or connect a mail source and let the
+        classifier build the board for you. Either way, everything below fills
+        in as applications arrive.
       </p>
       <div className="mt-5">
-        <AddApplicationForm align="start" />
+        <AddApplicationForm align="start" mode={mode} />
       </div>
 
       <div className="mt-6">
