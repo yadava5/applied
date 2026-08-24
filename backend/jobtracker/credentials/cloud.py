@@ -254,13 +254,45 @@ async def _fetch_credential(
     *,
     user_id: uuid.UUID,
     kind: str,
+    include_revoked: bool = False,
 ) -> Optional[UserCredential]:
-    result = await session.exec(
-        select(UserCredential).where(
-            UserCredential.user_id == user_id,
-            UserCredential.kind == kind,
-        )
-    )
+    """Fetch one credential row, EXCLUDING revoked grants by default.
+
+    ``revoked_at`` is set by :func:`jobtracker.cloud.gmail_client` when Google
+    rejects the refresh token — the grant is gone at the provider and no amount
+    of retrying brings it back; only fresh consent does. This read used to
+    ignore the column entirely, so a revoked row came back looking exactly like
+    a live one. Everything downstream believed it: ``/auth/gmail/status``
+    answered ``connected: true``, Settings told the user they were connected,
+    and the cron — which DOES filter (``cloud/cron.py``) — quietly synced
+    nothing for them. A user in that state had no way to find out and no
+    affordance to fix it, because the UI only offers Disconnect to someone it
+    believes is connected.
+
+    ``include_revoked=True`` IS NOT A CONVENIENCE. Exactly two callers need it,
+    and both are trying to CLEAN UP the grant rather than use it:
+
+      - ``gmail_disconnect`` — a revoked row still holds ciphertext and still
+        has an enrollment row occupying a connection-cap seat. Filtering it out
+        of the disconnect path would strand both forever.
+      - ``revoke_stored_gmail_grant`` (account deletion) — the mark is written
+        from a string heuristic, so a LIVE grant can be mis-marked. Skipping
+        revocation on the strength of that guess would leave a real grant
+        standing at Google after the account is gone.
+
+    Anything that wants to USE a credential must take the default. A caller
+    that passes ``include_revoked=True`` and then makes an API call with what
+    it gets back has reintroduced the bug.
+    """
+
+    conditions = [
+        UserCredential.user_id == user_id,
+        UserCredential.kind == kind,
+    ]
+    if not include_revoked:
+        conditions.append(UserCredential.revoked_at.is_(None))  # type: ignore[union-attr]
+
+    result = await session.exec(select(UserCredential).where(*conditions))
     row = result.first()
     if row is None:
         return None
@@ -313,12 +345,21 @@ async def save_gmail_credentials(
 
 
 async def get_gmail_credentials(
-    user_id: uuid.UUID, session: AsyncSession | None = None
+    user_id: uuid.UUID,
+    session: AsyncSession | None = None,
+    *,
+    include_revoked: bool = False,
 ) -> Optional[GmailCredentials]:
     """Fetch + decrypt Gmail OAuth credentials for ``user_id``.
 
     Returns ``None`` on miss; logs-and-returns-``None`` on decrypt failure
     rather than raising so routers degrade gracefully.
+
+    ``include_revoked`` — a grant Google has already rejected is NOT returned
+    unless a caller asks for it by name. See :func:`_fetch_credential` for the
+    two callers that legitimately do, and for why every other caller must not.
+    The flag lives here as well as on the private helper because every
+    sensitive call site goes through this public getter, not through that one.
 
     ``session`` — reuse the caller's open session instead of opening one.
     Under the cloud engine's NullPool a session is a fresh TCP+TLS+auth
@@ -330,10 +371,17 @@ async def get_gmail_credentials(
 
     fernet = _require_fernet()
     if session is not None:
-        row = await _fetch_credential(session, user_id=user_id, kind=KIND_GMAIL)
+        row = await _fetch_credential(
+            session, user_id=user_id, kind=KIND_GMAIL, include_revoked=include_revoked
+        )
     else:
         async with get_session() as own_session:
-            row = await _fetch_credential(own_session, user_id=user_id, kind=KIND_GMAIL)
+            row = await _fetch_credential(
+                own_session,
+                user_id=user_id,
+                kind=KIND_GMAIL,
+                include_revoked=include_revoked,
+            )
     if row is None:
         _log_secret_access(
             user_id=user_id, kind=KIND_GMAIL, key_id=None, op="read", outcome="miss"
@@ -399,7 +447,17 @@ async def delete_gmail_credentials(user_id: uuid.UUID) -> bool:
 async def update_gmail_access_token(
     user_id: uuid.UUID, access_token: str, token_expiry: datetime
 ) -> bool:
-    """Refresh the stored Gmail access_token/token_expiry for ``user_id``."""
+    """Refresh the stored Gmail access_token/token_expiry for ``user_id``.
+
+    THE DEFAULT READ IS LOAD-BEARING. This reads, mutates, and writes back
+    through ``save_gmail_credentials``, whose upsert clears ``revoked_at`` —
+    that clause exists so RECONNECTING un-revokes. Before the read was
+    filtered, a refresh against a revoked row travelled the same path and
+    un-revoked the grant with no fresh consent behind it, quietly restoring a
+    dead credential to "connected". Filtered, the row is not found, this
+    returns ``False``, and the only thing that can clear the mark is a real
+    trip through Google's consent screen. Do not pass ``include_revoked``.
+    """
 
     credentials = await get_gmail_credentials(user_id)
     if credentials is None:
