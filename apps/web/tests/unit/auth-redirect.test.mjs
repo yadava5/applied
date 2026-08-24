@@ -187,9 +187,32 @@ const WIRED = [
         /const nextPath = safeRedirectPath\(\s*searchParams\.get\("redirect"\)/,
         "resolve the 302 target through the guard",
       ],
+      // The success exit used to be `redirect(new URL(nextPath, origin))` and
+      // this pinned that literal. #494 put a decision between the two: the
+      // target is now `destinationAfterSignIn(...)`, which returns EITHER the
+      // path handed to it or a module constant it owns. The security property
+      // is unchanged — the only caller-supplied value that can reach a 302 is
+      // still one that came out of `safeRedirectPath` — so what is pinned is
+      // the same claim, expressed across the two lines that now carry it:
+      // the sink spends the decision's output, and the decision is fed the
+      // guarded path and nothing else.
       [
-        /NextResponse\.redirect\(new URL\(nextPath, origin\)\)/,
-        "still redirect to the guarded path and nothing else",
+        /NextResponse\.redirect\(new URL\(destination, origin\)\)/,
+        "spend the decision's output at the 302, not a raw value",
+      ],
+      [
+        /requestedRedirect: nextPath/,
+        "feed the decision the guarded path, not the raw search param",
+      ],
+    ],
+    // Whatever else the handler grows, a caller-supplied value must never
+    // reach a URL without passing the guard first. Stated as its own negative
+    // because the positives above can all hold in a file that ALSO builds a
+    // second, unguarded redirect somewhere below them.
+    forbidden: [
+      [
+        /new URL\(\s*searchParams\.get/,
+        "builds a URL straight from a search param",
       ],
     ],
   },
@@ -222,7 +245,7 @@ const codeOnly = (source) =>
     .filter((line) => !line.trim().startsWith("//"))
     .join("\n");
 
-for (const { file, required } of WIRED) {
+for (const { file, required, forbidden = [] } of WIRED) {
   test(`${file} spends a destination only through safeRedirectPath`, () => {
     const code = codeOnly(read(file));
 
@@ -236,6 +259,10 @@ for (const { file, required } of WIRED) {
 
     for (const [pattern, why] of required) {
       assert.ok(pattern.test(code), `${file} should ${why}`);
+    }
+
+    for (const [pattern, why] of forbidden) {
+      assert.ok(!pattern.test(code), `${file} ${why}`);
     }
 
     // The exact expression that failed. It is not a synonym for the guard and

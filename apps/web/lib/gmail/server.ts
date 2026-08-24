@@ -157,9 +157,23 @@ function networkFailure(err: unknown): GmailFailure {
   };
 }
 
-/** GET /auth/gmail/status — is Gmail available on this deploy, and linked? */
-export async function getGmailStatus(): Promise<GmailStatusResult> {
-  const token = await sessionToken();
+/**
+ * GET /auth/gmail/status — is Gmail available on this deploy, and linked?
+ *
+ * `accessToken` overrides the cookie-derived session, and exists for exactly
+ * one caller: the PKCE callback (#494). There, the session was created
+ * milliseconds earlier by `exchangeCodeForSession` and its cookies are riding
+ * OUT on the response being built — the INBOUND request this handler is
+ * answering carries no session at all, so the cookie-derived read would answer
+ * `unauthenticated` for a user who is, at that instant, definitively signed in.
+ * The exchange already handed us the access token; passing it is the honest
+ * way to ask, and it keeps the failure states distinguishable instead of
+ * folding a timing artefact into "not connected".
+ */
+export async function getGmailStatus(
+  accessToken?: string | null,
+): Promise<GmailStatusResult> {
+  const token = accessToken ?? (await sessionToken());
   if (!token) return { kind: "unauthenticated" };
 
   try {
