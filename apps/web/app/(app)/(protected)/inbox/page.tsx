@@ -5,7 +5,10 @@ import { BetaCard } from "@/components/beta/BetaCard";
 import { ConnectGmailButton } from "@/components/gmail/ConnectGmailButton";
 import { InboxWorkbench } from "@/components/gmail/InboxWorkbench";
 import { FiledMailList } from "@/components/mail/FiledMailList";
-import { LOCKED_PAGE_CLASS } from "@/components/shell/geometry";
+import {
+  LOCKED_BODY_CLASS,
+  LOCKED_PAGE_CLASS,
+} from "@/components/shell/geometry";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { getMail } from "@/lib/applications/server";
 import { getGmailStatus } from "@/lib/gmail/server";
@@ -101,7 +104,11 @@ function ViewSwitch({ scan }: { scan: boolean }) {
         aria-label="Inbox views"
         className="inline-flex rounded-lg border border-line-soft bg-surface p-0.5"
       >
-        <Link href="/inbox" aria-current={!scan ? "true" : undefined} className={tab(!scan)}>
+        <Link
+          href="/inbox"
+          aria-current={!scan ? "true" : undefined}
+          className={tab(!scan)}
+        >
           Filed
         </Link>
         <Link
@@ -125,7 +132,9 @@ function ViewSwitch({ scan }: { scan: boolean }) {
 function ImportFallback() {
   return (
     <div className="rounded-xl border border-line-soft bg-surface p-5">
-      <h2 className="text-base font-medium text-strong">See it on your own mail — right now</h2>
+      <h2 className="text-base font-medium text-strong">
+        See it on your own mail — right now
+      </h2>
       {/* How-to only — the no-upload reassurance prose moved to the policy the
           standing /privacy link reaches (#200/#201). */}
       <p className="mt-1.5 text-sm text-muted">
@@ -142,6 +151,31 @@ function ImportFallback() {
   );
 }
 
+/**
+ * THE SCROLL REGION IS PART OF THE LOCK, not decoration on it.
+ *
+ * This page's root declares `LOCKED_PAGE_CLASS`, which makes the root FILL the
+ * shell pane — and that is only half of it. Something inside still has to be
+ * the thing that moves, or a body taller than the pane pushes back out through
+ * <main> and the whole page scrolls, sync chrome and all, with the lock
+ * nominally on. The connected branch satisfies that with `InboxWorkbench`,
+ * which owns its own scroller. THESE branches did not: three stacked cards and
+ * two error cards, all of them ordinary flow content under a root that had
+ * stopped growing.
+ *
+ * Which made this the not-connected scan view — the first place someone on a
+ * fresh account goes looking for their mail — and it was carrying the same
+ * half-lock the empty dashboard was carrying (#505). Found while fixing that
+ * one, and it is the same one-line shape: give the body the region.
+ */
+function ScanBody({ children }: { children: React.ReactNode }) {
+  return (
+    <div className={cn(LOCKED_BODY_CLASS, "flex flex-col gap-3")}>
+      {children}
+    </div>
+  );
+}
+
 /** The scan view's non-connected states — connect, the beta seat, or the
  *  no-OAuth import path. Every branch routes forward; none is a dead end. */
 function ScanFallback({ configured }: { configured: boolean }) {
@@ -153,12 +187,17 @@ function ScanFallback({ configured }: { configured: boolean }) {
             consent moment carries it (Gmail card + Google's own screen), and
             the standing /privacy link above is the durable copy. */}
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <h2 className="text-base font-medium text-strong">Connect Gmail to scan live</h2>
+          <h2 className="text-base font-medium text-strong">
+            Connect Gmail to scan live
+          </h2>
           <ConnectGmailButton className="shrink-0" />
         </div>
         <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
           The full scopes-and-safeguards breakdown lives in{" "}
-          <Link href="/settings" className="text-strong underline-offset-4 hover:underline">
+          <Link
+            href="/settings"
+            className="text-strong underline-offset-4 hover:underline"
+          >
             Settings
           </Link>
           .
@@ -170,14 +209,21 @@ function ScanFallback({ configured }: { configured: boolean }) {
   );
 }
 
-export default async function InboxPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   const params = await searchParams;
   const scan = params.view === "scan";
 
   // --- Live scan ------------------------------------------------------------
   if (scan) {
     const result = await getGmailStatus();
-    const connected = result.kind === "ok" && result.status.configured && result.status.connected;
+    const connected =
+      result.kind === "ok" &&
+      result.status.configured &&
+      result.status.connected;
     return (
       <section className={cn("relative", LOCKED_PAGE_CLASS)}>
         {/* The page's ONE heading, for the document outline only — the rail
@@ -192,24 +238,33 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
         {connected ? (
           <InboxWorkbench email={result.status.email} />
         ) : result.kind === "auth" ? (
-          <div className="rounded-xl border border-line-soft bg-surface p-5">
-            <p className="text-sm text-muted">
-              Your session couldn&apos;t be verified for the mail backend (
-              <span className="font-mono text-dim">{result.status}</span>).
-            </p>
-            <Link
-              href="/login?redirect=/inbox"
-              className="mt-3 inline-flex items-center gap-2 rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background hover:opacity-90"
-            >
-              Sign in again <span aria-hidden>→</span>
-            </Link>
-          </div>
+          <ScanBody>
+            <div className="rounded-xl border border-line-soft bg-surface p-5">
+              <p className="text-sm text-muted">
+                Your session couldn&apos;t be verified for the mail backend (
+                <span className="font-mono text-dim">{result.status}</span>).
+              </p>
+              <Link
+                href="/login?redirect=/inbox"
+                className="mt-3 inline-flex items-center gap-2 rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background hover:opacity-90"
+              >
+                Sign in again <span aria-hidden>→</span>
+              </Link>
+            </div>
+          </ScanBody>
         ) : result.kind === "backend" ? (
-          <div className="rounded-xl border border-line-soft bg-surface p-5 text-sm text-muted">
-            The mail backend is temporarily unavailable — this view fills in the moment it answers.
-          </div>
+          <ScanBody>
+            <div className="rounded-xl border border-line-soft bg-surface p-5 text-sm text-muted">
+              The mail backend is temporarily unavailable — this view fills in
+              the moment it answers.
+            </div>
+          </ScanBody>
         ) : (
-          <ScanFallback configured={result.kind === "ok" && result.status.configured} />
+          <ScanBody>
+            <ScanFallback
+              configured={result.kind === "ok" && result.status.configured}
+            />
+          </ScanBody>
         )}
       </section>
     );
@@ -241,7 +296,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
       ) : (
         // Honest failure — never an empty inbox that reads as "no mail". The
         // distinct next step per status mirrors the dashboard's rule.
-        <div role="alert" className="rounded-xl border border-reject/40 bg-surface p-6">
+        <div
+          role="alert"
+          className="rounded-xl border border-reject/40 bg-surface p-6"
+        >
           <p className="label-caps text-reject-ink">couldn&apos;t load</p>
           <h2 className="mt-2 text-base font-medium text-strong">
             Your stored mail didn&apos;t load.
