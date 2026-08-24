@@ -15,8 +15,14 @@ import {
 /**
  * The slim, site-wide beta pill. Deliberately subtle: it surfaces
  * "Beta · limited access" without redesigning or dominating the landing or
- * demo, and expands into a compact details popover carrying the same two
- * actions as the rich <BetaCard> (email the admin, try the sample inbox).
+ * demo, and expands into a compact details popover carrying the beta ask
+ * (email the admin) plus the sample inbox.
+ *
+ * The sample-inbox action is the ONE thing this popover carries that the rich
+ * <BetaCard> deliberately does not (#495) — see the note in `constants.ts`.
+ * It is allowed here precisely because `HIDE_ON` below keeps this pill off
+ * every signed-in route, so the only visitors who see it are signed out. If a
+ * signed-in route is ever removed from that list, this link leaves with it.
  *
  * - Dismissible, and the dismissal persists in localStorage.
  * - Hidden on the surfaces that already show the full card (/settings,

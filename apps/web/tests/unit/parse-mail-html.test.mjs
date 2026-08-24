@@ -1,6 +1,6 @@
 /**
  * Unit tests for the HTML → text reduction in the in-browser mail parser
- * (`lib/import/parseMail.ts`), and for the fixture the /import page ships.
+ * (`lib/import/parseMail.ts`), and for a multi-message mbox's field derivation.
  *
  * These exist for two CodeQL alerts on the old chained-regex `stripHtml`, both
  * of which are ordinary correctness bugs before they are anything else — the
@@ -24,12 +24,12 @@
  * text nodes — but a sanitizer that does not sanitize is a landmine, and the
  * corruption is real regardless of where the text is rendered.
  *
- * The last block is a guard, not a feature: the /import page's screen capture
- * is recorded against the inline `sample.mbox` fixture and its counters (4
- * scanned / 3 auto-filed / 1 held). Classification is a pure function of
- * subject + body + sender, so pinning this parse pins those counters. The
- * fixture is read out of the component that ships it rather than copied here —
- * a copy is a twin, and twins drift.
+ * The `SAMPLE_MBOX` block is a guard, not a feature: it is the one case that
+ * asserts every derived field of every message across an mbox's boundaries.
+ * It used to be read out of `components/import/ImportMail.tsx` rather than
+ * copied here — a copy is a twin, and twins drift — but #495 deleted the
+ * fixture that page shipped, so the literal is inlined below and has nothing
+ * left to be a twin of.
  *
  * Run:  npm run test:unit
  */
@@ -37,7 +37,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseMailFile, stripHtml } from "../../lib/import/parseMail.ts";
-import { readSource } from "./helpers/renderTsx.mjs";
 
 // --- End-tag shape: alert 58, js/bad-tag-filter -----------------------------
 
@@ -156,14 +155,56 @@ test("quoted-printable decoding keeps an encoded underscore out of the space pas
   assert.equal(messages[0].body, "Hello world \u2014 done");
 });
 
-// --- The /import fixture must parse identically ------------------------------
+// --- A four-message mbox parses field for field ------------------------------
 
-/** The sample mbox as the page ships it — no `${}` or backticks in the literal. */
-const SAMPLE_MBOX = readSource("components/import/ImportMail.tsx").match(
-  /const SAMPLE_MBOX = `([\s\S]*?)`;/,
-)[1];
+/**
+ * This mbox used to be READ OUT OF the /import page, which shipped it behind a
+ * "Try a sample export" button; the note above explains why a copy was refused
+ * then. #495 deleted that button and the constant with it — nothing inside the
+ * app is the demo — so the literal lives here now, where it is a test fixture
+ * rather than product content and has nothing left to drift from.
+ *
+ * It is kept because no other case pins the WHOLE record across message
+ * boundaries: `parse-mail-accounting` counts an mbox (`totalFound`, the cap,
+ * format detection) and the prototype probe below asserts subjects only, while
+ * this one is the only place `senderName` / `senderEmail` / `snippet` /
+ * `receivedAt` are checked field for field on every message of a multi-message
+ * export. No `${}` or backticks in the literal.
+ */
+const SAMPLE_MBOX = `From 1@import Thu Jul 16 09:00:00 2026
+From: Cedar Labs Recruiting <no-reply@greenhouse.io>
+Subject: We received your application
+Date: Thu, 16 Jul 2026 09:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
 
-test("the sample.mbox fixture parses exactly as recorded", () => {
+Thank you for applying to the Software Engineer role at Cedar Labs. Your application has been received and our team is reviewing it.
+
+From 2@import Thu Jul 16 10:00:00 2026
+From: Juniper Cloud <recruiting@junipercloud.io>
+Subject: Let's schedule your technical interview
+Date: Thu, 16 Jul 2026 10:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+We'd like to schedule a 45-minute technical interview next week. Please use the Calendly link to book a time to meet the hiring team.
+
+From 3@import Thu Jul 16 11:00:00 2026
+From: Atlas Freight Careers <careers@atlasfreight.com>
+Subject: Update on your application to Atlas Freight
+Date: Thu, 16 Jul 2026 11:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+After careful consideration we have decided to move forward with other candidates at this time. We wish you the best in your search.
+
+From 4@import Thu Jul 16 12:00:00 2026
+From: Maya Chen <maya@earlystage.xyz>
+Subject: Quick question about your background
+Date: Thu, 16 Jul 2026 12:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+Hi, I had a quick question about your background and some recent projects. Do you have a few minutes this week?
+`;
+
+test("a four-message mbox parses field for field", () => {
   const result = parseMailFile("sample.mbox", SAMPLE_MBOX);
   assert.equal(result.format, "mbox");
   assert.equal(result.totalFound, 4);

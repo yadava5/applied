@@ -5,6 +5,7 @@ import {
   MOBILE_375,
   startConsoleWatch,
 } from "./helpers";
+import { requireSession } from "./session";
 
 /**
  * E2E for the beta-access notice.
@@ -72,14 +73,33 @@ test.describe("beta access notice", () => {
     await expect(mailto).toHaveAttribute("href", /body=/);
   });
 
-  test("the sample-inbox link routes to /demo/inbox", async ({ page }) => {
+  /**
+   * THE PRESENT HALF OF A PAIR (#495). Read it with "the signed-in app offers
+   * no route into the demo" at the foot of this file — neither assertion means
+   * anything alone.
+   *
+   * #495 removed every demo link from inside the product, and the rule it
+   * enforces is about REACHABILITY, not about the word "demo": the banner is
+   * `position: fixed` root-layout chrome whose `HIDE_ON` list excludes
+   * /dashboard, /inbox, /settings, /import, /demo and every landing route, so
+   * the only visitors who can see this popover are signed out — a stranger,
+   * which is precisely who the sample inbox is for. The rich <BetaCard>, which
+   * renders INSIDE the app, deliberately no longer offers it.
+   *
+   * So an absence-only assertion would be a trap: it would stay green against
+   * a build where this link had been deleted too, which is the over-correction
+   * this pair exists to catch. One test proves the link still works where it
+   * belongs; the other proves it is gone where it does not.
+   */
+  test("the signed-out popover still routes to the sample inbox", async ({ page }) => {
     await page.goto(BANNER_ROUTE);
     await page.getByRole("button", { name: /limited access/i }).click();
 
-    await page
-      .getByRole("region", { name: /beta access/i })
-      .getByRole("link", { name: /try the sample inbox/i })
-      .click();
+    const panel = page.getByRole("region", { name: /beta access/i });
+    // The seat request is the popover's point and must survive alongside it.
+    await expect(panel.getByRole("link", { name: /email admin for beta access/i })).toBeVisible();
+
+    await panel.getByRole("link", { name: /try the sample inbox/i }).click();
 
     await expect(page).toHaveURL(/\/demo\/inbox$/);
     await expect(page.getByRole("heading", { name: "Sample inbox" })).toBeVisible();
@@ -180,5 +200,35 @@ test.describe("the beta pill's route rule", () => {
     // The control: the same pill, same viewport, on a route that keeps it.
     await page.goto(BANNER_ROUTE);
     await expect(page.getByRole("button", { name: PILL })).toBeVisible();
+  });
+});
+
+/**
+ * THE ABSENT HALF OF THE PAIR ABOVE (#495).
+ *
+ * `<BetaCard>` is the renderer that sits INSIDE the product —
+ * `app/(app)/(protected)/inbox/page.tsx` and `GmailConnectionCard` on
+ * /settings — and it carried "Try the sample inbox" → /demo/inbox until #495.
+ * Nothing inside the app is the demo, so it is gone from there and stays gone.
+ *
+ * The assertion is deliberately about the WHOLE signed-in page rather than the
+ * card alone: the card renders only in the not-connected state, so a
+ * card-scoped locator would silently assert nothing against a connected
+ * account and look exactly like a pass. "This route offers no link into
+ * /demo" is true whatever the connection state, and it is the directive
+ * itself rather than a proxy for it.
+ *
+ * Auth-gated, so it goes through `requireSession()` and skips loudly under the
+ * shared `E2E_NO_SESSION_SKIP (#188):` token when there is no session — the
+ * banner half above runs without one and keeps the pair honest meanwhile.
+ */
+test.describe("no demo inside the app", () => {
+  test("the signed-in inbox offers no route into the demo", async ({ page }) => {
+    await requireSession(page, "the signed-in inbox carrying no link into /demo");
+    await page.goto("/inbox");
+
+    await expect(page.getByRole("heading", { name: /inbox/i }).first()).toBeVisible();
+    await expect(page.locator('a[href^="/demo"]')).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /sample inbox/i })).toHaveCount(0);
   });
 });

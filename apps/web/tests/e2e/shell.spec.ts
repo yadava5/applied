@@ -1000,17 +1000,17 @@ test.describe("app shell — signed out (public)", () => {
     await expect(page.locator('nav[aria-label="Primary"]')).toHaveCount(0);
     await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(0);
 
-    // But never a dead end: the header logo goes home and the sample inbox is
-    // linked from the standalone header.
+    // But never a dead end: the header logo goes home.
     const header = page.locator("header");
     // Matches the current brand. This asserted /job.*tracker/i until 2026-08-03,
     // which was the pre-rename name — the product has been "Applied" since, so
     // the test was failing against correct markup.
     await expect(header.getByRole("link", { name: /applied/i })).toHaveAttribute("href", "/");
-    await expect(header.getByRole("link", { name: /sample inbox/i })).toHaveAttribute(
-      "href",
-      "/demo/inbox",
-    );
+    // The header also carried a "sample inbox →" link to /demo/inbox until
+    // #495 pulled the demo out of the product's own surfaces. The assertion is
+    // inverted rather than deleted: a link that was removed on purpose has to
+    // stay removed, and a bare deletion here would let it drift back silently.
+    await expect(header.getByRole("link", { name: /sample inbox/i })).toHaveCount(0);
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 

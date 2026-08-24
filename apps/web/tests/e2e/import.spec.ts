@@ -11,6 +11,57 @@ import { expectNoHorizontalOverflow, MOBILE_375, startConsoleWatch } from "./hel
  * format, and that the page stays clean and free of horizontal overflow.
  */
 
+/**
+ * The four-message mbox the /import page used to ship behind a "Try a sample
+ * export" button. #495 deleted that button — nothing inside the app is the
+ * demo — so the bytes live here and reach the page the way a real user's file
+ * does, through the file input. They are byte-identical to the fixture the
+ * button pressed, deliberately: the verdicts asserted below (a clear applied /
+ * interview / rejection, plus one below-gate review) are real classifier
+ * output over exactly these four messages, and any edit to them re-writes the
+ * assertions too.
+ */
+const SAMPLE_MBOX = `From 1@import Thu Jul 16 09:00:00 2026
+From: Cedar Labs Recruiting <no-reply@greenhouse.io>
+Subject: We received your application
+Date: Thu, 16 Jul 2026 09:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+Thank you for applying to the Software Engineer role at Cedar Labs. Your application has been received and our team is reviewing it.
+
+From 2@import Thu Jul 16 10:00:00 2026
+From: Juniper Cloud <recruiting@junipercloud.io>
+Subject: Let's schedule your technical interview
+Date: Thu, 16 Jul 2026 10:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+We'd like to schedule a 45-minute technical interview next week. Please use the Calendly link to book a time to meet the hiring team.
+
+From 3@import Thu Jul 16 11:00:00 2026
+From: Atlas Freight Careers <careers@atlasfreight.com>
+Subject: Update on your application to Atlas Freight
+Date: Thu, 16 Jul 2026 11:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+After careful consideration we have decided to move forward with other candidates at this time. We wish you the best in your search.
+
+From 4@import Thu Jul 16 12:00:00 2026
+From: Maya Chen <maya@earlystage.xyz>
+Subject: Quick question about your background
+Date: Thu, 16 Jul 2026 12:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+Hi, I had a quick question about your background and some recent projects. Do you have a few minutes this week?
+`;
+
+async function importSample(page: Page) {
+  await page.getByTestId("import-file").setInputFiles({
+    name: "sample.mbox",
+    mimeType: "application/mbox",
+    buffer: Buffer.from(SAMPLE_MBOX, "utf-8"),
+  });
+}
+
 test.describe("import your mail", () => {
   test("is reachable without auth and explains the privacy guarantee", async ({ page }) => {
     const watch = startConsoleWatch(page);
@@ -22,9 +73,9 @@ test.describe("import your mail", () => {
     expect(watch.errors, watch.errors.join("\n")).toEqual([]);
   });
 
-  test("the sample export parses and classifies four messages on-device", async ({ page }) => {
+  test("a four-message mbox parses and classifies on-device", async ({ page }) => {
     await page.goto("/import");
-    await page.getByTestId("import-sample").click();
+    await importSample(page);
 
     const results = page.getByTestId("import-results");
     await expect(results).toBeVisible();
@@ -197,7 +248,7 @@ test.describe("import your mail", () => {
   test("no horizontal overflow on mobile with results", async ({ page }) => {
     await page.setViewportSize(MOBILE_375);
     await page.goto("/import");
-    await page.getByTestId("import-sample").click();
+    await importSample(page);
     await expect(page.getByTestId("import-results")).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });

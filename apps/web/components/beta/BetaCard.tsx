@@ -4,10 +4,8 @@ import {
   BETA_CTA_LABEL,
   BETA_IMPORT_LABEL,
   BETA_MAILTO,
-  BETA_SAMPLE_LABEL,
   BETA_SEATS,
   IMPORT_HREF,
-  SAMPLE_INBOX_HREF,
 } from "./constants";
 
 /**
@@ -15,8 +13,14 @@ import {
  * the `/settings` Gmail-connect area and the not-connected `/inbox` state.
  * It carries the full, honest message — direct Gmail connection is invite-only
  * (Google's 100-test-user cap on the `gmail.readonly` restricted scope) — plus
- * the two real actions: email the admin for a seat, or try the zero-connection
- * sample inbox right now.
+ * the two real actions: email the admin for a seat, or import your own mail
+ * on-device right now.
+ *
+ * It carried a third action until #495 — "Try the sample inbox", linking to
+ * `/demo/inbox`. This card renders on the signed-in `/inbox` and inside
+ * `GmailConnectionCard` on `/settings`, so that link was the demo advertising
+ * itself from inside the product. The demo keeps its home on the landing page
+ * and the public `/demo/*` routes.
  *
  * A Server Component with no client island: all motion is CSS (the animated
  * beam border, glow, dot-ping and seat-panel sheen defined in globals.css) and
@@ -64,19 +68,11 @@ export function BetaCard({ className = "" }: { className?: string }) {
               {BETA_IMPORT_LABEL}
               <span aria-hidden>→</span>
             </Link>
-            <Link
-              href={SAMPLE_INBOX_HREF}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-foreground outline-none transition-colors hover:border-line-strong hover:text-strong focus-accent"
-            >
-              {BETA_SAMPLE_LABEL}
-              <span aria-hidden>→</span>
-            </Link>
           </div>
 
           <p className="mt-3 text-[12px] leading-relaxed text-dim">
             No seat, no wait — <span className="text-muted">import your own mail</span> and classify it
-            on-device (nothing uploaded), or watch the classifier run on a synthetic sample inbox
-            first.
+            on-device. Nothing is uploaded.
           </p>
         </div>
 

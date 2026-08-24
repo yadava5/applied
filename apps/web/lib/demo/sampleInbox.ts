@@ -92,8 +92,15 @@ type SampleEmailSeed = Omit<SampleEmail, "receivedAt"> & {
   receivedDaysAgo: number;
 };
 
-/** The confidence gate: below this, nothing is auto-filed. */
-export const GATE = 0.85;
+/** The confidence gate: below this, nothing is auto-filed.
+ *
+ * RE-EXPORTED, not defined — the one definition is
+ * `lib/classification/gate.ts`. It moved there in #495 so a product surface
+ * can read the number without pulling this module's eleven fixture emails
+ * into its bundle. Existing readers of `@/lib/demo/sampleInbox` are
+ * unaffected; a new reader that wants ONLY the gate should import the
+ * definition directly. */
+export { GATE } from "@/lib/classification/gate";
 
 const SAMPLE_SEEDS: SampleEmailSeed[] = [
   {
