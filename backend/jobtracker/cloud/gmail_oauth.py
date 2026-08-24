@@ -254,6 +254,15 @@ class PipelineItemIn(BaseModel):
     with a fixed memory ceiling. The limits are generous multiples of what
     Gmail actually emits (a snippet is ~200 characters, an RFC-5321 address is
     at most 320) so nothing a real client sends is refused.
+
+    IT DELIBERATELY DOES NOT ACCEPT ``identity_role`` / ``identity_req_id``, and
+    must not learn to. Those are derived by the SERVER from the message body in
+    :func:`_classify_messages`, and they decide which application a message is
+    filed against and how the review queue groups decisions. Accepting them here
+    would let a client reshape dedup keys and file its own mail onto whichever
+    application it named. A relay item therefore leaves them unset, which means
+    "not derived" and sends the reader back to the snippet — the behaviour this
+    path has always had.
     """
 
     message_id: str = Field(max_length=256)
@@ -1721,14 +1730,51 @@ async def _classify_messages(
     """Run each fetched message through the classifier into a PipelineItem.
 
     ``bodies`` is the in-flight body text from the fetch (see
-    ``gmail_client.MessagePage.bodies``). It is READ HERE AND NOWHERE ELSE:
+    ``gmail_client.MessagePage.bodies``). It is READ HERE AND NOWHERE ELSE, and
     the ``PipelineItem`` built below carries ``snippet``, never ``body``, so
     nothing downstream — persistence, the API response, ``training_data`` — can
-    see it. ``tests/test_body_is_never_persisted.py`` is the enforcement.
+    see the text. ``tests/test_body_is_never_persisted.py`` is the enforcement.
+
+    WHAT IS DERIVED FROM IT, HOWEVER, IS CARRIED, and that changed on
+    2026-08-23. Identity resolution used to re-derive the job title and the
+    requisition number downstream from ``snippet`` — Gmail's own ~200
+    characters — so a title printed past that was invisible to the board while
+    the classifier, handed the whole body right here, read it perfectly. Torc
+    Robotics prints "the Software Engineer I - Metrics for Release opportunity"
+    at body character ~380 and its card carried no position; the shipped
+    extractor returns the right answer the instant it is given the body. No
+    pattern was missing. The text never arrived.
+
+    Against a production-shaped corpus that gap was 50 applications split over
+    two cards, 50 updates opening a rival card, and 81 further updates pushed
+    into the review queue on top of the 371 that honestly belong there.
+
+    Two things make carrying the derivation different from carrying the body:
+
+    · A job title and a requisition number are BOUNDED, and
+      ``applications.position`` / ``role_token`` / ``req_id`` have stored
+      exactly this class of value since ``f1a2c9b73d40``. What changes is where
+      the title is read from, not what kind of thing is kept. The sentinel test
+      plants its marker immediately after the capture boundary, so a capture
+      that ran long drags it into these fields and fails.
+
+    · The result is PERSISTED (``emails.identity_role`` /
+      ``identity_req_id``). Deriving from the body and keeping the answer only
+      in flight would have been worse than the bug it fixes:
+      ``pipeline.STORED_SNIPPET_CHARS`` records a queue key computed from one
+      width of text and a settle key computed from another, which left the row
+      unlinked, un-reviewed and re-queued on every sync forever. Storing it is
+      what makes both sides of a decision read one value.
+
+    Both fields are set to ``""`` — not left ``None`` — when the body names
+    nothing, because those are different questions downstream: ``None`` means
+    "never derived" and sends the reader back to the snippet, which is right for
+    a client relay item and wrong for a message this function actually read.
 
     Falls back to the snippet when a message produced no body text, so a
     message Gmail answered with headers only classifies exactly as it did
-    before rather than as an empty string.
+    before rather than as an empty string — and derives its identity from that
+    same snippet, which is all there is.
     """
 
     bodies = bodies or {}
@@ -1747,6 +1793,8 @@ async def _classify_messages(
                 confidence=result.confidence,
                 thread_id=msg.thread_id,
                 snippet=msg.snippet,
+                identity_role=pipeline.role_from_message(msg.subject, text) or "",
+                identity_req_id=pipeline.extract_req_id(msg.subject, text) or "",
             )
         )
     return items

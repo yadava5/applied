@@ -1468,6 +1468,29 @@ async def _resolve_application_for_email(
 _MESSAGE_LOOKUP_CHUNK = 500
 
 
+def _email_identity_parts(email) -> tuple[str | None, str | None]:
+    """The (role, req_id) a STORED message names — derived once, read here.
+
+    The same rule :func:`pipeline.identity_or_derive` applies to a message in
+    flight, for a row that has been persisted. Both columns NULL means nothing
+    was ever derived for this row — it predates the columns, or it came in
+    through the client relay, which carries a snippet and no body — so the
+    fallback re-derives from the stored snippet, which is what every caller here
+    used to do unconditionally.
+
+    Returning the PARTS rather than the sub-key because the callers mint an
+    ``Application`` and need the display title and the requisition number
+    separately, not just the key that distinguishes them.
+    """
+
+    return pipeline.identity_parts(
+        req_id=email.identity_req_id,
+        role=email.identity_role,
+        subject=email.subject or "",
+        snippet=email.body_snippet or "",
+    )
+
+
 async def _persist_message_refs(
     session,
     user_id: uuid.UUID,
@@ -1621,6 +1644,21 @@ async def _persist_message_refs(
             # it erases the identity the board groups by.
             if ref.snippet:
                 existing.body_snippet = pipeline.unescape_entities(ref.snippet)[:500]
+            # THE SAME RATCHET, for the identity the reader derived from the
+            # body. ``None`` means this pass derived nothing — a client relay
+            # item, which never had a body — and must leave a stored value
+            # alone; ``""`` is a real derivation that found no title and is
+            # written, because "derived, names nothing" is a different answer to
+            # "never derived" and the readers act on the difference.
+            #
+            # This is also what heals rows written before the columns existed:
+            # the next scan that reads one with a body ratchets NULL up to a
+            # real value, so no backfill has to guess from a snippet that never
+            # held the title in the first place.
+            if ref.identity_role is not None:
+                existing.identity_role = ref.identity_role[:200]
+            if ref.identity_req_id is not None:
+                existing.identity_req_id = ref.identity_req_id[:64]
             # A thread id, likewise: a metadata fetch that omits it must not
             # unlink a message from its conversation.
             if ref.thread_id:
@@ -1643,6 +1681,12 @@ async def _persist_message_refs(
                 sender_email=ref.sender_email,
                 received_at=received_at,
                 body_snippet=pipeline.unescape_entities(ref.snippet or "")[:500],
+                identity_role=(
+                    None if ref.identity_role is None else ref.identity_role[:200]
+                ),
+                identity_req_id=(
+                    None if ref.identity_req_id is None else ref.identity_req_id[:64]
+                ),
                 classified_as=category,
                 suggested_category=suggestion,
                 classification_confidence=ref.confidence,
@@ -2235,7 +2279,7 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             # Stamp the identity the message carries onto the row it mints, so
             # the next sync recognises this application instead of filing a
             # second one beside it.
-            role = pipeline.role_from_message(email.subject or "", email.body_snippet or "")
+            role, req_id = _email_identity_parts(email)
             app = Application(
                 user_id=user_id,
                 company=display,
@@ -2246,7 +2290,7 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
                 url=pipeline.gmail_deeplink(
                     thread_id=email.thread_id, message_id=email.message_id
                 ),
-                req_id=pipeline.extract_req_id(email.subject or "", email.body_snippet or ""),
+                req_id=req_id,
                 role_token=pipeline.normalize_role_token(role),
             )
             session.add(app)
@@ -2448,6 +2492,13 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                     Email.thread_id,
                     Email.subject,
                     Email.body_snippet,
+                    # Read, not re-derived. A row whose title was printed past
+                    # Gmail's ~200 characters carries the identity the reader
+                    # extracted from the body; recomputing it from the snippet
+                    # here would give this site a different answer to the one
+                    # the queue was built with.
+                    Email.identity_role,
+                    Email.identity_req_id,
                 ).where(
                     Email.user_id == user_id,
                     or_(*scoped),
@@ -2472,8 +2523,17 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                 thread_id=thread_id,
                 subject=subject or "",
                 snippet=snippet or "",
+                identity_role=identity_role,
+                identity_req_id=identity_req_id,
             )
-            for message_id, thread_id, subject, snippet in rows
+            for (
+                message_id,
+                thread_id,
+                subject,
+                snippet,
+                identity_role,
+                identity_req_id,
+            ) in rows
             if thread_id
         }
         refs = [
@@ -2485,6 +2545,8 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                 thread_id=r.thread_id,
                 subject=r.subject or "",
                 snippet=r.snippet or "",
+                identity_role=r.identity_role,
+                identity_req_id=r.identity_req_id,
             )
             not in settled_applications
         ]
@@ -3076,6 +3138,12 @@ async def _mint_scanned_email(
         sender_email=scanned.sender_email,
         received_at=received_at,
         body_snippet=pipeline.unescape_entities(scanned.snippet or "")[:500] or None,
+        # ``identity_role``/``identity_req_id`` are left NULL on purpose. This
+        # row comes from a CLIENT-supplied scan result, which carries a snippet
+        # and no body, so there is nothing to derive from that the reader cannot
+        # work out itself — and a client must never get to state which
+        # application a message names. NULL sends every reader back to the
+        # snippet, which is exactly what this path has always done.
         classified_as=scanned.category,
         classification_confidence=scanned.confidence,
         classification_method=scanned.method,
@@ -3339,7 +3407,7 @@ async def classify_review_item(
         if app is None:
             app = await _resolve_application_for_email(session, user_id, token, email)
         if app is None:
-            role = pipeline.role_from_message(email.subject or "", email.body_snippet or "")
+            role, req_id = _email_identity_parts(email)
             app = Application(
                 user_id=user_id,
                 company=display,
@@ -3350,7 +3418,7 @@ async def classify_review_item(
                 url=pipeline.gmail_deeplink(
                     thread_id=email.thread_id, message_id=email.message_id
                 ),
-                req_id=pipeline.extract_req_id(email.subject or "", email.body_snippet or ""),
+                req_id=req_id,
                 role_token=pipeline.normalize_role_token(role),
             )
             session.add(app)
@@ -3467,6 +3535,8 @@ async def _settle_thread_siblings(
         thread_id=email.thread_id,
         subject=email.subject or "",
         snippet=email.body_snippet or "",
+        identity_role=email.identity_role,
+        identity_req_id=email.identity_req_id,
     )
     siblings = [
         s
@@ -3476,6 +3546,8 @@ async def _settle_thread_siblings(
             thread_id=s.thread_id,
             subject=s.subject or "",
             snippet=s.body_snippet or "",
+            identity_role=s.identity_role,
+            identity_req_id=s.identity_req_id,
         )
         == decided
     ]
@@ -3858,6 +3930,13 @@ async def application_summary_cloud(
                     Email.thread_id,
                     Email.subject,
                     Email.body_snippet,
+                    # Read, not re-derived. A row whose title was printed past
+                    # Gmail's ~200 characters carries the identity the reader
+                    # extracted from the body; recomputing it from the snippet
+                    # here would give this site a different answer to the one
+                    # the queue was built with.
+                    Email.identity_role,
+                    Email.identity_req_id,
                 ).where(
                     Email.user_id == user_id,
                     Email.classified_as == EmailCategory.NEEDS_REVIEW,
@@ -3873,8 +3952,17 @@ async def application_summary_cloud(
                     thread_id=thread_id,
                     subject=subject or "",
                     snippet=snippet or "",
+                    identity_role=identity_role,
+                    identity_req_id=identity_req_id,
                 )
-                for message_id, thread_id, subject, snippet in pending
+                for (
+                    message_id,
+                    thread_id,
+                    subject,
+                    snippet,
+                    identity_role,
+                    identity_req_id,
+                ) in pending
             }
         )
 
@@ -4004,6 +4092,8 @@ async def review_queue_cloud(
             thread_id=e.thread_id,
             subject=e.subject or "",
             snippet=e.body_snippet or "",
+            identity_role=e.identity_role,
+            identity_req_id=e.identity_req_id,
         )
         if key in seen_threads:
             continue

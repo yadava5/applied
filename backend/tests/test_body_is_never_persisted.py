@@ -23,6 +23,26 @@ sentinel is searched for in:
     which is fed from ``email.body_snippet`` and must stay that way),
   * the full serialised body of every API response involved.
 
+WHAT CHANGED ON 2026-08-23, and what the claim now is
+-----------------------------------------------------
+
+``emails.identity_role`` and ``emails.identity_req_id`` store a job title and a
+requisition number DERIVED from the body. So a value computed from the body is
+now retained, and the page has to say so rather than implying nothing crosses.
+
+The claim that stays true is the one that always mattered: the body itself is
+read in flight and discarded, and what is kept is bounded and of a kind the
+product already stored — ``applications.position``, ``applications.role_token``
+and ``applications.req_id`` have held exactly these values since
+``f1a2c9b73d40``. What changed is where the title is read from, not what sort of
+thing is kept.
+
+That distinction is only worth anything if a capture running past the title
+would be caught, so ``test_a_capture_that_overruns_drags_the_sentinel_in``
+places the sentinel IMMEDIATELY after the point a role capture must stop. A
+marker anywhere else makes the assertion vacuous: the column could never have
+received it. That test is the one that can fail.
+
 Searching the whole serialised row/response rather than named fields is
 deliberate. Field-by-field assertions only cover the fields somebody thought
 of, and the failure this guards against is precisely a body reaching a field
@@ -715,3 +735,109 @@ async def test_a_correction_does_not_carry_the_body_into_training_data(
             "the retrain corpus is no longer being fed Gmail's snippet: "
             f"{row.body_text!r}"
         )
+
+
+# ── the derived identity is bounded, and the boundary is tested ──────────────
+
+#: A body whose job title is followed IMMEDIATELY by the sentinel. There is no
+#: punctuation between the title's terminator and the marker beyond the single
+#: space the capture must stop at, so a role pattern that runs one token long
+#: takes the sentinel with it into ``emails.identity_role``.
+#:
+#: This is the only arrangement that makes the absence assertion mean anything.
+#: A sentinel further into the body could never reach the column whatever the
+#: pattern did, and the test would pass on a capture of any length.
+BOUNDARY_BODY = (
+    "Hi Ayush, Thank you for applying to the Staff Platform Engineer position "
+    f"{SENTINEL} at Northwind Systems. We review every application carefully "
+    "and someone from the team will be in touch."
+)
+
+
+def test_a_capture_that_overruns_drags_the_sentinel_in() -> None:
+    """The boundary, asserted from both sides.
+
+    POSITIVE CONTROL FIRST: the identity really was derived from this text, and
+    it is the title. Without that, "the sentinel is absent" is satisfied by an
+    extractor that returns None for everything.
+    """
+
+    from jobtracker.cloud import pipeline
+
+    role = pipeline.role_from_message("Thanks for applying", BOUNDARY_BODY)
+
+    assert role == "Staff Platform Engineer", (
+        "the positive control failed: if no role is captured here, the absence "
+        "assertion below proves nothing about where a capture stops"
+    )
+    assert SENTINEL not in role
+
+
+def test_the_boundary_case_can_actually_fail() -> None:
+    """The mutation, run rather than described.
+
+    A pattern whose capture is allowed to cross the terminator DOES take the
+    sentinel, which is what makes the test above a real check and not a
+    restatement of the extractor's current behaviour.
+    """
+
+    import re
+
+    from jobtracker.cloud.pipeline import _clean_role
+
+    overrunning = re.compile(
+        r"\bapplying\s+to\s+the\s+(?P<role>[^.!?\n]{3,120}?)\s+at\s+[A-Z]"
+    )
+    match = overrunning.search(BOUNDARY_BODY)
+    assert match is not None
+    assert SENTINEL in (_clean_role(match.group("role")) or ""), (
+        "the mutation did not overrun, so it does not demonstrate the boundary"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_derived_identity_is_stored_and_the_body_is_not(cloud_app) -> None:
+    """Both halves of the claim, on one row, end to end.
+
+    The row must carry the identity the reader derived from the BODY — that is
+    the whole point of the columns, and asserting only the absence of the
+    sentinel would pass just as well if nothing were derived at all — and it
+    must not carry the body.
+
+    Mutation: dropping ``identity_role`` from the ``PipelineItem`` built in
+    ``_classify_messages`` → the stored value falls back to what the snippet
+    yields, which for this fixture is nothing, and the first assertion fails.
+    """
+
+    from sqlmodel import select
+
+    from jobtracker.classifier import get_classifier
+    from jobtracker.cloud import gmail_oauth, pipeline
+    from jobtracker.database.connection import get_session
+    from jobtracker.database.models import Email
+
+    page = _collect()
+    items = await gmail_oauth._classify_messages(
+        page.messages, get_classifier(), pipeline, page.bodies
+    )
+
+    derived = {i.message_id: (i.identity_role, i.identity_req_id) for i in items}
+    assert any(role for role, _ in derived.values()), (
+        "no message derived a role at all, so this test would pass without the "
+        "reader deriving anything"
+    )
+    for role, req in derived.values():
+        assert role is not None and req is not None, (
+            "a message this function READ must record 'derived, names nothing' "
+            "as an empty string, never None — None means the reader never ran "
+            "and sends every downstream site back to the snippet"
+        )
+        assert SENTINEL not in role and SENTINEL not in req
+
+    async with get_session() as session:
+        rows = (await session.exec(select(Email))).all()
+        for row in rows:
+            assert SENTINEL not in repr(row), (
+                "a body reached a stored column; the derived identity must be a "
+                "bounded title, never the text it was read from"
+            )

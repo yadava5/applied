@@ -108,7 +108,7 @@ import { cn } from "@/lib/utils";
 export const metadata: Metadata = {
   title: "Privacy",
   description:
-    "What Applied reads from your Gmail, what it stores, where it runs, and how to delete it. One scope — gmail.readonly. Message bodies are read to classify and discarded; only Gmail's own short snippet is stored, and no third-party model ever sees your mail.",
+    "What Applied reads from your Gmail, what it stores, where it runs, and how to delete it. One scope — gmail.readonly. Message bodies are read to classify and discarded; Gmail's own short snippet is stored, along with the job title and requisition number a message names, and no third-party model ever sees your mail.",
 };
 
 const UPDATED = "14 August 2026";
@@ -125,6 +125,7 @@ const MEASURED = "14 August 2026";
  * that says which promise moved and when.
  */
 const BODY_CHANGE = "14 August 2026";
+const IDENTITY_CHANGE = "23 August 2026";
 const CONTACT = "aesh.03.23@gmail.com";
 const GOOGLE_PERMISSIONS = "https://myaccount.google.com/permissions";
 const GOOGLE_USER_DATA_POLICY = "https://developers.google.com/terms/api-services-user-data-policy";
@@ -356,9 +357,33 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
             </P>
             <P>
               The body is read to classify the message and then discarded. It is never written to
-              the database, never returned by any endpoint, and never logged. Only Gmail’s short
-              snippet is stored — the same snippet that was stored before this change, unchanged
-              in length or origin.
+              the database, never returned by any endpoint, and never logged. Gmail’s short
+              snippet is still stored — the same snippet that was stored before this change,
+              unchanged in length or origin.
+            </P>
+            <Correction>
+              <strong className="text-strong">One thing derived from the body is now kept.</strong>{" "}
+              Since {IDENTITY_CHANGE}, two fields are read out of the body and stored: the job
+              title the message names and the employer’s requisition number, if it prints one.
+              Nothing else derived from the body is retained, and the body itself is still
+              discarded.
+            </Correction>
+            <P>
+              The reason is that the app could not otherwise tell your applications apart. The
+              title is what says which of four Amazon roles a rejection belongs to, and an
+              employer that prints it past the snippet’s ~200 characters was invisible: a real
+              Torc Robotics confirmation names its role at body character 380, and that card sat
+              on the board with a blank position while the classifier read the title perfectly.
+              Measured against the independent corpus, the gap was 50 applications split across
+              two cards, 50 status updates that opened a rival card beside the one they belonged
+              on, and 81 more that had to be handed back to you to sort out by hand.
+            </P>
+            <P>
+              What is kept is bounded and of a kind the app already stored: the same job title and
+              requisition number that have been on the application row itself since August. What
+              changed is where the title is read from, not what sort of thing is kept. The test
+              above places its marker immediately after the point the title must end, so a rule
+              that captured one word too much would store the marker and fail.
             </P>
             <P>
               The reason is accuracy, and it is specific. Gmail’s snippet stops at roughly 200
@@ -420,6 +445,13 @@ function PrivacyDocument({ inShell }: { inShell: boolean }) {
                   body the classifier reads. The column stops at 500 characters; measured in the
                   production database on {MEASURED}, the snippets held there averaged 197
                   characters and the longest was 201.
+                </Field>
+                <Field name="identity_role · identity_req_id">
+                  the job title and requisition number the message names, read out of the body
+                  when it arrives. These are the only values derived from the body that are kept,
+                  and they are what tells two applications at one employer apart. Empty when the
+                  message names neither, which is common: Google’s acknowledgement names no role
+                  anywhere in its body, and the app records that rather than guessing one.
                 </Field>
                 <Field name="classified_as">
                   the verdict — applied, interview, assessment, offer, rejection, follow-up, other,
