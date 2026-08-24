@@ -1444,6 +1444,15 @@ export interface components {
          *     with a fixed memory ceiling. The limits are generous multiples of what
          *     Gmail actually emits (a snippet is ~200 characters, an RFC-5321 address is
          *     at most 320) so nothing a real client sends is refused.
+         *
+         *     IT DELIBERATELY DOES NOT ACCEPT ``identity_role`` / ``identity_req_id``, and
+         *     must not learn to. Those are derived by the SERVER from the message body in
+         *     :func:`_classify_messages`, and they decide which application a message is
+         *     filed against and how the review queue groups decisions. Accepting them here
+         *     would let a client reshape dedup keys and file its own mail onto whichever
+         *     application it named. A relay item therefore leaves them unset, which means
+         *     "not derived" and sends the reader back to the snippet — the behaviour this
+         *     path has always had.
          */
         PipelineItemIn: {
             /** Message Id */
