@@ -1,10 +1,10 @@
 {
   "$comment": "Recorded facts for README.md \u2014 figures that require executing something. Regenerate with `python3 scripts/readme_facts.py --record`, then apply with `--write`. Do not hand-edit: the point of this file is that these numbers have a command behind them.",
-  "recordedAt": "2026-08-15",
+  "recordedAt": "2026-08-24",
   "machine": "Darwin-arm64, 3.11.14",
   "facts": {
     "testsCollected": {
-      "value": 1076,
+      "value": 1461,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "testsSkipped": {
@@ -12,27 +12,27 @@
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coveragePercent": {
-      "value": 60.9,
+      "value": 63.63,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageStatements": {
-      "value": 8600,
+      "value": 8927,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageMissed": {
-      "value": 3363,
+      "value": 3247,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageCloud": {
-      "value": 90.3,
+      "value": 90.9,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageAuth": {
-      "value": 80.5,
+      "value": 89.6,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageDatabase": {
-      "value": 80.5,
+      "value": 80.8,
       "command": "cd backend && pytest tests -q --cov=jobtracker --cov-report=json:.readme-facts-coverage.json --cov-report=term"
     },
     "coverageScriptsStatements": {
@@ -53,7 +53,7 @@
     }
   },
   "suiteOutcome": {
-    "passed": 1076,
+    "passed": 1461,
     "failed": 0,
     "skipped": 0,
     "errors": 0,

@@ -1287,7 +1287,13 @@ async def gmail_disconnect(
 
     from jobtracker.cloud.sync_state import clear_gmail_sync_state
 
-    stored = await get_gmail_credentials(user_id)
+    # A REVOKED GRANT MUST STILL BE DISCONNECTABLE. Disconnect is cleanup, not
+    # use: the row still holds ciphertext and still has an enrollment row
+    # occupying a connection-cap seat, and neither goes away on its own. Take
+    # the default read here and a user whose grant Google already rejected can
+    # never clear either one — `delete_gmail_credentials` below (which also
+    # un-enrolls) would be unreachable behind the `stored is None` early exit.
+    stored = await get_gmail_credentials(user_id, include_revoked=True)
     await clear_gmail_sync_state(user_id)
     if stored is None:
         return GmailDisconnectResponse(revoked=False, message="Gmail was not connected.")
@@ -1356,7 +1362,15 @@ async def revoke_stored_gmail_grant(user_id: uuid.UUID) -> bool:
     """
 
     try:
-        stored = await get_gmail_credentials(user_id)
+        # REVOKED ROWS INCLUDED, DELIBERATELY. `revoked_at` is written from a
+        # string heuristic over Google's error response, and that heuristic's
+        # own tests call the false positive the dangerous half — a LIVE grant
+        # can carry the mark. Skipping revocation on the strength of that guess
+        # would leave a real grant standing at Google after the account is
+        # gone, which is the one thing this function exists to prevent. A
+        # redundant revoke of an already-dead grant costs one ignored HTTP
+        # call; a missed revoke of a live one is the #215 guarantee breaking.
+        stored = await get_gmail_credentials(user_id, include_revoked=True)
     except Exception as exc:  # noqa: BLE001 — see docstring: must not raise
         logger.warning(
             "Could not read stored Gmail credentials to revoke for user_id=%s: %s",

@@ -37,9 +37,20 @@ WIDE = "in:inbox"
 
 
 class _StubVerdict:
-    def __init__(self, category: Any, confidence: float) -> None:
+    """A stand-in for ``classifier.hybrid.ClassificationResult``.
+
+    ``method`` is not decoration: it is a required field on the real type, and
+    the sync path now records WHICH LAYER answered rather than asserting
+    ``"rules"`` for everything (#496). A double that omits a field its original
+    always carries is not a simpler double, it is a wrong one — and this file
+    proved that by failing with ``AttributeError`` on a change that was correct
+    everywhere the real type is used. Keep it in step with the dataclass.
+    """
+
+    def __init__(self, category: Any, confidence: float, method: str = "rules") -> None:
         self.category = category
         self.confidence = confidence
+        self.method = method
 
 
 class _StubClassifier:
