@@ -270,8 +270,17 @@ export function FiledMailList({
                   {dispositionLabel(m) ? (
                     <span className="text-[11px] text-dim">{dispositionLabel(m)}</span>
                   ) : null}
+                  {/* `on_board`, NOT `application_id !== null`. A dismissed row
+                      keeps its id and its emails, so the link outlives the
+                      removal and the old test claimed "on your board" about a
+                      board that no longer contains it (#489). The removed case
+                      says so rather than falling silent: the mail IS still
+                      filed against something, and rendering nothing would read
+                      as unfiled. */}
                   {m.application_id !== null ? (
-                    <span className="text-[11px] text-dim">on your board</span>
+                    <span className="text-[11px] text-dim">
+                      {m.on_board ? "on your board" : "on a removed row"}
+                    </span>
                   ) : null}
                   <ReclassifyControl
                     messageId={m.message_id}

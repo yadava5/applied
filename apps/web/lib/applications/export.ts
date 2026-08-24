@@ -216,3 +216,26 @@ export function buildExportFile(
     messages,
   };
 }
+
+/**
+ * The human-readable half of a backend error.
+ *
+ * `String(res.error)` was the old expression and it produced the literal
+ * `"[object Object]"` for every real failure (#490): `res.error` is the PARSED
+ * JSON body, so a 401 arrives as `{detail: "unauthenticated"}` — an object,
+ * which stringifies uselessly — and the `??` fallback beside it never fired
+ * because an object is not nullish. The one case the fallback string was
+ * written for was the one case it could not reach.
+ *
+ * Lives here rather than in the route for the same reason the loops below do:
+ * in `app/api/applications/route.ts` it needs the Next runtime and cannot be
+ * executed by a test.
+ */
+export function errorDetail(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object" && "detail" in error) {
+    const detail = (error as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  return fallback;
+}
