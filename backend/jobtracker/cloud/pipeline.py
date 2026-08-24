@@ -232,6 +232,23 @@ class PipelineItem:
     # what it did before. An empty string means "derived, and it names nothing".
     identity_role: str | None = None
     identity_req_id: str | None = None
+    # WHICH LAYER PRODUCED ``category``, straight off the classifier that ran.
+    #
+    # This used to be thrown away, and the persist layer wrote the literal
+    # ``"rules"`` for every row it stored (#496). ``get_classifier`` is
+    # ``get_hybrid_classifier``, so the layer that actually answered may equally
+    # have been embeddings, setfit, the content filter or the fallback — the
+    # column read like provenance and was a constant, which is no evidence at
+    # all. It already cost one wrong diagnosis: while tracing #493 the stored
+    # rows claimed ``rules`` while the rules layer disagreed with them, and the
+    # contradiction was read as "some other layer labelled this". It had not.
+    #
+    # ``None`` means NOT DERIVED HERE and is the honest answer for the two
+    # client-relay paths, where the caller classified the mail and the server
+    # never saw a classifier run. It is written through as NULL rather than
+    # backfilled with a guess: the column is ``Optional[str]`` and nullable rows
+    # already exist, and "we do not know" is a different fact from "rules".
+    method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -760,6 +777,31 @@ _ROLE_FILLER: frozenset[str] = frozenset(
      "invitation", "opportunity", "rejection", "confirmation"}
 )
 
+# Legal-notice phrases whose OWN next word is one of the role keywords, so the
+# body patterns terminate on it and hand back the notice as a job title.
+#
+# Google's acknowledgement is the case that shipped: it closes with an
+# equal-opportunity notice, "opportunity" is the weakest keyword in
+# ``_ROLE_BODY_PATTERNS``, and the real board filed the Google card's position
+# as `"Equal Employment`.
+#
+# MATCHED WHOLE, never as a prefix, and that is the whole care in this
+# constant. "Equal Employment Opportunity Specialist" is a real job title and a
+# prefix test would refuse it; the phrase is only a notice when the keyword that
+# ENDED the capture was the phrase's own next word, which is exactly the case
+# where the capture equals the stem and nothing more. Normalized through
+# ``_normalize_token`` so quoting and punctuation cannot dodge it.
+_LEGAL_NOTICE_STEMS: frozenset[str] = frozenset(
+    {
+        "equal employment",
+        "equal opportunity",
+        "equal employment opportunity",
+        "affirmative action",
+        "reasonable accommodation",
+        "equal access",
+    }
+)
+
 # Role named in the subject. Tried in order; the capture is validated against
 # ``_ROLE_FILLER`` so "the role" alone never survives. Best-effort — a missing
 # role renders as nothing, never the literal "Unknown role".
@@ -1273,6 +1315,32 @@ def _clean_role(raw: str) -> str | None:
         return None
     if re.search(r"\b(?:our|your)\b", role, re.IGNORECASE):
         return None
+    # A capture that OPENS a quotation and never closes it was cut out of a
+    # quoted phrase rather than parsed as a title. Google's acknowledgement ends
+    # with an equal-opportunity notice citing a poster by name, and the weakest
+    # of the trailing keywords — "opportunity" — sits inside that title:
+    #
+    #   ... please refer to the "Equal Employment Opportunity is the Law" poster
+    #                           ^^^^^^^^^^^^^^^^^^ capture   ^^^^^^^^^^^ keyword
+    #
+    # which filed the real board's Google card as the position `"Equal
+    # Employment`, stray quote and all. The unbalanced quote is the structural
+    # tell and it is not specific to this sentence: any title lifted out of a
+    # quoted span carries one. A BALANCED pair is left alone — `Engineer II
+    # ("Platform")` is a real, if ugly, title.
+    # Double quotes only. An apostrophe is ordinary inside a title ("Women's
+    # Health", "Engineers' Lead") and counting it here would refuse real roles
+    # to catch a case the guard below already catches on its own terms.
+    if role.count('"') % 2:
+        return None
+    # Legal boilerplate that shares its next word with a role keyword. Matched
+    # WHOLE and only whole: the phrase is refused when the capture is exactly it
+    # — i.e. the keyword that terminated the capture was the boilerplate's own
+    # next word — and kept when the title continues past it. "Equal Employment
+    # Opportunity Specialist" is a real job title and must survive; "Equal
+    # Employment" immediately before "Opportunity" is a legal notice.
+    if _normalize_token(role) in _LEGAL_NOTICE_STEMS:
+        return None
     words = role.split()
     if not words or len(role) < 3:
         return None
@@ -1547,6 +1615,10 @@ class MessageRef:
     # None on the rolled-application path, where ``category`` already IS the
     # commitment and there is nothing outstanding to propose.
     suggested_category: str | None = None
+    # Carried from ``PipelineItem.method`` so the persisted row records which
+    # classifier layer actually answered instead of asserting one (#496).
+    # ``None`` means the server never saw a classifier run for this message.
+    method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1836,10 +1908,32 @@ def _employer_from_sender_name(
 
     candidates: list[str] = []
     if "@" in raw:
-        tail = raw.rsplit("@", 1)[1].strip()
+        head, tail = raw.rsplit("@", 1)
+        head, tail = head.strip(), tail.strip()
         # A dot in the tail means it is a hostname ("…@ashbyhq.com"), not a name.
         if tail and "." not in tail:
-            candidates.append(tail)
+            # ATS display names use the ``@`` in BOTH directions, and which
+            # side holds the employer depends on which side names the relay:
+            #
+            #   "Team Talent @ MotherDuck"   -> employer is the TAIL
+            #   "Medpace, Inc. @ icims"      -> employer is the HEAD
+            #
+            # The tail was already being rejected in the second shape — it
+            # names the relay, so ``_names_the_relay`` refuses it — but the
+            # fallback then took the WHOLE raw string, and the employer kept a
+            # courier's name glued to it. That is the real board's
+            # ``Medpace, Inc. @ icims`` card, which groups and sorts as a
+            # different employer from the same company reached through any
+            # other ATS.
+            #
+            # Reading the head in that case is not a special case for icims: it
+            # is the same question asked of the other side. Whichever side names
+            # the relay is the one carrying no employer information.
+            if _names_the_relay(_normalize_token(tail.split(" ")[0]), relay_brand):
+                if head:
+                    candidates.append(head)
+            else:
+                candidates.append(tail)
     candidates.append(raw)
 
     for candidate in candidates:
@@ -2213,6 +2307,8 @@ def _message_ref(item: PipelineItem) -> MessageRef:
         # would then disagree about the same message.
         identity_role=item.identity_role,
         identity_req_id=item.identity_req_id,
+        # Carried for the same reason and with the same meaning for ``None``.
+        method=item.method,
     )
 
 
