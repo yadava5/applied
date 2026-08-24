@@ -65,12 +65,30 @@ export function EmptyBoardBody({
   mode?: "live" | "demo";
 }) {
   return (
+    // `relative` IS LOAD-BEARING, and it is not the scroll region's doing.
+    // `ReviewQueue` positions nothing of its own, and its per-row `sr-only`
+    // labels are `position: absolute`. Unparented they resolve against the
+    // INITIAL containing block, which plants a 1px box at document scale that
+    // no ancestor's `overflow` can clip — the whole document then scrolls while
+    // this pane, <main> and the frame all still measure locked. That is the
+    // #149 family, and it is why `PipelineBoard`'s worklist pane and the inbox
+    // page's roots each carry an unprefixed `relative` with the same note.
+    //
+    // MEASURED HERE, not inherited from those: this component shipped without
+    // it, and `/demo/shell?empty=1&review=4` read document scrollHeight 1073
+    // against clientHeights of 800, 768 and 720 — the same 1073 at every
+    // viewport, because a box at document scale does not care how tall the
+    // window is. The offender was one label at top:1072. Restored: 768/768.
+    //
+    // Unprefixed on purpose. The lock releases below `lg` but the escape does
+    // not: an absolute box finds its containing block at every width.
+    //
     // The testid names the SCROLL REGION, not the card: what the geometry specs
     // have to measure is whether this element overflows its own box, and
     // finding it positionally ("the last div under .page-locked") would quietly
     // start measuring something else the first time the composition changed.
     <div
-      className={cn(LOCKED_BODY_CLASS, "space-y-6")}
+      className={cn("relative", LOCKED_BODY_CLASS, "space-y-6")}
       data-testid="empty-board-body"
     >
       {/* The body card, three ways. A genuinely fresh user gets the scaffold

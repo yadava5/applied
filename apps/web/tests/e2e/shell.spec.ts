@@ -233,16 +233,30 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
    * in — the same shape as the missing-`ReviewQueue` hole above, one branch
    * over.
    *
+   * WHERE THIS GATE STOPS, said out loud so nobody mistakes its reach. The twin
+   * builds its root at `components/demo/DemoDashboard.tsx` — a DIFFERENT call
+   * site from `app/(app)/(protected)/dashboard/page.tsx`. Revert the signed-in
+   * page's empty-branch root to `<section className="space-y-6">` and every
+   * assertion here still passes verbatim, because the twin's root is not the
+   * one that changed. Proved by mutation, not assumed. The source gate,
+   * `tests/unit/locked-pages-declare-their-scroller.test.mjs`, is what covers
+   * that half; the two are not redundant and neither is sufficient.
+   *
    * Both arrangements are driven, and the second is the one that discriminates:
    * with nothing held, the empty card is short enough that a pane with no lock
    * at all still fits, so `?empty=1` alone would pass against the broken build.
    * `?review=4` puts the held queue under the card, and that is what overflows.
    */
   const EMPTY_STATES = [
-    { url: "/demo/shell?empty=1", label: "empty board, nothing held" },
+    {
+      url: "/demo/shell?empty=1",
+      label: "empty board, nothing held",
+      tall: false,
+    },
     {
       url: "/demo/shell?empty=1&review=4",
       label: "empty board with held mail",
+      tall: true,
     },
   ] as const;
 
@@ -272,17 +286,34 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           `${state.url}: the worklist is still mounted, so this is not the empty board`,
         ).toHaveCount(0);
 
-        // The document never scrolls — the frame's own `h-dvh overflow-hidden`.
-        const doc = await docHeights(page);
-        expect(
-          doc.scroll,
-          `${state.label} — document scrolls: ${doc.scroll} > ${doc.client}`,
-        ).toBeLessThanOrEqual(doc.client + 1);
+        const body = await page
+          .getByTestId("empty-board-body")
+          .evaluate((el) => ({
+            scroll: el.scrollHeight,
+            client: el.clientHeight,
+          }));
 
-        // …and neither does <main>, which is the assertion that actually
-        // matches the report. A document lock alone leaves the pane free to
+        // THE CONTROL, INSIDE THE LOOP AND BEFORE THE LOCK ASSERTIONS.
+        //
+        // Everything below is an "it fits" claim, and a page whose content is
+        // simply short satisfies all of it with no lock whatsoever. So the tall
+        // arrangement has to be PROVED tall, at every viewport — this control
+        // used to live in one test hardcoded to 1024×768, which meant the other
+        // two widths were asserting against nothing and nobody could tell.
+        if (state.tall) {
+          expect(
+            body.scroll,
+            `${state.label} — the body fits its pane (${body.scroll} <= ${body.client}), ` +
+              "so the lock assertions below are measuring nothing at this viewport",
+          ).toBeGreaterThan(body.client + 1);
+        }
+
+        // <main> FIRST, and the order is deliberate. This is the assertion that
+        // matches the report — a document lock alone leaves the pane free to
         // scroll the sync row off the top, which reads to a user as "the
-        // dashboard scrolls" and is exactly what it was doing.
+        // dashboard scrolls". When the document assertion ran first it threw
+        // on the tall state before this one ever executed, so it had never
+        // discriminated anything.
         const main = await page.locator("main").evaluate((el) => ({
           scroll: el.scrollHeight,
           client: el.clientHeight,
@@ -292,37 +323,25 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           `${state.label} — the shell pane scrolls: ${main.scroll} > ${main.client}`,
         ).toBeLessThanOrEqual(main.client + 1);
 
+        // …and the document, which catches what a locked pane cannot: an
+        // absolutely-positioned descendant that escaped to the initial
+        // containing block. MEASURED — this is not a hypothetical. Before
+        // `EmptyBoardBody` was given `relative`, ReviewQueue's `sr-only` labels
+        // planted a box at y≈1072 and this read scrollHeight 1073 against
+        // clientHeights of 800, 768 and 720: the SAME number at every viewport,
+        // which is the signature of a box at document scale. <main> read
+        // 768/768 throughout, so only this assertion could see it (#149).
+        const doc = await docHeights(page);
+        expect(
+          doc.scroll,
+          `${state.label} — document scrolls: ${doc.scroll} > ${doc.client}` +
+            " (a constant figure across viewports means an escaped absolute, not overflow)",
+        ).toBeLessThanOrEqual(doc.client + 1);
+
         await expectNoHorizontalOverflow(page);
       }
     });
   }
-
-  /**
-   * The control for the block above, and it is not optional.
-   *
-   * Everything asserted there is an "it fits" claim, and a page whose content
-   * is simply short passes all of it with no lock whatsoever — which is the
-   * state the broken build was in for the `?empty=1` arrangement. So prove the
-   * held-mail arrangement is genuinely taller than the pane: its own scroll
-   * region must overflow. If this ever goes green by the body fitting, the
-   * three tests above stopped discriminating and are measuring nothing.
-   */
-  test("the empty board's held-mail arrangement really does overflow its pane", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1024, height: 768 });
-    await page.goto("/demo/shell?empty=1&review=4");
-    await expect(pageHeading(page)).toBeVisible();
-
-    const body = await page
-      .getByTestId("empty-board-body")
-      .evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
-    expect(
-      body.scroll,
-      `the empty board's body fits its pane (${body.scroll} <= ${body.client}) — ` +
-        "the lock tests above are asserting against nothing",
-    ).toBeGreaterThan(body.client + 1);
-  });
 
   test("the pulse is the board's full-width band — exactly one copy in the tree", async ({
     page,

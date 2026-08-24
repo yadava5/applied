@@ -37,8 +37,20 @@ import { fileURLToPath } from "node:url";
 const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => readFileSync(join(WEB_ROOT, rel), "utf8");
 
+/** Prose about the fix is not the fix. Every assertion here reads code only —
+ *  see the control at the foot of this file for the mutation that proved it
+ *  matters. */
+function withoutComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .map((line) => line.replace(/(^|[^:'"`\\])\/\/.*$/, "$1"))
+    .join("\n");
+}
+
 const DASHBOARD = "app/(app)/(protected)/dashboard/page.tsx";
 const INBOX = "app/(app)/(protected)/inbox/page.tsx";
+const EMPTY_BODY = "components/dashboard/EmptyBoardBody.tsx";
 
 test("every dashboard branch locks its root — not just the populated one", () => {
   const source = read(DASHBOARD);
@@ -70,22 +82,99 @@ test("every dashboard branch locks its root — not just the populated one", () 
   );
 });
 
-test("the dashboard's non-board branches declare a scroll region", () => {
-  const source = read(DASHBOARD);
+/**
+ * Match the class ON AN ELEMENT, never the identifier anywhere in the file.
+ *
+ * THIS IS A REPAIR TO THIS FILE, and the hole it closes was found by mutation
+ * rather than by reading. The first version of these assertions was a bare
+ * file-wide `/LOCKED_BODY_CLASS/`. Strip the class from the root div and leave
+ * the `import { LOCKED_BODY_CLASS }` line — the exact defect being asserted
+ * against — and the import alone still satisfies the regex. Green, on the
+ * broken build, for the one mutation the test is named after.
+ *
+ * Requiring a `className={...}` around it is what makes the match mean
+ * "something renders with this" instead of "this word appears".
+ */
+function declaresOnAnElement(source, constant) {
+  return new RegExp(`className=\\{[^}]*\\b${constant}\\b`).test(source);
+}
 
+test("the dashboard's non-board branches declare a scroll region", () => {
   // The populated branch's scroller is the worklist, inside PipelineBoard. The
   // other two have no worklist, so they must say where the scrolling happens.
-  assert.match(
-    source,
-    /LOCKED_BODY_CLASS/,
-    "no dashboard branch declares LOCKED_BODY_CLASS — the empty and failed boards have no " +
-      "worklist to do the scrolling, so a tall body (a held-mail queue, a short window) " +
-      "overflows back out through <main> with the lock nominally on",
+  assert.ok(
+    declaresOnAnElement(read(DASHBOARD), "LOCKED_BODY_CLASS"),
+    "no dashboard branch RENDERS with LOCKED_BODY_CLASS — the empty and failed boards have " +
+      "no worklist to do the scrolling, so a tall body (a held-mail queue, a short window) " +
+      "overflows back out through <main> with the lock nominally on. An import of the " +
+      "constant is not a use of it.",
+  );
+  assert.ok(
+    declaresOnAnElement(read(EMPTY_BODY), "LOCKED_BODY_CLASS"),
+    "EmptyBoardBody stopped declaring the scroll region it exists to own",
+  );
+});
+
+/**
+ * THE THIRD REQUIREMENT, and the one that actually shipped broken.
+ *
+ * A locked page needs a root that fills the pane, a body that scrolls — and a
+ * body that is a POSITIONED ANCESTOR. `ReviewQueue` positions nothing of its
+ * own and its per-row `sr-only` labels are `position: absolute`; unparented
+ * they resolve against the initial containing block and plant a 1px box at
+ * DOCUMENT scale, which no ancestor's `overflow` can clip. The document then
+ * scrolls while the pane, <main> and the frame all still measure locked.
+ *
+ * MEASURED, not theorised. `EmptyBoardBody` shipped in this PR without
+ * `relative`, and `/demo/shell?empty=1&review=4` read document scrollHeight
+ * **1073** against clientHeights of 800, 768 and 720 — the same 1073 at every
+ * viewport, because a box at document scale does not care how tall the window
+ * is. One label, at top:1072. This is the #149 family, third occurrence.
+ *
+ * The two sites that already knew — `PipelineBoard`'s worklist pane and the
+ * inbox page's roots — each carry an unprefixed `relative` with a comment
+ * naming this exact escape. Neither was enforced, which is how a third site
+ * was written without it.
+ */
+test("every container that can hold a ReviewQueue is a containing block", () => {
+  for (const [file, what] of [
+    [EMPTY_BODY, "EmptyBoardBody's scroll region"],
+    [INBOX, "the inbox page's roots"],
+  ]) {
+    assert.match(
+      read(file),
+      /className=\{cn\("relative"/,
+      `${what} does not establish a containing block. An absolutely-positioned ` +
+        "descendant — ReviewQueue's sr-only labels are the ones that keep doing this — " +
+        "resolves against the initial containing block instead, plants a box at document " +
+        "scale, and the whole page scrolls while every lock still measures green (#149).",
+    );
+  }
+
+  // THE CONTROL: the site that has carried this the longest still carries it.
+  // Without it the two assertions above could both be satisfied by a repo-wide
+  // convention that had quietly been abandoned.
+  //
+  // COMMENTS ARE STRIPPED FIRST, and that is not tidiness — the first version
+  // of this control read the raw file and passed against a build where the
+  // pane's `relative` had been deleted, because a twelve-line comment ABOVE
+  // the element explains the #149 escape and contains both the testid and the
+  // word `relative`. The control was matching the prose that describes the fix
+  // instead of the fix. Anchor on the element, and read only code.
+  const pane = withoutComments(read("components/dashboard/PipelineBoard.tsx"));
+  const paneElement = pane.slice(
+    pane.indexOf('data-testid="worklist-pane"'),
+    pane.indexOf('data-testid="worklist-pane"') + 300,
+  );
+  assert.ok(
+    paneElement.length > 0,
+    "the worklist pane's testid is gone — this control is anchored on nothing",
   );
   assert.match(
-    read("components/dashboard/EmptyBoardBody.tsx"),
-    /LOCKED_BODY_CLASS/,
-    "EmptyBoardBody stopped declaring the scroll region it exists to own",
+    paneElement,
+    /\brelative\b/,
+    "PipelineBoard's worklist pane lost its `relative` — the original #149 fix is gone, " +
+      "and the two assertions above are enforcing a convention nothing else follows",
   );
 });
 
@@ -97,7 +186,7 @@ test("the inbox's not-connected and failed scan views declare a scroll region", 
   // so a fourth branch cannot be added without either using it or being seen.
   assert.match(
     source,
-    /function ScanBody\([\s\S]*?LOCKED_BODY_CLASS/,
+    /function ScanBody\([\s\S]*?className=\{cn\(LOCKED_BODY_CLASS/,
     "ScanBody no longer declares LOCKED_BODY_CLASS — the not-connected scan view is back to " +
       "three stacked cards under a root that has stopped growing",
   );
