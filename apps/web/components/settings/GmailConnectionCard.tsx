@@ -14,8 +14,9 @@ import type { GmailStatusResult } from "@/lib/gmail/server";
  * browser — behind the centred confirmation dialog every sensitive Settings
  * action shares (#213, `DisconnectGmailButton`). Failure modes stay DISTINCT
  * and honest (auth rejection vs. not enabled vs. transient backend error),
- * and every state routes forward (the import fallback, the sample inbox) so
- * the card is never a dead end.
+ * and every state routes forward — the not-connected states through the
+ * <BetaCard> below (email for a seat, or import your own mail on-device),
+ * a connected one to its filed mail — so the card is never a dead end.
  *
  * The card leads with the STATE and the one control. The safeguards brief
  * that used to fold here moved into the privacy policy where it belongs
@@ -137,23 +138,26 @@ export function GmailConnectionCard({
           </div>
         </div>
 
-        <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
-          {connected ? (
-            <>
-              Review what it has read in your{" "}
-              <Link href="/inbox" className="text-strong underline-offset-4 hover:underline">
-                filed mail →
-              </Link>
-            </>
-          ) : (
-            <>
-              Not ready to connect? See exactly what the classifier does on a{" "}
-              <Link href="/demo/inbox" className="text-strong underline-offset-4 hover:underline">
-                sample inbox →
-              </Link>
-            </>
-          )}
-        </p>
+        {/* The not-connected arm of this line offered "See exactly what the
+            classifier does on a sample inbox →" (/demo/inbox) until #495, and
+            is deleted rather than gated behind `demo`: /demo/settings seeds
+            `fixtureGmail()` with `connected: true`, so the twin renders the
+            connected arm and never reached the other one — a `demo === true`
+            guard would be dead code pretending to be a decision.
+
+            Nothing replaces it. The whole <p> is conditional now rather than
+            holding an empty fragment, because its `border-t` + `mt-4 pt-4`
+            would otherwise draw a rule and a gap around nothing; and the
+            not-connected state already routes forward through the <BetaCard>
+            a few lines below, which carries the /import action. */}
+        {connected ? (
+          <p className="mt-4 border-t border-line-soft pt-4 text-sm text-muted">
+            Review what it has read in your{" "}
+            <Link href="/inbox" className="text-strong underline-offset-4 hover:underline">
+              filed mail →
+            </Link>
+          </p>
+        ) : null}
 
         {/* ---- Reference material, foldered ------------------------------
             One fold, not two: the safeguards brief moved to /privacy (#201).

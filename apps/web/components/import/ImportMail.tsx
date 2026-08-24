@@ -3,8 +3,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Mail } from "lucide-react";
 
+import { GATE } from "@/lib/classification/gate";
 import { classifyWithRules } from "@/lib/demo/rulesLayer";
-import { GATE } from "@/lib/demo/sampleInbox";
 import {
   DEFAULT_MESSAGE_CAP,
   parseMailFile,
@@ -56,40 +56,6 @@ const FORMAT_LABEL: Record<MailFormat, string> = {
   eml: "single .eml message",
   json: "JSON batch",
 };
-
-/** A small synthetic mbox so anyone can see the feature work without a file. */
-const SAMPLE_MBOX = `From 1@import Thu Jul 16 09:00:00 2026
-From: Cedar Labs Recruiting <no-reply@greenhouse.io>
-Subject: We received your application
-Date: Thu, 16 Jul 2026 09:00:00 +0000
-Content-Type: text/plain; charset="utf-8"
-
-Thank you for applying to the Software Engineer role at Cedar Labs. Your application has been received and our team is reviewing it.
-
-From 2@import Thu Jul 16 10:00:00 2026
-From: Juniper Cloud <recruiting@junipercloud.io>
-Subject: Let's schedule your technical interview
-Date: Thu, 16 Jul 2026 10:00:00 +0000
-Content-Type: text/plain; charset="utf-8"
-
-We'd like to schedule a 45-minute technical interview next week. Please use the Calendly link to book a time to meet the hiring team.
-
-From 3@import Thu Jul 16 11:00:00 2026
-From: Atlas Freight Careers <careers@atlasfreight.com>
-Subject: Update on your application to Atlas Freight
-Date: Thu, 16 Jul 2026 11:00:00 +0000
-Content-Type: text/plain; charset="utf-8"
-
-After careful consideration we have decided to move forward with other candidates at this time. We wish you the best in your search.
-
-From 4@import Thu Jul 16 12:00:00 2026
-From: Maya Chen <maya@earlystage.xyz>
-Subject: Quick question about your background
-Date: Thu, 16 Jul 2026 12:00:00 +0000
-Content-Type: text/plain; charset="utf-8"
-
-Hi, I had a quick question about your background and some recent projects. Do you have a few minutes this week?
-`;
 
 interface Classified extends ParsedMessage {
   category: string;
@@ -403,14 +369,6 @@ export function ImportMail() {
             className="rounded-lg bg-strong px-4 py-2 text-sm font-medium text-background hover:opacity-90"
           >
             Choose a file
-          </button>
-          <button
-            type="button"
-            data-testid="import-sample"
-            onClick={() => ingest("sample.mbox", SAMPLE_MBOX)}
-            className="rounded-lg border border-line px-4 py-2 text-sm text-foreground hover:border-line-strong hover:text-strong"
-          >
-            Try a sample export
           </button>
         </div>
         <p className="mt-6 text-xs leading-relaxed text-dim">

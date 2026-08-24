@@ -18,7 +18,6 @@
  */
 import type { NotificationPrefs } from "@/components/settings/NotificationsSection";
 import { createClient } from "@/lib/supabase/client";
-import { demoApplicationsAsApi } from "@/lib/demo/asApplications";
 import { writeDemoAmbientPref } from "@/lib/demo/ambientPref";
 import { writeDemoNotificationPrefs } from "@/lib/demo/notificationPrefs";
 
@@ -112,6 +111,17 @@ function isNotificationPrefs(value: unknown): value is NotificationPrefs {
   return typeof prefs.weekly === "boolean" && typeof prefs.reviewAlerts === "boolean";
 }
 
+/**
+ * The fixture board is loaded with a DYNAMIC import, and that is not
+ * decoration — the same rule, and the same reason, as `lib/gmail/transport.ts`
+ * (see its note above `const demo`).
+ *
+ * `settingsTransport()` is reached from the signed-in `/settings` page, so a
+ * top-level `import` of `lib/demo/asApplications` put the invented board into
+ * the bundle of every signed-in reader who will never open `/demo/settings`.
+ * Behind an `await import()` the fixtures are their own chunk, fetched only
+ * when the demo transport's export actually runs (#495).
+ */
 const demo: SettingsTransport = {
   mode: "demo",
   async saveMetadata(data) {
@@ -142,6 +152,7 @@ const demo: SettingsTransport = {
     await delay(300);
     // The twin's export is a real download of the fixture board — the control
     // genuinely works, on data that is genuinely synthetic.
+    const { demoApplicationsAsApi } = await import("@/lib/demo/asApplications");
     return { ok: true, data: { applications: demoApplicationsAsApi() } };
   },
   async signOut() {

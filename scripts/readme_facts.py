@@ -409,7 +409,12 @@ TS_AUTO_FILE_GATE_COPIES: dict[str, tuple[str, str]] = {
         "apps/web/components/viz/DecisionTrace.tsx",
         "GATE",
     ),
-    "apps/web/lib/demo/sampleInbox.ts::GATE": ("apps/web/lib/demo/sampleInbox.ts", "GATE"),
+    # Moved out of `lib/demo/sampleInbox.ts` in #495: a product surface
+    # (`components/import/ImportMail.tsx`) reads the gate at the top level, and
+    # importing it from the fixture module shipped eleven invented emails into
+    # the /import chunk. The fixture module re-exports this binding, so the
+    # census below still sees exactly one definition — not two.
+    "apps/web/lib/classification/gate.ts::GATE": ("apps/web/lib/classification/gate.ts", "GATE"),
     "booklet/src/visuals/DecisionTrace.tsx::GATE": (
         "booklet/src/visuals/DecisionTrace.tsx",
         "GATE",

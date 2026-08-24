@@ -206,7 +206,25 @@ export default async function DashboardPage() {
           syncError: gmailStatus.status.sync_error ?? null,
         }
       : null;
-  const connected = gmail?.connected === true;
+
+  /**
+   * Three states, not two.
+   *
+   * `connected` used to be `gmail?.connected === true` and nothing else, which
+   * is false both when Gmail is genuinely not connected AND when the status
+   * probe itself failed — `getGmailStatus()` returns a non-"ok" kind on a
+   * network fault, a backend 500 or a rejected session, and every one of those
+   * collapsed into "you have not connected your mail". A user whose probe
+   * timed out was told, in the product's own voice, a fact about their account
+   * that we had not established.
+   *
+   * The SyncBar's handling of the same null is deliberate and stays exactly as
+   * it was: it renders no gmail cluster at all rather than a guessed one. This
+   * value is for the BODY copy, which has the room to say "we couldn't check".
+   */
+  const gmailState: "connected" | "disconnected" | "unknown" =
+    gmailStatus.kind !== "ok" ? "unknown" : gmail?.connected === true ? "connected" : "disconnected";
+  const connected = gmailState === "connected";
 
   // Has a scan actually COMPLETED? "No application emails detected yet" is a
   // verdict about the mailbox, and only a finished scan can deliver it. The
@@ -285,73 +303,92 @@ export default async function DashboardPage() {
   }
 
   // --- Empty: nothing filed yet ---------------------------------------------
+  //
+  // ONE branch for every empty board. There used to be two — connected, and
+  // everything else — and the split cost real work: the review queue was
+  // rendered ONLY inside the connected branch, so a user with held mail whose
+  // Gmail was disconnected (or whose token had expired, or whose status probe
+  // merely failed) could not reach it from the one surface that offers it. The
+  // queue is gated on the queue's own quantity now, not on the mail connection
+  // (#495).
+  //
+  // Never fake rows in any of the three states: the fixture board that used to
+  // sit under this page left with `SamplePreview` in the same issue. The
+  // SyncBar's staleness rule still runs its one additive scan on arrival and
+  // reports in the header's status line.
   if (state.total === 0) {
-    // Connected but empty → honest real-empty state (never fake sample rows).
-    // The SyncBar's staleness rule runs its one additive scan on arrival and
-    // reports in the header's status line.
-    if (connected) {
-      // Zero *filed* applications does not mean zero work: the classifier may
-      // be holding low-confidence lifecycle mail for review.
-      const reviewItems = state.needsReview > 0 ? await reviewQueue : [];
-      const reviewNote =
-        state.needsReview > 0
-          ? ` · ${state.needsReview} ${state.needsReview === 1 ? "needs" : "need"} review`
-          : "";
-      return (
-        <section className="space-y-6">
-          <SyncBar
-            subtitle={`connected · ${
-              scanCompleted ? "no applications detected yet" : "no applications filed yet"
-            }${reviewNote}`}
-            gmail={gmail}
-            title="Applications"
-            signedIn
-          >
-            <AddApplicationForm compact />
-          </SyncBar>
+    // Zero *filed* applications does not mean zero work: the classifier may be
+    // holding low-confidence lifecycle mail for review. Deliberately NOT gated
+    // on `connected` — that gate is the defect described above.
+    const reviewItems = state.needsReview > 0 ? await reviewQueue : [];
+    const reviewNote =
+      state.needsReview > 0
+        ? ` · ${state.needsReview} ${state.needsReview === 1 ? "needs" : "need"} review`
+        : "";
+
+    const subtitle =
+      gmailState === "connected"
+        ? `connected · ${
+            scanCompleted ? "no applications detected yet" : "no applications filed yet"
+          }${reviewNote}`
+        : gmailState === "unknown"
+          ? `0 filed · mail connection unknown${reviewNote}`
+          : `0 filed · nothing tracked yet${reviewNote}`;
+
+    return (
+      <section className="space-y-6">
+        <SyncBar subtitle={subtitle} gmail={gmail} title="Applications" signedIn>
+          <AddApplicationForm compact />
+        </SyncBar>
+
+        {/* The body card, three ways. A genuinely fresh user gets the scaffold
+            and its routes forward; the other two states are ABOUT the mail
+            connection, and say so here — where there is room for a sentence —
+            rather than in the SyncBar's single line. */}
+        {gmailState === "disconnected" ? (
+          <DashboardEmptyState />
+        ) : (
           <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
             <p className="label-caps">
-              {scanCompleted ? "connected to gmail" : "no completed scan yet"}
+              {gmailState === "unknown"
+                ? "mail status unavailable"
+                : scanCompleted
+                  ? "connected to gmail"
+                  : "no completed scan yet"}
             </p>
             <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
-              {scanCompleted
-                ? "No application emails detected yet."
-                : "We haven't completed a scan of your mail yet."}
+              {gmailState === "unknown"
+                ? "We couldn't check your mail connection."
+                : scanCompleted
+                  ? "No application emails detected yet."
+                  : "We haven't completed a scan of your mail yet."}
             </h2>
             <p className="mt-2 max-w-xl text-sm text-muted">
-              {scanCompleted
-                ? "We scan your recent mail when you arrive. If your applications are older than 12 months, rebuild from a wider window."
-                : scanFailed
-                  ? "Nothing is filed because nothing has been read successfully — this is not a verdict that your mailbox holds no applications. The line above says how the last attempt failed and offers a retry; you can also rebuild from a wider window."
-                  : "Nothing is filed because your mail hasn't been read yet — this is not a verdict that your mailbox holds no applications. Sync, or choose a window, to run the first scan."}
+              {gmailState === "unknown"
+                ? "The check that tells us whether your mail is connected didn't answer, so we can't say why nothing is filed — that is a fault on our side, not a verdict about your mailbox and not a claim that you never connected. Reload in a moment; nothing has been lost."
+                : scanCompleted
+                  ? "We scan your recent mail when you arrive. If your applications are older than 12 months, rebuild from a wider window."
+                  : scanFailed
+                    ? "Nothing is filed because nothing has been read successfully — this is not a verdict that your mailbox holds no applications. The line above says how the last attempt failed and offers a retry; you can also rebuild from a wider window."
+                    : "Nothing is filed because your mail hasn't been read yet — this is not a verdict that your mailbox holds no applications. Sync, or choose a window, to run the first scan."}
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <RebuildWindowButton />
+              {/* Offered only when the mailbox is known to be connected: a
+                  rebuild is a Gmail action, and on an unknown status it would
+                  be a control whose precondition we have just said out loud we
+                  could not read. */}
+              {gmailState === "connected" ? <RebuildWindowButton /> : null}
               <AddApplicationForm align="start" />
             </div>
             <div className="mt-6">
               <ForwardRoutes />
             </div>
           </div>
-          {reviewItems.length > 0 ? (
-            <ReviewQueue items={reviewItems} applications={state.applications} />
-          ) : null}
-        </section>
-      );
-    }
+        )}
 
-    // Genuinely fresh user (not connected, nothing imported) → scaffold + sample.
-    return (
-      <section className="space-y-6">
-        <SyncBar
-          subtitle="0 filed · nothing tracked yet"
-          gmail={gmail}
-          title="Applications"
-          signedIn
-        >
-          <AddApplicationForm compact />
-        </SyncBar>
-        <DashboardEmptyState />
+        {reviewItems.length > 0 ? (
+          <ReviewQueue items={reviewItems} applications={state.applications} />
+        ) : null}
       </section>
     );
   }

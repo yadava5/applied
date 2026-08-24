@@ -127,12 +127,6 @@ export default async function ImportPage() {
         >
           <Logo className="h-6 w-auto" />
         </Link>
-        <Link
-          href="/demo/inbox"
-          className="inline-flex min-h-11 items-center font-mono text-xs uppercase tracking-widest text-muted transition-colors hover:text-strong"
-        >
-          sample inbox →
-        </Link>
       </header>
 
       {/* h1 + one quiet line. The subtitle is verb-led — what the page DOES —

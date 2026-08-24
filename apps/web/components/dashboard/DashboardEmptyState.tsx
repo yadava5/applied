@@ -1,10 +1,7 @@
 import Link from "next/link";
-import { Inbox, Mail, Upload, type LucideIcon } from "lucide-react";
+import { Mail, Upload, type LucideIcon } from "lucide-react";
 
 import { AddApplicationForm } from "@/components/applications/AddApplicationForm";
-import { PipelineBoard } from "@/components/dashboard/PipelineBoard";
-import { demoApplicationsAsApi } from "@/lib/demo/asApplications";
-import { summarize } from "@/lib/dashboard/summary";
 
 const ROUTES: { href: string; title: string; body: string; icon: LucideIcon }[] = [
   {
@@ -19,19 +16,19 @@ const ROUTES: { href: string; title: string; body: string; icon: LucideIcon }[] 
     body: "No connection, no sign-in — drop a Takeout export and classify it in your browser.",
     icon: Upload,
   },
-  {
-    href: "/demo/inbox",
-    title: "Try the sample inbox",
-    body: "Watch the real classifier label a set of job emails, gate and trace included.",
-    icon: Inbox,
-  },
 ];
 
-/** The three ways to start filling the board. Reused by the empty state and by
- * the honest offline/unauthorized states so every no-board view routes forward. */
+/** The two ways to start filling the board with real mail. Reused by the empty
+ * state and by the honest offline/unauthorized states so every no-board view
+ * routes forward.
+ *
+ * There used to be a third card here — "Try the sample inbox", pointing at
+ * `/demo/inbox`. It left with #495: the demo belongs to the public marketing
+ * surface, and inside the signed-in app a route whose payload is invented mail
+ * is an invitation to read fixtures as your own pipeline. */
 export function ForwardRoutes() {
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2">
       {ROUTES.map((route) => {
         const Icon = route.icon;
         return (
@@ -59,76 +56,36 @@ export function ForwardRoutes() {
 }
 
 /**
- * A labelled preview built from sample data. Clearly tagged "not yours" and
- * inert, it lets any no-board state still demonstrate exactly what a populated
- * dashboard looks like.
- *
- * The fixtures are dated relative to now (see `lib/demo/demoData.ts`) and
- * resolved HERE, at render, on the server: this is a server component, so the
- * rows travel to the client as props and the browser never re-derives them.
- * What the preview must show is a healthy board — it used to show one where
- * every card had gone quiet, because the fixture dates were frozen in July.
- */
-export function SamplePreview() {
-  const applications = demoApplicationsAsApi();
-  const summary = summarize(applications);
-
-  return (
-    <section aria-label="Sample dashboard preview" className="space-y-4">
-      {/* The "not yours" disclaimer is the only thing standing between a
-          fixture board and a user reading it as their own pipeline, so it is
-          sized and contrasted to be READ: text-strong on a raised surface with
-          a strong border, not a 10px dim whisper. Same mono/uppercase language
-          as the rest of the labels. */}
-      <div className="flex items-center gap-3">
-        <span className="label-caps">preview</span>
-        <span className="rounded-full border border-line-strong bg-surface-2 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-strong">
-          sample data · not yours
-        </span>
-        <span className="h-px flex-1 bg-line-soft" aria-hidden="true" />
-      </div>
-      {/* The board IS the preview — the same subtitle-plus-board hierarchy the
-          real dashboard has, so the sample demonstrates the product it mirrors
-          (no tiles, no funnel: those left the dashboard too). */}
-      <div className="pointer-events-none select-none space-y-4 opacity-70">
-        <p className="tabular text-[13px] text-muted">
-          {summary.total} filed · {summary.inMotion} in motion · {summary.offers} offer
-          {summary.offers === 1 ? "" : "s"}
-        </p>
-        <PipelineBoard applications={applications} interactive={false} />
-      </div>
-    </section>
-  );
-}
-
-/**
  * What the dashboard shows before anything is filed. Never a blank page: a
  * clear headline, the fastest first action (file one, or connect a source),
- * three routes forward, and a labelled sample preview so the empty state still
- * demonstrates the product.
+ * and the routes forward.
+ *
+ * It used to end with a `SamplePreview` — a fixture board rendered under a
+ * "sample data · not yours" pill, so the empty state could still demonstrate
+ * the product. #495 removed it: nothing inside the signed-in app is the demo.
+ * A disclaimer is not a defence when the thing it disclaims is a full,
+ * realistic pipeline sitting where the reader's own board goes; the
+ * demonstration belongs to the landing page and the public `/demo/*` routes,
+ * which is where it still lives.
  */
 export function DashboardEmptyState() {
   return (
-    <div className="space-y-8">
-      <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
-        <p className="label-caps">nothing filed yet</p>
-        <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
-          Your board is empty — let&apos;s fill it.
-        </h2>
-        <p className="mt-2 max-w-xl text-sm text-muted">
-          File an application by hand, or connect a mail source and let the classifier build the
-          board for you. Either way, everything below fills in as applications arrive.
-        </p>
-        <div className="mt-5">
-          <AddApplicationForm align="start" />
-        </div>
-
-        <div className="mt-6">
-          <ForwardRoutes />
-        </div>
+    <div className="rounded-2xl border border-line-soft bg-surface p-6 sm:p-8">
+      <p className="label-caps">nothing filed yet</p>
+      <h2 className="mt-3 text-balance text-2xl font-medium tracking-tight text-strong">
+        Your board is empty — let&apos;s fill it.
+      </h2>
+      <p className="mt-2 max-w-xl text-sm text-muted">
+        File an application by hand, or connect a mail source and let the classifier build the board
+        for you. Either way, everything below fills in as applications arrive.
+      </p>
+      <div className="mt-5">
+        <AddApplicationForm align="start" />
       </div>
 
-      <SamplePreview />
+      <div className="mt-6">
+        <ForwardRoutes />
+      </div>
     </div>
   );
 }
