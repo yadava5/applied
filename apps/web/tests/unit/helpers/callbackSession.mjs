@@ -168,6 +168,30 @@ const HEADERS_STUB = dataModule(
   "export async function cookies() { return globalThis.__callbackCookieStore; }",
 );
 
+/**
+ * `lib/gmail/server.ts`, stubbed rather than transpiled.
+ *
+ * `/callback` reads the Gmail link state to decide whether a Google sign-in
+ * should carry on into the Gmail grant (#494). That module is a real backend
+ * client — it pulls in `lib/env` (which validates at import time) and issues a
+ * `fetch` — and none of that is what these tests are about. Transpiling it
+ * would also mean transpiling its own `@/` edges recursively, which is a
+ * different and much larger harness than this one.
+ *
+ * The default answer is a FAILED probe, which the route must read as `unknown`
+ * and therefore must not chain on. That keeps every pre-existing assertion in
+ * this file measuring exactly what it measured before — and it means these
+ * tests would catch a route that chained on a failing probe, because the
+ * redirect would stop being the dashboard.
+ */
+const GMAIL_STUB = dataModule(
+  "export async function getGmailStatus(token) {" +
+    "  return globalThis.__callbackGmailStub" +
+    "    ? globalThis.__callbackGmailStub(token)" +
+    "    : { kind: 'backend', message: 'probe not stubbed' };" +
+    "}",
+);
+
 function transpile(absPath, rewrite) {
   const { outputText } = ts.transpileModule(readFileSync(absPath, "utf8"), {
     compilerOptions: {
@@ -201,9 +225,11 @@ function localOrPackage(spec) {
 
 /** The real route handler, wired to the real (stub-edged) server factory. */
 async function loadRoute(file) {
-  const source = transpile(resolvePath(WEB_ROOT, file), (spec) =>
-    spec === "@/lib/supabase/server" ? SERVER_MODULE : localOrPackage(spec),
-  );
+  const source = transpile(resolvePath(WEB_ROOT, file), (spec) => {
+    if (spec === "@/lib/supabase/server") return SERVER_MODULE;
+    if (spec === "@/lib/gmail/server") return GMAIL_STUB;
+    return localOrPackage(spec);
+  });
   return import(dataModule(source));
 }
 
@@ -217,13 +243,16 @@ async function loadRoute(file) {
  */
 export async function runCallback(
   route,
-  { code = "valid-code", cookies = [] } = {},
+  { code = "valid-code", cookies = [], gmail = null } = {},
 ) {
   const { NextRequest } = await import("next/server.js");
   const { GET } = await loadRoute(route.file);
 
   const store = cookieJar(cookies);
   globalThis.__callbackCookieStore = store;
+  // `gmail` is the status result `/auth/gmail/status` would have produced.
+  // Left null, the stub's own default (a failed probe) answers instead.
+  if (gmail) globalThis.__callbackGmailStub = () => gmail;
   globalThis.__callbackSupabaseStub = (_url, _key, options) => ({
     auth: {
       async exchangeCodeForSession(authCode) {
@@ -276,5 +305,6 @@ export async function runCallback(
   } finally {
     delete globalThis.__callbackCookieStore;
     delete globalThis.__callbackSupabaseStub;
+    delete globalThis.__callbackGmailStub;
   }
 }

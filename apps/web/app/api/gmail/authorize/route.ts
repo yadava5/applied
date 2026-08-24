@@ -34,8 +34,31 @@ import { getGmailAuthorizeUrl } from "@/lib/gmail/server";
  * it is the only reliable answer, and it is the one we send.
  */
 export async function GET(request: NextRequest) {
-  const { origin } = new URL(request.url);
+  const { origin, searchParams } = new URL(request.url);
   const result = await getGmailAuthorizeUrl(origin);
+
+  // `?from=signin` means the PKCE callback chained us here straight off a
+  // Google sign-in (#494), rather than the user clicking Connect in Settings.
+  //
+  // It changes only WHERE A FAILURE LANDS, and it has to. Every failure below
+  // is written for someone who is already inside the product and chose to
+  // connect: bouncing them to `/settings?gmail=...` puts the explanation next
+  // to the button they just pressed. Do that to a chained user and the very
+  // first screen of their account is a Settings error page for something they
+  // never asked for by name. They go to the dashboard instead — the place the
+  // sign-in was heading before the chain got involved — and Settings keeps the
+  // Connect button for whenever they want it.
+  //
+  // The flag cannot widen anything: it is read only to pick between two
+  // same-origin paths this file spells out in full, and it is never forwarded
+  // to the backend or used to build a URL.
+  const fromSignIn = searchParams.get("from") === "signin";
+  const onFailure = (flag: string) => {
+    if (fromSignIn) return NextResponse.redirect(new URL("/dashboard", origin));
+    const back = new URL("/settings", origin);
+    back.searchParams.set("gmail", flag);
+    return NextResponse.redirect(back);
+  };
 
   if (result.kind === "ok") {
     return NextResponse.redirect(result.url);
@@ -59,7 +82,5 @@ export async function GET(request: NextRequest) {
         : result.kind === "at_capacity"
           ? "capacity"
           : "error";
-  const back = new URL("/settings", origin);
-  back.searchParams.set("gmail", flag);
-  return NextResponse.redirect(back);
+  return onFailure(flag);
 }

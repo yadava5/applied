@@ -1,6 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { safeRedirectPath } from "@/lib/auth/redirect";
+import {
+  destinationAfterSignIn,
+  providerOfThisSignIn,
+  type GmailLinkState,
+} from "@/lib/auth/postSignIn";
+import { DEFAULT_REDIRECT, safeRedirectPath } from "@/lib/auth/redirect";
+import { getGmailStatus } from "@/lib/gmail/server";
 import { expireSpentPkceVerifierCookies } from "@/lib/supabase/pkceVerifierCookies";
 import { createClientWithSessionHeaders } from "@/lib/supabase/server";
 
@@ -76,7 +82,7 @@ export async function GET(request: NextRequest) {
   const finish = (response: NextResponse) =>
     expireSpentPkceVerifierCookies(request, applySessionHeaders(response));
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     const failUrl = new URL("/login", origin);
@@ -84,5 +90,38 @@ export async function GET(request: NextRequest) {
     return finish(NextResponse.redirect(failUrl));
   }
 
-  return finish(NextResponse.redirect(new URL(nextPath, origin)));
+  // #494: a Google sign-in carries straight on into the Gmail grant instead of
+  // stopping at a dashboard with nothing in it. The decision — and every
+  // reason behind it, including what it deliberately does NOT do — lives in
+  // `lib/auth/postSignIn.ts`, which is pure so the whole table is unit-tested;
+  // this handler only gathers the three inputs.
+  //
+  // The status probe is asked ONLY when the answer can change the destination:
+  // a non-Google sign-in, or one with a real destination already requested,
+  // skips it and pays nothing. When it is asked, it is asked with the access
+  // token the exchange just returned, because the cookies carrying this
+  // session are on the response being built and not on the inbound request.
+  const provider = providerOfThisSignIn({
+    providerToken: data.session?.provider_token,
+    appMetadataProvider: data.user?.app_metadata?.provider,
+    appMetadataProviders: data.user?.app_metadata?.providers,
+  });
+
+  let gmail: GmailLinkState = "unknown";
+  if (provider === "google" && nextPath === DEFAULT_REDIRECT) {
+    const status = await getGmailStatus(data.session?.access_token);
+    // Anything other than a clean answer stays `unknown`, which does not
+    // chain. A probe that failed is not evidence of a missing connection.
+    if (status.kind === "ok") {
+      gmail = status.status.connected ? "connected" : "not_connected";
+    }
+  }
+
+  const destination = destinationAfterSignIn({
+    provider,
+    gmail,
+    requestedRedirect: nextPath,
+  });
+
+  return finish(NextResponse.redirect(new URL(destination, origin)));
 }
