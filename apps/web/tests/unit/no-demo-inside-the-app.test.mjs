@@ -67,16 +67,36 @@ const ALLOWED = new Map([
   ],
   [
     "lib/demo/rulesLayer.ts",
-    "The REAL layer-1 rules engine plus its rules.json patterns — the shipped " +
-      "classifier, not a fixture of one. It is what /import runs on a visitor's own " +
-      "mail on-device. Misfiled under lib/demo/ by history; allowlisted rather than " +
-      "moved because moving it is a rename with its own blast radius.",
+    "The REAL layer-1 rules engine — the shipped classifier, not a fixture of one. " +
+      "Reached from a PRESENT import, not held in reserve: /import runs it on a " +
+      "visitor's own mail, on-device, with no upload and no session. Misfiled under " +
+      "lib/demo/ by history; allowlisted rather than moved because the rename has its " +
+      "own blast radius (readme_facts.py, the marketing surfaces and two e2e specs all " +
+      "name the path).",
+  ],
+  [
+    "lib/demo/rules.json",
+    "The engine's pattern table, and the inseparable other half of rulesLayer.ts — " +
+      "15 real ATS domains and 261 regexes in strong/weak/veto/negative buckets across " +
+      "7 categories. It surfaced only when the fence widened to /import, and it was " +
+      "read before it was allowlisted: it holds no message, no company and no date. " +
+      "Verified by a marker grep that returns 0 here while returning 6 in " +
+      "sampleInbox.ts and 12 in demoData.ts, so the null is the file's and not the " +
+      "grep's.",
   ],
 ]);
 
 test("no signed-in route reaches a fixture module under lib/demo/", () => {
-  const entrypoints = routeEntrypoints(join(WEB_ROOT, "app/(app)/(protected)"));
-  entrypoints.push(join(WEB_ROOT, "app/(app)/layout.tsx"));
+  // EVERY route in the `(app)` group, not just `(protected)`. "Within the app"
+  // means what renders in the app shell, and `/import` and `/privacy` do —
+  // they sit outside `(protected)` only because they need no session, not
+  // because they are somewhere else. Narrowing this to `(protected)` was a
+  // real hole: the one fixture leak #495 caught by MEASURING a production
+  // build was `components/import/ImportMail.tsx` importing GATE from
+  // `lib/demo/sampleInbox`, which dragged eleven invented emails into the
+  // /import chunk. A gate blind to the defect it shipped alongside is the
+  // shape this file exists to retire.
+  const entrypoints = routeEntrypoints(join(WEB_ROOT, "app/(app)"));
 
   const { hits, closure } = demoModulesReached(WEB_ROOT, entrypoints);
 
@@ -87,8 +107,9 @@ test("no signed-in route reaches a fixture module under lib/demo/", () => {
     closure.size > 50,
     `the import closure is only ${closure.size} modules; the walk did not resolve. ` +
       "A zero-hit result from a walk that went nowhere is not a pass. " +
-      "50 is a TRIPWIRE, not a target: the closure measured 115 on the commit that " +
-      "added this file (117 on origin/main, which still carried SamplePreview). Set " +
+      "50 is a TRIPWIRE, not a target: the closure measured 122 across the 7 `(app)` " +
+      "entrypoints on the commit that widened this fence (115 when it walked only " +
+      "`(protected)`; 124 on origin/main, which still carries SamplePreview). Set " +
       "far enough below that ordinary churn never touches it, and high enough that a " +
       "resolver returning null for every specifier cannot slip through — same rule as " +
       "MIN_TESTS in scripts/assert-unit-suite-ran.mjs.",
