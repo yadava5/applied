@@ -1686,7 +1686,13 @@ async def _persist_message_refs(
                 existing.classified_as = category
                 existing.suggested_category = suggestion
                 existing.classification_confidence = ref.confidence
-                existing.classification_method = "rules"
+                # REPORTS, does not assert (#496). The literal "rules" used to
+                # stand here while `get_classifier` is the HYBRID classifier,
+                # so the column could not disagree with itself no matter which
+                # layer answered. `None` means the server saw no classifier run
+                # for this message (the client-relay paths) and is written as
+                # NULL rather than guessed.
+                existing.classification_method = ref.method
             session.add(existing)
         else:
             created = Email(
@@ -1709,7 +1715,8 @@ async def _persist_message_refs(
                 classified_as=category,
                 suggested_category=suggestion,
                 classification_confidence=ref.confidence,
-                classification_method="rules",
+                # See the update branch above: carried, not asserted (#496).
+                classification_method=ref.method,
             )
             session.add(created)
             # Carry it in the map so a message_id repeated later in THIS list

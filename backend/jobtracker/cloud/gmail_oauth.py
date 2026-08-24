@@ -1795,6 +1795,10 @@ async def _classify_messages(
                 snippet=msg.snippet,
                 identity_role=pipeline.role_from_message(msg.subject, text) or "",
                 identity_req_id=pipeline.extract_req_id(msg.subject, text) or "",
+                # The layer that actually answered, not an assumption about it
+                # (#496). This is the one path where a classifier really runs
+                # server-side, so it is the one path that can report.
+                method=result.method,
             )
         )
     return items
