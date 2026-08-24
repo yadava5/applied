@@ -293,27 +293,23 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
             client: el.clientHeight,
           }));
 
-        // THE CONTROL, INSIDE THE LOOP AND BEFORE THE LOCK ASSERTIONS.
+        // <main> — the assertion that matches the report. A document lock
+        // alone leaves the pane free to scroll the sync row off the top, which
+        // is what a reader calls "the dashboard scrolls".
         //
-        // Everything below is an "it fits" claim, and a page whose content is
-        // simply short satisfies all of it with no lock whatsoever. So the tall
-        // arrangement has to be PROVED tall, at every viewport — this control
-        // used to live in one test hardcoded to 1024×768, which meant the other
-        // two widths were asserting against nothing and nobody could tell.
-        if (state.tall) {
-          expect(
-            body.scroll,
-            `${state.label} — the body fits its pane (${body.scroll} <= ${body.client}), ` +
-              "so the lock assertions below are measuring nothing at this viewport",
-          ).toBeGreaterThan(body.client + 1);
-        }
-
-        // <main> FIRST, and the order is deliberate. This is the assertion that
-        // matches the report — a document lock alone leaves the pane free to
-        // scroll the sync row off the top, which reads to a user as "the
-        // dashboard scrolls". When the document assertion ran first it threw
-        // on the tall state before this one ever executed, so it had never
-        // discriminated anything.
+        // IT RUNS BEFORE THE OVERFLOW CONTROL, and that ordering is the whole
+        // reason it is worth anything. Twice now a mutation has been run to
+        // prove this assertion can fail, and twice the control pre-empted it:
+        // removing the body's scroll region, and deleting the wrapper's
+        // `lg:has-[.page-locked]:min-h-0`, BOTH relax the height chain — so the
+        // body stops overflowing (control red) and <main> grows (this red) by
+        // the same single act. With the control first, <main> was unreachable
+        // for the entire class of failures it exists to catch, and passed
+        // vacuously on the short state. It was dead code wearing a comment
+        // about how load-bearing it was.
+        //
+        // Nothing is lost by running the control last: its job is to catch a
+        // build where everything above it ALREADY passed.
         const main = await page.locator("main").evaluate((el) => ({
           scroll: el.scrollHeight,
           client: el.clientHeight,
@@ -337,6 +333,27 @@ test.describe("app shell — viewport lock (via /demo/shell, executes without a 
           `${state.label} — document scrolls: ${doc.scroll} > ${doc.client}` +
             " (a constant figure across viewports means an escaped absolute, not overflow)",
         ).toBeLessThanOrEqual(doc.client + 1);
+
+        // THE CONTROL, LAST, AND INSIDE THE LOOP.
+        //
+        // Everything above is an "it fits" claim, and a page whose content is
+        // simply short satisfies all of it with no lock whatsoever. So the tall
+        // arrangement has to be PROVED tall, at every viewport — it used to
+        // live in one test hardcoded to 1024×768, which meant the other two
+        // widths were asserting against nothing and nobody could tell.
+        //
+        // Measured, so the numbers are on record: the held-mail body reads
+        // 1054 in panes of 718 / 686 / 638 at the three viewports here. Under
+        // any mutation that relaxes the height chain the pane grows to 1054 and
+        // this fires — which is exactly why it must not run first.
+        if (state.tall) {
+          expect(
+            body.scroll,
+            `${state.label} — the body fits its pane (${body.scroll} <= ${body.client}), ` +
+              "so the lock assertions above passed against a page that would fit with no " +
+              "lock at all, and this viewport is measuring nothing",
+          ).toBeGreaterThan(body.client + 1);
+        }
 
         await expectNoHorizontalOverflow(page);
       }
