@@ -543,15 +543,37 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # company's name is has no semantics; 60 fits a real employer name
             # and the phrase still has to be one clause.
             r"action required.{0,60}(application|submit)",
-            # A STEP YOU MUST TAKE BEFORE THE APPLICATION COUNTS. Email
-            # verification is a standard applicant-tracking gate rather than one
-            # sender's wording — the resolver already cites Roblox's for exactly
-            # this shape — and it belongs here for the same reason "complete
-            # your application" does: the application exists and is not
-            # finished. Deliberately NOT anchored to the word "application",
-            # because the sentence that asks for it usually does not contain
-            # one ("Please click here to verify your email address").
-            r"(verify|confirm) your e.?mail",
+            # `(verify|confirm) your e.?mail` WAS HERE (#464), and it was the
+            # only lifecycle pattern in this file that required no job-related
+            # evidence of any kind. In a subject that is +6 — score 6, margin 6,
+            # confidence 0.90 — which clears AUTO_FILE_GATE, so every product
+            # that sends a double-opt-in became a job application with a card on
+            # the board. Measured on a real mailbox: of the four messages this
+            # category auto-filed, THREE were SaaS signup confirmations, and one
+            # of those minted an employer that does not exist out of its sender
+            # domain (#493).
+            #
+            # It is also redundant for the family it was added for. #464's own
+            # table records that its OTHER change — the `action required` window
+            # 30 → 60, directly above — already moved the reported message off
+            # the auto-file gate. Re-measured here with nothing else changed:
+            # both #459 cases keep auto-filing from the subject pattern alone,
+            # and all three product-signup messages fall to `other` at 0.50.
+            #
+            # What this costs is written down so it is not re-fought: the 58
+            # `observed-pending` corpus cases return, as `applied` 0.75. That is
+            # UNDER the gate, so they are held for a person rather than filed —
+            # a wrong suggestion in the queue, not a rival card on the board.
+            # SPLIT stays 0 either way; the gap widening owns that, and the two
+            # were always separate fixes.
+            #
+            # Do not "fix" this with a veto list. The disambiguator for a signup
+            # confirmation lives in account vocabulary elsewhere in the body,
+            # and genuine ATS verification mail carries the same words ("create
+            # your candidate account"). A job-anchor requirement fails too: the
+            # message that prompted #493 reads "you signed up for an
+            # application", and that phrase is inside the ~200-character snippet
+            # production actually classifies.
             r"complete additional steps",
             r"additional information.{0,20}(required|needed)",
             r"please complete.{0,30}(application|profile)",

@@ -53,8 +53,8 @@ RECORDED = {
     # A published number nothing recomputes is a claim, which is the sentence
     # at the top of this dict, so it is now asserted below like the rest.
     "companies": 8020,
-    "correct": 15936,
-    "wrong": 311,
+    "correct": 15886,
+    "wrong": 361,
     "abstained": 1013,
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
@@ -236,16 +236,26 @@ def test_no_wrong_verdict_is_stated_as_fact(verdicts) -> None:
         ),
         (
             "observed-pending",
-            0,
-            "#459, FIXED and kept here as its own control. It was 58: a real "
-            "'please verify your email' read as `applied` 0.95, auto-filed, "
-            "and minted a rival card beside the confirmation it belongs to. "
-            "THIS number is closed by the `(verify|confirm) your e.?mail` "
-            "pattern specifically — measured, that pattern alone moves the "
-            "verdict from `applied` 0.75 to `pending_application` 0.80, and "
-            "removing it brings all 58 back while SPLIT stays 0. The SPLITs "
-            "are closed by the separate `action required` gap widening; the "
-            "two are not the same fix and they are asserted apart.",
+            50,
+            "#493. This was 0, closed by `(verify|confirm) your e.?mail`, and "
+            "the pattern has been DELETED — so these 50 are back, deliberately, "
+            "and this number is the price. Read what they cost before moving "
+            "it: they return as `applied` 0.75, which is UNDER the auto-file "
+            "gate, so they are held for a person as a wrong SUGGESTION. They "
+            "do not reach the board. The two counters that say so are asserted "
+            "elsewhere in this file and did not move: `auto_filed_wrong` "
+            "stayed at 72 and `splits` stayed at 0. "
+            ""
+            "What the pattern cost instead was measured on a real mailbox: it "
+            "required no job-related evidence at all, so of the four messages "
+            "it auto-filed there, THREE were SaaS signup confirmations and one "
+            "of those invented an employer from its sender domain. A wrong "
+            "suggestion in a queue is a smaller failure than a fabricated "
+            "employer stated as fact, and that is the whole of the trade. "
+            ""
+            "The rival card #459 was about is closed by the separate `action "
+            "required` gap widening, which is still here; the two were never "
+            "the same fix and #464's own table records them apart.",
         ),
         (
             "ats-relay-noise",
@@ -337,15 +347,23 @@ def test_the_defects_are_not_a_seed_artefact(seed: int) -> None:
         "measured band of 36..44. These are transcribed wordings, so a move "
         "here is the product changing, never the corpus."
     )
-    # WAS A BAND OF 55..66 AND IS NOW EXACTLY ZERO, at every seed — which is
-    # the stronger statement and the reason it stopped being a band. The 55..66
-    # width came from which of the two real wordings each case drew; now both
-    # are read correctly, so there is nothing left for the seed to vary. #459.
+    # WAS A BAND OF 55..66, THEN EXACTLY ZERO, AND IS A BAND AGAIN — 50/51/55
+    # measured at the three seeds. #493 deleted the pattern that closed it, so
+    # the width is back for the original reason: which of the two real wordings
+    # a case draws is seeded.
+    #
+    # This assertion deliberately does NOT say "a number here means a rival
+    # card came back" any more, because that sentence is now false and a
+    # message that lies is worse than no message. These 50 are held for review,
+    # not filed. The claim about rival cards is carried by `splits` and the
+    # claim about stated-as-fact by `auto_filed_wrong`, both asserted exactly
+    # rather than banded, and both unmoved by this change. A move HERE is the
+    # seed; a move THERE is the product.
     obs_pend = score.by_family["observed-pending"]["wrong"]
-    assert obs_pend == 0, (
+    assert 44 <= obs_pend <= 61, (
         f"{obs_pend} real action-required messages read as confirmations at "
-        "this seed. This was 58 and is fixed; a number here means #459 came "
-        "back, and a rival card comes back with it."
+        "this seed, outside the measured band of 44..61. These are transcribed "
+        "wordings, so a move here is the product changing, never the corpus."
     )
     # The closure wording NEVER lands, at any seed, and that steadiness is the
     # point: "your application is no longer active" is not a wording problem
