@@ -227,7 +227,12 @@ test.describe("no demo inside the app", () => {
     await requireSession(page, "the signed-in inbox carrying no link into /demo");
     await page.goto("/inbox");
 
-    await expect(page.getByRole("heading", { name: /inbox/i }).first()).toBeVisible();
+    // Arrival is asserted on the URL, not on a heading: /inbox's own <h1> is
+    // sr-only and its visible chrome differs by connection state, while a
+    // bounce to /login would satisfy both toHaveCount(0)s below for the wrong
+    // reason. requireSession() guarantees the session; this guarantees the
+    // route.
+    await expect(page).toHaveURL(/\/inbox$/);
     await expect(page.locator('a[href^="/demo"]')).toHaveCount(0);
     await expect(page.getByRole("link", { name: /sample inbox/i })).toHaveCount(0);
   });
