@@ -86,7 +86,12 @@ test("no signed-in route reaches a fixture module under lib/demo/", () => {
   assert.ok(
     closure.size > 50,
     `the import closure is only ${closure.size} modules; the walk did not resolve. ` +
-      "A zero-hit result from a walk that went nowhere is not a pass.",
+      "A zero-hit result from a walk that went nowhere is not a pass. " +
+      "50 is a TRIPWIRE, not a target: the closure measured 115 on the commit that " +
+      "added this file (117 on origin/main, which still carried SamplePreview). Set " +
+      "far enough below that ordinary churn never touches it, and high enough that a " +
+      "resolver returning null for every specifier cannot slip through — same rule as " +
+      "MIN_TESTS in scripts/assert-unit-suite-ran.mjs.",
   );
   for (const anchor of [
     "components/dashboard/DashboardEmptyState.tsx",
