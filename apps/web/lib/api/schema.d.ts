@@ -1378,6 +1378,11 @@ export interface components {
             application_id?: number | null;
             /** Company */
             company?: string | null;
+            /**
+             * On Board
+             * @default false
+             */
+            on_board: boolean;
             /** Gmail Link */
             gmail_link?: string | null;
         };

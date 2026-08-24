@@ -37,6 +37,20 @@ export interface FiledMessage {
   review_disposition: string | null;
   is_reviewed: boolean;
   application_id: number | null;
+  /**
+   * Is the linked application still ON THE BOARD?
+   *
+   * Separate from `application_id` on purpose. Dismissal is not a delete: a
+   * removed row keeps its id and keeps its emails, so a link outlives the
+   * removal. Reading `application_id !== null` as "on your board" is what made
+   * the Inbox claim a dismissed row was on a board that did not contain it
+   * (#489).
+   *
+   * Defaults to `false` when the field is absent, which is the safe direction:
+   * an older backend that does not send it renders "on a removed row" rather
+   * than asserting a presence nobody confirmed.
+   */
+  on_board: boolean;
   company: string | null;
   gmail_link: string | null;
 }
@@ -101,6 +115,7 @@ export function readFiledMailPage(body: unknown): FiledMailPage | null {
       review_disposition: str(m.review_disposition),
       is_reviewed: m.is_reviewed === true,
       application_id: num(m.application_id),
+      on_board: m.on_board === true,
       company: str(m.company),
       gmail_link: str(m.gmail_link),
     });

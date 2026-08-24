@@ -603,6 +603,25 @@ class MailMessageResponse(BaseModel):
     # page (never per row). ``None`` when the message is not filed against an
     # application — which most needs-review mail is not.
     company: str | None = None
+    # Is the linked application actually ON THE BOARD right now?
+    #
+    # NOT the same question as ``application_id is not None``, and the web app
+    # answered the wrong one for every dismissed row (#489). Dismissal is
+    # deliberately not a delete (see the module note at the top of this file):
+    # the row goes off the board, keeps its id, and KEEPS ITS EMAILS. So a
+    # message whose application was removed still carries a link, and a client
+    # reading only that link tells the user the mail is "on your board" while
+    # the board does not contain it.
+    #
+    # Found in production 2026-08-23 on the owner's account: the one
+    # needs-review message pointed at application 115, dismissed by a rebuild
+    # the day before, and the Inbox said "on your board".
+    #
+    # ``application_id`` is deliberately still populated for a dismissed row —
+    # it is what a restore/undo surface needs, and blanking it to fix a LABEL
+    # would break recovery. The two facts are reported separately because they
+    # are two facts.
+    on_board: bool = False
     gmail_link: str | None = None
 
 
@@ -4310,16 +4329,32 @@ async def mail_listing_cloud(
         # and re-asserting it here means a stale link cannot read across users.
         linked_ids = {e.application_id for e in rows if e.application_id is not None}
         company_by_application: dict[int, str] = {}
+        # The linked rows that are still ON THE BOARD. Carried by the SAME query
+        # that resolves the employer — one more selected column, no extra round
+        # trip and no per-row lookup — so the two can never disagree about which
+        # application they are describing (#489).
+        on_board_applications: set[int] = set()
         if linked_ids:
             pairs = (
                 await session.exec(
-                    select(Application.id, Application.company).where(
+                    select(
+                        Application.id,
+                        Application.company,
+                        Application.dismissed_at,
+                    ).where(
                         Application.id.in_(linked_ids),
                         Application.user_id == user_id,
                     )
                 )
             ).all()
-            company_by_application = dict(pairs)
+            company_by_application = {
+                application_id: company for application_id, company, _ in pairs
+            }
+            on_board_applications = {
+                application_id
+                for application_id, _, dismissed_at in pairs
+                if dismissed_at is None
+            }
 
         # Same session, and last — see _connected_account_email.
         account_email = await _connected_account_email(user_id, session)
@@ -4362,6 +4397,7 @@ async def mail_listing_cloud(
                 if e.application_id is not None
                 else None
             ),
+            on_board=e.application_id in on_board_applications,
             gmail_link=pipeline.gmail_deeplink(
                 thread_id=e.thread_id,
                 message_id=e.message_id,

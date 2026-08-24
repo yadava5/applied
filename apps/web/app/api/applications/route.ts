@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerApiClient } from "@/lib/api/server";
-import { buildExportPages, collectMail } from "@/lib/applications/export";
+import { buildExportPages, collectMail, errorDetail } from "@/lib/applications/export";
 import { APPLICATION_STATUSES, isApplicationStatus } from "@/lib/dashboard/status";
 
 /**
@@ -52,7 +52,7 @@ export async function GET() {
         return {
           ok: false as const,
           status: res.response.status || 502,
-          detail: String(res.error ?? `Export failed while reading page ${page}`),
+          detail: errorDetail(res.error, `Export failed while reading page ${page}`),
         };
       }
       return {
@@ -73,7 +73,7 @@ export async function GET() {
         return {
           ok: false as const,
           status: res.response.status || 502,
-          detail: String(res.error ?? `Export failed while reading mail page ${page}`),
+          detail: errorDetail(res.error, `Export failed while reading mail page ${page}`),
         };
       }
       return {
