@@ -20,7 +20,7 @@
  * server prop then agrees with it. `null` = no override this session. Shaped
  * for `useSyncExternalStore` (stable snapshot, `null` server snapshot).
  *
- * Module-level state is safe here for the same reason as `rebuild-bus`: only
+ * Module-level state is safe here for the same reason as `scan-bus`: only
  * client components touch it, from effects and event handlers, never during a
  * server render. Dependency-free so `node --test` can load it.
  */

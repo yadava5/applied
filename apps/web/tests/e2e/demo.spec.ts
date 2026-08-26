@@ -159,6 +159,29 @@ test.describe("live demo (/demo)", () => {
     await expect(page.getByRole("button", { name: "Sync options" })).toBeVisible();
     await expect(page.getByText(/re-sync/i)).toHaveCount(0);
     await expect(page.getByRole("button", { name: /re-sync/i })).toHaveCount(0);
+
+    // …and since #474, that Rebuild is no longer an action you can START. It
+    // is a disposition inside the windowed-scan dialog, and the DEFAULT is the
+    // safe one — asserted here rather than left as an intention, because "the
+    // destructive path is not the default" is the whole claim of that change.
+    // The menu offers a scan; the confirm button commits a scan; `Keep them`
+    // is pressed. Nothing here can be reached by accident.
+    await page.getByRole("button", { name: "Sync options" }).click();
+    await expect(page.getByRole("menuitem", { name: /rebuild/i })).toHaveCount(0);
+    await page.getByRole("menuitem", { name: /scan a window of gmail/i }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "Scan a window of Gmail" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Keep them" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(dialog.getByRole("button", { name: "Remove them" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(
+      dialog.getByRole("button", { name: "Scan the last 12 months" }),
+    ).toBeVisible();
   });
 
   test("the two type voices hold: product speaks Atkinson, data stays mono", async ({ page }) => {
@@ -343,14 +366,18 @@ test.describe("live demo (/demo)", () => {
     await page.goto("/demo");
     await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
 
-    // Rebuild lives behind the options menu, behind an explicit dialog.
+    // Rebuild lives behind the options menu, behind an explicit dialog, and
+    // since #474 behind an explicit CHOICE inside it: the dialog opens on
+    // "Keep them" and the purge has to be selected before it can be committed.
     await page.getByRole("button", { name: "Sync options" }).click();
-    await page.getByRole("menuitem", { name: /rebuild from gmail/i }).click();
+    await page.getByRole("menuitem", { name: /scan a window of gmail/i }).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("heading", { name: "Rebuild from Gmail" })).toBeVisible();
-    // The forced scope is stated, not offered.
+    await expect(dialog.getByRole("heading", { name: "Scan a window of Gmail" })).toBeVisible();
+    // The scope is stated, not offered.
     await expect(dialog.getByText(/scans all mail, including archive/i)).toBeVisible();
 
+    await dialog.getByRole("button", { name: "Remove them" }).click();
+    await expect(dialog.getByText(/taken off the board/i)).toBeVisible();
     await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
     // The running line restates the chosen window; the only number ticking is
     // the elapsed clock — never a percentage, here or on the receipt.
@@ -374,6 +401,50 @@ test.describe("live demo (/demo)", () => {
     ).toBeVisible();
   });
 
+  test("a keep-scan re-reads the window and takes nothing off the board", async ({ page }) => {
+    // The #474 path: an additive scan over an explicit window. It is the only
+    // way to make the backend re-read a message it has already stored — a
+    // routine Sync resumes from Gmail's history cursor and never looks at one
+    // twice — and until this control existed the only windowed run on this
+    // surface was the purge, which is how 17 rows came to be dismissed with
+    // `reason='resync'`.
+    //
+    // Three things separate it from BOTH neighbours, and all three are checked
+    // here: it reads the whole window like a rebuild (140, not the cursored
+    // sync's 24), it reports itself as a scan and not a rebuild, and the board
+    // is exactly as long afterwards as it was before.
+    await page.goto("/demo");
+    await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
+
+    await page.getByRole("button", { name: "Sync options" }).click();
+    await page.getByRole("menuitem", { name: /scan a window of gmail/i }).click();
+    const dialog = page.getByRole("dialog");
+    // No disposition click: the safe path is what the dialog already offers.
+    await dialog.getByRole("button", { name: "Scan the last 12 months" }).click();
+
+    const surface = syncSurface(page);
+    await expect(surface.locator("[data-sync-status]")).toContainText(
+      "scanning · up to 750 messages · last 12 months · all mail",
+    );
+    await expect(surface).not.toContainText("%");
+
+    // Named as what was pressed, and reporting the deep read — the cursored
+    // Sync's 24 here would mean the request never dropped the history cursor,
+    // which is the failure that looks exactly like success.
+    await expect(surface.getByText("scan finished · just now")).toBeVisible({ timeout: 6000 });
+    await expect(surface.getByText(/140 scanned/)).toBeVisible();
+    await expect(surface.getByText(/rebuild/i)).toHaveCount(0);
+    await expect(surface).not.toContainText("%");
+
+    // Nothing was removed: no restore list, and the stale row a rebuild would
+    // have purged is still filed.
+    await expect(page.getByRole("button", { name: /^Restore / })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: /closed — 3/i })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /closed/i }).getByText("Fernworks", { exact: true }),
+    ).toBeVisible();
+  });
+
   test("a scan that stops early never claims completion", async ({ page }) => {
     // The defect shape this guards: a bounded scan gave up early and the UI
     // reported "up to date" anyway — converging a real board once took six
@@ -383,9 +454,10 @@ test.describe("live demo (/demo)", () => {
     // and offer continue — never the finished heading.
     await page.goto("/demo");
     await page.getByRole("button", { name: "Sync options" }).click();
-    await page.getByRole("menuitem", { name: /rebuild from gmail/i }).click();
+    await page.getByRole("menuitem", { name: /scan a window of gmail/i }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Number of messages to scan").selectOption("100");
+    await dialog.getByRole("button", { name: "Remove them" }).click();
     await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
 
     const surface = syncSurface(page);
@@ -417,9 +489,10 @@ test.describe("live demo (/demo)", () => {
     // read exactly like continuing without one.
     await page.goto("/demo");
     await page.getByRole("button", { name: "Sync options" }).click();
-    await page.getByRole("menuitem", { name: /rebuild from gmail/i }).click();
+    await page.getByRole("menuitem", { name: /scan a window of gmail/i }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Number of messages to scan").selectOption("100");
+    await dialog.getByRole("button", { name: "Remove them" }).click();
     await dialog.getByRole("button", { name: "Rebuild from the last 12 months" }).click();
 
     const surface = syncSurface(page);

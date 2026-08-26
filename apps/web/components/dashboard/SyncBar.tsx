@@ -12,39 +12,45 @@ import { useSignOut } from "@/components/shell/SessionControls";
 import { Dialog } from "@/components/ui/Dialog";
 import { Segmented } from "@/components/ui/Segmented";
 import { selectClass } from "@/components/ui/formStyles";
-import { onRebuildRequest, requestRebuild } from "@/lib/dashboard/rebuild-bus";
+import { onScanRequest, requestScan } from "@/lib/dashboard/scan-bus";
 import { liveSyncTransport, type SyncTransport } from "@/lib/dashboard/transport";
 import { publishAmbientPulse } from "@/lib/shell/ambient-bus";
 import {
-  REBUILD_DEFAULT_DEPTH,
-  REBUILD_DEFAULT_RANGE,
-  REBUILD_DEPTH_OPTIONS,
-  REBUILD_MEMORY_DEMO_KEY,
-  REBUILD_MEMORY_KEY,
-  REBUILD_RANGE_OPTIONS,
+  SCAN_DEFAULT_DEPTH,
+  SCAN_DEFAULT_DISPOSITION,
+  SCAN_DEFAULT_RANGE,
+  SCAN_DEPTH_OPTIONS,
+  SCAN_DISPOSITION_OPTIONS,
+  SCAN_RANGE_OPTIONS,
   SYNC_MEMORY_DEMO_KEY,
   SYNC_MEMORY_KEY,
+  WINDOWED_MEMORY_DEMO_KEY,
+  WINDOWED_MEMORY_KEY,
   formatCount,
   formatElapsed,
-  parseRebuildMemory,
-  readRebuildOutcome,
+  parseScanMemory,
   readScanEnd,
-  rebuildConfirmLabel,
-  rebuildMemoryLine,
-  rebuildRequestBody,
-  rebuildScopeLine,
+  readScanOutcome,
   receiptBodyLine,
+  scanConfirmLabel,
+  scanDispositionNote,
   scanProgressLine,
+  scanRequestBody,
+  scanScopeLine,
   stopKind,
   stopReasonPhrase,
   syncMemoryLine,
   syncReceiptNote,
   syncRunningSentence,
-  type RebuildDepth,
-  type RebuildMemory,
-  type RebuildOutcome,
-  type RebuildRange,
+  windowedMemoryLine,
+  windowedOpName,
+  windowedRunningWord,
+  type ScanDepth,
+  type ScanDisposition,
   type ScanEnd,
+  type ScanMemory,
+  type ScanOutcome,
+  type ScanRange,
 } from "@/lib/gmail/sync-plan";
 import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
 
@@ -52,7 +58,7 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * The one sync surface. Everything the dashboard says about Gmail flows
  * through this component: the header cluster (subtitle, the change-ledger
  * chip, recency, the `Sync` button, the `⋯` overflow), the persistent
- * status/alert line, the rebuild dialog, and the rebuild receipt.
+ * status/alert line, the scan dialog, and the run receipt.
  *
  * Its header is the page's TOP LINE: one ~40px row carrying the route title
  * (`title` — the page's one <h1>, at every width; at `lg`+ the shell's
@@ -83,15 +89,38 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  *     the effect below and reports through the same status line as a manual
  *     press, because the operation is the same.
  *
- * The word "Re-sync" is retired. Two named actions remain:
- *   - **Sync** — additive. Checks Gmail for new mail and adds what it finds.
- *     It removes nothing for being absent from the scan — but ONE shape of row
- *     can still leave the board (an application whose last email turned out to
- *     be a different company's), so when the backend names removals a sync gets
- *     the same receipt a rebuild does, with the same per-row restore. A board
- *     that changed silently is what let 22 removals go unnoticed for two days.
- *   - **Rebuild** — destructive, behind a dialog that states its window and
- *     lists every removed row afterward with per-row restore.
+ * The word "Re-sync" is retired, and the vocabulary has not grown since. Two
+ * named ways to START a scan remain:
+ *   - **Sync** — one press, no dialog. Additive and INCREMENTAL: it resumes
+ *     from Gmail's `historyId` cursor, so it reads what arrived since the last
+ *     run and nothing else. It removes nothing for being absent from the scan —
+ *     but ONE shape of row can still leave the board (an application whose last
+ *     email turned out to be a different company's), so when the backend names
+ *     removals a sync gets the same receipt a rebuild does, with the same
+ *     per-row restore. A board that changed silently is what let 22 removals go
+ *     unnoticed for two days.
+ *   - **a windowed scan** — the `Scan a window of Gmail` dialog. Pick a window
+ *     and a depth, and the backend re-reads that window from scratch (an
+ *     explicit `count` drops the cursor) — INCLUDING mail it has already
+ *     stored. That re-read is the only way a row filed by an older build of the
+ *     classifier ever gets judged again, and until #474 it did not exist: the
+ *     cursor meant a routine sync never looked at a stored message twice, and
+ *     the only windowed path on this surface was the destructive one.
+ *
+ * **Rebuild is no longer an action you start.** It is one of two dispositions
+ * inside that dialog — what happens to applications the scan does NOT find,
+ * `Keep them` or `Remove them` — and `Keep them` is the default. This is a
+ * removal of vocabulary, not an addition: the same two words the surface always
+ * had, with the destructive one demoted from the tier you press to the tier you
+ * choose, where it can no longer be reached by accident. #474 records 17 rows
+ * dismissed with `reason='resync'` by owners who ran the purge because it was
+ * the only windowed thing here; that is the accident this closes.
+ *
+ * "Scan" is not a new word. It is the one this surface has always used for the
+ * operation both actions perform — `continue the scan`, `scanned`, `the scan
+ * hit its message limit`, `first scan · last 12 months`, `scanProgressLine`.
+ * The dialog's title just says out loud what its controls were always
+ * configuring.
  *
  * There is deliberately NO progress percentage anywhere here: the server sync
  * is one request that returns once, so any fraction would be fabricated. What
@@ -99,7 +128,7 @@ import { filedSummary, isStale, type SyncCounts } from "@/lib/gmail/sync-state";
  * (elapsed time is the one number the browser truly knows), the LAST run's
  * measured duration joining the line once this run outlasts it (the mid-run
  * answer to "how long will this take", #160 — see `syncRunningSentence`), and
- * the measured duration of the last rebuild remembered for the next dialog.
+ * the measured duration of the last windowed run remembered for the next dialog.
  *
  * That rule was re-tested against the real board rather than assumed (#160).
  * Timed on the signed-in dashboard at 1024: `POST /api/gmail/sync` takes
@@ -129,18 +158,39 @@ export interface SyncGmailState {
   syncError: string | null;
 }
 
+/**
+ * How a run names itself, from the control that started it through to the
+ * receipt that reports it — `Sync` → `sync finished`, `Scan the last 12
+ * months` → `scan finished`, `Rebuild from the last 12 months` → `rebuild
+ * finished`. The windowed pair is derived from the dialog's disposition by
+ * `windowedOpName`, never chosen here: a receipt headed "rebuild finished"
+ * over a keep-scan would send the reader looking for a purge they declined.
+ */
+type SyncOp = "sync" | "scan" | "rebuild";
+
 type SyncPhase =
   | { kind: "idle" }
   | { kind: "syncing"; startedAt: number }
   /** Additive finished — `end` says HOW. A partial end never renders as done. */
   | { kind: "synced"; note: string; end: ScanEnd }
-  | { kind: "rebuilding"; startedAt: number; scopeLine: string }
+  /** A WINDOWED run is in flight. It carries the DISPOSITION rather than the
+   *  op name because that is what the dialog committed to; the verb the status
+   *  line wears (`scanning` / `rebuilding`) and the name the receipt will use
+   *  are both derived from it, so the running line and the receipt cannot
+   *  drift from the button that was pressed. */
+  | {
+      kind: "windowed";
+      disposition: ScanDisposition;
+      startedAt: number;
+      scopeLine: string;
+    }
   /** A run that changed the board enough to owe a receipt. `op` is which run
-   *  wrote it: a rebuild always gets one, a sync only when it removed rows. */
-  | { kind: "receipt"; op: "sync" | "rebuild"; outcome: RebuildOutcome }
+   *  wrote it: a windowed run always gets one, a plain sync only when it
+   *  removed rows. */
+  | { kind: "receipt"; op: SyncOp; outcome: ScanOutcome }
   /** Additive scan broke mid-flight (disconnected / unexpected mode). */
   | { kind: "interrupted"; end: ScanEnd }
-  | { kind: "failed"; op: "sync" | "rebuild"; notConnected: boolean };
+  | { kind: "failed"; op: SyncOp; notConnected: boolean };
 
 /** Cooldown so the staleness auto-sync runs at most once per window per tab. */
 const AUTOSYNC_KEY = "applied:dashboard:autosync:lastAt";
@@ -169,15 +219,15 @@ function markAutoSynced(): void {
   }
 }
 
-function readRebuildMemoryFromStorage(key: string) {
+function readScanMemoryFromStorage(key: string) {
   try {
-    return parseRebuildMemory(window.localStorage.getItem(key));
+    return parseScanMemory(window.localStorage.getItem(key));
   } catch {
     return null;
   }
 }
 
-function writeRebuildMemory(key: string, ms: number, scanned: number): void {
+function writeScanMemory(key: string, ms: number, scanned: number): void {
   try {
     window.localStorage.setItem(key, JSON.stringify({ ms, scanned, at: Date.now() }));
   } catch {
@@ -186,19 +236,24 @@ function writeRebuildMemory(key: string, ms: number, scanned: number): void {
 }
 
 /**
- * "Choose a window" — the empty state's route into the rebuild dialog. Raises
- * the rebuild-bus signal answered by the mounted SyncBar; if no SyncBar is
- * listening (it always is on the connected dashboard, but a control must never
- * silently do nothing) it falls back to the inbox workbench, which has its own
- * window controls.
+ * "Choose a window" — the empty state's route into the scan dialog. Raises the
+ * scan-bus signal answered by the mounted SyncBar; if no SyncBar is listening
+ * (it always is on the connected dashboard, but a control must never silently
+ * do nothing) it falls back to the inbox workbench, which has its own window
+ * controls.
+ *
+ * The label got MORE true with #474, not less: an empty board pressing this
+ * used to land in a purge dialog, and now lands in a scan that defaults to
+ * keeping what it does not find — which on an empty board is the same run and
+ * a much better default on any other.
  */
-export function RebuildWindowButton() {
+export function ScanWindowButton() {
   const router = useRouter();
   return (
     <button
       type="button"
       onClick={() => {
-        if (!requestRebuild()) router.push("/inbox");
+        if (!requestScan()) router.push("/inbox");
       }}
       className="inline-flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-foreground transition-colors hover:border-line-strong hover:text-strong focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-line-strong"
     >
@@ -270,21 +325,31 @@ export function SyncBar({
   const { signOut } = useSignOut();
   const [phase, setPhase] = useState<SyncPhase>({ kind: "idle" });
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [range, setRange] = useState<RebuildRange>(REBUILD_DEFAULT_RANGE);
-  const [depth, setDepth] = useState<RebuildDepth>(REBUILD_DEFAULT_DEPTH);
+  const [range, setRange] = useState<ScanRange>(SCAN_DEFAULT_RANGE);
+  const [depth, setDepth] = useState<ScanDepth>(SCAN_DEFAULT_DEPTH);
+  /** What the dialog will do with rows the scan doesn't find. Reset to the
+   *  safe default every time the dialog OPENS (`openDialog`), never merely
+   *  initialised here: a destructive choice that survives in component state
+   *  is a destructive default for the next press. */
+  const [disposition, setDisposition] = useState<ScanDisposition>(SCAN_DEFAULT_DISPOSITION);
   const [memoryLine, setMemoryLine] = useState<string | null>(null);
   /** The last measured sync — duration, coverage, when. Feeds the Sync
    *  button's tooltip tail (`Your last sync took 3 s.`) and the running
    *  line's outlasted swap (see `syncRunningSentence`, #160). Held in state
    *  rather than read during render because localStorage does not exist on
    *  the server pass. */
-  const [lastSync, setLastSync] = useState<RebuildMemory | null>(null);
-  /** Ticks while a sync/rebuild runs so the elapsed clock stays honest. */
+  const [lastSync, setLastSync] = useState<ScanMemory | null>(null);
+  /** Ticks while any run is in flight so the elapsed clock stays honest. */
   const [nowMs, setNowMs] = useState(() => Date.now());
   const autoRan = useRef(false);
-  const lastRebuild = useRef<{
-    depth: RebuildDepth;
-    range: RebuildRange;
+  /** The last windowed run's full request — what "continue the scan" and the
+   *  failure line's "try again" re-issue. The DISPOSITION is part of it: a
+   *  retry that quietly changed what happens to unfound rows would be a
+   *  different operation wearing the same button. */
+  const lastWindowed = useRef<{
+    depth: ScanDepth;
+    range: ScanRange;
+    disposition: ScanDisposition;
   } | null>(null);
 
   const connected = gmail?.connected === true;
@@ -292,9 +357,9 @@ export function SyncBar({
   const lastSyncAt = gmail?.lastSyncAt ?? null;
   const reduceMotion = useReducedMotion();
   const simulated = transport.mode === "simulated";
-  const memoryKey = simulated ? REBUILD_MEMORY_DEMO_KEY : REBUILD_MEMORY_KEY;
+  const memoryKey = simulated ? WINDOWED_MEMORY_DEMO_KEY : WINDOWED_MEMORY_KEY;
   const syncMemoryKey = simulated ? SYNC_MEMORY_DEMO_KEY : SYNC_MEMORY_KEY;
-  const busy = phase.kind === "syncing" || phase.kind === "rebuilding";
+  const busy = phase.kind === "syncing" || phase.kind === "windowed";
 
   const runSync = useCallback(async () => {
     const startedAt = Date.now();
@@ -319,7 +384,7 @@ export function SyncBar({
     // real wall-clock time, and leaving those out made the button's tooltip
     // report an older run as if it were the last one.
     const elapsedMs = Date.now() - startedAt;
-    writeRebuildMemory(syncMemoryKey, elapsedMs, end.scanned);
+    writeScanMemory(syncMemoryKey, elapsedMs, end.scanned);
     setLastSync({ ms: elapsedMs, scanned: end.scanned, at: Date.now() });
     // The rail's ambient field is a status surface (ambient-bus): a run that
     // actually changed the board — filed, updated or removed rows — surges
@@ -328,7 +393,7 @@ export function SyncBar({
     // branch: a scan that broke mid-flight still filed what it found. A
     // "no new mail" pass publishes nothing — a field that stirred for
     // nothing would train the eye to ignore it.
-    const outcome = readRebuildOutcome(res.body);
+    const outcome = readScanOutcome(res.body);
     const changed = outcome.created + outcome.updated + outcome.removed.length;
     if (changed > 0) publishAmbientPulse(changed);
     // Disconnected / unexpected mid-scan is not "press again" — it is
@@ -370,31 +435,53 @@ export function SyncBar({
     router.refresh();
   }, [hasCursor, router, syncMemoryKey, transport]);
 
-  const runRebuild = useCallback(
-    async (d: RebuildDepth, r: RebuildRange) => {
-      lastRebuild.current = { depth: d, range: r };
+  /**
+   * The WINDOWED run — both dispositions, one code path, because they are one
+   * operation that differs only in how the backend merges the result. Every
+   * difference between them is derived from `disp` at the edges: the request
+   * body (`scanRequestBody` — additive carries `scope: "anywhere"`, rebuild
+   * does not), the status verb, and the name on the receipt.
+   *
+   * It cannot become an incremental sync by accident: `scanRequestBody` always
+   * sends `count`, which is what tells the backend to drop the Gmail history
+   * cursor and re-list the window from scratch. That re-list is the entire
+   * point — a cursored sync never re-reads a stored message, so a row a
+   * previous build of the classifier judged wrongly is unreachable from `Sync`
+   * no matter how many times it is pressed (#474).
+   */
+  const runScan = useCallback(
+    async (d: ScanDepth, r: ScanRange, disp: ScanDisposition) => {
+      lastWindowed.current = { depth: d, range: r, disposition: disp };
+      const op = windowedOpName(disp);
       const startedAt = Date.now();
       setPhase({
-        kind: "rebuilding",
+        kind: "windowed",
+        disposition: disp,
         startedAt,
-        scopeLine: rebuildScopeLine(d, r),
+        scopeLine: scanScopeLine(d, r),
       });
-      const res = await transport.sync(rebuildRequestBody(d, r));
+      const res = await transport.sync(scanRequestBody(d, r, disp));
       if (!res.ok) {
         setPhase({
           kind: "failed",
-          op: "rebuild",
+          op,
           notConnected: res.status === 409,
         });
         return;
       }
-      const outcome = readRebuildOutcome(res.body);
-      writeRebuildMemory(memoryKey, Date.now() - startedAt, outcome.scanned);
+      const outcome = readScanOutcome(res.body);
+      writeScanMemory(memoryKey, Date.now() - startedAt, outcome.scanned);
       // Same news contract as runSync: the ambient field surges by what the
-      // rebuild actually changed, never for the run's own sake.
+      // run actually changed, never for the run's own sake. A keep-scan that
+      // re-judged three stale rows counts as three — that is exactly the news
+      // this path exists to deliver.
       const changed = outcome.created + outcome.updated + outcome.removed.length;
       if (changed > 0) publishAmbientPulse(changed);
-      setPhase({ kind: "receipt", op: "rebuild", outcome });
+      // A windowed run ALWAYS gets a receipt, on either disposition — unlike a
+      // plain sync, which only owes one when it removed rows. The owner asked
+      // for a re-read of a specific window and is owed the answer to "what did
+      // that find", even when the answer is nothing.
+      setPhase({ kind: "receipt", op, outcome });
       router.refresh();
     },
     [memoryKey, router, transport],
@@ -422,7 +509,7 @@ export function SyncBar({
   }, [connected, simulated, lastSyncAt, runSync]);
 
   // The empty state's "Choose a window" button opens the same dialog.
-  useEffect(() => onRebuildRequest(() => setDialogOpen(true)), []);
+  useEffect(() => onScanRequest(() => setDialogOpen(true)), []);
 
   // The remembered duration of the last sync, read once per mount. Nothing
   // shows until a run has actually been timed — an unmeasured "usually quick"
@@ -431,7 +518,7 @@ export function SyncBar({
     // Deferred off the effect body (house rule — no synchronous setState in
     // an effect), which also keeps the read off the server pass entirely.
     const id = window.setTimeout(() => {
-      setLastSync(readRebuildMemoryFromStorage(syncMemoryKey));
+      setLastSync(readScanMemoryFromStorage(syncMemoryKey));
     }, 0);
     return () => window.clearTimeout(id);
   }, [syncMemoryKey]);
@@ -464,9 +551,15 @@ export function SyncBar({
 
   function openDialog() {
     setMemoryLine(() => {
-      const memory = readRebuildMemoryFromStorage(memoryKey);
-      return memory ? rebuildMemoryLine(memory) : null;
+      const memory = readScanMemoryFromStorage(memoryKey);
+      return memory ? windowedMemoryLine(memory) : null;
     });
+    // Window and depth persist across opens — they are preferences, and
+    // re-picking "6 mo" every time would be a chore. The DISPOSITION does not:
+    // it is a decision about this run, and a `Remove them` left standing from
+    // ten minutes ago would be a destructive default wearing a fresh dialog.
+    // Every open starts safe.
+    setDisposition(SCAN_DEFAULT_DISPOSITION);
     setDialogOpen(true);
   }
 
@@ -532,11 +625,14 @@ export function SyncBar({
         </span>
       </>
     );
-  } else if (phase.kind === "rebuilding") {
+  } else if (phase.kind === "windowed") {
     statusContent = (
       <>
         <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
-        rebuilding · {phase.scopeLine}
+        {/* `scanning` or `rebuilding` — the verb the pressed button committed
+            to, so a keep-scan never announces itself as a purge. Same scope
+            fragment either way: the two runs read the same mail. */}
+        {windowedRunningWord(phase.disposition)} · {phase.scopeLine}
         <span className="tabular font-mono text-[11px]" aria-hidden>
           · {formatElapsed(nowMs - phase.startedAt)}
         </span>
@@ -630,17 +726,31 @@ export function SyncBar({
       </>
     ) : (
       <>
-        {/* Both sentences are true because the backend applies a rebuild
-            transactionally or not at all; if that ever stops being true this
-            copy must change with it. */}
-        {phase.op === "rebuild"
-          ? "rebuild failed · nothing was changed. Your board is exactly as it was."
-          : "sync failed · Gmail did not answer. Your board is unchanged."}{" "}
+        {/* This line used to claim "nothing was changed. Your board is exactly
+            as it was", on the stated grounds that "the backend applies a
+            rebuild transactionally or not at all; if that ever stops being
+            true this copy must change with it". It is not true, and appears
+            never to have been: BOTH merges call
+            `upsert_applications_for_user`, which runs its own
+            `session.commit()` (applications.py) before either caller reaches
+            its final one. On the rebuild path the purge is flushed BEFORE that
+            call, so a failure in the window after it leaves rows dismissed and
+            not re-filed — the state in which "your board is exactly as it was"
+            is not merely imprecise but the opposite of what the reader is
+            looking at.
+            So the line says the one thing that is true on every path and at
+            every failure point, and the button beside it carries the action.
+            The `409` branch above keeps its stronger claim, and may: the
+            backend returns it before any scan or merge begins. */}
+        {phase.op} failed · anything it filed or removed before stopping stays that way{" "}
         <button
           type="button"
           onClick={() => {
-            if (phase.op === "rebuild" && lastRebuild.current) {
-              void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
+            // A retry re-issues the SAME request, disposition included —
+            // never a different operation under the same word.
+            if (phase.op !== "sync" && lastWindowed.current) {
+              const { depth: d, range: r, disposition: disp } = lastWindowed.current;
+              void runScan(d, r, disp);
             } else {
               void runSync();
             }
@@ -676,9 +786,9 @@ export function SyncBar({
   // whole 11 seconds a sync plus its note lasts, and losing the numbers you
   // were reading is what a working sync felt like when it was called frozen.
   // An ALLOWLIST on purpose: a status added later defaults to owning the
-  // slot, which is the safe side of the wrap. `rebuilding` is deliberately
-  // not in it — its line restates window, depth and scope, and is the widest
-  // status this row has.
+  // slot, which is the safe side of the wrap. The `windowed` run is deliberately
+  // not in it — its line restates verb, window, depth and scope, and is the
+  // widest status this row has.
   const statusRidesAlongTotals =
     phase.kind === "syncing" ||
     (phase.kind === "synced" && stopKind(phase.end.stoppedBy) !== "partial");
@@ -897,7 +1007,7 @@ export function SyncBar({
                 {/* The pressed control is the first place feedback lands
                     (#196/#160): while ITS run is in flight the icon spins in
                     place — same box, so the button never changes width — and
-                    the counter line sits right beside it. A rebuild disables
+                    the counter line sits right beside it. A windowed run disables
                     this button but keeps the still icon: a spinner here would
                     claim a sync that is not running. */}
                 {phase.kind === "syncing" ? (
@@ -925,7 +1035,7 @@ export function SyncBar({
               `signedIn` it is the board route's only sign-out at `lg`+
               (TopBar yields there) and a session must stay endable with Gmail
               disconnected. The sync-owned items still require a connection: a
-              menu must not offer a rebuild that can only 409. Sign-out is
+              menu must not offer a scan that can only 409. Sign-out is
               last and unhinted — the label is the whole action. The trigger's
               name follows its contents: the session edge makes it more than
               sync options, and the demo (no session) keeps the old name its
@@ -940,9 +1050,19 @@ export function SyncBar({
                 ...(connected
                   ? [
                       {
-                        key: "rebuild",
-                        label: "Rebuild from Gmail…",
-                        hint: "replaces Gmail-filed rows · lists every removal",
+                        // The hint names what the SCAN does that `Sync`
+                        // cannot — re-read mail already filed — because that
+                        // is the reason anyone comes here (a row judged by an
+                        // older build, #474), and then names the default
+                        // disposition so the destructive one is never a
+                        // surprise waiting inside. "keeps rows it doesn't
+                        // find" and not "removes nothing": an AUTO row whose
+                        // last email turns out to be another employer's is
+                        // still retired on this path, and the receipt still
+                        // says so.
+                        key: "scan-window",
+                        label: "Scan a window of Gmail…",
+                        hint: "re-reads mail already filed · keeps rows it doesn't find",
                         onSelect: openDialog,
                       },
                       {
@@ -1071,7 +1191,7 @@ export function SyncBar({
 
       {phase.kind === "receipt" ? (
         <div>
-          <RebuildReceipt
+          <ScanReceipt
             op={phase.op}
             outcome={phase.outcome}
             transport={transport}
@@ -1080,55 +1200,86 @@ export function SyncBar({
             onContinue={() => {
               if (phase.op === "sync") {
                 void runSync();
-              } else if (lastRebuild.current) {
-                void runRebuild(lastRebuild.current.depth, lastRebuild.current.range);
+              } else if (lastWindowed.current) {
+                const { depth: d, range: r, disposition: disp } = lastWindowed.current;
+                void runScan(d, r, disp);
               }
             }}
           />
         </div>
       ) : null}
 
+      {/* The windowed-scan dialog. Three questions in the order a person asks
+          them — how far back, how deep, and what happens to what it misses —
+          then the commit. The third is the one #474 added, and it is last on
+          purpose: it sits directly above the confirm button whose verb it
+          changes, so the choice and its consequence are read together. */}
       <Dialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        title="Rebuild from Gmail"
-        description="A rebuild scans the window you choose and replaces every application that was filed from Gmail with what it finds. Rows you filed or corrected by hand are kept. Anything removed is listed afterward and can be restored."
+        title="Scan a window of Gmail"
+        description="Reads the window you choose again from scratch, including mail Applied has already filed — which is how a row it got wrong the first time gets a second look. Rows you filed or corrected by hand are left alone."
       >
         <div className="space-y-4">
           <div className="flex flex-col gap-1.5">
             <span className="label-caps">window</span>
-            <Segmented<RebuildRange>
+            <Segmented<ScanRange>
               ariaLabel="Time window"
-              options={REBUILD_RANGE_OPTIONS}
+              options={SCAN_RANGE_OPTIONS}
               value={range}
               onChange={setRange}
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="label-caps" htmlFor="rebuild-depth">
+            <label className="label-caps" htmlFor="scan-depth">
               depth
             </label>
             <select
-              id="rebuild-depth"
+              id="scan-depth"
               aria-label="Number of messages to scan"
               className={`${selectClass} w-40 py-1.5 text-xs`}
               value={depth}
-              onChange={(e) => setDepth(Number(e.target.value) as RebuildDepth)}
+              onChange={(e) => setDepth(Number(e.target.value) as ScanDepth)}
             >
-              {REBUILD_DEPTH_OPTIONS.map((n) => (
+              {SCAN_DEPTH_OPTIONS.map((n) => (
                 <option key={n} value={n}>
                   {formatCount(n)} messages
                 </option>
               ))}
             </select>
           </div>
-          {/* The backend forces `scope="anywhere"` on every rebuild — a scan
-              that can remove rows must see everything it judges (an
-              inbox-scoped rebuild once deleted two applications whose ATS
-              confirmations were archived). So this is stated, not offered. */}
+          {/* Stated, not offered, on BOTH dispositions — but for two different
+              reasons, and the sentence has to be true of each. The backend
+              forces `scope="anywhere"` on a rebuild because a scan that can
+              remove rows must see everything it judges (an inbox-scoped
+              rebuild once deleted two applications whose ATS confirmations
+              were archived); `scanRequestBody` asks for the same scope on the
+              additive path because the mail that would correct a stale row is,
+              by the time anyone notices, archived. Either way there is no
+              honest control to put here. The leading clause is verbatim from
+              the rebuild dialog — demo.spec matches on it. */}
           <p className="text-xs text-muted">
-            scans all mail, including archive — a rebuild must see everything it judges
+            scans all mail, including archive — a scan that re-judges filed rows has to be able
+            to read them
           </p>
+          {/* The disposition. Amber only on the destructive choice, and only
+              on this one line: the label, the control and the confirm verb
+              carry the rest, so the dialog stays quiet until the moment it
+              stops being safe. */}
+          <div className="flex flex-col gap-1.5 border-t border-line-soft pt-4">
+            <span className="label-caps">rows it doesn&apos;t find</span>
+            <Segmented<ScanDisposition>
+              ariaLabel="What to do with applications this scan doesn't find"
+              options={SCAN_DISPOSITION_OPTIONS}
+              value={disposition}
+              onChange={setDisposition}
+            />
+            <p
+              className={`text-xs ${disposition === "remove" ? "text-review" : "text-muted"}`}
+            >
+              {scanDispositionNote(disposition)}
+            </p>
+          </div>
           {memoryLine ? <p className="text-xs text-dim">{memoryLine}</p> : null}
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-soft pt-4">
             <button
@@ -1142,11 +1293,11 @@ export function SyncBar({
               type="button"
               onClick={() => {
                 setDialogOpen(false);
-                void runRebuild(depth, range);
+                void runScan(depth, range, disposition);
               }}
               className="rounded-lg bg-strong px-3 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
             >
-              {rebuildConfirmLabel(range)}
+              {scanConfirmLabel(range, disposition)}
             </button>
           </div>
         </div>
@@ -1170,11 +1321,12 @@ export function SyncBar({
  * The heading is the end state, not a pleasantry: a run that stopped early did
  * NOT finish, and one that removed rows on a partial scan judged those
  * removals against mail it never read — both are said outright, with continue
- * as the one action. `op` names the run in that heading, because "rebuild
- * finished" over a removal an ordinary sync made would send the reader looking
- * for a rebuild they never ran.
+ * as the one action. `op` names the run in that heading, and it is the same
+ * word the control that started it used — "rebuild finished" over a removal an
+ * ordinary sync made would send the reader looking for a rebuild they never
+ * ran, and over a keep-scan it would name them an action they declined.
  */
-function RebuildReceipt({
+function ScanReceipt({
   op,
   outcome,
   transport,
@@ -1182,12 +1334,13 @@ function RebuildReceipt({
   onRestored,
   onContinue,
 }: {
-  op: "sync" | "rebuild";
-  outcome: RebuildOutcome;
+  op: SyncOp;
+  outcome: ScanOutcome;
   transport: SyncTransport;
   onDismiss: () => void;
   onRestored: (id: number) => void;
-  /** Re-runs the same operation (a rebuild keeps its window and depth). */
+  /** Re-runs the same operation (a windowed run keeps its window, depth AND
+   *  disposition — see `lastWindowed`). */
   onContinue: () => void;
 }) {
   const [restoringId, setRestoringId] = useState<number | null>(null);

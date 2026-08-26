@@ -1,5 +1,5 @@
 /**
- * The pure half of the dashboard's sync surface: what a rebuild request says,
+ * The pure half of the dashboard's sync surface: what a scan request says,
  * what the running line reads, what the receipt contains, and what the dialog
  * remembers about the last run.
  *
@@ -11,11 +11,19 @@
  *     request that returns once, at the end — a percentage on that path would
  *     be a timer wearing a costume. The elapsed clock is the one number the
  *     browser truly knows.
- *   - A rebuild body never carries `scope`. The backend forces
- *     `scope="anywhere"` on every rebuild (gmail_oauth.py: a scan that can
- *     REMOVE rows must see everything it judges; an inbox-scoped rebuild once
- *     deleted two real applications whose confirmations were archived). The UI
- *     states that instead of offering a control the server would ignore.
+ *   - `scope` is ASYMMETRIC, and it is the trap in this file. Both dispositions
+ *     have to read archived mail — a scan that re-judges a row it already filed
+ *     is reading mail the owner archived months ago, and a scan that can REMOVE
+ *     a row must see everything it judges (an inbox-scoped rebuild once deleted
+ *     two real applications whose confirmations were archived). The backend
+ *     gets there two different ways: `mode="rebuild"` is FORCED to
+ *     `in:anywhere` server-side and the caller gets no say, while
+ *     `mode="additive"` falls through `_parse_scope`, which DEFAULTS TO
+ *     `in:inbox` (gmail_oauth.py `_scan_server_side`). So a rebuild body must
+ *     not carry `scope` — claiming a say it does not have — and a windowed
+ *     additive body MUST carry `scope: "anywhere"` or the scan quietly reads
+ *     the inbox only, files nothing, and reports a clean receipt. Same reason,
+ *     opposite action; `tests/unit/sync-plan.test.mjs` asserts the pair.
  *   - The receipt renders only fields the response actually carried.
  *
  * Dependency-free on purpose (the same rule as `sync-state.ts`): no React, no
@@ -23,46 +31,109 @@
  * file directly under Node's built-in type stripping.
  */
 
-// --- The rebuild request ------------------------------------------------------
+// --- The windowed scan request ------------------------------------------------
 
 /**
  * The depth choices the dialog offers. The inbox mine's `COUNT_OPTIONS`
  * vocabulary plus 750 — today's server default (`_SYNC_DEFAULT_SCAN_TARGET`) —
- * so the default rebuild behaves exactly as the old hardwired button did.
+ * so a default-depth scan reads exactly what the old hardwired button did.
  */
-export const REBUILD_DEPTH_OPTIONS = [100, 200, 500, 750, 1000, 2000] as const;
-export type RebuildDepth = (typeof REBUILD_DEPTH_OPTIONS)[number];
-export const REBUILD_DEFAULT_DEPTH: RebuildDepth = 750;
+export const SCAN_DEPTH_OPTIONS = [100, 200, 500, 750, 1000, 2000] as const;
+export type ScanDepth = (typeof SCAN_DEPTH_OPTIONS)[number];
+export const SCAN_DEFAULT_DEPTH: ScanDepth = 750;
 
 /**
  * The window choices, mirroring the inbox's `RANGE_OPTIONS` values (restated
  * here rather than imported to keep this module loadable under `node --test`).
  * `"all"` omits the range bound entirely.
  */
-export const REBUILD_RANGE_OPTIONS = [
+export const SCAN_RANGE_OPTIONS = [
   { value: "3", label: "3 mo" },
   { value: "6", label: "6 mo" },
   { value: "9", label: "9 mo" },
   { value: "12", label: "12 mo" },
   { value: "all", label: "All time" },
 ] as const;
-export type RebuildRange = (typeof REBUILD_RANGE_OPTIONS)[number]["value"];
+export type ScanRange = (typeof SCAN_RANGE_OPTIONS)[number]["value"];
 /** Matches today's hardwired rebuild (12 months), so the default is not a change. */
-export const REBUILD_DEFAULT_RANGE: RebuildRange = "12";
+export const SCAN_DEFAULT_RANGE: ScanRange = "12";
 
 /**
- * Body of `POST /api/gmail/sync` for a rebuild. `range` is omitted for all
- * time (mirroring `buildInboxParams`), and `scope` is never sent — see the
- * module comment. Passing `count`/`range` on a rebuild is correct: a rebuild
- * is a windowed request by definition and does not want the incremental cursor.
+ * What the scan does with an application it does NOT find in the window.
+ *
+ * This is the whole reason the windowed scan stopped being called "Rebuild"
+ * (#474). Both dispositions re-read the window and re-judge every row they
+ * find — that is what heals a row a previous, older build of the classifier
+ * got wrong, and it is unreachable from the `Sync` button, which resumes from
+ * a Gmail `historyId` cursor and so never re-reads a message it already
+ * stored. The two differ only in what happens to the rows the scan misses:
+ *
+ *   - `keep` — `mode: "additive"`, upsert-only. Nothing leaves the board for
+ *     being absent from a bounded scan. This is the DEFAULT, because it is the
+ *     one a person actually wants when a row is stale, and because reaching it
+ *     used to require running the destructive path: issue #474 records 17 rows
+ *     dismissed with `reason='resync'` by owners doing exactly that.
+ *   - `remove` — `mode: "rebuild"`, the purge-and-rebuild. Every Gmail-filed
+ *     application the scan does not find is taken off the board (rows filed or
+ *     corrected by hand are kept), listed on the receipt, and restorable there.
+ *
+ * `keep` still is not a promise that nothing leaves: an AUTO row whose last
+ * linked email turns out to belong to a DIFFERENT employer is retired on both
+ * paths (`_dismiss_rows_left_without_mail`). That is why every sentence about
+ * this control is worded "rows it doesn't find" and never "removes nothing" —
+ * and why the additive path gets the same receipt, with the same per-row
+ * restore, when the backend names a removal.
  */
-export function rebuildRequestBody(
-  depth: RebuildDepth,
-  range: RebuildRange,
-): { mode: "rebuild"; count: number; range?: string } {
-  return range === "all"
-    ? { mode: "rebuild", count: depth }
-    : { mode: "rebuild", count: depth, range };
+export type ScanDisposition = "keep" | "remove";
+
+/** The segmented control's two choices, in the order they are offered. */
+export const SCAN_DISPOSITION_OPTIONS = [
+  { value: "keep", label: "Keep them" },
+  { value: "remove", label: "Remove them" },
+] as const satisfies readonly { value: ScanDisposition; label: string }[];
+
+/** Safe by default: the destructive disposition is never the resting state. */
+export const SCAN_DEFAULT_DISPOSITION: ScanDisposition = "keep";
+
+/**
+ * Body of `POST /api/gmail/sync` for a WINDOWED scan — the dialog's only
+ * request builder, for both dispositions.
+ *
+ * Three things are load-bearing, and each of them has a way of going quietly
+ * wrong:
+ *
+ *   - `count` is always sent, on both paths. It is what makes the backend
+ *     treat this as an explicit window request and drop the incremental cursor
+ *     (`_history_cursor_for`: `payload.range is not None or payload.count is
+ *     not None`). Omit it and an additive body is just the `Sync` button —
+ *     it resumes from the cursor, re-reads nothing, and heals nothing.
+ *   - `range` is ALWAYS sent, including `"all"`. This endpoint is not the
+ *     inbox mine and does not behave like it: `GET /gmail/inbox` reads
+ *     `_parse_range_months(range)` with no fallback, so omitting it there
+ *     means all-time, but `POST /gmail/sync` (`_scan_server_side`) reads
+ *     `_SYNC_DEFAULT_RANGE_MONTHS if payload.range is None else
+ *     _parse_range_months(payload.range)` — a MISSING range there is 12
+ *     months, and only the literal `"all"` reaches `_parse_range_months` and
+ *     comes back unbounded. Omitting it (which this builder used to do,
+ *     "mirroring `buildInboxParams`") made `Rebuild from all time` run a
+ *     12-month rebuild while the running line said `all time` and the receipt
+ *     reported a clean finish: exactly the overclaim this module exists to
+ *     prevent, and for the heal it is fatal — a 14-month-old rejection is
+ *     unreachable by the one control that promises to reach it.
+ *   - `scope` is sent on the additive path and NOT on the rebuild path. See
+ *     the module comment: the server forces `anywhere` for a rebuild and
+ *     defaults to `inbox` for everything else, so this asymmetry is what makes
+ *     both dispositions read archived mail. Every stale row this feature
+ *     exists to heal is an old rejection, and old mail is archived mail.
+ */
+export function scanRequestBody(
+  depth: ScanDepth,
+  range: ScanRange,
+  disposition: ScanDisposition,
+): { mode: "additive" | "rebuild"; count: number; range: string; scope?: "anywhere" } {
+  return disposition === "remove"
+    ? { mode: "rebuild", count: depth, range }
+    : { mode: "additive", count: depth, range, scope: "anywhere" };
 }
 
 // --- Sentences ----------------------------------------------------------------
@@ -83,28 +154,69 @@ export function formatElapsed(ms: number): string {
 }
 
 /** The window fragment of the running line and the confirm label. */
-export function rangeLabel(range: RebuildRange): string {
+export function rangeLabel(range: ScanRange): string {
   return range === "all" ? "all time" : `last ${range} months`;
 }
 
 /**
- * What a running rebuild restates about itself:
- * `up to 750 messages · last 12 months · all mail`. The `all mail` fragment is
- * the server-forced scope, stated because it is true, not chosen.
+ * What a running windowed scan restates about itself:
+ * `up to 750 messages · last 12 months · all mail`. Identical on both
+ * dispositions, because the scan itself is: `all mail` is forced by the server
+ * on the rebuild path and asked for by {@link scanRequestBody} on the additive
+ * one (see the module comment). It is stated rather than offered either way —
+ * a scan that re-judges filed rows has to be able to read archived mail, so
+ * there is no honest control to put here.
  */
-export function rebuildScopeLine(depth: RebuildDepth, range: RebuildRange): string {
+export function scanScopeLine(depth: ScanDepth, range: ScanRange): string {
   return `up to ${formatCount(depth)} messages · ${rangeLabel(range)} · all mail`;
 }
 
-/** The confirm button names the choice it commits. */
-export function rebuildConfirmLabel(range: RebuildRange): string {
-  return range === "all" ? "Rebuild from all time" : `Rebuild from the last ${range} months`;
+/**
+ * The confirm button names the act it commits, and names it the same way the
+ * receipt will report it afterwards ({@link windowedOpName}): press
+ * `Scan the last 12 months` and the receipt says `scan finished`; press
+ * `Rebuild from the last 12 months` and it says `rebuild finished`. A control
+ * whose name changes on the way to its own result is how a removal gets read
+ * as somebody else's doing.
+ */
+export function scanConfirmLabel(range: ScanRange, disposition: ScanDisposition): string {
+  if (disposition === "remove") {
+    return range === "all" ? "Rebuild from all time" : `Rebuild from the last ${range} months`;
+  }
+  return range === "all" ? "Scan all time" : `Scan the last ${range} months`;
+}
+
+/**
+ * What the disposition COMMITS TO, spelled out in the dialog under the
+ * control. Both sentences are about the rows the scan does not find, because
+ * that is the only thing the choice decides — what it does with the rows it
+ * DOES find (re-read them, re-judge them, leave anything you touched alone) is
+ * the same either way and is said once, in the dialog's description.
+ */
+export function scanDispositionNote(disposition: ScanDisposition): string {
+  return disposition === "remove"
+    ? "Applications filed from Gmail that this scan doesn't find are taken off the board. Each one is named on the receipt afterwards and can be restored from there."
+    : "Applications this scan doesn't find stay on the board. Nothing is removed for being outside the window.";
+}
+
+/**
+ * The verb a running windowed scan wears in the status line — `scanning` or
+ * `rebuilding`. Present tense here, past tense on the receipt
+ * ({@link windowedOpName}); the same act, so the same word.
+ */
+export function windowedRunningWord(disposition: ScanDisposition): string {
+  return disposition === "remove" ? "rebuilding" : "scanning";
+}
+
+/** How the receipt names the run that wrote it — `scan finished · just now`. */
+export function windowedOpName(disposition: ScanDisposition): "scan" | "rebuild" {
+  return disposition === "remove" ? "rebuild" : "scan";
 }
 
 // --- Memory of the last run ---------------------------------------------------
 
-/** What a finished rebuild records for the next dialog to report. */
-export interface RebuildMemory {
+/** What a finished run records for the next dialog to report. */
+export interface ScanMemory {
   /** Wall-clock duration of the run, in milliseconds. */
   ms: number;
   /** Messages the run scanned (from the response, not estimated). */
@@ -113,21 +225,25 @@ export interface RebuildMemory {
   at: number;
 }
 
-/** localStorage key for {@link RebuildMemory}. */
-export const REBUILD_MEMORY_KEY = "applied:rebuild:last";
+/** localStorage key for the last WINDOWED run's {@link ScanMemory} — either
+ *  disposition, since what the dialog reports is how long a scan of that depth
+ *  took, which is a fact about the scan and not about the merge. The string
+ *  still says `rebuild` on purpose: it is a storage key, and renaming it would
+ *  silently discard every record already on the owner's machine. */
+export const WINDOWED_MEMORY_KEY = "applied:rebuild:last";
 
 /**
- * The simulated (demo) surface remembers its rebuilds under its own key, so a
- * signed-in owner who visits /demo never has a fixture run reported back to
- * them as their own last rebuild.
+ * The simulated (demo) surface remembers its windowed runs under its own key,
+ * so a signed-in owner who visits /demo never has a fixture run reported back
+ * to them as their own last scan.
  */
-export const REBUILD_MEMORY_DEMO_KEY = "applied:rebuild:last:demo";
+export const WINDOWED_MEMORY_DEMO_KEY = "applied:rebuild:last:demo";
 
 /** Parse a stored memory record; anything malformed is no record at all. */
-export function parseRebuildMemory(raw: string | null | undefined): RebuildMemory | null {
+export function parseScanMemory(raw: string | null | undefined): ScanMemory | null {
   if (typeof raw !== "string" || raw === "") return null;
   try {
-    const data = JSON.parse(raw) as Partial<RebuildMemory>;
+    const data = JSON.parse(raw) as Partial<ScanMemory>;
     if (
       typeof data.ms !== "number" ||
       typeof data.scanned !== "number" ||
@@ -146,13 +262,17 @@ export function parseRebuildMemory(raw: string | null | undefined): RebuildMemor
 }
 
 /**
- * `your last rebuild scanned 512 messages in 41 s` — a report of a measured
+ * `your last windowed scan read 512 messages in 41 s` — a report of a measured
  * past fact, not a prediction. When no record exists the dialog shows nothing;
  * "usually under a minute" claims nobody measured are not invented here.
+ *
+ * "windowed scan" rather than "rebuild": this dialog writes the record on
+ * BOTH dispositions now, and reporting a keep-scan back as a rebuild would
+ * name the owner an action they deliberately did not take.
  */
-export function rebuildMemoryLine(memory: RebuildMemory): string {
+export function windowedMemoryLine(memory: ScanMemory): string {
   const seconds = Math.max(1, Math.round(memory.ms / 1000));
-  return `your last rebuild scanned ${formatCount(memory.scanned)} messages in ${seconds} s`;
+  return `your last windowed scan read ${formatCount(memory.scanned)} messages in ${seconds} s`;
 }
 
 // --- How the scan ended -------------------------------------------------------
@@ -254,7 +374,7 @@ export function readScanEnd(body: unknown): ScanEnd {
 /**
  * The window a CURSOR-LESS dashboard sync falls back to, mirroring the
  * backend's `_SYNC_DEFAULT_RANGE_MONTHS` (gmail_oauth.py). Restated rather
- * than imported for the same reason `REBUILD_DEFAULT_DEPTH` is: this module
+ * than imported for the same reason `SCAN_DEFAULT_DEPTH` is: this module
  * stays dependency-free, and the sentence must name a real window or say
  * nothing at all.
  */
@@ -297,7 +417,7 @@ export function syncScopeLine(hasCursor: boolean): string {
  * A MEASURED duration in whole seconds — `3 s`. Never a prediction and never
  * an average: it is only ever rendered about a run that already happened.
  * Floors at 1 s so a sub-second run reads as a duration rather than `0 s`.
- * Same vocabulary as {@link rebuildMemoryLine}, deliberately.
+ * Same vocabulary as {@link windowedMemoryLine}, deliberately.
  */
 export function durationLabel(ms: number): string {
   return `${Math.max(1, Math.round(Math.max(0, ms) / 1000))} s`;
@@ -343,7 +463,7 @@ export const SLOW_SYNC_GRACE_MS = 2000;
 export function syncRunningSentence(
   hasCursor: boolean,
   elapsedMs: number,
-  last: RebuildMemory | null,
+  last: ScanMemory | null,
 ): string {
   const slowAfterMs =
     last === null ? SLOW_SYNC_AFTER_MS : Math.min(SLOW_SYNC_AFTER_MS, last.ms + SLOW_SYNC_GRACE_MS);
@@ -397,7 +517,7 @@ export function syncReceiptNote(base: string, end: ScanEnd, elapsedMs: number): 
 export const SYNC_MEMORY_KEY = "applied:sync:last";
 
 /** The demo's own key, so a fixture run is never reported as a real one —
- *  same separation {@link REBUILD_MEMORY_DEMO_KEY} makes for rebuilds. */
+ *  same separation {@link WINDOWED_MEMORY_DEMO_KEY} makes for rebuilds. */
 export const SYNC_MEMORY_DEMO_KEY = "applied:sync:last:demo";
 
 /**
@@ -407,16 +527,19 @@ export const SYNC_MEMORY_DEMO_KEY = "applied:sync:last:demo";
  * It rides in `title`, which costs the header row no width — the row already
  * wraps at 1024 (#172) and must not be made worse.
  *
- * Reuses {@link RebuildMemory}: a run's duration + what it scanned + when, on
+ * Reuses {@link ScanMemory}: a run's duration + what it scanned + when, on
  * either path.
  */
-export function syncMemoryLine(memory: RebuildMemory): string {
+export function syncMemoryLine(memory: ScanMemory): string {
   return `Your last sync took ${durationLabel(memory.ms)}.`;
 }
 
 // --- Reading the response -----------------------------------------------------
 
-/** One row a rebuild removed — id + company, exactly what the backend names. */
+/** One row a run took off the board — id + company, exactly what the backend
+ *  names. Any of the three runs can produce these: a rebuild purges what it
+ *  did not find, and both additive paths retire a row whose last email turned
+ *  out to belong to another employer. */
 export interface RemovedRow {
   id: number;
   company: string;
@@ -425,7 +548,7 @@ export interface RemovedRow {
 }
 
 /** The receipt-relevant slice of the backend `SyncResponse`. */
-export interface RebuildOutcome {
+export interface ScanOutcome {
   created: number;
   updated: number;
   scanned: number;
@@ -461,7 +584,7 @@ function count(value: unknown): number {
  * of a partial body: nothing is ever displayed that the response did not say,
  * and a malformed `removed` entry is dropped rather than rendered blank.
  */
-export function readRebuildOutcome(body: unknown): RebuildOutcome {
+export function readScanOutcome(body: unknown): ScanOutcome {
   const data = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
   const removedRaw = Array.isArray(data.removed) ? data.removed : [];
   const removed: RemovedRow[] = [];
@@ -487,7 +610,7 @@ export function readRebuildOutcome(body: unknown): RebuildOutcome {
 
 /**
  * The receipt's body line: `41 filed · 2 updated · 512 scanned`, or the
- * explicit nothing-changed sentence when a rebuild confirmed the board.
+ * explicit nothing-changed sentence when a run confirmed the board unchanged.
  *
  * THE NOTHING-CHANGED SENTENCE IS A CLAIM, and it may only be made when the
  * sync really did account for everything it read. `every filed application
@@ -496,7 +619,7 @@ export function readRebuildOutcome(body: unknown): RebuildOutcome {
  * reached him as "the sync works, you must not have applied". A run with
  * anything in `dropped` takes the itemised branch instead and names the number.
  */
-export function receiptBodyLine(outcome: RebuildOutcome): string {
+export function receiptBodyLine(outcome: ScanOutcome): string {
   const boardUnchanged =
     outcome.created === 0 && outcome.updated === 0 && outcome.purged === 0;
   if (boardUnchanged && outcome.dropped === 0) {

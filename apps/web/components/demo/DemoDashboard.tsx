@@ -45,13 +45,20 @@ import { demoReviewQueueAsApi } from "@/lib/demo/reviewQueue";
  * the detail sheet — running their real state machines over an in-memory
  * fixture store instead of the network. Drag a card and it moves; open a card
  * and its (synthetic) mail trail renders; press Sync and the two not-yet-synced
- * fixture rows are filed onto the board; run a Rebuild and a stale row is
- * removed, named on the receipt, and restorable from it. Nothing here is a
- * mock of the UI — only the transport is simulated, which is exactly what the
- * "demo is the real thing" contract asks for, and what lets the e2e suite
- * execute the session-gated surfaces.
+ * fixture rows are filed onto the board; scan a window and every row on the
+ * board is re-read; choose `Remove them` and the stale row goes, named on the
+ * receipt and restorable from it. Nothing here is a mock of the UI — only the
+ * transport is simulated, which is exactly what the "demo is the real thing"
+ * contract asks for, and what lets the e2e suite execute the session-gated
+ * surfaces.
  *
  * Simulation semantics mirror the product's promises:
+ *   - the THREE runs are distinguishable, because on the live backend they are
+ *     three different scans: a cursored Sync reads a little and estimates
+ *     nothing, a keep-scan reads the whole window and removes nothing, a
+ *     rebuild reads the whole window and purges what it did not find. A
+ *     simulation that collapsed the first two would make the #474 control
+ *     untestable — see the transport's first branch;
  *   - a rebuild removes only the stale AUTO row (Fernworks) and only while the
  *     visitor has not corrected it by hand — "rows you corrected are kept";
  *   - every receipt count is derived from what the store actually did, never
@@ -377,13 +384,51 @@ export function DemoDashboard({
     () => ({
       mode: "simulated",
       async sync(body) {
+        // WINDOWEDNESS, not mode, is the first branch — and it has to be.
+        // Since #474 the dialog can send `mode: "additive"` WITH a `count`,
+        // which is the safe heal: a full re-read of the window that keeps rows
+        // it doesn't find. Branching on `mode === "rebuild"` alone dropped that
+        // request into the incremental path, so the new control behaved
+        // exactly like pressing Sync here and any e2e written against it would
+        // have asserted nothing at all. `count` is what the live backend reads
+        // to drop its history cursor (`_history_cursor_for`), so it is the
+        // right discriminator on both sides.
+        const windowed = typeof body.count === "number";
         const rebuild = body.mode === "rebuild";
-        // Long enough that the running state — and the rebuild's count-up
+        // Long enough that the running state — and the windowed run's count-up
         // clock — actually renders and can be asserted; short enough that a
         // visitor never waits meaningfully.
-        await delay(rebuild ? 2400 : 1200);
+        await delay(windowed ? 2400 : 1200);
         const s = store.current;
         const filed = s.pool;
+
+        if (windowed && !rebuild) {
+          // The keep-scan. It reads the same window a rebuild does — the deep
+          // count, Gmail's estimate — and re-judges every row it finds, but
+          // removes nothing: the stale row STAYS on the board and is reported
+          // as updated. That is the whole difference the disposition makes,
+          // and it is the one thing a visitor (or a spec) can see that tells
+          // this apart from both a plain Sync and a rebuild.
+          const nextApps = [...filed, ...s.apps];
+          commit({ ...s, apps: nextApps, pool: [] });
+          const partial = body.count === 100;
+          return {
+            ok: true,
+            status: 200,
+            body: {
+              created: filed.length,
+              // Every row already on the board was re-read and re-judged.
+              updated: s.apps.length,
+              scanned: partial ? PARTIAL_SCAN : REBUILD_SCAN,
+              purged: 0,
+              removed: [],
+              applications: nextApps.length,
+              needs_review: 0,
+              stopped_by: partial ? "target" : "complete",
+              result_size_estimate: ESTIMATE,
+            },
+          };
+        }
 
         if (rebuild) {
           // "Rows you corrected by hand are kept" — the stale row is removed
@@ -422,9 +467,10 @@ export function DemoDashboard({
           };
         }
 
-        // Additive: file the unsynced pool at the top of the board (newest
-        // first, like the live list) and never remove anything. Incremental
-        // scans never carry a size estimate, matching the live backend.
+        // Additive AND cursored — the plain `Sync` button. File the unsynced
+        // pool at the top of the board (newest first, like the live list) and
+        // never remove anything. Incremental scans never carry a size
+        // estimate, matching the live backend.
         commit({ ...s, apps: [...filed, ...s.apps], pool: [] });
         return {
           ok: true,
