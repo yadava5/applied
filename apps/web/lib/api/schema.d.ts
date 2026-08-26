@@ -1568,6 +1568,8 @@ export interface components {
             suggested_category?: string | null;
             /** Role */
             role?: string | null;
+            /** Hold Reason */
+            hold_reason?: string | null;
         };
         /**
          * ReviewQueueResponse

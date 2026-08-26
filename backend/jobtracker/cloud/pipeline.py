@@ -679,6 +679,71 @@ _EMPLOYER_ANCHORED = re.compile(
     r"(?:at|with|to|for|from|join)\s+)"
     r"(" + _COMPANY_CAPTURE + r")"
 )
+# "Thank you for your interest in <Company>" — the standard opening of an ATS
+# REJECTION, and the reason a real one sat in the review queue labelled "we
+# couldn't name the employer" while naming it (#512).
+#
+# It needs its own pattern because :data:`_EMPLOYER_ANCHORED` already lists this
+# very phrase as an anchor and then requires a SECOND preposition after it
+# (``at|with|to|for|from|join``). This phrase ends in its own preposition, so
+# there is never another one to find, and the anchor could not fire on the
+# shape it was added for. Measured, same sender, same employer:
+#
+#     "Thank you for applying to Verkada"            -> ('verkada', 'Verkada')
+#     "Thank you for your interest in Verkada, Ayush" -> None
+#
+# The capture stays case-sensitive, which is what keeps the far more common
+# "... interest in the <Role> position at <Company>" out: ``the`` is lowercase,
+# this pattern does not match at all, and the subject falls through to
+# _EMPLOYER_ANCHORED, which reads it correctly via "position at".
+#
+# IT DOES NOT ONLY ADD RESOLUTIONS, and an earlier version of this comment
+# claimed it did. Measured over 17,462 corpus cases: 48 change, all of them
+# DISPLAY-ONLY, none newly resolved and none lost, every token identical. Those
+# 48 already resolved through the SENDER DISPLAY NAME — step 3 of
+# `resolve_employer`, which does not run `_clean_company_display` — and the
+# subject path outranks it, so they now take the subject's cleaned form:
+#
+#     "Thank you for your interest in Granitethwaitevale Labs, Ayush"
+#         before ('granitethwaitevale', 'Granitethwaitevale Labs')
+#         after  ('granitethwaitevale', 'Granitethwaitevale')
+#
+# ``_CORP_TAIL`` strips "Labs"/"Systems"/"Group". That is pre-existing subject
+# path behaviour, not something this pattern introduced — "Thank you for
+# applying to Acme Labs" has always displayed "Acme" — so these 48 become
+# CONSISTENT with every other subject-resolved employer rather than newly
+# wrong. The token is unchanged, so nothing splits, no card is re-keyed and no
+# assertion in the suite moves: which is exactly why the false claim above
+# could sit here unchallenged, and why it is corrected rather than deleted.
+#
+# "Thanks for your interest", "Thank you so much for your interest" and a bare
+# "for your interest in" are all the same sentence with the same meaning; a
+# pattern that only knew the longest one would leave the same bug for the other
+# three. ``our``/``the``/``your`` are all company stopwords, so the possessive
+# variants ("interest in our team") cannot mint a company.
+#
+# THE THANK-YOU IS MANDATORY, and an earlier draft of this pattern made every
+# prefix group optional — which collapsed it to a bare "interest in <Capital>"
+# and matched the wrong population entirely:
+#
+#     "Jobs matching your interest in Machine Learning" -> ('machine', 'Machine Learning')
+#     "We noticed your interest in Data Science"        -> ('data', 'Data Science')
+#
+# `resolve_employer` gates `_qualifies_for_hard_row`, so those are not merely
+# wrong labels — they are CARDS ON THE BOARD for employers that do not exist,
+# minted out of job-alert mail, which is exactly the garbage the precision gate
+# is for. That is a worse defect than the one this pattern fixes.
+#
+# The two negative controls this shipped with ("interest in our team", "interest
+# in the position") did not catch it, and it is worth saying why: they passed on
+# `_COMPANY_STOPWORDS`, not on the pattern. A Title-Case noun phrase has no
+# stopword to catch it, so the controls were testing a different guard than the
+# one under test.
+_EMPLOYER_INTEREST_IN = re.compile(
+    r"(?i:\b(?:thanks|thank\s+you)(?:\s+so\s+much)?\s+for\s+"
+    r"(?:your\s+|the\s+)?interest\s+in\s+)"
+    r"(" + _COMPANY_CAPTURE + r")"
+)
 _EMPLOYER_ON_BEHALF = re.compile(
     r"(?i:on behalf of\s+)(" + _COMPANY_CAPTURE + r")"
 )
@@ -1831,7 +1896,12 @@ def _employer_from_subject(subject: str, ats_relay: bool = False) -> str | None:
       against a subject shape nothing has yet sent.
     """
 
-    patterns = (_EMPLOYER_ANCHORED, _EMPLOYER_ON_BEHALF, _EMPLOYER_BARE_AT)
+    patterns = (
+        _EMPLOYER_INTEREST_IN,
+        _EMPLOYER_ANCHORED,
+        _EMPLOYER_ON_BEHALF,
+        _EMPLOYER_BARE_AT,
+    )
     if ats_relay:
         patterns = (_EMPLOYER_AT_SIGN, *patterns)
 
@@ -1884,12 +1954,50 @@ def _names_the_relay(token: str, relay_brand: str) -> bool:
     first = token.split(" ")[0] if token else ""
     if not first:
         return True
-    if first in RELAY_DOMAINS:
+
+    # NO RELAY IDENTIFIED — the vocabulary is the only signal left, so use it.
+    if not relay_brand:
+        return first in RELAY_DOMAINS
+
+    # A RELAY IS KNOWN, so ask the precise question: is this token the name of
+    # THAT relay? The vocabulary test this replaced asked whether the token was
+    # the name of *any* relay, which is a different question and refuses a real
+    # employer whose name happens to be a platform's (#508).
+    #
+    # Handshake is both. It relays mail for other employers, and it hires. A
+    # rejection it sent through ASHBY named it in the sender display name,
+    # `_clean_sender_display_name` read "Handshake" correctly, and this function
+    # threw it away because "handshake" is in ``RELAY_DOMAINS`` — so a real
+    # rejection from a real company sat in the review queue as unattributable.
+    # `_employer_from_subject`'s docstring predicted exactly this and applied
+    # the reasoning to the wrong function.
+    # A SHORT relay name is refused whatever carried the message. The guard
+    # below makes containment safe for long tokens, but it leaves short
+    # vocabulary entries ("gem", "aol", "dice") reachable when a relay IS known
+    # and the prefix tests miss — so "Gem", a real recruiting CRM, resolved as
+    # an EMPLOYER through Ashby. Three letters is not enough signal to tell a
+    # company from a courier, and the population of employers whose whole name
+    # is a three-letter relay brand is smaller than the population of relay mail
+    # that names one.
+    if len(first) < 4 and first in RELAY_DOMAINS:
         return True
-    return bool(
-        relay_brand
-        and (relay_brand.startswith(first) or first.startswith(relay_brand))
-    )
+
+    if relay_brand.startswith(first) or first.startswith(relay_brand):
+        return True
+
+    # ...and the containment arm, which is not redundant with the two prefix
+    # tests above. A relay's domain brand is not always its brand name:
+    # ``joinhandshake.com`` yields ``joinhandshake``, and neither prefix test
+    # relates that to ``handshake``, so without this a Handshake-relayed
+    # message naming Handshake would now resolve — the exact garbage the
+    # precision gate exists to refuse, re-introduced by the fix for its
+    # opposite. That case is the control for this change.
+    #
+    # Length-guarded because containment is a weak test: a two- or three-letter
+    # employer token is a substring of far too many words to mean anything, and
+    # ``RELAY_DOMAINS`` holds short entries ("gem", "aol", "dice") that the
+    # prefix tests above already catch exactly.
+    return len(first) >= 4 and first in relay_brand
 
 
 def _employer_from_sender_name(
@@ -3050,6 +3158,109 @@ def references_an_application(subject: str, snippet: str) -> bool:
     """
 
     return bool(_APPLICATION_REFERENCE.search(f"{subject} {snippet}"))
+
+
+# --- WHY a message is in the review queue --------------------------------
+#
+# The queue has always shown a sentence explaining the hold. Until #507 that
+# sentence was not read from the decision — the web INFERRED it from the
+# confidence score alone, so every held row at/above the gate claimed "held
+# for a missing employer name". On the owner's own board that was wrong on
+# all three rows it appeared on: two named their employer in the subject and
+# were held because the employer had several applications and the mail named
+# no role, and the third named its employer in the sender display name and
+# was refused by the relay check (#508).
+#
+# These are the reasons the hold actually has. They are strings rather than an
+# Enum to match ``category`` and everything else this module hands across the
+# wire, and because a new member must be able to reach an old web build as a
+# string it can pass through rather than an import it cannot resolve.
+
+#: The classifier offered no category at all — genuinely "we cannot tell".
+HOLD_NO_PROPOSAL = "no_proposal"
+#: Under ``AUTO_FILE_GATE``: a real proposal, not strong enough to file alone.
+HOLD_BELOW_GATE = "below_gate"
+#: Under ``REVIEW_FLOOR`` and kept ONLY because a known ATS relayed it (#166).
+HOLD_ATS_FLOOR = "ats_floor"
+#: Clears the gate; no employer could be named. The ONLY "missing employer".
+HOLD_NO_EMPLOYER = "no_employer"
+#: Clears the gate, employer known, role unknown, and that employer holds
+#: several applications — so no single row can own it (#484).
+HOLD_WHICH_APPLICATION = "which_application"
+#: Clears the gate and none of the above fits. Deliberately not folded into a
+#: neighbour: an unexplained hold is a bug, and naming it is how it surfaces.
+HOLD_GATED_OTHER = "gated_other"
+
+HOLD_REASONS: frozenset[str] = frozenset(
+    {
+        HOLD_NO_PROPOSAL,
+        HOLD_BELOW_GATE,
+        HOLD_ATS_FLOOR,
+        HOLD_NO_EMPLOYER,
+        HOLD_WHICH_APPLICATION,
+        HOLD_GATED_OTHER,
+    }
+)
+
+
+def hold_reason(
+    *,
+    confidence: float | None,
+    subject: str,
+    sender_email: str,
+    sender_name: str | None = None,
+    snippet: str = "",
+    has_proposal: bool = True,
+    sibling_applications: int = 0,
+) -> str:
+    """Why this message is waiting for a human, as one of :data:`HOLD_REASONS`.
+
+    Derived from the SAME functions the sync used to hold it —
+    :func:`resolve_employer` and :func:`role_from_message` — rather than from a
+    parallel reading of the row. That is the whole point: a reason computed by
+    re-deriving the inputs can disagree with the decision it claims to explain,
+    and this repo has the scar from a twin that re-created what it should have
+    called.
+
+    ``sibling_applications`` is how many live applications the caller found at
+    this message's employer, and it is an ARGUMENT rather than a lookup because
+    this module does no I/O. Zero is the safe answer: it can only ever move a
+    row off :data:`HOLD_WHICH_APPLICATION`, never onto it, so a caller that
+    cannot count them degrades to a vaguer reason instead of a wrong one.
+
+    ``has_proposal`` is whether the classifier named a category at all. It is
+    NOT derivable from ``classified_as``: everything in this queue is stored as
+    ``needs_review``, which is the typed null, and the proposal lives in
+    ``suggested_category``.
+
+    PRECEDENCE IS THE MEANING. The gate splits the two questions the queue
+    asks. At or above it the classifier was confident and something else
+    stopped the filing, so the reason names that obstacle and the user's job is
+    to remove it. Below it the classifier itself was unsure, so the user's job
+    is to decide. Reading those in the wrong order tells a confident row that
+    its problem is confidence.
+    """
+
+    score = confidence if isinstance(confidence, (int, float)) else 0.0
+
+    if score >= AUTO_FILE_GATE:
+        if resolve_employer(sender_email, subject, sender_name) is None:
+            return HOLD_NO_EMPLOYER
+        # Role absent is only a REASON when it is also a problem. One
+        # application at this employer and the mail lands on it regardless
+        # (rule 3 of ``partition_applications``), so an unnameable role there
+        # holds nothing up and must not be reported as though it did.
+        if role_from_message(subject, snippet) is None and sibling_applications >= 2:
+            return HOLD_WHICH_APPLICATION
+        return HOLD_GATED_OTHER
+
+    if not has_proposal:
+        return HOLD_NO_PROPOSAL
+    # Below the review floor at all, a lifecycle verdict is dropped outright;
+    # reaching the queue from down here means the ATS floor caught it.
+    if score < REVIEW_FLOOR and is_ats_sender(sender_email):
+        return HOLD_ATS_FLOOR
+    return HOLD_BELOW_GATE
 
 
 def collect_review_items(

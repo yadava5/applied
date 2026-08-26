@@ -548,7 +548,10 @@ def _generate_code_verifier() -> str:
 
 
 def _sign_state(
-    user_id: uuid.UUID, code_verifier: str, return_origin: str | None = None
+    user_id: uuid.UUID,
+    code_verifier: str,
+    return_origin: str | None = None,
+    chained: bool = False,
 ) -> str:
     """Return an HS256-signed state binding the flow to ``user_id``.
 
@@ -586,11 +589,27 @@ def _sign_state(
     }
     if return_origin:
         payload["ro"] = return_origin
+    # ``ch`` — was this consent CHAINED off a sign-in rather than chosen in
+    # Settings (#510)? It has to survive the round trip to Google, and the state
+    # is the only thing that does, so it rides here beside ``ro`` and is read
+    # the same way.
+    #
+    # It selects between TWO SAME-ORIGIN PATHS this module spells out in full
+    # (`/dashboard` and `/settings`) and nothing else. It is never a URL, never
+    # forwarded to Google, and cannot influence ``return_origin``, which keeps
+    # its own mint-time validation against ``trusted_web_hosts``. A boolean that
+    # picks between two literals cannot widen the open-redirect surface.
+    #
+    # Written only when true, like ``ro``: an absent claim is the honest
+    # spelling of "this state predates the flag", and it reads as Settings,
+    # which is what every state minted before this change meant.
+    if chained:
+        payload["ch"] = True
     return jwt.encode(payload, settings.secret_encryption_key, algorithm="HS256")
 
 
-def _verify_state(token: str) -> tuple[uuid.UUID, str, str | None] | None:
-    """Return ``(user_id, code_verifier, return_origin)`` for a valid state.
+def _verify_state(token: str) -> tuple[uuid.UUID, str, str | None, bool] | None:
+    """Return ``(user_id, code_verifier, return_origin, chained)`` for a valid state.
 
     ``None`` for an invalid one. A state without a decryptable ``cv`` claim
     (forged, expired key, or minted by a pre-PKCE deploy) is treated as
@@ -629,7 +648,12 @@ def _verify_state(token: str) -> tuple[uuid.UUID, str, str | None] | None:
             if isinstance(claimed_origin, str)
             else None
         )
-        return user_id, code_verifier, return_origin
+        # ``ch`` is read with ``.get`` and compared to True rather than
+        # truth-tested, for the same reason ``ro`` is re-parsed rather than
+        # trusted: only a value this code could have written may reach the
+        # branch, whatever else got into the token.
+        chained = payload.get("ch") is True
+        return user_id, code_verifier, return_origin, chained
     except (
         jwt.InvalidTokenError,
         InvalidToken,
@@ -828,8 +852,10 @@ def _validated_return_origin(raw: str) -> str:
     return origin
 
 
-def _web_redirect(outcome: str, return_origin: str | None = None) -> RedirectResponse:
-    """Redirect the browser back to the web app's settings page.
+def _web_redirect(
+    outcome: str, return_origin: str | None = None, chained: bool = False
+) -> RedirectResponse:
+    """Redirect the browser back into the web app after a Gmail round trip.
 
     ``outcome`` is a coarse, non-sensitive status token (``connected`` /
     ``error``); no token or email ever rides in the URL.
@@ -851,7 +877,27 @@ def _web_redirect(outcome: str, return_origin: str | None = None) -> RedirectRes
     """
 
     base = return_origin or _web_app_base()
-    target = f"{base}/settings?gmail={urllib.parse.quote(outcome)}"
+    # WHERE A CHAINED CONSENT LANDS (#510).
+    #
+    # Every Gmail callback used to end on `/settings`, unconditionally. That is
+    # right for someone who pressed Connect there and wrong for someone who
+    # just signed up: #504 chains the consent straight off a first Google
+    # sign-in, so the very first screen of a brand-new account was a
+    # PREFERENCES PAGE, reached by a redirect they never asked for, reporting
+    # an outcome they experienced as "signing up". The report was, fairly,
+    # "that is very unprofessional".
+    #
+    # The dashboard is where the sign-in was going before the chain got
+    # involved, and it is also where the work is: a freshly connected account
+    # has no `last_sync_at`, `isStale` reads a missing stamp as stale, and
+    # `SyncBar`'s once-per-mount auto-sync fires on arrival. So landing there
+    # shows the first scan running rather than announcing a setting changed.
+    #
+    # The FAILURE path lands there too and keeps its flag. A chained user whose
+    # connect failed must not be dropped on a silent dashboard — the reason has
+    # to travel with them, and `/settings` is not where they were going.
+    page = "/dashboard" if chained else "/settings"
+    target = f"{base}{page}?gmail={urllib.parse.quote(outcome)}"
     return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
 
 
@@ -1104,6 +1150,16 @@ async def gmail_authorize(
             "JOBTRACKER_WEB_APP_URL."
         ),
     ),
+    chained: bool = Query(
+        default=False,
+        description=(
+            "True when this consent was chained straight off a Google sign-in "
+            "rather than chosen on the Settings page. It changes ONE thing: "
+            "which same-origin page the callback returns the browser to "
+            "(/dashboard rather than /settings). It is carried across the round "
+            "trip inside the signed state and is never forwarded to Google."
+        ),
+    ),
 ) -> GmailAuthorizeResponse:
     """Return the Google consent URL for the authenticated user.
 
@@ -1156,7 +1212,7 @@ async def gmail_authorize(
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
-        state=_sign_state(user_id, code_verifier, validated_origin),
+        state=_sign_state(user_id, code_verifier, validated_origin, chained),
     )
     return GmailAuthorizeResponse(authorization_url=authorization_url)
 
@@ -1196,9 +1252,12 @@ async def gmail_callback(
 
     verified = _verify_state(state)
     if verified is None:
+        # No readable state means no readable destination either: a forged or
+        # expired token cannot tell us whether this was chained, so this falls
+        # back to Settings exactly as it always did.
         logger.warning("Gmail callback rejected: invalid or expired state.")
         return _web_redirect("error")
-    user_id, code_verifier, return_origin = verified
+    user_id, code_verifier, return_origin, chained = verified
 
     try:
         stored = await _exchange_and_store(user_id, code, code_verifier)
@@ -1208,10 +1267,10 @@ async def gmail_callback(
             user_id,
             type(exc).__name__,
         )
-        return _web_redirect("error", return_origin)
+        return _web_redirect("error", return_origin, chained)
 
     logger.info("Gmail connected for user_id=%s (%s).", user_id, stored.email)
-    return _web_redirect("connected", return_origin)
+    return _web_redirect("connected", return_origin, chained)
 
 
 def _exchange_code(code: str, code_verifier: str) -> GmailCredentials:

@@ -143,6 +143,27 @@ export interface PipelineSummary {
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * The UTC calendar day of an instant, as `YYYY-MM-DD`.
+ *
+ * UTC on purpose, and it has to match the backend: `applied_date` is written
+ * from the mail's receipt time by a server that thinks in UTC, and the summary
+ * endpoint compares it against a UTC threshold. A local-zone reading here
+ * would put the twin and the signed-in board a day apart for anyone west of
+ * Greenwich for part of every day — the same class of defect as #438, where a
+ * UTC timestamp rendered in local time showed tomorrow's date.
+ *
+ * Built from `getUTC*` rather than `toISOString().slice(0, 10)` for the reason
+ * `sync-state.ts` documents about its own formatter: it states the frame it is
+ * working in instead of relying on a method whose zone is incidental.
+ */
+function utcDayKey(ms: number): string {
+  const d = new Date(ms);
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${month}-${day}`;
+}
+
+/**
  * Fold raw per-status counts into the display-stage summary. This is the
  * single implementation of stage semantics (which raw statuses roll into
  * which pipeline stage) — both the array path (`summarize`) and the
@@ -249,11 +270,36 @@ export function summarize(applications: Application[], now: number = Date.now())
   const statusCounts: Record<string, number> = {};
   let thisWeek = 0;
 
+  // THE WINDOW, on the date the user APPLIED — not the date we inserted the row.
+  //
+  // `created_at` is when the sync wrote the row, which is a fact about our
+  // batch and not about the user's week. Measured on the owner's board the day
+  // this changed: the header read "+47 this wk" for applications submitted
+  // across a fortnight, because one sync had just ingested them; 47 of the 47
+  // dated rows had an `applied_date` in a different calendar week from their
+  // `created_at`. Not one was counted correctly. The true answer was 7.
+  //
+  // Compared as CALENDAR DAYS, not instants. `applied_date` is a `YYYY-MM-DD`
+  // day with no time in it, so there is no instant to compare — giving it one
+  // means inventing a time of day, which is exactly what `parseInstant`
+  // refuses to do for this shape. Lexicographic order on a zero-padded ISO day
+  // IS chronological order, so the string comparison is the date comparison.
+  //
+  // A row with NO `applied_date` counts toward NOTHING, and that is deliberate
+  // rather than an oversight. Falling back to `created_at` would reintroduce
+  // the whole bug for precisely the rows whose date we do not know, and do it
+  // invisibly. On the live board every such row is a seeded demo row and every
+  // row that came from real mail carries a date, so this excludes nothing real
+  // — and if that ever stops being true, an undated row is still not evidence
+  // about any particular week.
+  const cutoff = utcDayKey(now - WEEK_MS);
+  const today = utcDayKey(now);
+
   for (const app of applications) {
     statusCounts[app.status] = (statusCounts[app.status] ?? 0) + 1;
 
-    const filed = Date.parse(app.created_at);
-    if (!Number.isNaN(filed) && now - filed >= 0 && now - filed <= WEEK_MS) thisWeek += 1;
+    const applied = typeof app.applied_date === "string" ? app.applied_date.slice(0, 10) : "";
+    if (applied.length === 10 && applied >= cutoff && applied <= today) thisWeek += 1;
   }
 
   return summarizeCounts(statusCounts, applications.length, thisWeek);

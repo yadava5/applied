@@ -14,6 +14,7 @@ import type { NotificationPrefs } from "@/components/settings/NotificationsSecti
 import { todayISO } from "@/lib/dashboard/age";
 import {
   buildSubtitle,
+  emptySubtitle,
   reviewSlotFor,
   type ReviewSlot,
 } from "@/lib/dashboard/boardPrefs";
@@ -478,7 +479,23 @@ export function DemoDashboard({
   // The signed-in page's own builder, not a copy of its format string — the
   // twin used to hand-roll this line WITHOUT the `weekly` fold, so the one
   // pref that is visible on a quiet board rendered on no testable surface.
-  const subtitle = buildSubtitle(summary, notifications.weekly);
+  // The EMPTY board says something different, and the twin has to say it the
+  // same way. Calling `buildSubtitle` here regardless of `empty` is what made
+  // `?empty=1` render "17 filed · 14 open · 0 offers" above "nothing filed
+  // yet" — the fixture zeroes the BODY and never zeroed the header, in the one
+  // harness state whose whole purpose is to model an empty board (and which
+  // the viewport-lock specs measure).
+  //
+  // `disconnected` matches `EMPTY_RAIL`'s `connected: false` in `DemoShell`,
+  // so the header, the rail and the body all describe one account rather than
+  // three.
+  const subtitle = empty
+    ? emptySubtitle({
+        gmailState: "disconnected",
+        scanCompleted: false,
+        needsReview,
+      })
+    : buildSubtitle(summary, notifications.weekly);
   /** The harness knob wins where it is set; otherwise the preference does. */
   const slot = reviewSlot ?? reviewSlotFor(notifications);
 

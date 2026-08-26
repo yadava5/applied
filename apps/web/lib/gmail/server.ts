@@ -74,7 +74,9 @@ export type GmailFailure =
   /** Any other non-2xx or a network error — treat as transient. */
   | { kind: "backend"; message: string; status?: number };
 
-export type GmailStatusResult = { kind: "ok"; status: GmailStatus } | GmailFailure;
+export type GmailStatusResult =
+  | { kind: "ok"; status: GmailStatus }
+  | GmailFailure;
 
 /**
  * One fetched page of the classified inbox, or a labelled failure.
@@ -207,15 +209,27 @@ export async function getGmailStatus(
  */
 export async function getGmailAuthorizeUrl(
   returnOrigin?: string,
+  /**
+   * True when this consent is chained straight off a Google sign-in rather
+   * than chosen on Settings (#510). It travels to the backend, which signs it
+   * into the OAuth state so the callback knows where to return the browser —
+   * `/dashboard` for a chained connect, `/settings` for a deliberate one.
+   *
+   * A boolean, and deliberately not a path: the destination is chosen from two
+   * literals inside the backend, so nothing a caller sends can name a place to
+   * redirect to.
+   */
+  chained = false,
 ): Promise<GmailAuthorizeResult> {
   const token = await sessionToken();
   if (!token) return { kind: "unauthenticated" };
 
   try {
     const { BACKEND_API_URL } = serverEnv();
-    const query = returnOrigin
-      ? `?return_origin=${encodeURIComponent(returnOrigin)}`
-      : "";
+    const params = new URLSearchParams();
+    if (returnOrigin) params.set("return_origin", returnOrigin);
+    if (chained) params.set("chained", "true");
+    const query = params.size > 0 ? `?${params}` : "";
     const res = await fetch(`${BACKEND_API_URL}/auth/gmail/authorize${query}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       cache: "no-store",
@@ -228,7 +242,10 @@ export async function getGmailAuthorizeUrl(
     if (!res.ok) return classifyBadResponse(res.status);
     const data = (await res.json()) as { authorization_url?: string };
     if (!data.authorization_url) {
-      return { kind: "backend", message: "Backend returned no authorization URL" };
+      return {
+        kind: "backend",
+        message: "Backend returned no authorization URL",
+      };
     }
     return { kind: "ok", url: data.authorization_url };
   } catch (err) {
@@ -263,7 +280,9 @@ export async function disconnectGmail(): Promise<boolean> {
  * chosen count or `next_page_token` is null. The JWT and `BACKEND_API_URL`
  * never leave the server.
  */
-export async function fetchGmailInboxPage(search: string): Promise<GmailInboxPageResult> {
+export async function fetchGmailInboxPage(
+  search: string,
+): Promise<GmailInboxPageResult> {
   const token = await sessionToken();
   if (!token) return { kind: "unauthenticated" };
 
@@ -288,7 +307,9 @@ export async function fetchGmailInboxPage(search: string): Promise<GmailInboxPag
  * Pure aggregation on the backend over data the client already holds; no Gmail
  * call. `items` is passed straight through (the backend bounds its size).
  */
-export async function analyzeGmailPipeline(items: unknown): Promise<GmailPipelineResult> {
+export async function analyzeGmailPipeline(
+  items: unknown,
+): Promise<GmailPipelineResult> {
   const token = await sessionToken();
   if (!token) return { kind: "unauthenticated" };
 
@@ -318,7 +339,9 @@ export async function analyzeGmailPipeline(items: unknown): Promise<GmailPipelin
  * a bounded recent page itself). Idempotent upsert on the backend; the JWT and
  * BACKEND_API_URL never leave the server.
  */
-export async function syncGmailPipeline(body: unknown): Promise<GmailSyncResult> {
+export async function syncGmailPipeline(
+  body: unknown,
+): Promise<GmailSyncResult> {
   const token = await sessionToken();
   if (!token) return { kind: "unauthenticated" };
 

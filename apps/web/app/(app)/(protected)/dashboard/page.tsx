@@ -23,7 +23,12 @@ import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
 // `lib/dashboard/boardPrefs.ts` — a Server Component page cannot be imported
 // by `node --test`, so nothing about them was assertable while they sat in
 // this file (#216).
-import { buildSubtitle, reviewSlotFor } from "@/lib/dashboard/boardPrefs";
+import { GmailNotice } from "@/components/gmail/GmailNotice";
+import {
+  buildSubtitle,
+  emptySubtitle,
+  reviewSlotFor,
+} from "@/lib/dashboard/boardPrefs";
 import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
 import { toChangeRow } from "@/lib/dashboard/lastLookStore";
 import {
@@ -172,7 +177,21 @@ async function loadDashboard(): Promise<LoadState> {
   }
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  /**
+   * `?gmail=` — the outcome of a Gmail connect round trip.
+   *
+   * The dashboard did not read this until #510, because every Gmail callback
+   * used to return to Settings. A consent CHAINED off a first Google sign-in
+   * now lands here instead, which means this page became a place where a
+   * connect can succeed or fail — and a failure that says nothing is worse
+   * than the Settings page it replaced.
+   */
+  searchParams: Promise<{ gmail?: string }>;
+}) {
+  const { gmail: gmailFlag } = await searchParams;
   /**
    * Started here, awaited below — the queue used to be fetched only AFTER the
    * three calls below had all resolved, because the `needsReview > 0` gate it
@@ -343,21 +362,15 @@ export default async function DashboardPage() {
     // holding low-confidence lifecycle mail for review. Deliberately NOT gated
     // on `connected` — that gate is the defect described above.
     const reviewItems = state.needsReview > 0 ? await reviewQueue : [];
-    const reviewNote =
-      state.needsReview > 0
-        ? ` · ${state.needsReview} ${state.needsReview === 1 ? "needs" : "need"} review`
-        : "";
-
-    const subtitle =
-      gmailState === "connected"
-        ? `connected · ${
-            scanCompleted
-              ? "no applications detected yet"
-              : "no applications filed yet"
-          }${reviewNote}`
-        : gmailState === "unknown"
-          ? `0 filed · mail connection unknown${reviewNote}`
-          : `0 filed · nothing tracked yet${reviewNote}`;
+    // Built by the shared helper, not inline: the demo twin could not see this
+    // when it lived here and fell back to the POPULATED builder, so
+    // `?empty=1` rendered "17 filed · 14 open · 0 offers" above "nothing filed
+    // yet". One definition, and the twin now mounts the same one.
+    const subtitle = emptySubtitle({
+      gmailState,
+      scanCompleted,
+      needsReview: state.needsReview,
+    });
 
     return (
       // THE LOCK BELONGS HERE MOST OF ALL. This is the first screen of every
@@ -375,6 +388,13 @@ export default async function DashboardPage() {
         >
           <AddApplicationForm compact />
         </SyncBar>
+
+        {/* THE BRANCH THAT MATTERS for the chained consent (#510): a user who
+            has just signed up and connected their mailbox has nothing filed
+            yet, so this is the state they actually land in. Above
+            `EmptyBoardBody` and therefore outside its scroll region, so the
+            outcome is the first thing read and cannot be scrolled past. */}
+        <GmailNotice flag={gmailFlag} />
 
         <EmptyBoardBody
           gmailState={gmailState}
@@ -450,6 +470,13 @@ export default async function DashboardPage() {
       >
         <AddApplicationForm compact />
       </SyncBar>
+
+      {/* Renders ONLY when a `?gmail=` flag is present, which on this route
+          means a consent was chained off a sign-in (#510). It sits under the
+          sync row rather than inside the board's scroll region so a failure
+          cannot be scrolled past unseen, and it costs the board a few fixed
+          pixels only on the one navigation that carries the flag. */}
+      <GmailNotice flag={gmailFlag} />
 
       {/* The board owns the rest of the pane. Its stage lens + search live in
           the shell's rail (portaled by the board itself — state stays with

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { DeadlineTag, FiledStamp, SameCompanyChip } from "@/components/dashboard/CardMeta";
+import { notifySuccess } from "@/components/feedback/notify";
 import { RowActionsMenu, type RowMenuItem } from "@/components/dashboard/RowActionsMenu";
 import { cardQualifier } from "@/lib/dashboard/board";
 import { todayISO } from "@/lib/dashboard/age";
@@ -336,9 +337,18 @@ export function ApplicationRow({
       if (result.status && result.status !== next) {
         setOptimistic({ from: app.status, to: result.status });
       }
+      // Success is otherwise silent — on the list view the row stays put and
+      // only the select's face changes. The key is deliberately target-free
+      // (#511): a triage burst across rows merges into ONE toast reading
+      // "N applications updated" instead of stacking one per row. Failure
+      // stays out of the toaster on purpose — this row already owns an
+      // inline `role="alert"` for it, and a toast would say it twice.
+      notifySuccess("application.status", `${app.company} updated`, {
+        countMessage: (n) => `${n} applications updated`,
+      });
       router.refresh();
     },
-    [app.id, app.status, optimisticTo, router, transport],
+    [app.company, app.id, app.status, optimisticTo, router, transport],
   );
 
   const commitRemoval = useCallback(async () => {

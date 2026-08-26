@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Download, Upload } from "lucide-react";
 
 import { SettingsSection } from "./SettingsSection";
+import { notifySuccess } from "@/components/feedback/notify";
 import { secondaryBtnClass } from "@/components/ui/formStyles";
 import { buildExportFile } from "@/lib/applications/export";
 import { localTodayISO } from "@/lib/dashboard/age";
@@ -64,6 +65,12 @@ export function DataSection({ mode = "live" }: { mode?: SettingsMode }) {
     a.remove();
     URL.revokeObjectURL(url);
     setState("idle");
+    // The one acknowledgement the flow gets from the APP (#511): the button
+    // face reverting to idle is indistinguishable from nothing having
+    // happened, and the download strip is browser chrome, not this page.
+    // Failure keeps its inline `role="alert"` below — closer to the control,
+    // and already reporting itself, so it must not also toast.
+    notifySuccess("data.export", "Export ready — check your downloads");
   }
 
   return (
