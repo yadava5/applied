@@ -1799,6 +1799,7 @@ async def _classify_messages(
     classifier: Any,
     pipeline: Any,
     bodies: dict[str, str] | None = None,
+    account_email: str | None = None,
 ) -> list[Any]:
     """Run each fetched message through the classifier into a PipelineItem.
 
@@ -1851,8 +1852,29 @@ async def _classify_messages(
     """
 
     bodies = bodies or {}
+    owner = (account_email or "").strip().lower()
     items: list[Any] = []
     for msg in messages:
+        # A MESSAGE THE USER SENT IS NOT AN UPDATE ABOUT THEM.
+        #
+        # This is the guard that actually closes the hole, and it lives here
+        # because here is where BOTH scan paths converge. The query-side
+        # ``-in:sent`` in ``build_gmail_query`` only reaches the full scan; the
+        # incremental path reads ``users.history.list``, which takes no query
+        # and reports every change in the mailbox — including the user's own
+        # replies the moment they send one.
+        #
+        # Structural, not textual, and it has to be: the four rows that
+        # exposed this were job-search outreach the owner wrote himself, and
+        # the classifier scored them ``applied`` at 0.9 on text that genuinely
+        # reads like an application. No amount of pattern work fixes that,
+        # because the text is not the thing that is wrong about them.
+        #
+        # Skipped silently rather than classified-and-dropped: an item that
+        # never enters the pipeline cannot be persisted, counted, queued for
+        # review, or fed to ``training_data`` as an example of anything.
+        if owner and (msg.sender_email or "").strip().lower() == owner:
+            continue
         text = bodies.get(msg.message_id) or msg.snippet
         result = await classifier.classify(msg.subject, text, msg.sender_email)
         items.append(
@@ -1900,6 +1922,7 @@ async def _full_scan(
     target: int,
     classifier: Any,
     pipeline: Any,
+    account_email: str | None = None,
     deadline: float | None = None,
 ) -> _ScanRead:
     """Re-list a STABLE, deep-enough slice of the window (the fallback path).
@@ -1965,7 +1988,9 @@ async def _full_scan(
             stopped_by = STOPPED_DISCONNECTED
             break
         items.extend(
-            await _classify_messages(page.messages, classifier, pipeline, page.bodies)
+            await _classify_messages(
+                page.messages, classifier, pipeline, page.bodies, account_email
+            )
         )
         scanned += len(page.messages)
         unreadable += page.unreadable
@@ -2011,6 +2036,7 @@ async def _incremental_scan(
     mail_scope: str,
     classifier: Any,
     pipeline: Any,
+    account_email: str | None = None,
 ) -> _ScanRead | None:
     """Read only what Gmail says changed since ``start_history_id``.
 
@@ -2036,7 +2062,9 @@ async def _incremental_scan(
     )
     if page is None or not page.usable:
         return None
-    items = await _classify_messages(page.messages, classifier, pipeline, page.bodies)
+    items = await _classify_messages(
+        page.messages, classifier, pipeline, page.bodies, account_email
+    )
     return _ScanRead(
         items=items,
         scanned=len(page.messages),
@@ -2140,6 +2168,7 @@ async def _scan_server_side(
             mail_scope=mail_scope,
             classifier=classifier,
             pipeline=pipeline,
+            account_email=account_email,
         )
         if incremental is not None:
             return _ScanOutcome(
@@ -2162,6 +2191,7 @@ async def _scan_server_side(
         target=target,
         classifier=classifier,
         pipeline=pipeline,
+        account_email=account_email,
     )
     return _ScanOutcome(
         items=read.items,

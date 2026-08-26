@@ -31,8 +31,21 @@ def test_build_query_inbox_with_range() -> None:
 
 
 def test_build_query_anywhere_all_time() -> None:
-    assert build_gmail_query(None, "anywhere") == "in:anywhere"
-    assert build_gmail_query(0, "anywhere") == "in:anywhere"
+    """`anywhere` carries `-in:sent`, and this expectation changed on purpose.
+
+    `in:anywhere` means anywhere, and Gmail counts the user's own Sent mail as
+    anywhere. The first windowed additive scan against a real mailbox put four
+    of the owner's own outreach messages into the review queue, scored
+    `applied` at 0.9 on text that genuinely reads like an application.
+
+    The age bound still composes on the end, so the ordering is asserted too —
+    Gmail's grammar is space-separated AND terms, but a reader diffing query
+    logs should see a stable string rather than a set.
+    """
+
+    assert build_gmail_query(None, "anywhere") == "in:anywhere -in:sent"
+    assert build_gmail_query(0, "anywhere") == "in:anywhere -in:sent"
+    assert build_gmail_query(12, "anywhere") == "in:anywhere -in:sent newer_than:12m"
 
 
 def test_build_query_inbox_all_time_is_bare_inbox() -> None:

@@ -337,7 +337,26 @@ def build_gmail_query(
     base scope with the optional age term.
     """
 
-    base = "in:anywhere" if scope == "anywhere" else "in:inbox"
+    # ``in:anywhere`` MEANS ANYWHERE, AND THAT INCLUDES THE USER'S SENT MAIL.
+    #
+    # Measured on the owner's own mailbox the first time a windowed additive
+    # scan ran against it: four of the five new review-queue rows were messages
+    # HE had sent — outreach whose subject lines read "…applied for the Member
+    # of Technical Staff role" and "Applied to the <ROLE> role, and a Miami CS
+    # note". The classifier scored them ``applied`` at 0.9, which is a fair
+    # reading of that text and completely wrong about the message: a thing the
+    # user WROTE is never an inbound update about their own application.
+    #
+    # The guard has to be structural rather than textual, because the text is
+    # genuinely application-shaped. This is the cheap half — do not fetch them
+    # at all, so the scan's message budget is spent on real mail. The half that
+    # actually closes the hole is ``_classify_messages``' own owner check: the
+    # incremental path reads ``users.history.list``, which takes no query and
+    # therefore never sees this term.
+    #
+    # Only ``anywhere`` needs it. ``in:inbox`` cannot contain sent mail, so the
+    # inbox query is left byte-identical rather than gaining a no-op term.
+    base = "in:anywhere -in:sent" if scope == "anywhere" else "in:inbox"
     if range_months and range_months > 0:
         return f"{base} newer_than:{int(range_months)}m"
     return base

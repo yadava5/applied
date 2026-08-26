@@ -910,7 +910,15 @@ async def test_inbox_forwards_filters_to_query_and_pagination(
     )
     assert resp.status_code == 200, resp.text
     # range + scope compose the Gmail search; count clamps this page's size.
-    assert captured["query"] == "in:anywhere newer_than:6m"
+    #
+    # `-in:sent` rides along on `anywhere`, and this surface wants it for the
+    # same reason the scan does. The endpoint's own contract says `anywhere`
+    # exists "so filed-away interview & offer emails are found" — INBOUND mail.
+    # The workbench is where a human files mail by hand, so showing them their
+    # own outreach here would just move the defect from the classifier to the
+    # user: the four rows that exposed this were his own sent messages, and
+    # they read like applications to a person too.
+    assert captured["query"] == "in:anywhere -in:sent newer_than:6m"
     assert captured["page_token"] == "ABC"
     assert captured["page_size"] == 200
 
@@ -918,7 +926,7 @@ async def test_inbox_forwards_filters_to_query_and_pagination(
     assert body["scope"] == "anywhere"
     assert body["range_months"] == 6
     assert body["next_page_token"] == "TOK2"
-    assert body["query"] == "in:anywhere newer_than:6m"
+    assert body["query"] == "in:anywhere -in:sent newer_than:6m"
 
 
 async def test_inbox_reports_unreadable_messages_and_the_size_estimate(
