@@ -66,7 +66,7 @@ export const LAST_LOOK_KEY = "applied:lastlook";
 /**
  * The /demo twin keeps its own marker, so a signed-in owner who visits the
  * demo never has fixture changes reported back as their own board's — the
- * same separation `REBUILD_MEMORY_DEMO_KEY` makes for rebuild memory.
+ * same separation `WINDOWED_MEMORY_DEMO_KEY` makes for windowed-scan memory.
  */
 export const LAST_LOOK_DEMO_KEY = "applied:lastlook:demo";
 

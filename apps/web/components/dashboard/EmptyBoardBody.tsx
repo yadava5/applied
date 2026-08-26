@@ -3,7 +3,7 @@ import {
   DashboardEmptyState,
   ForwardRoutes,
 } from "@/components/dashboard/DashboardEmptyState";
-import { RebuildWindowButton } from "@/components/dashboard/SyncBar";
+import { ScanWindowButton } from "@/components/dashboard/SyncBar";
 import { LOCKED_BODY_CLASS } from "@/components/shell/geometry";
 import { cn } from "@/lib/utils";
 
@@ -127,7 +127,7 @@ export function EmptyBoardBody({
                 rebuild is a Gmail action, and on an unknown status it would be
                 a control whose precondition we have just said out loud we
                 could not read. */}
-            {gmailState === "connected" ? <RebuildWindowButton /> : null}
+            {gmailState === "connected" ? <ScanWindowButton /> : null}
             <AddApplicationForm align="start" mode={mode} />
           </div>
           <div className="mt-6">

@@ -1,15 +1,24 @@
 /**
  * Unit tests for the pure half of the sync surface (`lib/gmail/sync-plan.ts`):
- * what a rebuild request says, what the running line and receipt read, and
- * what the dialog remembers.
+ * what a windowed scan request says, what the running line and receipt read,
+ * and what the dialog remembers.
  *
- * Two honesty rules are load-bearing enough to assert directly:
+ * Three honesty rules are load-bearing enough to assert directly:
  *
- *   1. A rebuild body NEVER carries `scope`. The backend forces
- *      `scope="anywhere"` on every rebuild (an inbox-scoped rebuild once
- *      deleted two real applications whose confirmations were archived);
- *      sending one would suggest the caller had a say it does not have.
- *   2. Nothing here produces a percentage. The server sync returns once, at
+ *   1. The two dispositions send OPPOSITE `scope`, and each must. A rebuild
+ *      body never carries one — the backend forces `scope="anywhere"` on every
+ *      rebuild (an inbox-scoped rebuild once deleted two real applications
+ *      whose confirmations were archived), so sending one would suggest the
+ *      caller had a say it does not have. A keep-scan body MUST carry
+ *      `scope: "anywhere"` — the backend's `_parse_scope` defaults to
+ *      `in:inbox` for every non-rebuild mode, so without it the heal reads the
+ *      inbox only and reports a clean receipt over mail it never opened. The
+ *      two are asserted as a PAIR on purpose: either one alone is an assertion
+ *      that would happily defend the other's bug.
+ *   2. A windowed body always carries `count`. That is what drops the Gmail
+ *      history cursor server-side (`_history_cursor_for`); without it an
+ *      additive body is just the `Sync` button and heals nothing (#474).
+ *   3. Nothing here produces a percentage. The server sync returns once, at
  *      the end — the elapsed clock and the stated scope are the only honest
  *      progress the UI can show, and the receipt renders only fields the
  *      response actually carried.
@@ -20,18 +29,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  REBUILD_DEFAULT_DEPTH,
-  REBUILD_DEFAULT_RANGE,
-  REBUILD_DEPTH_OPTIONS,
+  SCAN_DEFAULT_DEPTH,
+  SCAN_DEFAULT_DISPOSITION,
+  SCAN_DEFAULT_RANGE,
+  SCAN_DEPTH_OPTIONS,
   formatCount,
   formatElapsed,
-  parseRebuildMemory,
-  readRebuildOutcome,
+  parseScanMemory,
+  readScanOutcome,
   readScanEnd,
-  rebuildConfirmLabel,
-  rebuildMemoryLine,
-  rebuildRequestBody,
-  rebuildScopeLine,
+  scanConfirmLabel,
+  scanDispositionNote,
+  windowedMemoryLine,
+  scanRequestBody,
+  scanScopeLine,
   receiptBodyLine,
   scanProgressLine,
   stopKind,
@@ -45,32 +56,85 @@ import {
   syncReceiptNote,
   syncRunningSentence,
   syncScopeLine,
+  windowedOpName,
+  windowedRunningWord,
 } from "../../lib/gmail/sync-plan.ts";
 
-test("the default rebuild reproduces the old hardwired button exactly", () => {
+test("the dialog's defaults are the safe ones, and the window is unchanged", () => {
   // 12 months / 750 messages was the ReSyncButton's fixed behaviour; making
-  // the rebuild configurable must not change what the default press does.
-  assert.equal(REBUILD_DEFAULT_RANGE, "12");
-  assert.equal(REBUILD_DEFAULT_DEPTH, 750);
-  assert.ok(REBUILD_DEPTH_OPTIONS.includes(750));
-  assert.deepEqual(rebuildRequestBody(REBUILD_DEFAULT_DEPTH, REBUILD_DEFAULT_RANGE), {
+  // the scan configurable must not change what a default press reads.
+  assert.equal(SCAN_DEFAULT_RANGE, "12");
+  assert.equal(SCAN_DEFAULT_DEPTH, 750);
+  assert.ok(SCAN_DEPTH_OPTIONS.includes(750));
+  // What DID change, and is the point of #474: the default press no longer
+  // purges. `keep` must be the resting disposition — a default of "remove"
+  // here is the destructive default this work exists to delete.
+  assert.equal(SCAN_DEFAULT_DISPOSITION, "keep");
+  assert.deepEqual(
+    scanRequestBody(SCAN_DEFAULT_DEPTH, SCAN_DEFAULT_RANGE, SCAN_DEFAULT_DISPOSITION),
+    { mode: "additive", count: 750, range: "12", scope: "anywhere" },
+  );
+});
+
+test("the destructive disposition sends the rebuild mode, and no scope", () => {
+  assert.deepEqual(scanRequestBody(750, "12", "remove"), {
     mode: "rebuild",
     count: 750,
     range: "12",
   });
+  assert.deepEqual(scanRequestBody(2000, "all", "remove"), {
+    mode: "rebuild",
+    count: 2000,
+    range: "all",
+  });
 });
 
-test("a rebuild body never carries scope, and all-time omits range", () => {
-  for (const [depth, range] of [
-    [100, "3"],
-    [2000, "all"],
-    [750, "12"],
-  ]) {
-    const body = rebuildRequestBody(depth, range);
-    assert.equal("scope" in body, false, `scope must not be sent (${range})`);
-    assert.equal(body.mode, "rebuild");
+test("all-time sends range='all' — on THIS endpoint, omitting it means 12 months", () => {
+  // `POST /gmail/sync` is not the inbox mine. `_scan_server_side` reads
+  // `_SYNC_DEFAULT_RANGE_MONTHS if payload.range is None`, so a body with no
+  // `range` is a 12-month scan; only the literal "all" comes back unbounded.
+  // The builder used to omit it "mirroring buildInboxParams" (which reads the
+  // OTHER endpoint's rule), so "Rebuild from all time" scanned 12 months and
+  // said otherwise — and the heal could not reach a rejection older than a
+  // year. Every body carries `range`.
+  for (const disposition of ["keep", "remove"]) {
+    for (const range of ["3", "6", "9", "12", "all"]) {
+      assert.equal(
+        scanRequestBody(750, range, disposition).range,
+        range,
+        `range must be sent verbatim (${disposition}/${range})`,
+      );
+    }
   }
-  assert.deepEqual(rebuildRequestBody(2000, "all"), { mode: "rebuild", count: 2000 });
+});
+
+test("scope is opposite on the two paths, and each way round is required", () => {
+  // Paired assertions: rebuild must NOT claim a scope the server forces, and
+  // additive MUST claim the one the server would otherwise default to
+  // `in:inbox`. Asserting either alone would defend the other's bug.
+  for (const range of ["3", "12", "all"]) {
+    const rebuild = scanRequestBody(750, range, "remove");
+    assert.equal("scope" in rebuild, false, `rebuild must not send scope (${range})`);
+
+    const keep = scanRequestBody(750, range, "keep");
+    assert.equal(keep.scope, "anywhere", `keep-scan must send scope=anywhere (${range})`);
+  }
+});
+
+test("a windowed body always carries count, so the history cursor is dropped", () => {
+  // The one mistake that produces a run which looks like it worked: an
+  // additive body with no explicit window resumes from the Gmail cursor,
+  // re-reads nothing already stored, and reports a clean receipt.
+  for (const disposition of ["keep", "remove"]) {
+    for (const [depth, range] of [
+      [100, "3"],
+      [2000, "all"],
+      [750, "12"],
+    ]) {
+      const body = scanRequestBody(depth, range, disposition);
+      assert.equal(body.count, depth, `count must be sent (${disposition}/${range})`);
+    }
+  }
 });
 
 test("the elapsed clock formats m:ss and never shows a negative tick", () => {
@@ -90,18 +154,50 @@ test("counts group deterministically without consulting a locale", () => {
   assert.equal(formatCount(1234567), "1,234,567");
 });
 
-test("the running line states exactly what was chosen, plus the forced scope", () => {
-  assert.equal(rebuildScopeLine(750, "12"), "up to 750 messages · last 12 months · all mail");
-  assert.equal(rebuildScopeLine(2000, "all"), "up to 2,000 messages · all time · all mail");
+test("the running line states exactly what was chosen, plus the stated scope", () => {
+  assert.equal(scanScopeLine(750, "12"), "up to 750 messages · last 12 months · all mail");
+  assert.equal(scanScopeLine(2000, "all"), "up to 2,000 messages · all time · all mail");
 });
 
-test("the confirm button names the window it commits", () => {
-  assert.equal(rebuildConfirmLabel("12"), "Rebuild from the last 12 months");
-  assert.equal(rebuildConfirmLabel("all"), "Rebuild from all time");
+test("the confirm button names the window AND the act it commits", () => {
+  assert.equal(scanConfirmLabel("12", "remove"), "Rebuild from the last 12 months");
+  assert.equal(scanConfirmLabel("all", "remove"), "Rebuild from all time");
+  assert.equal(scanConfirmLabel("12", "keep"), "Scan the last 12 months");
+  assert.equal(scanConfirmLabel("all", "keep"), "Scan all time");
+});
+
+test("the name on the button is the name on the receipt", () => {
+  // An action keeps its name through the flow: press "Scan the last 12
+  // months" and the receipt says "scan finished", never "rebuild finished" —
+  // which would name the owner a purge they explicitly declined.
+  for (const [disposition, verb, noun] of [
+    ["keep", "scanning", "scan"],
+    ["remove", "rebuilding", "rebuild"],
+  ]) {
+    assert.ok(scanConfirmLabel("12", disposition).toLowerCase().startsWith(noun));
+    assert.equal(windowedRunningWord(disposition), verb);
+    assert.equal(windowedOpName(disposition), noun);
+  }
+});
+
+test("each disposition's note is about the rows the scan does not find", () => {
+  const keep = scanDispositionNote("keep");
+  const remove = scanDispositionNote("remove");
+  assert.notEqual(keep, remove);
+  // The keep note may not promise that nothing is ever removed: a row whose
+  // last email turns out to belong to another employer is retired on this
+  // path too, and the receipt says so. It promises only what the control
+  // decides — absence from the window.
+  assert.match(keep, /stay on the board/);
+  assert.equal(/never removes|removes nothing|nothing is removed\.?$/.test(keep), false);
+  // The destructive note has to say the removal AND the way back, in the same
+  // breath: an auditable purge is the only kind this surface performs.
+  assert.match(remove, /taken off the board/);
+  assert.match(remove, /restored/);
 });
 
 test("the receipt reads only what the response said, and drops malformed rows", () => {
-  const outcome = readRebuildOutcome({
+  const outcome = readScanOutcome({
     created: 41,
     updated: 2,
     scanned: 512,
@@ -133,7 +229,7 @@ test("the receipt reads only what the response said, and drops malformed rows", 
   assert.equal(receiptBodyLine(outcome), "41 filed · 2 updated · 512 scanned");
 
   // A body that says nothing renders as nothing having happened — never NaN.
-  const empty = readRebuildOutcome("<html>502</html>");
+  const empty = readScanOutcome("<html>502</html>");
   assert.deepEqual(empty, {
     created: 0,
     updated: 0,
@@ -322,7 +418,7 @@ test("readScanEnd reads the end-state facts defensively", () => {
 });
 
 test("a rebuild that changed nothing says so outright", () => {
-  const outcome = readRebuildOutcome({ created: 0, updated: 0, scanned: 512, purged: 0 });
+  const outcome = readScanOutcome({ created: 0, updated: 0, scanned: 512, purged: 0 });
   assert.equal(
     receiptBodyLine(outcome),
     "nothing changed · 512 scanned · every filed application matched",
@@ -344,7 +440,7 @@ test("a rebuild that changed nothing says so outright", () => {
  * that run.
  */
 test("a sync that discarded application mail may not claim everything matched", () => {
-  const outcome = readRebuildOutcome({
+  const outcome = readScanOutcome({
     created: 0,
     updated: 0,
     scanned: 512,
@@ -368,14 +464,14 @@ test("a sync that discarded application mail may not claim everything matched", 
 test("the dropped count is read defensively, like every other field", () => {
   // Absent (an older backend), malformed, or negative must all read as zero
   // rather than putting an invented number in front of the user.
-  assert.equal(readRebuildOutcome({ created: 1, scanned: 9 }).dropped, 0);
-  assert.equal(readRebuildOutcome({ dropped: "four" }).dropped, 0);
-  assert.equal(readRebuildOutcome({ dropped: -3 }).dropped, 0);
-  assert.equal(readRebuildOutcome({ dropped: 2.7 }).dropped, 2);
+  assert.equal(readScanOutcome({ created: 1, scanned: 9 }).dropped, 0);
+  assert.equal(readScanOutcome({ dropped: "four" }).dropped, 0);
+  assert.equal(readScanOutcome({ dropped: -3 }).dropped, 0);
+  assert.equal(readScanOutcome({ dropped: 2.7 }).dropped, 2);
 });
 
 test("dropped rides alongside a normal receipt without displacing it", () => {
-  const outcome = readRebuildOutcome({
+  const outcome = readScanOutcome({
     created: 41,
     updated: 2,
     scanned: 512,
@@ -385,17 +481,17 @@ test("dropped rides alongside a normal receipt without displacing it", () => {
   assert.equal(receiptBodyLine(outcome), "41 filed · 2 updated · 512 scanned · 3 too unclear to file");
 });
 
-test("rebuild memory is a measured past fact — malformed records are no record", () => {
-  const memory = parseRebuildMemory(JSON.stringify({ ms: 41_000, scanned: 512, at: 1754870000000 }));
+test("windowed-scan memory is a measured past fact — malformed records are no record", () => {
+  const memory = parseScanMemory(JSON.stringify({ ms: 41_000, scanned: 512, at: 1754870000000 }));
   assert.deepEqual(memory, { ms: 41_000, scanned: 512, at: 1754870000000 });
-  assert.equal(rebuildMemoryLine(memory), "your last rebuild scanned 512 messages in 41 s");
+  assert.equal(windowedMemoryLine(memory), "your last windowed scan read 512 messages in 41 s");
   // Sub-second runs round up to 1 s rather than claiming "0 s".
   assert.equal(
-    rebuildMemoryLine({ ms: 400, scanned: 3, at: 0 }),
-    "your last rebuild scanned 3 messages in 1 s",
+    windowedMemoryLine({ ms: 400, scanned: 3, at: 0 }),
+    "your last windowed scan read 3 messages in 1 s",
   );
 
   for (const bad of [null, undefined, "", "not json", "{}", '{"ms":-1,"scanned":2,"at":3}', '{"ms":"41","scanned":2,"at":3}']) {
-    assert.equal(parseRebuildMemory(bad), null, `parseRebuildMemory(${JSON.stringify(bad)})`);
+    assert.equal(parseScanMemory(bad), null, `parseScanMemory(${JSON.stringify(bad)})`);
   }
 });
