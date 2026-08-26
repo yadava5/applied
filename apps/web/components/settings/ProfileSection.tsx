@@ -2,11 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { notifyError } from "@/components/feedback/notify";
 
 import { type SignInSummary } from "./accountSecurity";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { ReadonlyField, SaveStatus, SettingsSection } from "./SettingsSection";
-import { inputClass, primaryBtnClass, fieldLabelClass } from "@/components/ui/formStyles";
+import {
+  inputClass,
+  primaryBtnClass,
+  fieldLabelClass,
+} from "@/components/ui/formStyles";
 import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -45,6 +50,17 @@ export function ProfileSection({
     setState("saving");
     const { ok } = await transport.saveMetadata({ display_name: name.trim() });
     setState(ok ? "saved" : "error");
+    // A FAILED save is the one thing the inline chip cannot carry (#511).
+    // Success stays inline, beside the control that caused it — a corner toast
+    // for every toggle would be noise, and the chip is already where the eye
+    // is. A failure is different: the control has visibly moved, nothing was
+    // written, and the chip is a small word at the edge of a card the user has
+    // usually already scrolled past. Error toasts never auto-dismiss.
+    if (!ok)
+      notifyError(
+        "settings.profile",
+        "Couldn't save your profile — your change wasn't kept",
+      );
     // #216, same reason as `NotificationsSection.persist` — see the note
     // there. This name is server-rendered into the shell (the rail's account
     // block, the TopBar), and every one of those routes can be sitting in the
@@ -72,11 +88,17 @@ export function ProfileSection({
         <div className="grid gap-4 sm:grid-cols-2">
           <ReadonlyField label="email" value={email} />
           <ReadonlyField label={signIn.label} value={signIn.value} />
-          {memberSince ? <ReadonlyField label="member since" value={memberSince} /> : null}
+          {memberSince ? (
+            <ReadonlyField label="member since" value={memberSince} />
+          ) : null}
         </div>
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={!dirty || state === "saving"} className={primaryBtnClass}>
+          <button
+            type="submit"
+            disabled={!dirty || state === "saving"}
+            className={primaryBtnClass}
+          >
             Save profile
           </button>
           <SaveStatus state={state} />

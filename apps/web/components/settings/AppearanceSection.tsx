@@ -2,13 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
+import { notifyError } from "@/components/feedback/notify";
 import { Moon, Sun } from "lucide-react";
 
 import { SaveStatus, SettingsSection } from "./SettingsSection";
 import { Toggle } from "./Toggle";
 import { setAmbientOverride } from "@/lib/shell/ambient-bus";
 import { settingsTransport, type SettingsMode } from "@/lib/settings/transport";
-import { THEME_CHANGE_EVENT, applyTheme, readAppliedTheme, type Theme } from "@/lib/theme";
+import {
+  THEME_CHANGE_EVENT,
+  applyTheme,
+  readAppliedTheme,
+  type Theme,
+} from "@/lib/theme";
 
 const OPTIONS: { value: Theme; label: string; icon: typeof Moon }[] = [
   { value: "dark", label: "Dark", icon: Moon },
@@ -60,7 +66,11 @@ export function AppearanceSection({
   /** The saved ambient-mail pref (server-read; metadata live, cookie demo). */
   initialAmbient?: boolean;
 }) {
-  const theme = useSyncExternalStore(subscribe, readAppliedTheme, () => "dark" as Theme);
+  const theme = useSyncExternalStore(
+    subscribe,
+    readAppliedTheme,
+    () => "dark" as Theme,
+  );
   const [ambient, setAmbient] = useState(initialAmbient);
   const [state, setState] = useState<SaveState>("idle");
   const transport = settingsTransport(mode);
@@ -71,6 +81,17 @@ export function AppearanceSection({
     setState("saving");
     const { ok } = await transport.saveMetadata({ ambient: next });
     setState(ok ? "saved" : "error");
+    // A FAILED save is the one thing the inline chip cannot carry (#511).
+    // Success stays inline, beside the control that caused it — a corner toast
+    // for every toggle would be noise, and the chip is already where the eye
+    // is. A failure is different: the control has visibly moved, nothing was
+    // written, and the chip is a small word at the edge of a card the user has
+    // usually already scrolled past. Error toasts never auto-dismiss.
+    if (!ok)
+      notifyError(
+        "settings.appearance",
+        "Couldn't save your appearance settings — your change wasn't kept",
+      );
     if (ok) {
       // The rail is on this very screen: the override stops (or restarts) the
       // field under the user's eyes now; the refresh below re-renders the
@@ -82,7 +103,11 @@ export function AppearanceSection({
   }
 
   return (
-    <SettingsSection id="appearance" title="Appearance" description="Choose how Applied looks.">
+    <SettingsSection
+      id="appearance"
+      title="Appearance"
+      description="Choose how Applied looks."
+    >
       <div
         role="radiogroup"
         aria-label="Theme"
@@ -99,7 +124,9 @@ export function AppearanceSection({
               aria-checked={active}
               onClick={() => applyTheme(opt.value)}
               className={`inline-flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
-                active ? "bg-strong text-background" : "text-muted hover:text-strong"
+                active
+                  ? "bg-strong text-background"
+                  : "text-muted hover:text-strong"
               }`}
             >
               <Icon className="h-4 w-4" aria-hidden="true" />
@@ -113,8 +140,8 @@ export function AppearanceSection({
           changing under your cursor is its own explanation (#200). */}
       {mode === "demo" ? (
         <p className="mt-3 text-[12px] leading-relaxed text-dim">
-          The demo is pinned to the product&apos;s dark theme, so this page won&apos;t change
-          colour — sign in to see your choice applied.
+          The demo is pinned to the product&apos;s dark theme, so this page
+          won&apos;t change colour — sign in to see your choice applied.
         </p>
       ) : null}
       <div className="mt-4 border-t border-line-soft">
@@ -128,8 +155,8 @@ export function AppearanceSection({
             no sidebar, so the switch names the page that shows its work. */}
         {mode === "demo" ? (
           <p className="text-[12px] leading-relaxed text-dim">
-            The demo settings page has no sidebar of its own — open the shell demo to see this
-            applied.
+            The demo settings page has no sidebar of its own — open the shell
+            demo to see this applied.
           </p>
         ) : null}
         {/* `min-h-4` reserves the status line's height so "Saved" arriving —
