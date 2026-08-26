@@ -336,8 +336,16 @@ _APPLICATION_MAIL_CAP = 1000
 
 # How recent an application counts as "this week" for the summary tile. Kept
 # in one place so the backend aggregate and the frontend's array-based
-# `summarize()` fold agree on the window (7 days).
-_THIS_WEEK_WINDOW = timedelta(days=7)
+# `summarize()` fold agree on the window.
+#
+# SEVEN CALENDAR DAYS INCLUDING TODAY, so the cutoff is six days back, not
+# seven. `now - timedelta(days=7)` looks like the same thing and is not: with
+# `>=` on both ends it spans EIGHT distinct dates. The frontend counts this
+# week as the last seven buckets of `dailyCounts` — ages 0 through 6 — so a
+# seven-day subtraction here put the two derivations a day apart, and the
+# disagreement would only ever have shown up as an off-by-a-few-filings on the
+# one screen that renders both numbers side by side.
+_THIS_WEEK_DAYS = 7
 
 
 def _application_mail_truncated(
@@ -563,6 +571,15 @@ class ReviewItemResponse(BaseModel):
     # nothing for that rather than falling back to a guess, which is the whole
     # defect this field exists to remove.
     hold_reason: str | None = None
+    # The employer the BODY names, when the filing path could not name one —
+    # i.e. only ever alongside ``hold_reason == "confirm_employer"``.
+    #
+    # It travels with the reason rather than being re-read in the web for the
+    # same reason the reason itself does: a second reading of the same message
+    # by different code is how the queue came to print a sentence that
+    # contradicted the row above it. This is DISPLAY grade — a name to put in
+    # front of the user to confirm, never a name anything files under.
+    suggested_employer: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -3917,7 +3934,7 @@ async def application_summary_cloud(
     """
 
     now = datetime.utcnow()
-    week_ago = now - _THIS_WEEK_WINDOW
+    week_start = now.date() - timedelta(days=_THIS_WEEK_DAYS - 1)
 
     async with get_session() as session:
         # Dismissed rows are off the board, so they are out of every tile too —
@@ -3968,7 +3985,7 @@ async def application_summary_cloud(
                 .where(
                     Application.user_id == user_id,
                     Application.dismissed_at.is_(None),
-                    Application.applied_date >= week_ago.date(),
+                    Application.applied_date >= week_start,
                     Application.applied_date <= now.date(),
                 )
             )
@@ -4174,8 +4191,16 @@ def _sibling_counts(company_names: Sequence[str | None]) -> Counter[str]:
     return counts
 
 
-def _hold_reason_for(email: Email, siblings: "Counter[str]") -> str | None:
-    """Why this queue row is waiting, or None if it cannot be said honestly.
+def _hold_reason_for(
+    email: Email, siblings: "Counter[str]"
+) -> tuple[str | None, str | None]:
+    """Why this queue row is waiting, and the employer to confirm if there is one.
+
+    Returns ``(reason, suggested_employer)``. The second is non-None only for
+    :data:`pipeline.HOLD_CONFIRM_EMPLOYER`, where the filing path could not name
+    the employer but the body does — the row needs a name to put in front of the
+    user, and re-deriving it in the web would be a second reading of the same
+    message that could disagree with this one.
 
     The employer is resolved here, once, and used for two things: whether one
     could be named at all, and how many applications sit under it. Both feed
@@ -4186,7 +4211,10 @@ def _hold_reason_for(email: Email, siblings: "Counter[str]") -> str | None:
     ``suggested_category`` is what tells a genuine "the classifier had no
     opinion" apart from a real proposal that merely scored low.
     ``classified_as`` cannot: every row in this queue stores ``needs_review``,
-    which is the typed null and not a verdict.
+    which is the typed null and not a verdict. It is ALSO the category the
+    fileability test needs, for the same reason: ``classified_as`` is the same
+    typed null on every row here, so testing it would ask every row the same
+    question and get the same answer.
     """
 
     subject = email.subject or ""
@@ -4198,7 +4226,7 @@ def _hold_reason_for(email: Email, siblings: "Counter[str]") -> str | None:
     # the counter was built under.
     sibling_count = siblings.get(resolved[0], 0) if resolved else 0
 
-    return pipeline.hold_reason(
+    reason = pipeline.hold_reason(
         confidence=email.classification_confidence,
         subject=subject,
         sender_email=sender_email,
@@ -4206,7 +4234,23 @@ def _hold_reason_for(email: Email, siblings: "Counter[str]") -> str | None:
         snippet=snippet,
         has_proposal=email.suggested_category is not None,
         sibling_applications=sibling_count,
+        # ``EmailCategory`` is a ``str`` Enum whose values are exactly the
+        # pipeline's category strings, so ``.value`` needs no translation table.
+        category=(
+            email.suggested_category.value
+            if email.suggested_category is not None
+            else None
+        ),
+        # The column the sync wrote from the FULL body, which the ~200-char
+        # stored snippet cannot always reproduce (#484).
+        stored_role=email.identity_role,
     )
+
+    suggested_employer: str | None = None
+    if reason == pipeline.HOLD_CONFIRM_EMPLOYER:
+        named = pipeline.employer_named_in_body(snippet, sender_email)
+        suggested_employer = named[1] if named else None
+    return reason, suggested_employer
 
 
 @router.get("/review", response_model=ReviewQueueResponse)
@@ -4291,6 +4335,7 @@ async def review_queue_cloud(
         if key in seen_threads:
             continue
         seen_threads.add(key)
+        hold_reason_value, suggested_employer_value = _hold_reason_for(e, siblings)
         items.append(
             ReviewItemResponse(
                 message_id=e.message_id,
@@ -4304,11 +4349,19 @@ async def review_queue_cloud(
                 suggested_category=(
                     e.suggested_category.value if e.suggested_category else None
                 ),
-                role=pipeline.role_from_message(
+                # Stored first, re-derived only as a fallback — same reason as
+                # ``stored_role`` in ``_hold_reason_for``: ``identity_role`` was
+                # written from the whole body, this snippet is the first ~200
+                # characters of it, and a title past that boundary exists in the
+                # column and nowhere else (#484). Re-deriving first would blank
+                # a role on screen that the sync had already read.
+                role=e.identity_role
+                or pipeline.role_from_message(
                     e.subject or "",
                     (e.body_snippet or "")[: pipeline.STORED_SNIPPET_CHARS],
                 ),
-                hold_reason=_hold_reason_for(e, siblings),
+                hold_reason=hold_reason_value,
+                suggested_employer=suggested_employer_value,
                 gmail_link=pipeline.gmail_deeplink(
                     thread_id=e.thread_id,
                     message_id=e.message_id,

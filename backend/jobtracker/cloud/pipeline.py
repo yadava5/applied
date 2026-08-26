@@ -667,6 +667,23 @@ _VIA_TAIL = re.compile(
 # A capitalized proper-noun-ish company token (leading capital, up to 3 words).
 _COMPANY_CAPTURE = r"[A-Z][A-Za-z0-9&.\-']*(?:\s+[A-Z0-9][A-Za-z0-9&.\-']*){0,3}"
 
+# The same capture, but a FULL STOP ENDS IT. A period is kept only inside a
+# token, where more word characters follow it ("Amazon.jobs", "Inc." losing a
+# trailing dot `_CORP_TAIL` would strip anyway); a period followed by space is
+# a sentence boundary and terminates the company.
+#
+# This exists because the body is a different medium from the subject. Subjects
+# rarely carry a full stop, so `_COMPANY_CAPTURE` running past one costs
+# nothing there; a body is prose and always does. Measured on the owner's own
+# mailbox, the naive capture read "Thank you for your interest in Palantir.
+# After careful consideration…" as the employer ``Palantir. After``. The token
+# (first word) would still have been right, which is exactly why this would
+# have survived every token-level assertion and shipped a wrong CARD TITLE.
+_COMPANY_CAPTURE_SENTENCE = (
+    r"[A-Z][A-Za-z0-9&\-']*(?:\.[A-Za-z0-9&\-']+)*"
+    r"(?:\s+[A-Z0-9][A-Za-z0-9&\-']*(?:\.[A-Za-z0-9&\-']+)*){0,3}"
+)
+
 # The employer named explicitly in a subject, anchored to lifecycle language so
 # a random "to Monday" is not mistaken for a company. The anchor/connective is
 # case-insensitive (subjects are Capitalized) but the company capture stays
@@ -743,6 +760,38 @@ _EMPLOYER_INTEREST_IN = re.compile(
     r"(?i:\b(?:thanks|thank\s+you)(?:\s+so\s+much)?\s+for\s+"
     r"(?:your\s+|the\s+)?interest\s+in\s+)"
     r"(" + _COMPANY_CAPTURE + r")"
+)
+# The same sentence, read out of the BODY rather than the subject, and the ONLY
+# pattern in this module that is ever pointed at body prose.
+#
+# It exists for one measured population: an ATS rejection whose subject names
+# the role and the candidate but not the employer — "<Employer> Follow-Up for
+# <ROLE> | <Name>" reaches `_employer_from_subject` and matches nothing — while
+# the first line of the body says "Thank you so much for your interest in
+# <Employer>". The employer is right there, plainly readable by the human
+# staring at the row, and the queue was telling him we could not name it.
+#
+# WHY THIS ONE PATTERN AND NOTHING ELSE. Body prose is a far weaker signal than
+# a subject line, so the question is not "does this pattern work" but "does its
+# population change when the medium does". Measured against 40 real messages
+# spanning every ATS in the mailbox, it fires on 6, agrees with the existing
+# resolution on 5, supplies the missing employer on 1, and disagrees on none.
+# The bodies that would have been dangerous do not match, because the capture
+# is case-sensitive and `_COMPANY_STOPWORDS` takes the rest:
+#
+#     "interest in the Software Engineer, C# position at Path Robotics"  no match
+#     "interest in our Associate Software Engineer ... role"             no match
+#     "interest in potential opportunities with Jump Trading"            no match
+#     "interest in joining the flock here at MotherDuck"                 no match
+#
+# `_EMPLOYER_BARE_AT` and friends must NEVER be pointed at a body: "at Home",
+# "at Noon", "at Miami University" are all ordinary body prose, and the comment
+# on `_EMPLOYER_AT_END` already explains why that shape needs a relay fence a
+# body cannot provide.
+_EMPLOYER_INTEREST_IN_BODY = re.compile(
+    r"(?i:\b(?:thanks|thank\s+you)(?:\s+so\s+much)?\s+for\s+"
+    r"(?:your\s+|the\s+)?interest\s+in\s+)"
+    r"(" + _COMPANY_CAPTURE_SENTENCE + r")"
 )
 _EMPLOYER_ON_BEHALF = re.compile(
     r"(?i:on behalf of\s+)(" + _COMPANY_CAPTURE + r")"
@@ -2331,6 +2380,63 @@ def resolve_employer(
     return None
 
 
+def employer_named_in_body(snippet: str, sender_email: str = "") -> tuple[str, str] | None:
+    """The employer this message's BODY names, or None. DISPLAY GRADE ONLY.
+
+    Deliberately NOT part of :func:`resolve_employer`, and no caller may route
+    it into :func:`_qualifies_for_hard_row`. The separation is the whole design:
+
+    * :func:`resolve_employer` is FILING grade. Whatever it returns becomes a
+      card on the board, so it reads only the sender's own domain, the subject,
+      and (for relays) the display name — signals an employer controls.
+    * this is DISPLAY grade. What it returns only ever reaches a sentence in
+      the review queue and a prefilled name the user confirms, so a wrong
+      answer costs a wrong suggestion the human is already looking at, not a
+      wrong row on the board.
+
+    That asymmetry is what makes reading body prose acceptable at all. The
+    population this pattern would be most dangerous on is the ATS rejection
+    preamble — "Thank you for your interest in <Employer>" is *documented above
+    as the standard opening of a rejection*, and the reason those rows sit in
+    the queue at high confidence is that a snippet-starved classifier can read
+    the preamble as a confirmation. If body resolution fed the filing path, the
+    exact population it was built for would start auto-filing REJECTIONS as
+    APPLIED, which is the failure #166 refused. At display grade it cannot:
+    nothing here can create, move or close an application.
+
+    The relay check that :func:`_employer_from_subject` skips is applied here,
+    and the inversion is deliberate: body prose is the weakest signal in the
+    module, so it gets the strictest fence. A capture that names the SENDING
+    RELAY is refused — "your interest in Ashby" off ``ashbyhq.com``, "in
+    Greenhouse" off ``greenhouse-mail.io``, "in Lever" off ``hire.lever.co``.
+
+    Note what this does NOT refuse, because the distinction is easy to get
+    backwards: "your interest in Handshake" off ``ashbyhq.com`` resolves, and
+    should. Handshake is the EMPLOYER there and Ashby is the relay carrying the
+    mail. The check compares the capture against the sender's own brand, not
+    against a list of companies that also happen to sell recruiting software
+    (#508 is the scar from conflating those two).
+    """
+
+    if not snippet:
+        return None
+    match = _EMPLOYER_INTEREST_IN_BODY.search(snippet)
+    if match is None:
+        return None
+
+    display = _clean_company_display(match.group(1))
+    if not display:
+        return None
+    token = _normalize_token(display.split(" ")[0])
+    if not _valid_company_token(token):
+        return None
+
+    brand = _domain_brand(sender_email.rsplit("@", 1)[1].lower()) if "@" in sender_email else ""
+    if brand and _names_the_relay(token, brand if brand in RELAY_DOMAINS else ""):
+        return None
+    return token, display
+
+
 def _role_from_subject(subject: str) -> str | None:
     """Extract a job role/title from a subject, or None. Never 'Unknown role'."""
 
@@ -3182,8 +3288,18 @@ HOLD_NO_PROPOSAL = "no_proposal"
 HOLD_BELOW_GATE = "below_gate"
 #: Under ``REVIEW_FLOOR`` and kept ONLY because a known ATS relayed it (#166).
 HOLD_ATS_FLOOR = "ats_floor"
-#: Clears the gate; no employer could be named. The ONLY "missing employer".
+#: Clears the gate; no employer could be named ANYWHERE, body included. The
+#: ONLY reason that may say "missing employer".
 HOLD_NO_EMPLOYER = "no_employer"
+#: Clears the gate; the filing path could not name the employer, but the body
+#: does. The user can read it off the message, so "we couldn't name it" reads
+#: as a lie (#512) — the honest ask is to confirm the name we found. The
+#: proposal travels beside the reason as ``suggested_employer``.
+HOLD_CONFIRM_EMPLOYER = "confirm_employer"
+#: Clears the gate, but this category is never filed on its own — "other",
+#: "needs_review", or a ``follow_up``, which :func:`_qualifies_for_hard_row`
+#: excludes by name. Nothing about the employer or the score is the obstacle.
+HOLD_NOT_FILEABLE = "not_fileable"
 #: Clears the gate, employer known, role unknown, and that employer holds
 #: several applications — so no single row can own it (#484).
 HOLD_WHICH_APPLICATION = "which_application"
@@ -3197,6 +3313,8 @@ HOLD_REASONS: frozenset[str] = frozenset(
         HOLD_BELOW_GATE,
         HOLD_ATS_FLOOR,
         HOLD_NO_EMPLOYER,
+        HOLD_CONFIRM_EMPLOYER,
+        HOLD_NOT_FILEABLE,
         HOLD_WHICH_APPLICATION,
         HOLD_GATED_OTHER,
     }
@@ -3212,6 +3330,8 @@ def hold_reason(
     snippet: str = "",
     has_proposal: bool = True,
     sibling_applications: int = 0,
+    category: str | None = None,
+    stored_role: str | None = None,
 ) -> str:
     """Why this message is waiting for a human, as one of :data:`HOLD_REASONS`.
 
@@ -3239,18 +3359,61 @@ def hold_reason(
     to remove it. Below it the classifier itself was unsure, so the user's job
     is to decide. Reading those in the wrong order tells a confident row that
     its problem is confidence.
+
+    WHAT ``HOLD_GATED_OTHER`` MEANS ONCE THE BRANCH ABOVE IS COMPLETE. With all
+    three of ``_qualifies_for_hard_row``'s refusals modelled, a row reaching the
+    fallthrough is one the CURRENT code would file — the read path can find no
+    obstacle at all. That is not a shrug about this message; it is the signature
+    of a verdict written by an OLDER build and never revisited, because a
+    routine sync resumes from a ``historyId`` cursor and re-reads nothing
+    (#474). The reason is kept rather than folded into a neighbour precisely so
+    that state stays visible: smoothing it away would rebuild #507's habit of
+    printing a plausible sentence instead of a true one.
     """
 
     score = confidence if isinstance(confidence, (int, float)) else 0.0
 
     if score >= AUTO_FILE_GATE:
+        # ABOVE THE GATE, THIS BRANCH MIRRORS ``_qualifies_for_hard_row`` — the
+        # predicate that actually decides whether a message may file — IN ITS
+        # OWN ORDER. That function refuses on three grounds and this used to
+        # model only two of them, which is why it needed a fallthrough at all.
+        #
+        # A confident verdict with no proposal is "confident that it cannot
+        # tell", and ``HOLD_NO_PROPOSAL`` is its exact meaning; reading the gate
+        # first sent it to the fallthrough instead.
+        if not has_proposal:
+            return HOLD_NO_PROPOSAL
+        # ``_qualifies_for_hard_row``'s FIRST test, which was missing here: a
+        # category outside the lifecycle set, or a ``follow_up``, is never filed
+        # on its own however confident it is. Nothing about the employer or the
+        # score is the obstacle, and reporting one of those is a false lead.
+        # ``None`` means the caller could not supply a category, and skipping
+        # the test is the safe degradation — it can only widen the fallthrough,
+        # never mislabel a row.
+        if category is not None and (
+            category not in JOB_LIFECYCLE_CATEGORIES or category == "follow_up"
+        ):
+            return HOLD_NOT_FILEABLE
         if resolve_employer(sender_email, subject, sender_name) is None:
+            # The filing path cannot name it. Before saying so — the sentence
+            # #512 is about — check whether the body names it anyway, because
+            # the user is looking at that body and can read it.
+            if employer_named_in_body(snippet, sender_email) is not None:
+                return HOLD_CONFIRM_EMPLOYER
             return HOLD_NO_EMPLOYER
         # Role absent is only a REASON when it is also a problem. One
         # application at this employer and the mail lands on it regardless
         # (rule 3 of ``partition_applications``), so an unnameable role there
         # holds nothing up and must not be reported as though it did.
-        if role_from_message(subject, snippet) is None and sibling_applications >= 2:
+        #
+        # ``stored_role`` outranks re-derivation: the sync wrote it from the
+        # FULL body, while ``snippet`` here is the ~200 stored characters. A
+        # role living past that boundary is present in the column and absent
+        # from the snippet, and re-deriving would report "which application?"
+        # about a row the sync itself placed without trouble.
+        role = stored_role if stored_role else role_from_message(subject, snippet)
+        if role is None and sibling_applications >= 2:
             return HOLD_WHICH_APPLICATION
         return HOLD_GATED_OTHER
 

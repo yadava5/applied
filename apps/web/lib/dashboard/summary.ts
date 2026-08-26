@@ -15,6 +15,7 @@ import type { components } from "@/lib/api/schema";
 // carry a hand-written copy of `STAGES` and could not have caught a stage
 // losing its statuses. The type-only import above is erased before Node sees
 // it, so it may keep the alias.
+import { dailyCounts, todayISO, weekOverWeek } from "./age.ts";
 import { filedAt } from "./dates.ts";
 
 /**
@@ -140,29 +141,6 @@ export interface PipelineSummary {
   stages: { stage: StageDef; count: number }[];
 }
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * The UTC calendar day of an instant, as `YYYY-MM-DD`.
- *
- * UTC on purpose, and it has to match the backend: `applied_date` is written
- * from the mail's receipt time by a server that thinks in UTC, and the summary
- * endpoint compares it against a UTC threshold. A local-zone reading here
- * would put the twin and the signed-in board a day apart for anyone west of
- * Greenwich for part of every day — the same class of defect as #438, where a
- * UTC timestamp rendered in local time showed tomorrow's date.
- *
- * Built from `getUTC*` rather than `toISOString().slice(0, 10)` for the reason
- * `sync-state.ts` documents about its own formatter: it states the frame it is
- * working in instead of relying on a method whose zone is incidental.
- */
-function utcDayKey(ms: number): string {
-  const d = new Date(ms);
-  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${month}-${day}`;
-}
-
 /**
  * Fold raw per-status counts into the display-stage summary. This is the
  * single implementation of stage semantics (which raw statuses roll into
@@ -279,27 +257,35 @@ export function summarize(applications: Application[], now: number = Date.now())
   // dated rows had an `applied_date` in a different calendar week from their
   // `created_at`. Not one was counted correctly. The true answer was 7.
   //
-  // Compared as CALENDAR DAYS, not instants. `applied_date` is a `YYYY-MM-DD`
-  // day with no time in it, so there is no instant to compare — giving it one
-  // means inventing a time of day, which is exactly what `parseInstant`
-  // refuses to do for this shape. Lexicographic order on a zero-padded ISO day
-  // IS chronological order, so the string comparison is the date comparison.
+  // AND COUNTED BY THE MOMENTUM PANEL'S OWN DERIVATION, not a second one that
+  // agrees with it today. `filedAt` (lib/dashboard/dates.ts) already means
+  // "when the user applied, falling back to when we filed it", and
+  // `dailyCounts` + `weekOverWeek` already turn that into a week — the
+  // MOMENTUM caption on this very screen reads a correct "7 this wk" from
+  // them while the header beside it read "+50".
   //
-  // A row with NO `applied_date` counts toward NOTHING, and that is deliberate
-  // rather than an oversight. Falling back to `created_at` would reintroduce
-  // the whole bug for precisely the rows whose date we do not know, and do it
-  // invisibly. On the live board every such row is a seeded demo row and every
-  // row that came from real mail carries a date, so this excludes nothing real
-  // — and if that ever stops being true, an undated row is still not evidence
-  // about any particular week.
-  const cutoff = utcDayKey(now - WEEK_MS);
-  const today = utcDayKey(now);
+  // So the bug was never a missing rule. It was one renderer not using the
+  // rule the other renderer already had, and writing a third rule here would
+  // have been the same mistake in a new place. Two things prove it: a private
+  // day-window written for this line came out EIGHT calendar days wide
+  // (`[today-7, today]` inclusive) against the panel's seven, so the two would
+  // have disagreed by a day's filings the first time anyone applied on a
+  // boundary; and the undated-row question (count them under `created_at` or
+  // not at all?) stops being a judgement call the moment both sides ask
+  // `filedAt`, because then they cannot answer it differently.
+  //
+  // Measured on the live board: 50 by `created_at`, 7 by either reading of
+  // `filedAt`. All 7 undated rows are seeded demo rows outside the window, so
+  // adopting the fallback changes no number today — it removes the way the two
+  // lines could drift apart tomorrow.
+  const days = dailyCounts(
+    applications.map((app) => filedAt(app)),
+    todayISO(now),
+  );
+  thisWeek = weekOverWeek(days).thisWeek;
 
   for (const app of applications) {
     statusCounts[app.status] = (statusCounts[app.status] ?? 0) + 1;
-
-    const applied = typeof app.applied_date === "string" ? app.applied_date.slice(0, 10) : "";
-    if (applied.length === 10 && applied >= cutoff && applied <= today) thisWeek += 1;
   }
 
   return summarizeCounts(statusCounts, applications.length, thisWeek);

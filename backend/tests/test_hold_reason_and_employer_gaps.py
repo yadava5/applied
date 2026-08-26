@@ -22,6 +22,9 @@ loosening here is paired with the case it must still refuse.
 
 from __future__ import annotations
 
+import pathlib
+import re
+
 import pytest
 
 from jobtracker.cloud import pipeline
@@ -226,3 +229,262 @@ def test_every_reason_is_one_the_web_knows() -> None:
 def test_a_missing_confidence_is_not_treated_as_confident() -> None:
     """None must not read as 1.0 and send an unscored row down the gated branch."""
     assert _reason(confidence=None, has_proposal=False) == pipeline.HOLD_NO_PROPOSAL
+
+
+# --- the three refusals of `_qualifies_for_hard_row`, all modelled -----------
+#
+# `hold_reason` used to mirror two of the three grounds on which a confident
+# message is refused a board row, which is why it needed a fallthrough. These
+# pin the third, and pin what the fallthrough is left meaning.
+
+
+def test_a_confident_follow_up_is_not_held_for_its_employer() -> None:
+    """`_qualifies_for_hard_row` excludes ``follow_up`` BY NAME, at any score.
+
+    Before this, such a row reported an employer or role problem it did not
+    have — the same class of false lead as #507, just one branch further in.
+    """
+    assert (
+        _reason(subject="Thank you for your interest in Verkada", category="follow_up")
+        == pipeline.HOLD_NOT_FILEABLE
+    )
+
+
+@pytest.mark.parametrize("category", ["other", "needs_review"])
+def test_a_category_outside_the_lifecycle_is_never_an_employer_problem(category: str) -> None:
+    assert (
+        _reason(subject="Thank you for your interest in Verkada", category=category)
+        == pipeline.HOLD_NOT_FILEABLE
+    )
+
+
+@pytest.mark.parametrize("category", ["applied", "rejection", "offer", "assessment", "interview"])
+def test_a_fileable_category_still_reports_the_real_obstacle(category: str) -> None:
+    """The CONTROL for the two above.
+
+    Without this pair, a `not_fileable` that fired on everything would satisfy
+    them both and the branch would be untested in the direction that matters.
+    """
+    assert _reason(subject="A subject naming nobody", category=category) == (
+        pipeline.HOLD_NO_EMPLOYER
+    )
+
+
+def test_an_absent_category_degrades_to_the_old_behaviour() -> None:
+    """`None` means the caller could not say, and must not mint a reason."""
+    assert _reason(subject="A subject naming nobody", category=None) == (
+        pipeline.HOLD_NO_EMPLOYER
+    )
+
+
+def test_a_confident_row_with_no_proposal_says_so_before_anything_else() -> None:
+    """Confident that it cannot tell IS `no_proposal`, not the fallthrough.
+
+    The gate used to be read first, so this state fell past every branch and
+    landed on "held, and we can't say why" — a shrug about the one case the
+    vocabulary already had an exact word for.
+    """
+    assert (
+        _reason(confidence=0.95, has_proposal=False, subject="Thank you for applying to Verkada")
+        == pipeline.HOLD_NO_PROPOSAL
+    )
+
+
+# --- the employer the BODY names --------------------------------------------
+
+
+def test_a_subject_that_names_nobody_still_asks_about_the_body_name() -> None:
+    """#512's third row: the subject carries the role and the candidate, the
+    body's first line carries the employer, and the queue denied both."""
+    assert (
+        _reason(
+            subject="Granitethwaitevale Follow-Up for TPU Kernel Engineer | A Candidate",
+            snippet=(
+                "Hi there, Thank you so much for your interest in Granitethwaitevale "
+                "and for the time you have invested in our process."
+            ),
+        )
+        == pipeline.HOLD_CONFIRM_EMPLOYER
+    )
+
+
+def test_no_employer_anywhere_is_still_no_employer() -> None:
+    """The CONTROL. `confirm_employer` must not swallow the real case, or the
+    only honest "missing employer" left in the vocabulary becomes unreachable
+    and #512's sentence is un-provable in the direction it was wrong."""
+    assert (
+        _reason(subject="A subject naming nobody", snippet="No company is named here at all.")
+        == pipeline.HOLD_NO_EMPLOYER
+    )
+
+
+def test_the_body_pass_stops_at_a_full_stop() -> None:
+    """A body is prose and a subject is not.
+
+    The shared subject capture reads "…interest in Granitethwaitevale. After
+    careful consideration" as a company two words long. The TOKEN would still
+    have been right, which is exactly why a token-level assertion could not
+    have caught it — and why this one is on the DISPLAY name.
+    """
+    named = pipeline.employer_named_in_body(
+        "Thank you for your interest in Granitethwaitevale. After careful consideration we",
+        "no-reply@hire.lever.co",
+    )
+    assert named is not None
+    assert named[1] == "Granitethwaitevale"
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        # A ROLE where the company would be. The determiner is what gives it
+        # away, and `_COMPANY_STOPWORDS` is what acts on that.
+        "Thank you for your interest in the Software Engineer, C# position at Acme",
+        "Thank you for your interest in our Associate Software Engineer role",
+        # Lowercase — never a company under a case-sensitive capture.
+        "Thank you for your interest in potential opportunities with Acme",
+        "Thank you for your interest in joining the flock here at Acme",
+    ],
+)
+def test_body_prose_that_is_not_a_company_names_none(snippet: str) -> None:
+    """Measured on 40 real messages: these are the shapes that would have been
+    dangerous, and none of them matches. Pinned so a later loosening of the
+    capture has to argue with them."""
+    assert pipeline.employer_named_in_body(snippet, "no-reply@us.greenhouse-mail.io") is None
+
+
+@pytest.mark.parametrize(
+    ("snippet", "sender"),
+    [
+        ("Thank you for your interest in Ashby and our platform", "no-reply@ashbyhq.com"),
+        ("Thank you for your interest in Greenhouse", "no-reply@us.greenhouse-mail.io"),
+        ("Thank you for your interest in Lever", "no-reply@hire.lever.co"),
+    ],
+)
+def test_the_body_pass_refuses_to_name_the_courier(snippet: str, sender: str) -> None:
+    """Body prose is the weakest signal here, so it gets the strictest fence:
+    a capture naming the SENDING relay is refused."""
+    assert pipeline.employer_named_in_body(snippet, sender) is None
+
+
+def test_the_courier_fence_does_not_refuse_a_real_employer(
+) -> None:
+    """The CONTROL for the fence, and the #508 distinction it must keep.
+
+    A company that also sells recruiting software is still an employer when a
+    DIFFERENT relay carries its mail. Refusing this would rebuild #508 inside
+    the body pass.
+    """
+    named = pipeline.employer_named_in_body(
+        "Thank you for your interest in Handshake! We have received your application",
+        "no-reply@ashbyhq.com",
+    )
+    assert named is not None
+    assert named[0] == "handshake"
+
+
+def test_the_body_name_never_reaches_the_filing_path() -> None:
+    """DISPLAY GRADE, and this is the assertion that keeps it that way.
+
+    `_qualifies_for_hard_row` gates on `resolve_employer`, so if the body pass
+    ever leaked into it, the ATS rejection preamble — which is the exact
+    population this pattern reads — would start minting board rows. #166
+    refused that trade and this is the tripwire on it.
+    """
+    subject = "Granitethwaitevale Follow-Up for TPU Kernel Engineer | A Candidate"
+    snippet = "Thank you so much for your interest in Granitethwaitevale and for the time"
+
+    assert pipeline.employer_named_in_body(snippet, "no-reply@us.greenhouse-mail.io") is not None
+    # …and the filing-grade resolver, given the same message, still refuses.
+    assert pipeline.resolve_employer("no-reply@us.greenhouse-mail.io", subject, None) is None
+
+
+def test_a_role_past_the_snippet_is_read_from_the_stored_column() -> None:
+    """`identity_role` is written from the FULL body; the snippet is its first
+    ~200 characters. Re-deriving from the snippet asks "which application?"
+    about a row the sync placed without trouble (#484)."""
+    assert (
+        _reason(
+            subject="Thank you for your interest in Verkada",
+            snippet="a body whose title sits past the stored boundary",
+            sibling_applications=4,
+            stored_role="Embedded Software Engineer, Access Control",
+        )
+        != pipeline.HOLD_WHICH_APPLICATION
+    )
+
+
+def test_without_the_stored_column_the_same_row_is_unplaceable() -> None:
+    """The CONTROL for the line above: it must be the COLUMN doing the work,
+    not the subject quietly carrying the role all along."""
+    assert (
+        _reason(
+            subject="Thank you for your interest in Verkada",
+            snippet="a body whose title sits past the stored boundary",
+            sibling_applications=4,
+            stored_role=None,
+        )
+        == pipeline.HOLD_WHICH_APPLICATION
+    )
+
+
+def test_the_web_knows_every_reason_this_module_can_emit() -> None:
+    """THE CROSS-LANGUAGE LOCKSTEP.
+
+    `holdReasonSentence` renders NOTHING for a reason it does not recognise —
+    deliberately, so an unknown reason degrades to silence instead of a guess.
+    That safety property is also what makes a drift invisible: add a member
+    here, forget the web, and the row simply stops explaining itself while
+    every suite stays green. This is the only thing that would say so.
+    """
+
+    web = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "apps"
+        / "web"
+        / "lib"
+        / "dashboard"
+        / "review.ts"
+    )
+    assert web.exists(), f"{web} is missing — the parity guard cannot run"
+
+    source = web.read_text()
+    block = source[source.index("export const HOLD_REASONS") : source.index("] as const;")]
+    on_the_web = set(re.findall(r'"([a-z_]+)"', block))
+
+    assert on_the_web == set(pipeline.HOLD_REASONS), (
+        "the hold-reason vocabularies have drifted — "
+        f"backend only: {sorted(set(pipeline.HOLD_REASONS) - on_the_web)}, "
+        f"web only: {sorted(on_the_web - set(pipeline.HOLD_REASONS))}"
+    )
+
+
+def test_the_web_knows_every_reason_this_module_can_emit() -> None:
+    """THE CROSS-LANGUAGE LOCKSTEP.
+
+    `holdReasonSentence` renders NOTHING for a reason it does not recognise —
+    deliberately, so an unknown reason degrades to silence instead of a guess.
+    That safety property is also what makes a drift invisible: add a member
+    here, forget the web, and the row simply stops explaining itself while
+    every suite stays green. This is the only thing that would say so.
+    """
+
+    web = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "apps"
+        / "web"
+        / "lib"
+        / "dashboard"
+        / "review.ts"
+    )
+    assert web.exists(), f"{web} is missing — the parity guard cannot run"
+
+    source = web.read_text()
+    block = source[source.index("export const HOLD_REASONS") : source.index("] as const;")]
+    on_the_web = set(re.findall(r'"([a-z_]+)"', block))
+
+    assert on_the_web == set(pipeline.HOLD_REASONS), (
+        "the hold-reason vocabularies have drifted — "
+        f"backend only: {sorted(set(pipeline.HOLD_REASONS) - on_the_web)}, "
+        f"web only: {sorted(on_the_web - set(pipeline.HOLD_REASONS))}"
+    )

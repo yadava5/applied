@@ -34,6 +34,7 @@ export interface ReviewItem {
   /** Why this is held — one of `HOLD_REASONS`. Absent on an older backend, in
    *  which case the row says nothing rather than guessing (#507). */
   hold_reason?: string | null;
+  suggested_employer?: string | null;
   /**
    * Which application this entry is about, when the mail names one.
    *
@@ -194,7 +195,7 @@ function ReviewRow({
           >
             {Math.round(item.confidence * 100)}%
           </span>
-          {holdReasonSentence(item.hold_reason, AUTO_FILE_GATE)}
+          {holdReasonSentence(item.hold_reason, AUTO_FILE_GATE, item.suggested_employer)}
         </p>
       ) : null}
       {item.snippet ? (

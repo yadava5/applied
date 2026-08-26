@@ -1570,6 +1570,8 @@ export interface components {
             role?: string | null;
             /** Hold Reason */
             hold_reason?: string | null;
+            /** Suggested Employer */
+            suggested_employer?: string | null;
         };
         /**
          * ReviewQueueResponse

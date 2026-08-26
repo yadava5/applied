@@ -287,6 +287,8 @@ export const HOLD_REASONS = [
   "below_gate",
   "ats_floor",
   "no_employer",
+  "confirm_employer",
+  "not_fileable",
   "which_application",
   "gated_other",
 ] as const;
@@ -318,12 +320,30 @@ export type HoldReason = (typeof HOLD_REASONS)[number];
 export function holdReasonSentence(
   reason: string | null | undefined,
   gate: number,
+  suggestedEmployer?: string | null,
 ): string | null {
   switch (reason) {
     // The only "missing employer" there has ever been. The user's next move is
     // to type the company, which is the control sitting directly below.
     case "no_employer":
       return "cleared the gate · we couldn't name the employer";
+    // The filing path could not name the employer, but the message body does,
+    // and the user is looking straight at that body. Saying "we couldn't name
+    // it" over a line that names it is the exact complaint behind #512. So we
+    // put the name we read in front of them and ask them to confirm it, which
+    // is both honest about what happened and one click from filing.
+    //
+    // The name is only ever the backend's — never re-read here. If it did not
+    // travel, the reason still says something true without inventing one.
+    case "confirm_employer":
+      return suggestedEmployer
+        ? `cleared the gate · is this ${suggestedEmployer}?`
+        : "cleared the gate · confirm the employer to file it";
+    // Confident, but this kind of update is never filed on its own. Neither
+    // the employer nor the score is the obstacle, and reporting one of those
+    // sent people hunting for a problem that was not there.
+    case "not_fileable":
+      return "cleared the gate · not a change we file on its own";
     // Employer known, role unknown, and that employer holds several
     // applications — so the question is WHICH, and the row's own picker is
     // where it gets answered. Naming the wrong question here is what sent

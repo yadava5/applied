@@ -121,3 +121,38 @@ test("TRIPWIRE: the queue row renders the reported reason, not a guess", () => {
     "the confidence-based guess is back in the component",
   );
 });
+
+test("confirm_employer puts the name we read in front of the user", () => {
+  const sentence = holdReasonSentence("confirm_employer", GATE, "Granitethwaitevale");
+  assert.match(sentence, /Granitethwaitevale/);
+  // …and it must NOT be the sentence #512 is about. This row's employer IS
+  // nameable; that is the entire reason it gets a different reason code.
+  assert.doesNotMatch(sentence, /couldn't name the employer/i);
+});
+
+test("confirm_employer never invents a name it was not given", () => {
+  // The backend is the only reader of the message body. If the name did not
+  // travel, the web must not re-read the snippet to produce one — a second
+  // reading by different code is how the queue came to print a sentence that
+  // contradicted the row above it.
+  const sentence = holdReasonSentence("confirm_employer", GATE, null);
+  assert.equal(typeof sentence, "string");
+  assert.doesNotMatch(sentence, /null|undefined/);
+});
+
+test("not_fileable blames neither the employer nor the score", () => {
+  const sentence = holdReasonSentence("not_fileable", GATE);
+  assert.doesNotMatch(sentence, /employer/i);
+  assert.doesNotMatch(sentence, new RegExp(String(GATE).replace(".", "\\.")));
+});
+
+test("TRIPWIRE: the row hands the suggested employer to the sentence", () => {
+  // Without this the backend can report `confirm_employer` with a name and the
+  // row still renders the nameless fallback, which reads as a regression to
+  // the very sentence this replaced.
+  const src = readFileSync(
+    new URL("../../components/dashboard/ReviewQueue.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(src, /holdReasonSentence\(\s*item\.hold_reason,\s*AUTO_FILE_GATE,\s*item\.suggested_employer/);
+});

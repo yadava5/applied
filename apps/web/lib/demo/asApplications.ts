@@ -28,6 +28,18 @@ function toApi(app: DemoApplication, id: number): Application {
     // The most recent classified signal reads naturally as the card's note.
     notes: app.lastSignal,
     created_at: `${app.appliedAt}T12:00:00.000Z`,
+    // THE DAY THE APPLICATION WAS FILED, carried in the field a real row
+    // carries it in. `appliedAt` has always meant this; it was only ever
+    // written to `created_at`, so every fixture row reached the board with a
+    // null `applied_date` — a shape no row from real mail has.
+    //
+    // That gap was invisible while the header counted "this week" off
+    // `created_at`, and became a failing e2e the moment it counted off the day
+    // the user applied: the twin's week silently went to zero, because not one
+    // fixture row had the field the count now reads. The twin has to model the
+    // real row, or the surface the tests measure stops being the surface that
+    // ships (#188's shape, in the data instead of the session).
+    applied_date: app.appliedAt,
     // Every fixture row is "from Gmail" in the simulation, so the rebuild's
     // stale-row semantics apply to them the way they would on a real board.
     source: "gmail",

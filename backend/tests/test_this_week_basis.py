@@ -83,12 +83,49 @@ def test_the_web_twin_counts_this_week_the_same_way() -> None:
     start = source.index("export function summarize(")
     body = source[start : source.index("\n}", start)]
 
-    assert "applied_date" in body, "summarize() is no longer counting on applied_date"
+    # The BASIS, not its spelling. `summarize()` no longer names `applied_date`
+    # itself: it counts through `filedAt`, which is the accessor the momentum
+    # panel on the same screen already used — and using the panel's own
+    # derivation instead of a private second one is the point of #509's
+    # revision, not a drift away from it. Asserting the literal column name
+    # here would have failed on the fix and passed on the bug, which is the
+    # inverted-gate shape this repo has a name for.
+    assert "filedAt(" in body, (
+        "summarize() no longer counts through filedAt, so the header and the "
+        "momentum caption can disagree about the same week again"
+    )
     assert "thisWeek" in body
+    # …and `filedAt` must still mean what its name says.
+    filed_at = _strip_ts_comments((_WEB_SUMMARY.parent / "dates.ts").read_text())
+    assert "app.applied_date ?? app.created_at" in filed_at, (
+        "filedAt no longer prefers applied_date, so every caller counting "
+        "through it silently went back to the insert time"
+    )
     # The specific reversion this guards: re-deriving the window from
     # `created_at`, which is what it did before #509.
     assert not re.search(r"Date\.parse\(\s*app\.created_at\s*\)", body), (
         "summarize() is counting this week on created_at again"
+    )
+
+
+def test_both_sides_span_the_same_number_of_days() -> None:
+    """A shared basis is not a shared WINDOW.
+
+    Both sides read the date the user applied and still disagreed: the backend
+    subtracted seven days and compared with `>=` on both ends, which spans
+    EIGHT dates, while the web counts the last seven buckets of `dailyCounts`.
+    One day of filings wide, visible only when someone applied on the boundary
+    — so it is pinned here rather than left to be noticed.
+    """
+
+    backend = _BACKEND.read_text()
+    assert "_THIS_WEEK_DAYS = 7" in backend
+    assert "timedelta(days=_THIS_WEEK_DAYS - 1)" in backend, (
+        "the backend's week cutoff is not seven days INCLUDING today"
+    )
+    web = _strip_ts_comments((_WEB_SUMMARY.parent / "age.ts").read_text())
+    assert "counts.slice(-7)" in web, (
+        "the web's week is no longer the last seven daily buckets"
     )
 
 

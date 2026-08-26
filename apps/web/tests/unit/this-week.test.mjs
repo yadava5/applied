@@ -57,9 +57,17 @@ test("a row applied this week still counts when it was ingested long ago", () =>
   assert.equal(summarize(apps, NOW).thisWeek, 1);
 });
 
-test("the window edges are days, and inclusive at the near edge", () => {
-  assert.equal(summarize([row("2026-08-19", "2026-08-19")], NOW).thisWeek, 1);
-  assert.equal(summarize([row("2026-08-18", "2026-08-18")], NOW).thisWeek, 0);
+test("the window is seven days INCLUDING today, matching the momentum bars", () => {
+  // NOW is 2026-08-26, so the seven days are the 20th through the 26th.
+  //
+  // This used to assert that the 19th counted, which is EIGHT dates — the
+  // shape you get from `now - 7 days` compared with `>=` on both ends. The
+  // momentum caption on the same screen sums the last seven daily buckets, so
+  // the two lines disagreed by whatever was filed on the far edge. The edge
+  // moved deliberately; both sides now derive it from `dailyCounts`.
+  assert.equal(summarize([row("2026-08-26", "2026-08-26")], NOW).thisWeek, 1, "today");
+  assert.equal(summarize([row("2026-08-20", "2026-08-20")], NOW).thisWeek, 1, "the near edge");
+  assert.equal(summarize([row("2026-08-19", "2026-08-19")], NOW).thisWeek, 0, "one day past it");
 });
 
 test("a future applied date is not this week", () => {
@@ -67,16 +75,32 @@ test("a future applied date is not this week", () => {
 });
 
 /**
- * Undated rows count toward nothing. Falling back to `created_at` would
- * reintroduce the whole bug for precisely the rows whose date is unknown — and
- * would do it invisibly, since those are the rows nobody can check by eye.
+ * An undated row falls back to `created_at`, VIA `filedAt` — the same accessor
+ * the momentum bars on the same screen have always used.
+ *
+ * This test asserted the opposite until the twin proved it wrong. Excluding
+ * undated rows reads as the stricter, safer choice, and on the signed-in board
+ * it changes nothing either way: the API serves no row without an
+ * `applied_date` (50 of 57 on the live board, the other 7 withheld). But the
+ * DEMO twin's fixtures had no `applied_date` at all, so a rule that excluded
+ * them sent the twin's week to zero and took a passing e2e down with it.
+ *
+ * The lesson is the one this file is about. Two derivations of one number
+ * drift; the fix is to share the accessor, not to write a second rule that
+ * looks stricter. `filedAt` is that accessor, and the fixtures now carry a real
+ * `applied_date` besides, so the fallback is a floor rather than the path.
  */
-test("a row with no applied date is not counted, and does not fall back", () => {
+test("an undated row falls back to its insert time, as the momentum bars do", () => {
   const undated = { ...row("2026-08-24", "2026-08-26"), applied_date: null };
   const summary = summarize([undated], NOW);
-  assert.equal(summary.thisWeek, 0, "an undated row fell back to its insert time");
-  // ...but it is still a real application and must not vanish from the totals.
+  assert.equal(summary.thisWeek, 1, "an undated row was dropped, not folded back");
   assert.equal(summary.total, 1);
+});
+
+test("the fallback is a floor: a real applied_date always outranks created_at", () => {
+  // The CONTROL for the line above — without it, "falls back" could be
+  // satisfied by ignoring `applied_date` entirely, which is the original bug.
+  assert.equal(summarize([row("2026-07-20", "2026-08-26")], NOW).thisWeek, 0);
 });
 
 test("a malformed applied date is not counted and does not throw", () => {
