@@ -52,11 +52,69 @@ export function reviewSlotFor(prefs: NotificationPrefs): ReviewSlot {
  *  board, and it is a data condition rather than a defect (#216) — the tests
  *  drive a non-zero count on purpose, or they would pass for the wrong
  *  reason. */
-export function buildSubtitle(summary: PipelineSummary, weekly: boolean): string {
-  const thisWeek = weekly && summary.thisWeek > 0 ? ` · +${summary.thisWeek} this wk` : "";
+export function buildSubtitle(
+  summary: PipelineSummary,
+  weekly: boolean,
+): string {
+  const thisWeek =
+    weekly && summary.thisWeek > 0 ? ` · +${summary.thisWeek} this wk` : "";
   // "open", not "in motion": the pulse already calls these same rows open,
   // and an applied-and-waiting row is precisely the one NOT moving.
   return `${summary.total} filed${thisWeek} · ${summary.inMotion} open · ${summary.offers} offer${
     summary.offers === 1 ? "" : "s"
   }`;
+}
+
+/**
+ * The sync row's subtitle for an EMPTY board.
+ *
+ * A separate builder from `buildSubtitle`, because an empty board's line
+ * answers a different question. `buildSubtitle` reports totals; here the totals
+ * are all zero and the useful thing to say is WHY — is mail connected, has a
+ * scan run, and is anything waiting in the review queue.
+ *
+ * IT LIVES HERE FOR THE REASON THE FILE HEADER GIVES. It was built inline in
+ * `app/(app)/(protected)/dashboard/page.tsx`, which a Server Component test
+ * cannot import, so nothing gated it — and the demo twin, which cannot see it
+ * either, fell back to calling `buildSubtitle` with the FULL fixture summary.
+ * The result was `/demo/shell?empty=1` rendering
+ *
+ *     17 filed · 14 open · 0 offers
+ *
+ * directly above "nothing filed yet", in the one harness state that exists to
+ * model an empty board. That knob is also what the viewport-lock specs measure,
+ * so the twin was contradicting itself on the surface it was meant to stand in
+ * for — the exact drift this module was created to prevent, in a corner it had
+ * not reached yet.
+ *
+ * `needsReview` is folded in rather than left to the pulse, and that is not a
+ * duplicate of the rule `buildSubtitle` follows: on an empty board there is no
+ * board for the pulse to sit on, so this line is the only place the held count
+ * can be said at all. Zero folds in nothing — "· 0 need review" is not news.
+ */
+export function emptySubtitle(input: {
+  /** What we know about the mailbox. `unknown` is a failed probe, not "no". */
+  gmailState: "connected" | "disconnected" | "unknown";
+  /** A sync has completed successfully at least once. */
+  scanCompleted: boolean;
+  /** How many messages are held for classification. */
+  needsReview: number;
+}): string {
+  const { gmailState, scanCompleted, needsReview } = input;
+  const reviewNote =
+    needsReview > 0
+      ? ` · ${needsReview} ${needsReview === 1 ? "needs" : "need"} review`
+      : "";
+
+  if (gmailState === "connected") {
+    const detail = scanCompleted
+      ? "no applications detected yet"
+      : "no applications filed yet";
+    return `connected · ${detail}${reviewNote}`;
+  }
+  // A failed probe is NOT evidence that nothing is connected, and saying
+  // "nothing tracked yet" about it would state a verdict we do not have.
+  if (gmailState === "unknown")
+    return `0 filed · mail connection unknown${reviewNote}`;
+  return `0 filed · nothing tracked yet${reviewNote}`;
 }

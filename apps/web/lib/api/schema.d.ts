@@ -1568,6 +1568,10 @@ export interface components {
             suggested_category?: string | null;
             /** Role */
             role?: string | null;
+            /** Hold Reason */
+            hold_reason?: string | null;
+            /** Suggested Employer */
+            suggested_employer?: string | null;
         };
         /**
          * ReviewQueueResponse
@@ -2486,6 +2490,8 @@ export interface operations {
             query?: {
                 /** @description The origin (scheme://host[:port]) the caller is being browsed on, which the callback will return the browser to. Validated against this deployment's trusted web hosts HERE, before any consent URL exists, and then carried across the round trip inside the signed state. Omit it and the callback falls back to the operator's JOBTRACKER_WEB_APP_URL. */
                 return_origin?: string | null;
+                /** @description True when this consent was chained straight off a Google sign-in rather than chosen on the Settings page. It changes ONE thing: which same-origin page the callback returns the browser to (/dashboard rather than /settings). It is carried across the round trip inside the signed state and is never forwarded to Google. */
+                chained?: boolean;
             };
             header?: {
                 authorization?: string | null;

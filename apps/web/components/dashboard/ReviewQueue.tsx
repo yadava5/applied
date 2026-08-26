@@ -13,6 +13,7 @@ import {
   classifyRequestBody,
   confirmCompanyPrompt,
   employerPromptFor,
+  holdReasonSentence,
   readClassifyOutcome,
   reviewCandidates,
   rowStaysInQueue,
@@ -30,6 +31,10 @@ export interface ReviewItem {
   snippet?: string | null;
   confidence?: number | null;
   gmail_link?: string | null;
+  /** Why this is held — one of `HOLD_REASONS`. Absent on an older backend, in
+   *  which case the row says nothing rather than guessing (#507). */
+  hold_reason?: string | null;
+  suggested_employer?: string | null;
   /**
    * Which application this entry is about, when the mail names one.
    *
@@ -172,11 +177,13 @@ function ReviewRow({
         {sender}
         {item.role ? <span className="text-dim"> · {item.role}</span> : null}
       </p>
-      {/* WHY this email is here, in the classifier's own numbers: its
-          confidence drawn against the auto-file gate. Most held mail sits
-          under the gate; a confident verdict in this queue was held because
-          no employer could be named — two different questions for the user,
-          so the line says which one this is. */}
+      {/* WHY this email is here: its confidence drawn against the auto-file
+          gate, then the hold reason THE BACKEND REPORTED — not one inferred
+          from the score. This line used to read the confidence twice, once for
+          the meter and once to guess the reason, and told every confident row
+          that its employer could not be named. See `holdReasonSentence`, and
+          note it returns null rather than a fallback sentence: a row whose
+          reason this build does not recognise says nothing at all. */}
       {typeof item.confidence === "number" ? (
         <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-dim">
           <GateMeter confidence={item.confidence} className="w-12" />
@@ -188,9 +195,7 @@ function ReviewRow({
           >
             {Math.round(item.confidence * 100)}%
           </span>
-          {item.confidence >= AUTO_FILE_GATE
-            ? "cleared the gate · held for a missing employer name"
-            : `below the ${AUTO_FILE_GATE} gate · your call decides it`}
+          {holdReasonSentence(item.hold_reason, AUTO_FILE_GATE, item.suggested_employer)}
         </p>
       ) : null}
       {item.snippet ? (

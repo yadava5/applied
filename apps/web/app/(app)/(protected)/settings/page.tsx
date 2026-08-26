@@ -10,6 +10,7 @@ import { NotificationsSection } from "@/components/settings/NotificationsSection
 import { ProfileSection } from "@/components/settings/ProfileSection";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { GmailNotice } from "@/components/gmail/GmailNotice";
 import { getGmailStatus } from "@/lib/gmail/server";
 import { readAmbientPref } from "@/lib/settings/ambient";
 import { readNotificationPrefs } from "@/lib/settings/notifications";
@@ -18,7 +19,8 @@ import { getCurrentUser } from "@/lib/supabase/auth";
 
 export const metadata: Metadata = {
   title: "Settings",
-  description: "Manage your profile, appearance, notifications, data, and Gmail.",
+  description:
+    "Manage your profile, appearance, notifications, data, and Gmail.",
 };
 
 /**
@@ -89,39 +91,6 @@ export const metadata: Metadata = {
  * because this route needs a session CI does not have.
  */
 
-const FLAG_BANNERS: Record<string, { tone: "ok" | "warn" | "error"; text: string }> = {
-  connected: {
-    tone: "ok",
-    text: "Gmail connected. Applied can now read and classify your job-search mail.",
-  },
-  disconnected: { tone: "ok", text: "Gmail disconnected and access revoked at Google." },
-  error: { tone: "error", text: "Something went wrong reaching the mail backend. Please try again." },
-  auth: {
-    tone: "error",
-    text: "Your session couldn't be verified for the mail backend. Sign in again and retry.",
-  },
-  unavailable: {
-    tone: "warn",
-    text: "Gmail connection isn't enabled on this deployment yet — see the note below.",
-  },
-  // The beta cap (backend 409). This is the only banner that asks the reader to
-  // do something outside the product, and it has to: Google caps how many
-  // people this app may ever connect and that number cannot be raised on
-  // request, so "try again later" would be false. The address is the whole
-  // point of the message — a refusal with no way to appeal it is a dead end,
-  // and importing an export needs no Google account at all.
-  capacity: {
-    tone: "warn",
-    text: "The Gmail beta is full, so this account can't connect a mailbox yet. Email aesh.03.23@gmail.com to ask for a place. Importing a mailbox export still works.",
-  },
-};
-
-const TONE_CLASS: Record<"ok" | "warn" | "error", string> = {
-  ok: "border-live/40 text-strong",
-  warn: "border-line-strong text-muted",
-  error: "border-reject/50 text-strong",
-};
-
 /**
  * The page's ONE backend read, isolated behind Suspense so the rest of
  * Settings — which needs only the request-memoized Supabase user — streams to
@@ -176,7 +145,10 @@ export default async function SettingsPage({
   searchParams: Promise<{ gmail?: string }>;
 }) {
   const { gmail: flag } = await searchParams;
-  const banner = flag ? FLAG_BANNERS[flag] : undefined;
+  // The notice map moved to `lib/gmail/notices.ts` when the dashboard became
+  // a second landing place for this callback (#510). One definition, so the
+  // sentence a user reads after consenting cannot differ by which page they
+  // happened to land on.
 
   // The Gmail status is NOT awaited here — `LiveGmailCard` reads it behind
   // its Suspense boundary, so this render blocks only on the (memoized,
@@ -184,7 +156,8 @@ export default async function SettingsPage({
   const user = await getCurrentUser();
   const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
   const email = user?.email ?? "";
-  const displayName = typeof meta.display_name === "string" ? meta.display_name : "";
+  const displayName =
+    typeof meta.display_name === "string" ? meta.display_name : "";
   const memberSince = user?.created_at
     ? new Date(user.created_at).toLocaleDateString("en-US", {
         month: "long",
@@ -212,14 +185,7 @@ export default async function SettingsPage({
           yields here now and sign-out has to stay reachable above `lg`. */}
       <PageHeader />
 
-      {banner ? (
-        <div
-          role="status"
-          className={`max-w-3xl rounded-xl border bg-surface px-4 py-3 text-sm ${TONE_CLASS[banner.tone]}`}
-        >
-          {banner.text}
-        </div>
-      ) : null}
+      <GmailNotice flag={flag} />
 
       <div className="lg:grid lg:grid-cols-[10rem_minmax(0,48rem)] lg:gap-8">
         <SettingsNav />

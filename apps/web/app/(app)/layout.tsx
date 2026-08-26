@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { FeedbackToaster } from "@/components/feedback/Toaster";
 import { AppShell } from "@/components/shell/AppShell";
 import { readAmbientPref } from "@/lib/settings/ambient";
 import { loadRailData } from "@/lib/shell/rail";
@@ -79,25 +80,40 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   // Signed out: the public routes in this group render their own standalone
   // page, and a protected one is bounced by the layout below before anything
-  // of theirs renders. Either way there is no chrome to wrap them in.
-  if (!user) return <>{children}</>;
+  // of theirs renders. Either way there is no chrome to wrap them in — but
+  // the toaster still mounts, so a public surface that grows a mutation later
+  // is covered by the same single instance.
+  if (!user)
+    return (
+      <>
+        <FeedbackToaster />
+        {children}
+      </>
+    );
 
   return (
-    <AppShell
-      rail={rail}
-      userEmail={user.email ?? null}
-      userName={userDisplayName(user)}
-      // Rides on the user the layout already verified — no extra read. The
-      // Appearance toggle's router.refresh() re-runs this layout, which is
-      // how a saved change reaches the rail server-side.
-      //
-      // `/import` used to miss this entirely: its in-page `<AppShell>` passed
-      // no `ambient`, so the prop defaulted to `true` and an account that had
-      // switched the ambient field OFF still got the canvas on that one route.
-      // One shell, one source for the preference, so that cannot recur.
-      ambient={readAmbientPref((user.user_metadata ?? {}) as Record<string, unknown>)}
-    >
-      {children}
-    </AppShell>
+    <>
+      {/* THE toaster (#511): one instance for every route in this group, as a
+          sibling of the shell so a client navigation can never remount it and
+          drop an in-flight toast. The /demo twins live outside this group and
+          deliberately have no toaster yet. */}
+      <FeedbackToaster />
+      <AppShell
+        rail={rail}
+        userEmail={user.email ?? null}
+        userName={userDisplayName(user)}
+        // Rides on the user the layout already verified — no extra read. The
+        // Appearance toggle's router.refresh() re-runs this layout, which is
+        // how a saved change reaches the rail server-side.
+        //
+        // `/import` used to miss this entirely: its in-page `<AppShell>` passed
+        // no `ambient`, so the prop defaulted to `true` and an account that had
+        // switched the ambient field OFF still got the canvas on that one route.
+        // One shell, one source for the preference, so that cannot recur.
+        ambient={readAmbientPref((user.user_metadata ?? {}) as Record<string, unknown>)}
+      >
+        {children}
+      </AppShell>
+    </>
   );
 }

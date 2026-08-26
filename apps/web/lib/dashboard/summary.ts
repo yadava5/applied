@@ -15,6 +15,7 @@ import type { components } from "@/lib/api/schema";
 // carry a hand-written copy of `STAGES` and could not have caught a stage
 // losing its statuses. The type-only import above is erased before Node sees
 // it, so it may keep the alias.
+import { dailyCounts, todayISO, weekOverWeek } from "./age.ts";
 import { filedAt } from "./dates.ts";
 
 /**
@@ -140,8 +141,6 @@ export interface PipelineSummary {
   stages: { stage: StageDef; count: number }[];
 }
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
 /**
  * Fold raw per-status counts into the display-stage summary. This is the
  * single implementation of stage semantics (which raw statuses roll into
@@ -249,11 +248,44 @@ export function summarize(applications: Application[], now: number = Date.now())
   const statusCounts: Record<string, number> = {};
   let thisWeek = 0;
 
+  // THE WINDOW, on the date the user APPLIED — not the date we inserted the row.
+  //
+  // `created_at` is when the sync wrote the row, which is a fact about our
+  // batch and not about the user's week. Measured on the owner's board the day
+  // this changed: the header read "+47 this wk" for applications submitted
+  // across a fortnight, because one sync had just ingested them; 47 of the 47
+  // dated rows had an `applied_date` in a different calendar week from their
+  // `created_at`. Not one was counted correctly. The true answer was 7.
+  //
+  // AND COUNTED BY THE MOMENTUM PANEL'S OWN DERIVATION, not a second one that
+  // agrees with it today. `filedAt` (lib/dashboard/dates.ts) already means
+  // "when the user applied, falling back to when we filed it", and
+  // `dailyCounts` + `weekOverWeek` already turn that into a week — the
+  // MOMENTUM caption on this very screen reads a correct "7 this wk" from
+  // them while the header beside it read "+50".
+  //
+  // So the bug was never a missing rule. It was one renderer not using the
+  // rule the other renderer already had, and writing a third rule here would
+  // have been the same mistake in a new place. Two things prove it: a private
+  // day-window written for this line came out EIGHT calendar days wide
+  // (`[today-7, today]` inclusive) against the panel's seven, so the two would
+  // have disagreed by a day's filings the first time anyone applied on a
+  // boundary; and the undated-row question (count them under `created_at` or
+  // not at all?) stops being a judgement call the moment both sides ask
+  // `filedAt`, because then they cannot answer it differently.
+  //
+  // Measured on the live board: 50 by `created_at`, 7 by either reading of
+  // `filedAt`. All 7 undated rows are seeded demo rows outside the window, so
+  // adopting the fallback changes no number today — it removes the way the two
+  // lines could drift apart tomorrow.
+  const days = dailyCounts(
+    applications.map((app) => filedAt(app)),
+    todayISO(now),
+  );
+  thisWeek = weekOverWeek(days).thisWeek;
+
   for (const app of applications) {
     statusCounts[app.status] = (statusCounts[app.status] ?? 0) + 1;
-
-    const filed = Date.parse(app.created_at);
-    if (!Number.isNaN(filed) && now - filed >= 0 && now - filed <= WEEK_MS) thisWeek += 1;
   }
 
   return summarizeCounts(statusCounts, applications.length, thisWeek);

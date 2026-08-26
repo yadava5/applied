@@ -3250,7 +3250,20 @@ async def test_dismissed_rows_are_out_of_the_summary_tiles(
     after = (await client.get("/applications/summary", headers=headers)).json()
     assert after["total"] == 1
     assert "applied" not in after["status_counts"]  # Stripe was the only one
-    assert after["this_week"] == before["this_week"] - 1
+
+    # THE FIXTURE MAIL IS MONTHS OLD, so neither row is "this week" under the
+    # #509 basis. This line used to read `after == before - 1`, arithmetic that
+    # held only because both rows were CREATED during the test — the count was
+    # measuring the insert, which is the whole defect #509 removed.
+    #
+    # Asserting the ZEROES rather than `after == before` on purpose: equality
+    # alone is satisfied by any basis, including the old one, and would leave
+    # this line vacuous. Pinning both to 0 fails immediately if the endpoint
+    # goes back to counting `created_at`, where these would read 2 and 1 — so
+    # this is the integration-level proof that the endpoint reads the new
+    # column, which the unit tests cannot give.
+    assert before["this_week"] == 0
+    assert after["this_week"] == 0
 
 
 async def test_setting_a_status_on_a_removed_row_brings_it_back(
@@ -3335,10 +3348,30 @@ async def test_manual_create_persists_applied_date_and_url(
     assert listed["url"] == "https://boards.greenhouse.io/acme/jobs/42"
 
 
-async def test_manual_create_without_the_new_fields_is_unchanged(
+async def test_manual_create_dates_the_row_today_and_leaves_url_null(
     client: AsyncClient,
 ) -> None:
-    """Omitting them behaves exactly as before — both null, row still manual."""
+    """A hand-created application is ALWAYS dated; ``url`` still is not.
+
+    THIS ASSERTION CHANGED ON PURPOSE, and the old one was right about the old
+    contract: omitting ``applied_date`` used to store NULL. It cannot any more.
+    Since #509 the "this week" count reads ``applied_date``, and ``>= NULL`` is
+    false in SQL — so an undated row could never appear in that number, and a
+    user who typed an application in by hand and left the date blank would
+    simply never see it in their week, with nothing anywhere saying why.
+
+    Today is a DEFAULT and not an invention: the Add-application form now shows
+    today's date in its field (`localTodayISO`, the reader's own day), so the
+    value is on screen and editable before the form is submitted. This endpoint
+    defaults it too, so an API caller cannot create the undated row the form no
+    longer can.
+
+    ``url`` keeps its null, which is what makes this a scoped contract change
+    rather than a general "fill in the blanks" policy — and asserting it here
+    is what would catch one.
+    """
+
+    from datetime import datetime
 
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     resp = await client.post(
@@ -3347,9 +3380,36 @@ async def test_manual_create_without_the_new_fields_is_unchanged(
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["applied_date"] is None
+    # The exact day, not merely "not null": `is not None` passes against a
+    # default of 1970-01-01, and a row dated wrongly is worse than one dated
+    # not at all.
+    assert resp.json()["applied_date"] == datetime.utcnow().date().isoformat()
     assert resp.json()["url"] is None
     assert resp.json()["source"] == "manual"
+
+
+async def test_an_explicit_applied_date_is_never_overwritten_by_the_default(
+    client: AsyncClient,
+) -> None:
+    """THE CONTROL for the default above.
+
+    A default that also clobbered a supplied value would pass every assertion
+    in the test above while destroying exactly the case the field exists for:
+    someone back-filling an application they made months ago.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    resp = await client.post(
+        "/applications",
+        json={
+            "company": "Acme",
+            "position": "Backend Engineer",
+            "applied_date": "2026-01-15",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["applied_date"] == "2026-01-15"
 
 
 async def test_manual_create_rejects_a_malformed_date_visibly(

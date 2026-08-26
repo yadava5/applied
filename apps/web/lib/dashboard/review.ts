@@ -274,3 +274,98 @@ export function reviewCandidates(
     return haystack.includes(name);
   });
 }
+
+/**
+ * The hold reasons `GET /applications/review` can report, as it spells them.
+ *
+ * Mirrors `pipeline.HOLD_REASONS`. Strings rather than an enum on both sides so
+ * a reason this build has never heard of arrives as a string it can decline to
+ * render, instead of a parse error — see `holdReasonSentence`.
+ */
+export const HOLD_REASONS = [
+  "no_proposal",
+  "below_gate",
+  "ats_floor",
+  "no_employer",
+  "confirm_employer",
+  "not_fileable",
+  "which_application",
+  "gated_other",
+] as const;
+
+export type HoldReason = (typeof HOLD_REASONS)[number];
+
+/**
+ * Why this message is waiting, in the queue's own voice — or `null` when it
+ * cannot be said.
+ *
+ * THE WHOLE POINT IS THAT THERE IS NO FALLBACK SENTENCE (#507). This line used
+ * to be derived from `confidence` alone:
+ *
+ *     item.confidence >= AUTO_FILE_GATE
+ *       ? "cleared the gate · held for a missing employer name"
+ *       : `below the ${AUTO_FILE_GATE} gate · your call decides it`
+ *
+ * which told every confident held row that its employer could not be named,
+ * whatever had actually stopped it. That guess was right on the rows it was
+ * reported about — and only by coincidence, because those three really did
+ * fail employer resolution (#512). A label that is correct by luck is not
+ * correct, it is untested, and the next `unplaceable` row would have inherited
+ * a sentence about a problem it does not have.
+ *
+ * So an unknown or absent reason renders NOTHING. Silence is worse copy and
+ * better information: the row still shows its confidence and its controls, and
+ * the user is not told something untrue about their own mail.
+ */
+export function holdReasonSentence(
+  reason: string | null | undefined,
+  gate: number,
+  suggestedEmployer?: string | null,
+): string | null {
+  switch (reason) {
+    // The only "missing employer" there has ever been. The user's next move is
+    // to type the company, which is the control sitting directly below.
+    case "no_employer":
+      return "cleared the gate · we couldn't name the employer";
+    // The filing path could not name the employer, but the message body does,
+    // and the user is looking straight at that body. Saying "we couldn't name
+    // it" over a line that names it is the exact complaint behind #512. So we
+    // put the name we read in front of them and ask them to confirm it, which
+    // is both honest about what happened and one click from filing.
+    //
+    // The name is only ever the backend's — never re-read here. If it did not
+    // travel, the reason still says something true without inventing one.
+    case "confirm_employer":
+      return suggestedEmployer
+        ? `cleared the gate · is this ${suggestedEmployer}?`
+        : "cleared the gate · confirm the employer to file it";
+    // Confident, but this kind of update is never filed on its own. Neither
+    // the employer nor the score is the obstacle, and reporting one of those
+    // sent people hunting for a problem that was not there.
+    case "not_fileable":
+      return "cleared the gate · not a change we file on its own";
+    // Employer known, role unknown, and that employer holds several
+    // applications — so the question is WHICH, and the row's own picker is
+    // where it gets answered. Naming the wrong question here is what sent
+    // people looking for a company field that was never the problem.
+    case "which_application":
+      return "cleared the gate · which of your applications is this?";
+    case "below_gate":
+      return `below the ${gate} gate · your call decides it`;
+    // The classifier offered no category at all, which is a different state
+    // from a weak one and deserves to read differently.
+    case "no_proposal":
+      return "no category proposed · your call decides it";
+    // Kept only because a known ATS relayed it (#166). Saying so explains why
+    // a low-confidence row is in front of the user at all.
+    case "ats_floor":
+      return "under the floor · kept because an ATS sent it";
+    // Deliberately not smoothed into a neighbour. A confident row held for no
+    // reason this build can name is a BUG, and it should read like one rather
+    // than borrow a plausible sentence from a case it does not belong to.
+    case "gated_other":
+      return "cleared the gate · held, and we can't say why";
+    default:
+      return null;
+  }
+}

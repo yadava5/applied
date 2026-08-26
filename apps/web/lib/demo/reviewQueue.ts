@@ -50,6 +50,16 @@ interface HeldSeed {
   /** Which application the mail names, where it names one. Null is the common
    *  case and is the row's no-role branch. */
   role?: string | null;
+  /**
+   * WHY this one is held, as `/applications/review` now reports it (#507).
+   *
+   * Seeded per row rather than derived from `confidence`, because deriving it
+   * is the exact defect that issue removed: the row used to infer the reason
+   * from the score and told every confident hold that its employer could not
+   * be named. A fixture that re-derived it would put the bug back inside the
+   * twin and quietly make the demo disagree with the signed-in queue.
+   */
+  holdReason: string;
 }
 
 /**
@@ -77,30 +87,37 @@ const HELD_SEEDS: HeldSeed[] = [
       "Saw your work on the analytics side and wanted to ask a couple of questions before we go further.",
     confidence: 0.61,
     receivedDaysAgo: 1,
+    holdReason: "below_gate",
   },
   {
     subject: "Re: your note — a few thoughts",
     senderName: "Priya Raman",
     senderEmail: "priya@cedarlabs.com",
-    snippet: "Thanks for reaching out. A few thoughts on where this could go, and one caveat.",
+    snippet:
+      "Thanks for reaching out. A few thoughts on where this could go, and one caveat.",
     confidence: 0.74,
     receivedDaysAgo: 2,
+    holdReason: "below_gate",
   },
   {
     subject: "Scheduling — are you around next week?",
     senderName: null,
     senderEmail: "scheduling@northstar.dev",
-    snippet: "Looking at Tuesday or Wednesday afternoon. Let me know what works on your end.",
+    snippet:
+      "Looking at Tuesday or Wednesday afternoon. Let me know what works on your end.",
     confidence: 0.79,
     receivedDaysAgo: 3,
+    holdReason: "below_gate",
   },
   {
     subject: "Following up on the role we discussed",
     senderName: "Dan Okafor",
     senderEmail: "dan@harboranalytics.com",
-    snippet: "Wanted to close the loop on the conversation from a couple of weeks back.",
+    snippet:
+      "Wanted to close the loop on the conversation from a couple of weeks back.",
     confidence: 0.68,
     receivedDaysAgo: 5,
+    holdReason: "below_gate",
   },
   {
     // Above the gate — this one is held because the mail names no employer at
@@ -108,9 +125,11 @@ const HELD_SEEDS: HeldSeed[] = [
     subject: "Thank you for your interest",
     senderName: "Recruiting",
     senderEmail: "no-reply@applicant-mail.net",
-    snippet: "We have received your materials and will be in touch if there is a fit.",
+    snippet:
+      "We have received your materials and will be in touch if there is a fit.",
     confidence: 0.92,
     receivedDaysAgo: 8,
+    holdReason: "no_employer",
   },
   {
     subject: "Thank you for applying to Verkada",
@@ -120,6 +139,7 @@ const HELD_SEEDS: HeldSeed[] = [
       "Thank you so much for applying to the Backend Engineer, Alarms role at Verkada. We are excited to receive your application and will review it as soon as we can.",
     confidence: 0.78,
     receivedDaysAgo: 9,
+    holdReason: "below_gate",
     role: "Backend Engineer, Alarms",
   },
   {
@@ -132,7 +152,30 @@ const HELD_SEEDS: HeldSeed[] = [
       "Thank you so much for applying to the Frontend Engineer - Access Control role at Verkada. We are excited to receive your application and will review it as soon as we can.",
     confidence: 0.78,
     receivedDaysAgo: 9,
+    holdReason: "below_gate",
     role: "Frontend Engineer - Access Control",
+  },
+  {
+    // THE THIRD QUESTION the queue can ask, and the one no seed used to cover.
+    // Employer known, role NOT named anywhere the resolver can reach it, and
+    // that employer already holds several applications — so this message
+    // cannot be placed on any one of them and the user is asked WHICH, not
+    // who. Modelled on a real held row: the role sits in the body past the
+    // stored snippet (#484), which is why `role` is null here even though the
+    // text plainly contains one.
+    //
+    // APPENDED rather than inserted. Seeds cycle by index, so every existing
+    // `?review=N` knob (3, 4, 7) keeps exactly the rows it had; only a caller
+    // asking for 8 or more reaches this one. Inserting it anywhere else would
+    // silently re-date and re-order the queue every geometry spec measures.
+    subject: "Thank you for your interest in Verkada",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.io",
+    snippet:
+      "Thank you for your interest in the Embedded Software Engineer, Access Control opportunity. It means a lot to us that you would consider joining our mission.",
+    confidence: 0.95,
+    receivedDaysAgo: 10,
+    holdReason: "which_application",
   },
 ];
 
@@ -152,7 +195,10 @@ const HELD_SEEDS: HeldSeed[] = [
  * pulse's own deep-link note already refuses. The API models the field as
  * optional and the row renders nothing for it.
  */
-export function demoReviewQueueAsApi(count: number, today: string = todayISO()): ReviewItem[] {
+export function demoReviewQueueAsApi(
+  count: number,
+  today: string = todayISO(),
+): ReviewItem[] {
   return Array.from({ length: Math.max(0, count) }, (_, index) => {
     const seed = HELD_SEEDS[index % HELD_SEEDS.length]!;
     const pass = Math.floor(index / HELD_SEEDS.length);
@@ -168,6 +214,7 @@ export function demoReviewQueueAsApi(count: number, today: string = todayISO()):
       confidence: seed.confidence,
       gmail_link: null,
       role: seed.role ?? null,
+      hold_reason: seed.holdReason,
     };
   });
 }

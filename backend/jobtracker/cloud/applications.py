@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import NamedTuple
@@ -335,8 +336,16 @@ _APPLICATION_MAIL_CAP = 1000
 
 # How recent an application counts as "this week" for the summary tile. Kept
 # in one place so the backend aggregate and the frontend's array-based
-# `summarize()` fold agree on the window (7 days).
-_THIS_WEEK_WINDOW = timedelta(days=7)
+# `summarize()` fold agree on the window.
+#
+# SEVEN CALENDAR DAYS INCLUDING TODAY, so the cutoff is six days back, not
+# seven. `now - timedelta(days=7)` looks like the same thing and is not: with
+# `>=` on both ends it spans EIGHT distinct dates. The frontend counts this
+# week as the last seven buckets of `dailyCounts` — ages 0 through 6 — so a
+# seven-day subtraction here put the two derivations a day apart, and the
+# disagreement would only ever have shown up as an off-by-a-few-filings on the
+# one screen that renders both numbers side by side.
+_THIS_WEEK_DAYS = 7
 
 
 def _application_mail_truncated(
@@ -551,6 +560,26 @@ class ReviewItemResponse(BaseModel):
     # Derived from the same text the dedup key reads, so the row cannot display
     # one application and be filed under another.
     role: str | None = None
+    # WHY this message is waiting for a human — one of ``pipeline.HOLD_REASONS``.
+    #
+    # It is here because the web used to GUESS it from ``confidence`` alone and
+    # told every confident held row that its employer could not be named (#507).
+    # Two of the three rows on the owner's board that said so named their
+    # employer in the subject line directly above the sentence denying it.
+    #
+    # ``None`` means this deployment could not derive one. The web must render
+    # nothing for that rather than falling back to a guess, which is the whole
+    # defect this field exists to remove.
+    hold_reason: str | None = None
+    # The employer the BODY names, when the filing path could not name one —
+    # i.e. only ever alongside ``hold_reason == "confirm_employer"``.
+    #
+    # It travels with the reason rather than being re-read in the web for the
+    # same reason the reason itself does: a second reading of the same message
+    # by different code is how the queue came to print a sentence that
+    # contradicted the row above it. This is DISPLAY grade — a name to put in
+    # front of the user to confirm, never a name anything files under.
+    suggested_employer: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -3905,7 +3934,7 @@ async def application_summary_cloud(
     """
 
     now = datetime.utcnow()
-    week_ago = now - _THIS_WEEK_WINDOW
+    week_start = now.date() - timedelta(days=_THIS_WEEK_DAYS - 1)
 
     async with get_session() as session:
         # Dismissed rows are off the board, so they are out of every tile too —
@@ -3922,6 +3951,33 @@ async def application_summary_cloud(
             )
         ).all()
 
+        # COUNTED ON ``applied_date`` — when the user applied — and NOT on
+        # ``created_at``, which is when our sync inserted the row (#509).
+        #
+        # Measured on the owner's production board the day this changed: the
+        # dashboard header read "+47 this wk" for applications submitted across
+        # a fortnight, because one sync had just ingested them. 47 of the 47
+        # dated rows had an ``applied_date`` in a different calendar week from
+        # their ``created_at``, so not one was counted correctly. The true
+        # answer was 7. The number a user reads here is about THEIR week, and
+        # `created_at` is a fact about our batch.
+        #
+        # ``applied_date`` is a DATE and the bounds are timestamps, so the
+        # thresholds are converted to days explicitly rather than left to an
+        # implicit cast — the comparison really is a day comparison and should
+        # say so.
+        #
+        # A row with NO ``applied_date`` counts toward NOTHING, deliberately.
+        # ``COALESCE(applied_date, created_at)`` would reintroduce the entire
+        # bug for precisely the rows whose date we cannot know, and would do it
+        # invisibly. On the live board every such row is a seeded demo row and
+        # every row that came from real mail carries a date. ``>=`` against a
+        # NULL is already NULL/false in SQL, so this is what the predicate does
+        # anyway; it is written down because it is a decision, not an accident.
+        #
+        # `lib/dashboard/summary.ts` counts the same way for the demo twin.
+        # The two must change together or the twin and the signed-in board
+        # disagree about the same number, which this repo has a scar from.
         this_week = (
             await session.exec(
                 select(func.count())
@@ -3929,8 +3985,8 @@ async def application_summary_cloud(
                 .where(
                     Application.user_id == user_id,
                     Application.dismissed_at.is_(None),
-                    Application.created_at >= week_ago,
-                    Application.created_at <= now,
+                    Application.applied_date >= week_start,
+                    Application.applied_date <= now.date(),
                 )
             )
         ).one()
@@ -4026,7 +4082,27 @@ async def create_application_cloud(
     dialog's date and link disappear into ``notes``.
     """
 
-    applied_date = _parse_applied_date(data.applied_date)
+    # A HAND-CREATED APPLICATION IS ALWAYS DATED, and it defaults to today.
+    #
+    # `applied_date` is optional on this endpoint and the Add-application form
+    # leaves its date field blank by default, so a row could be created with no
+    # date at all. That was invisible while "this week" counted `created_at`;
+    # since #509 counts on `applied_date`, an undated row can never appear in
+    # that number — silently, because `>= NULL` is false in SQL. A user who
+    # typed an application in by hand and did not fill the date would simply
+    # never see it in their week, with nothing anywhere saying why.
+    #
+    # The comment this replaced claimed every undated row was a seed row or
+    # mail-derived. That was true of the board it was measured on and false as a
+    # general statement: manual creation is a third source, and it is the one a
+    # real user reaches.
+    #
+    # Today is a DEFAULT, not an invention: the form now shows today's date in
+    # the field, so the value is visible and editable before it is submitted,
+    # and someone back-filling an older application changes it there. Rows that
+    # come from mail are unaffected — they carry the message's own receipt date
+    # and never reach this line.
+    applied_date = _parse_applied_date(data.applied_date) or datetime.utcnow().date()
     url = (data.url or "").strip() or None
 
     async with get_session() as session:
@@ -4068,6 +4144,115 @@ def _message_ref_response(
     )
 
 
+def _sibling_counts(company_names: Sequence[str | None]) -> Counter[str]:
+    """How many applications sit under each employer TOKEN the resolver can emit.
+
+    MIRRORS :func:`_company_rows`, and must keep mirroring it. That function
+    answers "which rows belong to this employer" for the sync, and it does so
+    with a UNION of two rules: the stored name normalized equals the token, OR
+    the stored name's LEADING normalized word equals it. Both halves are
+    load-bearing, and the comment there records what it cost to learn — an
+    early return that kept only the exact half grew six rows each for "IXL
+    Learning" and "Torc Robotics".
+
+    Counting on the normalized full name alone — which is what this did first —
+    silently misses every multi-word employer, because ``resolve_employer``
+    returns a token built from the FIRST WORD of the display name:
+
+        stored "Path Robotics" -> "path robotics"   token "path"    MISS
+        stored "IXL Learning"  -> "ixl learning"    token "ixl"     MISS
+        stored "Verkada"       -> "verkada"         token "verkada" match
+
+    So the branch that needs the count would have fired only for single-word
+    employers and reported a WRONG reason everywhere else, which is precisely
+    the class of defect #507 exists to remove — arriving inside the fix for it.
+
+    Two employers sharing a leading word land on one key on purpose. The
+    resolver cannot tell "Path Robotics" from "Path Analytics" either, so the
+    honest count for token ``path`` is both of them, and asking the user which
+    application this is beats guessing one.
+
+    Each row contributes to a key AT MOST ONCE: for a single-word employer the
+    full name and the leading word are the same string, and counting it twice
+    would push a lone application over the "several" threshold and ask a
+    question with one possible answer.
+    """
+
+    counts: Counter[str] = Counter()
+    for name in company_names:
+        if not name:
+            continue
+        normalized = pipeline.normalize_company_name(name)
+        if not normalized:
+            continue
+        leading = normalized.split(" ")[0]
+        for key in {normalized, leading}:
+            counts[key] += 1
+    return counts
+
+
+def _hold_reason_for(
+    email: Email, siblings: "Counter[str]"
+) -> tuple[str | None, str | None]:
+    """Why this queue row is waiting, and the employer to confirm if there is one.
+
+    Returns ``(reason, suggested_employer)``. The second is non-None only for
+    :data:`pipeline.HOLD_CONFIRM_EMPLOYER`, where the filing path could not name
+    the employer but the body does — the row needs a name to put in front of the
+    user, and re-deriving it in the web would be a second reading of the same
+    message that could disagree with this one.
+
+    The employer is resolved here, once, and used for two things: whether one
+    could be named at all, and how many applications sit under it. Both feed
+    :func:`pipeline.hold_reason`, which owns the precedence — this function is
+    the I/O-shaped half (a stored row, a count off the board) and holds no
+    policy of its own.
+
+    ``suggested_category`` is what tells a genuine "the classifier had no
+    opinion" apart from a real proposal that merely scored low.
+    ``classified_as`` cannot: every row in this queue stores ``needs_review``,
+    which is the typed null and not a verdict. It is ALSO the category the
+    fileability test needs, for the same reason: ``classified_as`` is the same
+    typed null on every row here, so testing it would ask every row the same
+    question and get the same answer.
+    """
+
+    subject = email.subject or ""
+    sender_email = email.sender_email or ""
+    snippet = (email.body_snippet or "")[: pipeline.STORED_SNIPPET_CHARS]
+
+    resolved = pipeline.resolve_employer(sender_email, subject, email.sender_name)
+    # ``resolve_employer`` returns (token, display); the token is the match key
+    # the counter was built under.
+    sibling_count = siblings.get(resolved[0], 0) if resolved else 0
+
+    reason = pipeline.hold_reason(
+        confidence=email.classification_confidence,
+        subject=subject,
+        sender_email=sender_email,
+        sender_name=email.sender_name,
+        snippet=snippet,
+        has_proposal=email.suggested_category is not None,
+        sibling_applications=sibling_count,
+        # ``EmailCategory`` is a ``str`` Enum whose values are exactly the
+        # pipeline's category strings, so ``.value`` needs no translation table.
+        category=(
+            email.suggested_category.value
+            if email.suggested_category is not None
+            else None
+        ),
+        # The column the sync wrote from the FULL body, which the ~200-char
+        # stored snippet cannot always reproduce (#484).
+        stored_role=email.identity_role,
+    )
+
+    suggested_employer: str | None = None
+    if reason == pipeline.HOLD_CONFIRM_EMPLOYER:
+        named = pipeline.employer_named_in_body(snippet, sender_email)
+        suggested_employer = named[1] if named else None
+    return reason, suggested_employer
+
+
 @router.get("/review", response_model=ReviewQueueResponse)
 async def review_queue_cloud(
     user_id: uuid.UUID = Depends(current_user),
@@ -4104,8 +4289,34 @@ async def review_queue_cloud(
             )
         ).all()
 
+        # HOW MANY APPLICATIONS EACH EMPLOYER HOLDS, for the hold reason (#507).
+        #
+        # One query for the whole board rather than ``_company_rows`` per queue
+        # row: the queue is capped at ``limit`` and the board is small, but a
+        # per-row lookup is two statements each and this answers every row at
+        # once. Only the company is selected — the rows themselves are not
+        # needed, just how many share an employer.
+        #
+        # Dismissed rows are excluded for the same reason every other tile
+        # excludes them: a removed application is not one of the candidates the
+        # user would be asked to choose between.
+        #
+        # Normalized with ``normalize_company_name`` — the SAME rules the tokens
+        # were minted under. Matching on ``lower(company)`` instead is what once
+        # filed a second "Together AI" row on every sync.
+        company_names = (
+            await session.exec(
+                select(Application.company).where(
+                    Application.user_id == user_id,
+                    Application.dismissed_at.is_(None),
+                )
+            )
+        ).all()
+
         # Same session, and last — see _connected_account_email.
         account_email = await _connected_account_email(user_id, session)
+
+    siblings = _sibling_counts(company_names)
 
     items: list[ReviewItemResponse] = []
     seen_threads: set[tuple[str, str | None] | str] = set()
@@ -4124,6 +4335,7 @@ async def review_queue_cloud(
         if key in seen_threads:
             continue
         seen_threads.add(key)
+        hold_reason_value, suggested_employer_value = _hold_reason_for(e, siblings)
         items.append(
             ReviewItemResponse(
                 message_id=e.message_id,
@@ -4137,10 +4349,19 @@ async def review_queue_cloud(
                 suggested_category=(
                     e.suggested_category.value if e.suggested_category else None
                 ),
-                role=pipeline.role_from_message(
+                # Stored first, re-derived only as a fallback — same reason as
+                # ``stored_role`` in ``_hold_reason_for``: ``identity_role`` was
+                # written from the whole body, this snippet is the first ~200
+                # characters of it, and a title past that boundary exists in the
+                # column and nowhere else (#484). Re-deriving first would blank
+                # a role on screen that the sync had already read.
+                role=e.identity_role
+                or pipeline.role_from_message(
                     e.subject or "",
                     (e.body_snippet or "")[: pipeline.STORED_SNIPPET_CHARS],
                 ),
+                hold_reason=hold_reason_value,
+                suggested_employer=suggested_employer_value,
                 gmail_link=pipeline.gmail_deeplink(
                     thread_id=e.thread_id,
                     message_id=e.message_id,

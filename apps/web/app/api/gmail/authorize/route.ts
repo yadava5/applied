@@ -35,7 +35,6 @@ import { getGmailAuthorizeUrl } from "@/lib/gmail/server";
  */
 export async function GET(request: NextRequest) {
   const { origin, searchParams } = new URL(request.url);
-  const result = await getGmailAuthorizeUrl(origin);
 
   // `?from=signin` means the PKCE callback chained us here straight off a
   // Google sign-in (#494), rather than the user clicking Connect in Settings.
@@ -53,6 +52,12 @@ export async function GET(request: NextRequest) {
   // same-origin paths this file spells out in full, and it is never forwarded
   // to the backend or used to build a URL.
   const fromSignIn = searchParams.get("from") === "signin";
+  // The flag now travels all the way to the backend, which signs it into the
+  // OAuth state so the CALLBACK can land a chained user on the dashboard
+  // instead of Settings (#510). Until then it stopped here and only chose
+  // where a local failure bounced to, which meant a chained connect that
+  // SUCCEEDED still ended on a preferences page.
+  const result = await getGmailAuthorizeUrl(origin, fromSignIn);
   const onFailure = (flag: string) => {
     if (fromSignIn) return NextResponse.redirect(new URL("/dashboard", origin));
     const back = new URL("/settings", origin);

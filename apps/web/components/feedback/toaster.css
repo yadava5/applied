@@ -1,0 +1,35 @@
+/* Reduced-motion treatment for the toast stack (#511): drop the slide, KEEP
+ * the fade. Sonner's own `prefers-reduced-motion` rule nukes every animation
+ * and transition with `!important`, which makes toasts pop in and out with no
+ * cue at all — an appearance the eye can miss entirely is worse feedback, not
+ * calmer feedback. These selectors carry one attribute more of specificity
+ * than sonner's (`[data-sonner-toaster] [data-sonner-toast]` vs its bare
+ * `[data-sonner-toast]`), so among equal `!important`s ours win. Stack
+ * repositioning still snaps (sonner's `transition: none` stands un-fought):
+ * that is the motion reduced-motion actually asks to remove. */
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toaster] [data-sonner-toast][data-mounted="true"] {
+    animation: applied-toast-fade-in 160ms ease-out both !important;
+  }
+  [data-sonner-toaster] [data-sonner-toast][data-removed="true"] {
+    animation: applied-toast-fade-out 120ms ease-in both !important;
+  }
+}
+
+@keyframes applied-toast-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes applied-toast-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

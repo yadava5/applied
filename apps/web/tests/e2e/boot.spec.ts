@@ -95,11 +95,36 @@ function stallReadySignal() {
  */
 const BOOT_FLAG_KEY = "jt-boot";
 
+/**
+ * A page that is NOT a boot route, which is where the flag has to be armed.
+ *
+ * `BootOverlay` consumes the flag in a `setTimeout(…, 0)` after mount, guarded
+ * by `isBootPath(window.location.pathname)` — so an overlay sitting on a boot
+ * route eats any flag it finds there. Arming on `/import` itself therefore
+ * raced its own consumer: whether the test won depended on whether that mount
+ * timeout had already fired by the time `page.goto` returned at `load`.
+ *
+ * That is why this is a wrong SEQUENCE, not a timing nicety. In production the
+ * flag is written on the sign-in page — never a boot path — and read once on
+ * arrival at the destination. Arming on the destination is a sequence no user
+ * performs, and it was the test asserting against itself.
+ *
+ * The race was invisible until a `<FeedbackToaster />` joined the signed-out
+ * layout: its client JS pushes hydration on `/import` past `load`, which moved
+ * the consume from before the arm to after it, and three tests began failing in
+ * CI for a reason that had nothing to do with toasts. Measured: 11 of 12 arms
+ * lost with the toaster present, 0 of 12 lost without it, and 12 of 12 raised
+ * with the toaster still present once the arm moved here. The corroboration was
+ * already in this file — the one test that armed off a non-boot page is the one
+ * test that never flaked.
+ */
+const ARM_FROM = "/demo";
+
 /** Arm the flag the way a sign-in does, then arrive on a boot route.
  *  `waitUntil: "commit"` returns as soon as the document commits, which puts
  *  the assertions inside the boot's window instead of after `load`. */
 async function armAndArrive(page: Page, target = "/import") {
-  await page.goto(target);
+  await page.goto(ARM_FROM);
   await page.evaluate(
     ([key, value]) => window.sessionStorage.setItem(key, `${value}|${Date.now()}`),
     [BOOT_FLAG_KEY, target],
@@ -120,7 +145,17 @@ async function waitForCover(page: Page, state: "raised" | "cleared", timeout = 1
         const log = await bootLog(page);
         return log.length > 0 ? log[log.length - 1].value : "none";
       },
-      { timeout, message: `data-boot never reached ${state}` },
+      {
+        timeout,
+        // Says WHICH of the two it was. This poll reads only the LAST entry, so
+        // a cover that raised and cleared normally reports the same
+        // "never reached raised" as one that was never armed at all — and those
+        // have opposite causes. Distinguishing them cost a full re-instrument
+        // of the page once; the message now carries the distinction.
+        message:
+          `data-boot never reached ${state} — an empty log means never armed, ` +
+          `a log containing "1" means it raised and then cleared`,
+      },
     )
     .toBe(want);
   const log = await bootLog(page);

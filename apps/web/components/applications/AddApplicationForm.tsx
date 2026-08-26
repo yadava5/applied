@@ -14,6 +14,7 @@ import {
   selectClass,
   textareaClass,
 } from "@/components/ui/formStyles";
+import { localTodayISO } from "@/lib/dashboard/age";
 import { APPLICATION_STATUSES } from "@/lib/dashboard/status";
 
 /**
@@ -269,7 +270,33 @@ export function AddApplicationForm({
           </label>
           <label htmlFor={dateId} className="grid gap-1">
             <span className={fieldLabelClass}>applied date</span>
-            <input id={dateId} name="applied" type="date" className={inputClass} />
+            {/* DEFAULTS TO TODAY, visibly. The field is optional and used to
+                open blank, which produced undated rows — invisible while "this
+                week" counted the row's insert time, and since #509 unable to
+                appear in that count at all, silently. Showing today's date
+                rather than defaulting it server-side is the difference between
+                a default and an invention: it is on screen before the form is
+                submitted, and anyone back-filling an older application edits it
+                here. `defaultValue`, not `value`, so it stays uncontrolled and
+                the user's own choice is never overwritten on a re-render.
+
+                `localTodayISO`, never `todayISO`: the latter is the UTC
+                instant, which between local midnight and UTC midnight names
+                a day the reader is not in yet. The date picker beside this
+                field offers the LOCAL day when the user clicks "today", and
+                a default that disagreed with it would be its own bug.
+
+                Safe to read a clock during render because `Dialog` mounts
+                its children only while open (`{open ? … : null}`), so this
+                input is never server-rendered and there is no hydration
+                pass for a UTC server and a local browser to disagree on. */}
+            <input
+              id={dateId}
+              name="applied"
+              type="date"
+              defaultValue={localTodayISO()}
+              className={inputClass}
+            />
           </label>
           <label htmlFor={linkId} className="grid gap-1 sm:col-span-2">
             <span className={fieldLabelClass}>link (job post / thread)</span>

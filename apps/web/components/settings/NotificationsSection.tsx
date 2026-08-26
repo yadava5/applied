@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { notifyError } from "@/components/feedback/notify";
 
 import { SaveStatus, SettingsSection } from "./SettingsSection";
 import { Toggle } from "./Toggle";
@@ -40,6 +41,17 @@ export function NotificationsSection({
     setState("saving");
     const { ok } = await transport.saveMetadata({ notifications: next });
     setState(ok ? "saved" : "error");
+    // A FAILED save is the one thing the inline chip cannot carry (#511).
+    // Success stays inline, beside the control that caused it — a corner toast
+    // for every toggle would be noise, and the chip is already where the eye
+    // is. A failure is different: the control has visibly moved, nothing was
+    // written, and the chip is a small word at the edge of a card the user has
+    // usually already scrolled past. Error toasts never auto-dismiss.
+    if (!ok)
+      notifyError(
+        "settings.notifications",
+        "Couldn't save your notification settings — your change wasn't kept",
+      );
     /**
      * THE OTHER HALF OF #216, and the reason the toggle read as dead.
      *
@@ -75,7 +87,11 @@ export function NotificationsSection({
           checked={prefs.weekly}
           onChange={(v) => persist({ ...prefs, weekly: v })}
           label="Weekly summary"
-          description="Adds this week's filings to your dashboard's header line."
+          // Says WHICH DATE is counted, because the two readings give very
+          // different numbers and the old copy ("this week's filings") named
+          // neither. On the owner's board the same toggle rendered 47 under one
+          // reading and 7 under the other.
+          description="Adds this week's applications to your dashboard header, counted from the date you applied rather than the date we filed the email."
         />
         <Toggle
           checked={prefs.reviewAlerts}
