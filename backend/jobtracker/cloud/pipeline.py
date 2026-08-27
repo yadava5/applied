@@ -884,6 +884,10 @@ _EMPLOYER_LEAD_SEGMENT = re.compile(
 # do, instead of one pattern that has to be traced to be believed.
 _SEGMENT_DELIMITER = re.compile(r"\||\s[-–—]\s")
 _LEADING_RUN = re.compile(r"^\s*(" + _COMPANY_CAPTURE + r")")
+#: What introduces a lifecycle word's object. "<Employer> Follow-Up FOR
+#: <Role>" is the reported shape; "from", "with", "by" and the rest introduce a
+#: person or a source, not the job the mail is about.
+_LIFECYCLE_OBJECT = re.compile(r"^(?:for|regarding|re)\b", re.IGNORECASE)
 _LIFECYCLE_WORD = re.compile(r"^" + _SUBJECT_LIFECYCLE_TAIL + r"$", re.IGNORECASE)
 
 # Head nouns of a JOB TITLE. A leading segment that ENDS in one of these is
@@ -2317,18 +2321,64 @@ def _lead_segment_candidates(subject: str) -> list[str]:
     parts = _SEGMENT_DELIMITER.split(subject, 1)
     if len(parts) < 2:
         return []
-    run_match = _LEADING_RUN.match(parts[0].strip())
+    segment = parts[0].strip()
+    run_match = _LEADING_RUN.match(segment)
     if not run_match:
         return []
     run = run_match.group(1)
+    remainder = segment[run_match.end() :].strip()
 
-    candidates = [run]
     words = run.split()
+    cut = None
     for index, word in enumerate(words):
         if index and _LIFECYCLE_WORD.match(word):
-            candidates.append(" ".join(words[:index]))
+            cut = " ".join(words[:index])
             break
-    return candidates
+
+    # THE RUN MUST ACCOUNT FOR THE WHOLE SEGMENT, or the part of the segment it
+    # does not account for must be introduced by a lifecycle word it DOES.
+    #
+    # This is the requirement the rule has always carried and the one that was
+    # lost when the candidate list was extracted out of `_EMPLOYER_LEAD_SEGMENT`:
+    # matching a leading run and discarding the rest of the segment turns the
+    # test into "the segment begins with a capital letter", which ordinary ATS
+    # subjects satisfy constantly. Measured against the mail this actually reads,
+    # dropping the requirement minted
+    #
+    #     "Invitation to interview | Acme"            -> Invitation
+    #     "Decision on your application | Acme"       -> Decision
+    #     "Sorry for the delay in getting back to you | Acme" -> Sorry
+    #     "Sarah Chen from Acme - quick chat?"        -> Sarah Chen
+    #     "Congratulations Ayush on your application | Acme" -> Congratulations Ayush
+    #
+    # every one of them at 0.95 on the AUTO-FILE path, i.e. a card on the board
+    # under a name nobody chose. All five resolved to nothing before the rule was
+    # widened, and resolve to nothing again with the requirement restored.
+    #
+    # A trailing remainder is therefore only forgiven when the run itself ends in
+    # a lifecycle word, which is what makes the remainder that word's object
+    # rather than unrelated prose: "Anthropic Follow-Up | for <Role>" is the
+    # reported shape and keeps working, while "Invitation | to interview" has no
+    # lifecycle word AFTER a company-shaped prefix and so offers nothing.
+    if remainder:
+        # A LEGAL SUFFIX IS PART OF THE COMPANY, not a remainder. "Salesforce,
+        # Inc. | Application Received" splits its run at the comma, and refusing
+        # it would drop an employer the rule reads correctly today.
+        if not _CORP_TAIL.sub("", remainder).strip(" ,.&-"):
+            return [run] if cut is None else [run, cut]
+        # Otherwise the remainder is only forgiven when it is the LIFECYCLE
+        # WORD'S OBJECT, and "for" is what marks it as one. Without that test
+        # any preposition will do, and "Quick Update | from Sarah" resolves to
+        # the company "Quick" — the run ends in a lifecycle word, so the cut is
+        # offered, and "Quick" passes every downstream guard.
+        #
+        # The distinction is the whole point of the rule: "Anthropic Follow-Up
+        # FOR <Role>" is a follow-up ABOUT a job at a named employer, while
+        # "Quick Update FROM Sarah" is prose that happens to open with a capital.
+        if cut and _LIFECYCLE_OBJECT.match(remainder):
+            return [cut]
+        return []
+    return [run] if cut is None else [run, cut]
 
 
 def _employer_from_subject_segment(
