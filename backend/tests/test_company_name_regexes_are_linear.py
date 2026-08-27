@@ -184,6 +184,33 @@ def test_employer_at_sign_is_linear() -> None:
     assert new_ms < BUDGET_MS, f"{new_ms:.2f} ms, budget {BUDGET_MS} ms"
 
 
+def test_leading_run_is_linear() -> None:
+    """The bare leading-run capture (#512 gap 2), on a long whitespace run.
+
+    It carries no trailing alternation for the engine to backtrack into — the
+    delimiter search moved out of the pattern and into ``_SEGMENT_DELIMITER``
+    precisely so this one could stay a single anchored capture — but it is the
+    newest ``_COMPANY_CAPTURE`` consumer and the family has a ReDoS scar, so it
+    is measured rather than argued.
+    """
+
+    payload = "A" + " " * BLOWUP_N + "x"
+
+    new_ms = _elapsed_ms(p._LEADING_RUN.match, payload)
+
+    assert new_ms < BUDGET_MS, f"leading run: {new_ms:.2f} ms, budget {BUDGET_MS} ms"
+
+
+def test_the_segment_delimiter_split_is_linear() -> None:
+    """Splitting a subject on its first delimiter, over a pathological input."""
+
+    payload = ("-" + " " * 40) * 400
+
+    new_ms = _elapsed_ms(lambda s: p._SEGMENT_DELIMITER.split(s, 1), payload)
+
+    assert new_ms < BUDGET_MS, f"segment split: {new_ms:.2f} ms, budget {BUDGET_MS} ms"
+
+
 def test_name_is_address_is_linear() -> None:
     """A sender display name made entirely of at-signs."""
 
@@ -281,7 +308,7 @@ def test_a_newline_bearing_name_is_reachable_from_mail_not_only_from_the_user() 
     """Which callers can deliver the divergent input — measured, not assumed.
 
     ``_COMPANY_CAPTURE``'s inter-word ``\\s+`` matches a newline, so an employer
-    captured out of a SUBJECT can arrive multi-line; six of the seven employer
+    captured out of a SUBJECT can arrive multi-line; seven of the eight employer
     patterns are built on it. That decides how much of the behaviour change
     below is user-typed input and how much is live mail, and the first answer
     written here — "only the user-typed field can do this" — was wrong.
@@ -293,6 +320,9 @@ def test_a_newline_bearing_name_is_reachable_from_mail_not_only_from_the_user() 
         p._EMPLOYER_BARE_AT: "role at Acme\nCorp",
         p._EMPLOYER_AT_SIGN: "SWE @ Acme\nCorp",
         p._EMPLOYER_LEAD_SEGMENT: "Acme\nCorp | Application Received",
+        # #512 gap 2: the leading run is taken on its own now, so the segment's
+        # employer can be cut out in front of a lifecycle word.
+        p._LEADING_RUN: "Acme\nCorp Follow-Up for A Role",
         p._SUBJECT_NAMES_EMPLOYER: "Thanks for applying to Acme\nCorp",
     }
     for pattern, subject in probes.items():

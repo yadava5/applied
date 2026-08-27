@@ -294,11 +294,23 @@ def test_a_confident_row_with_no_proposal_says_so_before_anything_else() -> None
 
 
 def test_a_subject_that_names_nobody_still_asks_about_the_body_name() -> None:
-    """#512's third row: the subject carries the role and the candidate, the
-    body's first line carries the employer, and the queue denied both."""
+    """The subject names no employer at all; the body's first line does.
+
+    THE FIXTURE MOVED, and the reason is worth recording because the old one
+    silently stopped testing this branch. It used to be
+    "<Employer> Follow-Up for <Role> | <Candidate>" — #512's gap 2, which the
+    FILING resolver could not read at the time. Gap 2 is fixed, so that subject
+    now names its employer outright, `hold_reason` short-circuits on the
+    resolver long before the body pass, and the assertion below would have been
+    green for a completely different reason.
+
+    A subject that genuinely names nobody is what this branch is for. There are
+    real ones: an ATS that puts only the candidate and the stage in the subject
+    and the employer in the first line of the body.
+    """
     assert (
         _reason(
-            subject="Granitethwaitevale Follow-Up for TPU Kernel Engineer | A Candidate",
+            subject="An update on your application | A Candidate",
             snippet=(
                 "Hi there, Thank you so much for your interest in Granitethwaitevale "
                 "and for the time you have invested in our process."
@@ -391,7 +403,12 @@ def test_the_body_name_never_reaches_the_filing_path() -> None:
     population this pattern reads — would start minting board rows. #166
     refused that trade and this is the tripwire on it.
     """
-    subject = "Granitethwaitevale Follow-Up for TPU Kernel Engineer | A Candidate"
+    # A subject that names nobody, so the ONLY place the employer appears is the
+    # body. (It used to be #512's gap-2 shape; that subject now resolves at
+    # filing grade, which would have made the second assertion below test the
+    # wrong thing entirely — see the note on
+    # `test_a_subject_that_names_nobody_still_asks_about_the_body_name`.)
+    subject = "An update on your application | A Candidate"
     snippet = "Thank you so much for your interest in Granitethwaitevale and for the time"
 
     assert pipeline.employer_named_in_body(snippet, "no-reply@us.greenhouse-mail.io") is not None
