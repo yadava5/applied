@@ -34,5 +34,29 @@ jobs:
       # optional, and a disabled checker is how the drift it guards against
       # started. The recorded figures come from docs/readme-facts.json, which is
       # refreshed by `--record` on a developer machine, never here.
+      # WELL-FORMEDNESS FIRST, and repo-wide rather than README-only.
+      #
+      # A merge left README.md holding the same paragraph three times separated
+      # by conflict markers, and `--check` passed on it: the markers DUPLICATE
+      # the prose, so every number it looks for is still present and still
+      # correct, and the site count went UP — which reads as more coverage
+      # rather than as corruption. It was committed and pushed in that state.
+      #
+      # README-only would not be enough. The same day, `git add -A` staged three
+      # conflicted .py files; that surfaced as a SyntaxError only because
+      # something happened to import one of them. A file nothing imports would
+      # have merged silently. This step costs milliseconds and covers every
+      # tracked file, which is the only version of this check worth having.
+      #
+      # `git grep` exits 1 when it finds NOTHING, so the sense is inverted on
+      # purpose: finding a marker is the failure.
+      - name: No unresolved conflict markers anywhere in the tree
+        run: |
+          if git grep -InE '^(<{7}|>{7}|\|{7}|={7})( |$)' -- . ; then
+            echo "::error::unresolved git conflict markers are committed above"
+            exit 1
+          fi
+          echo "no conflict markers in any tracked file"
+
       - name: Check every number the README asserts
         run: python3 scripts/readme_facts.py --check
