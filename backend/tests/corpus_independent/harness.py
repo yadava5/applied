@@ -69,7 +69,10 @@ even when both messages sit on the wrong cards:
   an absence read as a wrong record: **COMPANY-DRIFT**, the same employer
   spelled differently ("Arcgrove" for "Arcgrove Systems", which is the leading
   word the resolver keeps on purpose), and **ROLE-MISSING**, a blank title
-  where the mail named a job.
+  where the mail named a job. That last sentence was not true until #533: 146
+  cards were counted here for mail that named no job at all, because ground
+  truth had been handed a role the message never contained. They are asserted
+  as blank now, which is what makes the definition above the definition.
 
 ``expect_review`` cases are scored in their own bucket: being unplaceable is the
 DESIGNED answer there, and counting designed behaviour as failure would swamp
@@ -432,6 +435,10 @@ class BoardScore:
     #: cards — 10.4% of the board — carry any title the product cared to print
     #: while every counter stayed at zero. "The mail names no role" is a claim,
     #: not an absence, and a claim can be checked.
+    #:
+    #: 1106 now: #533 found 146 more of them hiding in the opposite counter,
+    #: scored as ROLE-MISSING defects for not printing a title their mail never
+    #: contained.
     blank_required: int = 0
 
     #: A card that must be blank and is not: the product printed a job title for
@@ -439,6 +446,18 @@ class BoardScore:
     #: than a gap — the opposite direction from ``role_missing``, which is an
     #: absence and stays out.
     role_invented: int = 0
+
+    #: Cards this corpus genuinely cannot settle a title for: the identity keys
+    #: on a requisition id, so the key names the application without naming the
+    #: job. Not a defect and not an assertion — the THIRD population, and it
+    #: exists so the three can be made to close against ``titles_graded``.
+    #:
+    #: Without it, "every card is accounted for" is unstatable: a regression
+    #: that stopped grading N cards would move ``roles_graded`` down and nothing
+    #: would move up, and the only visible effect would be a smaller
+    #: denominator — which is how a merge regression once took ``role_missing``
+    #: from 213 to 0 while breaking the board (#536).
+    role_unsettleable: int = 0
     #: The card names an employer that is not the one the mail is from.
     company_wrong: int = 0
     #: Same employer by the product's own matching rule, different string —
@@ -798,7 +817,18 @@ def score_board(
             # is the only correct card and any title is an invention. Only the
             # first is unanswerable; treating both as unanswerable is what left
             # 960 cards ungraded.
-            if any(by_mid[m].names_no_role for m in mids if m in by_mid):
+            blank = [by_mid[m].names_no_role for m in mids if m in by_mid]
+            # ``all`` RATHER THAN ``any``, and the empty list guarded, because
+            # the two differ only on a card this corpus cannot build: reaching
+            # here means every case on the card has ``role_truth is None``, and
+            # cases sharing an identity share a sub-key, so they share the
+            # reason. If one ever did arrive mixed, ``all`` sends it to the
+            # skipped population instead of asserting a blank the card was
+            # never required to have — a false ROLE-INVENTED naming a real
+            # defect that is not there costs more than one unasserted card.
+            if not blank or not all(blank):
+                score.role_unsettleable += 1
+            else:
                 score.blank_required += 1
                 if got_role is not None:
                     score.role_invented += 1
