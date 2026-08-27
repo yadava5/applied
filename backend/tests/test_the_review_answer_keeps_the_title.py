@@ -651,3 +651,78 @@ async def test_a_matching_requisition_still_does_not_re_key_the_row(test_session
     # The title is still filled: that is the fix, and it is what separates
     # "never rewrite the KEY" from "never write anything".
     assert after.position == ROLE
+
+
+async def test_a_dismissed_duplicate_does_not_make_the_landing_blind(test_session):
+    """One live card beside one dismissed one is not a tie-break.
+
+    `_company_rows` returns dismissed rows (sorted last) and
+    `_merge_rolled_into_board` dismisses rows on every resync, so this is an
+    ordinary state, not an exotic one. Counting the dismissed row toward the
+    ambiguity left the single live card blank with the job sitting in its own
+    `identity_role` column — proved end to end by an independent verification
+    pass on 2026-08-27, against the first version of the blind-landing refusal.
+
+    `employers_with_several_applications` already draws this line, in those
+    words: a dismissed duplicate is not on the board.
+    """
+
+    live = _row(company="Amazon")
+    dismissed = _row(company="Amazon")
+    dismissed.dismissed_at = BASE
+    await _seed(test_session, live, dismissed)
+    await _seed(test_session, _blind_mail("rv-dismissed"))
+
+    await apps.classify_review_item(
+        test_session, USER, "rv-dismissed", EmailCategory.REJECTION
+    )
+    await test_session.commit()
+
+    after = await _reload(test_session, live.id)
+    assert after.position == ROLE, (
+        "a dismissed duplicate was counted as a rival card, so the one card on "
+        "the board was left blank with its job in the column beside it"
+    )
+
+
+# ── the two clauses of the title guard, separated ────────────────────────────
+#
+# `if role and not app.position and app.position_source != ROLE_FROM_USER`
+# reads as two protections and was tested as one. An independent verification
+# pass on 2026-08-27 split it: dropping `not app.position` reds
+# `test_one_review_answer_does_not_rename_a_card_that_already_has_a_title`, but
+# dropping `app.position_source != ROLE_FROM_USER` left 13 passing here and 36
+# passing across `test_user_supplied_role.py` and
+# `test_a_resync_keeps_the_humans_decisions.py` — pinned by NOTHING in the repo.
+#
+# The reason is that both tests named for it seed a NON-BLANK typed title, so
+# `not app.position` short-circuits and the source is never consulted. They pin
+# the clause next door under a name that claims this one. The distinguishing
+# state is a BLANK title whose source still says a human owns it.
+
+
+def test_the_two_halves_of_the_title_guard_are_not_the_same_half():
+    """Called directly, because the state is unreachable through the API today.
+
+    `record_role_correction` nulls `position_source` when it clears a title, so
+    blank-with-source-user should not occur — which is exactly why no route
+    reaches it and exactly why the clause was untested. It is belt and braces
+    against a future writer that clears the text and leaves the provenance, and
+    belt and braces that nothing pins is indistinguishable from dead code.
+    """
+
+    typed_but_blank = _row(
+        company="Amazon", position="", position_source=apps.ROLE_FROM_USER
+    )
+    # The return value is deliberately NOT asserted: the call still stamps
+    # `role_token`, so it reports a change. What must not move is the title.
+    apps._adopt_mail_identity(typed_but_blank, ROLE, None)
+    assert typed_but_blank.position == "", (
+        "a row whose title a human owns was retitled from a message, because "
+        "the guard's only live clause is the one about the title being blank"
+    )
+
+    # THE CONTROL: same blank title, no human claim on it, and it fills.
+    sync_owned = _row(company="Amazon", position="", position_source=None)
+    apps._adopt_mail_identity(sync_owned, ROLE, None)
+    assert sync_owned.position == ROLE

@@ -1551,7 +1551,16 @@ async def _resolve_application_for_email(
         pipeline.role_from_message(subject, snippet)
     )
     picked = _pick_application(rows, req_id, role_token)
-    blind = req_id is None and role_token is None and len(rows) > 1
+    # LIVE ROWS ONLY, for the reason :func:`employers_with_several_applications`
+    # already gives: a dismissed duplicate is not on the board, so letting one
+    # push the count over the threshold refuses on the strength of a card that
+    # no longer exists. `_company_rows` deliberately returns dismissed rows and
+    # sorts them last, and `_merge_rolled_into_board` dismisses rows on every
+    # resync, so one live row beside one dismissed one is an ordinary state —
+    # and there is nothing ambiguous about it. Counting both left the single
+    # live card blank with the job sitting in its own `identity_role` column.
+    live = sum(1 for row in rows if row.dismissed_at is None)
+    blind = req_id is None and role_token is None and live > 1
     return picked, LANDED_BLIND if blind else LANDED_KEYED
 
 
@@ -1659,6 +1668,11 @@ def _adopt_mail_identity(app, role: str | None, req_id: str | None) -> bool:
         app.position = role
         changed = True
     if req_id is not None and app.req_id is None:
+        # The `is None` is bookkeeping, NOT a guard, and saying so is the point:
+        # the contradiction check above has already returned unless `app.req_id`
+        # is None or equal to `req_id`, so dropping it here changes no stored
+        # value and no test can red on it. It stays because writing the same
+        # string back would dirty the row and bump `updated_at` for nothing.
         app.req_id = req_id
         changed = True
     token = pipeline.normalize_role_token(role) if role else None
