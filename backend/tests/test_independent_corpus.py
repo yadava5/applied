@@ -112,7 +112,34 @@ RECORDED = {
     "update_stranded": 0,
     # Updates the pipeline was not confident enough to file, so it ASKED. The
     # designed answer, and it moves with the seed: 351 at 20260822.
-    "update_held": 371,
+    #
+    # 371 UNTIL 2026-08-26 and 631 now, because `rescinded-offer` gained the
+    # `joins` it should always have had. The extra 260 are not new behaviour —
+    # they were always held, and the corpus simply had no way to say which card
+    # they belonged to.
+    "update_held": 631,
+    # THE CARD IS AHEAD OF THE USER'S LIFE. A KNOWN, OPEN DEFECT, pinned so a
+    # fix moves it; it is not blessed by being here.
+    #
+    # All 260 are `rescinded-offer`. The offer files a card at `offered`; the
+    # withdrawal that revokes it scores `other` at 0.50 — nothing in the
+    # rejection patterns matches "we must rescind the offer" — and lands in the
+    # review queue. The board then shows an offer the person does not have,
+    # which is the single failure #417 says matters more than any other,
+    # because it asserts something false about their life rather than leaving
+    # them where they were.
+    #
+    # The corpus scored this GREEN for as long as it existed: the family set
+    # neither `joins` nor `card_status`, so the score watched the classifier
+    # and never the card. Exactly #487's shape, one field over.
+    #
+    # HELD IS NOT AUTOMATICALLY A DEFECT and this counter is careful about it.
+    # The 371 above leave a card reading `applied` when it should read
+    # `offered` — BEHIND reality, incomplete, and true as far as it goes. Only
+    # a card that is AHEAD counts, and the direction is read off the product's
+    # own `_STATUS_RANK`. That is the control: it is what keeps this from
+    # becoming a second, louder way of saying `update_held`.
+    "card_overstates": 260,
     # ── the card's TITLE, which nothing here compared until #487 ─────────────
     #
     # Every number above this line is about WHICH MESSAGES ENDED UP TOGETHER.
@@ -707,8 +734,12 @@ async def test_an_update_updates_the_card_it_belongs_to(
         "update-picks-between-two",
         "update-before-confirmation",
         "update-from-another-domain",
+        # The withdrawal of an offer. Held like the rest — and unlike the rest
+        # it leaves the card claiming the offer still stands; see
+        # `card_overstates` and `test_a_held_message_may_still_leave_a_lying_card`.
+        "rescinded-offer",
     }, dict(held)
-    assert 310 <= score.update_held_for_review <= 400, (
+    assert 560 <= score.update_held_for_review <= 700, (
         f"{score.update_held_for_review} updates held for review. A large "
         "move here is worth reading either way: fewer means the classifier got "
         "more confident, more means it got less."
@@ -751,6 +782,130 @@ async def test_the_card_says_what_the_mail_said(
     assert score.wrong_status == 0, [
         f.detail for f in score.failures if f.mode == "WRONG-STAGE"
     ][:5]
+
+
+@pytest.mark.asyncio
+async def test_a_held_message_may_still_leave_a_lying_card(
+    cases, verdicts, test_session
+) -> None:
+    """Holding is the designed answer. Holding is not always harmless.
+
+    ``update_held_for_review`` is deliberately outside ``total``: below the
+    gate, a person decides, and a score that punished asking would reward a
+    product that guesses. That argument is sound for the 371 updates it was
+    written for — an offer held while the card still reads ``applied`` leaves a
+    row that is BEHIND the user's life. Incomplete, and true as far as it goes.
+
+    It is not sound for a withdrawn offer. The offer files a card at
+    ``offered``; the withdrawal is held; the board goes on showing an offer the
+    person does not have. That row is AHEAD of their life, and #417 is right
+    that it is the one failure worth ranking above the rest — every other error
+    in this corpus leaves the user where they were, and this one tells them
+    something false about it.
+
+    The two outcomes were one number until 2026-08-26, which is why nobody had
+    to look at the second: the `rescinded-offer` family set neither ``joins``
+    nor ``card_status``, so the board score watched the classifier and never
+    the card, and reported WRONG STAGE 0 over 260 cards reading ``offered``
+    with all 260 withdrawals parked in the queue. Exactly #487's shape, one
+    field over.
+    """
+
+    replayed = await replay(test_session, verdicts)
+    score = score_board(replayed, cases)
+
+    assert score.card_overstates == RECORDED["card_overstates"], [
+        f.detail for f in score.failures if f.mode == "CARD-OVERSTATES"
+    ][:5]
+    families = {f.family for f in score.failures if f.mode == "CARD-OVERSTATES"}
+    assert families == {"rescinded-offer"}, (
+        f"a second family started overstating: {families}"
+    )
+    # THE CONTROL, and the reason this is not just `update_held` renamed: 631
+    # messages are held and only 260 leave a card claiming too much. If the
+    # direction test ever stops working, these two numbers converge.
+    assert score.card_overstates < score.update_held_for_review
+
+
+def test_only_a_card_that_is_AHEAD_of_reality_is_counted() -> None:
+    """The mutation proof, and the direction is the whole check.
+
+    A counter that fired on any held message whose card disagrees with ground
+    truth would read 631 here and would be a second name for
+    ``update_held_for_review``. Three cases, one held message each, identical
+    but for which way the card is wrong:
+
+      · card ``offered``, truth ``rejected``  -> counted. The offer was pulled.
+      · card ``applied``,  truth ``offered``  -> NOT counted. Behind, honest.
+      · card ``applied``,  truth ``applied``  -> NOT counted. Nothing wrong.
+    """
+
+    from datetime import datetime
+
+    from tests.corpus_independent.generate import Case
+    from tests.corpus_independent.harness import Replay
+
+    def scenario(card_reads: str, truth: str):
+        anchor = Case(
+            message_id="m1",
+            thread_id=None,
+            subject="s",
+            sender="x@y.test",
+            sender_name=None,
+            body="b",
+            delivered="b",
+            received_at=datetime(2026, 1, 1),
+            family="rescinded-offer",
+            expected_category="offer",
+            identity="northwind|Software Engineer",
+            employer="northwind",
+        )
+        update = Case(
+            message_id="m2",
+            thread_id=None,
+            subject="s",
+            sender="x@y.test",
+            sender_name=None,
+            body="b",
+            delivered="b",
+            received_at=datetime(2026, 1, 2),
+            family="rescinded-offer",
+            expected_category="rejection",
+            identity="northwind|Software Engineer",
+            employer="northwind",
+            joins="m1",
+            card_status=truth,
+        )
+        return score_board(
+            Replay(
+                groups=[("rowA", ["m1"])],
+                reviewed={"m2"},  # HELD — the whole point
+                dropped=set(),
+                status={"rowA": card_reads},
+                title={"rowA": ("Northwind", "Software Engineer")},
+            ),
+            [anchor, update],
+        )
+
+    pulled = scenario("offered", "rejected")
+    assert pulled.card_overstates == 1, (
+        "the board is showing an offer that was withdrawn and nothing counted it"
+    )
+    assert pulled.wrong_status == 0, (
+        "a held message has not been filed, so it cannot have moved the stage — "
+        "this must not ALSO fire as WRONG-STAGE or one defect reads as two"
+    )
+    assert pulled.total >= 1
+
+    behind = scenario("applied", "offered")
+    assert behind.card_overstates == 0, (
+        "a card that has not caught up yet is incomplete, not lying, and "
+        "counting it makes this a second name for update_held_for_review"
+    )
+    assert behind.update_held_for_review == 1
+
+    agrees = scenario("applied", "applied")
+    assert agrees.card_overstates == 0 and agrees.total == 0
 
 
 @pytest.mark.asyncio
