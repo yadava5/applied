@@ -55,6 +55,22 @@ even when both messages sit on the wrong cards:
   out. Counted separately from LOST for exactly that reason: one of these is
   invisible and the other is merely bad.
 
+* **WRONG COMPANY / WRONG ROLE** — the card holds the right mail and is NAMED
+  after something else. Everything above this line is about which messages
+  ended up together; these two are about the two fields a user actually reads,
+  and until #487 nothing here compared them at all. The proof is PR #486: it
+  turned 44 blank roles into correct ones and moved not one recorded number,
+  because gaining a title changes a card's NAME and not its partition. Both
+  carry a DENOMINATOR (``titles_graded``, ``roles_graded``) for the reason a
+  zero needs one — a grader that graded nothing would report a perfect board.
+
+  Two near neighbours are reported and kept OUT of ``total``, because
+  collapsing them into the counters above would make a cosmetic difference and
+  an absence read as a wrong record: **COMPANY-DRIFT**, the same employer
+  spelled differently ("Arcgrove" for "Arcgrove Systems", which is the leading
+  word the resolver keeps on purpose), and **ROLE-MISSING**, a blank title
+  where the mail named a job.
+
 ``expect_review`` cases are scored in their own bucket: being unplaceable is the
 DESIGNED answer there, and counting designed behaviour as failure would swamp
 the table.
@@ -276,6 +292,11 @@ class Replay:
     dropped: set[str]
     #: card label -> the stage the board shows for it.
     status: dict[str, str]
+    #: card label -> the two fields a user actually READS on the card:
+    #: ``(company, position)``, exactly as stored. Carried separately from the
+    #: label because the label is an identity for the harness's own bookkeeping
+    #: and comparing it to ground truth would compare an id, not a title.
+    title: dict[str, tuple[str, str]]
 
 
 async def replay(session, verdicts: list[Verdict]) -> Replay:
@@ -359,6 +380,10 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
             f"row{r.id}:{r.company}": getattr(r.status, "value", str(r.status))
             for r in live
         },
+        title={
+            f"row{r.id}:{r.company}": (r.company or "", r.position or "")
+            for r in live
+        },
     )
 
 
@@ -385,6 +410,29 @@ class BoardScore:
     update_held_for_review: int = 0
     #: The right card, showing the wrong stage.
     wrong_status: int = 0
+    #: How many cards had their TITLE compared to ground truth at all. Not a
+    #: defect count — the denominator. A grader that silently graded nothing
+    #: would report three zeroes below and read as perfect, which is the
+    #: check-that-cannot-fail shape this whole file exists to avoid.
+    titles_graded: int = 0
+    #: The same denominator for the ROLE half, which is smaller: a card whose
+    #: ground truth keys on a requisition id, or on this generator's "the mail
+    #: names no role" sentinel, has a title nothing here can settle. See
+    #: ``Case.role_truth``.
+    roles_graded: int = 0
+    #: The card names an employer that is not the one the mail is from.
+    company_wrong: int = 0
+    #: Same employer by the product's own matching rule, different string —
+    #: "Northwind" against "Northwind Labs". Reported, and kept OUT of
+    #: ``total``: it is a cosmetic variance, not a wrong record.
+    company_drift: int = 0
+    #: The card names a role that is not the one applied for.
+    role_wrong: int = 0
+    #: Ground truth has a role and the card's is blank. Not a lie, an absence —
+    #: reported and kept out of ``total`` for the same reason ``company_drift``
+    #: is. #486's Palantir case was this, and it is a real defect; it is simply
+    #: a different one from a card carrying somebody else's job title.
+    role_missing: int = 0
     #: About a real application and reached nothing at all.
     lost: int = 0
     #: About a real application and dropped under the review floor. Counted by
@@ -405,6 +453,8 @@ class BoardScore:
             + self.wrong_review
             + self.update_opened_a_card
             + self.wrong_status
+            + self.company_wrong
+            + self.role_wrong
             + self.lost
             + self.dropped
         )
@@ -567,6 +617,108 @@ def score_board(
                 message_ids=(case.message_id,),
             )
         )
+
+    # ── and the card is NAMED right ──────────────────────────────────────────
+    #
+    # The half this scorer could not see until #487. Everything above is about
+    # WHICH MESSAGES ENDED UP TOGETHER; none of it looks at the two fields a
+    # user actually reads. A card holding exactly the right mail, under a
+    # company called "Senior Software Engineer Interview" — a real capture, off
+    # the live filing path, found while fixing #512 — scores perfectly above.
+    # PR #486 is the other proof: it turned 44 blank roles into correct ones
+    # and moved not one number, because gaining a title changes a card's NAME
+    # and not its partition.
+    #
+    # Graded only where ground truth can settle it:
+    #
+    #   * the card must map to exactly ONE ground-truth application. A card
+    #     holding two is a MERGE, already counted, and "which of the two is it
+    #     supposed to be named after" has no answer.
+    #   * ``expect_review`` mail carries no identity, so a card built only from
+    #     it is not graded — there is nothing to grade against.
+    #
+    # Company is compared with ``matches_company_token``, the product's OWN
+    # "is this the same employer" rule, so that "Northwind" against "Northwind
+    # Labs" reports as drift rather than as a wrong record. Role is compared
+    # with ``normalize_role_token``, for the reason that function exists: an
+    # employer's confirmation and its own later mail punctuate the same title
+    # differently, and a comparison on display strings would read that as a
+    # wrong title several thousand times.
+    for label, mids in groups:
+        title = replayed.title.get(label)
+        if title is None:
+            continue
+        idents = {
+            by_mid[m].identity
+            for m in mids
+            if m in by_mid and by_mid[m].identity is not None
+        }
+        if len(idents) != 1:
+            continue  # no identity to grade against, or a MERGE already counted
+        ident = idents.pop()
+        want_employer = ident.partition("|")[0]
+        want_role = next(
+            (
+                by_mid[m].role_truth
+                for m in mids
+                if m in by_mid and by_mid[m].role_truth is not None
+            ),
+            None,
+        )
+        company, position = title
+        family = next(
+            (by_mid[m].family for m in mids if m in by_mid), "?"
+        )
+        score.titles_graded += 1
+
+        if not pipeline.matches_company_token(company, want_employer):
+            score.company_wrong += 1
+            score.failures.append(
+                Failure(
+                    mode="WRONG-COMPANY",
+                    family=family,
+                    detail=f"card reads company {company!r}, applied to {want_employer!r}",
+                    message_ids=tuple(mids[:5]),
+                )
+            )
+        elif pipeline.normalize_company_name(company) != pipeline.normalize_company_name(
+            want_employer
+        ):
+            score.company_drift += 1
+            score.failures.append(
+                Failure(
+                    mode="COMPANY-DRIFT",
+                    family=family,
+                    detail=f"card reads company {company!r}, applied to {want_employer!r}",
+                    message_ids=tuple(mids[:5]),
+                )
+            )
+
+        got_role = pipeline.normalize_role_token(position)
+        want_token = pipeline.normalize_role_token(want_role)
+        if want_token is None:
+            continue  # nothing here can settle this card's title; see role_truth
+        score.roles_graded += 1
+        if got_role is None:
+            score.role_missing += 1
+            score.failures.append(
+                Failure(
+                    mode="ROLE-MISSING",
+                    family=family,
+                    detail=f"card has no position; applied for {want_role!r}",
+                    message_ids=tuple(mids[:5]),
+                )
+            )
+        elif got_role != want_token:
+            score.role_wrong += 1
+            score.failures.append(
+                Failure(
+                    mode="WRONG-ROLE",
+                    family=family,
+                    detail=f"card reads position {position!r}, applied for {want_role!r}",
+                    message_ids=tuple(mids[:5]),
+                )
+            )
 
     # ── every application mail is addressed ──────────────────────────────────
     for case in cases:

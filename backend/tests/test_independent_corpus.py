@@ -113,6 +113,38 @@ RECORDED = {
     # Updates the pipeline was not confident enough to file, so it ASKED. The
     # designed answer, and it moves with the seed: 351 at 20260822.
     "update_held": 371,
+    # ── the card's TITLE, which nothing here compared until #487 ─────────────
+    #
+    # Every number above this line is about WHICH MESSAGES ENDED UP TOGETHER.
+    # PR #486 turned 44 blank roles into correct ones and moved not one of
+    # them, because gaining a title changes a card's NAME and not its
+    # partition. These five are the other half.
+    #
+    # The two denominators are pinned FIRST and on purpose. Three zeroes with
+    # nothing behind them is the shape this repository keeps shipping; a grader
+    # that graded nothing would report a perfect board.
+    "titles_graded": 9252,
+    # Smaller, because a card whose ground truth keys on a requisition id or on
+    # the generator's "names no role" sentinel has a title nothing can settle.
+    # See ``Case.role_truth``.
+    "roles_graded": 7892,
+    # The card names an employer nobody applied to. This is what a user would
+    # call hallucinating, and the live filing path can do it: while fixing #512
+    # the subject "Senior Software Engineer Interview | <name>" resolved to a
+    # company of that name. No corpus family produces that shape yet — #487's
+    # third condition, and the reason the mutation probe below exists.
+    "company_wrong": 0,
+    # The card names a job nobody applied for.
+    "role_wrong": 0,
+    # Same employer, differently spelled: "Arcgrove" against "Arcgrove
+    # Systems". The resolver keeps the leading word, which is what makes two
+    # spellings one employer; the cost is a card that reads short. Reported,
+    # and OUT of ``total`` — it is a cosmetic variance, not a wrong record.
+    "company_drift": 1420,
+    # Ground truth names a role and the card is blank. An absence, not a lie,
+    # so also out of ``total``. 260 of these are `rescinded-offer` and 127
+    # `conditional-explainer`; see #484 and #486.
+    "role_missing": 600,
 }
 
 
@@ -721,6 +753,162 @@ async def test_the_card_says_what_the_mail_said(
     ][:5]
 
 
+@pytest.mark.asyncio
+async def test_the_card_is_named_after_the_right_job(
+    cases, verdicts, test_session
+) -> None:
+    """And the card says WHOSE application it is (#487).
+
+    Everything above this test is about which messages ended up together. The
+    two fields a user actually reads — the employer and the job title — were
+    never compared to ground truth at all, and the proof of that is PR #486: it
+    turned 44 blank roles into correct ones and moved not a single recorded
+    number, because gaining a title changes a card's NAME and not its
+    partition. The corpus was green either way.
+
+    It is not a theoretical gap. The live filing path can mint a company out of
+    a job title: while fixing #512 the subject ``"Senior Software Engineer
+    Interview | <name>"`` resolved to an employer of that name, which is a card
+    on the board under a company nobody has ever applied to. #485 warns of the
+    same shape naming the CANDIDATE.
+
+    THE DENOMINATORS ARE ASSERTED FIRST, and that ordering is the point. Three
+    zeroes with nothing behind them is the defect shape this file exists to
+    prevent: a grader that graded nothing would report a perfect board, and
+    would keep reporting it.
+    """
+
+    replayed = await replay(test_session, verdicts)
+    score = score_board(replayed, cases)
+
+    assert score.titles_graded == RECORDED["titles_graded"], (
+        f"{score.titles_graded} of {score.cards} cards had their title compared "
+        "at all — the two assertions below are only worth their denominator"
+    )
+    assert score.roles_graded == RECORDED["roles_graded"], (
+        f"{score.roles_graded} cards had a role this corpus can settle"
+    )
+    assert score.company_wrong == RECORDED["company_wrong"], [
+        f.detail for f in score.failures if f.mode == "WRONG-COMPANY"
+    ][:5]
+    assert score.role_wrong == RECORDED["role_wrong"], [
+        f.detail for f in score.failures if f.mode == "WRONG-ROLE"
+    ][:5]
+    # Neither of these is a failure and both are real, so they are pinned
+    # rather than asserted at zero: a fix must MOVE them, and a regression
+    # cannot hide inside a number nobody wrote down.
+    assert score.company_drift == RECORDED["company_drift"], (
+        f"cards reading a short form of their employer moved to "
+        f"{score.company_drift}"
+    )
+    assert score.role_missing == RECORDED["role_missing"], (
+        f"blank-titled cards moved to {score.role_missing}"
+    )
+
+
+def test_a_wrong_title_is_actually_caught() -> None:
+    """The mutation proof for the three counters above.
+
+    Zero is only evidence when the check can produce something else. This
+    corrupts EXACTLY 250 card titles in a replay and asserts the scorer counts
+    exactly 250, in the right bucket, three times over:
+
+      · a different employer  -> WRONG-COMPANY, and it enters ``total``
+      · a different job       -> WRONG-ROLE, and it enters ``total``
+      · the same employer, spelled longer -> COMPANY-DRIFT, and ``total`` does
+        NOT move
+
+    The third is the control. Without it, "counts a wrong company" would be
+    satisfied by a scorer that flags every card whose string is not identical
+    to the token — which would be 1,420 false alarms on the real board.
+
+    Proven a second way, outside this file and against the whole product:
+    replacing ``pipeline.role_from_message`` with a constant took WRONG ROLE
+    from 0 to 2,376 over a 4,000-message slice.
+    """
+
+    from datetime import datetime
+
+    from tests.corpus_independent.generate import Case
+    from tests.corpus_independent.harness import Replay
+
+    def case(mid: str, ident: str, family: str = "f") -> Case:
+        return Case(
+            message_id=mid,
+            thread_id=None,
+            subject="s",
+            sender="x@y.test",
+            sender_name=None,
+            body="b",
+            delivered="b",
+            received_at=datetime(2026, 1, 1),
+            family=family,
+            expected_category="applied",
+            identity=ident,
+            employer=ident.partition("|")[0],
+        )
+
+    cards = [(f"row{i}", [f"m{i}"]) for i in range(250)]
+    cases_ = [case(f"m{i}", "northwind labs|Software Engineer") for i in range(250)]
+    right = {f"row{i}": ("Northwind Labs", "Software Engineer") for i in range(250)}
+
+    def scored(title: dict[str, tuple[str, str]]):
+        return score_board(
+            Replay(groups=cards, reviewed=set(), dropped=set(), status={}, title=title),
+            cases_,
+        )
+
+    control = scored(right)
+    assert control.titles_graded == 250 and control.roles_graded == 250
+    assert control.company_wrong == 0 and control.role_wrong == 0
+    assert control.company_drift == 0 and control.role_missing == 0
+
+    wrong_company = scored(
+        {k: ("Hallucinated Holdings", v[1]) for k, v in right.items()}
+    )
+    assert wrong_company.company_wrong == 250, wrong_company.company_wrong
+    assert wrong_company.role_wrong == 0
+    assert wrong_company.total == control.total + 250
+
+    wrong_role = scored({k: (v[0], "Chief Vibes Officer") for k, v in right.items()})
+    assert wrong_role.role_wrong == 250, wrong_role.role_wrong
+    assert wrong_role.company_wrong == 0
+    assert wrong_role.total == control.total + 250
+
+    blank_role = scored({k: (v[0], "") for k, v in right.items()})
+    assert blank_role.role_missing == 250 and blank_role.role_wrong == 0
+    assert blank_role.total == control.total, (
+        "a blank title is an absence, not a wrong record, and must not be "
+        "averaged into the same number as a card naming somebody else's job"
+    )
+
+    drift = scored({k: ("Northwind Labs International", v[1]) for k, v in right.items()})
+    assert drift.company_drift == 250 and drift.company_wrong == 0
+    assert drift.total == control.total, (
+        "THE CONTROL: a scorer that simply compared strings would call all "
+        "1,420 real drift cases a wrong company"
+    )
+
+    # And the sentinel half: ground truth that names no role must score a blank
+    # card as CORRECT, not as a miss. #487's first condition.
+    anonymous = score_board(
+        Replay(
+            groups=[("rowA", ["m0"])],
+            reviewed=set(),
+            dropped=set(),
+            status={},
+            title={"rowA": ("Northwind Labs", "")},
+        ),
+        [case("m0", "northwind labs|__apply0__")],
+    )
+    assert anonymous.titles_graded == 1
+    assert anonymous.roles_graded == 0, (
+        "a card whose mail names no role has nothing to grade; grading it "
+        "against the sentinel reported 660 correct cards as defects"
+    )
+    assert anonymous.role_missing == 0 and anonymous.total == 0
+
+
 def test_the_new_failure_modes_can_actually_fire() -> None:
     """A branch asserted empty that has never fired is a branch that may not work.
 
@@ -767,6 +955,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             status={"rowA": "applied", "rowB": "applied"},
+            title={},
         ),
         [anchor, case("m2", joins="m1")],
     )
@@ -782,6 +971,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             status={"rowA": "applied"},
+            title={},
         ),
         [anchor, case("m2", joins="m1", card_status="rejected")],
     )
@@ -791,12 +981,12 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
     # pattern was demoted and now fires at 0. A branch with no live example is
     # a branch nobody is watching.
     fell = score_board(
-        Replay(groups=[], reviewed=set(), dropped={"m1"}, status={}),
+        Replay(groups=[], reviewed=set(), dropped={"m1"}, status={}, title={}),
         [anchor],
     )
     assert fell.dropped == 1 and fell.lost == 0
     gone = score_board(
-        Replay(groups=[], reviewed=set(), dropped=set(), status={}),
+        Replay(groups=[], reviewed=set(), dropped=set(), status={}, title={}),
         [anchor],
     )
     assert gone.lost == 1 and gone.dropped == 0, (
@@ -812,6 +1002,7 @@ def test_the_new_failure_modes_can_actually_fire() -> None:
             reviewed=set(),
             dropped=set(),
             status={"rowA": "rejected"},
+            title={},
         ),
         [anchor, case("m2", joins="m1", card_status="rejected")],
     )
