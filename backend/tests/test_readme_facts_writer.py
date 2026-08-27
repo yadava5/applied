@@ -98,3 +98,67 @@ def test_a_value_that_repeats_inside_its_own_match_is_still_written_once() -> No
     pattern = re.compile(r"0 of the ([\d,]+) wrong verdicts")
     out = facts.substitute_at_group(text, pattern.search(text), "72")
     assert out == "0 of the 72 wrong verdicts sit above the gate.", out
+
+
+# ── unresolved conflict markers ──────────────────────────────────────────────
+#
+# The markers are BUILT rather than written out, so that this file is not itself
+# a violation of the repo-wide scan it documents.
+
+_LT = "<" * 7
+_EQ = "=" * 7
+_GT = ">" * 7
+_PIPE = "|" * 7
+
+
+def test_the_checker_refuses_a_file_mid_merge() -> None:
+    """A conflicted README passed `--check` reporting that every fact agreed.
+
+    The markers DUPLICATE the prose around them, so every number the checker
+    looks for is still present and still correct — twice or three times over —
+    and the reported site count goes UP, which reads as more coverage rather
+    than as corruption. A README in that state was committed and pushed, and was
+    caught afterwards by `git grep`, not by any gate.
+
+    Well-formedness has to be established before agreement is even a meaningful
+    question, which is what the pattern below is for.
+    """
+    tool = _load()
+
+    real_conflict = (
+        f"{_LT} HEAD\n"
+        "**1461 tests collected, 0 skipped.**\n"
+        f"{_PIPE} fe44834\n"
+        "**1461 tests collected, 0 skipped.**\n"
+        f"{_EQ}\n"
+        "**1461 tests collected, 0 skipped.**\n"
+        f"{_GT} origin/main\n"
+    )
+    assert tool._CONFLICT_MARKER.search(real_conflict), (
+        "the exact shape git leaves behind was not recognised"
+    )
+
+    # Each of the four markers, alone, on its own line.
+    for marker in (_LT, _EQ, _GT, _PIPE):
+        assert tool._CONFLICT_MARKER.search(f"text\n{marker} label\nmore\n"), marker
+        assert tool._CONFLICT_MARKER.search(f"text\n{marker}\nmore\n"), marker
+
+
+def test_prose_that_merely_discusses_markers_is_not_one() -> None:
+    """THE CONTROL. Without it the pattern could be satisfied by refusing everything.
+
+    This repository's own README, this test file, and the checker's source all
+    talk about conflict markers. A rule that fired on the words would make the
+    documentation unshippable, so it is anchored to the start of a line and
+    requires the run to be exactly seven characters.
+    """
+    tool = _load()
+    for benign in (
+        "a diff uses <<< and >>> to mark hunks\n",
+        "  " + _LT + " indented, so not a marker\n",
+        "text " + _LT + " mid-line\n",
+        ("<" * 6) + " six is not seven\n",
+        ("<" * 8) + " eight is not seven\n",
+        "compare a <= b and c >= d\n",
+    ):
+        assert not tool._CONFLICT_MARKER.search(benign), benign

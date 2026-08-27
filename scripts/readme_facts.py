@@ -1969,6 +1969,12 @@ def substitute_at_group(text: str, match: "re.Match[str]", want: str) -> str:
     return text[:start] + want + text[end:]
 
 
+#: The four markers `git merge` leaves behind, anchored to the start of a line
+#: and requiring the run to be exactly seven characters, so prose that merely
+#: discusses them (this file, and the tests for it) is not itself a violation.
+_CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7}|\|{7})(?:\s|$)", re.MULTILINE)
+
+
 def run(mode: str) -> None:
     values, artifact = resolve_facts()
     problems: list[str] = []
@@ -1978,7 +1984,30 @@ def run(mode: str) -> None:
 
     def load(rel: str) -> dict:
         if rel not in files:
-            files[rel] = {"text": (REPO / rel).read_text(encoding="utf-8"), "dirty": False}
+            text = (REPO / rel).read_text(encoding="utf-8")
+            # WELL-FORMEDNESS BEFORE AGREEMENT. Every fact below asks "does this
+            # number appear and agree", and conflict markers duplicate the prose
+            # around them — so every number is still present and still correct,
+            # two or three times over. A conflicted README.md passed this
+            # checker reporting "68 facts, asserted at 209 sites, all agree",
+            # with the site count going UP, which reads as more coverage rather
+            # than as corruption. It was committed and pushed in that state and
+            # caught later by `git grep`, not by any gate.
+            #
+            # Checked here because this is the one thing that opens these files
+            # on every push. The repo-wide equivalent lives in CI, since a
+            # conflicted .py reached a commit the same day and this checker
+            # would never have opened it.
+            hit = _CONFLICT_MARKER.search(text)
+            if hit:
+                problems.append(
+                    f"{rel}:{text.count(chr(10), 0, hit.start()) + 1} begins an "
+                    f"unresolved conflict marker ({hit.group(0)!r}). No number "
+                    f"below is meaningful until the merge is finished — the "
+                    f"markers duplicate the prose, so every fact still 'agrees' "
+                    f"with the code."
+                )
+            files[rel] = {"text": text, "dirty": False}
         return files[rel]
 
     def line_of(src: str, index: int) -> int:
