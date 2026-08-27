@@ -198,6 +198,24 @@ RECORDED = {
     # See #484 and #486 for the families; #536 for why a zero here is weaker
     # evidence than it looks.
     "role_missing": 213,
+    # Mail that names NO job title, where the only correct card is a blank one.
+    # These were SKIPPED entirely until the two counters below existed: "no role
+    # to grade against" read as "nothing to assert", and 960 cards — 10.4% of
+    # the board — could carry any title the product cared to print while every
+    # counter stayed at zero. Probed directly: a card reading "Chief Vibes
+    # Officer" scored titles_graded=1, roles_graded=0, role_wrong=0, total=0.
+    #
+    # 960 = repeat-anonymous 600 + update-in-thread 300 +
+    # double-acknowledgement 60, and the board's three title populations close:
+    # 7892 graded + 960 required-blank + 400 req-id (genuinely unsettleable) =
+    # 9252 cards.
+    "blank_required": 960,
+    # …and none of them is wrong today. A zero here is only worth its
+    # denominator above, which is why the denominator is asserted first — and
+    # `test_mail_that_names_no_role_must_leave_the_card_blank` mutation-proves
+    # it separately, because "all 960 really are blank" and "this counter can
+    # never fire" look identical from the corpus alone.
+    "role_invented": 0,
 }
 
 
@@ -966,6 +984,23 @@ async def test_the_card_is_named_after_the_right_job(
         f"{score.titles_graded} of {score.cards} cards had their title compared "
         "at all — the two assertions below are only worth their denominator"
     )
+    # …and as an INVARIANT, not only as a value. Every skip condition in the
+    # title loop is dormant on this corpus, so the recorded number says nothing
+    # the card count does not — and it cannot see the failure that matters: a
+    # regression that makes N cards ungradeable while minting N new ones leaves
+    # BOTH numbers at 9252 while N cards silently stop being graded.
+    assert score.titles_graded == score.cards, (
+        f"{score.cards - score.titles_graded} card(s) were skipped by the title "
+        "loop; a skipped card is one the product may name anything at all"
+    )
+    # The cards with no gradeable role split two ways, and only one of the two
+    # is unanswerable. `blank_required` is the half this corpus CAN settle.
+    assert score.blank_required == RECORDED["blank_required"], (
+        f"cards required to be blank moved to {score.blank_required}"
+    )
+    assert score.role_invented == RECORDED["role_invented"], [
+        f.detail for f in score.failures if f.mode == "ROLE-INVENTED"
+    ][:5]
     assert score.roles_graded == RECORDED["roles_graded"], (
         f"{score.roles_graded} cards had a role this corpus can settle"
     )
@@ -1311,3 +1346,149 @@ async def test_every_application_mail_is_addressed(
     assert score.lost == RECORDED["lost"]
     assert score.dropped == RECORDED["dropped"]
     assert score.unaddressed == RECORDED["lost"] + RECORDED["dropped"]
+
+
+# ── the cards that must be blank ─────────────────────────────────────────────
+
+
+def test_the_corpus_and_the_product_agree_on_what_a_status_is() -> None:
+    """`_CARD_STATUSES` is written out in the generator, not imported from the code.
+
+    That is deliberate — this corpus must not take its ground truth from what it
+    grades — and the cost of writing it out is that the two can drift. This is
+    the assertion that makes drift loud instead of silent.
+    """
+    from jobtracker.cloud import pipeline
+    from tests.corpus_independent.generate import _CARD_STATUSES
+
+    assert _CARD_STATUSES == (
+        frozenset(pipeline._STATUS_RANK) | pipeline._TERMINAL_STATUSES
+    ), (
+        "the corpus and the product disagree about which statuses exist; a "
+        "status only one side knows is exactly the typo this set exists to "
+        "make impossible"
+    )
+
+
+def test_ground_truth_cannot_name_a_status_no_board_shows() -> None:
+    """A wrong ``card_status`` was invisible rather than loud.
+
+    ``_overstates`` resolves an unknown status through
+    ``_STATUS_RANK.get(want, 0)``, which ranks it BELOW every live card — so
+    every card silently reads as "ahead" of it. The ``_UPDATES`` offer entry
+    said ``offer`` where boards store ``offered`` from the day it was written,
+    and 425 assertions could only ever be false with nothing noticing.
+    Restoring that one word moves ``card_overstates`` from 260 to 551, so
+    correcting the value was never enough — the wrong value has to be
+    impossible.
+    """
+    from datetime import datetime
+
+    from tests.corpus_independent.generate import Case
+
+    def build(status: str) -> Case:
+        return Case(
+            message_id="m1",
+            thread_id=None,
+            subject="s",
+            sender="x@y.test",
+            sender_name=None,
+            body="b",
+            delivered="b",
+            received_at=datetime(2026, 1, 1),
+            family="probe",
+            expected_category="rejection",
+            identity="northwind|Software Engineer",
+            employer="northwind",
+            card_status=status,
+        )
+
+    with pytest.raises(ValueError, match="not a status any board shows"):
+        build("offer")  # the real typo, not an invented one
+
+    # THE CONTROL: the correct spelling must still construct, or this guard is
+    # satisfied by rejecting everything.
+    assert build("offered").card_status == "offered"
+
+
+def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
+    """960 cards were skipped because "no role to grade" read as "nothing to assert".
+
+    It is not nothing. A sentinel sub-key means the family's mail withholds the
+    job title on purpose, so a blank card is the only correct card and any title
+    is an invention. ``role_invented`` is in ``total`` because inventing a title
+    is a lie, where ``role_missing`` is only a gap and stays out.
+
+    TWO CASES THAT LOOK IDENTICAL TO A SCORER AND MEAN OPPOSITE THINGS: a
+    req-id family also has no gradeable role, but there the corpus genuinely
+    cannot settle the title, so its card must still be skipped. Both are
+    asserted below; treating them alike is what left the 960 ungraded.
+    """
+    from datetime import datetime
+
+    from tests.corpus_independent.generate import Case
+    from tests.corpus_independent.harness import Replay
+
+    def case(mid: str, family: str, identity: str) -> Case:
+        return Case(
+            message_id=mid,
+            thread_id=None,
+            subject="Thanks for applying",
+            sender="no-reply@us.greenhouse-mail.io",
+            sender_name=None,
+            body="Thanks for applying. We will be in touch.",
+            delivered="Thanks for applying. We will be in touch.",
+            received_at=datetime(2026, 1, 1),
+            family=family,
+            expected_category="applied",
+            identity=identity,
+            employer="northwind",
+        )
+
+    anonymous = case("m1", "repeat-anonymous", "northwind|__apply0__")
+    assert anonymous.names_no_role is True, "the sentinel was not recognised"
+    assert anonymous.role_truth is None
+
+    def scored(position: str):
+        return score_board(
+            Replay(
+                groups=[("rowA", ["m1"])],
+                reviewed=set(),
+                dropped=set(),
+                status={"rowA": "applied"},
+                title={"rowA": ("Northwind", position)},
+            ),
+            [anonymous],
+        )
+
+    # THE MUTATION PROOF. On the real corpus this assertion passes only because
+    # all 960 such cards really are blank — which is indistinguishable from a
+    # counter that can never fire. A title the mail never named must move it.
+    invented = scored("Chief Vibes Officer")
+    assert invented.blank_required == 1
+    assert invented.role_invented == 1, (
+        "a card printed a job title for mail that names none and the score did "
+        "not move — this counter cannot fail"
+    )
+    assert invented.total >= 1, "role_invented must reach `total`, not just the report"
+
+    # …and a correct board must score clean, or the assertion above would be
+    # satisfied by punishing every card.
+    blank = scored("")
+    assert blank.blank_required == 1
+    assert blank.role_invented == 0 and blank.total == 0
+
+    # The OTHER reason a role cannot be graded, which must still be skipped.
+    req = case("m1", "req-id-same-title", "northwind|R-40080")
+    assert req.names_no_role is False
+    skipped = score_board(
+        Replay(
+            groups=[("rowA", ["m1"])],
+            reviewed=set(),
+            dropped=set(),
+            status={"rowA": "applied"},
+            title={"rowA": ("Northwind", "Chief Vibes Officer")},
+        ),
+        [req],
+    )
+    assert skipped.blank_required == 0 and skipped.role_invented == 0

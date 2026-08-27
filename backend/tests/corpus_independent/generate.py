@@ -139,6 +139,34 @@ ATS_SENDERS: tuple[str, ...] = (
 #: No job title can be spelled this way. See ``Case.role_truth``.
 _ROLE_SENTINEL = re.compile(r"^__[a-z0-9]+__$")
 
+#: Every status a board can actually show. Ground truth that names anything
+#: else is a typo, and a typo here is invisible rather than loud: `_overstates`
+#: resolves an unknown status through ``_STATUS_RANK.get(want, 0)``, which ranks
+#: it BELOW every live card, so every card silently becomes "ahead" of it. The
+#: `_UPDATES` offer entry said ``offer`` where boards store ``offered`` from the
+#: day it was written; 425 assertions could only ever be false and none had ever
+#: been evaluated. Restoring that one word moves `card_overstates` from 260 to
+#: 551 — 291 phantom defects across four unrelated families.
+#:
+#: Written out here rather than imported from the product ON PURPOSE. This file
+#: must not derive its ground truth from the code it grades — that is the
+#: circularity the whole independent corpus exists to avoid. The cost is that
+#: the two can drift, so `test_the_corpus_and_the_product_agree_on_what_a_status_is`
+#: asserts this set equals `_STATUS_RANK | _TERMINAL_STATUSES` and fails if
+#: either side gains a status the other has not heard of.
+_CARD_STATUSES = frozenset(
+    {
+        "applied",
+        "assessment",
+        "interviewing",
+        "offered",
+        "accepted",
+        "rejected",
+        "withdrawn",
+        "ghosted",
+    }
+)
+
 #: A bare requisition id used as the identity sub-key — ``req-id-same-title``.
 #: No job title can match it.
 _REQ_SUB_KEY = re.compile(r"^(?:R-)?\d{4,}$")
@@ -223,6 +251,16 @@ class Case:
     #: product; a real role can never match either.
     role_truth: str | None = None
 
+    #: The mail deliberately names NO role, so the only correct card is a blank
+    #: one. Derived from the sentinel sub-key, and the reason it exists as a
+    #: separate flag rather than as "role_truth is None": the two look identical
+    #: to a scorer and mean opposite things. `role_truth is None` on a req-id
+    #: family means "this corpus cannot settle the title"; here it means "any
+    #: title at all is an invention". The first must be skipped, the second must
+    #: be asserted, and skipping both left 960 cards where the product could
+    #: print anything and no counter moved.
+    names_no_role: bool = False
+
     def __post_init__(self) -> None:
         # A message that names an application IS about an application, and one
         # that must go to the queue is about one too — it is only unplaceable,
@@ -234,11 +272,28 @@ class Case:
                 "must_be_addressed",
                 self.identity is not None or self.expect_review,
             )
+        if self.card_status is not None and self.card_status not in _CARD_STATUSES:
+            raise ValueError(
+                f"card_status={self.card_status!r} is not a status any board "
+                f"shows. Ground truth nothing validates is worse than no ground "
+                f"truth: `_overstates` reads an unknown status through "
+                f"`_STATUS_RANK.get(want, 0)`, so a typo silently ranks BELOW "
+                f"every live card and every card becomes 'ahead' of it. This "
+                f"entry said `offer` instead of `offered` from the day it was "
+                f"written and no assertion could see it; correcting the one "
+                f"value was not enough, so the wrong value is now impossible. "
+                f"Known: {sorted(_CARD_STATUSES)}"
+            )
         if self.identity is not None and self.role_truth is None:
             sub_key = self.identity.partition("|")[2]
-            if sub_key and not _ROLE_SENTINEL.match(sub_key) and not _REQ_SUB_KEY.match(
-                sub_key
-            ):
+            if _ROLE_SENTINEL.match(sub_key or ""):
+                # THE MAIL NAMES NO ROLE, and that is a CLAIM, not an absence.
+                # A sentinel sub-key means this family's mail deliberately
+                # withholds the job title, so the only correct card is a blank
+                # one. Recorded here so the scorer can assert it instead of
+                # skipping the card — see BoardScore.role_invented.
+                object.__setattr__(self, "names_no_role", True)
+            elif sub_key and not _REQ_SUB_KEY.match(sub_key):
                 object.__setattr__(self, "role_truth", sub_key)
 
 
