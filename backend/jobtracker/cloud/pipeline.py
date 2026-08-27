@@ -1099,6 +1099,48 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ
         + r"\s+at\s+[A-Z]",
     ),
+    # "…submit your application for <ROLE> at <Employer>." The sibling of the
+    # Lever rule above with the words "to be a" absent, which is the commonest
+    # confirmation wording there is — and every pattern before this one walks
+    # past it. The subject rule for "application for" exists but requires an
+    # unbroken Title-Case run, so a real title dies on its own punctuation:
+    #
+    #   "…application for Software Engineer I, Entry-Level (Graduation Date:
+    #    Fall 2025-Summer 2026) at <Employer>."   ->  role = None
+    #
+    # 127 blank-titled cards in the corpus, all of this one shape.
+    #
+    # THE EMPLOYER IS THE TERMINATOR, exactly as above, and it is what makes
+    # the loose capture safe: "at" followed by a capital ends it, a lowercase
+    # "at a company like…" does not terminate and the capture simply fails
+    # rather than running to the end of the sentence. The capture must also
+    # START with a capital, which is what refuses "application to work at
+    # <Employer>" — "work" is a lowercase verb, not a job title.
+    re.compile(
+        r"\b(?:application|applying|applied)\s+(?:for|to)\s+(?:the\s+)?"
+        r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ
+        + r"\s+at\s+[A-Z]",
+    ),
+    # "…an offer to join <Employer> as a <ROLE>." The offer names the job and
+    # nothing reads it, so all 260 cards the corpus opens from an offer carry a
+    # blank title — and those are the cards a rescission later has to find.
+    #
+    # NO TRAILING KEYWORD EXISTS HERE. The sentence ends on the title, so the
+    # patterns above — every one of which terminates on "position"/"role" or on
+    # a requisition label — have nothing to stop on. The terminator is the end
+    # of the clause.
+    #
+    # ANCHORED ON "offer … to join", not on the bare "as a" that carries the
+    # title. "as a" is ordinary English ("we will be in touch as a team", "this
+    # is sent as a courtesy") and a rule keyed on it alone would take a noun out
+    # of any sentence in the corpus. Requiring the offer verb and the join verb
+    # ahead of it is what makes the shape an assertion about a job.
+    re.compile(
+        r"\boffer\b[^.!?\n]{0,40}?\bto\s+join\b[^.!?\n]{0,60}?"
+        r"\bas\s+an?\s+"
+        r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ
+        + r"\s*(?=[.!?\n]|$)",
+    ),
 )
 
 # A requisition id, when the employer prints one. DELIBERATELY conservative: a

@@ -228,6 +228,26 @@ def test_appending_the_rule_changed_no_existing_capture() -> None:
         assert role_from_message("", text) == expected
 
 
+#: The rule this file is about, found by what it MATCHES rather than by where it
+#: sits in the tuple.
+#:
+#: Both tests below read ``_ROLE_BODY_PATTERNS[-1]`` until 2026-08-26, on the
+#: reasoning — correct at the time and written down two comments up in
+#: ``pipeline.py`` — that a rule appended last can only fire where every other
+#: rule found nothing. The reasoning is about the rule's SAFETY and says nothing
+#: about its index, and the day two more rules were appended for the same safety
+#: reason, both tests silently began describing somebody else's pattern. One of
+#: them went red, which is the only reason this was noticed; the other would
+#: have gone on passing about the wrong rule.
+#:
+#: An index is a fact about the file. What these tests mean is "the rule that
+#: reads Lever's `to be a <ROLE> at <Employer>`", so that is what they now look
+#: for.
+LEVER_RULE = next(
+    p for p in _ROLE_BODY_PATTERNS if r"\bto\s+be\s+(?:an?|the)\s+" in p.pattern
+)
+
+
 def test_the_new_rule_cannot_even_see_what_the_others_own() -> None:
     """Disjointness, which is the real property — and the one worth testing.
 
@@ -246,7 +266,7 @@ def test_the_new_rule_cannot_even_see_what_the_others_own() -> None:
     make placement start to matter.
     """
 
-    new_rule = _ROLE_BODY_PATTERNS[-1]
+    new_rule = LEVER_RULE
     for text in OWNED_BY_AN_EARLIER_PATTERN:
         assert new_rule.search(text) is None, text
 
@@ -268,7 +288,7 @@ def test_when_both_anchors_share_a_sentence_the_earlier_pattern_still_wins() -> 
 
     assert role_from_message("", both) == "Site Reliability Engineer"
 
-    reordered = (_ROLE_BODY_PATTERNS[-1], *_ROLE_BODY_PATTERNS[:-1])
+    reordered = (LEVER_RULE, *(p for p in _ROLE_BODY_PATTERNS if p is not LEVER_RULE))
     first_match = next(
         role
         for role in (
