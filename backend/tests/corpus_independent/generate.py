@@ -60,6 +60,7 @@ runs cannot be a regression gate.
 from __future__ import annotations
 
 import random
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -130,6 +131,19 @@ ATS_SENDERS: tuple[str, ...] = (
 )
 
 
+#: "the mail names no role" — this file's own sentinel spelling, currently
+#: ``__apply0..2__`` (``repeat-anonymous``, ``update-in-thread``) and
+#: ``__submission__`` (``double-acknowledgement``). Matched by SHAPE rather
+#: than by listing them, so a family that invents a fourth sentinel is covered
+#: the day it lands instead of quietly scoring 120 correct cards as defects.
+#: No job title can be spelled this way. See ``Case.role_truth``.
+_ROLE_SENTINEL = re.compile(r"^__[a-z0-9]+__$")
+
+#: A bare requisition id used as the identity sub-key — ``req-id-same-title``.
+#: No job title can match it.
+_REQ_SUB_KEY = re.compile(r"^(?:R-)?\d{4,}$")
+
+
 @dataclass(frozen=True)
 class Case:
     """One generated email plus everything the product is supposed to do with it."""
@@ -186,6 +200,28 @@ class Case:
     #: all of them, and its LOST/DROPPED assertions silently exercised nothing.
     must_be_addressed: bool = False
     note: str = ""
+    #: The ROLE the card must be titled with, or None when this corpus cannot
+    #: settle it. Derived, never passed — see ``must_be_addressed`` above for
+    #: why a field the builder fills is a field some builder forgets.
+    #:
+    #: ``identity`` is ``employer|sub_key`` and the sub-key is the product's own
+    #: cascade, ``req_id or role_token``, so it is a role only SOMETIMES. Two
+    #: shapes are not roles and grading a card against them would report a
+    #: defect where the card is right:
+    #:
+    #:   * ``__…__`` — this generator's sentinel for "the mail names no role at
+    #:     all", which is what ``repeat-anonymous``, ``update-in-thread`` and
+    #:     ``double-acknowledgement`` are about. A BLANK card is the correct
+    #:     answer there, and #487 names this as the first way the counter goes
+    #:     wrong.
+    #:   * a bare requisition id — ``req-id-same-title`` keys on ``R-40080``,
+    #:     and the card it must produce reads "Infrastructure Engineer
+    #:     (R-40080)". Right card, right title, and nothing here knows the
+    #:     title, only the key.
+    #:
+    #: Both patterns describe what THIS FILE writes, not a guess about the
+    #: product; a real role can never match either.
+    role_truth: str | None = None
 
     def __post_init__(self) -> None:
         # A message that names an application IS about an application, and one
@@ -198,6 +234,12 @@ class Case:
                 "must_be_addressed",
                 self.identity is not None or self.expect_review,
             )
+        if self.identity is not None and self.role_truth is None:
+            sub_key = self.identity.partition("|")[2]
+            if sub_key and not _ROLE_SENTINEL.match(sub_key) and not _REQ_SUB_KEY.match(
+                sub_key
+            ):
+                object.__setattr__(self, "role_truth", sub_key)
 
 
 def snippet_of(body: str) -> str:

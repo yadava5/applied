@@ -837,12 +837,73 @@ _EMPLOYER_AT_SIGN = re.compile(r"@\s*(" + _COMPANY_CAPTURE + r")\s*+[!?.]*+\s*+$
 # one leaves a TRAILING dot alone, because "Acme Inc." is a company, not a host.
 _CAPTURE_IS_HOSTNAME = re.compile(r"\.[A-Za-z]")
 
+# Lifecycle words an ATS puts between the employer and the delimiter. These are
+# what the message is ABOUT, never who sent it, so the capture stops at them.
+_SUBJECT_LIFECYCLE_TAIL = (
+    r"(?:Follow[-\s]?Ups?|Applications?|Interviews?|Offers?|Assessments?|"
+    r"Updates?|Opportunit(?:y|ies)|Careers?|Recruit(?:ing|ment))"
+)
+
 # The employer named by the LEADING segment of an ATS subject, before a "|" or a
 # spaced dash: "Crusoe | Application Received", "Acme — Interview scheduled".
 # Anchored to the start so a separator later in the line cannot invent a company,
 # and the capture stays case-sensitive so only a Capitalized proper noun is taken.
+#
+# THE SEGMENT MAY CARRY A LIFECYCLE TAIL (#512, gap 2). It used to require the
+# company to run UNBROKEN to the delimiter, so Greenhouse's standard rejection
+# subject — "<Employer> Follow-Up for <Role> | <Candidate>" — matched nothing at
+# all: the lowercase "for" breaks the run, and the match failed rather than
+# falling back to the Title-Case prefix. A rejection scored at 0.95 therefore
+# produced no card, which is the row the owner reported three times.
+#
+# THE DELIMITER STAYS REQUIRED, and that restriction is the whole safety of
+# this. Dropping it — "a leading company-shaped run terminated by a lifecycle
+# noun" — reads just as well and mints JOB TITLES as employers: measured over a
+# 28-subject trial it produced "Senior Software Engineer", "Machine Learning
+# Engineer" and "Product Designer" as companies. This is the filing path, so a
+# rule that invents three employers to rescue one is worse than the bug. With
+# the delimiter kept the same trial had no false positive at all; what it costs
+# is delimiter-less subjects like "Stripe Application Received", which resolve
+# to nothing and go to the review queue, where a person decides.
+#
 _EMPLOYER_LEAD_SEGMENT = re.compile(
     r"^\s*(" + _COMPANY_CAPTURE + r")\s*(?:\||\s[-–—]\s)"
+)
+
+# THE CUT IS DONE IN CODE, NOT IN THE PATTERN, and that is a correctness fix
+# rather than a style choice. Every attempt to express "company, then a lifecycle
+# word, then anything, then the delimiter" as one regex loses to
+# `_COMPANY_CAPTURE`'s own greed: it reaches the delimiter by itself wherever it
+# can, so the lifecycle branch never gets the split it exists to produce.
+# "Northwind Labs Application Update - <Role>" captured all four words twice
+# over — once greedily to the dash, once greedily past "Application" — and
+# yielded nothing either way.
+#
+# So the segment is taken first, then its leading Title-Case run, then that run
+# is cut at its FIRST lifecycle word. Three small steps that each say what they
+# do, instead of one pattern that has to be traced to be believed.
+_SEGMENT_DELIMITER = re.compile(r"\||\s[-–—]\s")
+_LEADING_RUN = re.compile(r"^\s*(" + _COMPANY_CAPTURE + r")")
+_LIFECYCLE_WORD = re.compile(r"^" + _SUBJECT_LIFECYCLE_TAIL + r"$", re.IGNORECASE)
+
+# Head nouns of a JOB TITLE. A leading segment that ENDS in one of these is
+# describing the ROLE the message concerns, not naming the employer who sent it:
+# in "Senior Software Engineer Interview" the noun is the head and everything
+# before it modifies it.
+#
+# Kept SEPARATE from `_COMPANY_STOPWORDS`, and tested on the LAST word only,
+# because real companies are full of these words anywhere else — "Team Liquid",
+# "People Data Labs", "Cedar Labs" all survive, and all three would be destroyed
+# by testing every word. The lifecycle nouns ("interview", "offer", "update")
+# are already in `_COMPANY_STOPWORDS`; this adds the title heads that are not,
+# which is what "Staff Data Scientist" and "Product Designer" turn on.
+_ROLE_HEAD_NOUNS: frozenset[str] = frozenset(
+    {
+        "engineer", "developer", "designer", "scientist", "analyst",
+        "architect", "manager", "director", "lead", "specialist",
+        "consultant", "administrator", "technician", "researcher",
+        "associate", "intern", "internship",
+    }
 )
 
 # Role-ish tails an ATS sender's display name carries AFTER the company name:
@@ -2230,6 +2291,46 @@ def _employer_from_sender_name(
     return None
 
 
+def _lead_segment_candidates(subject: str) -> list[str]:
+    """Company-shaped readings of an ATS subject's LEADING SEGMENT, best first.
+
+    The segment is everything before the first ``|`` or spaced dash. A subject
+    with no such delimiter yields nothing at all, deliberately — see
+    :data:`_EMPLOYER_LEAD_SEGMENT` for why that restriction is the whole safety
+    of this branch.
+
+    Two readings, in order:
+
+    1. the leading Title-Case run of the segment, which is the shape this rule
+       has always read ("Crusoe | Application Received");
+    2. that run CUT AT ITS FIRST LIFECYCLE WORD, which is #512's gap 2 —
+       Greenhouse's "<Employer> Follow-Up for <Role> | <Candidate>", where the
+       run reaches "Anthropic Follow-Up" and the employer is the part in front
+       of the lifecycle word.
+
+    Both are offered because the cut is not always right: "Northwind Labs" is a
+    company and "Northwind Labs Application" is that company plus a lifecycle
+    word, while "Crusoe" needs no cut at all. The caller validates each in turn
+    and takes the first that survives.
+    """
+
+    parts = _SEGMENT_DELIMITER.split(subject, 1)
+    if len(parts) < 2:
+        return []
+    run_match = _LEADING_RUN.match(parts[0].strip())
+    if not run_match:
+        return []
+    run = run_match.group(1)
+
+    candidates = [run]
+    words = run.split()
+    for index, word in enumerate(words):
+        if index and _LIFECYCLE_WORD.match(word):
+            candidates.append(" ".join(words[:index]))
+            break
+    return candidates
+
+
 def _employer_from_subject_segment(
     subject: str, relay_brand: str
 ) -> tuple[str, str] | None:
@@ -2238,18 +2339,54 @@ def _employer_from_subject_segment(
     ``"Crusoe | Application Received"`` → ``Crusoe``. This is the shape that has
     no ``at``/``with``/``to`` connective for :data:`_EMPLOYER_ANCHORED` to hang
     off, which is why a real production classification silently created nothing.
+
+    Since #512 it also reads ``"<Employer> Follow-Up for <Role> | <Candidate>"``,
+    Greenhouse's standard rejection subject, whose employer sat unreadable in
+    the first word for as long as this function has existed.
     """
 
-    match = _EMPLOYER_LEAD_SEGMENT.match(subject or "")
-    if not match:
-        return None
-    display = _clean_company_display(match.group(1))
-    if not display:
-        return None
-    token = _normalize_token(display.split(" ")[0])
-    if not _valid_company_token(token) or _names_the_relay(token, relay_brand):
-        return None
-    return token, display
+    for candidate in _lead_segment_candidates(subject or ""):
+        display = _clean_company_display(candidate)
+        if not display:
+            continue
+        token = _normalize_token(display.split(" ")[0])
+        if not _valid_company_token(token) or _names_the_relay(token, relay_brand):
+            continue
+        # A SEGMENT ENDING IN A TITLE'S HEAD NOUN IS THE ROLE, NOT THE EMPLOYER.
+        #
+        # `_valid_company_token` reads the FIRST word, which is why this was
+        # needed and why it went unnoticed: "Senior Software Engineer Interview
+        # | <name>" is an unbroken Title-Case run to the delimiter and "senior"
+        # is not a stopword, so the shipped code resolved it to
+        # ('senior', 'Senior Software Engineer Interview') and would have put
+        # that on the board as a company. Verified against `main` before this
+        # line existed, along with "Machine Learning Engineer Offer" and
+        # "Product Designer Recruiting Update" — three invented employers.
+        #
+        # The LAST word, because it is the segment's head; everything before it
+        # modifies it. Testing every word would refuse "Team Liquid" and
+        # "People Data Labs", which `_NAME_ROLE_TAIL` above already records as
+        # names that must not be shredded from the middle out.
+        #
+        # `continue`, not `return None`: a refusal here is a refusal of THIS
+        # reading of the subject, and the tailed pattern may still find a
+        # shorter company in front of the same words.
+        #
+        # The lifecycle words are tested through `_LIFECYCLE_WORD` rather than
+        # through `_COMPANY_STOPWORDS` alone, because that set spells them as
+        # single words and the subjects do not: "Follow-Up" normalises to
+        # neither "follow" nor "up", so "Staff Data Scientist Follow-Up"
+        # survived every other guard here.
+        last = display.split(" ")[-1]
+        tail = _normalize_token(last)
+        if (
+            tail in _ROLE_HEAD_NOUNS
+            or tail in _COMPANY_STOPWORDS
+            or _LIFECYCLE_WORD.match(last)
+        ):
+            continue
+        return token, display
+    return None
 
 
 def employer_from_text(raw: str | None) -> tuple[str, str] | None:
