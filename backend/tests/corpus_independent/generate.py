@@ -642,6 +642,21 @@ def _rescinded_offers(b: _Builder, n: int) -> None:
 
     It is the exact inverse of the rejection problem: the classifier is reluctant
     to assert a negative outcome and eager to assert a positive one.
+
+    THE FAMILY ASSERTED NOTHING ABOUT THE BOARD until 2026-08-26, and that is
+    how the defect above went on reading green. Both messages carried
+    ``card_status=None`` and ``joins=None``, so the score watched the CLASSIFIER
+    and never the card — the exact shape of #487, one field over. Replayed
+    through the real sync, the family produces 260 cards reading ``offered``
+    with all 260 withdrawals parked in the review queue, and the board score
+    said WRONG STAGE 0.
+
+    The withdrawal now names the card it joins and the stage that card must
+    read. What that turns red is not WRONG-STAGE — a held message has not been
+    filed and cannot have moved anything — but the counter that exists for this
+    shape: the card is left ASSERTING A BETTER OUTCOME than the user has while
+    the mail that corrects it waits behind a question. A card that is BEHIND is
+    honest and incomplete; a card that is AHEAD is wrong.
     """
 
     withdrawals = (
@@ -674,6 +689,7 @@ def _rescinded_offers(b: _Builder, n: int) -> None:
             day=i % 60,
         )
         withdrawal = b.pick(withdrawals)
+        offer_id = f"c{b._n:05d}"
         b.add(
             family="rescinded-offer",
             subject=f"Re: Your offer from {display}",
@@ -692,6 +708,12 @@ def _rescinded_offers(b: _Builder, n: int) -> None:
             thread=thread,
             day=i % 60 + 3,
             adversarial=True,
+            joins=offer_id,
+            # `rejected`, not `withdrawn`: on this board `withdrawn` is the
+            # user pulling out, and nothing here says they did. The employer
+            # ended it, so from the row's side it ended the way a rejection
+            # does — which is also what `expected_category` above already says.
+            card_status="rejected",
             note="the offer language is in QUOTED HISTORY; the mail's own words withdraw it",
         )
 
@@ -1608,7 +1630,16 @@ _UPDATES: tuple[tuple[str, str, str, str], ...] = (
         "An offer from {e}",
         "Hi Ayush, We are delighted to extend you an offer to join us. The "
         "written terms are attached for your review.",
-        "offer",
+        # `offered`, the STATUS, not `offer`, the mail CATEGORY. The two scales
+        # differ by exactly this word (`pipeline._STATUS_RANK` against
+        # `_STAGE_RANK`) and this entry said `offer` from the day it was
+        # written. It could not match any stage a board ever shows, so all 425
+        # cases carrying it were assertions that could only ever be false —
+        # and not one of them was ever evaluated, because every one is held
+        # under the auto-file gate and WRONG-STAGE skips held mail. A wrong
+        # ground-truth value nothing reaches is invisible until something
+        # reaches it, which is what the overstatement counter now does.
+        "offered",
     ),
 )
 
