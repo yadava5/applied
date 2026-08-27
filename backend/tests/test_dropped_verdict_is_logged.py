@@ -19,10 +19,22 @@ subject carrying no employer anchor. Modelled here on a real message:
     sender   no-reply@us.greenhouse-mail.io
     name     (none)
 
-``us.greenhouse-mail.io`` is not the employer, the display name is absent, and
-the subject names the company only as a bare leading word with no "to <company>"
-anchor — so ``resolve_employer`` returns None and the message can never become
-an application row.
+``us.greenhouse-mail.io`` is not the employer and the display name is absent,
+so the subject is the only thing left that can name the company.
+
+THAT SUBJECT NOW RESOLVES, AND THIS FILE HAD TO BE REWRITTEN FOR IT (#512).
+Until the leading-segment rule learned to stop at a lifecycle word, the
+lowercase "for" broke the company's run to the ``|`` and ``resolve_employer``
+returned None — so a rejection the classifier scored at 0.93 produced no card,
+which is the defect the owner reported twice. Three tests here asserted that
+None. They were the inverted-gate shape: an assertion that PINS the broken
+answer goes red on the repair and defends the bug, and all three did.
+
+They now assert the fix, each paired with a subject that is genuinely
+anchorless — "Update on your application | <name>", which names nobody and must
+still resolve to nothing. That pairing is the point: the fix has to be readable
+as "this one resolves and that one does not", or the next rewrite loosens the
+rule until every rejection mints a company out of its own job title.
 
 WHAT IS AND IS NOT COVERED HERE
 -------------------------------
@@ -50,18 +62,27 @@ from jobtracker.cloud import pipeline as p
 
 # The real message, verbatim in the parts that matter.
 ANTHROPIC_SUBJECT = "Anthropic Follow-Up for TPU Kernel Engineer | Ayush Yadav"
+#: The same relay and the same absent display name, with a subject that names
+#: nobody. The control for every assertion about the one above: without it,
+#: "the employer resolves" is satisfied by a rule that resolves everything.
+ANCHORLESS_SUBJECT = "Update on your application | Ayush Yadav"
 GREENHOUSE_RELAY = "no-reply@us.greenhouse-mail.io"
 WHEN = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
 
-def _real_shape(message_id: str, category: str, confidence: float) -> p.PipelineItem:
-    """The production failing shape: relay sender, no display name, no anchor."""
+def _real_shape(
+    message_id: str,
+    category: str,
+    confidence: float,
+    subject: str = ANTHROPIC_SUBJECT,
+) -> p.PipelineItem:
+    """The production failing shape: relay sender, no display name."""
 
     return p.PipelineItem(
         message_id=message_id,
         category=category,
         sender_email=GREENHOUSE_RELAY,
-        subject=ANTHROPIC_SUBJECT,
+        subject=subject,
         sender_name=None,  # the relay sends none, and that is the whole problem
         received_at=WHEN,
         confidence=confidence,
@@ -73,17 +94,44 @@ def _real_shape(message_id: str, category: str, confidence: float) -> p.Pipeline
 # =============================================================================
 
 
-def test_the_real_failing_shape_names_no_employer() -> None:
-    """The precondition every existing rejection fixture accidentally avoids.
+def test_the_real_failing_shape_now_names_its_employer_and_files() -> None:
+    """The reported defect, and the assertion that used to pin it (#512).
 
-    This is the assertion that would have flagged the fixtures as unrepresentative:
-    on the real shape, employer resolution fails outright, so no rejection can
-    ever reach an application row by the rollup route.
+    This test asserted ``resolve_employer(...) is None`` — the broken answer —
+    from the day the file was written until the leading-segment rule was fixed.
+    Read at the time it looked like a careful negative: the fixtures elsewhere
+    in the suite all avoid this shape, and pinning what production really did
+    was the honest move. It is still the inverted-gate shape, because the thing
+    it pinned was a defect, and it went red the moment the defect was repaired.
+
+    What it must say instead is what the user asked for: the employer is in the
+    subject, so name it and file the card.
     """
 
-    assert p.resolve_employer(GREENHOUSE_RELAY, ANTHROPIC_SUBJECT, None) is None
+    assert p.resolve_employer(GREENHOUSE_RELAY, ANTHROPIC_SUBJECT, None) == (
+        "anthropic",
+        "Anthropic",
+    )
 
     item = _real_shape("anthropic-rej-1", "rejection", 0.93)
+    assert p._qualifies_for_hard_row(item) is not None
+    rolled = p.roll_up_applications([item])
+    assert [r.company_display for r in rolled] == ["Anthropic"]
+
+
+def test_a_subject_that_names_nobody_still_reaches_no_application_row() -> None:
+    """THE CONTROL for the test above, and the harder half to keep true.
+
+    This is the filing path: whatever ``resolve_employer`` returns becomes a
+    card. A rule loose enough to rescue the Anthropic subject by taking "the
+    leading words of anything" mints a company called "Update On Your"
+    here — and that card is on the board under a name nobody chose. Refusing is
+    the safe answer; the row goes to the queue and a person decides.
+    """
+
+    assert p.resolve_employer(GREENHOUSE_RELAY, ANCHORLESS_SUBJECT, None) is None
+
+    item = _real_shape("anchorless-rej-1", "rejection", 0.93, ANCHORLESS_SUBJECT)
     assert p._qualifies_for_hard_row(item) is None
     assert p.roll_up_applications([item]) == []
 
@@ -98,10 +146,10 @@ def test_an_anchorless_ats_rejection_keeps_its_real_verdict_into_the_queue() -> 
     persist-layer fix could even matter, and this goes red.
     """
 
-    item = _real_shape("anthropic-rej-1", "rejection", 0.93)
+    item = _real_shape("anchorless-rej-1", "rejection", 0.93, ANCHORLESS_SUBJECT)
     review = p.collect_review_items([item])
 
-    assert [r.message_id for r in review] == ["anthropic-rej-1"]
+    assert [r.message_id for r in review] == ["anchorless-rej-1"]
     assert review[0].category == "rejection"
     # No employer was invented on the way past — the honest outcome.
     assert review[0].company_display is None
@@ -248,9 +296,12 @@ def test_the_ats_floor_rescues_the_weak_ats_rejection() -> None:
     and below ``AUTO_FILE_GATE`` so not even a log line. It now reaches the
     queue — and only the queue.
 
-    Note what does NOT change. The employer is still unnameable on this shape
-    (see the module docstring), so the queue entry names no company rather than
-    inventing one, and nothing reaches the board.
+    Note what does NOT change: confidence. #512 taught the resolver to read the
+    employer out of this subject, which is a different question from how sure
+    the classifier is about the verdict. At 0.42 the message still reaches the
+    queue and only the queue — it now arrives with the employer's name on it,
+    which is the difference between "we are not sure what this is" and "we are
+    not sure what this is and cannot tell you who it is from".
     """
 
     weak = _real_shape("weak-ats-1", "rejection", 0.42)
@@ -259,4 +310,13 @@ def test_the_ats_floor_rescues_the_weak_ats_rejection() -> None:
     review = p.collect_review_items([weak])
     assert [r.message_id for r in review] == ["weak-ats-1"]
     assert review[0].category == "rejection"
-    assert review[0].company_display is None
+    assert review[0].company_display == "Anthropic"
+
+    # The control, same floor, a subject naming nobody: the queue entry must
+    # still name no company rather than inventing one.
+    blind = _real_shape("weak-ats-2", "rejection", 0.42, ANCHORLESS_SUBJECT)
+    assert p.roll_up_applications([blind]) == []
+    queued = p.collect_review_items([blind])
+    assert [r.message_id for r in queued] == ["weak-ats-2"]
+    assert queued[0].category == "rejection"
+    assert queued[0].company_display is None
