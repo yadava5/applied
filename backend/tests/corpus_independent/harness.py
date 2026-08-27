@@ -425,6 +425,20 @@ class BoardScore:
     #: names no role" sentinel, has a title nothing here can settle. See
     #: ``Case.role_truth``.
     roles_graded: int = 0
+
+    #: Cards whose mail names NO job title, so the only correct card is blank.
+    #: The denominator for ``role_invented``. These were SKIPPED until now: a
+    #: card with no gradeable role read as "nothing to assert", which let 960
+    #: cards — 10.4% of the board — carry any title the product cared to print
+    #: while every counter stayed at zero. "The mail names no role" is a claim,
+    #: not an absence, and a claim can be checked.
+    blank_required: int = 0
+
+    #: A card that must be blank and is not: the product printed a job title for
+    #: mail that names none. In ``total``, because it is an invention rather
+    #: than a gap — the opposite direction from ``role_missing``, which is an
+    #: absence and stays out.
+    role_invented: int = 0
     #: The card names an employer that is not the one the mail is from.
     company_wrong: int = 0
     #: Same employer by the product's own matching rule, different string —
@@ -461,6 +475,7 @@ class BoardScore:
             + self.card_overstates
             + self.company_wrong
             + self.role_wrong
+            + self.role_invented
             + self.lost
             + self.dropped
         )
@@ -776,7 +791,29 @@ def score_board(
         got_role = pipeline.normalize_role_token(position)
         want_token = pipeline.normalize_role_token(want_role)
         if want_token is None:
-            continue  # nothing here can settle this card's title; see role_truth
+            # TWO REASONS A CARD HAS NO ROLE TO GRADE AGAINST, and they mean
+            # opposite things. A req-id family keys on the requisition, so this
+            # corpus genuinely cannot settle the title and the card is skipped.
+            # A SENTINEL family withholds the title on purpose, so a blank card
+            # is the only correct card and any title is an invention. Only the
+            # first is unanswerable; treating both as unanswerable is what left
+            # 960 cards ungraded.
+            if any(by_mid[m].names_no_role for m in mids if m in by_mid):
+                score.blank_required += 1
+                if got_role is not None:
+                    score.role_invented += 1
+                    score.failures.append(
+                        Failure(
+                            mode="ROLE-INVENTED",
+                            family=family,
+                            detail=(
+                                f"card reads position {position!r}; this mail "
+                                f"names no job title at all"
+                            ),
+                            message_ids=tuple(mids[:5]),
+                        )
+                    )
+            continue
         score.roles_graded += 1
         if got_role is None:
             score.role_missing += 1
