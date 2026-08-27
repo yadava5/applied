@@ -145,8 +145,12 @@ _ROLE_SENTINEL = re.compile(r"^__[a-z0-9]+__$")
 #: it BELOW every live card, so every card silently becomes "ahead" of it. The
 #: `_UPDATES` offer entry said ``offer`` where boards store ``offered`` from the
 #: day it was written; 425 assertions could only ever be false and none had ever
-#: been evaluated. Restoring that one word moves `card_overstates` from 260 to
-#: 551 — 291 phantom defects across four unrelated families.
+#: been evaluated.
+#:
+#: THE DIRECTION MATTERS AND IS EASY TO STATE BACKWARDS. The typo produces
+#: ``card_overstates = 551``; the correct spelling produces 260. So the typo
+#: INVENTS 291 defects across four unrelated families that have nothing wrong
+#: with them, and fixing the word removes them. It does not surface real ones.
 #:
 #: Written out here rather than imported from the product ON PURPOSE. This file
 #: must not derive its ground truth from the code it grades — that is the
@@ -259,6 +263,9 @@ class Case:
     #: title at all is an invention". The first must be skipped, the second must
     #: be asserted, and skipping both left 960 cards where the product could
     #: print anything and no counter moved.
+    #: DERIVED, never passed. A field a builder fills is a field that is wrong
+    #: for every Case built any other way — the hazard `must_be_addressed`
+    #: already documents. Passing it is refused below rather than trusted.
     names_no_role: bool = False
 
     def __post_init__(self) -> None:
@@ -272,6 +279,14 @@ class Case:
                 "must_be_addressed",
                 self.identity is not None or self.expect_review,
             )
+        if self.names_no_role:
+            raise ValueError(
+                "names_no_role is derived from the identity sub-key, not "
+                "passed. Set by hand it can contradict the identity it is "
+                "supposed to describe — `northwind|R-40080` with "
+                "names_no_role=True asserts a blank card for mail that names a "
+                "real job."
+            )
         if self.card_status is not None and self.card_status not in _CARD_STATUSES:
             raise ValueError(
                 f"card_status={self.card_status!r} is not a status any board "
@@ -280,13 +295,30 @@ class Case:
                 f"`_STATUS_RANK.get(want, 0)`, so a typo silently ranks BELOW "
                 f"every live card and every card becomes 'ahead' of it. This "
                 f"entry said `offer` instead of `offered` from the day it was "
-                f"written and no assertion could see it; correcting the one "
-                f"value was not enough, so the wrong value is now impossible. "
+                f"written and no assertion could see it. The typo INVENTS "
+                f"defects rather than hiding them: it takes card_overstates to "
+                f"551 where the correct spelling gives 260, across four "
+                f"families with nothing wrong. Correcting the one value was not "
+                f"enough, so the wrong value is now impossible. "
                 f"Known: {sorted(_CARD_STATUSES)}"
             )
         if self.identity is not None and self.role_truth is None:
             sub_key = self.identity.partition("|")[2]
-            if _ROLE_SENTINEL.match(sub_key or ""):
+            if not sub_key:
+                # AN EMPTY SUB-KEY IS THE 960-CARD HOLE ONE SPELLING OVER.
+                # It matches no sentinel and fails the `elif`, so neither
+                # `role_truth` nor `names_no_role` is set and the card leaves
+                # BOTH grading and `blank_required` with nothing moving — the
+                # exact shape this file was changed to close. Unreachable today
+                # (0 of 15,730 identities), and refused rather than left to
+                # become reachable quietly.
+                raise ValueError(
+                    f"identity={self.identity!r} has an empty sub-key. An "
+                    f"identity is `employer|role`, `employer|<req id>` or "
+                    f"`employer|__sentinel__`; an empty one is gradeable by "
+                    f"nothing and would be silently skipped."
+                )
+            if _ROLE_SENTINEL.match(sub_key):
                 # THE MAIL NAMES NO ROLE, and that is a CLAIM, not an absence.
                 # A sentinel sub-key means this family's mail deliberately
                 # withholds the job title, so the only correct card is a blank

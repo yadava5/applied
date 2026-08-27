@@ -984,11 +984,19 @@ async def test_the_card_is_named_after_the_right_job(
         f"{score.titles_graded} of {score.cards} cards had their title compared "
         "at all — the two assertions below are only worth their denominator"
     )
-    # …and as an INVARIANT, not only as a value. Every skip condition in the
-    # title loop is dormant on this corpus, so the recorded number says nothing
-    # the card count does not — and it cannot see the failure that matters: a
-    # regression that makes N cards ungradeable while minting N new ones leaves
-    # BOTH numbers at 9252 while N cards silently stop being graded.
+    # …and as an equality with `cards`, which is BELT AND BRACES rather than an
+    # independent check, stated plainly because the first draft of this comment
+    # justified it with arithmetic that does not hold. Sitting after the pin
+    # above, it can only fire when `cards != 9252` — and `cards` is itself
+    # pinned in `test_the_board_is_clean`. The one genuinely reachable skip is
+    # `len(idents) != 1`, which a MERGE causes and `merges == 0` already catches;
+    # the other skip, a missing `title` entry, is structurally dead because
+    # `replay()` writes one for every live row.
+    #
+    # It is kept because it costs nothing and says what the loop MEANS — every
+    # card gets its title compared — where a pinned integer only says what it
+    # measured once. It is not load-bearing, and a reader should not treat it as
+    # the thing standing between a skipped card and a green board.
     assert score.titles_graded == score.cards, (
         f"{score.cards - score.titles_graded} card(s) were skipped by the title "
         "loop; a skipped card is one the product may name anything at all"
@@ -1359,15 +1367,26 @@ def test_the_corpus_and_the_product_agree_on_what_a_status_is() -> None:
     the assertion that makes drift loud instead of silent.
     """
     from jobtracker.cloud import pipeline
+    from jobtracker.database.models import APPLICATION_STATUSES
     from tests.corpus_independent.generate import _CARD_STATUSES
 
-    assert _CARD_STATUSES == (
-        frozenset(pipeline._STATUS_RANK) | pipeline._TERMINAL_STATUSES
-    ), (
-        "the corpus and the product disagree about which statuses exist; a "
-        "status only one side knows is exactly the typo this set exists to "
-        "make impossible"
+    # AGAINST THE CANONICAL VOCABULARY, not against `pipeline`'s two hand-written
+    # tables. Comparing to those alone leaves the hop that actually matters
+    # unguarded: adding a status to `APPLICATION_STATUSES` — the vocabulary the
+    # board really shows — left this test GREEN, because both sides of the
+    # comparison were downstream of the same omission.
+    assert {s.lower() for s in _CARD_STATUSES} == {
+        s.lower() for s in APPLICATION_STATUSES
+    }, (
+        "the corpus and the product's status vocabulary disagree; a status only "
+        "one side knows is exactly the typo this set exists to make impossible"
     )
+    # …and the two pipeline tables the scorer actually reads must cover it, or
+    # `_overstates` resolves a real status through `.get(want, 0)` and ranks it
+    # below every live card.
+    assert _CARD_STATUSES <= (
+        frozenset(pipeline._STATUS_RANK) | pipeline._TERMINAL_STATUSES
+    ), "a status the board shows is unknown to the ranking the scorer uses"
 
 
 def test_ground_truth_cannot_name_a_status_no_board_shows() -> None:
@@ -1491,4 +1510,10 @@ def test_mail_that_names_no_role_must_leave_the_card_blank() -> None:
         ),
         [req],
     )
+    # THE DENOMINATOR FIRST. Two zeroes with nothing behind them is satisfied by
+    # a card that was never graded at all — verified: pointing `mids` at an
+    # unknown message, or dropping the `title` entry, makes both zeroes true
+    # with titles_graded=0. That is the defect shape this whole file exists to
+    # catch, and it had reappeared inside the test written to close it.
+    assert skipped.titles_graded == 1, "the req-id card was not graded at all"
     assert skipped.blank_required == 0 and skipped.role_invented == 0
