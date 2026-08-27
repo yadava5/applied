@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import time
 import uuid
+from datetime import datetime
 from typing import Any, AsyncIterator
 
 import jwt as pyjwt
@@ -289,6 +290,68 @@ async def test_summary_empty_is_zeroed(client: AsyncClient) -> None:
         "status_counts": {},
         "needs_review": 0,
     }
+
+
+async def test_summary_this_week_is_a_calendar_week_not_a_trailing_seven_days(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``this_week`` starts over on Monday (#519), through the real endpoint.
+
+    ``test_this_week_is_a_calendar_week.py`` pins the boundary function against
+    the table the web suite shares. This asserts the thing a user actually
+    sees: the number the tile returns, out of the real query, over real rows.
+
+    THE CLOCK IS FROZEN TO A MONDAY on purpose, and that is what makes the test
+    discriminate rather than merely pass. Every fixture below is dated relative
+    to Monday 2026-08-31:
+
+        2026-08-31  Monday      — this week, the only row that counts
+        2026-08-30  Sunday      — LAST week, and one day ago
+        2026-08-25  Tuesday     — last week, and six days ago
+
+    Both of the excluded rows are inside a trailing seven-day window, so the
+    old derivation returned 3 for exactly this board. Written relative to the
+    real ``today`` instead, the test would agree with the old code on Sundays
+    and disagree the rest of the week — a gate whose verdict depends on the day
+    it runs, which is the flake shape this repo has a scar from.
+    """
+
+    import jobtracker.cloud.applications as applications_module
+
+    frozen = datetime(2026, 8, 31, 12, 0, 0)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def utcnow(cls) -> datetime:  # type: ignore[override]
+            return frozen
+
+    monkeypatch.setattr(applications_module, "datetime", _FrozenDatetime)
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    for company, applied in (
+        ("Monday Co", "2026-08-31"),
+        ("Sunday Co", "2026-08-30"),
+        ("Tuesday Co", "2026-08-25"),
+    ):
+        resp = await client.post(
+            "/applications",
+            json={
+                "company": company,
+                "position": "SWE",
+                "status": "applied",
+                "applied_date": applied,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+
+    body = (await client.get("/applications/summary", headers=headers)).json()
+
+    assert body["total"] == 3
+    assert body["this_week"] == 1, (
+        "the week did not start over on Monday — a trailing seven-day window "
+        f"would have counted all three of these rows, and returned {body['this_week']}"
+    )
 
 
 # =============================================================================

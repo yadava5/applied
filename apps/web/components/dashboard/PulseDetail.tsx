@@ -180,6 +180,18 @@ const TITLES: Record<PulseDetailKind, string> = {
   provenance: "auto-filed · how applications arrived",
 };
 
+/** Ordinals for "by its Nth day", indexed by the day itself. Only 1–6 are
+ *  reachable: the line they appear in is suppressed once the week is whole. */
+const ORDINAL: Record<number, string> = {
+  1: "1st",
+  2: "2nd",
+  3: "3rd",
+  4: "4th",
+  5: "5th",
+  6: "6th",
+  7: "7th",
+};
+
 /** A clickable histogram: the shared chart of the momentum and age contents.
  *  Bars with a count are buttons; empty positions keep their 2px stub as
  *  inert rhythm. `gapBefore` marks a boundary (weeks, the quiet threshold)
@@ -417,7 +429,13 @@ export function PulseDetail({
   kind: PulseDetailKind;
   today: string;
   /** Filed-per-day counts, oldest first — the band's own derivation. */
-  momentum: { days: number[]; thisWeek: number; lastWeek: number };
+  momentum: {
+    days: number[];
+    thisWeek: number;
+    lastWeek: number;
+    lastWeekToDate: number;
+    daysElapsed: number;
+  };
   /** Open rows per day of age (index 0 = today … index cap = the quiet
    *  overflow), plus the top of the ageing curve, named. */
   age: {
@@ -443,7 +461,7 @@ export function PulseDetail({
   let content: ReactNode;
 
   if (kind === "momentum") {
-    const { days, thisWeek, lastWeek } = momentum;
+    const { days, thisWeek, lastWeek, lastWeekToDate, daysElapsed } = momentum;
     const filed = days.reduce((a, b) => a + b, 0);
     const best = bestDay(days);
     const bestDate = best ? isoDaysAgo(today, best.daysAgo) : null;
@@ -469,15 +487,30 @@ export function PulseDetail({
             </>
           ) : null}
         </FigureLine>
+        {/* The caption above compares a PART-WEEK against the same part of
+            last week, which is the only honest thing a one-line cell can say.
+            The panel has room for the other half of the comparison — what all
+            seven days of last week came to — so the two numbers stop being
+            confusable with each other. Suppressed on a Sunday, when they are
+            the same figure. */}
+        {daysElapsed < 7 ? (
+          <FigureLine>
+            <span className="tabular text-strong">{lastWeek}</span> in all of last week ·{" "}
+            <span className="tabular text-strong">{lastWeekToDate}</span> by its{" "}
+            {ORDINAL[daysElapsed] ?? `${daysElapsed}th`} day
+          </FigureLine>
+        ) : null}
         <div className="mt-3">
           <DayBars
-            ariaLabel={`Filed per day, this week ${thisWeek} vs last week ${lastWeek} — select a day to filter the worklist`}
+            ariaLabel={`Filed per day, this week ${thisWeek} in ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"} so far, ${lastWeekToDate} by the same day last week, ${lastWeek} in all of last week — select a day to filter the worklist`}
             bars={days.map((count, i) => {
               const daysAgo = days.length - 1 - i;
               const date = isoDaysAgo(today, daysAgo);
               return {
                 count,
-                color: i >= days.length - 7 ? "var(--viz-rules)" : "var(--text-dim)",
+                // `daysElapsed`, not 7 — see `PipelinePulse`'s copy of this
+                // rule. The inked run has to be the days the numbers describe.
+                color: i >= days.length - daysElapsed ? "var(--viz-rules)" : "var(--text-dim)",
                 name: date ? `${dayName(date)} — ${count} filed` : `${count} filed`,
                 tip: momentumTip(date, count),
                 // A breath before each Monday: the weekday structure Ayush

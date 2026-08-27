@@ -334,18 +334,46 @@ DEFAULT_MAIL_PAGE_SIZE = 50
 # truncated set rather than proposing one.
 _APPLICATION_MAIL_CAP = 1000
 
-# How recent an application counts as "this week" for the summary tile. Kept
-# in one place so the backend aggregate and the frontend's array-based
-# `summarize()` fold agree on the window.
-#
-# SEVEN CALENDAR DAYS INCLUDING TODAY, so the cutoff is six days back, not
-# seven. `now - timedelta(days=7)` looks like the same thing and is not: with
-# `>=` on both ends it spans EIGHT distinct dates. The frontend counts this
-# week as the last seven buckets of `dailyCounts` — ages 0 through 6 — so a
-# seven-day subtraction here put the two derivations a day apart, and the
-# disagreement would only ever have shown up as an off-by-a-few-filings on the
-# one screen that renders both numbers side by side.
-_THIS_WEEK_DAYS = 7
+def _week_start(today: date) -> date:
+    """The Monday that begins ``today``'s week — the "this week" boundary.
+
+    A REAL CALENDAR WEEK, and it was a trailing seven days until #519. The
+    owner reported the rolling window as wrong: a week is the unit people
+    apply in, and on a Monday it is supposed to start over. "How many in any
+    seven days" is a different question and nobody plans by it.
+
+    MONDAY rather than Sunday, and that is read off the product rather than
+    picked: the momentum strip on the same screen already draws a gap before
+    every Monday bar (``PulseDetail.tsx``), so a Sunday-start count would have
+    disagreed with the picture beside it. ``date.weekday()`` is 0 on a Monday
+    and the frontend's ``weekdayOf`` — ``(days_since_epoch + 3) % 7`` — is 0 on
+    a Monday too, so the two sides share the convention rather than each
+    choosing one.
+
+    THE TWIN IS ``weekStartOf`` in ``apps/web/lib/dashboard/age.ts``, and the
+    two are held together by a table of days asserted on both sides:
+    ``tests/test_this_week_is_a_calendar_week.py`` here,
+    ``tests/unit/week-boundary.test.mjs`` there. They cannot literally share an
+    implementation across Python and TypeScript; they can be made to fail
+    together, which is the next best thing and is what this repo's scar from
+    two independent derivations of one number asks for.
+
+    UTC, and that is NOT the same clock the momentum caption on the same
+    screen uses. ``PipelinePulse`` reads ``useLocalToday()`` — the reader's own
+    day — because "what have I filed this week" is a question about the week
+    they are living in. A counts-only endpoint cannot know that zone, so for a
+    reader west of UTC there is a window each week (Sunday 20:00 to midnight in
+    Eastern, the size of their offset) where this tile has rolled into the new
+    week and the caption below it has not.
+
+    The split is not new: under the trailing window it moved a single day's
+    filings and was invisible. A calendar boundary makes it a whole week's
+    worth, so it is written down here instead of being rediscovered as a bug.
+    Closing it means putting the reader's day on the wire — a change to this
+    endpoint's contract — and is filed as #518.
+    """
+
+    return today - timedelta(days=today.weekday())
 
 
 def _application_mail_truncated(
@@ -3926,7 +3954,9 @@ async def application_summary_cloud(
 
     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
       applications the user has). ``total`` is their sum.
-    - a windowed ``COUNT(*)`` for applications created in the last 7 days.
+    - a windowed ``COUNT(*)`` for applications the user APPLIED to since this
+      calendar week's Monday (see :func:`_week_start`). Not "created", which is
+      when our sync inserted the row, and not a trailing seven days.
 
     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
     stays flat as an account scales from 10 to 10,000 applications — the whole
@@ -3934,7 +3964,7 @@ async def application_summary_cloud(
     """
 
     now = datetime.utcnow()
-    week_start = now.date() - timedelta(days=_THIS_WEEK_DAYS - 1)
+    week_start = _week_start(now.date())
 
     async with get_session() as session:
         # Dismissed rows are off the board, so they are out of every tile too —

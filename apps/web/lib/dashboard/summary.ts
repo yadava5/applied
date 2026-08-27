@@ -278,11 +278,17 @@ export function summarize(applications: Application[], now: number = Date.now())
   // `filedAt`. All 7 undated rows are seeded demo rows outside the window, so
   // adopting the fallback changes no number today — it removes the way the two
   // lines could drift apart tomorrow.
+  //
+  // AND IT IS A REAL CALENDAR WEEK, since #519: Monday through today, not a
+  // trailing seven days. `weekOverWeek` owns that boundary for both this
+  // number and the momentum caption, and the backend's `_week_start` computes
+  // the same Monday for the signed-in board.
+  const today = todayISO(now);
   const days = dailyCounts(
     applications.map((app) => filedAt(app)),
-    todayISO(now),
+    today,
   );
-  thisWeek = weekOverWeek(days).thisWeek;
+  thisWeek = weekOverWeek(days, today).thisWeek;
 
   for (const app of applications) {
     statusCounts[app.status] = (statusCounts[app.status] ?? 0) + 1;

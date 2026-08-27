@@ -108,24 +108,53 @@ def test_the_web_twin_counts_this_week_the_same_way() -> None:
     )
 
 
-def test_both_sides_span_the_same_number_of_days() -> None:
+def test_neither_side_still_carries_a_private_window() -> None:
     """A shared basis is not a shared WINDOW.
 
     Both sides read the date the user applied and still disagreed: the backend
     subtracted seven days and compared with `>=` on both ends, which spans
-    EIGHT dates, while the web counts the last seven buckets of `dailyCounts`.
-    One day of filings wide, visible only when someone applied on the boundary
-    — so it is pinned here rather than left to be noticed.
+    EIGHT dates, while the web summed the last seven buckets of `dailyCounts`.
+    One day of filings wide, visible only when someone applied on the boundary.
+
+    SINCE #519 THE WINDOW IS A CALENDAR WEEK on both sides, and this assertion
+    inverted with it — the old version pinned the literals
+    ``_THIS_WEEK_DAYS = 7`` and ``counts.slice(-7)``, so it defended the
+    trailing window and would have gone red on the repair. That is the defect
+    shape this repo keeps meeting, so the replacement is written as a PAIR:
+    the calendar-week helper must be present AND the trailing-window shape must
+    be gone. Either half alone is a check that cannot fail — "present" passes
+    on a file that carries both, and "absent" passes on a file that computes
+    nothing at all.
+
+    WHAT THE TWO IMPLEMENTATIONS AGREE ON is not asserted here. Source strings
+    cannot show that; ``test_this_week_is_a_calendar_week.py`` and
+    ``apps/web/tests/unit/week-boundary.test.mjs`` run the two functions
+    against one shared table of days and are where a semantic drift fails.
+    This test guards the cheaper reversion: somebody re-inlining a private
+    window at a call site and leaving the shared helper unused.
     """
 
-    backend = _BACKEND.read_text()
-    assert "_THIS_WEEK_DAYS = 7" in backend
-    assert "timedelta(days=_THIS_WEEK_DAYS - 1)" in backend, (
-        "the backend's week cutoff is not seven days INCLUDING today"
+    backend = _strip_py_comments(_BACKEND.read_text())
+    assert "def _week_start(" in backend, (
+        "the backend no longer names its week boundary, so nothing shared can "
+        "be asserted against it"
     )
+    assert "_week_start(now.date())" in backend, (
+        "the summary endpoint stopped going through _week_start"
+    )
+    assert "_THIS_WEEK_DAYS" not in backend, (
+        "the trailing seven-day window is back on the backend"
+    )
+
     web = _strip_ts_comments((_WEB_SUMMARY.parent / "age.ts").read_text())
-    assert "counts.slice(-7)" in web, (
-        "the web's week is no longer the last seven daily buckets"
+    assert "weekStartOf" in web and "daysElapsedThisWeek" in web, (
+        "the web no longer names its week boundary"
+    )
+    assert "counts.slice(-7)" not in web, (
+        "the web's week is a trailing seven buckets again"
+    )
+    assert "counts.slice(-14, -7)" not in web, (
+        "the web's baseline is a trailing fourteen-to-seven window again"
     )
 
 

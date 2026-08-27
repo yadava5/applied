@@ -662,12 +662,17 @@ test.describe("live demo (/demo)", () => {
     // guards. applied#80 was that defect — the fixtures were absolute dates,
     // the demo's first number aged to 0, and no spec noticed for 28 days.
     //
-    // Safe at both offset projects: the seeds inside the 7-day window are at
-    // 1,2,3,3,5,6 days (`demoData.ts`), so the count is 6, and the ±1 day a
-    // UTC−10/+14 reader's calendar can shift it by moves it to 5 or 7 — never
-    // near 0. It is a staleness gate, not a fixture-census one; the exact
-    // count deliberately is not asserted so re-spreading the seeds does not
-    // have to touch this line.
+    // SAFE ON EVERY WEEKDAY, and that needed a fixture change when the week
+    // became a real calendar week (#519). The near seeds are at 0,1,3,3,5,6
+    // days (`demoData.ts`), so a Monday — when the week is one day wide —
+    // still counts the row filed today. Before `a14` was moved to 0 the
+    // nearest was 1 day ago, and this line would have gone red every Monday
+    // while passing Tuesday through Sunday: a gate whose verdict depends on
+    // the day CI happens to run.
+    //
+    // It is a staleness gate, not a fixture-census one; the exact count
+    // deliberately is not asserted so re-spreading the seeds does not have to
+    // touch this line — as long as one of them stays at 0.
     await expect(pulse.getByText(/[1-9]\d* this wk/)).toBeVisible();
 
     // Ageing: the fixture board's open rows are weeks old, so the quiet share
