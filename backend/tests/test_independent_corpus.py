@@ -64,14 +64,18 @@ RECORDED = {
     # The number that matters more than `wrong`: how many wrong verdicts are
     # stated to the user as fact rather than held for them to settle.
     #
-    # 72 ENCODES A KNOWN, OPEN DEFECT and is not a target. 14 of these are #455:
+    # 72 ENCODES KNOWN, OPEN DEFECTS and is not a target. The decomposition
+    # below accounts for 16 of the 72 and the remaining 56 are UNATTRIBUTED —
+    # said plainly, because this comment used to name two families under a
+    # headline of 116 and read as though it explained the whole number. 14 are
+    # #455:
     # a rejection whose full body says "we have decided not to move forward" is
     # scored `applied` at exactly the auto-file gate because the JOB TITLE
     # contains the word "Career", so the title — reference text, naming which
     # application — supplies the points that decide what happened to it. The
-    # other 2 are `ats-relay-noise` minting cards from a profile-completion
-    # nudge. Both are pinned so a fix MOVES them; neither is blessed by being
-    # here. See #455 and #451.
+    # other 2 are `ats-relay-noise` scoring a profile-completion nudge as job
+    # mail. The number is pinned so a fix MOVES it; nothing here is blessed by
+    # being pinned. See #455 and #451.
     "auto_filed_wrong": 72,
     "cards": 9252,
     # Mail about a real application that the product did nothing with. Two
@@ -83,8 +87,11 @@ RECORDED = {
     # wordings the author of `rules.py` did not write — where 66 messages
     # reached nothing. Extending the reference signal to `your assessment` and
     # `your interview` (completing the category, not chasing a wording) took
-    # that to 11. See #458 for the ones that remain and why closing them was
-    # declined rather than overlooked.
+    # that to 8. It reads 11 now, and this comment does not know what moved it
+    # from 8 to 11 — the honest state, rather than back-dating the later number
+    # onto the earlier fix, which is what an edit here previously did. See #458
+    # for the ones that remain and why closing them was declined rather than
+    # overlooked.
     #
     # The history below is kept because the mechanism has not changed: it was 610: rejections whose
     # verdict sits past Gmail's snippet, and withdrawals whose own words never
@@ -209,15 +216,26 @@ RECORDED = {
     #   * for ALL 67, no message ON the card yields a role from
     #     `role_from_message`. There is no card whose title was read and then
     #     dropped.
-    #   * 26 of them have a message that DOES yield the role, and it is in the
-    #     REVIEW QUEUE. Holding a message for a human costs the card its job
-    #     title, and answering the review item does not repair it:
-    #     `classify_review_item` extracts the role and writes it only on the
+    # The partition below is COMPLETE — 26 + 15 + 26 = 67 — and it is stated
+    # that way on purpose. An earlier version of this comment accounted for 43
+    # of the 67 and left 24 with no mechanism, which reads as an explanation and
+    # is a gap.
+    #
+    #   * 26 have a message that DOES yield the role, and it is in the REVIEW
+    #     QUEUE, so the card never saw it. Holding a message for a human costs
+    #     the card its job title, and answering the review item does not repair
+    #     it: `classify_review_item` extracts the role and writes it only on the
     #     branch that MINTS a row, never on the branch that resolves onto the
-    #     existing one. observed-rejection 24, observed-assessment 2.
-    #   * 17 have the role spelled in the SUBJECT of a message on the card and
-    #     nothing reads it. That is #485, and it is the only part of this number
-    #     a new pattern can close.
+    #     existing one. observed-rejection 24, observed-assessment 2. See #546.
+    #   * 26 also have a message off the card, and that message names no role
+    #     either, so nothing was lost by its absence.
+    #   * 15 hold every message of their identity and the reader reads none of
+    #     them.
+    #
+    # Cutting the same 67 a second way: 17 have the role spelled in the SUBJECT
+    # of a message ON the card and nothing reads it. That is #485, and it is the
+    # only part of this number a new pattern can close. The two cuts overlap and
+    # neither is a sub-total of the other.
     #
     # WHAT MAKES THIS A SAFE MOVE rather than a number that merely got smaller:
     # `role_wrong` stayed 0, `titles_graded` was unmoved at 9252, and every card
@@ -1058,11 +1076,20 @@ async def test_the_card_is_named_after_the_right_job(
     # agreeing while a card moves from being GRADED to being skipped, because
     # both sides of that move are just numbers that were re-recorded together.
     #
-    # The close is what makes a silent skip impossible: a card can only leave
-    # one population by entering another, so a regression that stops grading N
-    # cards has to say where they went. #536 documents the shape it catches —
-    # a merge regression once took `role_missing` 213 -> 0 by LOWERING the
-    # denominator, and every zero in this test read better afterwards.
+    # WHAT IT ACTUALLY CATCHES, stated narrowly because an earlier draft of this
+    # comment oversold it. Between `titles_graded += 1` and the three-way
+    # partition below it, the close is tautological against the current control
+    # flow — every path out increments exactly one term. It does NOT catch a
+    # skip UPSTREAM of the increment (`len(idents) != 1`, or a missing title
+    # entry): those shrink `titles_graded` and the partition together and the
+    # equation still holds. The pins above are what catch those.
+    #
+    # What the close does catch is a careless JOINT re-record: three pinned
+    # integers can be moved together to match a broken run and still look
+    # deliberate, and this line refuses the ones that do not add up. #536
+    # documents why that matters — a merge regression once took `role_missing`
+    # 213 -> 0 by lowering the denominator, and every zero in this test read
+    # BETTER afterwards.
     assert (
         score.roles_graded + score.blank_required + score.role_unsettleable
         == score.titles_graded
@@ -1880,3 +1907,71 @@ def test_the_digest_covers_what_the_corpus_asserts_not_only_what_it_says(cases) 
     # …and the corpus is left exactly as it was found, or every test after this
     # one in the module is running against a different corpus.
     assert digest(cases) == base
+
+
+def test_a_card_required_to_be_blank_names_no_job_anywhere(cases) -> None:
+    """`names_no_role` claims more than the derivation proves. Close the gap.
+
+    `_settle_role_reachability` establishes one thing: the role THIS IDENTITY IS
+    KEYED ON is spelled in no message on the card. `names_no_role` then asserts
+    something stronger — that the mail names no job at all — and `role_invented`
+    enforces that stronger claim against the product, in `total`.
+
+    Today the gap between the two is empty, because every `observed-*` template
+    either interpolates `{role}` or contains no job title in any wording. But
+    nothing held it empty. A template added tomorrow that names a job in words
+    other than the interpolated one, or spells it a way this file's plain
+    lowercase substring match misses, would be flipped to MUST-BE-BLANK — and
+    then a correct extractor reading that title would fire ROLE-INVENTED, which
+    is a gate going red because the product got it right. `Case.__post_init__`
+    already warns about exactly this shape in its refusal message; nothing
+    stopped the derivation from creating it.
+
+    So: no card required to be blank may contain ANY title from the pool, in
+    subject or readable body. Asserted over the sentinel families too, which the
+    derivation never touches and which have carried the same unchecked claim
+    since #487.
+    """
+
+    from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS
+    from tests.corpus_independent.generate import ROLES
+
+    def reachable_text(case) -> str:
+        """Rebuilt here, NOT imported from the module under test.
+
+        Importing `generate._readable_text` would make this test move with the
+        thing it is checking: narrowing that window would narrow this window
+        too, so a derivation that flipped thousands of role-naming cards to
+        MUST-BE-BLANK would still find no role to complain about. That is not
+        hypothetical — it is what the first draft of this test did, and the
+        mutation run that was supposed to prove the test caught nothing.
+        """
+
+        return " ".join(
+            (case.subject, " ".join(case.body.split())[:_MAX_BODY_CHARS])
+        ).lower()
+
+    by_identity: dict[str, list] = {}
+    for case in cases:
+        if case.identity is not None and case.names_no_role:
+            by_identity.setdefault(case.identity, []).append(case)
+
+    named = []
+    for identity, group in by_identity.items():
+        text = " ".join(reachable_text(c) for c in group)
+        hit = next((r for r in ROLES if r.lower() in text), None)
+        if hit is not None:
+            named.append((identity, hit))
+
+    assert not named, (
+        f"{len(named)} card(s) are asserted to be BLANK for mail that names a "
+        f"job from the pool. A correct extractor reading it would be scored as "
+        f"an invention: {named[:5]}"
+    )
+    # THE DENOMINATOR. "No blank-required card names a job" is also true of a
+    # corpus with no blank-required cards, and the derivation that produces them
+    # is one line away in the same module.
+    assert len(by_identity) == RECORDED["blank_required"], (
+        f"{len(by_identity)} identities are required to be blank; the assertion "
+        f"above is worth exactly that many"
+    )

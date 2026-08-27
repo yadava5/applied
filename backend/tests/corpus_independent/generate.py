@@ -2452,12 +2452,15 @@ def _settle_role_reachability(cases: list[Case]) -> None:
     job the reader could not read — and a derivation that swept them up would
     have deleted the defect instead of the mis-statement.
 
-    WHY IT MATTERS MORE THAN THE NUMBER, stated more carefully than the issue
-    stated it. #533 calls this "ground truth that rewards guessing", and that
-    overstates it: ROLE-MISSING is out of ``total``, and an extractor that
-    invented titles would go RED through ``role_wrong``, because the role these
-    cards were graded against was drawn from an invented pool and no guess can
-    match it.
+    WHY IT MATTERS MORE THAN THE NUMBER. #533 calls this "ground truth that
+    rewards guessing". An earlier draft of this docstring called that an
+    overstatement, on the grounds that "no guess can match" a role drawn from an
+    invented pool. That was itself wrong, and in the direction that flatters the
+    fix: ``ROLES`` holds seventeen strings and every identity's role is one of
+    them, so a guesser that printed the pool's most common title scored CORRECT
+    on roughly one card in seventeen — and anything fitted on this corpus would
+    do far better than that. The old truth was matchable, so #533's wording was
+    closer to right than the correction.
 
     The real harm is that it set a target NO CORRECT BEHAVIOUR CAN REACH. 146 of
     the 213 could not be closed by any pattern, ever, because the text does not

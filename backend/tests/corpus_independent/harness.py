@@ -216,7 +216,17 @@ def score_classifier(verdicts: list[Verdict]) -> ClassifierScore:
 #: happens when the verdict is out of reach, and hands the classifier all 7,351.
 #: Correcting it moves classifier numbers, not identity ones, and belongs with
 #: its own re-record.
-_MAX_BODY_CHARS = 4000
+#:
+#: IMPORTED RATHER THAN COPIED, since 2026-08-27. It was hand-written as 4000
+#: here — a THIRD copy of a number that also lives in the product and in
+#: ``generate._READABLE_CHARS`` — and nothing pinned it. The corpus's
+#: independence doctrine is about GROUND TRUTH, not about plumbing, and this
+#: file already imports ``pipeline.role_from_message`` wholesale; hand-copying
+#: the size of that function's input window buys no independence and one way to
+#: drift. If it drifted, the harness would feed the extractor a different window
+#: than both the product and the ground-truth derivation assume, and every role
+#: counter would be quietly wrong.
+from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS  # noqa: E402
 
 
 def _readable(case: Case) -> str:
