@@ -60,8 +60,13 @@ from jobtracker.cloud.pipeline import role_from_message
         # sentence to lean on. The clause-end lookahead is what reads this, and
         # without it the rule would need a terminator that is not there.
         (
+            # This fixture ENDED HERE, with no full stop, until end-of-string
+            # stopped counting as a clause end. That made it a truncated body —
+            # the shape `test_a_truncated_body_yields_nothing_rather_than_half_a_title`
+            # now requires to yield nothing — so it was finished into the
+            # sentence a real offer mail actually sends.
             "We are delighted to extend an offer to join Northwind as an "
-            "Infrastructure Engineer",
+            "Infrastructure Engineer. The written terms are attached.",
             "Infrastructure Engineer",
         ),
         (
@@ -149,3 +154,171 @@ def test_a_title_the_board_already_has_is_not_changed() -> None:
     }
     for body, expected in owned.items():
         assert role_from_message("", body) == expected, body
+
+
+# ── the sentence does not stop where the title does ──────────────────────────
+#
+# Both rules below have no trailing keyword to terminate on, so the first draft
+# captured to whatever punctuation turned up next. Every case here returned a
+# WRONG title from that draft, and the wrong title is worse than the blank one
+# the rules exist to fill: `normalize_role_token` keys an application on the
+# role, so "Staff Engineer at Northwind" in the offer and "Staff Engineer" in
+# the confirmation are two applications, and the board grows the duplicate card
+# this whole change set was opened to prevent.
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        # The title ends; the sentence carries on. Each of these captured the
+        # continuation before the span was shaped.
+        (
+            "We are delighted to extend an offer for you to join Northwind as a "
+            "Software Engineer starting on January 5, 2027.",
+            "Software Engineer",
+        ),
+        (
+            "We would like to extend an offer to join us as a Staff Engineer at "
+            "Northwind.",
+            "Staff Engineer",
+        ),
+        (
+            "We are pleased to extend an offer to join Northwind as a Senior "
+            "Engineer reporting to Jane Smith.",
+            "Senior Engineer",
+        ),
+        # The employer's possessive, in both apostrophe glyphs. The ASCII guard
+        # in the first draft made these two sentences disagree with each other:
+        # one produced a title carrying the employer, the other produced nothing.
+        (
+            "We are pleased to extend an offer to join Northwind as a Software "
+            "Engineer on Northwind\u2019s Platform team.",
+            "Software Engineer",
+        ),
+        (
+            "We are pleased to extend an offer to join Northwind as a Software "
+            "Engineer on Northwind's Platform team.",
+            "Software Engineer",
+        ),
+    ],
+)
+def test_the_title_ends_where_the_prose_resumes(body, expected):
+    assert role_from_message("", body) == expected
+
+
+CAPTURED_THE_SENTENCE = [
+    # "at <Employer>" is the terminator, and in each of these it sits a whole
+    # clause downstream — so the capture ran through a verb, a conjunction or a
+    # comma to reach it.
+    "Your application for Data Scientist is under review at Northwind.",
+    "We have kept your application for Data Scientist on file and will reach "
+    "out about future opportunities at Northwind.",
+    "Thank you for your application for Data Scientist, and at Northwind we "
+    "review every submission carefully.",
+    # "application TO <X>" names the employer, never the job. This one filed the
+    # company itself as the position, which is the token most likely to collide
+    # with a real card.
+    "Thanks for applying to Northwind at GHC last week!",
+]
+
+
+@pytest.mark.parametrize("body", CAPTURED_THE_SENTENCE)
+def test_a_capture_that_spans_a_clause_yields_nothing(body):
+    """Refusing is correct here: the row goes to the queue, not onto a card."""
+    assert role_from_message("", body) is None, (
+        f"{body!r} produced a title out of a sentence fragment"
+    )
+
+
+def test_a_hard_wrapped_title_is_refused_rather_than_truncated():
+    """Plain-text bodies wrap at ~72 columns, and a wrap is not a clause end.
+
+    Treating it as one produced "Machine Learning" — clean enough to look
+    correct on a card and wrong enough to split the identity. This is the one
+    case where refusing costs a real title, and it is still the right trade: a
+    blank card is repairable by the next message about the same job, a wrong
+    identity is not.
+    """
+    assert (
+        role_from_message(
+            "",
+            "We are pleased to extend an offer to join Northwind as a Machine "
+            "Learning\nEngineer.",
+        )
+        is None
+    )
+
+
+def test_the_shaped_span_does_not_cross_a_full_stop():
+    """The control for dropping "." out of the title-word class.
+
+    A title word may not carry a full stop, because a word that can carry one
+    can carry the sentence boundary with it — "Operator Experience. We" was a
+    real capture from the draft that allowed it.
+    """
+    got = role_from_message(
+        "",
+        "Hi, We are delighted to extend you an offer to join Northwind as an "
+        "Associate Software Engineer, Operator Experience. We are thrilled.",
+    )
+    assert got == "Associate Software Engineer, Operator Experience"
+
+
+def test_the_requisition_eater_is_bounded():
+    """An unclosed "(id:" must not make the scan quadratic in the body length.
+
+    Bodies are untrusted third-party text and this pattern anchors on the most
+    common word in it. Unbounded, this shape grew 6ms -> 233ms across four
+    doublings; bounded it is linear. Asserted as a wall-clock ceiling because
+    the defect IS the time.
+    """
+    import time
+
+    body = "application for Aaaa (id:" * 4000
+    start = time.perf_counter()
+    role_from_message("", body)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_a_truncated_body_yields_nothing_rather_than_half_a_title():
+    """THE OFFER RULE IS THE ONE PATTERN THAT CAN FAIL OPEN, so it is pinned here.
+
+    Every other body pattern needs a trailing keyword and therefore stops
+    producing anything when the text runs out. This one has no keyword, so
+    while end-of-string counted as a clause end it happily returned whatever
+    fragment the truncation left behind.
+
+    The input is real: the extractor is handed `bodies.get(id) or msg.snippet`,
+    and Gmail's snippet is cut at an arbitrary character. A truncated capture is
+    not a cosmetic wrong title — the role token is half the identity, so it
+    mints a card no later, fuller-text message about the same job can join.
+    """
+    cut_mid_word = "We are delighted to extend an offer to join Northwind as a Software Eng"
+    cut_at_a_boundary = "We are delighted to extend an offer to join Northwind as a Software"
+    assert role_from_message("", cut_mid_word) is None
+    assert role_from_message("", cut_at_a_boundary) is None
+    # THE CONTROL. The same sentence, finished, must still produce its title —
+    # otherwise "refuse truncated bodies" is satisfied by refusing everything.
+    assert (
+        role_from_message(
+            "",
+            "We are delighted to extend an offer to join Northwind as a Software "
+            "Engineer.",
+        )
+        == "Software Engineer"
+    )
+
+
+def test_a_title_joined_by_an_en_dash_is_read():
+    """An ASCII-only joiner refused the module's own worked example.
+
+    `_ROLE_BODY_PATTERNS`' documentation uses "Software Development Engineer I
+    – AI/ML Network Infrastructure" to explain the width bound, and until the
+    joiner accepted en and em dashes that exact title produced nothing.
+    """
+    got = role_from_message(
+        "",
+        "We are delighted to extend an offer to join Amazon as a Software "
+        "Development Engineer I \u2013 AI/ML Network Infrastructure.",
+    )
+    assert got == "Software Development Engineer I \u2013 AI/ML Network Infrastructure"
