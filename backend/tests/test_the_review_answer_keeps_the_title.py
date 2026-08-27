@@ -121,10 +121,13 @@ def _mail(
     category: EmailCategory,
     minutes: int = 0,
     reviewed: bool = False,
+    application_id: int | None = None,
+    identity_role: str | None = None,
+    identity_req_id: str | None = None,
 ) -> Email:
     return Email(
         user_id=USER,
-        application_id=None,
+        application_id=application_id,
         source_account=EmailSource.GMAIL,
         message_id=message_id,
         thread_id=None,
@@ -136,6 +139,8 @@ def _mail(
         classification_confidence=0.75,
         is_reviewed=reviewed,
         user_corrected=reviewed,
+        identity_role=identity_role,
+        identity_req_id=identity_req_id,
     )
 
 
@@ -258,6 +263,19 @@ async def test_a_review_answer_never_overwrites_an_identity_the_row_already_has(
 
     row = _row(company="Amazon", req_id="9999999", role_token="platform engineer")
     await _seed(test_session, row)
+    # THE MESSAGE MUST ACTUALLY LAND ON THAT ROW, and saying so is the whole
+    # test. Written without this the mail names requisition 4471002, the row
+    # carries 9999999, and `_pick_application`'s contradiction guard refuses to
+    # file across them — so the message MINTS A SECOND CARD, `_adopt_mail_identity`
+    # is never called on `row` at all, and the two assertions below pass against
+    # a row nothing touched. That version survived deleting both `is None`
+    # guards it claims to pin: 9 passed with the identity columns overwriting
+    # unconditionally. Found by an adversarial review of this branch on
+    # 2026-08-27 and reproduced before this rewrite.
+    #
+    # `application_id` is the route the product itself uses: the resolver
+    # consults a message's existing link before any inference (LANDED_LINKED),
+    # which is how an already-filed message reaches an already-keyed row.
     await _seed(
         test_session,
         _mail(
@@ -266,15 +284,26 @@ async def test_a_review_answer_never_overwrites_an_identity_the_row_already_has(
             subject=ACME_SUBJECT,
             body=_named(ROLE, REQ),
             category=EmailCategory.NEEDS_REVIEW,
+            application_id=row.id,
         ),
     )
 
-    await apps.classify_review_item(test_session, USER, "rv-keyed", EmailCategory.APPLIED)
+    result = await apps.classify_review_item(
+        test_session, USER, "rv-keyed", EmailCategory.APPLIED
+    )
     await test_session.commit()
 
+    assert result["application_id"] == row.id, (
+        "the message did not reach the keyed row, so nothing below is a test of "
+        "what happens when it does"
+    )
     after = await _reload(test_session, row.id)
     assert after.req_id == "9999999"
     assert after.role_token == "platform engineer"
+    assert after.position == "", (
+        "a contradicted requisition let the title through, so the row now wears "
+        "one application's number and another's job"
+    )
 
 
 async def test_a_title_the_user_typed_survives_a_review_answer(test_session):
@@ -455,3 +484,170 @@ async def test_the_catch_up_leaves_a_typed_title_alone(test_session):
 
     after = await _reload(test_session, row.id)
     assert after.position == "The Job I Actually Applied For"
+
+
+# ── the blind landing: filing is not the same as knowing ─────────────────────
+#
+# `_email_identity_parts` PREFERS the stored `identity_*` columns, which are
+# written from the whole body where one was fetched. `_resolve_application_for_email`
+# re-derives from subject + the first ~200 characters. So the case where the
+# cascade reads nothing — rule 4, "pick the employer's oldest row rather than
+# mint a fourth card" — is exactly the case where the caller may still hold a
+# body-grade role. Stamping it there writes one application's title onto
+# another's card, and 24 of the 26 cards #546 is about are rejections, whose
+# snippet reliably ends mid-preamble.
+#
+# Raised by an adversarial review of this branch on 2026-08-27, as the fix's own
+# worst case. The pair below is the gate: the refusal, and the control that
+# stops "refuse everything" from satisfying it.
+
+BLIND_SUBJECT = "Update on your application"
+BLIND_SNIPPET = "Thank you for taking the time to apply. After careful review,"
+
+
+def _blind_mail(message_id: str, *, application_id: int | None = None) -> Email:
+    """Names no job anywhere the cascade looks, and one where it does not."""
+
+    return _mail(
+        message_id,
+        sender=ACME_SENDER,
+        subject=BLIND_SUBJECT,
+        body=BLIND_SNIPPET,
+        category=EmailCategory.NEEDS_REVIEW,
+        application_id=application_id,
+        identity_role=ROLE,
+        identity_req_id=REQ,
+    )
+
+
+async def test_a_tie_break_between_two_cards_does_not_title_either(test_session):
+    """Two anonymous rows at one employer, and a message that names neither.
+
+    The resolver files it on the oldest — deliberately, because minting a third
+    card to answer "which of your two?" is worse. But that choice is a
+    tie-break, not a reading, and a title stamped on it is a guess wearing the
+    authority of a fact.
+    """
+
+    first = _row(company="Amazon")
+    second = _row(company="Amazon")
+    await _seed(test_session, first, second)
+    await _seed(test_session, _blind_mail("rv-blind"))
+
+    result = await apps.classify_review_item(
+        test_session, USER, "rv-blind", EmailCategory.REJECTION
+    )
+    await test_session.commit()
+
+    assert result["application_id"] in (first.id, second.id), (
+        "the message minted a card instead of landing on one of the two, so this "
+        "is not a test of the tie-break"
+    )
+    for row in (first, second):
+        after = await _reload(test_session, row.id)
+        assert after.position == "", (
+            "a card was titled off a tie-break: the resolver read nothing in "
+            "this message and picked a row by age, and the title came from a "
+            "column it never looked at"
+        )
+        assert after.req_id is None and after.role_token is None
+
+
+async def test_the_same_message_titles_the_card_when_there_is_only_one(test_session):
+    """THE CONTROL. One row, so nothing is being broken between.
+
+    Without it the test above is satisfied by never adopting at all, which is
+    the bug #546 was filed for. The mail is byte-identical; the only difference
+    is how many cards the employer holds.
+    """
+
+    only = _row(company="Amazon")
+    await _seed(test_session, only)
+    await _seed(test_session, _blind_mail("rv-single"))
+
+    await apps.classify_review_item(
+        test_session, USER, "rv-single", EmailCategory.REJECTION
+    )
+    await test_session.commit()
+
+    after = await _reload(test_session, only.id)
+    assert after.position == ROLE
+    assert after.req_id == REQ
+
+
+async def test_the_user_picking_the_card_is_never_a_blind_landing(test_session):
+    """They were shown the board and chose. That outranks every inference.
+
+    Asserted because the refusal above is keyed on HOW the row was reached, and
+    the chosen-card path must not be swept up in it — otherwise the one case
+    where the product asked the question and got an answer is the one case it
+    refuses to act on.
+    """
+
+    first = _row(company="Amazon")
+    second = _row(company="Amazon")
+    await _seed(test_session, first, second)
+    await _seed(test_session, _blind_mail("rv-chosen"))
+
+    await apps.classify_review_item(
+        test_session,
+        USER,
+        "rv-chosen",
+        EmailCategory.REJECTION,
+        application_id=second.id,
+    )
+    await test_session.commit()
+
+    after = await _reload(test_session, second.id)
+    assert after.position == ROLE
+    assert (await _reload(test_session, first.id)).position == ""
+
+
+async def test_a_matching_requisition_still_does_not_re_key_the_row(test_session):
+    """The fill-if-empty guards, pinned where the contradiction guard cannot hide them.
+
+    THIS TEST EXISTS BECAUSE THE OBVIOUS ONE DOES NOT WORK. Pointing a
+    CONTRADICTING requisition at a keyed row proves nothing about
+    ``app.req_id is None`` / ``app.role_token is None``: the contradiction guard
+    returns first, so deleting both `is None` clauses leaves that test green.
+    Measured on 2026-08-27 — the unconditional-overwrite mutant survived the
+    whole file until this case was added.
+
+    So the requisition AGREES here, which is a real state: the sync keyed this
+    row from one wording of the title, and a below-gate message words it
+    differently. Re-keying on that is how a card stops matching its own future
+    mail — the same reason the sync's own upsert fills these columns and never
+    rewrites them.
+    """
+
+    row = _row(company="Amazon", req_id=REQ, role_token="platform engineer")
+    await _seed(test_session, row)
+    await _seed(
+        test_session,
+        _mail(
+            "rv-agrees",
+            sender=ACME_SENDER,
+            subject=ACME_SUBJECT,
+            body=_named(ROLE, REQ),
+            category=EmailCategory.NEEDS_REVIEW,
+        ),
+    )
+
+    result = await apps.classify_review_item(
+        test_session, USER, "rv-agrees", EmailCategory.APPLIED
+    )
+    await test_session.commit()
+
+    assert result["application_id"] == row.id, (
+        "the message did not land on the keyed row, so the guards below were "
+        "never reached"
+    )
+    after = await _reload(test_session, row.id)
+    assert after.req_id == REQ
+    assert after.role_token == "platform engineer", (
+        "the row was re-keyed off one below-gate message, so it no longer "
+        "matches the mail the sync keyed it for"
+    )
+    # The title is still filled: that is the fix, and it is what separates
+    # "never rewrite the KEY" from "never write anything".
+    assert after.position == ROLE

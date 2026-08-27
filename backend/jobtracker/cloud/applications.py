@@ -1493,13 +1493,26 @@ async def _chosen_application(
     return next((row for row in rows if row.id == application_id), None)
 
 
+#: HOW a stored message reached the row it is being filed against. Only a
+#: landing that is a CLAIM about which application this is may carry the
+#: message's identity onto the row; ``LANDED_BLIND`` is the resolver saying it
+#: does not know, and a title stamped on that basis is a guess wearing the
+#: authority of a fact. See :func:`_adopt_mail_identity`.
+LANDED_LINKED = "linked"
+LANDED_KEYED = "keyed"
+LANDED_BLIND = "blind"
+
+
 async def _resolve_application_for_email(
     session,
     user_id: uuid.UUID,
     token: str,
     email: Email,
-) -> Application | None:
+) -> tuple[Application | None, str]:
     """Resolve the application ONE stored message belongs to, or None to mint.
+
+    Returns the row AND how it was reached, because the two callers now write
+    the message's identity onto the row and must not do that on a tie-break.
 
     THE MESSAGE'S OWN LINK COMES FIRST. Both callers are answering a human — the
     review queue's "what is this?" and the orphan catch-up — and both used to go
@@ -1522,14 +1535,24 @@ async def _resolve_application_for_email(
     if email.application_id is not None:
         linked = next((row for row in rows if row.id == email.application_id), None)
         if linked is not None:
-            return linked
+            return linked, LANDED_LINKED
     subject = email.subject or ""
     snippet = email.body_snippet or ""
-    return _pick_application(
-        rows,
-        pipeline.extract_req_id(subject, snippet),
-        pipeline.normalize_role_token(pipeline.role_from_message(subject, snippet)),
+    # SNIPPET-GRADE, deliberately, and that is the whole reason the landing is
+    # reported. `_email_identity_parts` prefers the stored `identity_*` columns,
+    # which were written from the WHOLE BODY where one was fetched; this
+    # cascade re-derives from subject + the first ~200 characters. So the case
+    # where rule 4 fires — nothing readable here — is exactly the case where the
+    # caller may still be holding a body-grade role, and stamping it onto the
+    # row this tie-break happened to pick writes one application's title onto
+    # another's card.
+    req_id = pipeline.extract_req_id(subject, snippet)
+    role_token = pipeline.normalize_role_token(
+        pipeline.role_from_message(subject, snippet)
     )
+    picked = _pick_application(rows, req_id, role_token)
+    blind = req_id is None and role_token is None and len(rows) > 1
+    return picked, LANDED_BLIND if blind else LANDED_KEYED
 
 
 # How many message ids may travel in one ``WHERE message_id IN (...)``.
@@ -1608,11 +1631,28 @@ def _adopt_mail_identity(app, role: str | None, req_id: str | None) -> bool:
     site, not a new one.
 
     ``position_source`` is deliberately left alone. NULL means "the sync owns
-    this field", and nobody typed this title, so a later extraction fix must
-    still be allowed to correct it.
+    this field", so this title stays the sync's to correct — for as long as the
+    row still reads as a sync row. Where the same request also moves the stage,
+    the review path flips ``source`` to ``gmail_user`` a few lines later, and
+    the sync's rewrite clause is gated on ``_is_auto_row``; so on that path the
+    title becomes effectively frozen until a split or a human edits it. Stated
+    rather than fixed: unfreezing it means a third ``position_source`` value,
+    and inventing one to soften a docstring is the wrong trade.
+
+    A CONTRADICTED REQUISITION REFUSES EVERYTHING. If this message names a
+    requisition and the row already carries a different one, they are two
+    applications however identical the titles read — the same judgement
+    :func:`_pick_application` makes before it will file across them. Without
+    this the three columns fill independently and a row can end up wearing one
+    requisition's number and another's title: a chimera that rule 1 then
+    matches for one application while displaying the other's job. An anonymous
+    row is honestly anonymous; a half-stamped one is confidently wrong.
 
     Returns whether anything changed, so the caller can skip a pointless write.
     """
+
+    if req_id is not None and app.req_id is not None and app.req_id != req_id:
+        return False
 
     changed = False
     if role and not app.position and app.position_source != ROLE_FROM_USER:
@@ -2418,7 +2458,9 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             continue  # still unnameable — never invent a company
         token, display = employer
 
-        app = await _resolve_application_for_email(session, user_id, token, email)
+        app, landing = await _resolve_application_for_email(
+            session, user_id, token, email
+        )
         # DERIVED ONCE, ABOVE THE BRANCH, and the placement is load-bearing.
         # This used to sit inside the `if app is None:` below, which made it a
         # loop-carried variable for every other iteration: reading `role` in
@@ -2477,7 +2519,17 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
             # The title and key this message names, onto a card that has
             # neither. Outside the stage gate above on purpose: whether the
             # stage moved says nothing about whether the card knows its job.
-            if _adopt_mail_identity(app, role, req_id):
+            #
+            # NOT ON A BLIND LANDING. `LANDED_BLIND` means the cascade read
+            # nothing in this message's subject or snippet and picked the
+            # employer's oldest row to avoid minting a fourth card for a third
+            # Google application. `role` may still be non-None there, because it
+            # can come from the body-grade `identity_role` column the cascade
+            # never looks at — so this is precisely where a title would be
+            # stamped onto a card it does not belong to. Filing the message is
+            # still the least-bad answer; claiming to know what the card is, is
+            # not.
+            if landing != LANDED_BLIND and _adopt_mail_identity(app, role, req_id):
                 app.updated_at = datetime.utcnow()
                 session.add(app)
         email.application_id = app.id
@@ -3561,8 +3613,13 @@ async def classify_review_item(
         # mail actually names, so a stale or wrong id degrades to the normal
         # resolution instead of filing a message under an unrelated company.
         app = await _chosen_application(session, user_id, application_id, token)
+        # A row the USER picked is the most confident landing there is: they
+        # were shown the board and chose. Only the fallback can be blind.
+        landing = LANDED_LINKED
         if app is None:
-            app = await _resolve_application_for_email(session, user_id, token, email)
+            app, landing = await _resolve_application_for_email(
+                session, user_id, token, email
+            )
         # DERIVED ONCE, ABOVE THE BRANCH. It used to be bound only inside the
         # mint branch, so reading it in the else-branch raised UnboundLocalError
         # mid-request — after the session.adds and before the commit. Same
@@ -3626,7 +3683,16 @@ async def classify_review_item(
             # neither. Outside the `new_status != app.status` gate above on
             # purpose: a message can name the job without moving the stage, and
             # a card that stays at `applied` still deserves to say what for.
-            _adopt_mail_identity(app, role, req_id)
+            #
+            # Never on a blind landing — see the catch-up's note. This path is
+            # where it matters most: 24 of the 26 corpus cards are rejections,
+            # whose snippet reliably ends mid-preamble, so the cascade goes
+            # blind exactly when the stored body-grade role is the only place
+            # the job is named.
+            if landing != LANDED_BLIND and _adopt_mail_identity(app, role, req_id):
+                # Same bookkeeping as the catch-up's. Without it a card titled
+                # by a review answer does not register as touched.
+                app.updated_at = datetime.utcnow()
             session.add(app)
         email.application_id = app.id
         result["application_id"] = app.id
