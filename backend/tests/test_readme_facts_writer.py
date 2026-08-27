@@ -263,13 +263,32 @@ def test_the_same_tree_with_the_merge_finished_is_not_called_conflicted(
 def test_write_refuses_a_readme_that_begins_mid_merge(tmp_path, capsys) -> None:
     """`--write` is the command the failure message tells you to run.
 
-    It is the one that would otherwise rewrite numbers INTO a half-merged file
-    and report the count it rewrote, so it has to refuse for the same reason.
+    THE FIXTURE CARRIES A WRONG NUMBER ON PURPOSE, and the first version of this
+    test did not. With every number already correct, `--write` has nothing to
+    rewrite and leaves the file alone for a reason that has nothing to do with
+    the markers — so the test passed against a tool that would have corrupted a
+    file it was given real work to do. The number below is deliberately wrong so
+    the write is actually attempted, and the assertion compares the WHOLE file
+    rather than its first line: a rewrite replaces a captured number in the
+    middle of the text and never touches the leading marker, so
+    ``startswith(_LT)`` is true whether or not the file was written.
+
+    That the refusal now happens BEFORE the write is a change to
+    ``readme_facts.run`` in this commit. Until it, the tool wrote every dirty
+    file and then raised, so on a half-merged README it corrected a number
+    inside a conflict hunk, printed "rewrote 1 number", and the refusal was the
+    exit code only. Found by an independent verification pass on 2026-08-27
+    which reproduced it on unmutated `main`.
     """
 
     tool = _load()
     pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    root = _mirror_repo(tmp_path, _conflicted(pristine))
+    wrong = CARDS.sub(
+        lambda m: m.group(0).replace(m.group(1), "7,654,321", 1), pristine, count=1
+    )
+    assert wrong != pristine, "the board row moved; this fixture no longer bites"
+    conflicted = _conflicted(wrong)
+    root = _mirror_repo(tmp_path, conflicted)
     tool.REPO = root
 
     with pytest.raises(SystemExit) as exit_info:
@@ -277,6 +296,28 @@ def test_write_refuses_a_readme_that_begins_mid_merge(tmp_path, capsys) -> None:
 
     assert exit_info.value.code == 1
     assert "unresolved conflict marker" in capsys.readouterr().err
-    assert (root / "README.md").read_text(encoding="utf-8").startswith(_LT), (
+    assert (root / "README.md").read_text(encoding="utf-8") == conflicted, (
         "--write refused, but not before rewriting the half-merged file"
     )
+
+
+def test_write_still_writes_when_the_merge_is_finished(tmp_path) -> None:
+    """THE CONTROL for the refusal above: refusing everything is not the fix.
+
+    Same deliberately-wrong number, no markers. `--write` must correct it.
+    """
+
+    tool = _load()
+    pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    wrong = CARDS.sub(
+        lambda m: m.group(0).replace(m.group(1), "7,654,321", 1), pristine, count=1
+    )
+    root = _mirror_repo(tmp_path, wrong)
+    tool.REPO = root
+
+    try:
+        tool.run("write")
+    except SystemExit:  # an unrelated number may also disagree; not this gate
+        pass
+    after = (root / "README.md").read_text(encoding="utf-8")
+    assert "7,654,321" not in after, "--write left the wrong number in place"
