@@ -22,6 +22,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "readme_facts.py"
 
@@ -162,3 +164,119 @@ def test_prose_that_merely_discusses_markers_is_not_one() -> None:
         "compare a <= b and c >= d\n",
     ):
         assert not tool._CONFLICT_MARKER.search(benign), benign
+
+
+# ── the checker itself, invoked ──────────────────────────────────────────────
+#
+# THE TWO TESTS ABOVE ASSERT A REGEX, NOT A CHECK. They ask
+# `_CONFLICT_MARKER.search(...)` questions directly, so they stay green with the
+# pattern intact and the code that USES it deleted — which is exactly the state
+# #538 was reported for, one level up: a gate that passes on corrupted input
+# because it only asks about the parts it knows to look for. Proved by an
+# independent audit on 2026-08-27: removing the `load()` wiring from
+# `readme_facts.run` left all five tests in this file passing while `--check`
+# went back to calling a conflicted README "all agree with the code".
+#
+# So the checker is run. `REPO` is a module global read at call time, and the
+# tree below is the real repository with every top-level entry symlinked into
+# a temporary directory — every fact still computes off the real source — and
+# README.md alone replaced by a real copy we are free to corrupt. Nothing
+# writes to the working tree.
+
+
+def _mirror_repo(tmp_path, readme_text: str):
+    """The real repo, with README.md swapped for `readme_text`.
+
+    Symlinks rather than copies: `resolve_facts()` runs before the first
+    `load()` and computes static facts by parsing the source under `REPO`, so a
+    tree that is missing `backend/` would fail for a reason that has nothing to
+    do with conflict markers, and the test would pass for the wrong reason.
+    """
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    for entry in REPO_ROOT.iterdir():
+        if entry.name != "README.md":
+            (root / entry.name).symlink_to(entry)
+    (root / "README.md").write_text(readme_text, encoding="utf-8")
+    return root
+
+
+#: The shape `git merge` leaves: the fact line survives, three times over.
+def _conflicted(readme: str) -> str:
+    line = "**1,461 tests collected, 0 skipped.**"
+    return (
+        f"{_LT} HEAD\n{line}\n{_PIPE} d41dcf0\n{line}\n{_EQ}\n{line}\n"
+        f"{_GT} origin/main\n" + readme
+    )
+
+
+def test_check_refuses_a_readme_that_begins_mid_merge(tmp_path, capsys) -> None:
+    """`--check` must exit 1, and say why, on a file it can still 'agree' with.
+
+    Every number is present and correct in a conflicted README — the markers
+    DUPLICATE the prose — and the site count goes UP, which reads as more
+    coverage. So a checker that only compares numbers reports success on it.
+    """
+
+    tool = _load()
+    pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    tool.REPO = _mirror_repo(tmp_path, _conflicted(pristine))
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool.run("check")
+
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "unresolved conflict marker" in err, err
+    assert "README.md:1" in err, err
+
+
+def test_the_same_tree_with_the_merge_finished_is_not_called_conflicted(
+    tmp_path, capsys
+) -> None:
+    """THE CONTROL, and it is the whole point of the pair.
+
+    Without it the test above is satisfied by a checker that refuses
+    everything, and by a mirrored tree so broken that any input fails. The only
+    difference between the two trees is the seven-character runs at the top.
+
+    It deliberately does NOT require a clean exit. Whether every number in the
+    README currently agrees with the code is a different gate, run by CI on
+    every push; borrowing it here would red this file for a reason that has
+    nothing to do with merge markers, and a control that fires on unrelated
+    drift stops being read.
+    """
+
+    tool = _load()
+    pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    tool.REPO = _mirror_repo(tmp_path, pristine)
+
+    try:
+        tool.run("check")
+    except SystemExit:
+        pass
+    err = capsys.readouterr().err
+    assert "conflict marker" not in err, err
+
+
+def test_write_refuses_a_readme_that_begins_mid_merge(tmp_path, capsys) -> None:
+    """`--write` is the command the failure message tells you to run.
+
+    It is the one that would otherwise rewrite numbers INTO a half-merged file
+    and report the count it rewrote, so it has to refuse for the same reason.
+    """
+
+    tool = _load()
+    pristine = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    root = _mirror_repo(tmp_path, _conflicted(pristine))
+    tool.REPO = root
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool.run("write")
+
+    assert exit_info.value.code == 1
+    assert "unresolved conflict marker" in capsys.readouterr().err
+    assert (root / "README.md").read_text(encoding="utf-8").startswith(_LT), (
+        "--write refused, but not before rewriting the half-merged file"
+    )
