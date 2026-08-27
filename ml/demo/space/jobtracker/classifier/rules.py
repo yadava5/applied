@@ -463,7 +463,38 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"be in touch (soon|shortly|if)",
             r"next steps.{0,30}hear from us",
             r"application.{0,20}(for|to).{0,40}(position|role|job)",
-            r"applied.{0,20}(for|to).{0,40}(position|role|job)",
+            # ANCHORED IN THE SECOND PERSON, and the contiguity is the fix.
+            #
+            # It was a bare `applied.{0,20}(for|to)...`, which never said WHOSE
+            # application it meant. An employer writes "you applied for the X
+            # role"; a candidate writes "applied for the X role" — and a reply
+            # copies the candidate's subject onto the employer's message, so
+            # the pattern read the owner's own words as the employer asserting
+            # them. Reported from the real board: a company he had cold-emailed
+            # sat in the review queue at 0.70, on this one match, because their
+            # autoresponder quoted his subject back. Nothing else in the
+            # message contributed at all.
+            #
+            # THE PRONOUN MUST BE IN THE SAME CLAUSE, not merely nearby.
+            # Outreach prose says "you" and "your" constantly ("…what your team
+            # is building, applied for the X role"), so a proximity anchor is
+            # defeated by the very text it defends against. Requiring "you"
+            # (optionally "you've" / "you have recently") to run straight into
+            # "applied" refuses the comma splice that a first-person pitch
+            # always carries, and keeps the phrasing employers actually use.
+            #
+            # `your` is deliberately NOT in the alternation: "your application
+            # for <Role> at <Company>" is a THREAD SUBJECT every reply
+            # inherits, which #348 measured and demoted to `weak`. Admitting it
+            # here would quietly promote a subset of it back to `strong`.
+            #
+            # Measured before the change: this pattern matches 0 of the 17,260
+            # independent-corpus cases, and its sibling above matches 1,695.
+            # The corpus can therefore neither justify nor refute this edit —
+            # `tests/test_an_autoresponder_to_outreach_is_not_an_application.py`
+            # is the gate that can actually fail on the defect.
+            r"\byou(?:'ve|’ve)?(?:\s+(?:have|had|just|recently|successfully|now)){0,2}"
+            r"\s+applied\b.{0,20}(for|to).{0,40}(position|role|job)",
             r"application was sent to",
             r"application.{0,20}is in",
         ],
@@ -522,6 +553,26 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"move(d)? forward with other",
             r"congratulations on completing",
             r"your course",
+            # A CONTACT-FORM NEGATIVE WAS TRIED HERE AND DELIBERATELY NOT
+            # SHIPPED — written down so it is not re-proposed as new.
+            #
+            # `thank(s| you) for (getting in touch|reaching out|contacting)`
+            # acknowledges a MESSAGE, not an application, and it looked like
+            # the obvious second half of the anchor above. Two measurements
+            # stopped it. In `_NOISE_NEGATIVES` it is nearly inert: the careers
+            # autoresponder it was written for carries "reviewing
+            # applications", which is a strong BODY match, so `has_strong_body`
+            # exempts the negative in exactly the case it was meant to catch.
+            # Out of `_NOISE_NEGATIVES` it fires, and then a weak-but-genuine
+            # confirmation that opens with the same courtesy — the Notion shape
+            # already sits at 5, one point under the gate — goes to OTHER and
+            # is dropped SILENTLY, which is the worst failure this pipeline has.
+            #
+            # Neither risk is measurable today: the phrase family appears 0
+            # times in the 17,260-case independent corpus and once in the
+            # owner's whole stored mailbox. So the rule ships nothing until the
+            # corpus grows an outreach-autoresponder family to judge it
+            # against; #520 carries both.
             r"\b(unsubscribe|manage preferences|newsletter|digest)\b",
             r"\b(discount|promo(?:tion)?|coupon|sale|limited time offer|flash sale)\b",
             r"\b(shop|buy|cart|checkout|order|purchase|shipment|tracking number)\b",
