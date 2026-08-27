@@ -202,12 +202,22 @@ RECORDED = {
     # blank card is the CORRECT answer and a printed title would be a defect.
     # See `_settle_role_reachability`.
     #
-    # The 67 that remain are the product gap: observed-rejection 44,
-    # observed-pending 21, observed-assessment 2. In 41 of them
-    # `role_from_message` returns nothing for every message on the card although
-    # the role is spelled in a subject (20) or a body (21) — #485's shape. The
-    # other 26 are stranger and are filed separately: the reader DOES return a
-    # role for some message on the card and the card is still blank.
+    # The 67 that remain are the product's, and they are not one defect.
+    # Measured against the replay rather than reasoned about — a first reading
+    # of them was wrong, and the mechanism below is what the board actually did:
+    #
+    #   * for ALL 67, no message ON the card yields a role from
+    #     `role_from_message`. There is no card whose title was read and then
+    #     dropped.
+    #   * 26 of them have a message that DOES yield the role, and it is in the
+    #     REVIEW QUEUE. Holding a message for a human costs the card its job
+    #     title, and answering the review item does not repair it:
+    #     `classify_review_item` extracts the role and writes it only on the
+    #     branch that MINTS a row, never on the branch that resolves onto the
+    #     existing one. observed-rejection 24, observed-assessment 2.
+    #   * 17 have the role spelled in the SUBJECT of a message on the card and
+    #     nothing reads it. That is #485, and it is the only part of this number
+    #     a new pattern can close.
     #
     # WHAT MAKES THIS A SAFE MOVE rather than a number that merely got smaller:
     # `role_wrong` stayed 0, `titles_graded` was unmoved at 9252, and every card
