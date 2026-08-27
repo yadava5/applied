@@ -126,8 +126,16 @@ def main() -> int:
     print(f"  SHOULD BE REVIEW  {bs.wrong_review:6d}  role-less mail at a multi-application employer, guessed")
     print(f"  UPDATE STRANDED   {bs.update_opened_a_card:6d}  an update that never reached the card it belongs to")
     print(f"  WRONG STAGE       {bs.wrong_status:6d}  the right card, showing the wrong stage")
+    print(f"  WRONG COMPANY     {bs.company_wrong:6d}  the card names an employer nobody applied to")
+    print(f"  WRONG ROLE        {bs.role_wrong:6d}  the card names a job nobody applied for")
     print(f"  LOST              {bs.lost:6d}  about a real application, and reached NOTHING")
     print(f"  DROPPED           {bs.dropped:6d}  under the review floor; counted, but on no screen")
+    print("\n  not failures — the designed answer, or an absence rather than a lie:")
+    print(f"  titles graded     {bs.titles_graded:6d}  of {bs.cards} cards; the denominator for WRONG COMPANY")
+    print(f"  roles graded      {bs.roles_graded:6d}  the smaller denominator for WRONG ROLE — see Case.role_truth")
+    print(f"  company drift     {bs.company_drift:6d}  same employer, differently spelled")
+    print(f"  ROLE MISSING      {bs.role_missing:6d}  ground truth names a role, the card is blank")
+    print(f"  UPDATE HELD       {bs.update_held_for_review:6d}  an update the product asked about instead of filing")
     if bs.total:
         print("\n  ranked:")
         for mode, family, n in rank(bs)[:15]:
