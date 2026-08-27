@@ -2397,16 +2397,25 @@ def _readable_text(case: Case) -> str:
     """Every character of one message a job title could be read out of.
 
     Subject, then the body as the server holds it — collapsed and cut at
-    ``_READABLE_CHARS`` — then ``delivered``, which is the same body for most
-    families and Gmail's snippet for the ones that turn on truncation. Lowered
-    once here so the caller compares like with like.
+    ``_READABLE_CHARS``. Lowered once here so the caller compares like with
+    like.
+
+    ``delivered`` IS DELIBERATELY ABSENT, and an earlier draft had it. It is
+    what the CLASSIFIER reads; ``role_from_message`` is handed ``subject`` and
+    the capped body and never sees it (``harness._item``). Including it did
+    nothing visible — measured, ``delivered`` is a substring of ``body`` in all
+    17,260 cases and the flip count is 146 either way — but it is
+    ``body`` UNCAPPED, so it silently restored the 4,000 characters this
+    function exists to cut off. A family whose only mention of a role sat past
+    the cap, with no shorter sibling on the card, would have been called
+    reachable for text the extractor structurally cannot reach: #533's own
+    defect, moved from "never mentioned" to "mentioned past character 4,000".
     """
 
     return " ".join(
         (
             case.subject,
             " ".join(case.body.split())[:_READABLE_CHARS],
-            case.delivered,
         )
     ).lower()
 

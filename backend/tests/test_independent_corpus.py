@@ -1633,9 +1633,30 @@ def test_ground_truth_never_asserts_a_title_no_message_spells(cases) -> None:
     lives in ``generate()``, and a family added tomorrow gets it for free only
     if something checks the whole corpus. Removing ``_settle_role_reachability``
     fails this at 146 identities.
+
+    THE WINDOW IS SPELLED OUT HERE RATHER THAN IMPORTED, and that is the whole
+    difference between this test and a restatement. An earlier draft called
+    ``generate._readable_text``, which made the assertion true by construction:
+    production and test computed the same predicate over the same objects, so
+    any bug INSIDE the predicate was invisible to it. One was there — the window
+    also concatenated ``delivered``, which is ``body`` uncapped, quietly undoing
+    the 4,000-character cut the function exists to make.
+
+    So the window is rebuilt from the product's own constant
+    (``gmail_client._MAX_BODY_CHARS``) and the two fields the extractor is
+    actually handed. A corpus-side window that drifts from what
+    ``role_from_message`` can read now fails here instead of agreeing with
+    itself.
     """
 
-    from tests.corpus_independent.generate import _readable_text
+    from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS
+
+    def reachable_text(case) -> str:
+        """Exactly what ``role_from_message`` is handed, and nothing else."""
+
+        return " ".join(
+            (case.subject, " ".join(case.body.split())[:_MAX_BODY_CHARS])
+        ).lower()
 
     by_identity: dict[str, list] = {}
     for case in cases:
@@ -1646,7 +1667,7 @@ def test_ground_truth_never_asserts_a_title_no_message_spells(cases) -> None:
         identity
         for identity, group in by_identity.items()
         if not any(
-            " ".join(group[0].role_truth.split()).lower() in _readable_text(c)
+            " ".join(group[0].role_truth.split()).lower() in reachable_text(c)
             for c in group
         )
     ]
@@ -1718,7 +1739,31 @@ def test_a_role_the_mail_does_spell_survives_the_derivation() -> None:
         "An update on your Platform Engineer application.",
     )
 
-    corpus = [spelled, silent, late_first, late_second]
+    # THE FOURTH SHAPE IS THE CAP, and it is the one that catches a window
+    # that has quietly stopped being the extractor's window. The role is
+    # spelled once, past `_MAX_BODY_CHARS`, on a card with no shorter sibling.
+    # `role_from_message` structurally cannot reach it, so the correct ground
+    # truth is a blank card — and any predicate that reads `delivered` (which
+    # is the body UNCAPPED) finds it and leaves the card graded against a title
+    # the product can never print.
+    from jobtracker.cloud.gmail_client import _MAX_BODY_CHARS
+
+    past_the_cap = case(
+        "m5",
+        "kestrelan|Systems Engineer",
+        "Thank you for your application. " + ("filler " * ((_MAX_BODY_CHARS // 7) + 20))
+        + "The role was Systems Engineer.",
+        subject="Your application",
+    )
+    assert "Systems Engineer" not in past_the_cap.body[:_MAX_BODY_CHARS], (
+        "the fixture no longer puts the role past the cap, so it gates nothing"
+    )
+    assert "Systems Engineer" in past_the_cap.delivered, (
+        "…and it must still be inside `delivered`, or the mutation this shape "
+        "exists to catch cannot happen"
+    )
+
+    corpus = [spelled, silent, late_first, late_second, past_the_cap]
     assert all(c.role_truth is not None for c in corpus), "precondition"
 
     _settle_role_reachability(corpus)
@@ -1734,6 +1779,11 @@ def test_a_role_the_mail_does_spell_survives_the_derivation() -> None:
         "property of the CARD, and every message sharing an identity is on it"
     )
     assert not late_first.names_no_role and not late_second.names_no_role
+    assert past_the_cap.role_truth is None and past_the_cap.names_no_role, (
+        "a role spelled only past the body cap was called reachable — the "
+        "window has drifted from what `role_from_message` is handed, which is "
+        "#533's own defect moved past character 4,000 instead of fixed"
+    )
 
 
 def test_the_derivation_is_a_property_of_a_generated_corpus_not_of_a_case() -> None:
