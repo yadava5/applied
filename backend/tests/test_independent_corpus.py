@@ -237,6 +237,13 @@ RECORDED = {
     # only part of this number a new pattern can close. The two cuts overlap and
     # neither is a sub-total of the other.
     #
+    # "ON THE CARD" IS LOAD-BEARING IN THAT SENTENCE, not filler. Counted over
+    # the card's own messages the answer is 17; counted over the identity's
+    # messages minus the reviewed ones it is 21. Both describe something real
+    # and only the first describes what a user would see, because a message in
+    # the queue is not on the card. A reader who reproduces 21 has not found a
+    # discrepancy, they have used the other definition.
+    #
     # WHAT MAKES THIS A SAFE MOVE rather than a number that merely got smaller:
     # `role_wrong` stayed 0, `titles_graded` was unmoved at 9252, and every card
     # that left `roles_graded` arrived in `blank_required` — the three

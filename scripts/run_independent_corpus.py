@@ -93,7 +93,17 @@ def main() -> int:
     print(f"  digest            {digest(cases)[:16]}")
     print(f"  adversarial       {st.adversarial} ({st.adversarial / st.messages:.1%}) — "
           "written to defeat the classifier, not merely hard")
-    print(f"  companies         {st.companies}, no two sharing a leading word")
+    # TWO DIFFERENT NOUNS, and printing one of them under the bare word
+    # "companies" is how a count-noun trap starts. `Stats.companies` is what the
+    # builder HANDED OUT, including the impersonation family's forgeries and
+    # employers that only ever appear as a sender display name. The number the
+    # README publishes is the other one: distinct employers actually named on a
+    # case. Both are true and they differ by about 1,280. See #536.
+    named = len({c.employer for c in cases if c.employer})
+    print(
+        f"  companies         {st.companies} minted, no two sharing a leading "
+        f"word; {named} of them are named on a case (the published figure)"
+    )
 
     t0 = time.time()
     verdicts = classify_all(cases)
@@ -136,6 +146,17 @@ def main() -> int:
     print(f"  titles graded     {bs.titles_graded:6d}  of {bs.cards} cards; the denominator for WRONG COMPANY")
     print(f"  roles graded      {bs.roles_graded:6d}  the smaller denominator for WRONG ROLE — see Case.role_truth")
     print(f"  blank required    {bs.blank_required:6d}  the denominator for ROLE INVENTED — mail that names no job")
+    print(f"  unsettleable      {bs.role_unsettleable:6d}  keyed on a requisition; this corpus cannot name the job")
+    # THE THREE POPULATIONS, SHOWN CLOSING. Printing two of the three is how a
+    # reader concludes cards went missing when they merely moved, and how a
+    # reader misses cards that really did go missing. The sum is the point, so
+    # the sum is on the page.
+    print(
+        f"  ─ of which        {bs.roles_graded} + {bs.blank_required} + "
+        f"{bs.role_unsettleable} = "
+        f"{bs.roles_graded + bs.blank_required + bs.role_unsettleable}"
+        f"  (must equal titles graded)"
+    )
     print(f"  company drift     {bs.company_drift:6d}  same employer, differently spelled")
     print(f"  ROLE MISSING      {bs.role_missing:6d}  ground truth names a role, the card is blank")
     print(f"  UPDATE HELD       {bs.update_held_for_review:6d}  an update the product asked about instead of filing")

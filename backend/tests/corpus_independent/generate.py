@@ -2452,6 +2452,17 @@ def _settle_role_reachability(cases: list[Case]) -> None:
     job the reader could not read — and a derivation that swept them up would
     have deleted the defect instead of the mis-statement.
 
+    THE ISSUE PREDICTED 27 OF THEM WOULD FLIP, and following its measurement
+    would have done exactly that damage. #533 reports 196 flips including
+    ``observed-rejection`` 27; this rule finds 146 and rejection 0. The
+    difference is the window: measured over the four candidate windows, three
+    agree at 146 — ``subject`` + capped body (this rule), ``subject`` +
+    ``delivered`` (what the issue PRESCRIBED), and ``subject`` + uncapped body —
+    while ``delivered`` alone, with no subject, gives 166 and picks up 20
+    rejection identities. The issue's number came from a window that could not
+    see the subject, and rejection templates name the role there. Twenty real
+    #485 defects, one window away from being deleted as ground-truth error.
+
     WHY IT MATTERS MORE THAN THE NUMBER. #533 calls this "ground truth that
     rewards guessing". An earlier draft of this docstring called that an
     overstatement, on the grounds that "no guess can match" a role drawn from an
