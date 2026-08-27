@@ -142,9 +142,35 @@ RECORDED = {
     # and OUT of ``total`` — it is a cosmetic variance, not a wrong record.
     "company_drift": 1420,
     # Ground truth names a role and the card is blank. An absence, not a lie,
-    # so also out of ``total``. 260 of these are `rescinded-offer` and 127
-    # `conditional-explainer`; see #484 and #486.
-    "role_missing": 600,
+    # so also out of ``total``.
+    #
+    # WAS 600, AND THE TWO NEW ROLE PATTERNS IN THIS COMMIT ARE WHAT MOVED IT.
+    # Re-recorded here rather than on the branch that pinned it, because the
+    # number and the code that produces it belong in one commit where a
+    # reviewer can see both — see #534. Neither branch's CI could catch the
+    # disagreement: the grader ran without the product fix, and the product fix
+    # ran without the grader.
+    #
+    # The 387 that went away are exactly the two families the patterns read:
+    # `rescinded-offer` 260 ("...an offer to join <Employer> as a <ROLE>.") and
+    # `conditional-explainer` 127 ("...your application for <ROLE> at
+    # <Employer>."). Both now report zero blank-titled cards.
+    #
+    # The 213 that remain are entirely `observed-*` — transcribed real-mail
+    # templates that name a role in a wording no pattern reads:
+    # observed-confirmation 65, observed-rejection 44, observed-closure 36,
+    # observed-pending 35, observed-assessment 33.
+    #
+    # WHAT MAKES THIS A SAFE MOVE rather than a number that merely got smaller:
+    # `role_wrong` stayed 0 and BOTH denominators above were unmoved
+    # (`titles_graded` 9252, `roles_graded` 7892). A change that filled blank
+    # titles by capturing the wrong span would raise `role_wrong`; one that
+    # fractured identity would LOWER the denominator instead. Read all four
+    # together or this number means nothing on its own.
+    #
+    # See #484 and #486 for the families; #536 for why a zero here is weaker
+    # evidence than it looks.
+    "role_missing": 213,
 }
 
 
