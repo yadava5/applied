@@ -1567,6 +1567,67 @@ def _email_identity_parts(email) -> tuple[str | None, str | None]:
     )
 
 
+def _adopt_mail_identity(app, role: str | None, req_id: str | None) -> bool:
+    """Give a card the title and key ONE stored message names. Fill-only.
+
+    THE TWO PATHS THAT RESOLVE A STORED MESSAGE ONTO AN EXISTING ROW — the
+    review queue's "what is this?" and the orphan catch-up — both derived the
+    role and then used it only when they MINTED a row. Landing on a row that
+    already existed, they wrote the stage and the source and dropped the title
+    on the floor (#546). Nothing repaired it afterwards: the message is linked,
+    so the catch-up's own predicate excludes it, and a below-gate message never
+    joins a rolled cluster, so the sync upsert's title write is never reached
+    for it either. The product held the answer and threw it away.
+
+    Measured over the 9,252-card independent corpus: 26 cards whose title is
+    readable, sits in the review queue, and never arrives. On the live board on
+    2026-08-27, 8 of 57 cards showed no job title and every one had
+    ``position_source`` NULL — nobody typed those and nobody cleared them.
+
+    FILL-ONLY, and deliberately narrower than the sync's rule.
+    :func:`upsert_applications_for_user` also REWRITES an auto row's non-blank
+    title when extraction produces something different, so that improvements
+    reach rows already on the board. That is defensible there because it
+    re-reads the whole cluster. It is not defensible here: this is one message,
+    the classifier was unsure enough about it to ask a person, and the person
+    was asked what the MESSAGE is — not what the application is called. Copying
+    the sync's clause verbatim would also make the outcome depend on whether
+    the stage happened to move in the same request, because the review path
+    flips ``source`` to ``gmail_user`` a few lines later, and a rule whose
+    effect turns on an unrelated coincidence is not a rule.
+
+    THE IDENTITY IS STAMPED TOO, and that is not scope creep. A row that shows
+    a title while staying anonymous to the resolver is the state that mints
+    duplicates: ``_pick_application`` rule 3 adopts an anonymous row only when
+    it is the employer's ONLY anonymous one, so at an employer holding two the
+    next sync refuses to adopt and files a second card beside the one just
+    titled. That state is live — on 2026-08-27 one employer on the real board
+    held three rows with both identity columns NULL. The stamp is fill-if-empty
+    for each column independently, which is exactly what the sync upsert
+    already does on the row it lands on; this is that rule at one more call
+    site, not a new one.
+
+    ``position_source`` is deliberately left alone. NULL means "the sync owns
+    this field", and nobody typed this title, so a later extraction fix must
+    still be allowed to correct it.
+
+    Returns whether anything changed, so the caller can skip a pointless write.
+    """
+
+    changed = False
+    if role and not app.position and app.position_source != ROLE_FROM_USER:
+        app.position = role
+        changed = True
+    if req_id is not None and app.req_id is None:
+        app.req_id = req_id
+        changed = True
+    token = pipeline.normalize_role_token(role) if role else None
+    if token is not None and app.role_token is None:
+        app.role_token = token
+        changed = True
+    return changed
+
+
 async def _persist_message_refs(
     session,
     user_id: uuid.UUID,
@@ -2358,11 +2419,18 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
         token, display = employer
 
         app = await _resolve_application_for_email(session, user_id, token, email)
+        # DERIVED ONCE, ABOVE THE BRANCH, and the placement is load-bearing.
+        # This used to sit inside the `if app is None:` below, which made it a
+        # loop-carried variable for every other iteration: reading `role` in
+        # the else-branch would take the PREVIOUS orphan's role — a different
+        # employer's job title, written onto this employer's card, silently and
+        # in production on the first multi-orphan pass. See
+        # `test_the_catch_up_never_carries_one_employer_s_title_onto_another`.
+        role, req_id = _email_identity_parts(email)
         if app is None:
             # Stamp the identity the message carries onto the row it mints, so
             # the next sync recognises this application instead of filing a
             # second one beside it.
-            role, req_id = _email_identity_parts(email)
             app = Application(
                 user_id=user_id,
                 company=display,
@@ -2406,6 +2474,12 @@ async def reconcile_orphaned_classifications(session, user_id: uuid.UUID) -> int
                     app.status = new_status
                     app.updated_at = datetime.utcnow()
                     session.add(app)
+            # The title and key this message names, onto a card that has
+            # neither. Outside the stage gate above on purpose: whether the
+            # stage moved says nothing about whether the card knows its job.
+            if _adopt_mail_identity(app, role, req_id):
+                app.updated_at = datetime.utcnow()
+                session.add(app)
         email.application_id = app.id
         session.add(email)
 
@@ -3489,8 +3563,12 @@ async def classify_review_item(
         app = await _chosen_application(session, user_id, application_id, token)
         if app is None:
             app = await _resolve_application_for_email(session, user_id, token, email)
+        # DERIVED ONCE, ABOVE THE BRANCH. It used to be bound only inside the
+        # mint branch, so reading it in the else-branch raised UnboundLocalError
+        # mid-request — after the session.adds and before the commit. Same
+        # placement as the catch-up's, for the same reason.
+        role, req_id = _email_identity_parts(email)
         if app is None:
-            role, req_id = _email_identity_parts(email)
             app = Application(
                 user_id=user_id,
                 company=display,
@@ -3544,6 +3622,11 @@ async def classify_review_item(
                 # column, not a different reading of this one.
                 app.status = new_status
                 app.source = SOURCE_GMAIL_USER
+            # The title and key this message names, onto a card that has
+            # neither. Outside the `new_status != app.status` gate above on
+            # purpose: a message can name the job without moving the stage, and
+            # a card that stays at `applied` still deserves to say what for.
+            _adopt_mail_identity(app, role, req_id)
             session.add(app)
         email.application_id = app.id
         result["application_id"] = app.id
