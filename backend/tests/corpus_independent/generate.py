@@ -175,6 +175,24 @@ _CARD_STATUSES = frozenset(
 #: No job title can match it.
 _REQ_SUB_KEY = re.compile(r"^(?:R-)?\d{4,}$")
 
+#: Everything of a message the product can ever read a job title out of, in
+#: characters of BODY. Gmail bodies are whitespace-collapsed and cut at 4,000
+#: before anything downstream sees them (``gmail_client._MAX_BODY_CHARS``), and
+#: the harness hands ``role_from_message`` exactly that text.
+#:
+#: Written out rather than imported, for the same reason ``_CARD_STATUSES`` is:
+#: this file must not take its ground truth from the code it grades. The cost
+#: is drift, so `test_the_readable_window_is_the_product_s_window` pins the two
+#: together and fails if either moves.
+#:
+#: NOT the snippet. #533 prescribed testing reachability against ``delivered``,
+#: which is what the CLASSIFIER sees; the extractor that titles the card is
+#: handed the capped BODY, and matching the wrong one would quietly sweep #484's
+#: cases — a role printed past the snippet — into "the mail names no role",
+#: where a later fix that reached them would turn the gate RED for repairing the
+#: defect. Worth 0 cases today and worth being right about.
+_READABLE_CHARS = 4000
+
 
 @dataclass(frozen=True)
 class Case:
@@ -281,9 +299,10 @@ class Case:
             )
         if self.names_no_role:
             raise ValueError(
-                "names_no_role is derived from the identity sub-key, not "
-                "passed. Set by hand it can contradict the identity it is "
-                "supposed to describe — `northwind|R-40080` with "
+                "names_no_role is derived — from the identity sub-key here, "
+                "and from the corpus text in `_settle_role_reachability` — "
+                "never passed. Set by hand it can contradict the identity it "
+                "is supposed to describe: `northwind|R-40080` with "
                 "names_no_role=True asserts a blank card for mail that names a "
                 "real job."
             )
@@ -2374,12 +2393,134 @@ _FAMILIES: tuple[tuple[str, object, int], ...] = (
 )
 
 
+def _readable_text(case: Case) -> str:
+    """Every character of one message a job title could be read out of.
+
+    Subject, then the body as the server holds it — collapsed and cut at
+    ``_READABLE_CHARS``. Lowered once here so the caller compares like with
+    like.
+
+    ``delivered`` IS DELIBERATELY ABSENT, and an earlier draft had it. It is
+    what the CLASSIFIER reads; ``role_from_message`` is handed ``subject`` and
+    the capped body and never sees it (``harness._item``). Including it did
+    nothing visible — measured, ``delivered`` is a substring of ``body`` in all
+    17,260 cases and the flip count is 146 either way — but it is
+    ``body`` UNCAPPED, so it silently restored the 4,000 characters this
+    function exists to cut off. A family whose only mention of a role sat past
+    the cap, with no shorter sibling on the card, would have been called
+    reachable for text the extractor structurally cannot reach: #533's own
+    defect, moved from "never mentioned" to "mentioned past character 4,000".
+    """
+
+    return " ".join(
+        (
+            case.subject,
+            " ".join(case.body.split())[:_READABLE_CHARS],
+        )
+    ).lower()
+
+
+def _settle_role_reachability(cases: list[Case]) -> None:
+    """A role no message on the card ever spells is not ground truth, it is a wish.
+
+    THE SECOND DERIVATION SITE, and it has to be here rather than in
+    ``Case.__post_init__`` for one reason: reachability is a property of the
+    CARD, not of a message. ``update-joins-one-application`` sends an update
+    that names no role onto a card the confirmation already titled, and judging
+    that update alone would call a perfectly good title an invention. So the
+    question is asked once per identity, over every message that shares it.
+
+    WHAT IT FIXES (#533). The builder writes ``identity=f"{token}|{role}"`` for
+    every case, drawing the role from ``ROLES`` — including for the
+    ``observed-*`` families, which are transcriptions of real ATS wordings and
+    plenty of them name no job at all. One says only "your details have been
+    added to our database". Ground truth therefore asserted a title the product
+    could not possibly know, and the correct behaviour — a blank card — was
+    scored as a ROLE-MISSING defect.
+
+    Measured at the recorded seed: **146 identities, 227 messages** —
+    ``observed-confirmation`` 65, ``observed-closure`` 36,
+    ``observed-assessment`` 31, ``observed-pending`` 14.
+    ``role_from_message`` returns ``None`` for all 227, so every one of those
+    cards is blank today and the counter was punishing the product for being
+    right.
+
+    ``observed-rejection`` FLIPS NOTHING, and that is the check that says the
+    rule is reading the mail rather than the family name: every one of its
+    templates names the role, two of them in the subject alone. Its 44
+    blank-titled cards are the honest half of ROLE-MISSING — mail that named a
+    job the reader could not read — and a derivation that swept them up would
+    have deleted the defect instead of the mis-statement.
+
+    THE ISSUE PREDICTED 27 OF THEM WOULD FLIP, and following its measurement
+    would have done exactly that damage. #533 reports 196 flips including
+    ``observed-rejection`` 27; this rule finds 146 and rejection 0. The
+    difference is the window: measured over the four candidate windows, three
+    agree at 146 — ``subject`` + capped body (this rule), ``subject`` +
+    ``delivered`` (what the issue PRESCRIBED), and ``subject`` + uncapped body —
+    while ``delivered`` alone, with no subject, gives 166 and picks up 20
+    rejection identities. The issue's number came from a window that could not
+    see the subject, and rejection templates name the role there. Twenty real
+    #485 defects, one window away from being deleted as ground-truth error.
+
+    WHY IT MATTERS MORE THAN THE NUMBER. #533 calls this "ground truth that
+    rewards guessing". An earlier draft of this docstring called that an
+    overstatement, on the grounds that "no guess can match" a role drawn from an
+    invented pool. That was itself wrong, and in the direction that flatters the
+    fix: ``ROLES`` holds seventeen strings and every identity's role is one of
+    them, so a guesser that printed the pool's most common title scored CORRECT
+    on roughly one card in seventeen — and anything fitted on this corpus would
+    do far better than that. The old truth was matchable, so #533's wording was
+    closer to right than the correction.
+
+    The real harm is that it set a target NO CORRECT BEHAVIOUR CAN REACH. 146 of
+    the 213 could not be closed by any pattern, ever, because the text does not
+    contain the answer — so a reader of the ledger sees a ranked table of
+    "misses" whose largest families are unfixable, and the only way to move the
+    number is to make the extractor guess, which the neighbouring counter then
+    punishes. A ledger that points at work which cannot succeed is worse than a
+    number that is merely wrong, and this one is published.
+
+    The card is not skipped afterwards. ``names_no_role`` asserts the blank,
+    which is the #540 lesson: "the mail names no role" is a claim, and a claim
+    can fail. What used to be 146 cards scored as defects becomes 146 cards
+    asserted to be blank.
+
+    KNOWN AND NOT FIXED HERE: the identity key still reads
+    ``employer|Machine Learning Engineer`` for these cards. 81 of the 146 hold
+    two messages, none of them threaded, so what actually joins them today is
+    employer plus an EMPTY role token — the identity assertion passes for a
+    reason unrelated to what it states. Filed separately rather than folded in,
+    because changing those sub-keys moves identities and is a different blast
+    radius.
+    """
+
+    by_identity: dict[str, list[Case]] = {}
+    for case in cases:
+        if case.identity is not None and case.role_truth is not None:
+            by_identity.setdefault(case.identity, []).append(case)
+
+    for group in by_identity.values():
+        role = " ".join(group[0].role_truth.split()).lower()
+        if any(role in _readable_text(case) for case in group):
+            continue
+        for case in group:
+            # ``object.__setattr__`` because ``Case`` is frozen and because
+            # ``dataclasses.replace`` would re-run ``__post_init__``, whose
+            # guard refuses a PASSED ``names_no_role`` — correctly. This is a
+            # derivation, the same as the guard's own branch; the guard exists
+            # to stop a BUILDER asserting it, and no builder can reach here.
+            object.__setattr__(case, "role_truth", None)
+            object.__setattr__(case, "names_no_role", True)
+
+
 def generate(seed: int = 20260822) -> list[Case]:
     """Build the corpus. Deterministic: same seed, byte-identical output."""
 
     b = _Builder(seed)
     for _name, family, n in _FAMILIES:
         family(b, n)
+    _settle_role_reachability(b.cases)
     return b.cases
 
 
@@ -2424,6 +2565,15 @@ def digest(cases: list[Case]) -> str:
     Over the FIELDS rather than over ``repr``: a dataclass repr would change
     when a field is added and the digest would have to be re-recorded for a
     change that altered no mail.
+
+    GROUND TRUTH IS PART OF THE CORPUS, and it was outside this hash until
+    #533. The digest covered the mail — subject, body, delivered, identity —
+    and not what the product is supposed to DO with it, so ``joins``,
+    ``card_status``, ``role_truth`` and ``names_no_role`` could all be rewritten
+    with the tripwire staying green. A corpus whose expectations moved silently
+    is exactly what a determinism gate is for; the fields are in now, and the
+    cost is that a truth-only edit re-records the digest, which is the point
+    rather than the price.
     """
 
     import hashlib
@@ -2447,6 +2597,10 @@ def digest(cases: list[Case]) -> str:
                     c.employer or "",
                     str(c.adversarial),
                     str(c.expect_review),
+                    c.joins or "",
+                    c.card_status or "",
+                    c.role_truth or "",
+                    str(c.names_no_role),
                 )
             ).encode()
         )
