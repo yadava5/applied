@@ -1043,7 +1043,84 @@ _ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
 #: Optional, and the same label set :func:`_clean_role` strips, so the pattern
 #: and the cleaner cannot disagree about what an id looks like. Case-insensitive
 #: inline because one of the two patterns using it is not.
-_ROLE_TRAILING_REQ = r"(?:\s*\(\s*(?i:(?:job\s*|requisition\s*|req\s*)?id[:\s#])[^)]*\))?"
+_ROLE_TRAILING_REQ = r"(?:\s*\(\s*(?i:(?:job\s*|requisition\s*|req\s*)?id[:\s#])[^)]{0,80}\))?"
+
+#: A JOB TITLE IS A NOUN PHRASE, NOT A RUN OF CHARACTERS.
+#:
+#: The two patterns at the end of the tuple below have no trailing keyword to
+#: stop on — the sentence simply continues past the title — so the tempered dot
+#: every other pattern uses lets the capture run to whatever terminator turns up
+#: next, however far downstream that is. Measured against the wordings real
+#: recruiting mail uses, that is not a corner case: it produced
+#:
+#:     "Your application for Data Scientist is under review at Northwind."
+#:         -> "Data Scientist is under review"
+#:     "...an offer to join us as a Staff Engineer at Northwind."
+#:         -> "Staff Engineer at Northwind"
+#:     "Thanks for applying to Northwind at GHC last week!"
+#:         -> "Northwind"
+#:
+#: A wrong title is strictly worse than the blank one these rules exist to fill:
+#: the role token is half of an application's identity, so a title that reads
+#: one way in the offer and another way in the confirmation MINTS A SECOND CARD
+#: for a job the board already tracks. That is the failure this whole change set
+#: was opened to fix, so producing it here would be self-defeating.
+#:
+#: So the span is SHAPED, not merely bounded. A title word is Capitalised (or an
+#: acronym, a level, a roman numeral); words join on a space, a comma, a slash,
+#: an ampersand or a hyphen; and only the few lowercase function words that
+#: really do occur inside titles may sit BETWEEN two title words — "Head of
+#: Design", "Engineer in Test". The span therefore begins and ends on a title
+#: word, which is what refuses "Data Scientist, and" and stops "Machine Learning
+#: Engineer at this time" at "Engineer".
+#: A full stop is NOT part of a title word. Allowing it so that "Sr." could be
+#: one word let "Operator Experience. We" be two, which is the sentence boundary
+#: this whole fragment exists to respect. An abbreviation loses its stop and
+#: keeps its meaning; a title that swallows the next sentence does not.
+_ROLE_WORD = r"[A-Z][A-Za-z0-9&/+-]*"
+_ROLE_INNER = r"(?:of|and|in|for|the)"
+#: En and em dashes join title segments as often as the hyphen does — the
+#: module's own worked example ("Software Development Engineer I – AI/ML
+#: Network Infrastructure") uses one, and an ASCII-only joiner refused it.
+_ROLE_JOIN = r"(?:[ ]+|[ ]*[,/&\u2010-\u2015-][ ]*)"
+#: A trailing parenthetical is part of the posted title and routinely carries the
+#: cohort — "Software Engineer I, Entry-Level (Graduation Date: Fall 2026)".
+#: Bounded, and it may not contain a sentence-ender or a nested paren, so it can
+#: only ever extend the span across material that was already inside the clause.
+_ROLE_PAREN = r"(?:[ ]*\([^()\n.!?]{0,60}\))?"
+_ROLE_SPAN = (
+    _ROLE_WORD
+    + r"(?:" + _ROLE_JOIN + r"(?:" + _ROLE_INNER + _ROLE_JOIN + r")?" + _ROLE_WORD + r"){0,9}"
+    + _ROLE_PAREN
+)
+
+#: WHERE A TITLE ENDS: the clause ends, or lowercase prose resumes.
+#:
+#: Stated positively rather than as a list of stop-words, because a list is only
+#: ever as complete as the sentences whoever wrote it had seen. "as a Software
+#: Engineer starting on 5 January", "as a Staff Engineer at Northwind", "as a
+#: Software Engineer on Northwind's Platform team" all end the title at the
+#: first lowercase word, and so does every wording nobody has thought of yet.
+#:
+#: A newline is deliberately NOT a terminator. Plain-text bodies hard-wrap at
+#: ~72 columns, and treating the wrap as the end of the clause turned
+#: "as a Machine Learning\nEngineer." into the title "Machine Learning" — clean
+#: enough to look right on a card and wrong enough to split the identity. The
+#: span cannot cross the wrap either, so this shape now yields nothing and the
+#: message goes to the review queue, which is the safe direction.
+#: END OF STRING IS NOT A CLAUSE END, and this is the one pattern where the
+#: difference is load-bearing. Every other body pattern needs a trailing keyword
+#: and so fails CLOSED when the text runs out; this one has no keyword, so
+#: accepting `$` made it fail OPEN on truncation. The extractor is fed
+#: `bodies.get(id) or msg.snippet`, and Gmail's snippet is cut at an arbitrary
+#: character — so "…an offer to join Northwind as a Software Eng" yielded the
+#: title "Software Eng", and "…as a Software" yielded "Software".
+#:
+#: That is worse than a cosmetic wrong title. The role token is half the
+#: identity, so a truncated capture mints a card that no later, fuller-text
+#: message about the same job can ever join. Requiring real punctuation or
+#: resumed prose means a cut-off body yields nothing and goes to the queue.
+_ROLE_ENDS = r"(?=[.!?,;:]|\s+[a-z])"
 
 _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Ashby: "Thank you for applying to our role: Software Engineer I, Storage."
@@ -1163,6 +1240,55 @@ _ROLE_BODY_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"\bto\s+be\s+(?:an?|the)\s+"
         r"(?P<role>[A-Z](?:(?!'s\s)[^.!?\n]){3,90}?)" + _ROLE_TRAILING_REQ
         + r"\s+at\s+[A-Z]",
+    ),
+    # "…submit your application for <ROLE> at <Employer>." The sibling of the
+    # Lever rule above with the words "to be a" absent, which is the commonest
+    # confirmation wording there is — and every pattern before this one walks
+    # past it. The subject rule for "application for" exists but requires an
+    # unbroken Title-Case run, so a real title dies on its own punctuation:
+    #
+    #   "…application for Software Engineer I, Entry-Level (Graduation Date:
+    #    Fall 2025-Summer 2026) at <Employer>."   ->  role = None
+    #
+    # 127 blank-titled cards in the corpus, all of this one shape.
+    #
+    # THE EMPLOYER IS THE TERMINATOR, exactly as above, and it is what makes
+    # the loose capture safe: "at" followed by a capital ends it, a lowercase
+    # "at a company like…" does not terminate and the capture simply fails
+    # rather than running to the end of the sentence. The capture must also
+    # START with a capital, which is what refuses "application to work at
+    # <Employer>" — "work" is a lowercase verb, not a job title.
+    #
+    # "for" ONLY, never "to". "application to <X>" names the EMPLOYER, not the
+    # job — "Thanks for applying to Northwind at GHC last week!" filed the
+    # company itself as the position, and the company name is exactly the token
+    # most likely to collide with a real card's identity. No corpus wording and
+    # no observed template loses anything by the restriction: every "applying
+    # to" shape in the corpus carries "position" or "role" and is answered by a
+    # pattern above.
+    re.compile(
+        r"\b(?:application|applying|applied)\s+for\s+(?:the\s+)?"
+        r"(?P<role>" + _ROLE_SPAN + r")" + _ROLE_TRAILING_REQ
+        + r"\s+at\s+[A-Z]",
+    ),
+    # "…an offer to join <Employer> as a <ROLE>." The offer names the job and
+    # nothing reads it, so all 260 cards the corpus opens from an offer carry a
+    # blank title — and those are the cards a rescission later has to find.
+    #
+    # NO TRAILING KEYWORD EXISTS HERE. The sentence ends on the title, so the
+    # patterns above — every one of which terminates on "position"/"role" or on
+    # a requisition label — have nothing to stop on. The terminator is the end
+    # of the clause.
+    #
+    # ANCHORED ON "offer … to join", not on the bare "as a" that carries the
+    # title. "as a" is ordinary English ("we will be in touch as a team", "this
+    # is sent as a courtesy") and a rule keyed on it alone would take a noun out
+    # of any sentence in the corpus. Requiring the offer verb and the join verb
+    # ahead of it is what makes the shape an assertion about a job.
+    re.compile(
+        r"\boffer\b[^.!?\n]{0,40}?\bto\s+join\b[^.!?\n]{0,60}?"
+        r"\bas\s+an?\s+"
+        r"(?P<role>" + _ROLE_SPAN + r")" + _ROLE_TRAILING_REQ + _ROLE_ENDS,
     ),
 )
 
