@@ -139,7 +139,13 @@ const APPLICATION_SEEDS: DemoSeed[] = [
   { id: "a11", company: "Atlas Freight", position: "Software Engineer II", status: "rejected", filedDaysAgo: 38, lastSignal: "Moving forward with other candidates" },
   { id: "a12", company: "Juniper Cloud", position: "Infrastructure Engineer", status: "applied", filedDaysAgo: 5, lastSignal: "We received your application" },
   { id: "a13", company: "Copperline", position: "Backend Engineer, Payments", status: "applied", filedDaysAgo: 3, lastSignal: "We received your application" },
-  { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", filedDaysAgo: 2, lastSignal: "Thanks for applying" },
+  // FILED TODAY, and the zero is load-bearing rather than incidental. Since
+  // #519 "this wk" is a real calendar week, so on a Monday it covers exactly
+  // one day — and with the nearest seed at 1 day ago the demo board would have
+  // read "0 this wk" every Monday, on a public marketing surface, and taken
+  // `demo.spec.ts`'s staleness gate red with it. One seed dated today is what
+  // makes the week non-empty on every weekday. Do not push it back out.
+  { id: "a14", company: "Waypoint Robotics", position: "Software Engineer, Controls", status: "applied", filedDaysAgo: 0, lastSignal: "Thanks for applying" },
   // Assessments with deadlines ×3 — the landing's own opening problem ("its
   // 48-hour deadline passes unseen") demonstrated in all three states: one
   // comfortably ahead, one inside the DUE_SOON_DAYS window, one already

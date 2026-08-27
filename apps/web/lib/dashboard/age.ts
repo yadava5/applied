@@ -140,15 +140,110 @@ export function dailyCounts(
 }
 
 /**
- * The momentum comparison the delta line states: the last 7 days against the
- * 7 before them, from the same buckets the bars draw — one derivation, so the
- * arrow can never contradict the picture.
+ * How many days of THIS CALENDAR WEEK have happened, counting today: 1 on a
+ * Monday … 7 on a Sunday. Falls back to a full 7 for an unparsable day, which
+ * is the reading that degrades to the old trailing window rather than to zero.
  */
-export function weekOverWeek(counts: number[]): { thisWeek: number; lastWeek: number } {
+export function daysElapsedThisWeek(today: string): number {
+  const weekday = weekdayOf(today);
+  return weekday === null ? 7 : weekday + 1;
+}
+
+/**
+ * The Monday that begins `today`'s week, as `YYYY-MM-DD`. THE boundary — the
+ * backend's `_week_start` (`backend/jobtracker/cloud/applications.py`) computes
+ * the same date with `date.weekday()`, and `tests/unit/week-boundary.test.mjs`
+ * and `backend/tests/test_this_week_is_a_calendar_week.py` assert the same
+ * table of days on both sides so the two cannot drift.
+ */
+export function weekStartOf(today: string): string | null {
+  const weekday = weekdayOf(today);
+  if (weekday === null) return null;
+  return isoDaysAgo(today, weekday);
+}
+
+export interface WeekOverWeek {
+  /** Filed since this week's Monday, inclusive of today. */
+  thisWeek: number;
+  /** Filed in ALL SEVEN days of the previous calendar week. */
+  lastWeek: number;
+  /** Filed in the previous week's FIRST {@link daysElapsed} days. */
+  lastWeekToDate: number;
+  /** 1 on a Monday … 7 on a Sunday. */
+  daysElapsed: number;
+}
+
+/**
+ * The momentum comparison the delta line states — a REAL CALENDAR WEEK, from
+ * the same buckets the bars draw, so the arrow can never contradict the
+ * picture.
+ *
+ * IT WAS A TRAILING SEVEN DAYS, and the owner reported that as wrong: "the
+ * week counter should be actual real life week data, but real calendar". A
+ * rolling window answers "how much in any seven days", which nobody plans by;
+ * a week is the unit people actually apply in, and on a Monday it is supposed
+ * to start over.
+ *
+ * MONDAY, and that is read off the product rather than chosen: `PulseDetail`
+ * already draws a gap before every `weekdayOf(date) === 0` bar, so the strip
+ * this caption sits under visibly breaks the week at Monday. A Sunday-start
+ * count would have disagreed with the picture beside it. Python's
+ * `date.weekday()` uses the same convention, so the backend agrees by
+ * construction rather than by coincidence.
+ *
+ * WHOSE MONDAY, stated because the two surfaces do NOT share one and it would
+ * be easy to claim they do. This function is given whatever day its caller
+ * holds, and the callers differ on purpose:
+ *
+ *  - `PipelinePulse` passes `useLocalToday()` — the READER's day. "How many
+ *    have I filed this week" is a question about the week the reader is
+ *    living in, and the bars beside the caption are bucketed on that same day,
+ *    so the panel is internally consistent.
+ *  - `summarize()` (the demo twin) passes `todayISO` — the UTC day — because
+ *    it renders on the server and must hydrate without a text mismatch.
+ *  - the signed-in HEADER does not come through here at all. It is
+ *    `GET /applications/summary`, counted server-side from `_week_start`
+ *    against `datetime.utcnow()`, and a counts-only endpoint cannot know the
+ *    reader's zone.
+ *
+ * So for a reader west of UTC there is a window each week — Sunday 20:00 to
+ * midnight in Eastern, the size of their offset — where the header has rolled
+ * into the new week and this caption has not. That split is not new; under a
+ * trailing window it moved a single day's filings and nobody could see it.
+ * A calendar boundary makes it the whole week's worth, which is why it is
+ * written down here and filed as #518 rather than left to be rediscovered.
+ * Closing it needs the reader's day on the wire, which is a change to the
+ * endpoint, not to this function.
+ *
+ * TWO BASELINES, because a partial week cannot honestly be compared with a
+ * whole one. On a Monday `thisWeek` covers one day and `lastWeek` covers
+ * seven, so a caption comparing them would report a collapse every Monday and
+ * Tuesday, for a board that had not changed. {@link lastWeekToDate} is the
+ * same number of days a week earlier — the like-for-like baseline the caption
+ * renders — and {@link lastWeek} stays for the detail panel, which has room to
+ * say which is which.
+ */
+export function weekOverWeek(counts: number[], today: string): WeekOverWeek {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  const daysElapsed = daysElapsedThisWeek(today);
+  const n = counts.length;
+  // Clamped rather than left to `slice`'s negative-index behaviour, which
+  // would silently count from the END of the window and read the WRONG days
+  // if a caller ever passes fewer than 14 buckets.
+  const thisWeekStart = Math.max(0, n - daysElapsed);
+  const lastWeekStart = Math.max(0, n - daysElapsed - 7);
   return {
-    thisWeek: sum(counts.slice(-7)),
-    lastWeek: sum(counts.slice(-14, -7)),
+    thisWeek: sum(counts.slice(thisWeekStart)),
+    lastWeek: sum(counts.slice(lastWeekStart, thisWeekStart)),
+    // Bounded by `thisWeekStart` as well as by its own width. Without that
+    // second bound a clamped `lastWeekStart` lets the baseline run FORWARD
+    // into this week and count the very days it is supposed to be compared
+    // against — measured on a 3-bucket array, where it returned 3 against a
+    // last week that holds nothing at all.
+    lastWeekToDate: sum(
+      counts.slice(lastWeekStart, Math.min(thisWeekStart, lastWeekStart + daysElapsed)),
+    ),
+    daysElapsed,
   };
 }
 

@@ -500,7 +500,9 @@ export function PipelinePulse({
     today,
   );
   const filedInWindow = days.reduce((a, b) => a + b, 0);
-  const { thisWeek, lastWeek } = weekOverWeek(days);
+  const { thisWeek, lastWeek, lastWeekToDate, daysElapsed } = weekOverWeek(days, today);
+  /** True until Sunday: this week is shorter than a whole one. */
+  const partialWeek = daysElapsed < 7;
 
   // --- ageing (open rows only — a closed row's age answers nothing) ---------
   const openRows = applications.filter((app) => isOpenStage(app.status));
@@ -609,17 +611,24 @@ export function PipelinePulse({
         triggerRef={momentumTrigger}
       >
         <DayStrip
-          ariaLabel={`Filed per day, last ${MOMENTUM_DAYS} days: ${filedInWindow} total — this week ${thisWeek}, last week ${lastWeek}`}
+          ariaLabel={`Filed per day, last ${MOMENTUM_DAYS} days: ${filedInWindow} total — this week ${thisWeek} in ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"} so far, ${lastWeekToDate} by the same day last week, ${lastWeek} in all of last week`}
           counts={days}
           testId="pulse-day"
           // Two inks, one meaning: the delta sentence beside these bars
           // compares this week against last, so the bars draw that same
-          // split — the recency sky for the seven days the sentence leads
+          // split — the recency sky for the days the sentence leads
           // with, the ramp's neutral grey for everything before them. (A
           // same-hue 45% fade was measured first: 1.8:1 on the light ground,
           // invisible. Solid neutral keeps every filled bar ≥3:1 in both
           // themes.) Colour encodes the comparison; it never decorates.
-          colorAt={(i) => (i >= days.length - 7 ? "var(--viz-rules)" : "var(--text-dim)")}
+          //
+          // `daysElapsed`, NOT a fixed 7: the caption now counts a real
+          // calendar week, so a hard-coded seven would ink Sunday and Saturday
+          // of LAST week as though the sentence beside them included those
+          // filings. The bars and the number have to describe the same days.
+          colorAt={(i) =>
+            i >= days.length - daysElapsed ? "var(--viz-rules)" : "var(--text-dim)"
+          }
         />
         <p
           data-testid="pulse-caption"
@@ -630,15 +639,23 @@ export function PipelinePulse({
               the same collision the ageing caption was reported for. "up
               from 0" owns its figure; the baseline number stays on the muted
               ramp the way the prior days' bars stay grey. */}
+          {/* THE BASELINE IS LIKE-FOR-LIKE. "This wk" is now Monday-to-today,
+              so on a Monday it covers one day; comparing that against all
+              seven of last week would print "down from 8" every Monday for a
+              board nobody had touched. `lastWeekToDate` is the same stretch of
+              days a week earlier, and "by now" is what says so — dropped on a
+              Sunday, when the two spans are both a whole week and the
+              qualifier would be noise. */}
           <span className="tabular text-strong">{thisWeek}</span> this wk
           {" · "}
-          {thisWeek > lastWeek ? (
-            <>up from {lastWeek}</>
-          ) : thisWeek < lastWeek ? (
-            <>down from {lastWeek}</>
+          {thisWeek > lastWeekToDate ? (
+            <>up from {lastWeekToDate}</>
+          ) : thisWeek < lastWeekToDate ? (
+            <>down from {lastWeekToDate}</>
           ) : (
             <>same as last</>
           )}
+          {partialWeek ? " by now" : null}
         </p>
       </PulseCell>
 
@@ -919,7 +936,7 @@ export function PipelinePulse({
           panelRef={panelRef as RefObject<HTMLDivElement | null>}
           kind={open}
           today={today}
-          momentum={{ days, thisWeek, lastWeek }}
+          momentum={{ days, thisWeek, lastWeek, lastWeekToDate, daysElapsed }}
           age={{ bins: ageBins, openTotal, quiet: ages.quiet, oldest: oldestOpen }}
           // The panel's numbers are the cell's own: one derivation, bucketed
           // once, drawn twice — the runway bins the rows the caption counted.

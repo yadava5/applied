@@ -80,13 +80,32 @@ test("dailyCounts buckets oldest-first with today last", () => {
   );
 });
 
-test("weekOverWeek splits the same buckets the bars draw: last 7 vs the 7 before", () => {
+test("weekOverWeek splits the same buckets the bars draw, at the CALENDAR week", () => {
+  // THE SEMANTICS MOVED (#519). This used to assert "the last 7 buckets vs the
+  // 7 before them" — a trailing window that never started over, which is what
+  // the owner reported as wrong. The split is now Monday-to-today, so the
+  // function needs `today` to know which bucket the week begins at.
+  //
+  // 2026-08-26 is a WEDNESDAY: this week is Mon 24th, Tue 25th, Wed 26th.
+  const today = "2026-08-26";
   const counts = new Array(MOMENTUM_DAYS).fill(0);
-  counts[MOMENTUM_DAYS - 1] = 2; // today
-  counts[MOMENTUM_DAYS - 7] = 1; // 6d ago — still this week
-  counts[MOMENTUM_DAYS - 8] = 5; // 7d ago — last week
+  counts[MOMENTUM_DAYS - 1] = 2; // Wed 26th — today
+  counts[MOMENTUM_DAYS - 3] = 1; // Mon 24th — this week's first day
+  counts[MOMENTUM_DAYS - 4] = 5; // Sun 23rd — LAST week's last day
+  counts[MOMENTUM_DAYS - 10] = 4; // Mon 17th — last week's first day
+  counts[MOMENTUM_DAYS - 11] = 7; // Sun 16th — the week before that, neither
   counts[0] = 9; // 29d ago — neither
-  assert.deepEqual(weekOverWeek(counts), { thisWeek: 3, lastWeek: 5 });
+
+  assert.deepEqual(weekOverWeek(counts, today), {
+    thisWeek: 3, // 2 + 1
+    lastWeek: 9, // 5 + 4, the whole of Mon 17th–Sun 23rd
+    lastWeekToDate: 4, // Mon 17th–Wed 19th, the same three days a week earlier
+    daysElapsed: 3,
+  });
+
+  // The trailing window would have said 8 — it reaches back to Thu 20th and so
+  // swallows Sunday the 23rd, the day the calendar week is supposed to end at.
+  assert.notEqual(weekOverWeek(counts, today).thisWeek, 8);
 });
 
 test("bestDay takes the heaviest day, ties to the most recent, null when empty", () => {

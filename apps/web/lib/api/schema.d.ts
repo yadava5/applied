@@ -223,7 +223,9 @@ export interface paths {
          *
          *     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
          *       applications the user has). ``total`` is their sum.
-         *     - a windowed ``COUNT(*)`` for applications created in the last 7 days.
+         *     - a windowed ``COUNT(*)`` for applications the user APPLIED to since this
+         *       calendar week's Monday (see :func:`_week_start`). Not "created", which is
+         *       when our sync inserted the row, and not a trailing seven days.
          *
          *     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
          *     stays flat as an account scales from 10 to 10,000 applications — the whole
