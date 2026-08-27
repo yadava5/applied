@@ -1,0 +1,17 @@
+{
+  "why": "The ONE table of week boundaries, read by both suites. 'This week' is derived twice — backend/jobtracker/cloud/applications.py::_week_start and apps/web/lib/dashboard/age.ts::weekStartOf — and the two cannot share an implementation across Python and TypeScript. They can be made to fail together, and this file is how: backend/tests/test_this_week_is_a_calendar_week.py and apps/web/tests/unit/week-boundary.test.mjs both assert exactly these rows. Editing one side's answer without the other is impossible, because there is only one answer to edit.",
+  "weekStartsOn": "monday",
+  "days": [
+    { "day": "2026-08-24", "weekday": "Monday", "weekStart": "2026-08-24", "daysElapsed": 1 },
+    { "day": "2026-08-25", "weekday": "Tuesday", "weekStart": "2026-08-24", "daysElapsed": 2 },
+    { "day": "2026-08-26", "weekday": "Wednesday", "weekStart": "2026-08-24", "daysElapsed": 3 },
+    { "day": "2026-08-27", "weekday": "Thursday", "weekStart": "2026-08-24", "daysElapsed": 4 },
+    { "day": "2026-08-28", "weekday": "Friday", "weekStart": "2026-08-24", "daysElapsed": 5 },
+    { "day": "2026-08-29", "weekday": "Saturday", "weekStart": "2026-08-24", "daysElapsed": 6 },
+    { "day": "2026-08-30", "weekday": "Sunday", "weekStart": "2026-08-24", "daysElapsed": 7 },
+    { "day": "2026-08-31", "weekday": "Monday", "weekStart": "2026-08-31", "daysElapsed": 1 },
+    { "day": "2026-01-01", "weekday": "Thursday", "weekStart": "2025-12-29", "daysElapsed": 4 },
+    { "day": "2024-02-29", "weekday": "Thursday", "weekStart": "2024-02-26", "daysElapsed": 4 },
+    { "day": "2026-03-02", "weekday": "Monday", "weekStart": "2026-03-02", "daysElapsed": 1 }
+  ]
+}

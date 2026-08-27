@@ -252,7 +252,15 @@ test.describe("settings (via the public /demo/settings twin)", () => {
    * `thisWeek === 0` both subtitles are identical (#216 records this as the
    * innocent reason the controls look dead on a real account) — so the queue
    * case forces four held verdicts and the subtitle case runs on the seed
-   * fixture, which files several rows inside the last seven days.
+   * fixture, which files a row TODAY.
+   *
+   * "Today", not "inside the last seven days", and the difference is a gate
+   * rather than pedantry. Since #519 "this wk" is a real calendar week, so on
+   * a Monday it covers one day; a fixture whose nearest filing was yesterday
+   * folded in nothing and took the assertion below red — but only on Mondays,
+   * which is the flake shape that gets "fixed" by loosening the regex. The
+   * seed at `filedDaysAgo: 0` in `demoData.ts` is what holds this case up on
+   * every weekday, and it says so there.
    */
 
   /** The board's one prose data line, inside the sync header row. Scoped:

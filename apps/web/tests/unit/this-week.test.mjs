@@ -57,17 +57,32 @@ test("a row applied this week still counts when it was ingested long ago", () =>
   assert.equal(summarize(apps, NOW).thisWeek, 1);
 });
 
-test("the window is seven days INCLUDING today, matching the momentum bars", () => {
-  // NOW is 2026-08-26, so the seven days are the 20th through the 26th.
+test("the window is THIS CALENDAR WEEK — Monday to today, matching the momentum bars", () => {
+  // NOW is Wednesday 2026-08-26, so the week is Monday the 24th through today.
   //
-  // This used to assert that the 19th counted, which is EIGHT dates — the
-  // shape you get from `now - 7 days` compared with `>=` on both ends. The
-  // momentum caption on the same screen sums the last seven daily buckets, so
-  // the two lines disagreed by whatever was filed on the far edge. The edge
-  // moved deliberately; both sides now derive it from `dailyCounts`.
+  // THE EDGE HAS MOVED TWICE, and both moves are recorded because the second
+  // one inverts an assertion the first one wrote. It first spanned EIGHT dates
+  // (`now - 7 days` with `>=` on both ends), then seven; both were TRAILING
+  // windows, and the owner reported that as wrong: "the week counter should be
+  // actual real life week data, but real calendar". A rolling window never
+  // starts over — on a Monday it still carries the previous Thursday.
+  //
+  // So the near edge is no longer "six days back". It is this week's Monday,
+  // and Sunday the 23rd — one day earlier, and well inside any seven-day
+  // window — is now OUT. That last assertion is the one that fails if anyone
+  // reinstates the rolling window.
   assert.equal(summarize([row("2026-08-26", "2026-08-26")], NOW).thisWeek, 1, "today");
-  assert.equal(summarize([row("2026-08-20", "2026-08-20")], NOW).thisWeek, 1, "the near edge");
-  assert.equal(summarize([row("2026-08-19", "2026-08-19")], NOW).thisWeek, 0, "one day past it");
+  assert.equal(summarize([row("2026-08-24", "2026-08-24")], NOW).thisWeek, 1, "this week's Monday");
+  assert.equal(
+    summarize([row("2026-08-23", "2026-08-23")], NOW).thisWeek,
+    0,
+    "Sunday belongs to LAST week, however few days ago it was",
+  );
+  assert.equal(
+    summarize([row("2026-08-20", "2026-08-20")], NOW).thisWeek,
+    0,
+    "the old trailing window's near edge, which is last Thursday",
+  );
 });
 
 test("a future applied date is not this week", () => {
