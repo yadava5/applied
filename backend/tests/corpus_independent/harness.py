@@ -410,6 +410,11 @@ class BoardScore:
     update_held_for_review: int = 0
     #: The right card, showing the wrong stage.
     wrong_status: int = 0
+    #: The card claims a BETTER outcome than the user has, and the mail that
+    #: would correct it is sitting in the review queue. A card that is BEHIND
+    #: reality is honest and incomplete; a card that is AHEAD of it is a lie
+    #: the product is telling, and the two must not be counted as one thing.
+    card_overstates: int = 0
     #: How many cards had their TITLE compared to ground truth at all. Not a
     #: defect count — the denominator. A grader that silently graded nothing
     #: would report three zeroes below and read as perfect, which is the
@@ -453,6 +458,7 @@ class BoardScore:
             + self.wrong_review
             + self.update_opened_a_card
             + self.wrong_status
+            + self.card_overstates
             + self.company_wrong
             + self.role_wrong
             + self.lost
@@ -469,6 +475,66 @@ class BoardScore:
         """
 
         return self.lost + self.dropped
+
+
+def _overstates(
+    score: BoardScore,
+    replayed: Replay,
+    card_of: dict[str, str],
+    case: Case,
+) -> None:
+    """Count a held message whose card is left claiming a better outcome.
+
+    Ground truth (``case.card_status``) says where the row belongs once this
+    message is understood. The card shows something else because the message is
+    in the queue. Two directions and only one is a defect:
+
+      * the card ranks LOWER — it has not caught up yet. Honest.
+      * the card ranks HIGHER, or ground truth is TERMINAL and the card is not
+        — the row is asserting a stage the user does not have.
+
+    ``_TERMINAL_STATUSES`` carries no rank (a rejection is not "further along"
+    than an offer), so it is handled explicitly: ground truth ``rejected`` with
+    the card on any live stage is the rescinded-offer shape, and it overstates.
+    """
+
+    want = case.card_status
+    # The message is in the QUEUE, so it is on no card — the card at issue is
+    # the one it belongs to. ``Case.joins`` names it. Without this the lookup
+    # is always None and the counter is one of the checks that cannot fail:
+    # it read 0 against 260 cards that were demonstrably overstating.
+    label = card_of.get(case.message_id) or (
+        card_of.get(case.joins) if case.joins else None
+    )
+    if want is None or label is None:
+        return
+    actual = replayed.status.get(label)
+    if actual is None or actual == want:
+        return
+
+    want_terminal = want in pipeline._TERMINAL_STATUSES
+    actual_terminal = actual in pipeline._TERMINAL_STATUSES
+    if want_terminal and actual_terminal:
+        return  # two terminal answers; not an overstatement, and not this counter
+    ahead = want_terminal or (
+        not actual_terminal
+        and pipeline._STATUS_RANK.get(actual, 0) > pipeline._STATUS_RANK.get(want, 0)
+    )
+    if not ahead:
+        return
+
+    score.card_overstates += 1
+    score.failures.append(
+        Failure(
+            mode="CARD-OVERSTATES",
+            family=case.family,
+            detail=(
+                f"card {label!r} still reads {actual!r}; the mail that makes it "
+                f"{want!r} is in the review queue"
+            ),
+            message_ids=(case.message_id,),
+        )
+    )
 
 
 def score_board(
@@ -595,12 +661,25 @@ def score_board(
             continue
         if case.message_id in replayed.reviewed:
             # HELD FOR A PERSON, so it has not been filed, so it cannot have
-            # moved the stage. Asserting a stage here asserts that an unfiled
-            # message changed the board, which is the opposite of what the
-            # review queue is for. Measured: 77 offers arriving before their
+            # moved the stage. Asserting WRONG-STAGE here asserts that an
+            # unfiled message changed the board, which is the opposite of what
+            # the review queue is for. Measured: 77 offers arriving before their
             # confirmation sat in the queue at 0.75 while the card correctly
             # read `applied`, and scoring that as WRONG-STAGE would have made
             # the designed answer look like a defect for the second time.
+            #
+            # BUT NOT EVERY HELD MESSAGE LEAVES AN HONEST CARD, and collapsing
+            # the two outcomes is how this went unmeasured. Those 77 leave a
+            # card reading `applied` when it should read `offered`: BEHIND
+            # reality, incomplete, and true as far as it goes. The withdrawal
+            # of an offer leaves a card reading `offered` when the offer has
+            # been rescinded: AHEAD of reality, and the board is asserting
+            # something about the user's life that is not so — which is the
+            # single failure #417 says matters more than the rest.
+            #
+            # The direction is the whole distinction, so it is read off the
+            # product's own ``_STATUS_RANK`` rather than a list kept here.
+            _overstates(score, replayed, card_of, case)
             continue
         label = card_of.get(case.message_id)
         if label is None:
