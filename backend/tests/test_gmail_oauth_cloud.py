@@ -1652,12 +1652,23 @@ async def test_review_item_classify_creates_sticky_application(client: AsyncClie
 
 
 async def _two_northwind_rows_and_a_blind_review_item(
-    client: AsyncClient, headers: dict[str, str], message_id: str
+    client: AsyncClient,
+    headers: dict[str, str],
+    message_id: str,
+    positions: tuple[str, ...] = ("Backend Engineer", "Platform Engineer"),
 ) -> list[int]:
-    """Two applications at one employer, and a held message naming no role."""
+    """N applications at one employer, and a held message naming no role.
+
+    Two by default, because that is the smallest board on which the picker has
+    a question to ask and is what every caller here wanted. `positions` exists
+    for the one caller that needs THREE: with two rows the middle and the last
+    are the same row, and a test whose only discriminating fact is "the human
+    picked the last one" cannot tell a resolver that honours the link from one
+    that returns `rows[-1]`. See the caller for the mutant that proved it.
+    """
 
     ids = []
-    for position in ("Backend Engineer", "Platform Engineer"):
+    for position in positions:
         created = await client.post(
             "/applications",
             json={"company": "Northwind", "position": position},
@@ -5065,3 +5076,142 @@ async def test_a_relayed_mine_says_the_server_did_not_scan_it(
     assert body["stopped_by"] == "relay"
     assert body["unreadable"] == 0
     assert body["result_size_estimate"] is None
+
+
+# ---------------------------------------------------------------------------
+# A CORRECTION IS NOT A TIE-BREAK (#560)
+#
+# #560 was filed claiming that reclassifying already-filed mail re-points it
+# onto the employer's OLDEST row: `classify_review_item` ends with
+#
+#     email.application_id = app.id
+#
+# with no consultation of the link the email already has. The write is indeed
+# unconditional, and the report was still wrong — by the time it runs, `app` IS
+# the linked row. `_resolve_application_for_email` consults the message's own
+# link before anything else and returns `LANDED_LINKED`, a guard added in
+# `3401c20` (#546 / #548) BEFORE the issue was written. Reading a write without
+# reading its operand is how the report got made.
+#
+# WHY THIS FILE NOW SAYS SO. Deleting that link-first branch and running the
+# whole suite reds exactly ONE test —
+# `test_a_review_answer_never_overwrites_an_identity_the_row_already_has` — and
+# it reds on its own PRECONDITION ("the message did not reach the keyed row, so
+# nothing below is a test of what happens when it does"), not on its subject.
+# So the invariant was defended only by another test's setup, and a setup
+# assertion is one fixture change away from defending nothing. An invariant
+# whose only gate is incidental is how a fixed thing gets re-reported as broken;
+# these two name it directly.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_reclassify_keeps_the_row_a_human_chose(client: AsyncClient) -> None:
+    """A correction to a message's CATEGORY must not move it between rows.
+
+    `ReclassifyControl` hardcodes `null` in the `applicationId` position, so a
+    reclassify from the filed ledger or the inbox arrives with no choice in it.
+    For a message that names no role that reaches `_pick_application`'s rule 4,
+    the employer's oldest live row — a tie-break, not evidence. The message's
+    existing link outranks it, and this is the test that says so.
+
+    Delete the link-first branch of `_resolve_application_for_email` and the
+    user's own answer to the review queue is silently undone by the next label
+    correction, against a row they were not talking about.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    # THREE rows, and the human picks the MIDDLE one. Two is not enough and the
+    # first draft of this test used two: `chosen` was then also `rows[-1]`, so
+    # the one fact the assertion below turns on was shared with a resolver that
+    # ignores the link entirely. Replacing `return linked` with
+    # `return rows[-1]` passed this test, its control, and the whole 1757-test
+    # suite — while reproducing #560's headline verbatim, a human's answer
+    # walked onto a row they never named. Found by an independent verifier, not
+    # by the mutation rounds that shipped with the first draft.
+    #
+    # With three, `chosen` is neither `rows[0]` (rule 4's tie-break) nor
+    # `rows[-1]`, so both mutants die on it.
+    ids = await _two_northwind_rows_and_a_blind_review_item(
+        client,
+        headers,
+        "rv-keep",
+        positions=("Backend Engineer", "Platform Engineer", "Data Engineer"),
+    )
+    oldest, chosen, newest = ids[0], ids[1], ids[2]
+    assert len({oldest, chosen, newest}) == 3, "the fixture must offer three distinct rows"
+    assert chosen not in (oldest, newest), (
+        "the chosen row must be neither end of the board, or this test cannot "
+        "tell a resolver that reads the link from one that returns rows[0] or "
+        "rows[-1]"
+    )
+
+    # A human answers the queue and picks the second row.
+    picked = await client.post(
+        "/applications/review/rv-keep/classify",
+        json={"category": "rejection", "application_id": chosen},
+        headers=headers,
+    )
+    assert picked.status_code == 200, picked.text
+    assert picked.json()["application_id"] == chosen, (
+        "the picker's own answer did not land, so nothing below is a test of "
+        "what happens to it afterwards"
+    )
+
+    # The reclassify surface: category only, exactly what ReclassifyControl sends.
+    corrected = await client.post(
+        "/applications/review/rv-keep/classify",
+        json={"category": "interview"},
+        headers=headers,
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["application_id"] == chosen, (
+        f"a category correction moved the message from application {chosen} to "
+        f"{corrected.json()['application_id']} — the tie-break overruled a link "
+        "a human made"
+    )
+
+    rows = await _northwind_rows(client, headers)
+    by_id = {row["id"]: row for row in rows}
+    assert by_id[oldest]["status"] == "applied", (
+        f"application {oldest} was moved to {by_id[oldest]['status']} by a "
+        "message that has never been about it"
+    )
+
+
+async def test_an_unlinked_message_still_takes_the_tie_break(client: AsyncClient) -> None:
+    """The other half, and it is NOT a bug being asserted as correct.
+
+    An UNLINKED message at an employer holding several rows has no link to
+    outrank the tie-break, so rule 4 files it on the oldest. That is the
+    residual `_resolve_application_for_email`'s own docstring states, and it is
+    the least-bad answer on a path where nobody asked the user: minting instead
+    would answer "which of your three applications?" by inventing a fourth.
+
+    It is pinned here for two reasons. It is the DIRECTIONAL CONTROL for the
+    test above — without it, that test passes on a build that has stopped
+    resolving anything at all, and says nothing about the link. And it is the
+    measurement behind the real defect in #560, which is not the write: the
+    review queue asks the user which application a blind message is about
+    (#554), and `ReclassifyControl` has no picker, so on the one other surface
+    where the question could be put it is not put. When that picker ships, this
+    test changes — and it should be read as the thing being fixed, not as a
+    guarantee to preserve.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    ids = await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-blind")
+    oldest = ids[0]
+
+    corrected = await client.post(
+        "/applications/review/rv-blind/classify",
+        json={"category": "interview"},
+        headers=headers,
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["application_id"] == oldest, (
+        "an unlinked blind message must land on the employer's oldest live row "
+        "— if this moved, rule 4 changed and the test above no longer measures "
+        "the link"
+    )
