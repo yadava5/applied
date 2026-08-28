@@ -103,9 +103,40 @@ jobs:
         # `node --test` on a file that registers no tests exits 0. So does a
         # path filter that quietly stopped matching. Neither is a pass, and
         # both look exactly like one in the checks list.
+        #
+        # THE COUNT IS EXACT, NOT A FLOOR, AND THAT IS THE WHOLE POINT.
+        #
+        # It used to be `>= 38`, written when the file held 38 cases. #563 then
+        # added three tests — the only ones in the file that assert a SKIP,
+        # which is the one verdict a broken script cannot produce — and took
+        # the suite to 42, then 43. A floor of 38 defends none of them: all
+        # three can be deleted, the suite reports 40, and this step, the
+        # negative control (which mutates the guard, not the suite) and every
+        # other check stay green. Measured, not reasoned: deleting lines
+        # 705-754 gave 39 tests / 39 pass / 0 fail, 21 of 21 mutations still
+        # caught, and this gate green.
+        #
+        # An exact count cannot decay that way. Adding a test reds this step
+        # until the number below is bumped in the same commit, which is the
+        # same discipline the guard's own header asks for on its allowlist;
+        # deleting one reds it and cannot be argued away as "the guard got
+        # simpler".
+        #
+        # THIS DELIBERATELY DIFFERS FROM THE HOUSE PATTERN, and the difference
+        # is the argument. `apps/web/scripts/assert-unit-suite-ran.mjs` uses a
+        # FLOOR on purpose, and says so at length: "a tripwire far enough below
+        # the real number that ordinary churn never touches it". That is right
+        # for a 608-test suite that changes on most PRs. It is wrong here. This
+        # file holds 43 deliberate cases, changes a few times a year, and exists
+        # precisely to end checks that cannot fail — so a threshold five below
+        # the count, which is what a floor becomes the moment anyone adds
+        # anything, IS one, for exactly the newest and least-defended cases.
+        # Churn is not a cost we pay here, so we do not buy insurance against it.
         run: |
           python3 - <<'PY'
           import os, re, sys
+
+          EXPECTED = 43
 
           tap = open(os.path.join(os.environ["RUNNER_TEMP"], "guard.tap")).read()
           def n(field):
@@ -114,18 +145,28 @@ jobs:
 
           total, passed, failed, skipped = n("tests"), n("pass"), n("fail"), n("skipped")
           print(f"guard suite: {total} tests, {passed} pass, {failed} fail, {skipped} skipped")
-          if total < 38 or passed < 38 or failed != 0 or skipped != 0:
+          if total != EXPECTED or passed != EXPECTED or failed != 0 or skipped != 0:
               sys.exit(
-                  "The ignore-build guard is UNVERIFIED by this build. Expected at "
-                  "least 38 passing tests and no skips. A shrinking count means "
-                  "cases were deleted, not that the guard got simpler."
+                  f"The ignore-build guard is UNVERIFIED by this build. Expected "
+                  f"exactly {EXPECTED} passing tests and no skips, got {total} "
+                  f"tests / {passed} pass / {failed} fail / {skipped} skipped. "
+                  "If you ADDED a case, bump EXPECTED in this file in the same "
+                  "commit. If this dropped on its own, cases were deleted or the "
+                  "runner stopped collecting them -- neither is the guard getting "
+                  "simpler."
               )
           PY
 
       - name: Prove the suite can fail
-        # Breaks the guard and its two call sites 19 specific ways and requires
-        # the suite to go red for each. Without this the suite is exactly the
-        # thing it was written to fix: a check nothing checks.
+        # Breaks the guard and its two call sites every way listed in that
+        # file's own MUTATIONS array and requires the suite to go red for each.
+        # Without this the suite is exactly the thing it was written to fix: a
+        # check nothing checks.
+        #
+        # No count here on purpose. This comment said "19 specific ways" while
+        # the file held 21, and DEPLOY.md said ten while it held nineteen. A
+        # number is now stated in exactly one place that can be wrong --
+        # DEPLOY.md -- and the control itself asserts it.
         run: node scripts/negative_control_ignore_build.mjs
 
       - name: The negative control cleaned up after itself
