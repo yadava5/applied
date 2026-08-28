@@ -156,13 +156,62 @@
 # deploy from before it merged. So an unresolvable supplied base exits BUILD,
 # and the two cases stay distinguishable in the log as well as in the code.
 #
-# On previews there is deliberately no `HEAD^` fallback: with no previous
-# deployment the branch has no preview URL yet, and the e2e pass needs one. A
-# branch's first build always happens — nothing supplied still means no fetch
-# and a build. Previews do get the fetch, so a preview whose supplied base sits
-# outside the clone is now decided on its real window instead of always
-# building; a push that touches nothing the project builds from can legitimately
-# skip where it used to not be measurable.
+# Previews do get the fetch, so a preview whose supplied base sits outside the
+# clone is decided on its real window instead of always building; a push that
+# touches nothing the project builds from can legitimately skip where it used
+# to not be measurable.
+#
+# ---------------------------------------------------------------------------
+# A PREVIEW'S FIRST BUILD IS NOT UNCONDITIONAL ANY MORE.
+# ---------------------------------------------------------------------------
+#
+# A branch that has never deployed for this project has no
+# VERCEL_GIT_PREVIOUS_SHA, and this script used to answer that with an
+# unconditional BUILD. The reason recorded here was that "the branch has no
+# preview URL yet, and the e2e pass needs one". THAT REASON WAS FALSE WHEN IT
+# WAS WRITTEN AND IS STILL FALSE. Nothing in .github/workflows reads a preview
+# URL: `e2e-ci.yml` pins PLAYWRIGHT_BASE_URL to http://localhost:3000 in both
+# of its Playwright jobs and boots its own servers. A preview URL is looked at
+# by a human, and a branch with no changes under apps/ has nothing to look at.
+#
+# What the unconditional build actually bought was waste. The six real
+# jobtracker-web previews of 2026-08-27/28, read out of their build logs:
+#
+#   e353a3e  changes found in apps/web       BUILD  26s  correct
+#   d5b9bb5  changes found in apps/web       BUILD  21s  correct
+#   b0705a2  changes found in apps/web       BUILD  27s  correct
+#   36b00a3  no usable base commit           BUILD  24s  right answer, no reason
+#   736a6a2  no usable base commit           BUILD  20s  BACKEND ONLY  (#553)
+#   ccf19f1  no usable base commit           BUILD  21s  BACKEND ONLY  (#547)
+#   304f79c  no usable base commit           BUILD  27s  BACKEND ONLY  (#538)
+#
+# Three full Next.js builds of a bundle those commits cannot change, and a
+# fourth that happened to be right by accident. Each is also a production-slot
+# holder and a deployment that replaces nothing.
+#
+# THE WINDOW IS THE DEFAULT BRANCH'S TIP, and the choice is deliberate:
+#
+#   `HEAD^`      wrong for the reason given above — a branch's first push can
+#                carry many commits, and the newest one is not the window.
+#   merge base   exactly right, and unavailable: it needs history a
+#                `--depth=10` clone does not have, and a `--depth=1` fetch of
+#                the default branch cannot supply it either.
+#   branch tip   one commit to fetch, and its only error is in the SAFE
+#                direction. When the default branch has moved on with changes
+#                this branch does not carry, the diff sees them and BUILDS —
+#                a wasted build, never a missed one. It can only skip when the
+#                branch's tree for this project's paths already equals what
+#                the default branch holds, and then there is by construction
+#                nothing to preview.
+#
+# Production is untouched by this: it keeps the `HEAD^` fallback, because
+# `origin/main` on a production build IS the commit being deployed and diffing
+# a commit against itself would skip every first deploy.
+#
+# The arm is entered only on VERCEL_ENV=preview, not on "anything that is not
+# production". An unset or unrecognised VERCEL_ENV means we are not in a build
+# whose shape we understand, and the doctrine three sections up applies: an
+# uncertain path builds.
 #
 # ---------------------------------------------------------------------------
 # MAINTENANCE: THE PATH LISTS ARE AN ALLOWLIST.
@@ -177,6 +226,11 @@ set -u
 
 readonly SKIP=0
 readonly BUILD=1
+
+# The branch every preview is measured against when Vercel supplies no base;
+# see A PREVIEW'S FIRST BUILD below. Vercel exposes no default-branch variable,
+# so this is written down here rather than guessed at the call site.
+readonly DEFAULT_BRANCH=main
 
 log() { printf '[vercel-ignore-build] %s\n' "$*" >&2; }
 
@@ -267,6 +321,24 @@ if [ -z "$base_sha" ] && [ "${VERCEL_ENV:-}" = 'production' ]; then
   base_sha="$(git rev-parse --verify -q "${head_sha}^" 2>/dev/null || true)"
   if [ -n "$base_sha" ]; then
     log "no previous deployment supplied; falling back to HEAD^ ${base_sha}"
+  fi
+fi
+if [ -z "$base_sha" ] && [ "${VERCEL_ENV:-}" = 'preview' ]; then
+  # A preview branch that has never deployed here also gets no previous SHA.
+  # See A PREVIEW'S FIRST BUILD in the header for why that stopped meaning
+  # "build unconditionally". Resolve the default branch's tip locally first —
+  # a full clone already has it — and only ask the remote for the one commit
+  # when it does not. Both arms may leave $base_sha empty, and the check below
+  # then builds.
+  base_sha="$(git rev-parse --verify -q "origin/${DEFAULT_BRANCH}^{commit}" 2>/dev/null || true)"
+  if [ -z "$base_sha" ]; then
+    GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+    base_sha="$(git rev-parse --verify -q 'FETCH_HEAD^{commit}' 2>/dev/null || true)"
+  fi
+  if [ -n "$base_sha" ]; then
+    log "no previous deployment supplied; measuring against ${DEFAULT_BRANCH} tip ${base_sha}"
+  else
+    log "no previous deployment supplied and ${DEFAULT_BRANCH} is unreachable"
   fi
 fi
 if [ -z "$base_sha" ]; then
