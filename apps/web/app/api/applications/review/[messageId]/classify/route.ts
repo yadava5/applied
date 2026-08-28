@@ -62,8 +62,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   // It was written as "can only be lost in `readClassifyBody`", and that is
   // more than this line earns. Below it sit `classifyReviewItem`'s call to
   // `classifyBackendBody` and, past the wire, FastAPI's own re-spread of the
-  // parsed body into arguments — five rebuilds in all, of which the unit tests
-  // execute two. Deleting one argument from that last re-spread left every
+  // parsed body into arguments — five rebuilds in all, of which `tests/unit/`
+  // executes three (`classifyRequestBody`, `readClassifyBody` and
+  // `classifyBackendBody`, all called directly in `classify-request.test.mjs`).
+  // Deleting one argument from that last re-spread left every
   // frontend and backend unit test green while the field stopped arriving;
   // `backend/tests/test_gmail_oauth_cloud.py` now covers it over HTTP for the
   // two fields the review picker sends, and the rest of that seam is still

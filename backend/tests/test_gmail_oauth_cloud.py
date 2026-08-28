@@ -1819,6 +1819,45 @@ async def test_the_flag_is_not_manufactured_at_the_api_boundary(
     assert len(await _northwind_rows(client, headers)) == 3
 
 
+async def test_confirm_new_company_is_not_manufactured_either(
+    client: AsyncClient,
+) -> None:
+    """The OTHER flag on this model, and it had the annotation but no gate.
+
+    `none_of_these` and `confirm_new_company` are both `StrictBool` for one
+    stated reason — "one of these flags skips the typo check and the other OPENS
+    A ROW; neither may be manufactured" — and only the row-opening half was
+    asserted. Relaxing `confirm_new_company` back to `bool` left the entire
+    suite green, so the rule was half a rule.
+
+    This is the cheaper half: skipping the near-miss confirmation opens a second
+    application under a misspelling rather than destroying one. It is still the
+    check that exists because a "Verkeda" row was once opened silently.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-cnc")
+
+    for raw in ["true", "false", 1, "1"]:
+        resp = await client.post(
+            "/applications/review/rv-cnc/classify",
+            json={"category": "rejection", "confirm_new_company": raw},
+            headers=headers,
+        )
+        assert resp.status_code == 422, (
+            f"confirm_new_company={raw!r} was accepted as an answer: {resp.text}"
+        )
+
+    # CONTROL — a real boolean is still an answer, and the request still files.
+    ok = await client.post(
+        "/applications/review/rv-cnc/classify",
+        json={"category": "rejection", "confirm_new_company": True},
+        headers=headers,
+    )
+    assert ok.status_code == 200, ok.text
+
+
 async def test_resync_purges_stale_auto_but_preserves_manual(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

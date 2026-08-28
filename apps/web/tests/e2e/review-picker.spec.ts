@@ -37,8 +37,10 @@ import { startConsoleWatch } from "./helpers";
 const MULTI_CARD = /thank you for your interest in northstar systems/i;
 /** The seed whose employer holds exactly one — the control that must stay 1 click. */
 const SINGLE_CARD = /thank you for your interest in quarry data/i;
+/** Exactly TWO — the threshold's own value, and the direction a control misses. */
+const TWO_CARDS = /thank you for your interest in cedar labs/i;
 
-const QUEUE_URL = "/demo/shell?review=9";
+const QUEUE_URL = "/demo/shell?review=10";
 
 /** The row's `<li>`, located by its own subject text. */
 function rowFor(page: Page, subject: RegExp) {
@@ -56,7 +58,7 @@ function rowFor(page: Page, subject: RegExp) {
  */
 async function openQueue(page: Page) {
   await page.goto(QUEUE_URL);
-  await page.getByRole("button", { name: /show all 9/i }).click();
+  await page.getByRole("button", { name: /show all 10/i }).click();
 }
 
 /**
@@ -178,6 +180,77 @@ test.describe("the review queue's application picker", () => {
     await expect.poll(() => sent.length).toBe(1);
     expect("application_id" in sent[0]!).toBe(false);
     expect("none_of_these" in sent[0]!).toBe(false);
+  });
+
+  test("an employer with exactly TWO applications is still asked about", async ({ page }) => {
+    /*
+     * THE CONTROL THAT POINTS THE OTHER WAY, and the one this file shipped
+     * without.
+     *
+     * `showPicker` is a threshold — `candidates.length >= 2` — and a threshold
+     * needs a case on each side of it AND one sitting on it. The multi-card seed
+     * yields four and the single-card control yields one, so `>= 2` could be
+     * narrowed to `>= 3` and both stayed green: four is still >= 3, one is still
+     * < 3. An employer holding exactly two applications would then be asked
+     * nothing, the request would carry no answer, and the backend would
+     * tie-break onto the oldest row — this defect, restored, for the smallest
+     * ambiguous case there is.
+     *
+     * Narrowing is the direction that reintroduces the bug and widening is the
+     * direction the other control catches. Both are needed; neither implies the
+     * other.
+     */
+    const sent = await captureClassifyPosts(page);
+    await openQueue(page);
+
+    const row = rowFor(page, TWO_CARDS);
+    await expect(row).toBeVisible();
+    await row.getByRole("combobox").selectOption("rejection");
+
+    // Two candidates plus "none of these" — the question IS asked here.
+    await expect(row.getByRole("radio")).toHaveCount(3);
+    await expect(row.getByRole("radio", { checked: true })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: /^classify$/i })).toBeDisabled();
+    expect(sent).toEqual([]);
+  });
+
+  for (const stage of ["interview", "assessment", "offer", "rejection"]) {
+    test(`a ${stage} at a multi-card employer is asked about, not guessed`, async ({
+      page,
+    }) => {
+      /*
+       * EVERY MEMBER OF `LIFECYCLE_ANSWERS`, one test each.
+       *
+       * The set decides whether the question is asked at all, and the rest of
+       * this file only ever chooses "rejection". Deleting "offer" from it left
+       * every other test here green while an offer at a multi-card employer
+       * skipped the picker and tie-broke onto the oldest row. A set whose
+       * members are not individually asserted is a set with one member.
+       */
+      await openQueue(page);
+      const row = rowFor(page, MULTI_CARD);
+      await row.getByRole("combobox").selectOption(stage);
+
+      await expect(row.getByRole("radio")).toHaveCount(5);
+      await expect(row.getByRole("button", { name: /^classify$/i })).toBeDisabled();
+    });
+  }
+
+  test("a category that opens or closes nothing asks no question", async ({ page }) => {
+    /*
+     * The control for the loop above. `applied` opens a NEW application and
+     * "not job related" opens none, so neither answers an existing card and
+     * neither may put a picker on screen — which is what stops the loop being
+     * satisfied by "always show the picker".
+     */
+    await openQueue(page);
+    const row = rowFor(page, MULTI_CARD);
+
+    for (const stage of ["applied", "other"]) {
+      await row.getByRole("combobox").selectOption(stage);
+      await expect(row.getByRole("radio")).toHaveCount(0);
+      await expect(row.getByRole("button", { name: /^classify$/i })).toBeEnabled();
+    }
   });
 
   test("changing the stage takes the pick back and blocks the send again", async ({ page }) => {
