@@ -1652,12 +1652,23 @@ async def test_review_item_classify_creates_sticky_application(client: AsyncClie
 
 
 async def _two_northwind_rows_and_a_blind_review_item(
-    client: AsyncClient, headers: dict[str, str], message_id: str
+    client: AsyncClient,
+    headers: dict[str, str],
+    message_id: str,
+    positions: tuple[str, ...] = ("Backend Engineer", "Platform Engineer"),
 ) -> list[int]:
-    """Two applications at one employer, and a held message naming no role."""
+    """N applications at one employer, and a held message naming no role.
+
+    Two by default, because that is the smallest board on which the picker has
+    a question to ask and is what every caller here wanted. `positions` exists
+    for the one caller that needs THREE: with two rows the middle and the last
+    are the same row, and a test whose only discriminating fact is "the human
+    picked the last one" cannot tell a resolver that honours the link from one
+    that returns `rows[-1]`. See the caller for the mutant that proved it.
+    """
 
     ids = []
-    for position in ("Backend Engineer", "Platform Engineer"):
+    for position in positions:
         created = await client.post(
             "/applications",
             json={"company": "Northwind", "position": position},
@@ -4791,9 +4802,30 @@ async def test_a_reclassify_keeps_the_row_a_human_chose(client: AsyncClient) -> 
 
     await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
-    ids = await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-keep")
-    oldest, chosen = ids[0], ids[1]
-    assert chosen != oldest, "the fixture must offer a row that is NOT the tie-break's"
+    # THREE rows, and the human picks the MIDDLE one. Two is not enough and the
+    # first draft of this test used two: `chosen` was then also `rows[-1]`, so
+    # the one fact the assertion below turns on was shared with a resolver that
+    # ignores the link entirely. Replacing `return linked` with
+    # `return rows[-1]` passed this test, its control, and the whole 1757-test
+    # suite — while reproducing #560's headline verbatim, a human's answer
+    # walked onto a row they never named. Found by an independent verifier, not
+    # by the mutation rounds that shipped with the first draft.
+    #
+    # With three, `chosen` is neither `rows[0]` (rule 4's tie-break) nor
+    # `rows[-1]`, so both mutants die on it.
+    ids = await _two_northwind_rows_and_a_blind_review_item(
+        client,
+        headers,
+        "rv-keep",
+        positions=("Backend Engineer", "Platform Engineer", "Data Engineer"),
+    )
+    oldest, chosen, newest = ids[0], ids[1], ids[2]
+    assert len({oldest, chosen, newest}) == 3, "the fixture must offer three distinct rows"
+    assert chosen not in (oldest, newest), (
+        "the chosen row must be neither end of the board, or this test cannot "
+        "tell a resolver that reads the link from one that returns rows[0] or "
+        "rows[-1]"
+    )
 
     # A human answers the queue and picks the second row.
     picked = await client.post(
