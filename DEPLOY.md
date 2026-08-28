@@ -265,7 +265,7 @@ whose entire diff is Python.
 
 `scripts/test_vercel_ignore_build.mjs` pins every one of these answers against
 real commits from this repository's history, and
-`scripts/negative_control_ignore_build.mjs` breaks the guard 21 ways to prove
+`scripts/negative_control_ignore_build.mjs` breaks the guard 22 ways to prove
 that suite can go red. Both run in CI (`.github/workflows/vercel-ignore-build.yml`)
 on any change to the guard, to either `vercel.json`, or to `.vercelignore`. If
 you change the allowlist, change the suite in the same commit.
