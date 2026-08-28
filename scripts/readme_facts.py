@@ -2110,6 +2110,25 @@ def run(mode: str) -> None:
         )
 
     if mode == "write":
+        # REFUSE BEFORE WRITING, not after. This block used to write every dirty
+        # file and THEN raise, which meant `--write` on a half-merged README
+        # corrected a number sitting inside a conflict hunk, reported "rewrote 1
+        # number", and left the markers in place — the exit code was the only
+        # thing the refusal changed. Every problem that reaches here is one
+        # rewriting cannot fix (markers, a broken invariant, a stale or red
+        # recording); a number the README got wrong was already corrected above
+        # and never lands in this list. So there is nothing to lose by stopping
+        # first, and a corrupted file to lose by not.
+        if problems:
+            print(
+                "\n  Refusing to write. Some problems cannot be fixed by "
+                "rewriting a number:\n",
+                file=sys.stderr,
+            )
+            for p in problems:
+                print(f"  ✗ {p}\n", file=sys.stderr)
+            raise SystemExit(1)
+
         written = []
         for rel, entry in files.items():
             if entry["dirty"]:
@@ -2120,11 +2139,6 @@ def run(mode: str) -> None:
             if rewrites == 0
             else f"  ✓ rewrote {rewrites} number{'' if rewrites == 1 else 's'} in {', '.join(written)}."
         )
-        if problems:
-            print("\n  Some problems cannot be fixed by rewriting a number:\n", file=sys.stderr)
-            for p in problems:
-                print(f"  ✗ {p}\n", file=sys.stderr)
-            raise SystemExit(1)
         return
 
     if problems:
