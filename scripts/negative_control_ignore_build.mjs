@@ -127,6 +127,21 @@ const MUTATIONS = [
     find: "if [ -z \"$base_sha\" ] && [ \"${VERCEL_ENV:-}\" = 'production' ]; then",
     replace: 'if [ -z "$base_sha" ]; then',
   },
+  {
+    // The measured saving: three of the seven web previews of 2026-08-27/28
+    // were full Next.js builds of branches whose entire diff is Python. With
+    // this arm gone every first preview builds again, and only a SKIP
+    // assertion can tell — a BUILD is also what a broken script produces.
+    name: "a branch's first preview loses its default-branch window",
+    find: "if [ -z \"$base_sha\" ] && [ \"${VERCEL_ENV:-}\" = 'preview' ]; then",
+    replace: 'if false; then',
+  },
+  {
+    // Fail-open doctrine: only a build whose shape we recognise gets measured.
+    name: 'the preview window is taken on any non-production environment',
+    find: "if [ -z \"$base_sha\" ] && [ \"${VERCEL_ENV:-}\" = 'preview' ]; then",
+    replace: "if [ -z \"$base_sha\" ] && [ \"${VERCEL_ENV:-}\" != 'production' ]; then",
+  },
 
   // The two call sites. These mutate a TRACKED file in place rather than a
   // copy, because there is no indirection to point the suite at a different
