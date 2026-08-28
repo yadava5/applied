@@ -766,6 +766,15 @@ class ReviewClassifyRequest(BaseModel):
     :func:`_misspelled_employer`); this flag is the human saying no, these really
     are two employers. Deliberately an explicit acknowledgement and not a
     default: the whole point is that the typo was accepted silently once.
+
+    ``none_of_these`` is the OTHER answer to "which of these is it about?", and
+    it needs a field of its own because an absent ``application_id`` cannot
+    carry it. Absent means "nobody asked" — the single-candidate queue rows, the
+    mail reclassify surface, the live scan — and the honest answer to silence is
+    the tie-break in :func:`_pick_application`. It is the wrong answer to a
+    person saying "not one of those": for a rejection the tie-break moves a LIVE
+    application to a terminal status, and ``advance_application_status`` never
+    walks a terminal status back. Reading the two as one value is #554.
     """
 
     category: EmailCategory
@@ -773,6 +782,7 @@ class ReviewClassifyRequest(BaseModel):
     application_id: int | None = None
     message: ScannedMessageIn | None = None
     confirm_new_company: bool = False
+    none_of_these: bool = False
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -3393,6 +3403,7 @@ async def classify_review_item(
     application_id: int | None = None,
     scanned: ScannedMessageIn | None = None,
     confirm_new_company: bool = False,
+    none_of_these: bool = False,
 ) -> dict[str, object]:
     """Classify a needs-review email into a category — persist + train.
 
@@ -3621,19 +3632,38 @@ async def classify_review_item(
 
     if status_value is not None and employer is not None:
         token, display = employer
-        # The user's own answer to "which application is this about?" outranks
-        # every inference below it — that is the whole point of asking. Still
-        # validated: the row must be theirs and must be at the employer this
-        # mail actually names, so a stale or wrong id degrades to the normal
-        # resolution instead of filing a message under an unrelated company.
-        app = await _chosen_application(session, user_id, application_id, token)
-        # A row the USER picked is the most confident landing there is: they
-        # were shown the board and chose. Only the fallback can be blind.
+        # "NONE OF THESE" SKIPS RESOLUTION ENTIRELY, and that is why it is
+        # carried as its own field rather than inferred from a missing id. Both
+        # resolvers below answer "which existing row is this about?", and the
+        # user has just said the answer is none of them. Running them anyway
+        # reaches ``_pick_application``'s rule 4 — the employer's oldest live
+        # row — which on a rejection is a live application moved to a terminal
+        # status against an explicit human statement, and terminal is the one
+        # thing ``advance_application_status`` will not walk back.
+        #
+        # This is not a loosening of rule 4, which is right for the sync it was
+        # written for: only a caller that ASKED and was ANSWERED reaches here,
+        # and only on a literal ``True``. The mint below is what the user said —
+        # a lifecycle message about an application the board does not hold IS an
+        # application the board is missing — and it is the cheap direction to be
+        # wrong in: a spurious row is one dismiss click, a wrongly-terminal row
+        # is permanent.
+        app = None
         landing = LANDED_LINKED
-        if app is None:
-            app, landing = await _resolve_application_for_email(
-                session, user_id, token, email
-            )
+        if not none_of_these:
+            # The user's own answer to "which application is this about?"
+            # outranks every inference below it — that is the whole point of
+            # asking. Still validated: the row must be theirs and must be at the
+            # employer this mail actually names, so a stale or wrong id degrades
+            # to the normal resolution instead of filing a message under an
+            # unrelated company.
+            app = await _chosen_application(session, user_id, application_id, token)
+            # A row the USER picked is the most confident landing there is: they
+            # were shown the board and chose. Only the fallback can be blind.
+            if app is None:
+                app, landing = await _resolve_application_for_email(
+                    session, user_id, token, email
+                )
         # DERIVED ONCE, ABOVE THE BRANCH. It used to be bound only inside the
         # mint branch, so reading it in the else-branch raised UnboundLocalError
         # mid-request — after the session.adds and before the commit. Same
@@ -4605,6 +4635,7 @@ async def classify_review_item_cloud(
             data.application_id,
             data.message,
             data.confirm_new_company,
+            data.none_of_these,
         )
 
 

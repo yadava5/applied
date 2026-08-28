@@ -30,8 +30,10 @@ import {
   NEEDS_EMPLOYER_PROMPT,
   NEEDS_EMPLOYER_RETRY,
   canNameCompany,
+  canSubmitReview,
   classifyRequestBody,
   confirmCompanyPrompt,
+  pickerAnswered,
   employerPromptFor,
   readClassifyOutcome,
   reviewCandidates,
@@ -245,7 +247,11 @@ test("the assign-to-application choice rides the body only when it is a real id"
     company: "Amazon",
     application_id: 42,
   });
-  // "not one of these", absent, or garbage → the field is simply not sent.
+  // UNANSWERED, or garbage → the field is simply not sent. This list used to
+  // begin with the comment "not one of these, absent, or garbage", which is the
+  // defect #554 is about written down as a contract: it made a deliberate human
+  // answer and an unanswered control produce the same wire body. `"none"` is
+  // now its own value and is asserted separately below.
   for (const empty of [undefined, null, 0, -1, 1.5, Number.NaN]) {
     assert.deepEqual(
       classifyRequestBody("rejection", "", empty),
@@ -253,6 +259,68 @@ test("the assign-to-application choice rides the body only when it is a real id"
       `classifyRequestBody("rejection", "", ${String(empty)})`,
     );
   }
+});
+
+test('"none of these" is an answer on the wire, not the absence of one', () => {
+  // The whole point: this body must be DISTINGUISHABLE from the one above.
+  // Absent means "nobody asked", which the backend answers by tie-breaking onto
+  // the employer's oldest live row. On a rejection that moves a live
+  // application to a terminal status, and terminal is the one thing
+  // `advance_application_status` will not walk back.
+  assert.deepEqual(classifyRequestBody("rejection", "", "none"), {
+    category: "rejection",
+    none_of_these: true,
+  });
+  assert.deepEqual(classifyRequestBody("rejection", "Amazon", "none"), {
+    category: "rejection",
+    company: "Amazon",
+    none_of_these: true,
+  });
+
+  // …and it is not the same body as a picked row, in either direction. Both
+  // halves are asserted because one value builds both fields: a mapping that
+  // sent `application_id` alongside the flag, or the flag alongside an id,
+  // would leave the backend two answers to one question.
+  const picked = classifyRequestBody("rejection", "", 42);
+  assert.equal(picked.application_id, 42);
+  assert.equal("none_of_these" in picked, false);
+  const none = classifyRequestBody("rejection", "", "none");
+  assert.equal("application_id" in none, false);
+});
+
+test("the submit gate blocks a shown picker that has not been answered", () => {
+  const CATEGORY = "rejection";
+
+  // The defect, stated as an assertion: a picker on screen with nothing chosen
+  // must not be sendable.
+  assert.equal(canSubmitReview(CATEGORY, true, null), false);
+
+  // CONTROL — an answered picker sends. Without this, `() => false` passes the
+  // line above and the queue stops working entirely.
+  assert.equal(canSubmitReview(CATEGORY, true, 42), true);
+
+  // CONTROL — "none of these" IS an answer. The fix adds a click; it does not
+  // remove the option. Without this, "only a number counts" passes both lines
+  // above and wedges every user whose message really is about no card shown.
+  assert.equal(canSubmitReview(CATEGORY, true, "none"), true);
+
+  // CONTROL — no picker, no extra click. This is the single-candidate employer
+  // and it is most of the queue; without it, "always require an assignment"
+  // passes everything above and puts a mandatory question on rows that have
+  // none to ask.
+  assert.equal(canSubmitReview(CATEGORY, false, null), true);
+
+  // CONTROL — the stage is still required, picker or not. This is the rule that
+  // was already there, and a rewrite that only looks at the assignment would
+  // let an unclassified row be sent.
+  assert.equal(canSubmitReview("", false, null), false);
+  assert.equal(canSubmitReview("", true, 42), false);
+});
+
+test("pickerAnswered treats none as answered and null as not", () => {
+  assert.equal(pickerAnswered(null), false);
+  assert.equal(pickerAnswered("none"), true);
+  assert.equal(pickerAnswered(42), true);
 });
 
 /** A board shaped like the owner's: several applications at one employer. */

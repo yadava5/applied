@@ -168,13 +168,42 @@ const HELD_SEEDS: HeldSeed[] = [
     // `?review=N` knob (3, 4, 7) keeps exactly the rows it had; only a caller
     // asking for 8 or more reaches this one. Inserting it anywhere else would
     // silently re-date and re-order the queue every geometry spec measures.
-    subject: "Thank you for your interest in Verkada",
+    //
+    // THE EMPLOYER MUST BE ONE THIS BOARD ACTUALLY HOLDS (#554). This seed said
+    // "Verkada", and the demo board has no Verkada row — so `reviewCandidates`
+    // matched nothing, the picker never rendered, and the one seed written for
+    // the "which application?" question asked it of an empty list. The twin was
+    // therefore a strict subset of the signed-in page in exactly the way this
+    // file's header warns about, one control further in: the picker had no
+    // browser-testable surface anywhere in the repo, which is how it shipped
+    // with "not one of these" pre-selected. `Northstar Systems` holds four rows
+    // (`a1`, `a2`, `a3`, `a7` in `demoData.ts`) and is the board's stand-in for
+    // the owner's four Amazon requisitions, which is the shape this asks about.
+    subject: "Thank you for your interest in Northstar Systems",
     senderName: null,
     senderEmail: "no-reply@us.greenhouse-mail.io",
     snippet:
       "Thank you for your interest in the Embedded Software Engineer, Access Control opportunity. It means a lot to us that you would consider joining our mission.",
     confidence: 0.95,
     receivedDaysAgo: 10,
+    holdReason: "which_application",
+  },
+  {
+    // THE CONTROL FOR THE ROW ABOVE, and it is not decoration. The picker is
+    // shown only when an employer holds SEVERAL candidates; a single-application
+    // employer must still be one click, and most of the queue is that case.
+    // Without a seed that reaches exactly one row, widening the predicate from
+    // "two or more" to "one or more" puts a mandatory question on every row in
+    // the queue and no test in the repo goes red.
+    //
+    // `Quarry Data` holds exactly one row (`a8`).
+    subject: "Thank you for your interest in Quarry Data",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.io",
+    snippet:
+      "Thank you for your interest in the Data Platform opportunity. It means a lot to us that you would consider joining our mission.",
+    confidence: 0.95,
+    receivedDaysAgo: 11,
     holdReason: "which_application",
   },
 ];
