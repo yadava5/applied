@@ -170,6 +170,15 @@ export function properties(object) {
  * The mutation it exists for is `needsReview: state.needsReview` -> `needsReview: 0`:
  * the old grep survives that, and so does any "the keys are right" check. A
  * bare read (`x`, `x.y`, `x[0]`, `x!.y`) passes; a literal does not.
+ *
+ * THIS IS THE TWIN'S CHECK, not the page's, and the distinction is the whole
+ * point of `isPropertyAccessOf` below. "Reads *a* binding" is satisfied by
+ * `needsReview: state.total` (always 0 in the branch that is only entered when
+ * it is), by `scanCompleted: scanFailed` (the inversion the page's own comment
+ * exists to prevent), and by a laundered literal — `const NONE = 0` above the
+ * call, `needsReview: NONE` in it. The twin can only be held to this weaker
+ * shape because its `needsReview` comes from a query parameter whose plumbing
+ * is allowed to be renamed; the page's three inputs are pinned by name.
  */
 export function readsABinding(expression) {
   let cursor = expression;
@@ -256,6 +265,46 @@ export function enclosingWhenTrue(node) {
 }
 
 /**
+ * The nearest `cond ? … : …` this node sits ANYWHERE inside — either arm — or
+ * `null`.
+ *
+ * The twin needs `bindingFor` to walk out through a conditional (that is how
+ * it chooses between the two builders), and the page inherits that allowance
+ * for free: `const subtitle = state.needsReview > 0 ? emptySubtitle({…}) : ""`
+ * binds, reaches the SyncBar, and sits in the empty branch, so every other
+ * assertion passes while a real empty board with nothing held renders an empty
+ * subtitle. The page does not branch on anything, so the honest assertion
+ * there is that this returns `null`. Unlike `enclosingWhenTrue` it does not
+ * care which arm — `cond ? "" : emptySubtitle({…})` is the same defect
+ * inverted.
+ */
+export function enclosingConditional(node) {
+  let cursor = node;
+  while (cursor.parent && !ts.isSourceFile(cursor.parent)) {
+    if (ts.isConditionalExpression(cursor.parent)) return cursor.parent;
+    cursor = cursor.parent;
+  }
+  return null;
+}
+
+/**
+ * Every expression under `root` that tests the board for emptiness.
+ *
+ * WHY A COUNT AND NOT A FIND. Asserting "the call sits under `state.total === 0`"
+ * says nothing about the OTHER branches, so a second empty-board return
+ * inserted ABOVE the gated one — `if (state.total === 0 && gmailState ===
+ * "unknown") return <SyncBar subtitle="0 filed" …>` — takes a slice of empty
+ * boards to a literal subtitle while every assertion here stays green. The
+ * page's own comment at the branch records that this split shipped once and
+ * cost real work. One expression, one branch, one subtitle: the count IS the
+ * assertion. The `&&` form is caught because its tree still contains the
+ * `===` node.
+ */
+export function emptyBoardTests(root) {
+  return collect(root, testsBoardIsEmpty);
+}
+
+/**
  * Is this expression literally `state.total === 0` — the real page's empty-board
  * condition? Structural on every part, so `state.total === 1`,
  * `state.total !== 0` and `summary.total === 0` all read false.
@@ -271,6 +320,26 @@ export function testsBoardIsEmpty(expression) {
     left.name.text === "total" &&
     ts.isNumericLiteral(right) &&
     right.text === "0"
+  );
+}
+
+/**
+ * Is this expression exactly the property access `objectName.propertyName`?
+ *
+ * The strict counterpart to `readsABinding`, for a value whose SOURCE is part
+ * of the contract and not merely its shape: the page's `needsReview` must be
+ * `state.needsReview`, because `state.total` reads a binding, typechecks as a
+ * number, and is 0 by construction everywhere this branch runs — permanently
+ * silencing the held-mail note without changing a character `readsABinding`
+ * can see. Structural on both halves, so `state.total`, `other.needsReview`
+ * and `state.counts.needsReview` all read false.
+ */
+export function isPropertyAccessOf(expression, objectName, propertyName) {
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === objectName &&
+    expression.name.text === propertyName
   );
 }
 
