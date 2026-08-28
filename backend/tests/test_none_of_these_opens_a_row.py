@@ -16,8 +16,25 @@ status it will not walk back, and no product surface re-points a filed message,
 so the wrong card was rejected permanently and the application that really was
 rejected still read "Applied".
 
-Measured over 2,701 replayed queue answers: requiring the pick took applications
-destroyed from **19 to 0** and applications scattered from 58 to 1.
+WHERE THE NUMBER COMES FROM, because "19 destroyed records" is the sentence this
+whole change rests on and it is not re-derived by anything in CI.
+
+``tests/corpus_independent/harness.py``'s ``answer_the_queue`` replays every held
+case in the independent corpus — 2,701 of them — through this very function, and
+``test_independent_corpus.py`` records what that produces
+(``RECORDED_ANSWERS``: 2,701 queued, 2,701 answered, 2,024 filed on an existing
+card, 421 landing where several existed). The comparison below was made by
+running that same replay twice, changing exactly one thing: whether ground truth
+supplies ``application_id``.
+
+    default (as the queue behaved)     19 MERGE, 58 SPLIT, 80 blank titles
+    a card supplied every time          0 MERGE,  1 SPLIT, 42 blank titles
+
+It is a one-off probe and deliberately not a gate: the two arms need two database
+states and therefore two full replays, roughly +2 minutes on a gate that already
+takes ten, to re-derive a number that cannot move until this issue is fixed. What
+IS a gate is everything below, plus the recorded counters the corpus already
+carries.
 
 WHY "NONE OF THESE" IS ITS OWN FIELD AND NOT AN ABSENT ID. Absent means "nobody
 asked" — single-candidate queue rows, the mail reclassify surface, the live scan

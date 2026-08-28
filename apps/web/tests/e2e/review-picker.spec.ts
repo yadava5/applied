@@ -13,7 +13,9 @@ import { startConsoleWatch } from "./helpers";
  * indistinguishable from silence, and silence is answered by the employer's
  * OLDEST live row; on a rejection that moves a live application to a terminal
  * status nothing walks back. Replayed over 2,701 queue answers, requiring the
- * pick took applications destroyed from 19 to 0.
+ * pick took applications destroyed from 19 to 0 — a one-off probe, whose
+ * provenance is written out in
+ * `backend/tests/test_none_of_these_opens_a_row.py`.
  *
  * WHY THIS FILE HAS TO EXIST IN A BROWSER. The decision itself is a pure
  * function in `lib/dashboard/review.ts` and `tests/unit/` proves it four ways.

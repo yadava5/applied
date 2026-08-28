@@ -133,6 +133,12 @@ export interface ClassifyRequestBody {
    * tie-break moves a live application to a terminal status, which
    * `advance_application_status` never walks back.
    *
+   * The field crosses FIVE rebuilds, not the three that are obvious from here:
+   * this function, the proxy's `readClassifyBody`, its `classifyBackendBody`,
+   * and then FastAPI's own re-spread of the parsed body into arguments. The
+   * last one is the least visible and was the one that could be cut with every
+   * test still green.
+   *
    * So the two are separated on the wire. With this flag the backend skips
    * resolution entirely and opens a new application, which is what the user
    * literally said: a lifecycle message about an application the board does not

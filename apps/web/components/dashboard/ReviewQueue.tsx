@@ -102,7 +102,9 @@ function ReviewRow({
    * that discards the question was the default, and a user who read the subject,
    * chose a stage and clicked classify had answered it without choosing it
    * (#554). Measured over 2,701 replayed answers, requiring the pick took
-   * applications destroyed from 19 to 0 and applications scattered from 58 to 1.
+   * applications destroyed from 19 to 0 and applications scattered from 58 to 1
+   * — a one-off probe over the corpus harness, not a CI gate; its provenance is
+   * written out in `backend/tests/test_none_of_these_opens_a_row.py`.
    *
    * This is the rule `CATEGORY_CHOICES` above already states for the stage
    * select — "the control must not answer for the user" — applied to the control

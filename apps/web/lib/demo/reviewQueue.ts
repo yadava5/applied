@@ -63,12 +63,18 @@ interface HeldSeed {
 }
 
 /**
- * Seven held messages, cycled to whatever length the harness asks for. Most sit
+ * NINE held messages, cycled to whatever length the harness asks for. Most sit
  * in the uncertain band under the gate; one cleared it and is held for a
  * missing employer name, which is the branch the amber/green split in the row's
  * confidence line exists to distinguish.
  *
- * The last TWO are one shape and belong together: an applicant tracking system
+ * The count is stated here and the list is below it, so this sentence goes stale
+ * the moment someone appends without reading — it said "Seven" over eight seeds
+ * before #554 touched the file, and the paragraph below it pointed at the wrong
+ * pair. Both are fixed; the lesson is that a hand-maintained count in prose is
+ * worth exactly what the next reader's diligence is worth.
+ *
+ * SEEDS 6 AND 7 are one shape and belong together: an applicant tracking system
  * sends every acknowledgement for an employer under one subject from one
  * no-reply address, so the queue can hold several entries whose subject and
  * sender are byte-identical and which are nevertheless different applications.
@@ -77,6 +83,12 @@ interface HeldSeed {
  * telling the two rows apart is the role. Seeding it here is what keeps the
  * twin from being a strict subset of the page it stands in for — the omission
  * this file's header is about, in its next form.
+ *
+ * SEEDS 8 AND 9 are the "which application is this about?" pair, added by #554:
+ * one employer holding four cards, one holding a single card. They are the only
+ * seeds that make the picker render at all, and neither is a repeat of the pair
+ * above — 6 and 7 differ by ROLE, which is what stops them being one question
+ * asked twice, while 8 names no role and so cannot be placed without asking.
  */
 const HELD_SEEDS: HeldSeed[] = [
   {

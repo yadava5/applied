@@ -1629,6 +1629,196 @@ async def test_review_item_classify_creates_sticky_application(client: AsyncClie
     assert not any(i["message_id"] == "rv1" for i in review2["items"])
 
 
+# ---------------------------------------------------------------------------
+# "None of these" has to survive the HTTP boundary (#554)
+#
+# `backend/tests/test_none_of_these_opens_a_row.py` proves what
+# `classify_review_item` DOES with the flag, and the web unit tests prove the
+# browser and the proxy both build it. Between those two fronts sit three
+# rebuilds nothing executes in CI: the Next route handler, `classifyReviewItem`,
+# and `classify_review_item_cloud`'s own re-spread of `data` into arguments.
+#
+# That gap is not theoretical. Deleting `none_of_these=data.none_of_these` from
+# the endpoint leaves every one of those tests green — the flag never reaches the
+# function, "none of these" silently degrades to the oldest-row tie-break, and
+# #554 is back in production with a green board. Three fields have already been
+# lost on a hop exactly like it (`confidence`, `applied_date`, `url`), and a
+# fourth (`confirm_new_company`) was lost on the two hops above it.
+#
+# So these two tests go over HTTP, against the real app, and they are a PAIR:
+# one asserts the flag changes the outcome, the other asserts it is the flag
+# doing it and not the endpoint having stopped resolving altogether.
+# ---------------------------------------------------------------------------
+
+
+async def _two_northwind_rows_and_a_blind_review_item(
+    client: AsyncClient, headers: dict[str, str], message_id: str
+) -> list[int]:
+    """Two applications at one employer, and a held message naming no role."""
+
+    ids = []
+    for position in ("Backend Engineer", "Platform Engineer"):
+        created = await client.post(
+            "/applications",
+            json={"company": "Northwind", "position": position},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        ids.append(created.json()["id"])
+
+    relayed = [
+        {
+            "message_id": message_id,
+            "category": "needs_review",
+            "sender_email": "talent@northwind.com",
+            "sender_name": "Northwind",
+            # Names no role anywhere the resolver can reach — which is the whole
+            # reason a message like this reaches the picker.
+            "subject": "Update on your application",
+            "confidence": 0.62,
+            "received_at": "2026-05-25T09:00:00+00:00",
+        }
+    ]
+    synced = await client.post("/gmail/sync", json={"items": relayed}, headers=headers)
+    assert synced.status_code == 200, synced.text
+    return ids
+
+
+async def _northwind_rows(client: AsyncClient, headers: dict[str, str]) -> list[dict]:
+    listing = (await client.get("/applications", headers=headers)).json()
+    return [a for a in listing["applications"] if a["company"].lower() == "northwind"]
+
+
+async def test_none_of_these_reaches_the_backend_and_opens_a_row(
+    client: AsyncClient,
+) -> None:
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    existing = await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-none")
+
+    resp = await client.post(
+        "/applications/review/rv-none/classify",
+        json={"category": "rejection", "none_of_these": True},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    filed = resp.json()["application_id"]
+    assert filed is not None
+    assert filed not in existing, (
+        "the user said none of these and the message was filed onto one of them "
+        "— the flag did not reach classify_review_item"
+    )
+
+    rows = await _northwind_rows(client, headers)
+    assert len(rows) == 3, "the answer opens the row the board was missing"
+    for row in rows:
+        if row["id"] in existing:
+            assert row["status"] == "applied", (
+                f"application {row['id']} was moved to {row['status']} by a "
+                "message the user said was not about it"
+            )
+
+
+async def test_without_the_flag_the_same_request_settles_an_existing_row(
+    client: AsyncClient,
+) -> None:
+    """The control. Same fixture, same endpoint, the flag removed.
+
+    Without this the test above passes whenever the endpoint mints — including
+    when it has stopped resolving for some unrelated reason — and would say
+    nothing about the flag.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    existing = await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-silent")
+
+    resp = await client.post(
+        "/applications/review/rv-silent/classify",
+        json={"category": "rejection"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["application_id"] in existing, (
+        "silence must still resolve onto an existing row; the fix separates the "
+        "ANSWER from silence, it does not change what silence means"
+    )
+    assert len(await _northwind_rows(client, headers)) == 2, "silence opens nothing"
+
+
+async def test_the_chosen_application_reaches_the_backend_too(
+    client: AsyncClient,
+) -> None:
+    """The picker's OTHER answer crosses the same seam, and had the same hole.
+
+    Found by mutating the endpoint after the two tests above landed: replacing
+    `application_id=data.application_id` with `None` left every test green. The
+    suite's existing `test_the_users_choice_of_application_is_honoured` calls
+    `_chosen_application` directly and never invokes the endpoint, so the whole
+    picker could become decoration without a single red.
+
+    The SECOND row is chosen deliberately. The failure this guards is filing onto
+    the employer's oldest, so choosing the first would be satisfied by the bug.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    existing = await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-pick")
+    chosen = existing[1]
+
+    resp = await client.post(
+        "/applications/review/rv-pick/classify",
+        json={"category": "rejection", "application_id": chosen},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["application_id"] == chosen, (
+        "the user picked a row and the message landed somewhere else — the id "
+        "did not reach classify_review_item"
+    )
+
+    rows = {r["id"]: r for r in await _northwind_rows(client, headers)}
+    assert len(rows) == 2, "a pick resolves; it does not open a row"
+    assert rows[chosen]["status"] == "rejected"
+    assert rows[existing[0]]["status"] == "applied", "the oldest row was not the answer"
+
+
+async def test_the_flag_is_not_manufactured_at_the_api_boundary(
+    client: AsyncClient,
+) -> None:
+    """A truthy value is not a person clicking "none of these".
+
+    The "only a literal true" rule is enforced in the proxy's `readClassifyBody`,
+    which a caller reaching this API directly never passes through. `StrictBool`
+    is what makes the rule hold here too — without it Pydantic coerces, and the
+    string "false" is truthy.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-coerce")
+
+    for raw in ["true", "false", 1, "1"]:
+        resp = await client.post(
+            "/applications/review/rv-coerce/classify",
+            json={"category": "rejection", "none_of_these": raw},
+            headers=headers,
+        )
+        assert resp.status_code == 422, (
+            f"none_of_these={raw!r} was accepted as an answer: {resp.text}"
+        )
+
+    # CONTROL — a real boolean is still an answer. Without this, a validator that
+    # refused everything would satisfy the loop above and break the feature.
+    ok = await client.post(
+        "/applications/review/rv-coerce/classify",
+        json={"category": "rejection", "none_of_these": True},
+        headers=headers,
+    )
+    assert ok.status_code == 200, ok.text
+    assert len(await _northwind_rows(client, headers)) == 3
+
+
 async def test_resync_purges_stale_auto_but_preserves_manual(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -32,7 +32,7 @@ from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, or_
 from sqlalchemy import update as sa_update
@@ -781,8 +781,14 @@ class ReviewClassifyRequest(BaseModel):
     company: str | None = None
     application_id: int | None = None
     message: ScannedMessageIn | None = None
-    confirm_new_company: bool = False
-    none_of_these: bool = False
+    # ``StrictBool`` on both, because the "only a literal true is an answer"
+    # rule is enforced in `readClassifyBody` — which is the PROXY, not this
+    # boundary. Pydantic's default mode coerces ``"true"``, ``"false"`` and
+    # ``1``, so a caller reaching the API directly could turn the string
+    # ``"false"`` (truthy) into an answer nobody gave. One of these flags skips
+    # the typo check and the other OPENS A ROW; neither may be manufactured.
+    confirm_new_company: StrictBool = False
+    none_of_these: StrictBool = False
 
 
 class CloudApplicationListResponse(BaseModel):
@@ -4626,16 +4632,22 @@ async def classify_review_item_cloud(
     """
 
     async with get_session() as session:
+        # BY KEYWORD, and that is not a style preference. This is the FIFTH
+        # rebuild of the classify body — browser, proxy in, proxy out, this,
+        # then the function — and a positional list is how `confidence`,
+        # `applied_date` and `url` were each lost on a hop like it. Positionally,
+        # a field inserted into `ReviewClassifyRequest` above its neighbours
+        # silently shifts every argument after it and every type still checks.
         return await classify_review_item(
             session,
             user_id,
             message_id,
             data.category,
-            data.company,
-            data.application_id,
-            data.message,
-            data.confirm_new_company,
-            data.none_of_these,
+            company=data.company,
+            application_id=data.application_id,
+            scanned=data.message,
+            confirm_new_company=data.confirm_new_company,
+            none_of_these=data.none_of_these,
         )
 
 
