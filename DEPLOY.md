@@ -253,12 +253,19 @@ skips, `exit 1` builds). **The reasoning lives in the header of
 lists are an allowlist: a new build input that is not added there will never
 deploy.
 
-A branch's first preview always builds, so the e2e browser pass always has a
-preview URL.
+A branch's first preview has no previous deployment to diff against, so it is
+measured against the tip of `main` instead. That arm is entered only on
+`VERCEL_ENV=preview`; anything else with no base builds. It replaced an
+unconditional build whose stated reason — that the e2e pass needs a preview URL
+— was never true: both Playwright jobs in `e2e-ci.yml` pin
+`PLAYWRIGHT_BASE_URL` to `http://localhost:3000` and nothing in
+`.github/workflows` reads a preview URL at all. Three of the seven
+`jobtracker-web` previews on 2026-08-27/28 were full Next.js builds of branches
+whose entire diff is Python.
 
 `scripts/test_vercel_ignore_build.mjs` pins every one of these answers against
 real commits from this repository's history, and
-`scripts/negative_control_ignore_build.mjs` breaks the guard ten ways to prove
+`scripts/negative_control_ignore_build.mjs` breaks the guard 21 ways to prove
 that suite can go red. Both run in CI (`.github/workflows/vercel-ignore-build.yml`)
 on any change to the guard, to either `vercel.json`, or to `.vercelignore`. If
 you change the allowlist, change the suite in the same commit.
