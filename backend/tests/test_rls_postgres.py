@@ -34,8 +34,6 @@ so ordinary CI / desktop runs (no Postgres) stay green.
 
 from __future__ import annotations
 
-import atexit
-import contextlib
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -47,6 +45,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from tests.pg_support import register_owned_container
 
 
 def _resolve_admin_url():
@@ -97,51 +97,28 @@ def _resolve_admin_url():
 
 ADMIN_URL, _OWNED_CONTAINER = _resolve_admin_url()
 
-
-_CONTAINER_STOPPED = False
-
-
-def _stop_owned_container() -> None:
-    """Stop the throwaway container once, from whichever path reaches it first.
-
-    WHY ``teardown_module`` ALONE IS NOT ENOUGH
-    -------------------------------------------
-    The container is started at **import** time (``_resolve_admin_url`` runs at
-    module scope), but ``teardown_module`` only fires once pytest has actually
-    *executed* a test in this module. Every run that imports the module without
-    running its tests therefore leaves a ``postgres:16`` up forever:
-    ``--collect-only``, a ``-k`` expression that deselects everything here, or
-    an earlier ``-x`` failure that aborts the session before this file's turn.
-
-    That is not a hypothesis. ``pytest tests/test_rls_postgres.py
-    --collect-only`` leaves a container running, and nothing reaps it — watched
-    for 90 s, still up — which is exactly the reported "postgres:16 still
-    running 15 minutes after the suite exited 0". A full run stops it correctly,
-    which is why it looked intermittent.
-
-    ``atexit`` covers every one of those paths. ``teardown_module`` still calls
-    this so the normal case releases the port promptly rather than at process
-    exit, and the flag makes the second call a no-op — ``stop()`` on an
-    already-removed container raises.
-    """
-
-    global _CONTAINER_STOPPED
-
-    if _OWNED_CONTAINER is None or _CONTAINER_STOPPED:
-        return
-    _CONTAINER_STOPPED = True
-    with contextlib.suppress(Exception):  # already gone, or the daemon went away
-        _OWNED_CONTAINER.stop()
-
-
-if _OWNED_CONTAINER is not None:
-    atexit.register(_stop_owned_container)
+_STOP_OWNED_CONTAINER = (
+    register_owned_container(_OWNED_CONTAINER)
+    if _OWNED_CONTAINER is not None
+    else (lambda: None)
+)
 
 
 def teardown_module(module) -> None:  # noqa: ANN001 - pytest hook signature
-    """Stop the container we started, if we started one."""
+    """Release the container promptly; ``atexit`` covers the runs that skip here.
 
-    _stop_owned_container()
+    The container is started at **import**, but ``teardown_module`` only fires
+    once pytest has actually *executed* a test in this module — so
+    ``--collect-only``, a ``-k`` that deselects everything, and an ``-x`` abort
+    earlier in the session all reach process exit with it still up. That was
+    the reported "postgres:16 still running 15 minutes after the suite exited
+    0", and it is why the ``atexit`` registration inside
+    ``register_owned_container`` is the guarantee and this hook is only the
+    prompt release. ``tests/pg_support.py`` carries the measurement, including
+    why Ryuk does not cover it.
+    """
+
+    _STOP_OWNED_CONTAINER()
 
 
 pytestmark = pytest.mark.skipif(

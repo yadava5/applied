@@ -47,13 +47,75 @@ the four Postgres modules in separate pytest invocations.
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import os
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 _RESOLVED: tuple[str | None, Any] | None = None
+
+
+def register_owned_container(container: Any) -> Callable[[], None]:
+    """Stop ``container`` when this interpreter exits, and hand back the stopper.
+
+    WHY THIS IS OURS TO DO, AND NOT RYUK'S
+    ---------------------------------------
+    Testcontainers ships a resource reaper (Ryuk) whose whole job is this, and
+    it is enabled here — ``testcontainers_config.ryuk_disabled`` is ``False``
+    and no ``.testcontainers.properties`` overrides it. It genuinely starts:
+    driving ``PostgresContainer("postgres:16").start()`` from a throwaway
+    script and listing containers from inside that same process shows
+    ``testcontainers/ryuk:0.8.1  testcontainers-ryuk-8ccd7575-…`` alive beside
+    the database.
+
+    It still reaps nothing. Ryuk kills a session's containers
+    ``RYUK_RECONNECTION_TIMEOUT`` (10 s) after the client that spawned it drops
+    the socket — but ``Reaper.delete_instance`` is itself registered with
+    ``atexit`` and **stops the Ryuk container** on the way out. The client kills
+    its own reaper before the reaper's timer can start. Measured: two seconds
+    after that script exited, the Ryuk container was gone and the ``postgres:16``
+    was still up; it was still up thirty seconds later.
+
+    So on any orderly exit the container is ours to stop, and only ours. Ryuk
+    remains the backstop for the path where ``atexit`` never runs at all — a
+    ``SIGKILL`` — which is why nothing here disables it.
+
+    WHY ``teardown_module`` IS NOT ENOUGH ON ITS OWN
+    ------------------------------------------------
+    Every module that uses a throwaway Postgres resolves it at **import** time,
+    but ``teardown_module`` only fires once pytest has actually *executed* a
+    test in that module. A run that imports without running — ``--collect-only``,
+    a ``-k`` that deselects everything, an ``-x`` abort earlier in the session —
+    leaves the container up forever. ``atexit`` is what covers those.
+
+    THE FLAG IS PER CONTAINER
+    -------------------------
+    ``stop()`` on an already-removed container raises, so the stopper must be
+    idempotent — ``teardown_module`` calls it for the normal case, so the port
+    is released promptly rather than at process exit, and ``atexit`` calls it
+    again. The flag lives in this closure rather than in a module global
+    because three modules register three different containers through here, and
+    one shared flag would make every registration after the first a silent
+    no-op.
+    """
+
+    stopped = False
+
+    def stop() -> None:
+        nonlocal stopped
+        if stopped:
+            return
+        stopped = True
+        with contextlib.suppress(Exception):  # already gone, or the daemon did
+            container.stop()
+
+    atexit.register(stop)
+    return stop
+
 
 
 def resolve_admin_url() -> tuple[str | None, Any]:
@@ -63,6 +125,10 @@ def resolve_admin_url() -> tuple[str | None, Any]:
     otherwise a throwaway ``postgres:16`` via testcontainers, otherwise
     ``(None, None)`` and the caller skips. A suite that runs only when a human
     exported a variable is a suite that never runs.
+
+    A container started here is registered for teardown before it is handed
+    out — see ``register_owned_container`` for why that cannot be left to
+    Ryuk or to ``teardown_module``.
     """
 
     global _RESOLVED
@@ -87,6 +153,7 @@ def resolve_admin_url() -> tuple[str | None, Any]:
         _RESOLVED = (None, None)
         return _RESOLVED
 
+    register_owned_container(container)
     _RESOLVED = (container.get_connection_url(), container)
     return _RESOLVED
 
