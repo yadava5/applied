@@ -47,7 +47,8 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -547,16 +548,40 @@ test('no base supplied on a production deploy falls back to HEAD^', () => {
   expect('api', api, SKIP, 'api: no changes in');
 });
 
-// Deliberately no HEAD^ fallback on previews: with no previous deployment the
-// branch has no preview URL yet and the e2e pass needs one, so a branch's first
-// build always happens.
-test('no base supplied on a preview builds, with no HEAD^ fallback', () => {
+// A preview with no supplied base is measured against the DEFAULT BRANCH TIP.
+//
+// This test used to assert the opposite — `no usable base commit; building` —
+// because a branch's first preview built unconditionally. That was not a
+// contract worth defending: three of the seven web previews of 2026-08-27/28
+// were full Next.js builds of branches whose entire diff is Python. The script
+// header records the measurement. A test that asserts the old answer would now
+// defend the waste, so it asserts the new one.
+//
+// `HEAD^` must STILL not appear on a preview. That half of the old contract is
+// intact and is the half that had a real reason: a branch's first push can
+// carry many commits and the newest one is not the window.
+test('no base supplied on a preview is measured against the default branch tip', () => {
   const env = prod(C.neither, { VERCEL_ENV: 'preview' });
   delete env.VERCEL_GIT_PREVIOUS_SHA;
-  const got = expect('web', env, BUILD, 'no usable base commit; building');
+  const got = expect('web', env, BUILD, 'measuring against main tip');
   assert.ok(
     !got.stderr.includes('falling back to HEAD^'),
     `previews must not narrow to HEAD^:\n${got.stderr}`,
+  );
+});
+
+// The arm is entered on VERCEL_ENV=preview and on nothing else. "Not
+// production" is a wider door than this deserves: an unset or unrecognised
+// VERCEL_ENV means the build's shape is not one we recognise, and the script's
+// fail-open doctrine says build. Without this test the condition can be widened
+// back to `!= 'production'` and every assertion in this file stays green.
+test('an unrecognised VERCEL_ENV does not take the preview path', () => {
+  const env = prod(C.neither, { VERCEL_ENV: 'development' });
+  delete env.VERCEL_GIT_PREVIOUS_SHA;
+  const got = expect('web', env, BUILD, 'no usable base commit; building');
+  assert.ok(
+    !got.stderr.includes('measuring against'),
+    `only a preview may be measured against the default branch:\n${got.stderr}`,
   );
 });
 
@@ -565,6 +590,167 @@ test('no base and no VERCEL_ENV builds', () => {
   delete env.VERCEL_GIT_PREVIOUS_SHA;
   delete env.VERCEL_ENV;
   expect('web', env, BUILD, 'no usable base commit; building');
+});
+
+// ---------------------------------------------------------------------------
+// 6b. A preview's first build, measured. THE SKIP IS THE POINT.
+// ---------------------------------------------------------------------------
+//
+// Everything in section 6 above asserts a BUILD, and a BUILD is what this
+// script does when anything at all goes wrong — a syntax error exits 2 and
+// reads as BUILD. So none of it can distinguish "the default-branch window was
+// computed and it contained web changes" from "the new code never ran". The
+// only assertion that can is a SKIP, and a SKIP needs a branch whose diff
+// against the default branch is empty for one project and not the other.
+//
+// The repository's own history cannot supply that fixture. The window is the
+// default branch's TIP, which moves; any commit pinned here as "no web changes
+// since main" stops being one the next time a web commit lands on main. So
+// these cases build their own three-commit repository instead. It is synthetic
+// on purpose: the script reads nothing but the path names in a diff, and a
+// repository that exists only to hold those path names cannot decay.
+//
+// The script is COPIED IN rather than invoked from this checkout, for the same
+// reason the negative control copies it: `cd "$(dirname "$0")"` means the
+// script finds its repository from its own location, so a script left outside
+// would take the "no git checkout here; building" arm and every case below
+// would pass without measuring anything.
+
+/** A throwaway repository whose only content is path names. */
+function scratchRepo({ withOriginMain }) {
+  const dir = mkdtempSync(join(tmpdir(), 'ignore-build-'));
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'core.hooksPath=', '-c', 'user.name=t',
+      '-c', 'user.email=t@example.invalid', '-C', dir, ...args], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const write = (rel, body) => {
+    mkdirSync(join(dir, dirname(rel)), { recursive: true });
+    writeFileSync(join(dir, rel), body);
+  };
+
+  git('init', '--quiet', '--initial-branch=main');
+  for (const f of ['apps/web/x.ts', 'backend/jobtracker/y.py', 'docs/z.md', '.vercelignore']) {
+    write(f, 'base\n');
+  }
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+
+  // The default branch as a build container sees it: a remote-tracking ref.
+  // Omitting it is the unreachable-default-branch case, which must fail open.
+  if (withOriginMain) git('update-ref', 'refs/remotes/origin/main', base);
+
+  // Three branches off it, each touching exactly one project's inputs.
+  const branch = (name, file) => {
+    git('checkout', '--quiet', '-b', name, base);
+    write(file, 'changed\n');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', name);
+    return git('rev-parse', 'HEAD');
+  };
+  const heads = {
+    backendOnly: branch('t/backend', 'backend/jobtracker/y.py'),
+    webOnly: branch('t/web', 'apps/web/x.ts'),
+    neither: branch('t/docs', 'docs/z.md'),
+  };
+
+  // Two commits in one push, the oldest of which carries the web change. This
+  // is the scenario `HEAD^` gets wrong, and the reason the window is not it.
+  git('checkout', '--quiet', '-b', 't/two', base);
+  write('apps/web/x.ts', 'changed first\n');
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'web change');
+  write('docs/z.md', 'changed second\n');
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'docs change on top');
+  heads.twoCommits = git('rev-parse', 'HEAD');
+
+  writeFileSync(join(dir, 'vercel-ignore-build.sh'), readFileSync(SCRIPT));
+  return { dir, base, heads };
+}
+
+/** Run the COPY inside `repo.dir`, as a preview with nothing supplied. */
+function firstPreview(repo, project, sha, overrides = {}) {
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith('VERCEL_')),
+  );
+  const r = spawnSync('bash', [join(repo.dir, 'vercel-ignore-build.sh'), project], {
+    cwd: repo.dir,
+    encoding: 'utf8',
+    env: {
+      ...clean,
+      GIT_ALLOW_PROTOCOL: 'none-for-tests',
+      GIT_TERMINAL_PROMPT: '0',
+      VERCEL_ENV: 'preview',
+      VERCEL_GIT_COMMIT_REF: 't/branch',
+      VERCEL_GIT_COMMIT_SHA: sha,
+      ...overrides,
+    },
+  });
+  if (r.error) throw r.error;
+  return { code: r.status, verdict: r.status === 0 ? SKIP : BUILD, stderr: r.stderr ?? '' };
+}
+
+function expectFirst(repo, project, sha, wanted, reason) {
+  const got = firstPreview(repo, project, sha);
+  const detail = `\n  exit=${got.code} verdict=${got.verdict}\n  stderr: ${got.stderr.trim() || '(empty)'}`;
+  assert.equal(got.verdict, wanted, `expected ${wanted}, got ${got.verdict}${detail}`);
+  assert.ok(got.stderr.includes(reason),
+    `expected stderr to contain ${JSON.stringify(reason)}${detail}`);
+  return got;
+}
+
+test("a branch's first preview skips the project it cannot change", () => {
+  const repo = scratchRepo({ withOriginMain: true });
+  try {
+    // The measured case: three of the seven web previews of 2026-08-27/28 were
+    // this exact shape and each cost a full Next.js build.
+    expectFirst(repo, 'web', repo.heads.backendOnly, SKIP, 'web: no changes in');
+    // Directional control on the SAME commit: the project it CAN change builds.
+    expectFirst(repo, 'api', repo.heads.backendOnly, BUILD, 'api: changes found');
+
+    // And the mirror image, so a guard that simply always skips web is caught.
+    expectFirst(repo, 'web', repo.heads.webOnly, BUILD, 'web: changes found');
+    expectFirst(repo, 'api', repo.heads.webOnly, SKIP, 'api: no changes in');
+
+    // Neither project's inputs: both skip.
+    expectFirst(repo, 'web', repo.heads.neither, SKIP, 'web: no changes in');
+    expectFirst(repo, 'api', repo.heads.neither, SKIP, 'api: no changes in');
+  } finally {
+    rmSync(repo.dir, { recursive: true, force: true });
+  }
+});
+
+test("a first preview's window is the whole branch, not its newest commit", () => {
+  const repo = scratchRepo({ withOriginMain: true });
+  try {
+    // Two commits pushed at once: apps/web changed in the FIRST, docs in the
+    // second. `git diff HEAD^ HEAD` sees only the docs commit and would skip
+    // the web build entirely — the failure the script's header calls out. The
+    // default-branch window sees both.
+    const got = expectFirst(repo, 'web', repo.heads.twoCommits, BUILD, 'web: changes found');
+    assert.ok(!got.stderr.includes('HEAD^'),
+      `a preview must not narrow to HEAD^:\n${got.stderr}`);
+  } finally {
+    rmSync(repo.dir, { recursive: true, force: true });
+  }
+});
+
+test('an unreachable default branch builds rather than guessing', () => {
+  // No refs/remotes/origin/main and no network: the fetch cannot answer, so
+  // there is no window. Fail open. Without this the arm could resolve an empty
+  // base and diff against nothing, which git reports as no difference — a
+  // silent SKIP of every first preview.
+  const repo = scratchRepo({ withOriginMain: false });
+  try {
+    const got = expectFirst(repo, 'web', repo.heads.webOnly, BUILD, 'no usable base commit');
+    assert.ok(got.stderr.includes('main is unreachable'),
+      `the reason must name the unresolved default branch:\n${got.stderr}`);
+  } finally {
+    rmSync(repo.dir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------
