@@ -1859,6 +1859,237 @@ async def test_confirm_new_company_is_not_manufactured_either(
 
 
 # ---------------------------------------------------------------------------
+# The two arguments #558 left behind (#562)
+#
+# Same seam, same shape of hole. `classify_review_item_cloud` rebuilds the
+# parsed body into keyword arguments, and a field deleted from that rebuild is
+# a field `classify_review_item` never sees. #558 closed `none_of_these` and
+# `application_id`; the two below were still one-line deletions.
+#
+# `confirm_new_company` is the one that was genuinely uncovered: deleting
+# `confirm_new_company=data.confirm_new_company` leaves this file, the web unit
+# suite and every e2e spec green. It is also the field that has ALREADY been
+# lost once, on the two proxy hops above this one — which is why
+# `classify-request.ts` exists as a separately-testable module.
+#
+# `scanned=data.message` was NOT in that state, and this comment is where that
+# is recorded rather than repeated as folklore: `tests/test_scan_classify.py`
+# drives this endpoint over HTTP with a `message` payload, and deleting the
+# argument reds six of its tests. Its pair is kept here anyway, stated
+# beside the review-queue surface it shares an endpoint with, and it says in
+# its own docstring which file owns the claim.
+# ---------------------------------------------------------------------------
+
+
+async def _one_northwind_row_and_a_relayed_review_item(
+    client: AsyncClient, headers: dict[str, str], message_id: str
+) -> int:
+    """One application at "Northwind", and a held message naming no employer.
+
+    The relay sender is the whole fixture. `no-reply@greenhouse-mail.io` behind
+    its own display name names nobody, so classify has to fall back to the
+    caller's `company` — and only a HAND-TYPED name is ever asked about (see
+    `named_by_hand` in `classify_review_item`). A message from the employer's
+    own domain resolves itself and never reaches the question.
+    """
+
+    created = await client.post(
+        "/applications",
+        json={"company": "Northwind", "position": "Backend Engineer"},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    relayed = [
+        {
+            "message_id": message_id,
+            "category": "needs_review",
+            "sender_email": "no-reply@greenhouse-mail.io",
+            "sender_name": "Greenhouse",
+            "subject": "Update on your application",
+            "confidence": 0.62,
+            "received_at": "2026-05-25T09:00:00+00:00",
+        }
+    ]
+    synced = await client.post("/gmail/sync", json={"items": relayed}, headers=headers)
+    assert synced.status_code == 200, synced.text
+    return created.json()["id"]
+
+
+async def _board(client: AsyncClient, headers: dict[str, str]) -> dict[str, dict]:
+    """The board by employer name — these tests turn on WHICH names are on it."""
+
+    listing = (await client.get("/applications", headers=headers)).json()
+    return {a["company"]: a for a in listing["applications"]}
+
+
+async def test_confirm_new_company_reaches_the_backend_and_opens_the_second_row(
+    client: AsyncClient,
+) -> None:
+    """Defends `confirm_new_company=data.confirm_new_company` in the endpoint.
+
+    Delete that line and the human's answer to "did you mean the one already on
+    your board?" never arrives: the re-POST is read as the first POST all over
+    again, so "no, a different company" re-asks forever and an employer one edit
+    from one already on the board can never be filed from the review queue at
+    all. The user loses the row, not just the prompt.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    await _one_northwind_row_and_a_relayed_review_item(client, headers, "rv-confirm")
+
+    asked = await client.post(
+        "/applications/review/rv-confirm/classify",
+        json={"category": "rejection", "company": "Northwynd"},
+        headers=headers,
+    )
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["needs_company_confirmation"] is True
+    assert asked.json()["suggested_company"] == "Northwind"
+    assert asked.json()["application_id"] is None
+
+    # The same request, plus the answer. Everything else is byte-identical, so
+    # the flag is the only thing that can change the outcome.
+    filed = await client.post(
+        "/applications/review/rv-confirm/classify",
+        json={
+            "category": "rejection",
+            "company": "Northwynd",
+            "confirm_new_company": True,
+        },
+        headers=headers,
+    )
+    assert filed.status_code == 200, filed.text
+    assert filed.json().get("needs_company_confirmation") is None, (
+        "the user answered the question and was asked it again — the flag did "
+        "not reach classify_review_item"
+    )
+    opened = filed.json()["application_id"]
+    assert opened is not None
+
+    board = await _board(client, headers)
+    assert set(board) == {"Northwind", "Northwynd"}, (
+        "the answer is that these are two employers; it opens a SEPARATE row"
+    )
+    assert board["Northwynd"]["id"] == opened
+    assert board["Northwynd"]["status"] == "rejected"
+    assert board["Northwind"]["status"] == "applied", (
+        "the near miss was acted on — the rejection settled the row it merely resembled"
+    )
+
+
+async def test_without_the_answer_the_same_request_asks_again_and_files_nothing(
+    client: AsyncClient,
+) -> None:
+    """The control. Same fixture, same endpoint, the answer withheld.
+
+    Without this the test above passes whenever the endpoint files something —
+    including a build that had stopped asking at all — and would say nothing
+    about the flag. Re-sending the question's own body is not an answer to it.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    northwind = await _one_northwind_row_and_a_relayed_review_item(client, headers, "rv-unanswered")
+
+    for attempt in (1, 2):
+        resp = await client.post(
+            "/applications/review/rv-unanswered/classify",
+            json={"category": "rejection", "company": "Northwynd"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["needs_company_confirmation"] is True, (
+            f"attempt {attempt}: an unanswered question stopped being asked"
+        )
+        assert resp.json()["application_id"] is None
+
+    board = await _board(client, headers)
+    assert set(board) == {"Northwind"}, "an unanswered question opens nothing"
+    assert board["Northwind"]["id"] == northwind
+    assert board["Northwind"]["status"] == "applied"
+
+
+async def test_a_scanned_message_crosses_the_hop_and_is_filed(
+    client: AsyncClient,
+) -> None:
+    """Defends `scanned=data.message` in the endpoint.
+
+    Delete that line and a correction made on the LIVE SCAN becomes a 404: the
+    scan's rows are verdicts about mail this database has never stored, so the
+    correction lands on nothing and the user's click does nothing.
+
+    NOT the primary cover for that line, and it does not claim to be —
+    `tests/test_scan_classify.py` already drives this endpoint over HTTP with a
+    `message` payload, and six of its tests red on this deletion (its
+    `test_a_scanned_message_is_stored_and_then_corrected` records that
+    mutation). #562's table says the argument is uncovered; it is not. This is
+    the same assertion stated beside the review-queue tests it shares the
+    endpoint with.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    scanned = "scan-quarry-assessment"
+
+    resp = await client.post(
+        f"/applications/review/{scanned}/classify",
+        json={
+            "category": "assessment",
+            "message": {
+                "sender_email": "talent@quarry-data.test",
+                "received_at": "2026-08-11T09:30:00+00:00",
+                "subject": "Take-home exercise for the Data Platform role",
+                "sender_name": "Quarry Data",
+                # The scan's own verdict, as the user was looking at it: below
+                # the review floor, so no sync would ever have stored it.
+                "category": "other",
+                "confidence": 0.0,
+                "method": "rules",
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    filed = resp.json()["application_id"]
+    assert filed is not None
+
+    board = await _board(client, headers)
+    assert set(board) == {"Quarry Data"}
+    assert board["Quarry Data"]["id"] == filed
+    assert board["Quarry Data"]["status"] == "assessment"
+
+    # ...and the message itself was stored, or the correction would have nothing
+    # to sit on and could never be corrected a second time.
+    listing = (await client.get("/applications/mail", headers=headers)).json()
+    stored = {m["message_id"]: m for m in listing["messages"]}
+    assert scanned in stored, "the verdict was accepted and the message was not stored"
+    assert stored[scanned]["category"] == "assessment"
+    assert stored[scanned]["user_corrected"] is True
+
+
+async def test_without_the_metadata_the_same_correction_is_a_404(
+    client: AsyncClient,
+) -> None:
+    """The control. Same message id, same category, the payload removed.
+
+    This is the state the whole scan view was in, and it is what makes the 200
+    above mean something: an unconditional mint would satisfy that test while
+    letting any caller write a row for a message id it made up.
+    """
+
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+
+    resp = await client.post(
+        "/applications/review/scan-quarry-assessment/classify",
+        json={"category": "assessment"},
+        headers=headers,
+    )
+    assert resp.status_code == 404, resp.text
+    assert (await client.get("/applications", headers=headers)).json()["applications"] == []
+
+
+# ---------------------------------------------------------------------------
 # Rule 3 asks WHO MADE THE ROW (#559)
 #
 # `_pick_application`'s rule 3 adopts an employer's single identity-less row IN
