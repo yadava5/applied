@@ -748,6 +748,41 @@ test('an unreachable default branch builds rather than guessing', () => {
     const got = expectFirst(repo, 'web', repo.heads.webOnly, BUILD, 'no usable base commit');
     assert.ok(got.stderr.includes('main is unreachable'),
       `the reason must name the unresolved default branch:\n${got.stderr}`);
+    // With no owner/slug there is no URL to build, and the log must say that
+    // rather than print an empty one — the control for the case below.
+    assert.ok(got.stderr.includes('tried: (no repository URL to build)'),
+      `the failure must distinguish "no URL" from "the URL did not work":\n${got.stderr}`);
+  } finally {
+    rmSync(repo.dir, { recursive: true, force: true });
+  }
+});
+
+// A VERCEL BUILDER HAS NO `origin`. Measured on deployment jobtracker-cne7abe27:
+// the guard's own failure line printed `remotes:` with nothing after it and
+// `fatal: 'origin' does not appear to be a git repository`. Vercel clones and
+// then drops the remote, so every `git fetch origin ...` in the script is a
+// no-op there — including the one the supplied-base arm has made since #150.
+// The same clone made by hand over SSH HAS an origin and the fetch works, which
+// is why it stayed invisible until the failure printed its own stderr.
+//
+// This asserts the fallback names a URL rather than a remote. It cannot assert
+// the fetch SUCCEEDS — `run`/`firstPreview` pin GIT_ALLOW_PROTOCOL to an
+// unusable value so the suite never touches the network — so what is pinned is
+// the URL the arm builds from the two variables Vercel supplies. A typo in it
+// would fetch from nowhere, forever, and only ever be visible as an
+// unexplained BUILD.
+test('with no remote at all, the default branch is fetched by URL', () => {
+  const repo = scratchRepo({ withOriginMain: false });
+  try {
+    const got = firstPreview(repo, 'web', repo.heads.webOnly, {
+      VERCEL_GIT_REPO_OWNER: 'yadava5',
+      VERCEL_GIT_REPO_SLUG: 'applied',
+    });
+    assert.equal(got.verdict, BUILD, `an unresolved base must build:\n${got.stderr}`);
+    assert.ok(
+      got.stderr.includes('tried: https://github.com/yadava5/applied.git'),
+      `the arm must fall back to the repository URL:\n${got.stderr}`,
+    );
   } finally {
     rmSync(repo.dir, { recursive: true, force: true });
   }
