@@ -21,6 +21,8 @@ import pytest
 
 from tests.corpus_independent.generate import digest, generate
 from tests.corpus_independent.harness import (
+    _ANSWERS,
+    answer_the_queue,
     classify_all,
     replay,
     score_board,
@@ -43,6 +45,91 @@ CORPUS_SIZE = 17260
 #: README and this dict disagree, which is the whole reason they are a dict and
 #: not literals inside the asserts. A published number that nothing recomputes
 #: is a claim, and this repository has a ledger of those.
+#: THE BOARD AFTER A PERSON ANSWERS THE QUEUE (#547), recorded separately from
+#: `RECORDED` so that neither block moves the other. Every number above is the
+#: board as the SYNC left it; every number here is the same board after every
+#: held message has been answered with the category its mail carries.
+#:
+#: These are not aspirations. Several of them are defects the phase exists to
+#: make visible, and they are pinned at what the product actually does so that a
+#: change to it has to argue with a number.
+RECORDED_AFTER_ANSWERING = {
+    # THE HEADLINE, and the reason the phase was worth building: every one of
+    # the 260 cards reading "Offered" for a withdrawn offer (#417) corrects
+    # itself the moment a person answers the queue. Nothing in this corpus
+    # could say that before, because it wrote the queue and never read it.
+    "card_overstates": 0,
+    # AND ANSWERING BREAKS THINGS, which is the other half of measuring it.
+    # MERGE is the failure `test_the_board_is_clean` calls strictly worse than
+    # any other: it discards a record silently. All 19 are the family
+    # `update-picks-between-two` — an employer holding two applications and an
+    # update that must choose — and all 19 misfile, because the queue's card
+    # picker pre-selects "not one of these" (#554) and rule 4 then resolves by
+    # age. 19 of 19 is the failure rate of that SHAPE, not of the queue.
+    "merges": 19,
+    # 19 of these are the same answers scattering the application they were
+    # taken from. The other 39 are `observed-pending` and are a separate
+    # defect: answering "pending application" mints a second card for an
+    # application that already has one, with no sibling choice involved (#555).
+    "splits": 58,
+    "cards": 9569,
+    "update_opened_a_card": 19,
+    "noise_on_card": 0,
+    # 67 BEFORE, 80 AFTER — and the interesting number is the one that is not
+    # here. On the tree immediately before #548 this read 106. #548 recovers
+    # exactly 26 of them, which is the figure #546 claimed and which no
+    # instrument could check until this phase existed. The residual +13 is
+    # blank cards minted by answers that landed nowhere existing.
+    "role_missing": 80,
+    # ZERO AGAINST A DENOMINATOR THAT HAS TO BE SAID OUT LOUD. #548 refuses to
+    # stamp a title on a blind landing, and 421 of the 2,341 filed answers
+    # landed where the employer held several cards — so those 421 are excluded
+    # from this counter BY CONSTRUCTION and it can only be non-zero on the
+    # 1,920 single-card landings and the 317 mints. Read as "no answer that was
+    # allowed to name a card named it wrongly", not as "answering never
+    # mis-titles". #536 is the standing note on zeros that cannot be non-zero.
+    "role_wrong": 0,
+    # The three title populations still close after answering:
+    # 8044 + 1106 + 400 == 9550.
+    "roles_graded": 8044,
+    "blank_required": 1106,
+    "role_unsettleable": 400,
+    "titles_graded": 9550,
+    # `score_board`'s `wrong_review`, READ UNDER A NAME THAT IS TRUE HERE. That
+    # counter means "the product guessed instead of asking". After the phase the
+    # product DID ask and was answered, so 150 is not 150 failures — it is 150
+    # cases that were correctly held and are now correctly filed. Recorded under
+    # its own key so the sync-phase number (0, asserted above) keeps its meaning.
+    "held_cases_now_filed": 150,
+}
+
+#: What answering DOES, per call — the outcomes the board cannot show.
+RECORDED_ANSWERS = {
+    "queued": 2701,
+    "answered": 2701,
+    # THE GUARD THAT NEVER FIRES, said plainly rather than left to read as
+    # coverage. `_settle_thread_siblings` can remove a queue entry when a
+    # sibling is answered, and `classify_review_item` has no `is_reviewed`
+    # guard, so the phase re-asks the queue predicate before every answer. On
+    # this corpus the answer is always yes. The re-check is correct and is
+    # currently exercised by nothing; a corpus family whose thread siblings
+    # share an identity would exercise it.
+    "settled_by_a_prior_answer": 0,
+    # The branch that keeps the row in the queue and returns quietly. Measured
+    # independently before these buckets were designed: 360 of the 17,260 cases
+    # resolve no employer from sender + subject — all 200 `bare-relay`, and 160
+    # of 320 `verdict-past-the-body-cap`. Every one of them is here.
+    "refused_needs_employer": 360,
+    "filed_on_an_existing_card": 2024,
+    "minted_a_card": 317,
+    "not_a_lifecycle_answer": 0,
+    # HOW MUCH CHOICE THERE WAS. A landing at an employer holding one live card
+    # is right by cardinality, not by understanding; folding the two together
+    # would hide rule 4's coin toss inside a healthy headline.
+    "landed_where_one_card_existed": 1920,
+    "landed_where_several_did": 421,
+}
+
 RECORDED = {
     "size": 17260,
     # DISTINCT FAMILY LABELS in the generated corpus, which is 37 and not the
@@ -792,6 +879,86 @@ async def test_the_board_is_clean(cases, verdicts, test_session) -> None:
         f.detail for f in score.failures if "REVIEW" in f.mode
     ][:3]
     assert score.cards == RECORDED["cards"], f"the board came out at {score.cards} cards"
+
+    # ── and now a person answers the queue ───────────────────────────────────
+    #
+    # EMBEDDED HERE RATHER THAN GIVEN ITS OWN TEST, and the reason is arithmetic
+    # rather than taste. `test_session` is function-scoped, so every test that
+    # replays pays for its own full replay; a separate test would add a sixth to
+    # the five this gate already runs, for roughly +2 minutes, to measure
+    # something that costs seconds on a board that already exists.
+    #
+    # It also makes "the pre-answer numbers did not move" structurally true
+    # instead of asserted: every assertion above ran, on this same snapshot,
+    # before the first answer was given.
+    answers, after = await answer_the_queue(test_session, cases, replayed)
+
+    # THE BUCKETS CLOSE, which is the first thing to check about any of them.
+    # A count of good outcomes with no denominator is a number that can only go
+    # up. `refused_needs_employer` is in here because it is the branch that
+    # leaves the row in the queue and returns quietly: uncounted, those messages
+    # simply vanish from the accounting.
+    assert (
+        answers.answered + answers.settled_by_a_prior_answer == answers.queued
+    ), (
+        f"{answers.queued} were held, {answers.answered} were answered and "
+        f"{answers.settled_by_a_prior_answer} left the queue with a sibling — "
+        "the rest are unaccounted for"
+    )
+    assert (
+        answers.filed_on_an_existing_card
+        + answers.minted_a_card
+        + answers.refused_needs_employer
+        + answers.not_a_lifecycle_answer
+        == answers.answered
+    ), "an answer produced an outcome this score has no bucket for"
+
+    filed = answers.filed_on_an_existing_card + answers.minted_a_card
+    assert (
+        answers.landed_where_one_card_existed + answers.landed_where_several_did
+        == filed
+    ), "a filed answer was not counted against how much choice there was"
+
+    after_score = score_board(after, cases)
+
+    # NOT ZERO, AND NOT ASSERTED AS ZERO. This phase is new and the point of it
+    # is to make these numbers exist; pinning them to the recorded values is
+    # what a later commit does once they have been read by a person. What is
+    # asserted now is that answering the queue does not DESTROY anything: a
+    # merge is the one failure that silently discards a record.
+    assert after_score.merges == RECORDED_AFTER_ANSWERING["merges"], [
+        f.detail for f in after_score.failures if f.mode == "MERGE"
+    ][:3]
+    assert after_score.splits == RECORDED_AFTER_ANSWERING["splits"]
+    assert after_score.cards == RECORDED_AFTER_ANSWERING["cards"]
+    assert after_score.card_overstates == RECORDED_AFTER_ANSWERING["card_overstates"]
+    assert after_score.role_missing == RECORDED_AFTER_ANSWERING["role_missing"]
+    assert after_score.role_wrong == RECORDED_AFTER_ANSWERING["role_wrong"]
+    assert after_score.wrong_review == RECORDED_AFTER_ANSWERING["held_cases_now_filed"]
+    assert after_score.noise_on_card == RECORDED_AFTER_ANSWERING["noise_on_card"]
+    assert (
+        after_score.update_opened_a_card
+        == RECORDED_AFTER_ANSWERING["update_opened_a_card"]
+    )
+    # THE POPULATIONS STILL CLOSE. A title counter that stops closing after the
+    # phase runs would mean answering had produced a card the grader cannot
+    # place, which is exactly the state a zero elsewhere would hide.
+    assert (
+        after_score.roles_graded
+        + after_score.blank_required
+        + after_score.role_unsettleable
+        == after_score.titles_graded
+    )
+    for name in ("roles_graded", "blank_required", "role_unsettleable", "titles_graded"):
+        assert getattr(after_score, name) == RECORDED_AFTER_ANSWERING[name], (
+            f"{name} is {getattr(after_score, name)}, "
+            f"recorded {RECORDED_AFTER_ANSWERING[name]}"
+        )
+
+    for name, want in RECORDED_ANSWERS.items():
+        assert getattr(answers, name) == want, (
+            f"{name} is {getattr(answers, name)}, recorded {want}"
+        )
 
 
 @pytest.mark.asyncio
@@ -2004,4 +2171,31 @@ def test_a_card_required_to_be_blank_names_no_job_anywhere(cases) -> None:
     assert len(by_identity) == RECORDED["blank_required"], (
         f"{len(by_identity)} identities are required to be blank; the assertion "
         f"above is worth exactly that many"
+    )
+
+
+def test_every_category_the_corpus_carries_is_an_answer_a_person_can_give(cases):
+    """The answer mapping is exactly total, in both directions.
+
+    Cheap, and it guards two different mistakes. A family that introduces a new
+    `expected_category` would otherwise reach `answer_the_queue` and raise
+    mid-replay, nine minutes in. And a mapping entry the corpus never exercises
+    is a wording nothing tests, which is how a table grows rows that are never
+    read.
+
+    `NEEDS_REVIEW` must be in neither set. It is the typed null of
+    `classified_as`, not a verdict — answering with it would write a decision no
+    person made, which is the commitment `classified_as` is documented to carry.
+    """
+
+    carried = {c.expected_category for c in cases}
+    assert carried - set(_ANSWERS) == set(), (
+        "the corpus carries a category the queue phase cannot answer with"
+    )
+    assert set(_ANSWERS) - carried == set(), (
+        "the answer table has a row no case exercises"
+    )
+    assert "needs_review" not in _ANSWERS, (
+        "needs_review is the absence of a verdict; sending it as one forges a "
+        "human decision"
     )
