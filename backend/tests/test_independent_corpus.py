@@ -75,12 +75,23 @@ RECORDED_AFTER_ANSWERING = {
     "cards": 9569,
     "update_opened_a_card": 19,
     "noise_on_card": 0,
-    # 67 BEFORE, 80 AFTER — and the interesting number is the one that is not
-    # here. On the tree immediately before #548 this read 106. #548 recovers
-    # exactly 26 of them, which is the figure #546 claimed and which no
-    # instrument could check until this phase existed. The residual +13 is
-    # blank cards minted by answers that landed nowhere existing.
-    "role_missing": 80,
+    # 62 BEFORE, 75 AFTER — and the interesting number is the one that is not
+    # here. On the tree immediately before #548 the after-answering figure read
+    # 106. #548 recovers exactly 26 of them, which is the figure #546 claimed
+    # and which no instrument could check until this phase existed. The residual
+    # +13 is blank cards minted by answers that landed nowhere existing, and it
+    # is unchanged: 80 - 67 and 75 - 62 are the same 13.
+    #
+    # BOTH ENDS MOVED BY 5 TOGETHER (#553), which is the check that this is one
+    # improvement and not two. The lead-segment role reader fills five cards
+    # whose title was spelled out in their subject all along, so it fills them
+    # before the queue is answered (67 -> 62) and they are still filled after
+    # (80 -> 75). A change that moved only one end would mean the answering path
+    # and the sync path disagree about the same five messages, which is the
+    # shape of a bug rather than a fix. Every other counter on this score is
+    # exactly where it was: cards 9569, splits 58, merges 19, wrong_review 150,
+    # update_opened_a_card 19.
+    "role_missing": 75,
     # ZERO AGAINST A DENOMINATOR THAT HAS TO BE SAID OUT LOUD. #548 refuses to
     # stamp a title on a blind landing, and 421 of the 2,341 filed answers
     # landed where the employer held several cards — so those 421 are excluded
