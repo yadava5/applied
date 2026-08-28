@@ -213,6 +213,23 @@
 # whose shape we understand, and the doctrine three sections up applies: an
 # uncertain path builds.
 #
+# HOW TO REPRODUCE THIS ARM WITHOUT A DEPLOYMENT. The unit suite cannot reach
+# the network, so it builds a synthetic repository and hands the arm a local
+# refs/remotes/origin/main. That proves the logic, not the fetch. For the
+# fetch, make the clone Vercel makes:
+#
+#   git clone --depth=10 --branch <branch> git@github.com:yadava5/applied.git /tmp/c
+#   cp vercel-ignore-build.sh /tmp/c/ && cd /tmp/c
+#   VERCEL_ENV=preview VERCEL_GIT_COMMIT_REF=<branch> \
+#     VERCEL_GIT_COMMIT_SHA=$(git rev-parse HEAD) bash vercel-ignore-build.sh web
+#
+# On 2026-08-28 that clone had no refs/remotes/origin/main, the depth-1 fetch
+# supplied d131f25, and the arm answered SKIP for a branch whose whole diff is
+# this script. The FIRST deployment to take this arm nonetheless logged
+# "main is unreachable" — the same recipe over Vercel's HTTPS remote rather
+# than SSH. That is why the failure now prints the remote list and the fetch's
+# own stderr instead of only its own conclusion.
+#
 # ---------------------------------------------------------------------------
 # MAINTENANCE: THE PATH LISTS ARE AN ALLOWLIST.
 # ---------------------------------------------------------------------------
@@ -332,13 +349,28 @@ if [ -z "$base_sha" ] && [ "${VERCEL_ENV:-}" = 'preview' ]; then
   # then builds.
   base_sha="$(git rev-parse --verify -q "origin/${DEFAULT_BRANCH}^{commit}" 2>/dev/null || true)"
   if [ -z "$base_sha" ]; then
-    GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+    # A --depth=10 --single-branch clone has no remote-tracking ref for the
+    # default branch, so ask the remote for its tip — one commit, not a
+    # deepened history. The explicit refspec form is tried second because a
+    # builder that rewrites the remote's fetch refspec can reject the short
+    # form while still serving the ref by its full name.
+    fetch_err="$(GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin "$DEFAULT_BRANCH" 2>&1 >/dev/null)" || true
     base_sha="$(git rev-parse --verify -q 'FETCH_HEAD^{commit}' 2>/dev/null || true)"
+    if [ -z "$base_sha" ]; then
+      fetch_err="$(GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin \
+        "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" 2>&1 >/dev/null)" || true
+      base_sha="$(git rev-parse --verify -q "origin/${DEFAULT_BRANCH}^{commit}" 2>/dev/null || true)"
+    fi
   fi
   if [ -n "$base_sha" ]; then
     log "no previous deployment supplied; measuring against ${DEFAULT_BRANCH} tip ${base_sha}"
   else
+    # Say WHY. The first deployment to take this arm reported only that the
+    # branch was unreachable, which is exactly as much as "it did not work" —
+    # and the arm above it has been fetching just as blindly for as long.
     log "no previous deployment supplied and ${DEFAULT_BRANCH} is unreachable"
+    log "  remotes: $(git remote 2>/dev/null | tr '\n' ' ')"
+    log "  fetch said: ${fetch_err:-(nothing)}"
   fi
 fi
 if [ -z "$base_sha" ]; then
