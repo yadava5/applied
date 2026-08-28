@@ -19,6 +19,13 @@ name: Vercel ignore-build guard
 #                                               without touching the guard
 #   .vercelignore                 an entry in BOTH allowlists, so renaming it
 #                                 would leave both pointing at a dead path
+#   DEPLOY.md                     it states how many ways the negative control
+#                                 breaks the guard, and the control now asserts
+#                                 that number. Off this list, the one edit that
+#                                 can falsify the claim is the one edit that
+#                                 never runs the check that would catch it —
+#                                 which is how the sentence came to say "ten"
+#                                 while the file held nineteen.
 on:
   pull_request:
     paths:
@@ -26,6 +33,7 @@ on:
       - "vercel.json"
       - "apps/web/vercel.json"
       - ".vercelignore"
+      - "DEPLOY.md"
       - "scripts/test_vercel_ignore_build.mjs"
       - "scripts/negative_control_ignore_build.mjs"
       - ".github/workflows/vercel-ignore-build.yml"
@@ -38,6 +46,7 @@ on:
       - "vercel.json"
       - "apps/web/vercel.json"
       - ".vercelignore"
+      - "DEPLOY.md"
       - "scripts/test_vercel_ignore_build.mjs"
       - "scripts/negative_control_ignore_build.mjs"
       - ".github/workflows/vercel-ignore-build.yml"
