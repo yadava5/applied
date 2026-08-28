@@ -1529,6 +1529,15 @@ export interface components {
          *     :func:`_misspelled_employer`); this flag is the human saying no, these really
          *     are two employers. Deliberately an explicit acknowledgement and not a
          *     default: the whole point is that the typo was accepted silently once.
+         *
+         *     ``none_of_these`` is the OTHER answer to "which of these is it about?", and
+         *     it needs a field of its own because an absent ``application_id`` cannot
+         *     carry it. Absent means "nobody asked" — the single-candidate queue rows, the
+         *     mail reclassify surface, the live scan — and the honest answer to silence is
+         *     the tie-break in :func:`_pick_application`. It is the wrong answer to a
+         *     person saying "not one of those": for a rejection the tie-break moves a LIVE
+         *     application to a terminal status, and ``advance_application_status`` never
+         *     walks a terminal status back. Reading the two as one value is #554.
          */
         ReviewClassifyRequest: {
             category: components["schemas"]["EmailCategory"];
@@ -1542,6 +1551,11 @@ export interface components {
              * @default false
              */
             confirm_new_company: boolean;
+            /**
+             * None Of These
+             * @default false
+             */
+            none_of_these: boolean;
         };
         /**
          * ReviewItemResponse
