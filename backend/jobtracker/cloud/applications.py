@@ -1477,15 +1477,25 @@ def _pick_application(
         return rows[0]
 
     # Rule 3 — adopt the employer's single pre-identity row, in place.
-    unidentified = [row for row in rows if row.req_id is None and row.role_token is None]
-    if len(unidentified) == 1:
-        return unidentified[0]
-    # With several, prefer the one the SYNC made. A manual row is a human's own
-    # entry and may legitimately duplicate what the mail says; adopting it would
-    # rewrite their record. An auto row is the sync's own and is exactly what
-    # this identity belongs on.
-    auto = [row for row in unidentified if _is_auto_row(row.source)]
-    return auto[0] if len(auto) == 1 else None
+    #
+    # ONLY A ROW THE SYNC MADE. A manual row is a human's own entry and may
+    # legitimately duplicate what the mail says; a row `classify_review_item`
+    # minted is a human's answer to "which application is this about?" and is
+    # identity-less BY CONSTRUCTION, because the message reached the picker
+    # precisely for naming no role. Adopting either one writes ANOTHER
+    # application's `req_id` and `role_token` onto it, and `role_token` is half
+    # an application's identity — so the adopted card then captures the other
+    # application's future mail. That is not a cosmetic mis-key.
+    #
+    # This test used to be applied only when there were SEVERAL candidates, and
+    # the comment stating the rule sat on that branch while the one-candidate
+    # branch above it returned whatever it found. One is the common case.
+    unidentified = [
+        row
+        for row in rows
+        if row.req_id is None and row.role_token is None and _is_auto_row(row.source)
+    ]
+    return unidentified[0] if len(unidentified) == 1 else None
 
 
 async def _chosen_application(

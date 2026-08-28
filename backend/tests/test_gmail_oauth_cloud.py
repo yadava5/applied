@@ -1858,6 +1858,325 @@ async def test_confirm_new_company_is_not_manufactured_either(
     assert ok.status_code == 200, ok.text
 
 
+# ---------------------------------------------------------------------------
+# Rule 3 asks WHO MADE THE ROW (#559)
+#
+# `_pick_application`'s rule 3 adopts an employer's single identity-less row IN
+# PLACE — the next sync stamps its cluster's `req_id` and `role_token` onto it.
+# The one-candidate branch used to do that whatever the row's source was, while
+# the comment on the several-candidates branch below it already said the
+# opposite: a row a human made is not the sync's to re-key.
+#
+# The row a user opens by answering "none of these" is exactly the shape that
+# branch adopts. It is identity-less BY CONSTRUCTION — the message reached the
+# picker precisely because it names no role — and it is user-owned, and at an
+# employer whose other cards are keyed it is the only unidentified one.
+#
+# The independent corpus cannot price this: `answer_the_queue` mints and then
+# only READS the board, so no `gmail_user` row ever reaches `_pick_application`,
+# and the harm needs exactly the sync that runs afterwards. These two tests are
+# that sync.
+#
+# The three `thread_id`s below are distinct on purpose. A message sharing a
+# thread with a stored one is routed by that thread and never reaches rule 3, so
+# collapsing them would leave both tests green with the rule under test unrun.
+# ---------------------------------------------------------------------------
+
+
+def _northwind_confirmation(
+    message_id: str, role: str, req_id: str, *, day: int, thread: str
+) -> dict:
+    """One Northwind confirmation that NAMES the application it is about."""
+
+    return {
+        "message_id": message_id,
+        "category": "applied",
+        "sender_email": "careers@northwind.com",
+        "sender_name": "Northwind",
+        "subject": "Thank you for applying to Northwind",
+        "snippet": (
+            "Hi, thanks for applying to Northwind! We've received your "
+            f"application for the {role} (ID: {req_id}) position."
+        ),
+        "confidence": 0.95,
+        "thread_id": thread,
+        "received_at": f"2026-05-{day:02d}T09:00:00+00:00",
+    }
+
+
+async def _stored_northwind_rows(user_id: str) -> dict[int, dict]:
+    """Northwind's rows WITH their identity columns, read from the database.
+
+    `_serialize` publishes neither `req_id` nor `role_token` — deliberately, they
+    are resolution internals — so the board listing cannot see the re-keying this
+    section is about.
+    """
+
+    import uuid as _uuid
+
+    from sqlmodel import select as sm_select
+
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Application
+
+    uid = _uuid.UUID(user_id)
+    async with get_session() as session:
+        rows = (
+            await session.exec(
+                sm_select(Application).where(
+                    Application.user_id == uid, Application.company == "Northwind"
+                )
+            )
+        ).all()
+        return {
+            row.id: {
+                "id": row.id,
+                "source": row.source,
+                "req_id": row.req_id,
+                "role_token": row.role_token,
+                "position": row.position,
+                "dismissed_at": row.dismissed_at,
+            }
+            for row in rows
+        }
+
+
+async def _filed_against(user_id: str, message_id: str) -> int | None:
+    """The application a stored message ended up linked to."""
+
+    import uuid as _uuid
+
+    from sqlmodel import select as sm_select
+
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Email
+
+    uid = _uuid.UUID(user_id)
+    async with get_session() as session:
+        email = (
+            await session.exec(
+                sm_select(Email).where(
+                    Email.user_id == uid, Email.message_id == message_id
+                )
+            )
+        ).first()
+        return email.application_id if email else None
+
+
+async def _make_it_the_syncs_own_row(user_id: str, row_id: int) -> None:
+    """Flip one row's `source` to the sync's own, changing nothing else.
+
+    The control's single variable. Done in the database because no product path
+    can produce this row: an anonymous confirmation arriving at an employer that
+    already holds a card is resolved by rule 4 onto that card (measured while
+    writing these tests: `created=0, updated=1`), so the sync never mints a
+    second blank row there. Everything else — the employer, the messages, the
+    answer, the sync that follows — is byte-identical to the test above, which is
+    what makes the pair directional.
+    """
+
+    import uuid as _uuid
+
+    from sqlmodel import select as sm_select
+
+    from jobtracker.cloud.applications import SOURCE_GMAIL_AUTO
+    from jobtracker.database import get_session
+    from jobtracker.database.models import Application
+
+    uid = _uuid.UUID(user_id)
+    async with get_session() as session:
+        row = (
+            await session.exec(
+                sm_select(Application).where(
+                    Application.user_id == uid, Application.id == row_id
+                )
+            )
+        ).one()
+        row.source = SOURCE_GMAIL_AUTO
+        session.add(row)
+        await session.commit()
+
+
+async def _a_keyed_row_and_the_row_an_answer_opened(
+    client: AsyncClient, headers: dict[str, str]
+) -> tuple[int, int]:
+    """Northwind holds one KEYED application; the user then answers "none of these".
+
+    Returns ``(the keyed row, the row the answer opened)``. The shape of the
+    minted row is asserted HERE rather than in the tests, because both of them
+    rest on it: if the answer stopped minting, or minted something already
+    carrying an identity, neither test below would be exercising rule 3 at all
+    and both would pass on a fixture that proves nothing.
+    """
+
+    from jobtracker.cloud.applications import _is_auto_row
+
+    keyed = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                _northwind_confirmation(
+                    "nw-keyed", "Backend Engineer", "44120", day=20, thread="th-keyed"
+                )
+            ]
+        },
+        headers=headers,
+    )
+    assert keyed.status_code == 200, keyed.text
+    assert keyed.json()["created"] == 1, "the fixture's first application"
+
+    held = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "nw-blind",
+                    "category": "needs_review",
+                    "sender_email": "talent@northwind.com",
+                    "sender_name": "Northwind",
+                    # Names no role anywhere the resolver can reach — the reason
+                    # a message like this is held for a person in the first place.
+                    "subject": "Update on your application",
+                    "confidence": 0.62,
+                    "thread_id": "th-blind",
+                    "received_at": "2026-05-25T09:00:00+00:00",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert held.status_code == 200, held.text
+    assert held.json()["needs_review"] == 1, "the blind message must reach the queue"
+
+    answered = await client.post(
+        "/applications/review/nw-blind/classify",
+        json={"category": "rejection", "none_of_these": True},
+        headers=headers,
+    )
+    assert answered.status_code == 200, answered.text
+    opened = answered.json()["application_id"]
+    assert opened is not None, "the answer opened no row"
+
+    rows = await _stored_northwind_rows(USER_A)
+    live = [r for r in rows.values() if r["dismissed_at"] is None]
+    # One keyed, one blank, one employer — and the blind sender is a different
+    # local part (`talent@`) from the confirmations' (`careers@`), so this also
+    # states that both still resolve to Northwind. If they ever stopped, the
+    # tests below would be about two employers and would pass meaninglessly.
+    assert len(live) == 2, f"expected a keyed row and the opened row, got {live}"
+    keyed_id = next(r["id"] for r in live if r["id"] != opened)
+    assert rows[keyed_id]["req_id"] == "44120"
+    assert rows[keyed_id]["role_token"] == "backend engineer"
+
+    minted = rows[opened]
+    assert minted["req_id"] is None and minted["role_token"] is None, (
+        f"the opened row already carries an identity ({minted['req_id']!r}, "
+        f"{minted['role_token']!r}); rule 3 would never consider it and these "
+        "tests would measure nothing"
+    )
+    assert _is_auto_row(minted["source"]) is False, (
+        f"the opened row's source is {minted['source']!r}, which the sync owns "
+        "— a human's answer must produce a user-owned row"
+    )
+    return keyed_id, opened
+
+
+async def test_a_later_sync_does_not_re_key_the_row_the_user_opened(
+    client: AsyncClient,
+) -> None:
+    """The card a person opened must not absorb another application's identity.
+
+    Delete the `_is_auto_row` test from rule 3's one-candidate branch and the
+    next sync adopts this row in place, writing the Data Scientist application's
+    `req_id` and `role_token` onto the card the user opened by answering "none of
+    these". `role_token` is half an application's identity, so from that moment
+    the user's own card answers to the OTHER application's mail: its rejection
+    settles this card, its interviews land on it, and nothing on the board says
+    the two were ever different applications.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    keyed_id, opened_id = await _a_keyed_row_and_the_row_an_answer_opened(client, headers)
+
+    synced = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                _northwind_confirmation(
+                    "nw-other", "Data Scientist", "77341", day=30, thread="th-other"
+                )
+            ]
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200, synced.text
+
+    rows = await _stored_northwind_rows(USER_A)
+    opened = rows[opened_id]
+    assert opened["req_id"] is None and opened["role_token"] is None, (
+        f"the sync re-keyed the user's own row (req_id={opened['req_id']!r}, "
+        f"role_token={opened['role_token']!r}) — it now answers to the Data "
+        "Scientist application's mail"
+    )
+
+    landed = await _filed_against(USER_A, "nw-other")
+    assert landed is not None, "the identified confirmation was not filed at all"
+    assert landed != opened_id, "it landed on the row the user opened"
+    assert landed != keyed_id, "it landed on the OTHER requisition's row"
+    assert rows[landed]["role_token"] == "data scientist"
+    assert rows[keyed_id]["req_id"] == "44120", "the keyed sibling was rewritten"
+
+
+async def test_the_syncs_own_blank_row_is_still_adopted_in_place(
+    client: AsyncClient,
+) -> None:
+    """The control, and the behaviour rule 3 exists for.
+
+    Identical scenario, one column different: the single identity-less row is the
+    SYNC's own. It must still be adopted in place — same row id, now carrying the
+    identity its mail names. What a user loses if this stops is a duplicate card
+    per requisition at every employer whose first mail named no role: the blank
+    card keeps the mail that made it, and the identity the later message carries
+    mints a second row beside it.
+
+    Without this control the fix above would be satisfied by a rule 3 that never
+    adopts anything at all.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    keyed_id, blank_id = await _a_keyed_row_and_the_row_an_answer_opened(client, headers)
+    await _make_it_the_syncs_own_row(USER_A, blank_id)
+
+    synced = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                _northwind_confirmation(
+                    "nw-other", "Data Scientist", "77341", day=30, thread="th-other"
+                )
+            ]
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200, synced.text
+
+    rows = await _stored_northwind_rows(USER_A)
+    live = [r for r in rows.values() if r["dismissed_at"] is None]
+    assert len(live) == 2, (
+        f"the identity minted a row instead of landing on the sync's own blank "
+        f"one: {live}"
+    )
+    adopted = rows[blank_id]
+    assert adopted["req_id"] == "77341" and adopted["role_token"] == "data scientist", (
+        f"the sync's own blank row was not adopted (req_id={adopted['req_id']!r}, "
+        f"role_token={adopted['role_token']!r})"
+    )
+    assert await _filed_against(USER_A, "nw-other") == blank_id
+    assert rows[keyed_id]["req_id"] == "44120", "the keyed sibling was rewritten"
+
+
 async def test_resync_purges_stale_auto_but_preserves_manual(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
