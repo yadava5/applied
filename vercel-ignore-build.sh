@@ -350,16 +350,43 @@ if [ -z "$base_sha" ] && [ "${VERCEL_ENV:-}" = 'preview' ]; then
   base_sha="$(git rev-parse --verify -q "origin/${DEFAULT_BRANCH}^{commit}" 2>/dev/null || true)"
   if [ -z "$base_sha" ]; then
     # A --depth=10 --single-branch clone has no remote-tracking ref for the
-    # default branch, so ask the remote for its tip — one commit, not a
-    # deepened history. The explicit refspec form is tried second because a
-    # builder that rewrites the remote's fetch refspec can reject the short
-    # form while still serving the ref by its full name.
+    # default branch, so the tip has to be fetched — one commit, not a
+    # deepened history.
+    #
+    # THERE IS NO `origin` ON A VERCEL BUILDER. Measured, on deployment
+    # jobtracker-cne7abe27 (commit 072d79c):
+    #
+    #   [vercel-ignore-build] no previous deployment supplied and main is unreachable
+    #   [vercel-ignore-build]   remotes:
+    #   [vercel-ignore-build]   fetch said: fatal: 'origin' does not appear to be a git repository
+    #
+    # The remote list is EMPTY. Vercel clones and then drops the remote, so
+    # every `git fetch origin ...` in this file — including the one the
+    # supplied-base arm has been making since #150 — is a no-op there. The same
+    # clone made by hand over SSH has an `origin` and the fetch works, which is
+    # why this was invisible until the failure printed its own stderr.
+    #
+    # So name the URL instead of a remote. `git fetch <url> <ref>` needs no
+    # remote to exist and no credential for a PUBLIC repository, which this one
+    # is; if it ever stops being public the fetch fails and the arm falls
+    # through to BUILD, which is the safe direction. A checkout that HAS a
+    # remote (a developer running the reproduction recipe below) is tried
+    # first, so the local path costs no network at all.
+    #
+    # VERCEL_GIT_REPO_OWNER and VERCEL_GIT_REPO_SLUG are Vercel's documented
+    # system variables, and unlike the empty remote list above they have NOT
+    # been observed on a builder here. That is why the failure line prints the
+    # URL it built: if the variables are absent the log says "(no repository
+    # URL to build)" and the deployment builds, so the next preview's log is
+    # the test and there is no state in which a wrong guess here fails quietly.
     fetch_err="$(GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin "$DEFAULT_BRANCH" 2>&1 >/dev/null)" || true
     base_sha="$(git rev-parse --verify -q 'FETCH_HEAD^{commit}' 2>/dev/null || true)"
-    if [ -z "$base_sha" ]; then
-      fetch_err="$(GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 origin \
-        "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" 2>&1 >/dev/null)" || true
-      base_sha="$(git rev-parse --verify -q "origin/${DEFAULT_BRANCH}^{commit}" 2>/dev/null || true)"
+    origin_url=""
+    if [ -z "$base_sha" ] && [ -n "${VERCEL_GIT_REPO_OWNER:-}" ] && [ -n "${VERCEL_GIT_REPO_SLUG:-}" ]; then
+      origin_url="https://github.com/${VERCEL_GIT_REPO_OWNER}/${VERCEL_GIT_REPO_SLUG}.git"
+      fetch_err="$(GIT_TERMINAL_PROMPT=0 git fetch --no-tags --depth=1 "$origin_url" \
+        "$DEFAULT_BRANCH" 2>&1 >/dev/null)" || true
+      base_sha="$(git rev-parse --verify -q 'FETCH_HEAD^{commit}' 2>/dev/null || true)"
     fi
   fi
   if [ -n "$base_sha" ]; then
@@ -370,6 +397,7 @@ if [ -z "$base_sha" ] && [ "${VERCEL_ENV:-}" = 'preview' ]; then
     # and the arm above it has been fetching just as blindly for as long.
     log "no previous deployment supplied and ${DEFAULT_BRANCH} is unreachable"
     log "  remotes: $(git remote 2>/dev/null | tr '\n' ' ')"
+    log "  tried: ${origin_url:-(no repository URL to build)}"
     log "  fetch said: ${fetch_err:-(nothing)}"
   fi
 fi

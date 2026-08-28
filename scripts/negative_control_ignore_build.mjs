@@ -137,6 +137,14 @@ const MUTATIONS = [
     replace: 'if false; then',
   },
   {
+    // A Vercel builder has NO `origin`. Without this fallback the arm can never
+    // resolve a base there, and the symptom is an unexplained BUILD — the
+    // failure mode the whole file exists to make visible.
+    name: 'the default branch can only be fetched from a remote that does not exist',
+    find: "if [ -z \"$base_sha\" ] && [ -n \"${VERCEL_GIT_REPO_OWNER:-}\" ] && [ -n \"${VERCEL_GIT_REPO_SLUG:-}\" ]; then",
+    replace: 'if false; then',
+  },
+  {
     // Fail-open doctrine: only a build whose shape we recognise gets measured.
     name: 'the preview window is taken on any non-production environment',
     find: "if [ -z \"$base_sha\" ] && [ \"${VERCEL_ENV:-}\" = 'preview' ]; then",
@@ -189,6 +197,33 @@ function runSuite(env = {}) {
     encoding: 'utf8',
     env: { ...process.env, ...env },
   });
+}
+
+// EVERY TRACKED TARGET MUST BE CLEAN BEFORE WE TOUCH IT.
+//
+// The mutations below that name a `file` rewrite a TRACKED config in place and
+// restore it from a copy taken one line earlier. That is safe alone and unsafe
+// beside anything else: two copies of this script running at once each take the
+// OTHER's mutation as the original, and whichever finishes last writes a
+// mutated vercel.json back to the working tree and calls it restored. Running
+// the unit suite concurrently is the milder version of the same race — it reads
+// a config that is mid-mutation and fails for a reason that has nothing to do
+// with the change under test. Both happened while #563 was being written.
+//
+// Refusing on a dirty target also refuses to overwrite an edit someone made on
+// purpose, which is the more likely way to lose work here.
+const dirty = [...new Set(MUTATIONS.map((m) => m.file).filter(Boolean))].filter(
+  (file) => spawnSync('git', ['diff', '--quiet', '--', file], { cwd: REPO }).status !== 0,
+);
+if (dirty.length > 0) {
+  console.error(
+    'These tracked files have uncommitted changes and are mutation targets:\n  ' +
+      dirty.join('\n  ') +
+      '\n\nThis script rewrites them in place and restores them from a copy, so ' +
+      'running it now would restore the wrong content. Commit or stash them ' +
+      'first — and if another copy of this script is already running, wait for it.',
+  );
+  process.exit(1);
 }
 
 const results = [];
@@ -261,6 +296,32 @@ if (survivors > 0) {
     `${survivors} of ${results.length} mutations survived. The suite does not ` +
       'detect them, so it does not cover what it claims to cover. Add the ' +
       'missing case rather than removing the mutation.',
+  );
+  process.exit(1);
+}
+
+// DEPLOY.md quotes this count in prose, and a number nothing recomputes goes
+// stale: it said "ten ways" while this file held nineteen, for long enough that
+// nobody could say when it stopped being true. The file that owns the number is
+// the only one that can keep it honest, so it asserts it here rather than
+// leaving the prose to be re-read by hand. Failing on a mismatch is the point —
+// a stale figure in the deployment runbook is exactly the kind of claim this
+// repository keeps having to correct after the fact.
+const runbook = readFileSync(new URL('../DEPLOY.md', import.meta.url), 'utf8');
+const quoted = runbook.match(/breaks the guard (\d+) ways/);
+if (quoted === null) {
+  console.error(
+    'DEPLOY.md no longer states how many ways this file breaks the guard. ' +
+      'Restore the sentence or delete this check — a claim nobody can find is ' +
+      'not a claim this file can keep true.',
+  );
+  process.exit(1);
+}
+if (Number(quoted[1]) !== results.length) {
+  console.error(
+    `DEPLOY.md says this file breaks the guard ${quoted[1]} ways; it breaks it ` +
+      `${results.length}. Update the sentence in the same commit as the ` +
+      'mutation.',
   );
   process.exit(1);
 }
