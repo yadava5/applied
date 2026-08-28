@@ -255,7 +255,30 @@ RECORDED = {
     #
     # See #484 and #486 for the families; #536 for why a zero here is weaker
     # evidence than it looks.
-    "role_missing": 67,
+    #
+    # 67 -> 62 (#553). Five cards whose job title was spelled out in the subject
+    # all along, in the segment the employer was already being read from:
+    # "<Employer> Follow-Up for <Role> | <Candidate>". The employer half of that
+    # shape was taught in #512/#525; the role half sat unread on the same
+    # message, in the same request, and `identity_parts` returning (None, None)
+    # is what sent the resolver into `_pick_application`'s rule 4 — so it cost a
+    # title AND downgraded the filing decision.
+    #
+    # THE SAME READING OF THIS NUMBER APPLIES, and it is the reason the first
+    # attempt was rejected rather than recorded. That draft bounded the segment
+    # with `_SEGMENT_DELIMITER`, which accepts a spaced dash — and two of this
+    # corpus's own job titles carry one, so they were truncated. It reached
+    # role_missing 62 as well, and it was a REGRESSION: `splits` went 0 -> 1,
+    # `role_wrong` 0 -> 1, `cards` and `titles_graded` +1, because a truncated
+    # title minted a rival card for an application already tracked. Five filled
+    # blanks do not pay for one destroyed identity.
+    #
+    # What makes THIS 62 a safe move is the same close the paragraph above
+    # describes: `splits` 0, `merges` 0, `role_wrong` 0, `cards` 9252 and
+    # `roles_graded` 7746 are all exactly where they were, so nothing moved
+    # except five cards inside one population. Measured across all 17,260 cases,
+    # the reader fires on 40 subjects and matches ground truth on 40 of 40.
+    "role_missing": 62,
     # Mail that names NO job title, where the only correct card is a blank one.
     # These were SKIPPED entirely until the two counters below existed: "no role
     # to grade against" read as "nothing to assert", and 960 cards — 10.4% of
