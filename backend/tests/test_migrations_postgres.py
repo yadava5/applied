@@ -58,6 +58,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DBAPIError
 
 from jobtracker.database.models import Application, ApplicationStatus
+from tests.pg_support import register_owned_container
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
@@ -110,12 +111,23 @@ def _resolve_admin_url() -> tuple[str | None, Any]:
 
 ADMIN_URL, _OWNED_CONTAINER = _resolve_admin_url()
 
+_STOP_OWNED_CONTAINER = (
+    register_owned_container(_OWNED_CONTAINER)
+    if _OWNED_CONTAINER is not None
+    else (lambda: None)
+)
+
 
 def teardown_module(module) -> None:  # noqa: ANN001 - pytest hook signature
-    """Stop the container we started, if we started one."""
+    """Release the container promptly; ``atexit`` covers the runs that skip here.
 
-    if _OWNED_CONTAINER is not None:
-        _OWNED_CONTAINER.stop()
+    ``teardown_module`` fires only once pytest has *executed* a test in this
+    module, and the container is started at import. ``register_owned_container``
+    is what covers ``--collect-only``, a ``-k`` that deselects everything, and
+    an ``-x`` abort — see ``tests/pg_support.py`` for the measurement.
+    """
+
+    _STOP_OWNED_CONTAINER()
 
 
 pytestmark = pytest.mark.skipif(
