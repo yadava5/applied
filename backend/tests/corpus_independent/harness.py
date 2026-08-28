@@ -94,7 +94,9 @@ from jobtracker.cloud.applications import (
     Application,
     Email,
     _persist_review_items,
+    classify_review_item,
     employers_with_several_applications,
+    reconcile_orphaned_classifications,
     threads_naming_one_application,
     upsert_applications_for_user,
 )
@@ -345,6 +347,18 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
         if rolled or review:
             await session.commit()
 
+    return await _read_the_board(session, dropped)
+
+
+async def _read_the_board(session, dropped: set[str]) -> Replay:
+    """The board, exactly as :func:`replay` left it.
+
+    Extracted verbatim so :func:`answer_the_queue` can take the SAME reading
+    afterwards. A second reader written by hand would be a second definition of
+    "what the board says", and the delta between the two phases would then be
+    partly a difference between two readers.
+    """
+
     rows = (
         await session.exec(
             select(Application)
@@ -398,6 +412,197 @@ async def replay(session, verdicts: list[Verdict]) -> Replay:
             for r in live
         },
     )
+
+
+@dataclass
+class AnswerScore:
+    """What answering the queue DOES, counted so the buckets close.
+
+    Only the per-call outcomes the board cannot show. Everything about where
+    the mail ended up is graded by re-running :func:`score_board` on the board
+    afterwards — a second set of hand-rolled "did it land right" counters would
+    be a weaker copy of instruments that already carry denominators, a closure
+    assertion and mutation probes.
+    """
+
+    #: The denominator. Items in the queue when the phase starts.
+    queued: int = 0
+    answered: int = 0
+    #: Left the queue because answering a SIBLING settled it. The queue offers
+    #: one entry per conversation, so this is the product working, not a loss —
+    #: but an accounting that does not name it reads as messages going missing.
+    settled_by_a_prior_answer: int = 0
+    #: `classify_review_item` could not name the employer, so it kept the label,
+    #: kept the row in the queue and returned `needs_employer`. A silent branch
+    #: until it is counted: over the whole corpus 360 of 17,260 cases resolve no
+    #: employer from sender + subject (200 `bare-relay`, 160 of 320
+    #: `verdict-past-the-body-cap`).
+    refused_needs_employer: int = 0
+    filed_on_an_existing_card: int = 0
+    minted_a_card: int = 0
+    #: Answered with a category that files nothing (`other`).
+    not_a_lifecycle_answer: int = 0
+
+    #: HOW MUCH CHOICE THERE WAS, for the filed ones. Reported apart because a
+    #: landing at an employer holding ONE live card is right by cardinality, not
+    #: by understanding, and folding the two together hides rule 4's coin toss
+    #: inside a healthy-looking headline.
+    landed_where_one_card_existed: int = 0
+    landed_where_several_did: int = 0
+
+
+#: The corpus's categories, mapped to the enum the endpoint takes.
+#:
+#: PLUMBING, not ground truth — the same distinction `_MAX_BODY_CHARS` is
+#: imported under. `NEEDS_REVIEW` is deliberately absent and unmappable: it is
+#: the typed null of `classified_as`, not a verdict a person can give, and
+#: sending it as an answer would forge a decision nobody made.
+_ANSWERS = {
+    "applied": EmailCategory.APPLIED,
+    "pending_application": EmailCategory.PENDING_APPLICATION,
+    "interview": EmailCategory.INTERVIEW,
+    "rejection": EmailCategory.REJECTION,
+    "offer": EmailCategory.OFFER,
+    "assessment": EmailCategory.ASSESSMENT,
+    "other": EmailCategory.OTHER,
+}
+
+
+async def _still_in_the_queue(session, message_id: str) -> bool:
+    """The product's own three-clause predicate, re-asked per message.
+
+    `_settle_thread_siblings` marks same-identity siblings reviewed and linked
+    when one of them is answered, and `classify_review_item` has no
+    `is_reviewed` guard — it selects on `message_id` alone. So a loop over the
+    queue snapshot would re-answer rows that have already left it, producing
+    duplicate training examples and a call path no UI can make. Re-checking is
+    what the user sees: the row is gone from the list.
+    """
+
+    return (
+        await session.exec(
+            select(Email.message_id).where(
+                Email.user_id == _USER,
+                Email.message_id == message_id,
+                Email.application_id.is_(None),
+                Email.classified_as == EmailCategory.NEEDS_REVIEW,
+                Email.is_reviewed == False,  # noqa: E712 — SQL boolean
+            )
+        )
+    ).first() is not None
+
+
+async def answer_the_queue(
+    session, cases: list[Case], replayed: Replay
+) -> tuple[AnswerScore, Replay]:
+    """Answer every held message with the category its mail really carries.
+
+    THE HARNESS WROTE THE QUEUE AND NEVER READ IT. `replay` runs the sync and
+    stops; `classify_review_item` and `reconcile_orphaned_classifications` were
+    called nowhere under `tests/corpus_independent/`, so every product behaviour
+    that begins with a person answering "what is this?" was ungraded (#547).
+    The queue is where a message goes when the product is honest about not
+    knowing, and a harness that cannot see it being ANSWERED scores "the user
+    resolved it and the card is right" the same as "the user resolved it and the
+    card is wrong".
+
+    THIS MODELS A PERFECT ANSWERER, NOT A USER. Every held message is answered,
+    and answered correctly, because `Case.expected_category` is the category the
+    MAIL carries — what a person reading the whole thing in Gmail would say —
+    while the pipeline only ever saw a ~200-character snippet. Wrong answers are
+    a different instrument and out of scope. What this measures is the filing
+    path under ideal answers: given the right answer, does the product put the
+    mail on the right card and say the right thing about it?
+
+    NO CARD IS PICKED, deliberately. `ReviewQueue.tsx` initialises its selection
+    to null and pre-checks "not one of these" (#554), and sends null outright
+    whenever the picker is not shown — so this is not merely the default path,
+    it is the only path for most items. Passing `application_id` would measure a
+    product the user does not have.
+
+    OLDEST FIRST, and the order is part of the instrument. `Replay.reviewed` is
+    a set, so iterating it directly is hash-order and therefore
+    PYTHONHASHSEED-dependent; and order is load-bearing here, because the first
+    answer at an employer mints the row the later ones land on. Sorted by
+    `(received_at, message_id)`, which is also the order a person works a queue.
+
+    Returns the per-call score and the board as it stands afterwards, read by
+    the same function that read it the first time.
+    """
+
+    by_mid = {c.message_id: c for c in cases}
+    held = sorted(
+        (by_mid[mid] for mid in replayed.reviewed if mid in by_mid),
+        key=lambda c: (c.received_at, c.message_id),
+    )
+    score = AnswerScore(queued=len(replayed.reviewed))
+    existing = _row_ids(replayed)
+
+    for case in held:
+        if not await _still_in_the_queue(session, case.message_id):
+            score.settled_by_a_prior_answer += 1
+            continue
+        answer = _ANSWERS.get(case.expected_category)
+        if answer is None:  # pragma: no cover — the mapping is asserted total
+            raise AssertionError(
+                f"{case.expected_category!r} is not an answer a person can give"
+            )
+
+        result = await classify_review_item(
+            session, _USER, case.message_id, answer
+        )
+        await session.commit()
+        score.answered += 1
+
+        if result.get("needs_employer"):
+            score.refused_needs_employer += 1
+            continue
+        app_id = result.get("application_id")
+        if app_id is None:
+            score.not_a_lifecycle_answer += 1
+            continue
+
+        if app_id in existing:
+            score.filed_on_an_existing_card += 1
+        else:
+            score.minted_a_card += 1
+            existing.add(app_id)
+
+        # CARDINALITY READ OFF THE BOARD, not derived from the case. The token
+        # space `employers_with_several_applications` counts in is the leading
+        # word of a display name, not the normalized company, and the comment on
+        # that function records what happened the last time this was rederived:
+        # a set that never contained the token being looked up, so the rule
+        # silently did nothing. Counting the rows that share the landed row's
+        # own `company` asks the board instead of guessing its vocabulary.
+        landed = await session.get(Application, app_id)
+        siblings = (
+            await session.exec(
+                select(Application.id).where(
+                    Application.user_id == _USER,
+                    Application.company == landed.company,
+                    Application.dismissed_at.is_(None),
+                )
+            )
+        ).all()
+        if len(siblings) > 1:
+            score.landed_where_several_did += 1
+        else:
+            score.landed_where_one_card_existed += 1
+
+    # THE CATCH-UP, which #547 names alongside the answer path. It is the
+    # designed repair for the `needs_employer` refusals above, and it was
+    # equally unreachable from this harness.
+    await reconcile_orphaned_classifications(session, _USER)
+    await session.commit()
+
+    return score, await _read_the_board(session, replayed.dropped)
+
+
+def _row_ids(replayed: Replay) -> set[int]:
+    """The application ids behind the labels, which carry `row<id>:`."""
+
+    return {int(label.split(":", 1)[0][3:]) for label, _ in replayed.groups}
 
 
 @dataclass
