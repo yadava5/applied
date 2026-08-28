@@ -57,6 +57,13 @@ export interface ClassifyArgs {
    * a default of `true` is the silent acceptance the round trip exists to stop.
    */
   confirmNewCompany?: boolean;
+  /**
+   * "None of the applications you showed me." The user's answer to the review
+   * queue's picker, and the reason it cannot simply be an absent
+   * `applicationId`: absent means "nobody asked", which the backend answers by
+   * tie-breaking onto the employer's oldest row.
+   */
+  noneOfThese?: boolean;
 }
 
 /**
@@ -121,6 +128,7 @@ export function readClassifyBody(raw: unknown): ClassifyRequest {
     application_id?: unknown;
     message?: unknown;
     confirm_new_company?: unknown;
+    none_of_these?: unknown;
   };
 
   const category = typeof body.category === "string" ? body.category.trim() : "";
@@ -137,6 +145,10 @@ export function readClassifyBody(raw: unknown): ClassifyRequest {
   // makes the backend skip the typo check — coercing into it would restore the
   // silent acceptance by the back door.
   const confirmNewCompany = body.confirm_new_company === true;
+  // Literally `true`, for the same reason and with more at stake: this flag is
+  // what makes the backend OPEN A ROW instead of resolving one. A truthy string
+  // arriving from anywhere would mint applications nobody asked for.
+  const noneOfThese = body.none_of_these === true;
 
   return {
     ok: true,
@@ -145,6 +157,7 @@ export function readClassifyBody(raw: unknown): ClassifyRequest {
     ...(applicationId !== undefined ? { applicationId } : {}),
     ...(message !== undefined ? { message } : {}),
     ...(confirmNewCompany ? { confirmNewCompany } : {}),
+    ...(noneOfThese ? { noneOfThese } : {}),
   };
 }
 
@@ -177,5 +190,6 @@ export function classifyBackendBody(args: ClassifyArgs): Record<string, unknown>
     ...(args.applicationId !== undefined ? { application_id: args.applicationId } : {}),
     ...(args.message ? { message: args.message } : {}),
     ...(args.confirmNewCompany === true ? { confirm_new_company: true } : {}),
+    ...(args.noneOfThese === true ? { none_of_these: true } : {}),
   };
 }

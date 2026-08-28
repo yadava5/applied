@@ -57,8 +57,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   // on create — and the newest field here, `message`, is what lets a live-scan
   // correction land at all (its rows are verdicts about mail the backend has
   // never stored, so without it every one of them is a 404). Passing the parse
-  // result whole means a field can only be lost in `readClassifyBody`, which
-  // `tests/unit/classify-request.test.mjs` executes.
+  // result whole means a field cannot be lost HERE.
+  //
+  // It was written as "can only be lost in `readClassifyBody`", and that is
+  // more than this line earns. Below it sit `classifyReviewItem`'s call to
+  // `classifyBackendBody` and, past the wire, FastAPI's own re-spread of the
+  // parsed body into arguments — five rebuilds in all, of which `tests/unit/`
+  // executes three (`classifyRequestBody`, `readClassifyBody` and
+  // `classifyBackendBody`, all called directly in `classify-request.test.mjs`).
+  // Deleting one argument from that last re-spread left every
+  // frontend and backend unit test green while the field stopped arriving;
+  // `backend/tests/test_gmail_oauth_cloud.py` now covers it over HTTP for the
+  // two fields the review picker sends, and the rest of that seam is still
+  // carried by types and review.
   const r = await classifyReviewItem(messageId, parsed);
   return NextResponse.json(r.data ?? {}, { status: r.status });
 }

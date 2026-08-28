@@ -63,12 +63,18 @@ interface HeldSeed {
 }
 
 /**
- * Seven held messages, cycled to whatever length the harness asks for. Most sit
+ * TEN held messages, cycled to whatever length the harness asks for. Most sit
  * in the uncertain band under the gate; one cleared it and is held for a
  * missing employer name, which is the branch the amber/green split in the row's
  * confidence line exists to distinguish.
  *
- * The last TWO are one shape and belong together: an applicant tracking system
+ * The count is stated here and the list is below it, so this sentence goes stale
+ * the moment someone appends without reading — it said "Seven" over eight seeds
+ * before #554 touched the file, and the paragraph below it pointed at the wrong
+ * pair. Both are fixed; the lesson is that a hand-maintained count in prose is
+ * worth exactly what the next reader's diligence is worth.
+ *
+ * SEEDS 6 AND 7 are one shape and belong together: an applicant tracking system
  * sends every acknowledgement for an employer under one subject from one
  * no-reply address, so the queue can hold several entries whose subject and
  * sender are byte-identical and which are nevertheless different applications.
@@ -77,6 +83,16 @@ interface HeldSeed {
  * telling the two rows apart is the role. Seeding it here is what keeps the
  * twin from being a strict subset of the page it stands in for — the omission
  * this file's header is about, in its next form.
+ *
+ * SEEDS 8, 9 AND 10 are the "which application is this about?" set, added by
+ * #554: employers holding four cards, one card, and exactly two. All three are
+ * needed because the picker's predicate is a THRESHOLD, and a threshold needs a
+ * case on each side of it AND one sitting on it — four and one alone leave
+ * `>= 2` changeable to `>= 3` with every gate in the repo green.
+ *
+ * None is a repeat of the pair above: 6 and 7 differ by ROLE, which is what
+ * stops them being one question asked twice, while 8, 9 and 10 name no role and
+ * so cannot be placed without asking.
  */
 const HELD_SEEDS: HeldSeed[] = [
   {
@@ -168,13 +184,75 @@ const HELD_SEEDS: HeldSeed[] = [
     // `?review=N` knob (3, 4, 7) keeps exactly the rows it had; only a caller
     // asking for 8 or more reaches this one. Inserting it anywhere else would
     // silently re-date and re-order the queue every geometry spec measures.
-    subject: "Thank you for your interest in Verkada",
+    //
+    // THE EMPLOYER MUST BE ONE THIS BOARD ACTUALLY HOLDS (#554). This seed said
+    // "Verkada", and the demo board has no Verkada row — so `reviewCandidates`
+    // matched nothing, the picker never rendered, and the one seed written for
+    // the "which application?" question asked it of an empty list. The twin was
+    // therefore a strict subset of the signed-in page in exactly the way this
+    // file's header warns about, one control further in: the picker had no
+    // browser-testable surface anywhere in the repo, which is how it shipped
+    // with "not one of these" pre-selected. `Northstar Systems` holds four rows
+    // (`a1`, `a2`, `a3`, `a7` in `demoData.ts`) and is the board's stand-in for
+    // the owner's four Amazon requisitions, which is the shape this asks about.
+    // The snippet names a role this employer actually posts. It kept Verkada's
+    // "Embedded Software Engineer, Access Control" when the subject was
+    // retargeted, matching none of Northstar's four rows. The picker was
+    // unaffected — `reviewCandidates` reads subject and sender, never the
+    // snippet — but the twin displayed a row that did not hang together.
+    subject: "Thank you for your interest in Northstar Systems",
     senderName: null,
     senderEmail: "no-reply@us.greenhouse-mail.io",
     snippet:
-      "Thank you for your interest in the Embedded Software Engineer, Access Control opportunity. It means a lot to us that you would consider joining our mission.",
+      "Thank you for your interest in the Machine Learning Engineer opportunity. It means a lot to us that you would consider joining our mission.",
     confidence: 0.95,
     receivedDaysAgo: 10,
+    holdReason: "which_application",
+  },
+  {
+    // THE CONTROL FOR THE ROW ABOVE, and it is not decoration. The picker is
+    // shown only when an employer holds SEVERAL candidates; a single-application
+    // employer must still be one click, and most of the queue is that case.
+    // Without a seed that reaches exactly one row, widening the predicate from
+    // "two or more" to "one or more" puts a mandatory question on every row in
+    // the queue and no test in the repo goes red.
+    //
+    // `Quarry Data` holds exactly one row (`a8`).
+    subject: "Thank you for your interest in Quarry Data",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.io",
+    snippet:
+      "Thank you for your interest in the Data Platform opportunity. It means a lot to us that you would consider joining our mission.",
+    confidence: 0.95,
+    receivedDaysAgo: 11,
+    holdReason: "which_application",
+  },
+  {
+    // EXACTLY TWO CANDIDATES — the case the picker's own predicate is written
+    // for ("two or more") and the case nothing in the repo could reach.
+    //
+    // Northstar yields four and Quarry yields one, so the threshold could be
+    // narrowed from `>= 2` to `>= 3` with every gate green: four is still >= 3
+    // and one is still < 3, so neither existing seed notices. An employer
+    // holding exactly two applications would then get no picker at all, the
+    // request would carry no answer, and the backend would tie-break onto the
+    // oldest row — #554 restored for the MINIMAL ambiguous case.
+    //
+    // A control is DIRECTIONAL, which is the lesson this seed records. Quarry
+    // catches the predicate widening; only a two-candidate employer catches it
+    // narrowing, and narrowing is the direction that reintroduces the bug.
+    //
+    // `Cedar Labs` holds exactly two rows (`a4`, `a5`). It could not be reached
+    // before: its only other seed sends from `priya@cedarlabs.com`, and
+    // `reviewCandidates` asks whether the haystack contains "cedar labs", which
+    // a domain label without the space does not satisfy.
+    subject: "Thank you for your interest in Cedar Labs",
+    senderName: null,
+    senderEmail: "no-reply@us.greenhouse-mail.io",
+    snippet:
+      "Thank you for your interest in the Platform Engineering opportunity. It means a lot to us that you would consider joining our mission.",
+    confidence: 0.95,
+    receivedDaysAgo: 12,
     holdReason: "which_application",
   },
 ];

@@ -60,6 +60,42 @@ export const CLASSIFY_FAILED = "Couldn't classify this item.";
  */
 export const MIN_COMPANY_LENGTH = 2;
 
+/**
+ * WHAT THE USER HAS SAID ABOUT WHICH APPLICATION THIS MESSAGE IS ABOUT.
+ *
+ * Three states, because the two that used to share `null` are different
+ * answers: `null` is "not asked yet", `"none"` is "none of the ones you showed
+ * me", and a number is the row they picked. Collapsing the first two is the
+ * defect (#554) — the discarding option was pre-selected, so a user who read
+ * the subject, chose a stage and clicked classify answered "none of my
+ * applications at this employer" without ever choosing it.
+ */
+export type ReviewAssignment = number | "none" | null;
+
+/** Has the user answered the picker at all? `"none"` IS an answer. */
+export function pickerAnswered(assignment: ReviewAssignment): boolean {
+  return assignment !== null;
+}
+
+/**
+ * May this decision be sent?
+ *
+ * THE ONE PLACE THAT DECIDES, and it is deliberately not the submit button's
+ * `disabled` attribute. Three other controls re-send the same decision — both
+ * confirmation buttons and the needs-employer form — and none of them consults
+ * that attribute, so a gate written only there is a gate with a side door: a
+ * `needs_employer` round trip re-enables the category select, changing it
+ * clears the pick, and the still-mounted prompt then files blind.
+ */
+export function canSubmitReview(
+  category: string,
+  showPicker: boolean,
+  assignment: ReviewAssignment,
+): boolean {
+  if (!category) return false;
+  return !showPicker || pickerAnswered(assignment);
+}
+
 /** Body of `POST /applications/review/{message_id}/classify`. */
 export interface ClassifyRequestBody {
   category: string;
@@ -85,6 +121,31 @@ export interface ClassifyRequestBody {
    * stop.
    */
   confirm_new_company?: boolean;
+  /**
+   * "None of the applications you showed me." Sent only when the user chose
+   * that option against a rendered picker.
+   *
+   * It exists because an ABSENT `application_id` cannot carry it. Absent means
+   * "nobody asked" — the single-candidate queue rows, the mail reclassify
+   * surface, the live scan — and the backend answers that by tie-breaking onto
+   * the employer's oldest row. That is the right answer to silence and the
+   * wrong answer to a person saying "not one of those": for a rejection the
+   * tie-break moves a live application to a terminal status, which
+   * `advance_application_status` never walks back.
+   *
+   * The field crosses FIVE rebuilds, not the three that are obvious from here:
+   * this function, the proxy's `readClassifyBody`, its `classifyBackendBody`,
+   * and then FastAPI's own re-spread of the parsed body into arguments. The
+   * last one is the least visible and was the one that could be cut with every
+   * test still green.
+   *
+   * So the two are separated on the wire. With this flag the backend skips
+   * resolution entirely and opens a new application, which is what the user
+   * literally said: a lifecycle message about an application the board does not
+   * hold IS an application the board is missing. A spurious row is one dismiss
+   * click; a wrongly-terminal row is permanent.
+   */
+  none_of_these?: boolean;
 }
 
 /**
@@ -116,7 +177,7 @@ export type ClassifyOutcome =
 export function classifyRequestBody(
   category: string,
   company?: string | null,
-  applicationId?: number | null,
+  assignment?: ReviewAssignment,
   message?: ScanMessagePayload | null,
   confirmNewCompany?: boolean | null,
 ): ClassifyRequestBody {
@@ -124,8 +185,17 @@ export function classifyRequestBody(
   const body: ClassifyRequestBody = { category };
   if (named) body.company = named;
   if (confirmNewCompany === true) body.confirm_new_company = true;
-  if (typeof applicationId === "number" && Number.isInteger(applicationId) && applicationId > 0) {
-    body.application_id = applicationId;
+  // THE ANSWER TRAVELS AS ONE VALUE, so a caller cannot send the id and forget
+  // the flag, or send the flag and forget to clear the id. `"none"` and a row
+  // id are two answers to one question and they are built from one argument.
+  if (assignment === "none") {
+    body.none_of_these = true;
+  } else if (
+    typeof assignment === "number" &&
+    Number.isInteger(assignment) &&
+    assignment > 0
+  ) {
+    body.application_id = assignment;
   }
   // Sent on EVERY attempt for a scan row, including the re-send that answers
   // `needs_employer`. The first attempt does store the message (the backend

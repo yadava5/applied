@@ -10,6 +10,7 @@ import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 import {
   CLASSIFY_FAILED,
   canNameCompany,
+  canSubmitReview,
   classifyRequestBody,
   confirmCompanyPrompt,
   employerPromptFor,
@@ -18,6 +19,7 @@ import {
   reviewCandidates,
   rowStaysInQueue,
   type CandidateApplication,
+  type ReviewAssignment,
 } from "@/lib/dashboard/review";
 import type { Application } from "@/lib/dashboard/summary";
 
@@ -92,8 +94,33 @@ function ReviewRow({
    * resemblance itself, so this is a question with two buttons, not a notice.
    */
   const [suggestion, setSuggestion] = useState<string | null>(null);
-  /** The application this verdict answers, when one employer holds several. */
-  const [applicationId, setApplicationId] = useState<number | null>(null);
+  /**
+   * The application this verdict answers, when one employer holds several.
+   *
+   * `null` is UNANSWERED and nothing is checked. It used to be both "unanswered"
+   * and "not one of these", with "not one of these" pre-selected — so the option
+   * that discards the question was the default, and a user who read the subject,
+   * chose a stage and clicked classify had answered it without choosing it
+   * (#554). Measured over 2,701 replayed answers, requiring the pick took
+   * applications destroyed from 19 to 0 and applications scattered from 58 to 1
+   * — a one-off probe over the corpus harness, not a CI gate; its provenance is
+   * written out in `backend/tests/test_none_of_these_opens_a_row.py`.
+   *
+   * This is the rule `CATEGORY_CHOICES` above already states for the stage
+   * select — "the control must not answer for the user" — applied to the control
+   * where being wrong costs a record rather than a label.
+   *
+   * THE INITIAL VALUE HERE IS NOT WHAT PINS THAT, and no test can make it be.
+   * The picker renders only once a lifecycle stage is chosen, and choosing one
+   * runs the reset below — so whatever this `useState` holds is overwritten
+   * before the radios ever appear. The load-bearing line is
+   * `setAssignment(null)` in the select's `onChange`; changing it to `"none"`
+   * reproduces the shipped defect exactly, and `tests/e2e/review-picker.spec.ts`
+   * goes red on it. `null` here is agreement with that line, not a second
+   * guard, and weakening the reset on the grounds that "the default is safe
+   * anyway" would put the bug straight back.
+   */
+  const [assignment, setAssignment] = useState<ReviewAssignment>(null);
 
   // The picker is a question, and one candidate is not a question: it renders
   // only when the message matches SEVERAL applications and the chosen category
@@ -111,6 +138,14 @@ function ReviewRow({
    * reading `company` here would send the previous attempt's value.
    */
   async function classify(answer?: { company?: string; confirmNewCompany?: boolean }) {
+    // ENFORCED HERE, NOT ON THE BUTTON. Three other controls re-send this same
+    // decision — both confirmation buttons and the needs-employer form — and
+    // none of them reads the submit button's `disabled`. Gating only there left
+    // a live side door: a `needs_employer` round trip leaves the stage select
+    // enabled, changing the stage clears the pick, and the still-mounted prompt
+    // then files with no answer at all. Every caller inherits the rule from
+    // here, and the `disabled` attributes below are courtesy on top of it.
+    if (!canSubmitReview(category, showPicker, assignment)) return;
     setBusy(true);
     setError(null);
     const named = (answer?.company ?? company).trim();
@@ -124,7 +159,7 @@ function ReviewRow({
             classifyRequestBody(
               category,
               named,
-              showPicker ? applicationId : null,
+              showPicker ? assignment : null,
               null,
               answer?.confirmNewCompany,
             ),
@@ -159,7 +194,7 @@ function ReviewRow({
 
   const sender = item.sender_name || item.sender_email || "unknown sender";
   const canFile = canNameCompany(company);
-  const hasChosen = category !== PLACEHOLDER;
+  const canSend = canSubmitReview(category, showPicker, assignment);
 
   return (
     <li className="rounded-lg border border-line-soft bg-surface-2 p-3">
@@ -221,7 +256,13 @@ function ReviewRow({
           disabled={busy}
           onChange={(e) => {
             setCategory(e.target.value);
-            setApplicationId(null);
+            // The pick belonged to the previous stage's question, and so did
+            // any prompt on screen: `employerPrompt` and `suggestion` are both
+            // answers ABOUT the last submission. Leaving them mounted is what
+            // let a re-send fire against a cleared pick.
+            setAssignment(null);
+            setEmployerPrompt(null);
+            setSuggestion(null);
           }}
           className="rounded border border-line-soft bg-surface px-1.5 py-1 text-xs text-muted outline-none transition-colors hover:border-line focus:border-line-strong disabled:opacity-50"
         >
@@ -240,7 +281,7 @@ function ReviewRow({
           // the did-you-mean question, and a bare handler would hand it the
           // click event as that answer.
           onClick={() => void classify()}
-          disabled={busy || !hasChosen}
+          disabled={busy || !canSend}
           className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium text-foreground transition-colors hover:border-line-strong hover:text-strong disabled:opacity-50"
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
@@ -276,8 +317,14 @@ function ReviewRow({
                 <input
                   type="radio"
                   name={`assign-${item.message_id}`}
-                  checked={applicationId === candidate.id}
-                  onChange={() => setApplicationId(candidate.id)}
+                  // The answer is readable from the DOM, which is what lets a
+                  // browser test assert that the id the user picked is the id
+                  // the request carried. Without it the radio's identity lives
+                  // only in a closure and the wire between the two is untestable
+                  // — the gap this control shipped through.
+                  value={candidate.id}
+                  checked={assignment === candidate.id}
+                  onChange={() => setAssignment(candidate.id)}
                   disabled={busy}
                   className="h-3 w-3 accent-[var(--text-strong)]"
                 />
@@ -291,12 +338,18 @@ function ReviewRow({
               <input
                 type="radio"
                 name={`assign-${item.message_id}`}
-                checked={applicationId === null}
-                onChange={() => setApplicationId(null)}
+                value="none"
+                checked={assignment === "none"}
+                onChange={() => setAssignment("none")}
                 disabled={busy}
                 className="h-3 w-3 accent-[var(--text-strong)]"
               />
-              <span>not one of these</span>
+              {/* The label says what the product will DO, because what it used
+                  to do was file against the oldest row at this employer — the
+                  opposite of what "not one of these" promises. Choosing it now
+                  opens a row, which is what a lifecycle message about an
+                  application the board does not hold actually means. */}
+              <span>none of these — track it as a new application</span>
             </label>
           </div>
         </fieldset>
@@ -350,7 +403,7 @@ function ReviewRow({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (!busy && canFile) void classify();
+            if (!busy && canFile && canSend) void classify();
           }}
           className="mt-2 rounded border border-review/40 bg-surface px-2.5 py-2"
         >

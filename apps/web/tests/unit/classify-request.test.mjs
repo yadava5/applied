@@ -224,6 +224,91 @@ test("browser to backend, whole: the confirmation crosses every rebuild", () => 
   });
 });
 
+// --- Answering "which application is this about?" with "none" (#554) --------
+//
+// The same trap, one field later, and this one is worse if it springs. An
+// absent `application_id` means "nobody asked" — the single-candidate queue
+// rows, the mail reclassify surface, the live scan — and the backend answers
+// silence with `_pick_application`'s rule 4, the employer's OLDEST live row. On
+// a rejection that moves a live application to a terminal status, which
+// `advance_application_status` never walks back.
+//
+// So "none of these" cannot travel as an absent id. It has its own field, and
+// if any hop drops it the request degrades to exactly the silence above — a
+// green `tsc`, a working-looking UI, and a destroyed record. That is why the
+// chain is asserted whole rather than at the browser end.
+
+test("'none of these' survives the proxy's read", () => {
+  const parsed = readClassifyBody({ category: "rejection", none_of_these: true });
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.noneOfThese, true);
+});
+
+test("'none of these' reaches the body the backend is actually sent", () => {
+  const body = classifyBackendBody({ category: "rejection", noneOfThese: true });
+
+  assert.equal(body.none_of_these, true);
+});
+
+test("browser to backend, whole: 'none of these' crosses every rebuild", () => {
+  const fromBrowser = classifyRequestBody("rejection", "", "none");
+  const parsed = readClassifyBody(JSON.parse(JSON.stringify(fromBrowser)));
+  assert.equal(parsed.ok, true);
+
+  assert.deepEqual(classifyBackendBody(parsed), {
+    category: "rejection",
+    none_of_these: true,
+  });
+});
+
+test("browser to backend, whole: a PICKED row still crosses, and carries no flag", () => {
+  // The control for the chain above. A rewrite that sets `none_of_these` from
+  // "the id is absent" rather than from the user's answer would satisfy every
+  // assertion in the previous test and mint a row for every anonymous
+  // reclassify on the board.
+  const fromBrowser = classifyRequestBody("rejection", "", 42);
+  const parsed = readClassifyBody(JSON.parse(JSON.stringify(fromBrowser)));
+  assert.equal(parsed.ok, true);
+
+  assert.deepEqual(classifyBackendBody(parsed), {
+    category: "rejection",
+    application_id: 42,
+  });
+});
+
+test("silence stays silence: an unanswered picker sends neither field", () => {
+  // The other control, and the one the whole design turns on. "Nobody asked"
+  // and "the user said none" must not produce the same body — if they do, the
+  // flag is decoration and rule 4 still decides.
+  const fromBrowser = classifyRequestBody("rejection", "", null);
+  const parsed = readClassifyBody(JSON.parse(JSON.stringify(fromBrowser)));
+  const toBackend = classifyBackendBody(parsed);
+
+  assert.deepEqual(toBackend, { category: "rejection" });
+  assert.equal("none_of_these" in toBackend, false);
+  assert.equal("application_id" in toBackend, false);
+});
+
+test("'none of these' is never manufactured — only a literal true", () => {
+  // This flag makes the backend OPEN A ROW rather than resolve one, so a
+  // coerced truthy value mints applications nobody asked for.
+  for (const raw of [undefined, false, null, 0, 1, "true", "false", "yes", {}, []]) {
+    const parsed = readClassifyBody({ category: "rejection", none_of_these: raw });
+    assert.equal(parsed.ok, true);
+    assert.equal(
+      parsed.noneOfThese,
+      undefined,
+      `none_of_these ${JSON.stringify(raw)} must not become an answer`,
+    );
+    assert.equal(
+      "none_of_these" in classifyBackendBody(parsed),
+      false,
+      `none_of_these ${JSON.stringify(raw)} must not reach the backend`,
+    );
+  }
+});
+
 test("the flag is never manufactured — only a literal true is an answer", () => {
   // The safety half, and the one that decides whether forwarding this is
   // sound. `confirm_new_company` is the single input that makes the backend
