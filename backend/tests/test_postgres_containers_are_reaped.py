@@ -33,6 +33,7 @@ and on a desktop running one suite.
 
 from __future__ import annotations
 
+import ast
 import os
 import shutil
 import subprocess
@@ -76,7 +77,7 @@ def _docker_is_usable() -> bool:
     return probe.returncode == 0
 
 
-pytestmark = pytest.mark.skipif(
+requires_docker = pytest.mark.skipif(
     not _docker_is_usable(),
     reason=(
         "No Docker daemon, so no module here starts a container and there is "
@@ -146,6 +147,7 @@ def _child_env() -> dict[str, str]:
     return env
 
 
+@requires_docker
 def test_the_measurement_can_see_a_container_that_is_never_registered() -> None:
     """Directional control: an unregistered container DOES show up as leaked."""
 
@@ -171,6 +173,7 @@ def test_the_measurement_can_see_a_container_that_is_never_registered() -> None:
         _remove(leaked)
 
 
+@requires_docker
 @pytest.mark.parametrize("module", DRIVEN_MODULES)
 def test_importing_a_postgres_module_leaves_no_container(module: str) -> None:
     """``--collect-only`` imports the module, starts a container, and exits."""
@@ -197,3 +200,54 @@ def test_importing_a_postgres_module_leaves_no_container(module: str) -> None:
         )
     finally:
         _remove(leaked)
+
+
+def _modules_that_can_start_a_container() -> tuple[set[str], set[str]]:
+    """``(starts one directly, resolves the shared one)``, by AST, not by grep.
+
+    A comment saying "remember to add new modules to DRIVEN_MODULES" is not a
+    check. This reads the tree.
+    """
+
+    direct: set[str] = set()
+    shared: set[str] = set()
+    for path in sorted((BACKEND_DIR / "tests").glob("*.py")):
+        if path.name == Path(__file__).name:
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id == "PostgresContainer":
+                direct.add(f"tests/{path.name}")
+            elif node.func.id == "resolve_admin_url":
+                shared.add(f"tests/{path.name}")
+    return direct, shared
+
+
+def test_every_module_that_starts_a_container_is_driven_above() -> None:
+    """A module added later must be added to ``DRIVEN_MODULES`` or this reds.
+
+    Without this the parametrised list silently stops covering the codebase:
+    a fifth Postgres module could leak on every run while every case above
+    stayed green. ``pg_support`` itself is not driven directly — it has no
+    tests — so it is covered through whichever module resolves its shared
+    container.
+    """
+
+    direct, shared = _modules_that_can_start_a_container()
+    driven = set(DRIVEN_MODULES)
+
+    # pg_support is a helper, not a test module; it is reached through its users.
+    direct.discard("tests/pg_support.py")
+    shared.discard("tests/pg_support.py")
+
+    assert direct <= driven, (
+        "these modules construct a PostgresContainer of their own but are not "
+        f"driven by this file: {sorted(direct - driven)}"
+    )
+    assert shared, "nothing resolves pg_support's shared container any more"
+    assert shared & driven, (
+        "no module that shares pg_support's container is driven here, so "
+        f"pg_support's own registration is untested: {sorted(shared)}"
+    )
