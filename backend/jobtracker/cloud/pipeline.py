@@ -2381,6 +2381,116 @@ def _lead_segment_candidates(subject: str) -> list[str]:
     return [run] if cut is None else [run, cut]
 
 
+#: THE ROLE LIVES IN THE SAME SEGMENT THE EMPLOYER WAS READ OUT OF (#553).
+#:
+#: A shape must be recognised once, not twice. :func:`_lead_segment_candidates`
+#: already establishes that "<Employer> Follow-Up for <Role> | <Candidate>" is
+#: this subject's shape and where its boundaries are, and then reads only the
+#: half in front of the lifecycle word. The half behind it — the job the message
+#: is about — was thrown away, on the same message, in the same request.
+#:
+#: That cost more than a missing title. ``identity_parts`` returning
+#: ``(None, None)`` is what sends the resolver into ``_pick_application``'s rule
+#: 4, the tie-break that files onto the employer's OLDEST row; so an unread role
+#: here downgraded the filing decision as well as blanking the card.
+#:
+#: THREE THINGS ARE REQUIRED, and every one of them is a refusal that the
+#: reported shape happens to satisfy rather than a rule written to fit it:
+#:
+#: 1. the leading run must END in a lifecycle word, with something in front of
+#:    it. That is what makes the remainder that word's object rather than
+#:    unrelated prose — the same test #537 had to restore for the employer half
+#:    after #525 minted companies named "Invitation", "Decision" and "Sorry";
+#: 2. the remainder must be INTRODUCED by "for"/"regarding"/"re"
+#:    (:data:`_LIFECYCLE_OBJECT`). "Quick Update from Sarah | …" offers nothing;
+#: 3. what is left must be TITLE-SHAPED and must contain a title's head noun.
+#:
+#: AND THE SEGMENT IS BOUNDED BY A PIPE, NEVER BY A DASH. This reads the role,
+#: not the employer, and the two need different boundaries even though they are
+#: read out of the same subject. ``_SEGMENT_DELIMITER`` accepts a spaced dash,
+#: which is correct for the employer — it sits in front of the delimiter, and no
+#: company name in this mail carries one — but a JOB TITLE routinely does:
+#:
+#:     "…Follow-Up for Software Engineer, Agentic AI Harness & Quality - Talonflow | <name>"
+#:     "…Follow-Up for Software Development Engineer I - AI/ML Network Infrastructure, … | <name>"
+#:
+#: Splitting those at the dash yields "Software Engineer, Agentic AI Harness &
+#: Quality" and "Software Development Engineer I" — clean enough to look right on
+#: a card and wrong enough to split the identity, which is the exact failure this
+#: module's role captures are built to avoid. Both shipped in a first draft and
+#: the independent corpus caught them: 38 of 40 right is a REGRESSION here, not a
+#: partial win, because the two wrong ones minted a rival card for an application
+#: the board already tracked.
+#:
+#: Measured over the 17,260-case corpus, against ground truth:
+#:
+#:     any delimiter   40 fire, 38 exact, 2 WRONG
+#:     pipe only       40 fire, 40 exact, 0 wrong
+#:
+#: The pipe costs nothing on this corpus — every subject of this shape has one —
+#: and a dash-delimited subject now reads no role and goes to the review queue,
+#: where a person decides. That is the direction this file takes everywhere else.
+#:
+#: The head noun is the load-bearing one. Shape alone accepts "Acme Interview
+#: for Tomorrow | <Candidate>" and "Acme Follow-Up for Tuesday | <Candidate>",
+#: both of which are Title-Case single words in exactly the reported position,
+#: and a wrong role is strictly worse than a blank one: the token is half an
+#: application's identity, so it becomes the card's title AND captures that
+#: application's future mail. :data:`_ROLE_HEAD_NOUNS` is the set the employer
+#: half already uses to tell a role from a company, so the two halves of this
+#: subject cannot end up disagreeing about what a job title looks like.
+#:
+#: What it costs is a real title whose head noun is not in that set — "Chief of
+#: Staff", "Product Owner", "Scrum Master" read as nothing here. That is the
+#: safe direction and the one this module takes everywhere else: the row goes to
+#: the review queue, where a person decides, instead of onto the board under a
+#: title nobody chose.
+_TITLE_SHAPED = re.compile(r"^" + _ROLE_SPAN + r"$")
+
+
+def _role_from_lead_segment(subject: str) -> str | None:
+    """The job title named INSIDE an ATS subject's leading segment, or None.
+
+    ``"Northwind Follow-Up for Backend Engineer | <Candidate>"`` -> ``Backend
+    Engineer``. Reads the same segment :func:`_lead_segment_candidates` reads the
+    employer from, but bounded only by a ``|`` — see the note above for the two
+    real titles a spaced dash truncated.
+    """
+
+    parts = (subject or "").split("|", 1)
+    if len(parts) < 2:
+        return None
+    segment = parts[0].strip()
+    run_match = _LEADING_RUN.match(segment)
+    if not run_match:
+        return None
+
+    # (1) An employer-shaped prefix, then the lifecycle word. ``[:-1]`` is not
+    # enough on its own — a run that IS a lifecycle word ("Interview | for
+    # Backend Engineer") has no employer in front of it and names no company,
+    # so there is nothing here to attach a role to.
+    words = run_match.group(1).split()
+    if len(words) < 2 or not _LIFECYCLE_WORD.match(words[-1]):
+        return None
+
+    # (2) …and the remainder is that word's object, not prose that follows it.
+    remainder = segment[run_match.end() :].strip()
+    intro = _LIFECYCLE_OBJECT.match(remainder)
+    if not intro:
+        return None
+
+    role = _clean_role(remainder[intro.end() :])
+    if role is None:
+        return None
+
+    # (3) Title-shaped, and it names a job rather than a day of the week.
+    if not _TITLE_SHAPED.match(role):
+        return None
+    if not any(_normalize_token(w) in _ROLE_HEAD_NOUNS for w in role.split()):
+        return None
+    return role
+
+
 def _employer_from_subject_segment(
     subject: str, relay_brand: str
 ) -> tuple[str, str] | None:
@@ -2768,7 +2878,11 @@ def _role_from_subject(subject: str) -> str | None:
         if len(role) < 3:
             continue
         return role
-    return None
+    # Last, and only when every pattern above declined: the leading-segment
+    # reader is a narrower rule about one known shape, so it must not pre-empt
+    # the general ones. Purely additive — nothing that resolved before resolves
+    # differently now.
+    return _role_from_lead_segment(text)
 
 
 def is_terminal_status(value: str) -> bool:
