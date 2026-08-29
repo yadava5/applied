@@ -302,7 +302,26 @@ class PipelineItemIn(BaseModel):
 
 
 class PipelineAnalyzeRequest(BaseModel):
-    items: list[PipelineItemIn]
+    """What the client asks the pipeline analytics about.
+
+    BOUNDED, for the same reason every string on ``PipelineItemIn`` is, and with
+    the same number as its sibling :class:`SyncRequest`. Processing already
+    discards everything past ``gmail_fetch_hard_cap`` (2000) — but that slice
+    happens after Pydantic has already materialised the entire list, so it caps
+    the WORK and not the ALLOCATION.
+
+    Set above the hard cap rather than at it, so this rejects abuse without ever
+    turning a client that merely relayed a few too many items into a 422; that
+    client's surplus is still silently dropped exactly as before.
+
+    IT WAS THE ONE THAT WAS MISSED. ``SyncRequest.items`` carried this bound and
+    this reasoning; the twin next to it carried neither, and measured (issue
+    #406) that showed up as ``SYNC n=2501 -> 422`` beside
+    ``PIPELINE n=100000 -> 200``, roughly 19x heap amplification inside Vercel's
+    ~4.5 MB body cap, for a handler that consumes 2,000 of what it allocated.
+    """
+
+    items: list[PipelineItemIn] = Field(max_length=2500)
     stale_days: int | None = None
 
 

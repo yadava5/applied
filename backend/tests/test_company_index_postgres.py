@@ -32,6 +32,8 @@ holds.
 from __future__ import annotations
 
 import os
+import random
+import string
 import subprocess
 import sys
 import uuid
@@ -266,3 +268,129 @@ def test_the_collation_is_the_production_one(seeded_engine):
         f"test database collation is {collation!r}; production (Supabase) is "
         "en_US.utf8 and this suite's conclusions do not transfer"
     )
+
+
+
+
+# =============================================================================
+# The ceiling those indexes impose on the column (issue #406)
+# =============================================================================
+#
+# A btree version 4 index row may not exceed 2704 bytes, and ``company`` is in
+# two of them. Nothing bounded the field, so ``POST /applications`` answered
+# 201 to a 5,000,000-character company and the INSERT was the thing that broke:
+#
+#     company len=2000 -> INSERT OK
+#     company len=2700 -> ProgramLimitExceeded: index row size 2712 exceeds
+#                         btree version 4 maximum 2704
+#     smallest rejected INCOMPRESSIBLE company: 2677 characters
+#
+# ``CloudApplicationCreate.company`` carries ``max_length=_MAX_COMPANY_LEN``
+# now, so the API refuses with 422 before the database is asked. That refusal is
+# tested on SQLite in ``test_application_create_is_bounded.py``, which cannot
+# see this ceiling at all — SQLite has no index-row limit. These two tests are
+# the half that can: the bound is inserted for real, and the length it protects
+# against is inserted for real too.
+#
+# THE FIXTURES ARE RANDOM BECAUSE THE CEILING IS ABOUT STORED BYTES. Postgres
+# compresses a varlena index datum before measuring it, so ``"C" * 2700``
+# INSERTS FINE — measured here, and the reason the issue records the smallest
+# rejected length as an *incompressible* one. A repeated character would have
+# made the first test below silently vacuous, which is the failure shape this
+# module's docstring is already about.
+
+_COMPANY_PROBE_USER = uuid.UUID("5f2b7c19-3a84-4d61-8e07-6c9a1b3d4f22")
+
+
+def _incompressible(n: int, *, four_byte: bool = False) -> str:
+    """``n`` characters that pglz cannot shrink, seeded so a red is reproducible.
+
+    ``four_byte=True`` draws from CJK Extension B, every code point of which is
+    four bytes in UTF-8 — the worst exchange rate between the CHARACTER count
+    ``max_length`` enforces and the BYTE count the index measures.
+    """
+
+    rng = random.Random(406)
+    if four_byte:
+        return "".join(chr(rng.randrange(0x20000, 0x2A6DF)) for _ in range(n))
+    alphabet = string.ascii_letters + string.digits
+    return "".join(rng.choice(alphabet) for _ in range(n))
+
+
+def _insert_company(engine, company: str) -> None:
+    """One INSERT in its own transaction, so a failure cannot poison the next."""
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO applications "
+                "(user_id, company, position, status, source, created_at, updated_at) "
+                "VALUES (:uid, :company, 'Engineer', 'APPLIED', 'manual', now(), now())"
+            ),
+            {"uid": _COMPANY_PROBE_USER, "company": company},
+        )
+
+
+@pytest.fixture
+def probe_rows(seeded_engine):
+    """Clear this user's rows either side of a probe.
+
+    Either side, not just after: the first draft left a row behind when its
+    INSERT unexpectedly SUCCEEDED, and the next test read that row instead of
+    its own and failed with a confusing diff rather than an honest one.
+    """
+
+    def clear():
+        with seeded_engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM applications WHERE user_id = :uid"),
+                {"uid": _COMPANY_PROBE_USER},
+            )
+
+    clear()
+    yield seeded_engine
+    clear()
+
+
+def test_the_length_the_api_now_refuses_really_does_break_the_insert(probe_rows):
+    """PROVE THE INSTRUMENT. Without this, the bound is superstition.
+
+    If this database's indexes did not have the ceiling, the test below would
+    assert only that a short string fits in a large index — true of any schema,
+    and no evidence at all that ``_MAX_COMPANY_LEN`` was needed.
+    """
+
+    from sqlalchemy.exc import DatabaseError
+
+    with pytest.raises(DatabaseError) as excinfo:
+        _insert_company(probe_rows, _incompressible(2700))
+
+    message = str(excinfo.value)
+    assert "index row size" in message and "btree" in message, (
+        "the INSERT failed for some reason other than the btree index-row limit, "
+        f"so this module is not measuring what it claims to:\n{message}"
+    )
+
+
+def test_a_company_at_the_api_bound_inserts_even_at_four_bytes_a_character(probe_rows):
+    """The bound cannot reach the ceiling, at the worst byte cost UTF-8 allows.
+
+    ``_MAX_COMPANY_LEN`` incompressible four-byte code points is the largest
+    ``company`` the API will now let through. It goes into the real schema,
+    through both real indexes, and comes back unchanged.
+    """
+
+    from jobtracker.cloud.applications import _MAX_COMPANY_LEN
+
+    company = _incompressible(_MAX_COMPANY_LEN, four_byte=True)
+    assert len(company.encode("utf-8")) == _MAX_COMPANY_LEN * 4
+
+    _insert_company(probe_rows, company)
+
+    with probe_rows.connect() as conn:
+        stored = conn.execute(
+            text("SELECT company FROM applications WHERE user_id = :uid"),
+            {"uid": _COMPANY_PROBE_USER},
+        ).scalar()
+
+    assert stored == company

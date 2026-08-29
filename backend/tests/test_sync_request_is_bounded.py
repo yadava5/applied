@@ -22,7 +22,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from jobtracker.cloud.gmail_oauth import PipelineItemIn, SyncRequest
+from jobtracker.cloud.gmail_oauth import (
+    PipelineAnalyzeRequest,
+    PipelineItemIn,
+    SyncRequest,
+)
 
 
 def _item(**overrides):
@@ -102,3 +106,57 @@ def test_a_sync_request_with_no_items_is_still_valid():
 
     assert SyncRequest().items is None
     assert SyncRequest(count=50, range="6m", scope="anywhere", mode="rebuild").items is None
+
+
+# =============================================================================
+# The twin that was missed (issue #406)
+# =============================================================================
+#
+# ``SyncRequest`` carried the bound above and the reasoning for it.
+# ``PipelineAnalyzeRequest`` — the same list of the same items, one class
+# earlier in the same module — carried neither. Measured:
+#
+#     SYNC     n=  2501 -> 422    # correctly refused
+#     PIPELINE n=100000 -> 200    # accepted, 100,000 items materialised
+#
+# with roughly 19x heap amplification inside Vercel's ~4.5 MB body cap, for a
+# handler that goes on to consume 2,000 of them.
+
+
+def test_the_pipeline_items_list_is_bounded():
+    with pytest.raises(ValidationError):
+        PipelineAnalyzeRequest(items=[_item() for _ in range(2501)])
+
+
+def test_the_pipeline_bound_is_its_siblings_bound():
+    """NOT "both are bounded" — both are bounded AT THE SAME NUMBER.
+
+    The two models take the same items from the same client for the same scan.
+    A pipeline that refused at 1,000 while sync accepted to 2,500 would be a
+    relay that can persist a set it cannot get analytics for, and the drift
+    would not look like a bug from either side.
+    """
+
+    def bound(model, field):
+        return next(
+            m.max_length
+            for m in model.model_fields[field].metadata
+            if getattr(m, "max_length", None) is not None
+        )
+
+    assert bound(PipelineAnalyzeRequest, "items") == bound(SyncRequest, "items")
+
+
+def test_the_pipeline_accepts_a_full_relay():
+    """The other side. ``gmail_fetch_hard_cap`` items is a legitimate payload.
+
+    Same argument as ``test_the_items_bound_sits_above_the_processing_cap``: the
+    bound sits above what the handler consumes, so an honest client relaying the
+    whole of what it fetched is never turned away.
+    """
+
+    from jobtracker.config import settings
+
+    request = PipelineAnalyzeRequest(items=[_item() for _ in range(settings.gmail_fetch_hard_cap)])
+
+    assert len(request.items) == settings.gmail_fetch_hard_cap
