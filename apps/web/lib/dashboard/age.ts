@@ -207,11 +207,22 @@ export interface WeekOverWeek {
  *    Monday it counted; `lib/dashboard/readerWeek.ts` decides when to ask and
  *    `BoardSubtitle` does the asking, after hydration, on the same
  *    server-value-then-client-value pattern `useLocalToday` is built on.
- *  - `summarize()` (the demo twin) still passes `todayISO` — the UTC day — so
- *    on /demo the split described above is still there. It is a fixture
- *    surface, and the fix is one line (pass the `useLocalToday()` value the
- *    twin already holds), but it moves numbers the demo Playwright projects
- *    measure in two non-UTC zones, so it is not smuggled in here.
+ *  - `summarize()` still defaults to `Date.now()` and buckets on `todayISO` —
+ *    the UTC day. TWO surfaces call it, and only one of them can show the
+ *    split:
+ *      · `DemoDashboard.tsx` renders `buildSubtitle(summary, notifications.weekly)`,
+ *        so with the weekly pref on, /demo's header and its momentum caption
+ *        can still disagree in exactly the window described above. The fix is
+ *        one line (pass the `useLocalToday()` value the twin already holds),
+ *        but it moves numbers the `demo-utc-minus-10` / `demo-utc-plus-14`
+ *        Playwright projects measure, so it is not smuggled in here.
+ *      · `MarketingBoard.tsx` renders `buildSubtitle(summarize(apps), false)`.
+ *        `weekly` is a hard `false` there, and `buildSubtitle` omits the whole
+ *        ` · +N this wk` segment when it is — so the landing board computes a
+ *        UTC `thisWeek` and never prints it. Named here anyway, because "this
+ *        call site cannot show the bug today" is a property of one argument
+ *        that a future edit can flip without anyone remembering this note
+ *        existed.
  *
  * The split was never new. Under a trailing window it moved a single day's
  * filings and nobody could see it; a calendar boundary made it a whole week's

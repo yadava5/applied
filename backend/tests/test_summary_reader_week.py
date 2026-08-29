@@ -44,6 +44,7 @@ from httpx import ASGITransport, AsyncClient
 
 JWT_SECRET = "reader-week-test-jwt-secret-at-least-32-bytes-long-hs256"
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
 
 def _token_for(user_id: str) -> str:
@@ -134,8 +135,8 @@ async def client(cloud_app: Any) -> AsyncIterator[AsyncClient]:
         yield c
 
 
-def _headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {_token_for(USER_A)}"}
+def _headers(user_id: str = USER_A) -> dict[str, str]:
+    return {"Authorization": f"Bearer {_token_for(user_id)}"}
 
 
 def _freeze(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
@@ -155,7 +156,9 @@ def _freeze(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
     monkeypatch.setattr(applications_module, "datetime", _FrozenDatetime)
 
 
-async def _file(client: AsyncClient, company: str, applied: str) -> None:
+async def _file(
+    client: AsyncClient, company: str, applied: str, user_id: str = USER_A
+) -> None:
     resp = await client.post(
         "/applications",
         json={
@@ -164,16 +167,18 @@ async def _file(client: AsyncClient, company: str, applied: str) -> None:
             "status": "applied",
             "applied_date": applied,
         },
-        headers=_headers(),
+        headers=_headers(user_id),
     )
     assert resp.status_code == 201, resp.text
 
 
-async def _summary(client: AsyncClient, week_start: str | None = None) -> Any:
+async def _summary(
+    client: AsyncClient, week_start: str | None = None, user_id: str = USER_A
+) -> Any:
     url = "/applications/summary"
     if week_start is not None:
         url = f"{url}?week_start={week_start}"
-    return await client.get(url, headers=_headers())
+    return await client.get(url, headers=_headers(user_id))
 
 
 # =============================================================================
@@ -508,3 +513,105 @@ def test_the_slack_is_exactly_one_day_of_zone_either_side() -> None:
     # harmless" is how a range check becomes a way to ask this account about
     # any week in its history. Mutation-checked: 1, 6, 8 and 14 all red here.
     assert max(distances) == _WEEK_START_SLACK_DAYS
+
+
+# =============================================================================
+# Whose rows are being counted
+# =============================================================================
+
+
+async def test_the_readers_week_counts_only_the_readers_own_rows(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``this_week`` is scoped to the caller, and the parameter does not widen it.
+
+    THE PREDICATE IS OLDER THAN THIS FEATURE AND WAS UNGATED ANYWAY. Deleting
+    ``Application.user_id == user_id`` from the ``this_week`` ``COUNT(*)`` was
+    green across the whole backend suite. Three tests look like they cover it
+    and none does: ``test_summary_scoped_per_user`` asserts ``total`` and
+    ``status_counts`` only; every other test in this module drives one user;
+    and ``test_summary_empty_is_zeroed`` runs on an empty database, where a
+    leak and a correct answer are both 0.
+
+    IT IS IN SCOPE FOR #518 because this is the query #518 changed. The count
+    now takes its two date bounds from a value the CALLER supplies, so the one
+    thing standing between "count my week" and "count everybody's week" is a
+    predicate nothing was measuring.
+
+    THE TWO COUNTS ARE DIFFERENT AND BOTH NONZERO, deliberately. Equal counts,
+    or a count that happens to equal the sum, is how a scoping test ends up
+    asserting nothing:
+
+      - deleting the predicate makes both users read 5;
+      - swapping it for ``Application.user_id != user_id`` — the same-typed
+        operand swap, which type-checks and runs — makes A read 2 and B read 3.
+
+    Neither survives the assertions below.
+    """
+
+    _freeze(monkeypatch, WEST_MOMENT)
+
+    # Three inside the reader's week for A…
+    for company, applied in (
+        ("Tuesday Co", "2026-08-25"),
+        ("Thursday Co", "2026-08-27"),
+        ("Sunday Co", "2026-08-30"),
+    ):
+        await _file(client, company, applied)
+    # …and two for B, on days A did not use, so a leak cannot be mistaken for a
+    # duplicate of A's own rows.
+    for company, applied in (
+        ("Wednesday Ltd", "2026-08-26"),
+        ("Friday Ltd", "2026-08-28"),
+    ):
+        await _file(client, company, applied, user_id=USER_B)
+
+    a_body = (await _summary(client, WEST_READER_MONDAY)).json()
+    b_body = (await _summary(client, WEST_READER_MONDAY, user_id=USER_B)).json()
+
+    assert a_body["week_start"] == WEST_READER_MONDAY
+    assert b_body["week_start"] == WEST_READER_MONDAY
+
+    assert a_body["this_week"] == 3, (
+        "the reader's this-week count is not scoped to the reader — "
+        f"A filed 3 and B filed 2 inside this week, and A was told {a_body['this_week']}"
+    )
+    assert b_body["this_week"] == 2, (
+        "the reader's this-week count is not scoped to the reader — "
+        f"B filed 2 and A filed 3 inside this week, and B was told {b_body['this_week']}"
+    )
+
+    # The neighbouring counts on the same response, so a leak that reaches one
+    # of them cannot hide behind a correct ``this_week``.
+    assert a_body["total"] == 3
+    assert b_body["total"] == 2
+
+
+async def test_the_un_parameterised_week_is_scoped_too(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same predicate, on the path every server render takes.
+
+    The parameterised call above and this one reach the same ``COUNT(*)``, but
+    only through different bounds — so gating one and not the other would leave
+    the default path, which is the one that runs on every dashboard render,
+    resting on a test of the optional one.
+    """
+
+    # Frozen inside the UTC week itself, so the default window counts these.
+    _freeze(monkeypatch, datetime(2026, 9, 2, 12, 0, 0))
+
+    for company, applied in (("Alpha Co", "2026-08-31"), ("Beta Co", "2026-09-01")):
+        await _file(client, company, applied)
+    await _file(client, "Gamma Ltd", "2026-09-02", user_id=USER_B)
+
+    a_body = (await _summary(client)).json()
+    b_body = (await _summary(client, user_id=USER_B)).json()
+
+    assert a_body["week_start"] == "2026-08-31"
+    assert a_body["this_week"] == 2, (
+        f"A filed 2 this week and B filed 1; A was told {a_body['this_week']}"
+    )
+    assert b_body["this_week"] == 1, (
+        f"B filed 1 this week and A filed 2; B was told {b_body['this_week']}"
+    )
