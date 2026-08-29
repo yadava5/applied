@@ -634,12 +634,53 @@ _COMPANY_STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
-# Corporate suffixes / recruiting tails stripped from a display name so that
-# "Globex Corp", "Globex Inc." and "Globex" all collapse to the same token.
+# Corporate suffixes / recruiting tails, matched ANYWHERE in a string. Used to
+# ask "is what remains nothing but corporate noise?" — see the remainder test in
+# :func:`_employer_lead_segment_candidates`, which is the only caller left.
+#
+# IT IS NO LONGER WHAT CLEANS A DISPLAY NAME, and #532 is why. As an unanchored
+# substitution it ate these words out of the MIDDLE and the FRONT of a name, not
+# only off the tail its own name claims:
+#
+#     "People Data Labs"      -> "Data"      leading word destroyed
+#     "Team Liquid"           -> "Liquid"
+#     "Systems Research"      -> "Research"
+#     "Health Solutions Group"-> "Health"
+#
+# The first is not cosmetic. A row displayed "Data" no longer shares a leading
+# word with the token "people", so :func:`matches_company_token` stops matching
+# it and the next sync files a SECOND card for the same employer — the exact
+# duplicate that function exists to prevent. ``_NAME_ROLE_TAIL``'s comment
+# already claims "People Data Labs" is safe from being shredded from the middle
+# out; that was true of ``_NAME_ROLE_TAIL`` and false of the pipeline, because
+# this ran unanchored immediately after it.
 _CORP_TAIL = re.compile(
     r"\b(?:inc|inc\.|llc|l\.l\.c\.|ltd|ltd\.|corp|corp\.|corporation|co|co\.|"
     r"gmbh|plc|group|holdings|technologies|technology|labs|systems|solutions|"
     r"careers?|recruiting|recruitment|talent|hiring|team|hr|people)\b\.?",
+    re.IGNORECASE,
+)
+
+# What a DISPLAY name may end with and still not be part of the name: legal
+# entity forms, and the recruiting-desk tail an ATS appends to an employer.
+#
+# Two differences from ``_CORP_TAIL`` above, and both are the fix for #532.
+#
+# ANCHORED TO THE END, applied repeatedly — the same shape as
+# ``_NAME_ROLE_TAIL`` and for the same reason. "Crusoe Hiring Team" needs two
+# passes; "Team Liquid" and "People Data Labs" must survive all of them.
+#
+# DESCRIPTIVE WORDS ARE GONE FROM THE SET. "Labs", "Systems", "Solutions",
+# "Technologies", "Group" and "Holdings" are parts of company names, not
+# suffixes to be trimmed off them, and stripping them is what put a shorter
+# employer name on 1,420 of 9,252 graded cards — "Arcgrove" for a person who
+# applied to "Arcgrove Systems". Grouping does not need them stripped:
+# :func:`matches_company_token` collapses on the LEADING word, so "Arcgrove
+# Systems" and the token "arcgrove" were always the same employer to the
+# product. The trimming bought nothing and cost the second half of the name.
+_DISPLAY_TAIL = re.compile(
+    r"(?:\s|^)(?:inc|llc|l\.l\.c|ltd|corp|corporation|co|gmbh|plc|"
+    r"careers?|recruiting|recruitment|talent|hiring|team|hr|people)\.?\s*$",
     re.IGNORECASE,
 )
 
@@ -725,13 +766,20 @@ _EMPLOYER_ANCHORED = re.compile(
 #         before ('granitethwaitevale', 'Granitethwaitevale Labs')
 #         after  ('granitethwaitevale', 'Granitethwaitevale')
 #
-# ``_CORP_TAIL`` strips "Labs"/"Systems"/"Group". That is pre-existing subject
-# path behaviour, not something this pattern introduced — "Thank you for
-# applying to Acme Labs" has always displayed "Acme" — so these 48 become
-# CONSISTENT with every other subject-resolved employer rather than newly
-# wrong. The token is unchanged, so nothing splits, no card is re-keyed and no
-# assertion in the suite moves: which is exactly why the false claim above
-# could sit here unchallenged, and why it is corrected rather than deleted.
+# ``_CORP_TAIL`` stripped "Labs"/"Systems"/"Group". That was pre-existing
+# subject path behaviour, not something this pattern introduced — "Thank you for
+# applying to Acme Labs" displayed "Acme" — so these 48 became CONSISTENT with
+# every other subject-resolved employer rather than newly wrong. The token was
+# unchanged, so nothing split, no card was re-keyed and no assertion in the
+# suite moved: which is exactly why the false claim above could sit here
+# unchallenged, and why it is corrected rather than deleted.
+#
+# #532 THEN CHANGED WHICH ANSWER THE TWO PATHS AGREE ON. They still agree; the
+# display path stopped being the one that truncates, so "Granitethwaitevale
+# Labs" now survives BOTH paths and the example above reads
+# ('granitethwaitevale', 'Granitethwaitevale Labs') either way. Measured over
+# the 17,260-message independent corpus: company drift 1420 -> 0, with cards,
+# splits, merges and wrong-company all unmoved.
 #
 # "Thanks for your interest", "Thank you so much for your interest" and a bare
 # "for your interest in" are all the same sentence with the same meaning; a
@@ -2238,7 +2286,14 @@ def _clean_company_display(raw: str) -> str:
 
     text = re.sub(r"\s+", " ", raw or "")
     text = _VIA_TAIL.sub("", text).strip()
-    text = _CORP_TAIL.sub("", text).strip(" ,.-&")
+    # Bounded, like `_clean_sender_display_name`'s loop: "Acme Talent Team"
+    # needs two passes and nothing needs four. See :data:`_DISPLAY_TAIL` for
+    # why this is anchored and why "Labs" and "Systems" are no longer in it.
+    for _ in range(4):
+        stripped = _DISPLAY_TAIL.sub("", text).strip(" ,.-&")
+        if stripped == text:
+            break
+        text = stripped
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -2259,6 +2314,9 @@ def _employer_from_subject(subject: str, ats_relay: bool = False) -> str | None:
     Until #325 the anchored pattern ran first and "your application to Systems
     Research Engineer, GPU Programming @ Together AI" filed as "Research
     Engineer" — "Systems" being eaten by :data:`_CORP_TAIL` on the way out.
+    Since #532 the display path no longer strips that word, so the same subject
+    would file as "Systems Research Engineer": still a job title, and now at
+    least a whole one. The ordering fix is what makes it read the employer.
 
     Two rules this leaves wrong, stated rather than papered over:
 
