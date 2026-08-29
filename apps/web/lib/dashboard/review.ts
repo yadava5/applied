@@ -144,9 +144,11 @@ export interface ClassifyRequestBody {
    * that option against a rendered picker.
    *
    * It exists because an ABSENT `application_id` cannot carry it. Absent means
-   * "nobody asked" — the single-candidate queue rows, the mail reclassify
-   * surface, the live scan — and the backend answers that by tie-breaking onto
-   * the employer's oldest row. That is the right answer to silence and the
+   * "nobody asked" — a single-candidate row, a message already filed against a
+   * row of this employer's, a correction that opens nothing ("applied", "not
+   * job related"), the live scan (which cannot see the board), and every sync —
+   * and the backend answers that by tie-breaking onto the employer's oldest
+   * row. That is the right answer to silence and the
    * wrong answer to a person saying "not one of those": for a rejection the
    * tie-break moves a live application to a terminal status, which
    * `advance_application_status` never walks back.
@@ -223,6 +225,105 @@ export function classifyRequestBody(
   // it already has.
   if (message) body.message = message;
   return body;
+}
+
+/**
+ * Categories that ANSWER an existing application rather than opening one.
+ *
+ * A rejection, an interview invitation, an assessment or an offer is a stage in
+ * an application that already exists, so at an employer holding several it is
+ * ambiguous until someone says which. "applied" opens a row and "not job
+ * related" opens nothing, so neither has a which-one to ask about.
+ *
+ * A SET WHOSE MEMBERS ARE NOT ASSERTED INDIVIDUALLY IS A SET WITH ONE MEMBER
+ * (#554): dropping "offer" or "assessment" here was green until there was one
+ * test per member, plus the two controls that must ask NOTHING — without which
+ * "always ask" satisfies the whole loop.
+ */
+export const LIFECYCLE_ANSWERS: ReadonlySet<string> = new Set([
+  "interview",
+  "assessment",
+  "offer",
+  "rejection",
+]);
+
+/** Everything either surface knows when it sends a classify decision. */
+export interface ClassifyDecision {
+  category: string;
+  /** Only consulted once the backend has asked for the employer by name. */
+  company?: string | null;
+  /** The employer's rows this message could be about (see `reviewCandidates`). */
+  candidates: readonly CandidateApplication[];
+  /**
+   * The row this message is ALREADY filed against, or null when it is not
+   * filed against one. The review queue is unlinked by construction and passes
+   * null; the filed ledger passes what the row carries.
+   */
+  linkedApplicationId?: number | null;
+  /** What the user answered — `null` is "not asked / not answered yet". */
+  assignment: ReviewAssignment;
+  message?: ScanMessagePayload | null;
+  confirmNewCompany?: boolean | null;
+}
+
+/**
+ * Must this decision ask WHICH APPLICATION it is about?
+ *
+ * THE ONE PLACE THAT DECIDES, for every surface that sends a correction —
+ * `ReviewQueue` and `ReclassifyControl` both read it, and both render the
+ * question through the one `ApplicationPicker`. Two renderers of one question
+ * is a defect this estate has already paid for twice; two PREDICATES behind one
+ * question is the same defect one level down, because the surface that asks and
+ * the surface that files then disagree about when the answer was required.
+ *
+ * Three ways the answer is no, and each is a different reason:
+ *
+ * - THE MESSAGE IS ALREADY FILED AGAINST A ROW. Its link outranks every
+ *   tie-break inside `_resolve_application_for_email` (#546 / #548), so the
+ *   backend cannot get this one wrong and there is nothing to ask. Asking
+ *   anyway would offer "none of these — track it as a new application" over a
+ *   message that is already tracked, which is a new way to scatter a record.
+ * - FEWER THAN TWO CANDIDATES. One option is not a question. Nobody is asked,
+ *   the request carries no answer, and the backend's tie-break has one row to
+ *   break between — which is the right row.
+ * - THE CATEGORY OPENS A ROW OR OPENS NOTHING. See `LIFECYCLE_ANSWERS`.
+ *
+ * A THRESHOLD NEEDS A CASE SITTING ON IT (#554). `>= 2` is the smallest
+ * ambiguous board there is; narrowing it to `>= 3` reintroduces the defect for
+ * exactly that case and is invisible to fixtures that only ever hold one row
+ * and four.
+ */
+export function asksWhichApplication(decision: {
+  category: string;
+  candidates: readonly CandidateApplication[];
+  linkedApplicationId?: number | null;
+}): boolean {
+  if (typeof decision.linkedApplicationId === "number") return false;
+  return decision.candidates.length >= 2 && LIFECYCLE_ANSWERS.has(decision.category);
+}
+
+/**
+ * The body a CORRECTION SURFACE sends — the picker's answer included.
+ *
+ * Both surfaces build their request here, so the hop that carries the user's
+ * answer onto the wire is executed by `tests/unit/` on the queue's path and the
+ * ledger's path alike. `ReclassifyControl` shipped for months with a literal
+ * `null` in this position: it never asked, so it never had an answer to send,
+ * and an unlinked message at an employer holding several rows was filed onto
+ * the oldest by a tie-break nobody had been consulted about (#560).
+ *
+ * The assignment is DROPPED when the question was not asked, and that is not
+ * belt-and-braces. A stale pick from a stage the user then changed away from
+ * would otherwise ride along as an answer to a question no longer on screen.
+ */
+export function classifyDecisionBody(decision: ClassifyDecision): ClassifyRequestBody {
+  return classifyRequestBody(
+    decision.category,
+    decision.company,
+    asksWhichApplication(decision) ? decision.assignment : null,
+    decision.message,
+    decision.confirmNewCompany,
+  );
 }
 
 /** True once the user has typed enough for a re-submit to be worth making. */

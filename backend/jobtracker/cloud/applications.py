@@ -1553,8 +1553,13 @@ async def _resolve_application_for_email(
     The residual is stated rather than fixed: an UNLINKED anonymous message at an
     employer holding several rows still lands on the oldest by rule 4. Minting
     instead would answer "which of your three Google applications?" by inventing
-    a fourth, which is worse, and the review queue already asks the user directly
-    (:func:`_chosen_application`) on the path where the question can be put.
+    a fourth, which is worse — and this is only ever reached when NOBODY WAS
+    ASKED. Both correction surfaces put the question directly where it can be
+    put (:func:`_chosen_application`): the needs-review queue since #554, and the
+    filed ledger's reclassify control since #560. What still arrives here
+    unanswered is a sync, a single-candidate employer, or a correction to a
+    message that already carries a link — and for the last of those the branch
+    above has already answered.
     """
 
     rows = await _company_rows(session, user_id, token)

@@ -194,6 +194,19 @@ export function getMail(search: URLSearchParams): Promise<ApiCallResult> {
 }
 
 /**
+ * GET /applications — one bounded page of the board, for a surface that needs
+ * to ask WHICH application a message is about (#560).
+ *
+ * The same call and the same page size the dashboard makes, deliberately: the
+ * question can only offer rows the reader can also see on their board, and a
+ * second page size here would make the two disagree about which employers hold
+ * "several" applications.
+ */
+export function getBoardPage(pageSize: number): Promise<ApiCallResult> {
+  return call(`/applications?page=1&page_size=${pageSize}`, { method: "GET" });
+}
+
+/**
  * POST /applications/review/{messageId}/classify — classify + persist + train.
  *
  * `company` is the second half of the `needs_employer` round trip: the backend
