@@ -321,8 +321,9 @@ def test_the_record_is_arithmetically_whole(measured) -> None:
     constants to constants — including the ``approx(0.302)`` below, which reads
     a percentage off two literals and would go on publishing it over an engine
     that had lost a pattern. Without this assertion, deleting a never-fired rule
-    from ``rules.py`` outright is green in all 17 tests; ``RECORDED_POSITIVE_
-    PATTERNS`` explains why, and what this still does not bound.
+    from ``rules.py`` outright is green in all 17 tests. The comment on
+    ``RECORDED_POSITIVE_PATTERNS`` explains why, and says what this still does
+    not bound.
     """
 
     assert len(RECORDED_FIRED) == len(set(RECORDED_FIRED)), "a duplicate entry"
