@@ -94,7 +94,18 @@ RECORDED_AFTER_ANSWERING = {
     # shape of a bug rather than a fix. Every other counter on this score is
     # exactly where it was: cards 9569, splits 58, merges 19, wrong_review 150,
     # update_opened_a_card 19.
-    "role_missing": 75,
+    #
+    # 75 -> 71 WITH #458, AND THIS END MOVED ALONE, which is the opposite of
+    # the paragraph above and is right here. The eleven recovered messages are
+    # REJECTIONS that reach the queue; the sync files nothing for them either
+    # way, so the before-answering figure stays at 62. Four of the eleven are
+    # answered onto a card that had no title, and answering reads the role off
+    # the message. The other seven land on cards that already had one. That
+    # split is DERIVED, not inspected: `cards` and `minted_a_card` are both
+    # unchanged, so all eleven filed onto cards that already existed, and the
+    # only input that differs between the two readings is those eleven
+    # answers.
+    "role_missing": 71,
     # ZERO AGAINST A DENOMINATOR THAT HAS TO BE SAID OUT LOUD. #548 refuses to
     # stamp a title on a blind landing, and 421 of the 2,341 filed answers
     # landed where the employer held several cards — so those 421 are excluded
@@ -119,8 +130,15 @@ RECORDED_AFTER_ANSWERING = {
 
 #: What answering DOES, per call — the outcomes the board cannot show.
 RECORDED_ANSWERS = {
-    "queued": 2701,
-    "answered": 2701,
+    # 2,701 -> 2,712 WITH #458, and the eleven are exactly the eleven that used
+    # to be LOST: a relayed `follow_up` now reaches the queue instead of the
+    # terminal drop. They travel together through the three counters below —
+    # `answered` +11, `filed_on_an_existing_card` +11,
+    # `landed_where_one_card_existed` +11 — and nothing else on this score
+    # moves. A queue that grew without those three moving with it would mean
+    # the fix had found messages it cannot settle.
+    "queued": 2712,
+    "answered": 2712,
     # THE GUARD THAT NEVER FIRES, said plainly rather than left to read as
     # coverage. `_settle_thread_siblings` can remove a queue entry when a
     # sibling is answered, and `classify_review_item` has no `is_reviewed`
@@ -134,7 +152,9 @@ RECORDED_ANSWERS = {
     # resolve no employer from sender + subject — all 200 `bare-relay`, and 160
     # of 320 `verdict-past-the-body-cap`. Every one of them is here.
     "refused_needs_employer": 360,
-    "filed_on_an_existing_card": 2024,
+    # 2,024 -> 2,035: the eleven relayed follow-ups #458 recovered are all
+    # answered onto a card their employer already had. None minted one.
+    "filed_on_an_existing_card": 2035,
     "minted_a_card": 317,
     "not_a_lifecycle_answer": 0,
     # HOW MUCH CHOICE THERE WAS. A landing at an employer holding one live card
@@ -161,7 +181,10 @@ RECORDED_ANSWERS = {
     #
     # 376 tokens collapsed to a single spelling and NONE gained one. So these
     # two answers always had a choice; the board just could not see it.
-    "landed_where_one_card_existed": 1918,
+    # 1,918 -> 1,929 with #458: all eleven recovered messages land at an
+    # employer holding exactly one live card, so none of them exercises rule
+    # 4's choice and `landed_where_several_did` is unchanged at 423.
+    "landed_where_one_card_existed": 1929,
     "landed_where_several_did": 423,
 }
 
@@ -226,17 +249,24 @@ RECORDED = {
     # Mail about a real application that the product did nothing with. Two
     # numbers because both are unaddressed and only one is invisible; see #447.
     #
-    # LOST IS 11, AND IT WAS 0 BEFORE THE OBSERVED FAMILIES LANDED. That is not
-    # a regression; it is the first honest reading. #447 took the INVENTED
-    # corpus to 0, and `observed.py` then measured the same guarantee against
-    # wordings the author of `rules.py` did not write — where 66 messages
-    # reached nothing. Extending the reference signal to `your assessment` and
-    # `your interview` (completing the category, not chasing a wording) took
-    # that to 8. It reads 11 now, and this comment does not know what moved it
-    # from 8 to 11 — the honest state, rather than back-dating the later number
-    # onto the earlier fix, which is what an edit here previously did. See #458
-    # for the ones that remain and why closing them was declined rather than
-    # overlooked.
+    # LOST IS 0, AND THE LAST 11 WERE NOT WHAT #458 SAID THEY WERE. It read 11
+    # here — 66 when the observed families first landed, 8 after `your
+    # assessment|interview` completed the reference category, 11 after #466 —
+    # and the issue described all of them as scoring `other` at 0.50 with no
+    # text that refers to an application. Measured instead of read, every one
+    # of the 11 scored `follow_up` at 0.70: their subjects carry the SENDER'S
+    # word "Follow-Up" and their verdict sentence sits one character past the
+    # snippet cut, so the rejection veto never fires. `follow_up` is excluded
+    # from filing, from the queue AND from `DroppedVerdict`, all three on the
+    # premise that it is the reader's own chasing mail — which is false for a
+    # message an ATS relayed. That is #458, and the fix is a sender-and-
+    # category clause in `collect_review_items`, not a wording: see
+    # `tests/test_relayed_follow_up_is_not_your_own.py`.
+    #
+    # The 11 were also the ONLY `follow_up` verdicts in the whole corpus, and
+    # every one of them is truly a `rejection`. So this corpus can say nothing
+    # about a correct `follow_up`, and a later change to how `follow_up` is
+    # DETECTED cannot be graded here.
     #
     # The history below is kept because the mechanism has not changed: it was 610: rejections whose
     # verdict sits past Gmail's snippet, and withdrawals whose own words never
@@ -247,7 +277,7 @@ RECORDED = {
     # queue. It must stay 0: a message about a real application reaching
     # NOTHING is the one outcome indistinguishable from a mailbox that never
     # received it.
-    "lost": 11,
+    "lost": 0,
     "dropped": 54,
     # Noise that MINTED A CARD. Went 0 -> 2 on 2026-08-22, when the corpus first
     # contained ATS mail that is not about the user at all (a profile-completion
@@ -1728,25 +1758,30 @@ async def test_every_application_mail_is_addressed(
     # received it.
     lost = Counter(f.family for f in score.failures if f.mode == "LOST")
     assert dict(lost) == {
-        # ALL 11 ARE #458 NOW, and that is a measurement rather than a
-        # simplification: this was 16 with two causes behind it, and closing the
-        # #466 half took it to exactly 11, every one of which carries "invested
-        # in our process". #458 is:
-        # the snippet cuts one character before "with your application", leaving
-        # "thank you so much for your interest in <Employer> and for the time
-        # and effort you have invested in our process" — which does not say it
-        # is about an application. Closing those needs `invested in our process`
-        # in the reference signal, a sender's SENTENCE rather than a category,
-        # so it was declined and pinned.
+        # EMPTY SINCE #458, and the 11 that used to sit here were not lost for
+        # the reason the issue gave. They were `observed-rejection`, and #458
+        # described them as `other` at 0.50 whose text never refers to an
+        # application — which would have needed `invested in our process` in
+        # the reference signal, a sender's SENTENCE rather than a category, so
+        # closing them was declined.
         #
-        # The 5 that used to sit here were #466: `_APPLICATION_REFERENCE`
+        # Executed rather than read, all 11 scored `follow_up` at 0.70. Their
+        # subjects carry the sender's own word "Follow-Up" and their decision
+        # sentence sits one character past Gmail's snippet cut, so the veto
+        # that outranks the follow-up pattern never fires. `follow_up` is
+        # dropped by filing, by the queue and by `DroppedVerdict` alike, on a
+        # premise — "it is the reader's own chasing mail" — that is false for a
+        # message an ATS relayed. Both wording extensions would have missed
+        # them: the reference clause is scoped to `other` and never sees a
+        # `follow_up` verdict.
+        #
+        # The 5 that used to sit alongside were #466: `_APPLICATION_REFERENCE`
         # spanned the job title with `[\w,\ \-/]{0,60}?`, a character class
-        # holding no `(`, `)` or `:`, so a real DoorDash title made the #447
-        # floor blind to a message it exists to catch. Fixed by bounding on the
-        # CLAUSE instead — extending the character class was the obvious move
-        # and the wrong one, because "Software Engineer, C#" already needed a
-        # character nobody had anticipated.
-        "observed-rejection": 11,
+        # holding no `(`, `)` or `:`, so a real title made the #447 floor blind
+        # to a message it exists to catch. Fixed by bounding on the CLAUSE
+        # instead — extending the character class was the obvious move and the
+        # wrong one, because "Software Engineer, C#" already needed a character
+        # nobody had anticipated.
     }, dict(lost)
 
     # 54 updates from the company's own domain rather than the ATS relay,
@@ -1773,6 +1808,14 @@ async def test_every_application_mail_is_addressed(
     # pair is each other's control: the assertion above says the fix reaches far
     # enough, this one says it does not reach too far, and neither is meaningful
     # alone.
+    #
+    # #458 IS BOUNDED BY THE SAME 400, and its number is measured rather than
+    # structural: zero of them score `follow_up`, so the clause that now routes
+    # a relayed `follow_up` to the queue cannot touch one of them. That is a
+    # fact about these 400 messages and not a guarantee about the category —
+    # a relayed digest whose own text scored `follow_up` WOULD be queued, and
+    # the module docstring in `test_relayed_follow_up_is_not_your_own.py` says
+    # so out loud.
     noise = {c.message_id for c in cases if c.family == "ats-relay-noise"}
     queued_noise = noise & replayed.reviewed
     assert queued_noise == set(), (

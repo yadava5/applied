@@ -75,13 +75,19 @@ def _real_shape(
     category: str,
     confidence: float,
     subject: str = ANTHROPIC_SUBJECT,
+    sender: str = GREENHOUSE_RELAY,
 ) -> p.PipelineItem:
-    """The production failing shape: relay sender, no display name."""
+    """The production failing shape: relay sender, no display name.
+
+    ``sender`` is a parameter because ONE test here needs a message the reader
+    sent rather than one a relay delivered — see
+    :func:`test_a_confident_dropped_verdict_is_logged` and #458.
+    """
 
     return p.PipelineItem(
         message_id=message_id,
         category=category,
-        sender_email=GREENHOUSE_RELAY,
+        sender_email=sender,
         subject=subject,
         sender_name=None,  # the relay sends none, and that is the whole problem
         received_at=WHEN,
@@ -167,9 +173,24 @@ def test_a_confident_dropped_verdict_is_logged(caplog: pytest.LogCaptureFixture)
     design, so a confident one vanishes completely: no application row, no queue
     entry, no counter. That silence is what let three separate persistence drops
     ship unnoticed. The log line is the instrument.
+
+    THE SENDER MOVED OFF THE RELAY (#458), and the reason is the point of this
+    file rather than a detail of this test. Until then the fixture here was the
+    relay shape at the top — the REAL Anthropic subject, delivered by
+    Greenhouse — and this test asserted that it produced nothing. That is the
+    inverted-gate shape the module docstring describes, twice over: the message
+    it pinned as correctly dropped is a real rejection, and eleven of its kind
+    reached nothing in the corpus for exactly this reason. ``follow_up`` from a
+    relay now reaches the queue.
+
+    What this test is actually for is the LOG, and the shape that still drops
+    is the one the category names: mail the reader sent. So the fixture is that
+    message, sent by the reader, and the instrument is unchanged.
     """
 
-    item = _real_shape("anthropic-followup-1", "follow_up", 0.90)
+    item = _real_shape(
+        "anthropic-followup-1", "follow_up", 0.90, sender="ayush@example.com"
+    )
 
     with caplog.at_level(logging.WARNING, logger="jobtracker.cloud.pipeline"):
         review = p.collect_review_items([item])
