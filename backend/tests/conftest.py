@@ -139,3 +139,26 @@ def application_factory():
 def email_factory():
     """Provide EmailFactory for tests."""
     return EmailFactory
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # noqa: ANN001, ARG001
+    """Name what did not run, at the bottom of the run, where the count is.
+
+    See ``tests/skip_report.py`` for why this reports rather than fails. The
+    formatting lives there so it can be tested without arranging for a machine
+    to lack Docker; this hook only pulls the pairs out of pytest's own stats.
+    """
+
+    from tests.skip_report import summarise_skips
+
+    entries = [
+        (report.nodeid, str(report.longrepr[2]) if report.longrepr else "")
+        for report in terminalreporter.stats.get("skipped", [])
+    ]
+    lines = summarise_skips(entries)
+    if lines is None:
+        return
+
+    terminalreporter.write_sep("=", "tests that did not run", yellow=True, bold=True)
+    for line in lines:
+        terminalreporter.write_line(line, yellow=True)
