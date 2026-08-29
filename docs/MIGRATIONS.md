@@ -316,6 +316,34 @@ chain is linear; `test_schema_version.py` now catches this before merge.
 days idle. The workflow reports that case distinctly and applies nothing —
 restore from the dashboard and re-run.
 
+**Reverting a merge that carried a revision — the obvious command is WRONG.**
+`git revert -m 1 <merge-sha>` reverts the *migration file* along with the code.
+Production's `alembic_version` still names the revision, its file is gone, and
+`alembic upgrade head` then dies with "Can't locate revision" — on that revert
+push and on **every later merge**, until someone restores the file or stamps the
+database by hand. This was measured by simulating a revert of `46e6bdb`, not
+inferred.
+
+Revert the code and leave the schema alone:
+
+```bash
+git revert -m 1 --no-commit <merge-sha>
+git checkout HEAD -- backend/alembic backend/jobtracker/database/schema_version.py
+git commit
+```
+
+Verified on the simulation: the revision file survives, `EXPECTED_REVISION` is
+unchanged, the code files revert, and the chain still resolves to one head. This
+is safe **only because the revision was additive** — nullable columns that
+reverted code simply never selects. For a contract step (drop, rename, narrow,
+NOT NULL) there is no code-only revert: that is why `docs/MIGRATIONS.md` requires
+contract steps to ship as two merges in the first place.
+
+If the merge was a train of several PRs, the same recipe excises ONE of them:
+pass the *inner* merge commit's sha (`git log --merges` on the range), not the
+outer one. That only works while the inner merges exist — a squash-merged train
+has none, which is why trains are merged with `--merge`.
+
 **Applying by hand** (only when the workflow cannot run). One transaction, and
 put the stamp in it — DDL without moving `alembic_version` leaves the real schema
 diverged from its recorded head, and the next genuine run dies re-adding the
