@@ -73,7 +73,6 @@ change, not that each branch is load-bearing. Those runs are in that PR body.
 
 from __future__ import annotations
 
-import importlib
 
 import pytest
 from fastapi import HTTPException
@@ -99,6 +98,7 @@ def _module(
     production_url: str = API_HOST,
     allowed_hosts: str = APP_HOST,
     redirect_uri: str = f"https://{API_HOST}/auth/gmail/callback",
+    enc_key: str | None = None,
 ):
     """Load the Gmail OAuth router under a given deployment environment.
 
@@ -115,54 +115,46 @@ def _module(
     reason ``production_url`` does: a fixture that left it unset would leave
     that branch of the self-check untested while every test still passed.
 
-    Reloads ``config`` first so ``settings`` (an ``lru_cache``d singleton)
-    picks the environment up, then the router so it binds to the fresh module.
+    ``enc_key`` is passed rather than set in the environment because the
+    signing key has to reach ``credentials.cloud``'s Fernet AND the signer as
+    the SAME value; see the holder loop below.
     """
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
+    # NOT ``Settings`` fields: ``config.trusted_web_hosts`` reads these two out
+    # of ``os.environ`` on every call, so ``setenv`` reaches them with no
+    # reload at all.
     monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", production_url)
     monkeypatch.setenv("VERCEL_URL", "")
-    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", allowed_hosts)
-    monkeypatch.setenv("JOBTRACKER_GMAIL_OAUTH_REDIRECT_URI", redirect_uri)
-    monkeypatch.setenv("JOBTRACKER_WEB_APP_URL", web_app_url if web_app_url is not None else "")
 
+    hosts = [h.strip() for h in allowed_hosts.split(",") if h.strip()]
+
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
-
-    importlib.reload(config_module)
-    # ``credentials.cloud`` does ``from jobtracker.config import settings``, so
-    # it holds the PREVIOUS settings object until it is reloaded too. That
-    # matters here rather than being tidiness: ``_sign_state`` signs with the
-    # reloaded config's key and encrypts the PKCE verifier through this
-    # module's Fernet, and two different keys make a state this deployment
-    # cannot read back.
     import jobtracker.credentials.cloud as cred_cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(cred_cloud_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    # ``credentials.cloud`` is in the tuple deliberately: ``_sign_state`` signs
+    # with the config's key and encrypts the PKCE verifier through THAT
+    # module's Fernet, and two different key values make a state this
+    # deployment cannot read back.
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cred_cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "cors_allowed_hosts", hosts)
+        monkeypatch.setattr(instance, "gmail_oauth_redirect_uri", redirect_uri)
+        monkeypatch.setattr(instance, "web_app_url", web_app_url)
+        if enc_key is not None:
+            monkeypatch.setattr(instance, "secret_encryption_key", enc_key)
+
     import jobtracker.cloud.gmail_oauth as gmail_oauth
 
-    importlib.reload(gmail_oauth)
     return gmail_oauth
-
-
-@pytest.fixture(autouse=True)
-def _restore_settings(monkeypatch: pytest.MonkeyPatch):
-    """Leave the settings singleton as we found it.
-
-    Without this the next test file in the session inherits a cloud config —
-    the same guard ``test_cors_origin_regex.py`` carries, for the same reason.
-    """
-
-    yield
-    monkeypatch.undo()
-    import jobtracker.config as config_module
-
-    importlib.reload(config_module)
-    import jobtracker.credentials.cloud as cred_cloud_module
-
-    importlib.reload(cred_cloud_module)
-    import jobtracker.cloud.gmail_oauth as gmail_oauth
-
-    importlib.reload(gmail_oauth)
 
 
 # ── the incident itself ───────────────────────────────────────────────
@@ -600,8 +592,9 @@ def test_the_origin_survives_the_state_round_trip(
 
     from cryptography.fernet import Fernet
 
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode())
-    gmail_oauth = _module(monkeypatch, web_app_url=None)
+    gmail_oauth = _module(
+        monkeypatch, web_app_url=None, enc_key=Fernet.generate_key().decode()
+    )
 
     user_id = uuid.uuid4()
     state = gmail_oauth._sign_state(
@@ -635,8 +628,11 @@ def test_a_state_with_no_origin_still_works(monkeypatch: pytest.MonkeyPatch) -> 
 
     from cryptography.fernet import Fernet
 
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode())
-    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+    gmail_oauth = _module(
+        monkeypatch,
+        web_app_url=f"https://{APP_HOST}",
+        enc_key=Fernet.generate_key().decode(),
+    )
 
     state = gmail_oauth._sign_state(uuid.uuid4(), gmail_oauth._generate_code_verifier())
     verified = gmail_oauth._verify_state(state)
@@ -668,8 +664,7 @@ def test_a_state_signed_with_another_key_cannot_supply_an_origin(
 
     ours = Fernet.generate_key().decode()
     theirs = Fernet.generate_key().decode()
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", ours)
-    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}")
+    gmail_oauth = _module(monkeypatch, web_app_url=f"https://{APP_HOST}", enc_key=ours)
 
     now = datetime.now(UTC)
     forged = jwt.encode(

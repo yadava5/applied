@@ -35,7 +35,6 @@ and its result are recorded on each test.
 
 from __future__ import annotations
 
-import importlib
 import sqlite3
 import subprocess
 import sys
@@ -82,62 +81,36 @@ def _token_for(user_id: str) -> str:
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     """The cloud app over the in-memory SQLite test DB (see test_mail_listing)."""
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
-    monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
+
     connection_module._engine = None
-
-    import jobtracker.auth.supabase_jwt as auth_module
-
-    # REBIND, never ``importlib.reload``. That module does ``from
-    # jobtracker.config import settings``, so it holds the singleton the reload
-    # above has just replaced and it does need putting right — but reloading it
-    # also rebuilds ``AuthError``, and ``tests/test_auth_supabase_jwt.py``
-    # imported that class at collection time. Its twelve
-    # ``pytest.raises(AuthError)`` blocks then stop catching the exception the
-    # dependency raises, and eleven of them fail on class identity in any
-    # session where this file ran first — which alphabetically is every one.
-    # Measured both ways; see the teardown for the other half.
-    auth_module.settings = config_module.settings
-
-    import jobtracker.cloud.applications as cloud_apps_module
-
-    importlib.reload(cloud_apps_module)
-
-    import jobtracker.main_cloud as main_cloud_module
-
-    importlib.reload(main_cloud_module)
 
     from jobtracker.database import init_db
 
     await init_db()
+
+    import jobtracker.main_cloud as main_cloud_module
 
     yield main_cloud_module.app
 
     if connection_module._engine is not None:
         await connection_module._engine.dispose()
     connection_module._engine = None
-    monkeypatch.undo()
-    importlib.reload(config_module)
-    # AND point the auth module at the settings object that reload just made.
-    #
-    # ``jobtracker.auth.supabase_jwt`` does ``from jobtracker.config import
-    # settings``, binding the SINGLETON rather than the module. The reload above
-    # constructs a NEW singleton, so without this line ``supabase_jwt.settings``
-    # is left holding the discarded one — and
-    # ``tests/test_auth_supabase_jwt.py``'s ``configured_secret`` fixture, which
-    # patches ``config_module.settings.supabase_jwt_secret`` and says in its own
-    # comment that "no reload required", then patches an object nothing reads.
-    # All 12 of its tests fail with "401: Invalid signature", in the same
-    # session, only after this file — which alphabetically is always.
-    #
-    # Rebound rather than reloaded, for the reason given at the setup site.
-    auth_module.settings = config_module.settings
 
 
 async def _seed(

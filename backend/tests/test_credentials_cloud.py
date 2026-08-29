@@ -11,7 +11,6 @@ the SQLite fallback; the Postgres path is covered by a later issue
 
 from __future__ import annotations
 
-import importlib
 import uuid
 from datetime import datetime, timedelta
 
@@ -28,27 +27,26 @@ _TEST_FERNET_KEY = "fxHtKRWuaD2nQbNZoAzwEo9pG_Q4AoHTsWvj1_RlrZw="
 async def cloud_env(monkeypatch: pytest.MonkeyPatch):
     """Configure settings for the cloud credential backend + initialize DB."""
 
-    monkeypatch.setenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", _TEST_FERNET_KEY)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
-
-    importlib.reload(config_module)
-
-    # Re-import the cloud module *after* settings reload so its
-    # module-level ``from jobtracker.config import settings`` picks up
-    # the new singleton.
     import jobtracker.credentials.cloud as cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(cloud_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "secret_encryption_key", _TEST_FERNET_KEY)
 
     from jobtracker.database import init_db
 
     await init_db()
 
     yield cloud_module
-
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture
@@ -224,15 +222,19 @@ async def test_missing_encryption_key_raises(
     operators should get a loud failure at the first request.
     """
 
-    monkeypatch.delenv("JOBTRACKER_SECRET_ENCRYPTION_KEY", raising=False)
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
-
-    importlib.reload(config_module)
-
     import jobtracker.credentials.cloud as cloud_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(cloud_module)
+    # The keyless deployment, expressed on the object rather than by deleting
+    # the env var and rebuilding Settings from it (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module, cloud_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "secret_encryption_key", None)
 
     from jobtracker.database import init_db
 
@@ -248,6 +250,3 @@ async def test_missing_encryption_key_raises(
     with pytest.raises(cloud_module.CredentialEncryptionError):
         await cloud_module.save_gmail_credentials(user_id, creds)
 
-    # Restore cleanly for later tests in the session.
-    importlib.reload(config_module)
-    importlib.reload(cloud_module)
