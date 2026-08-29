@@ -21,6 +21,14 @@ Two scores, because a message can pass one and fail the other:
 * **BOARD** — the cards those verdicts produce, after a day-by-day replay
   through the real sync against a real database.
 
+And one measurement that is about the CORPUS rather than about the product:
+
+* **REACH** — how much of the engine this corpus is capable of saying anything
+  about. Pattern coverage, distinct wordings per family, and discovery rate. See
+  ``tests/corpus_independent/reach.py``; ``--reach-only`` prints it in seconds
+  and skips both scores above. Read it BEFORE the accuracy figure: a headline
+  computed over mail that exercises 48 of 159 rules is a statement about the 48.
+
 Read the headline accuracy WITH the corpus. It is 18% adversarial by
 construction, so the number describes behaviour under stress, not what a user's
 own inbox would produce. The per-family table is the useful part.
@@ -33,6 +41,7 @@ import asyncio
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 _BACKEND = Path(__file__).resolve().parent.parent / "backend"
@@ -43,6 +52,7 @@ if str(_BACKEND) not in sys.path:
 # board half stands one up. Set before the app is imported, as conftest does.
 os.environ.setdefault("JOBTRACKER_ENVIRONMENT", "test")
 
+from tests.corpus_independent import reach as reach_  # noqa: E402
 from tests.corpus_independent.generate import digest, generate, stats  # noqa: E402
 from tests.corpus_independent.harness import (  # noqa: E402
     classify_all,
@@ -82,6 +92,12 @@ def main() -> int:
         action="store_true",
         help="skip the board replay, which is where the wall clock goes",
     )
+    parser.add_argument(
+        "--reach-only",
+        action="store_true",
+        help="only what the corpus can REACH — pattern coverage, wordings, "
+        "discovery rate. Seconds, no replay.",
+    )
     args = parser.parse_args()
 
     cases = generate(args.seed)
@@ -104,6 +120,30 @@ def main() -> int:
         f"  companies         {st.companies} minted, no two sharing a leading "
         f"word; {named} of them are named on a case (the published figure)"
     )
+
+    t0 = time.time()
+    r = reach_.measure(cases)
+    print(f"\n{'-' * 74}\nREACH  ({time.time() - t0:.1f}s) — what this corpus can "
+          f"say anything about\n{'-' * 74}")
+    print(f"  positive engine patterns   {r.total_patterns:6d}")
+    print(f"    exercised by a message   {len(r.fired):6d}  ({r.coverage:.1%})")
+    print(f"    never fired by anything  {r.total_patterns - len(r.fired):6d}  "
+          f"— shipped with no evidence behind them")
+    per_category = r.never_fired_by_category
+    total_by_category = Counter(pid.category for pid, _ in reach_.positive_patterns())
+    for category, n in sorted(per_category.items(), key=lambda kv: -kv[1]):
+        print(f"      {category:22s} {n:4d} of {total_by_category[category]}")
+    print(f"\n  {'family':36s} {'msgs':>6s} {'wordings':>9s} {'discovers':>10s}")
+    for family, f in r.families.items():
+        # The wording count is the one to read. A family's statistical weight is
+        # how many DIFFERENT things it says, not how many times it says them.
+        print(f"  {family:36s} {f.messages:6d} {f.wordings:9d} "
+              f"{f.no_strong:6d} {f.discovery_rate:5.1%}")
+    print(f"\n  {'':36s} {len(cases):6d} "
+          f"{len({reach_.wording(c.subject, c.body) for c in cases}):9d}"
+          f"  distinct corpus-wide")
+    if args.reach_only:
+        return 0
 
     t0 = time.time()
     verdicts = classify_all(cases)
