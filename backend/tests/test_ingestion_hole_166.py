@@ -587,18 +587,23 @@ def test_ordinary_non_ats_mail_below_the_floor_is_still_dropped() -> None:
         assert not _leaves_a_trace(item), f"{sender} should still be dropped"
 
 
-def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() -> None:
-    """Three ATS-sender shapes the floor deliberately does NOT rescue.
+def test_the_floor_does_not_swallow_the_shapes_that_must_stay_dropped() -> None:
+    """The shapes the floor deliberately does NOT rescue.
 
     Each is dropped for its own reason, and each is the reason the floor is
     scoped to lifecycle categories rather than to the sender alone:
 
-    - ``follow_up`` — excluded from filing AND from the queue by design, above
-      the floor as well as below it. It is the user's own chasing mail, and
-      queueing it asks them to classify themselves.
     - a category outside the canonical vocabulary — a BUG, and the pipeline's
       contract is that it is logged rather than turned into a queue entry.
-      Queueing it would hide the bug behind a plausible-looking row.
+      Queueing it would hide the bug behind a plausible-looking row. That holds
+      whoever sent it, so it is asserted on the relay AND off it.
+    - ``follow_up`` — the user's own chasing mail, and queueing it asks them to
+      classify themselves. THE SENDER IS NOW PART OF THAT SENTENCE (#458): the
+      premise is about mail the reader SENT, so it is asserted here only for
+      senders that are not relays. A known ATS does not carry the reader's own
+      mail, and on that sender the same verdict is a category error whose
+      silent drop cost 11 real rejections; see
+      ``test_relayed_follow_up_is_not_your_own.py``.
 
     ``other`` USED TO BE ON THIS LIST and is not any more. That is #447: the
     reason given here was that queueing it "would put every promotional mail an
@@ -608,19 +613,24 @@ def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() ->
     conclusion; the fix was to find a signal narrower than the sender rather
     than to keep dropping. ``other`` now has its own pair of cases below.
 
-    This test caught a genuine defect in that change, which is why the two
-    survivors stay in a loop of their own: the first draft of the #447 clause
-    read ``is_lifecycle or references(...)`` and reversed BOTH of these as a
-    side effect.
+    This test caught a genuine defect in the #447 change, which is why the
+    survivors stay in a loop of their own: its first draft read
+    ``is_lifecycle or references(...)`` and reversed BOTH of these as a side
+    effect.
     """
-    for category, confidence in (
-        ("follow_up", 0.90),
-        ("rejected", 0.95),  # note: not "rejection" — non-canonical
+    for category, confidence, sender in (
+        # Non-canonical, and it stays a logged bug on either kind of sender.
+        ("rejected", 0.95, GREENHOUSE),  # note: not "rejection" — non-canonical
+        ("rejected", 0.95, "recruiting@acme.com"),
+        # The reader's own chasing mail, which is what ``follow_up`` means.
+        # Both a company address and a plain one, at both ends of the gate.
+        ("follow_up", 0.90, "recruiting@acme.com"),
+        ("follow_up", 0.70, "ayush@example.com"),
     ):
         item = pipeline.PipelineItem(
-            message_id=f"drop-{category}-{confidence}",
+            message_id=f"drop-{category}-{confidence}-{sender}",
             category=category,
-            sender_email=GREENHOUSE,
+            sender_email=sender,
             subject=TOGETHER_SUBJECT,
             sender_name=None,
             received_at=None,
@@ -628,7 +638,11 @@ def test_the_floor_does_not_swallow_the_three_shapes_that_must_stay_dropped() ->
             thread_id=None,
             snippet=TOGETHER_SNIPPET_PREAMBLE,
         )
-        assert pipeline.collect_review_items([item]) == [], (category, confidence)
+        assert pipeline.collect_review_items([item]) == [], (
+            category,
+            confidence,
+            sender,
+        )
 
 
 def test_an_other_verdict_is_queued_only_when_it_speaks_about_your_application() -> None:
