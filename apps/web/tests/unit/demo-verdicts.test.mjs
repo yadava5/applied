@@ -56,6 +56,12 @@
  * is the no-sender answer. Adding the sender argument here would turn s11 red
  * with no explanation on screen, so if that is ever the right change it is a
  * change to the fixture and to the page, not to this line.
+ *
+ * The confidences are compared with strict equality, which is safe only on that
+ * signature: every value it can return is a literal off the tier table, while
+ * the ATS path adds 0.05 and is not float-exact. Belt and braces, since s11
+ * reds first, but it is the second thing to settle if the sender is ever
+ * passed.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -258,11 +264,15 @@ test("every stored verdict is what lib/demo/rulesLayer.ts actually computes", ()
 
   // The pin is scoped: one known disagreement, and no message may quietly join
   // it. A new entry is a deliberate, reviewable line in a diff.
+  //
+  // Sorted on both sides — the fixture's order is a curated reading order and a
+  // pin declared in a different one is not a defect. This must fail for the
+  // reason it names, which is a pinned id that no longer matches any row.
   assert.deepEqual(
-    pinsSeen,
-    [...PINNED_STALE.keys()],
-    "PINNED_STALE names a message the walk never reached, or reached out of order. Every pinned " +
-      "disagreement must correspond to a live fixture row.",
+    [...pinsSeen].sort(),
+    [...PINNED_STALE.keys()].sort(),
+    "PINNED_STALE names a message the walk never reached. Every pinned disagreement must " +
+      "correspond to a live fixture row.",
   );
   assert.equal(
     PINNED_STALE.size,
