@@ -19,7 +19,9 @@ trends" still scored +1 and won as `assessment`. Veto patterns exist for the
 cases where a phrase means the category is wrong regardless of what else the
 text says — see EmailCategory.ASSESSMENT and EmailCategory.FOLLOW_UP below.
 
-The category with highest score wins. Confidence is based on margin and match strength.
+The category with highest score wins; at equal score a category that REPORTS on
+an application outranks one that merely ASSERTS one exists, because the first
+entails the second (#451). Confidence is based on margin and match strength.
 """
 
 import logging
@@ -462,7 +464,6 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             r"reviewing (applications|candidates)",
             r"be in touch (soon|shortly|if)",
             r"next steps.{0,30}hear from us",
-            r"application.{0,20}(for|to).{0,40}(position|role|job)",
             # ANCHORED IN THE SECOND PERSON, and the contiguity is the fix.
             #
             # It was a bare `applied.{0,20}(for|to)...`, which never said WHOSE
@@ -526,6 +527,33 @@ PATTERNS: dict[EmailCategory, CategoryPatterns] = {
             # 45/50 both before and after this move.
             r"your application for\s+.+\s+at\s+[A-Z]",
             r"your application to\s+.+\s+at\s+[A-Z]",
+            # DEMOTED FROM `strong` (#451), and it is the THIRD member of the
+            # family #348 and #441 already moved. This says WHICH application
+            # the mail is about; it says nothing about what happened to it.
+            # Every category's mail carries it, because "regarding your
+            # application for the Backend Engineer position" is simply how a
+            # courteous recruiter names the thread they are answering.
+            #
+            # At `strong` it was +3, which is exactly what a REPORT of a later
+            # stage earns. An offer reading "We are delighted to extend you an
+            # offer to join us... This concerns your application for the
+            # Backend Engineer position" therefore scored applied 3, offer 3 —
+            # a dead tie, broken by `EmailCategory` declaration order, which
+            # puts `applied` first. The board said "acknowledged" about an
+            # offer, and nothing about the message decided it.
+            #
+            # Measured across the 17,260-case independent corpus: it produced
+            # 109 positive-score ties, ALL of them a reference against a report
+            # (94 applied/offer, 15 applied/rejection), and enum order got all
+            # 109 wrong. At `weak` the reference contributes +1 — which is what
+            # naming a thread is worth — and the report keeps its margin.
+            #
+            # The cost is named rather than buried: 135 messages that used to
+            # arrive on the board by themselves now wait in the review queue.
+            # DROPPED goes to 0 and LOST does not move, so nothing became
+            # unreachable; what changed is that the product asks instead of
+            # guessing. See the PR for the full before/after table.
+            r"application.{0,20}(for|to).{0,40}(position|role|job)",
             r"thank you for your interest",
             r"interested in.{0,30}(position|role|opportunity)",
             r"review your (application|resume|qualifications)",
@@ -1222,8 +1250,75 @@ def domain_matches(domain: str, listed: str) -> bool:
 
 
 # =============================================================================
+# What a category CLAIMS about an application
+# =============================================================================
+
+#: The categories whose mail ASSERTS an application into existence.
+#:
+#: The same fact ``pipeline.APPLIED_SIGNAL_CATEGORIES`` states for a different
+#: job — it is not imported from there because ``cloud.pipeline`` is
+#: deliberately free of ``jobtracker`` imports at module level (see its
+#: ``is_ats_sender``), and the classifier must not be the thing that puts
+#: ``sqlmodel`` into its cold-start graph. The two are held together by
+#: ``tests/test_a_reference_does_not_outrank_a_report.py`` instead of by an
+#: import, so a change to one that is not made to the other goes red.
+ASSERTS_AN_APPLICATION: frozenset[str] = frozenset({"applied"})
+
+#: The categories whose mail says nothing about an application of yours at all.
+#:
+#: ``models.CATEGORY_TO_STATUS`` is the authority for this list and its own
+#: comment is the reason: "a follow-up is chasing an application, not a stage
+#: of one, and the other two are noise or a holding pen". Those three are
+#: exactly the categories absent from that map.
+#:
+#: SPELLED HERE RATHER THAN READ FROM THE MAP, for one reason that is worth
+#: naming: this file has a second copy at
+#: ``ml/demo/space/jobtracker/classifier/rules.py`` which ships an older
+#: ``models.py`` with no ``CATEGORY_TO_STATUS`` in it, and the two copies are
+#: meant to stay identical. So the derivation is written out and then CHECKED
+#: against the map by ``test_a_reference_does_not_outrank_a_report.py``, which
+#: recomputes it and goes red if the map and this file disagree. The
+#: single source of truth is preserved by a test instead of by an import.
+_SAYS_NOTHING_ABOUT_AN_APPLICATION: frozenset[str] = frozenset(
+    {"follow_up", "needs_review", "other"}
+)
+
+#: The categories whose mail REPORTS on an application that already exists.
+#:
+#: DERIVED, NOT RANKED, and that distinction is the whole point of this pair.
+#: It is a two-class PARTITION of the categories that speak about an
+#: application — one asserts, the rest report — and the members within each
+#: class are unordered. Nothing here says an offer beats a rejection, because
+#: nothing true would.
+REPORTS_ON_AN_APPLICATION: frozenset[str] = (
+    frozenset(c.value for c in EmailCategory)
+    - ASSERTS_AN_APPLICATION
+    - _SAYS_NOTHING_ABOUT_AN_APPLICATION
+)
+
+
+# =============================================================================
 # Rule-Based Classifier
 # =============================================================================
+
+
+def winner_first(scores: dict[str, int]) -> list[tuple[str, int]]:
+    """Order the categories best-first, breaking ties on what they CLAIM.
+
+    Pulled out of :meth:`RulesClassifier.classify` so the rule has a name and
+    so a test can exercise the real one rather than a copy of it: building a
+    message that ties ``applied`` against each of the five report categories
+    means testing the PATTERNS, and this is a claim about the SORT.
+
+    The second element of the key is the whole of #451. See
+    :data:`REPORTS_ON_AN_APPLICATION` for why it is true, and the caller for
+    what it replaces.
+    """
+    return sorted(
+        scores.items(),
+        key=lambda x: (x[1], x[0] in REPORTS_ON_AN_APPLICATION),
+        reverse=True,
+    )
 
 
 @dataclass
@@ -1254,6 +1349,11 @@ class RulesClassifier:
     - score >= 4 and margin >= 2: 0.80
     - score >= 2 and margin >= 1: 0.70
     - otherwise: 0.60
+
+    Ties are broken by what the category CLAIMS, not by enum declaration
+    order: at equal score a member of :data:`REPORTS_ON_AN_APPLICATION` beats a
+    member of :data:`ASSERTS_AN_APPLICATION`. It cannot change the margin, so
+    it cannot change the confidence.
 
     Three overrides apply:
     - A category with a veto match is capped at 0, so it cannot win. The cap
@@ -1444,8 +1544,46 @@ class RulesClassifier:
             if category_matches:
                 matched_patterns.extend(category_matches)
 
-        # Find winner
-        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        # Find winner. A REPORT OUTRANKS A REFERENCE AT EQUAL EVIDENCE (#451).
+        #
+        # The second element of the key is the tie-break, and it is the only
+        # thing this sort does that the score does not: at equal score, a
+        # category that REPORTS on an application sorts above one that merely
+        # ASSERTS that an application exists.
+        #
+        # WHY THAT IS TRUE AND NOT A PREFERENCE. A report entails the
+        # assertion — an offer for a job presupposes you applied for it, a
+        # rejection presupposes the same — and the entailment does not run the
+        # other way: "we received your application" says nothing about an
+        # offer. So when the evidence is exactly balanced, the report is the
+        # reading that accounts for ALL of it; the assertion is the reading
+        # that throws half of it away. It is not that an offer matters more
+        # than a confirmation. It is that one of the two readings is implied
+        # by the other.
+        #
+        # WHAT IT REPLACES. `sorted(..., key=lambda x: x[1])` is a stable sort
+        # over a dict built in ``EmailCategory`` declaration order, where
+        # ``applied`` happens to be first. Every tie in this classifier was
+        # therefore decided by the order somebody typed an enum in — not by
+        # anything about the message. Across the 17,260-case independent
+        # corpus that produced 109 positive-score ties, every one of them a
+        # reference against a report, and enum order got every one wrong.
+        #
+        # THIS IS NOT A RANKED TABLE, which is the fix that would have been
+        # the same defect with a nicer face. There are exactly two classes and
+        # they are read off ``CATEGORY_TO_STATUS``; the members of each are
+        # unordered, so a tie BETWEEN TWO REPORTS (``rejection`` against
+        # ``interview``, say) is left exactly where it was — neither entails
+        # the other and this rule has nothing true to say about it. That is
+        # a real remaining hole and it is stated rather than papered over; the
+        # corpus contains no such tie, so it is currently unobservable.
+        #
+        # THE MARGIN IS UNTOUCHED. A tie means the two scores are equal, so
+        # reordering them cannot change ``runner_up_score`` and cannot change
+        # ``confidence``. This rule decides WHICH verdict, never HOW SURE —
+        # deliberately, because raising confidence on a zero margin is how a
+        # coin toss gets stated to the user as a fact.
+        sorted_scores = winner_first(scores)
         winner_name, winner_score = sorted_scores[0]
         runner_up_score = sorted_scores[1][1] if len(sorted_scores) > 1 else 0
 

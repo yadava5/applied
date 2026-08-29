@@ -40,6 +40,12 @@ function compileRules(raw) {
   return { cats, ats: raw.ats_domains };
 }
 
+/* Categories whose mail REPORTS on an application that already exists, as
+ * opposed to `applied`, whose mail ASSERTS one into being. The port of
+ * `rules.REPORTS_ON_AN_APPLICATION` (#451): a partition, not a ranking — a
+ * report entails the assertion and the entailment does not run back. */
+const REPORTS_ON_AN_APPLICATION = new Set(['rejection', 'interview', 'assessment', 'offer', 'pending_application']);
+
 function rulesClassify(subject, body, sender) {
   const scores = {};
   let isAts = false;
@@ -55,7 +61,15 @@ function rulesClassify(subject, body, sender) {
     for (const re of g.veto) { if (re.test(subject) || re.test(body)) s = Math.min(s, 0); }
     scores[cat] = s;
   }
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  // Score first; at equal score a REPORT outranks an ASSERTION (#451) — a
+  // report entails the assertion and not the reverse, so the tie is decided
+  // by what the categories claim rather than by `rules.json`'s key order.
+  // Margin, and therefore confidence, is unchanged: the scores are equal.
+  const sorted = Object.entries(scores).sort(
+    (a, b) =>
+      b[1] - a[1] ||
+      Number(REPORTS_ON_AN_APPLICATION.has(b[0])) - Number(REPORTS_ON_AN_APPLICATION.has(a[0])),
+  );
   const [winner, ws] = sorted[0];
   const runner = sorted[1] ? sorted[1][1] : 0;
   if (ws <= 0) return { category: 'other', confidence: 0.5 };
