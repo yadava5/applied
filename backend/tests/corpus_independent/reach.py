@@ -37,7 +37,11 @@ pattern anywhere in the engine. It is the only place a corpus can find something
 the classifier does not already know, and every invented lifecycle family sits
 at **0.0%** by construction: they were written by the author of ``rules.py``, so
 their language is the language the engine was taught. All of the discovery power
-in 17,260 messages lives in the ``observed-*`` families, at 17–51%.
+in 17,260 messages lives in the ``observed-*`` families — 1,600 messages from
+36 transcribed templates. The four that carry an UPDATE run 17.3–50.8%;
+``observed-confirmation`` is 1.3% because an acknowledgement is the shape the
+engine knows best, and ``observed-not-application`` is 100% because it is not
+job mail at all.
 
 WHAT THIS IS NOT. A raw case-insensitive regex scan over ``subject`` +
 ``delivered``, which is NOT what the classifier does: the real path strips

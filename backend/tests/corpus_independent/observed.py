@@ -37,9 +37,12 @@ agreement, not contamination.**
 What actually bounds what this file can find is the DISCOVERY RATE — the share
 of its messages matching no strong pattern at all, which is the only place a
 corpus can find something the engine does not already know. Every invented
-family is 0.0% by construction; these run 17-51%, and that is the whole of this
-product's non-circular evidence. ``tests/test_corpus_reach.py`` pins them with
-the direction that matters: they may not FALL.
+family is 0.0% by construction. The four families here that carry an UPDATE run
+17.3-50.8%; the acknowledgements are 1.3%, which is not a counter-example — an
+acknowledgement is the shape the engine knows best. 1,600 of the corpus's
+17,260 messages, and the whole of this product's non-circular evidence.
+``tests/test_corpus_reach.py`` pins them with the direction that matters: the
+count of messages reaching nothing may not FALL.
 
 WHAT IS AND IS NOT COPIED. Employer and role are PARAMETERS, filled from the
 corpus's invented pool. Two reasons, and the second is the load-bearing one:

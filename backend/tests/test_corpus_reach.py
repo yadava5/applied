@@ -215,10 +215,16 @@ RECORDED_FAMILIES: dict[str, tuple[int, int, int]] = {
     "hostile-zero-width": (100, 1, 28),
     "not-job-mail": (700, 6, 700),
     "rejection-past-the-snippet": (700, 3, 350),
-    # ── TRANSCRIBED. All of the corpus's discovery power, in 3,120 of 17,260
+    # ── TRANSCRIBED. All of the corpus's discovery power, in 1,600 of 17,260
     # messages and 36 templates. These wordings were written by recruiting teams
     # with no knowledge of this repository, so a message here matching no strong
     # pattern is real ATS mail the engine has never been shown.
+    #
+    # THE FOUR THAT CARRY AN UPDATE run 17.3-50.8%, which is the range #530
+    # quotes. The other two are not counter-examples and are not averaged in:
+    # observed-confirmation is 1.3% because an acknowledgement is the shape the
+    # engine knows best, and observed-not-application is 100% because it is not
+    # job mail at all and no lifecycle pattern should touch it.
     "observed-assessment": (300, 26, 54),
     "observed-closure": (240, 24, 122),
     "observed-confirmation": (300, 23, 4),
