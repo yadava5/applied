@@ -15,30 +15,43 @@
  * employer's oldest row. The picker is the fix, and this file is what says the
  * answer reaches the wire.
  *
- * WHAT IS AND IS NOT COVERED HERE, stated because the gap matters more than
- * the coverage. `asksWhichApplication` and `classifyDecisionBody` are executed
- * directly, so the hop that carries the answer from a surface's state into the
- * request body is a real gate on the queue's path and the ledger's path alike.
- * What no unit test in this repo can execute is a `.tsx` component that uses
- * hooks — `ReclassifyControl` reaches for `useRouter`, so `renderTsx` cannot
- * load it. The queue's component wiring is gated by
- * `tests/e2e/review-picker.spec.ts` on `/demo/shell`; the ledger's has no
- * public twin (the filed view is behind a session), so its call site is held by
- * the SOURCE TRIPWIRE at the bottom of this file and by a browser pass, and it
- * is labelled as a tripwire rather than counted as a gate.
+ * WHAT IS COVERED HERE. `asksWhichApplication` and `classifyDecisionBody` are
+ * executed directly, so the hop that carries the answer from a surface's state
+ * into the request body is a real gate on the queue's path and the ledger's
+ * path alike. The queue's component wiring is gated by
+ * `tests/e2e/review-picker.spec.ts` on `/demo/shell`.
+ *
+ * The ledger has no public twin — the filed view is behind a session, and every
+ * session-gated e2e test in this repo skips (`tests/e2e/session.ts`) — so its
+ * mount used to be held by a SOURCE TRIPWIRE, a regex asserting that the right
+ * call appeared in the file. That was defeatable and was measured to be: both
+ * `board.slice(0, 1)` at the mount and `const showPicker = false` in the
+ * control silence the question permanently, and both left the whole web suite,
+ * `tsc` and `eslint` green with the tripwire still matching. The bottom of this
+ * file now MOUNTS the real ledger over a real-shaped listing row, clicks
+ * through it, and looks for the question on the page.
+ *
+ * The other half of "one rule" is cross-language: which board rows belong to a
+ * message's employer is decided in TypeScript here and in Python there, and the
+ * two are held together by `tests/fixtures/employer-token-match.json`, which
+ * `backend/tests/test_one_employer_rule.py` executes as well.
  *
  * Run:  pnpm test:unit
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   LIFECYCLE_ANSWERS,
   asksWhichApplication,
   canSubmitReview,
   classifyDecisionBody,
+  matchesEmployerToken,
   reviewCandidates,
 } from "../../lib/dashboard/review.ts";
+import { React, importApp, mount } from "./helpers/mountApp.mjs";
 import { importTsx, markup, readSource } from "./helpers/renderTsx.mjs";
 
 /** Two applications at one employer — the smallest board with a question on it. */
@@ -182,18 +195,66 @@ test("the rest of the body still crosses the shared builder", () => {
 
 // --- The question has to be REACHABLE on the mail it exists for --------------
 
-test("the ledger's resolved employer is what makes the question fire on ATS mail", () => {
+test("a board name longer than the mail's is still the same employer", () => {
+  // THE DIVERGENCE, AND IT IS THE ORDINARY CASE. A board row stores the human
+  // display name ("Northwind Traders"); the backend resolves mail to a TOKEN
+  // built from the first word of what the mail says ("northwind"). Asking
+  // whether the message's text CONTAINS the row's name answers no, while the
+  // backend's `_company_rows` matches it on the leading word — so the ledger
+  // showed no question and the endpoint moved a live application anyway.
+  // Measured against the real endpoint on this exact fixture:
+  //
+  //     board  [(1 "Northwind Traders" applied), (2 "Northwind Traders" applied)]
+  //     POST   {"category": "interview"}  ->  application_id 1, interviewing
+  //     ledger candidates 0 -> asks nothing
+  const LONGER = [
+    { id: 51, company: "Northwind Traders", position: "Backend Engineer", status: "applied" },
+    { id: 52, company: "Northwind Traders", position: "Platform Engineer", status: "applied" },
+  ];
+  const relay = {
+    sender_email: "no-reply@greenhouse.io",
+    sender_name: "Northwind Hiring Team",
+    subject: "Update on your application",
+    employer_token: "northwind",
+  };
+  assert.equal(
+    reviewCandidates(relay, LONGER).length,
+    2,
+    "a stored name longer than the token is the same employer — the backend " +
+      "matches it and files onto it, so the question must offer it",
+  );
+  assert.equal(
+    asksWhichApplication({
+      category: "rejection",
+      candidates: reviewCandidates(relay, LONGER),
+      linkedApplicationId: null,
+    }),
+    true,
+  );
+
+  // The negative control, and it is directional: a name that merely SHARES
+  // letters is not this employer, or the picker would offer strangers' rows.
+  assert.equal(
+    reviewCandidates(relay, [
+      { id: 61, company: "Northgate Systems", position: "SRE", status: "applied" },
+      { id: 62, company: "Windward Labs", position: "SRE", status: "applied" },
+    ]).length,
+    0,
+  );
+});
+
+test("the employer token is what makes the question fire on ATS mail", () => {
   // THE MAIL THIS DEFECT LIVES ON. A lifecycle message at an employer holding
   // several rows is almost never sent from that employer's domain: it is an ATS
-  // relay whose employer appears in neither the sender nor the subject, and
-  // which the backend resolved from the body and stored on the row. Matching on
-  // sender and subject alone returns NOTHING for that shape, so a control that
-  // asks perfectly would have asked it on nothing.
+  // relay. The backend names the employer from the sender's display name or the
+  // subject's leading segment — never from the body, which is filing grade the
+  // resolver refuses (`pipeline.resolve_employer`) — and the mail listing ships
+  // that token on every row, linked or not.
   const ats = {
     sender_email: "no-reply@greenhouse.io",
     sender_name: "Greenhouse",
     subject: "Update on your application",
-    company: "Northwind",
+    employer_token: "northwind",
   };
   assert.equal(reviewCandidates(ats, TWO).length, 2);
   assert.equal(
@@ -208,7 +269,7 @@ test("the ledger's resolved employer is what makes the question fire on ATS mail
 
   // The control, and it is the pre-fix behaviour: drop the resolved employer
   // and the same message matches nothing at all.
-  const withoutEmployer = { ...ats, company: null };
+  const withoutEmployer = { ...ats, employer_token: null };
   assert.equal(
     reviewCandidates(withoutEmployer, TWO).length,
     0,
@@ -216,23 +277,50 @@ test("the ledger's resolved employer is what makes the question fire on ATS mail
   );
 
   // A two-letter name is still not evidence found INSIDE a haystack — it has to
-  // be the whole of an exact signal, now either of the two.
+  // be the whole of an exact signal.
   const ge = [
     { id: 7, company: "GE", position: "Analyst", status: "applied" },
     { id: 8, company: "GE", position: "Engineer", status: "applied" },
   ];
-  assert.equal(reviewCandidates({ ...ats, company: "GE" }, ge).length, 2);
+  assert.equal(reviewCandidates({ ...ats, employer_token: "ge" }, ge).length, 2);
   assert.equal(
-    reviewCandidates({ ...ats, subject: "Your GE application", company: "Northwind" }, ge).length,
+    reviewCandidates(
+      { ...ats, subject: "Your GE application", employer_token: "northwind" },
+      ge,
+    ).length,
     0,
     "'GE' inside a subject would match half an inbox",
   );
 });
 
+test("both sides of the wire answer the shared employer table identically", () => {
+  // ONE RULE, TWO LANGUAGES. `matchesEmployerToken` here and
+  // `pipeline.matches_company_token` there decide the same question — is this
+  // board row this employer? — and they cannot share an implementation. They
+  // can be made to fail together: this table is the only copy of the answers,
+  // and `backend/tests/test_one_employer_rule.py` asserts exactly these rows.
+  // Editing one side's answer alone is impossible, because there is one answer.
+  const table = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/employer-token-match.json", import.meta.url)), "utf8"),
+  );
+  assert.ok(table.cases.some((c) => c.matches === true));
+  assert.ok(
+    table.cases.some((c) => c.matches === false),
+    "a table with no negative rows passes against a function that returns true",
+  );
+  for (const row of table.cases) {
+    assert.equal(
+      matchesEmployerToken(row.company, row.token),
+      row.matches,
+      `${JSON.stringify(row.company)} / ${JSON.stringify(row.token)}: ${row.why}`,
+    );
+  }
+});
+
 test("the review queue's own matching is unchanged", () => {
   // A `ReviewItem` carries `suggested_employer` — a question the backend is
-  // ASKING — and no resolved `company`, so the queue passes nothing and this
-  // change cannot move what it offers. Its e2e gate stays meaningful.
+  // ASKING — and no resolved token, so the queue passes nothing and this change
+  // cannot move what it offers. Its e2e gate stays meaningful.
   const queueItem = {
     sender_email: "no-reply@greenhouse.io",
     sender_name: "Greenhouse",
@@ -319,48 +407,189 @@ test("both surfaces render the question through that one component", () => {
   }
 });
 
-// --- Source tripwire, and it is labelled as one ------------------------------
+// --- The ledger's own mount, on a screen ------------------------------------
+//
+// WHAT THIS REPLACED, AND WHY. These two used to be source TRIPWIRES: one
+// regex over `ReclassifyControl.tsx` and one over `FiledMailList.tsx`, both
+// labelled as tripwires rather than gates because nothing in CI could execute
+// a `.tsx` component that uses hooks. They were not merely weak, they were
+// defeatable — measured, each applied alone:
+//
+//     FiledMailList: reviewCandidates(m, board) -> reviewCandidates(m, board.slice(0, 1))
+//       unit 631/631 GREEN · tsc EXIT 0 · lint EXIT 0 · tripwire still matched
+//     ReclassifyControl: const showPicker = ... -> const showPicker = false
+//       same, green everywhere
+//
+// Either one silences this question forever. `helpers/mountApp.mjs` is what
+// closed that: the real components are mounted over a real-shaped listing row
+// and the question is looked for on the page. Reading source is how #560 was
+// misdiagnosed in the first place; a regex standing in for behaviour is not
+// coverage.
 
-test("TRIPWIRE: ReclassifyControl sends the user's answer, not a literal null", () => {
-  // NOT A GATE, and the difference is the point. The behaviour this asserts —
-  // "the component puts its own `assignment` state into the decision" — lives
-  // in a hooks component that `renderTsx` cannot load and whose only rendered
-  // surfaces are behind a Supabase session, so nothing in CI executes it. A
-  // tripwire that reads the source is what is available, and reading the
-  // source is exactly how #560 was misdiagnosed in the first place: it is
-  // worth having and it is not worth trusting. The executable half is
-  // `classifyDecisionBody` above; the human half is the browser pass.
-  const source = readSource("components/mail/ReclassifyControl.tsx");
-  const call = source.slice(
-    source.indexOf("classifyDecisionBody({"),
-    source.indexOf("const outcome ="),
+/** One stored message as `GET /applications/mail` actually serves it. */
+const RELAY_ROW = {
+  message_id: "m-relay",
+  thread_id: "t-relay",
+  subject: "Update on your application",
+  sender_name: "Northwind Hiring Team",
+  sender_email: "no-reply@greenhouse.io",
+  received_at: "2026-05-25T09:00:00+00:00",
+  snippet: "Thanks for your interest.",
+  category: "needs_review",
+  confidence: 0.62,
+  method: "rules",
+  user_corrected: false,
+  review_disposition: null,
+  is_reviewed: false,
+  // UNLINKED — the population the question exists for.
+  application_id: null,
+  on_board: false,
+  // The LINKED row's employer, and it is null here BY CONSTRUCTION. Read the
+  // pair together: a matcher keyed on this field can only fire where the
+  // question is never asked.
+  company: null,
+  employer_token: "northwind",
+  gmail_link: "https://mail.google.com/mail/u/0/#inbox/t-relay",
+};
+
+/** The employer's rows, named as a human would store them — LONGER than the
+ *  token, which is the ordinary case and the one that used to match nothing. */
+const LEDGER_BOARD = [
+  { id: 51, company: "Northwind Traders", position: "Backend Engineer", status: "applied" },
+  { id: 52, company: "Northwind Traders", position: "Platform Engineer", status: "applied" },
+];
+
+/**
+ * Mount the ledger over one listing payload and open that row's correction.
+ *
+ * The row is built by `readFiledMailPage` from a raw body rather than typed as
+ * an object, so a field the parser drops on the floor is a field this test
+ * cannot see either — which is exactly what happened to the last attempt at
+ * making the question reachable.
+ */
+async function openLedgerCorrection(rawMessage, board) {
+  const { readFiledMailPage } = await importApp("lib/mail/filed.ts");
+  const { FiledMailList } = await importApp("components/mail/FiledMailList.tsx");
+  const page = readFiledMailPage({
+    messages: [rawMessage],
+    total: 1,
+    page: 1,
+    page_size: 50,
+    category_counts: { needs_review: 1 },
+  });
+  const view = await mount(
+    React.createElement(FiledMailList, { page, activeCategory: null, q: null, board }),
   );
-  assert.ok(call.includes("classifyDecisionBody({"), "the shared builder must build the body");
-  for (const field of ["candidates,", "linkedApplicationId,", "assignment,"]) {
-    assert.ok(
-      call.includes(field),
-      `the decision must carry ${field} — passing a literal in that position is ` +
-        "the shape of #560, and a hard-coded null there means the picker is decoration",
-    );
-  }
-  assert.doesNotMatch(call, /assignment:\s*null/);
+  await view.click('button[aria-label^="Reclassify"]');
+  // The question is only put for a LIFECYCLE answer — a stage a message can
+  // actually be about. Chosen the way a reader chooses it.
+  await view.choose(`select#reclass-${rawMessage.message_id}`, "rejection");
+  return view;
+}
+
+test("the filed ledger asks which application an unlinked ATS correction is about", async () => {
+  const view = await openLedgerCorrection(RELAY_ROW, LEDGER_BOARD);
+
+  assert.match(
+    view.html(),
+    /which application is this about\?/,
+    "the ledger drew no question over an unlinked message at an employer " +
+      "holding two rows — this is #560 on the screen",
+  );
+  assert.equal(
+    view.queryAll('input[type="radio"]').length,
+    3,
+    "both of the employer's rows, plus 'none of these'",
+  );
+  assert.deepEqual(
+    view.queryAll('input[type="radio"]').map((input) => input.value),
+    ["51", "52", "none"],
+    "the options carry the board ids the answer will travel as",
+  );
+  assert.equal(
+    view.queryAll('input[type="radio"]:checked').length,
+    0,
+    "nothing is pre-selected — the option that DISCARDS the question used to " +
+      "be the default (#554)",
+  );
+  await view.unmount();
 });
 
-test("TRIPWIRE: the filed ledger hands its control the employer's rows", () => {
-  // The mount is what makes the question reachable at all: a control that asks
-  // correctly, handed `[]` by every mount, asks nothing. The scan mount is NOT
-  // asserted here on purpose — it passes `[]` deliberately, and pinning that in
-  // a test would red on the day someone gives the scan a board, which is an
-  // improvement, not a regression. What holds the scan mount honest is that
-  // `candidates` is a REQUIRED prop: a new mount cannot compile without stating
-  // its answer, and that is a typecheck, not a regex.
-  const source = readSource("components/mail/FiledMailList.tsx");
-  const mount = source.slice(source.indexOf("<ReclassifyControl"), source.indexOf("</li>"));
-  assert.match(mount, /candidates=\{reviewCandidates\(/);
-  assert.match(
-    mount,
-    /linkedApplicationId=\{m\.application_id\}/,
-    "the ledger's rows are mostly LINKED, and a link is what stops the question " +
-      "being asked where it has already been answered",
+test("a message already filed against a row is asked nothing", async () => {
+  // The opposite direction, and it is what stops the test above passing on a
+  // build that asks everything. A link outranks the tie-break (#546/#548), so
+  // there is nothing to ask; offering "none of these" over a tracked message
+  // is a new way to scatter a record.
+  const view = await openLedgerCorrection(
+    { ...RELAY_ROW, application_id: 51, on_board: true, company: "Northwind Traders" },
+    LEDGER_BOARD,
   );
+  assert.doesNotMatch(view.html(), /which application is this about\?/);
+  assert.equal(view.queryAll('input[type="radio"]').length, 0);
+  await view.unmount();
+});
+
+test("one candidate is not a question", async () => {
+  // The threshold, on the mount rather than on the predicate alone: one option
+  // is not a choice, and the backend's resolution already has the right row.
+  const view = await openLedgerCorrection(RELAY_ROW, [LEDGER_BOARD[0]]);
+  assert.doesNotMatch(view.html(), /which application is this about\?/);
+  await view.unmount();
+});
+
+test("the answer the reader picks is the id the request carries", async () => {
+  // The last hop, and the one #560 actually was: `ReclassifyControl` put a
+  // literal `null` in the `application_id` position, so even a perfect picker
+  // sent nothing. `classify` is the component's own transport seam — the prop
+  // `/demo/scan` uses — so this reads the real request body off the real
+  // click path, with no source regex anywhere in it.
+  const { readFiledMailPage } = await importApp("lib/mail/filed.ts");
+  const { FiledMailList } = await importApp("components/mail/FiledMailList.tsx");
+  const { ReclassifyControl } = await importApp("components/mail/ReclassifyControl.tsx");
+  const { reviewCandidates } = await importApp("lib/dashboard/review.ts");
+
+  // The candidates come from the LEDGER's own mount, not from this test: read
+  // the page the same way the list does, then hand the control what the list
+  // would hand it.
+  const page = readFiledMailPage({ messages: [RELAY_ROW], total: 1, page: 1, page_size: 50 });
+  const message = page.messages[0];
+  assert.ok(FiledMailList, "the ledger must still be loadable — the mount above is the gate");
+
+  const sent = [];
+  const view = await mount(
+    React.createElement(ReclassifyControl, {
+      messageId: message.message_id,
+      subject: message.subject,
+      company: message.company,
+      candidates: reviewCandidates(message, LEDGER_BOARD),
+      linkedApplicationId: message.application_id,
+      classify: async (messageId, body) => {
+        sent.push({ messageId, body });
+        return { ok: true, body: { application_id: body.application_id } };
+      },
+    }),
+  );
+  await view.click('button[aria-label^="Reclassify"]');
+  await view.choose(`select#reclass-${message.message_id}`, "rejection");
+
+  const apply = view.queryAll("button").find((b) => b.textContent.trim() === "apply");
+  assert.equal(
+    apply.disabled,
+    true,
+    "an unanswered question must not be submittable — a click here files the " +
+      "correction against a row nobody named",
+  );
+
+  await view.click('input[type="radio"][value="52"]');
+  assert.equal(apply.disabled, false);
+  await view.click(apply);
+
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].body.application_id,
+    52,
+    "the row the reader picked did not reach the wire — the picker is decoration",
+  );
+  assert.equal(sent[0].body.category, "rejection");
+  await view.unmount();
 });

@@ -372,6 +372,15 @@ def matches_company_token(company_name: str, token: str) -> bool:
     already applies when it collapses a company's mail under one token. Two
     employers sharing a first word therefore merge — but they would have shared
     a rolled row anyway, whereas the alternative is the duplicate above.
+
+    THIS RULE HAS A WEB MIRROR: ``matchesEmployerToken`` in
+    ``apps/web/lib/dashboard/review.ts``. The filed ledger asks the user which
+    application a correction is about, and it may only offer rows this function
+    would accept as an answer — offering one it would reject files the mail
+    somewhere else, and offering none asks nothing and lets the backend's
+    tie-break move a live application unasked (#560). The two are held together
+    by ``apps/web/tests/fixtures/employer-token-match.json``, a table both
+    sides execute; add a case there, not to one side.
     """
 
     left = _normalize_token(company_name or "")

@@ -421,56 +421,115 @@ export interface CandidateApplication {
 }
 
 /**
+ * Lowercase, collapse to `[a-z0-9]` words, single-space joined.
+ *
+ * The mirror of `pipeline.normalize_company_name`, which is the ONLY spelling
+ * of "the same company" the backend mints tokens under. A fifth spelling here
+ * (`lower(company)` was the fourth, and it filed a second "Together AI" row on
+ * every sync) is how the two sides start disagreeing.
+ */
+function normalizeCompanyName(value: string): string {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Does a board row's company NAME identify the employer this TOKEN names?
+ *
+ * THE WEB MIRROR OF `pipeline.matches_company_token`, and it has to be one.
+ * The two sides are minted differently and cannot simply be compared: a row
+ * stores the human DISPLAY name ("Northwind Traders", "Together AI"), while
+ * the token is either the sender's domain brand or the normalized FIRST WORD
+ * of a display name ("northwind", "together"). So the rule is: normalize both,
+ * then accept a full match OR a match on the leading word.
+ *
+ * WHAT A SECOND, LOOSER RULE COSTS — measured, not argued. Before this existed
+ * the client asked `haystack.includes(row.company)`, so a board row named
+ * "Northwind Traders" was not a candidate for mail whose employer token is
+ * "northwind". The backend's `_company_rows` matched it on the leading word,
+ * `_pick_application`'s rule 4 tie-broke onto the oldest of them, and a live
+ * application moved stage with the ledger showing no question at all:
+ *
+ *     board  [(1 "Northwind Traders" applied), (2 "Northwind Traders" applied)]
+ *     mail   no-reply@greenhouse.io, "Northwind Hiring Team"
+ *     ledger candidates 0 -> asks nothing
+ *     POST   {"category":"interview"}  ->  application_id 1, moved unasked
+ *
+ * A board name LONGER than the name the mail uses is the normal case, not an
+ * edge one, so that gap covered most real ATS mail. The picker may only offer
+ * rows the backend would ACCEPT as an answer (`_chosen_application` validates
+ * the choice against the same `_company_rows`), which is exactly what sharing
+ * this rule buys.
+ *
+ * Held to the Python original by `tests/fixtures/employer-token-match.json`,
+ * a table both sides execute.
+ */
+export function matchesEmployerToken(companyName: string, token: string): boolean {
+  const left = normalizeCompanyName(companyName);
+  const right = normalizeCompanyName(token);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.split(" ")[0] === right.split(" ")[0];
+}
+
+/**
  * Which of the user's applications could this review item belong to?
  *
  * One company can now hold several applications (four Amazon roles in one
  * evening is the proven case), so a rejection from `amazon.jobs` is ambiguous
- * until the user says which role it answers. This is the conservative,
- * client-side half of that surface: an application is a candidate when its
- * company name appears in the message's sender, subject, or the employer the
- * BACKEND resolved for it. Deliberately strict — a false "which of these?"
- * question is worse than no question — and two-character names must match the
- * sender's domain label or the resolved token exactly, or "GE" would match half
- * an inbox.
+ * until the user says which role it answers. An application is a candidate
+ * when EITHER its company name appears in the message's sender or subject, OR
+ * it matches the employer token the backend resolved for that message. Both
+ * arms are load-bearing:
  *
- * `company` IS THE ONE THAT MAKES THIS FIRE ON REAL MAIL, and it is optional
- * because only one caller has it. The message this whole picker exists for is
- * an ATS relay — `no-reply@greenhouse.io`, "Update on your application" — whose
- * employer appears in NEITHER the sender nor the subject; the backend resolved
- * it from the body and stored it on the row. Matching on sender and subject
- * alone returns zero candidates for exactly that shape, so the ledger would
- * have asked nothing on the mail it was fixed for, measured:
+ *   - the token arm is what makes this fire on the mail the picker exists for.
+ *     That mail is an ATS relay — `no-reply@greenhouse.io`, "Update on your
+ *     application" — and it is also what makes a board row whose name is
+ *     LONGER than the mail's ("Northwind Traders" against "northwind") a
+ *     candidate at all. See `matchesEmployerToken` for the measured cost of
+ *     not having it.
+ *   - the haystack arm still carries every surface that has no token: the
+ *     needs-review queue passes none (`ReviewItem` has `suggested_employer`,
+ *     which is a question the backend is ASKING, not an answer it reached), so
+ *     its behaviour and its e2e gate are untouched by this.
  *
- *     sender no-reply@greenhouse.io, subject "Update on your application",
- *     board [Northwind, Northwind]  ->  candidates: 0
+ * Deliberately strict otherwise — a false "which of these?" question is worse
+ * than no question — so a two-character name must be the WHOLE of one exact
+ * signal (the sender's domain label, or the token) rather than something found
+ * inside a haystack, or "GE" would match half an inbox.
  *
- * The filed ledger has that token on every row and passes it. The needs-review
- * queue does not carry one (`ReviewItem` has `suggested_employer`, which is a
- * question the backend is asking, not an answer it reached) and passes nothing,
- * so its behaviour is unchanged.
+ * `employer_token` is FILING grade used at DISPLAY grade, which is the safe
+ * direction: the backend derives it from the sender's own domain, the subject
+ * and (for relays) the display name — never from the body or the snippet. It
+ * is never guessed here.
  *
  * The picker renders only when TWO OR MORE candidates match (one match is not
  * a question), and the chosen id rides the classify request as
- * `application_id` — accepted and validated by the backend since the
- * entity-model change landed. The truly robust version of this matching still
- * belongs server-side; this client-side pass is the conservative floor.
+ * `application_id` — validated by the backend against the same employer.
  */
 export function reviewCandidates(
   item: {
     sender_email?: string | null;
     sender_name?: string | null;
     subject?: string | null;
-    /** The employer the backend resolved for this message, where the surface
-     *  has one. Never a guess made here. */
-    company?: string | null;
+    /**
+     * The employer token the BACKEND resolved for this message, where the
+     * surface has one. Never a guess made here, and never `company` — that is
+     * the linked application's display name and is null on precisely the rows
+     * this question is asked about.
+     */
+    employer_token?: string | null;
   },
   applications: readonly CandidateApplication[],
 ): CandidateApplication[] {
-  const haystack = [item.sender_email, item.sender_name, item.subject, item.company]
+  const haystack = [item.sender_email, item.sender_name, item.subject]
     .filter((part): part is string => typeof part === "string")
     .join(" ")
     .toLowerCase();
-  if (!haystack) return [];
+  const token = typeof item.employer_token === "string" ? item.employer_token.trim() : "";
+  if (!haystack && !token) return [];
 
   const senderDomainLabel = (() => {
     const email = typeof item.sender_email === "string" ? item.sender_email : "";
@@ -478,15 +537,14 @@ export function reviewCandidates(
     if (at === -1) return "";
     return email.slice(at + 1).toLowerCase().split(".")[0] ?? "";
   })();
-  const resolvedEmployer =
-    typeof item.company === "string" ? item.company.trim().toLowerCase() : "";
 
   return applications.filter((app) => {
     const name = app.company.trim().toLowerCase();
     if (name.length < 2) return false;
+    if (token && matchesEmployerToken(app.company, token)) return true;
     // A two-letter name is too short to be evidence inside a haystack, so it
-    // has to be the WHOLE of one of the two exact signals.
-    if (name.length === 2) return senderDomainLabel === name || resolvedEmployer === name;
+    // has to be the WHOLE of one exact signal.
+    if (name.length === 2) return senderDomainLabel === name;
     return haystack.includes(name);
   });
 }

@@ -52,6 +52,22 @@ export interface FiledMessage {
    */
   on_board: boolean;
   company: string | null;
+  /**
+   * The employer TOKEN the backend's filing resolver names for this message,
+   * or `null` when it refuses to name one.
+   *
+   * NOT `company`, and the difference is the whole reason this field exists.
+   * `company` is the LINKED application's display name, so it is populated
+   * only on rows that already have an answer — while the question "which
+   * application is this about?" is asked exactly on the UNLINKED ones, where
+   * `company` is null by construction. Matching candidates on `company` can
+   * therefore only ever match rows nobody is asked about.
+   *
+   * This is the key `reviewCandidates` matches board rows against, through
+   * `matchesEmployerToken` — the same rule the backend narrows on, so the
+   * options offered are the options the backend would accept.
+   */
+  employer_token: string | null;
   gmail_link: string | null;
 }
 
@@ -117,6 +133,7 @@ export function readFiledMailPage(body: unknown): FiledMailPage | null {
       application_id: num(m.application_id),
       on_board: m.on_board === true,
       company: str(m.company),
+      employer_token: str(m.employer_token),
       gmail_link: str(m.gmail_link),
     });
   }

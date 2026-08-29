@@ -85,7 +85,15 @@ export function ReclassifyControl({
   /** For the control's accessible name — three bare "reclassify" buttons in a
    *  list are indistinguishable to a screen reader. */
   subject: string;
-  /** The row's resolved employer token, if any — prefills the employer ask. */
+  /**
+   * The LINKED application's employer name, if this message has one — it
+   * prefills the "we couldn't name the employer" ask.
+   *
+   * Not the employer the mail itself names, and not what decides which rows
+   * are offered: it is null on every unlinked row, which is the whole
+   * population the picker is for. `candidates` carries that answer, matched
+   * from `employer_token` (#560).
+   */
   company: string | null;
   /**
    * The board rows this message could be about — its employer's, matched by

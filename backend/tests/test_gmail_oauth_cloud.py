@@ -31,6 +31,8 @@ import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 
+from jobtracker.cloud import pipeline
+
 JWT_SECRET = "gmail-c5-test-jwt-secret-at-least-32-bytes-long-hs256"
 ENC_KEY = Fernet.generate_key().decode()  # valid Fernet key; also signs state
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -5275,4 +5277,139 @@ async def test_an_unlinked_message_takes_the_tie_break_only_when_nobody_answered
         "an unlinked message nobody was asked about must land on the employer's "
         "oldest live row — if this moved, rule 4 changed, and both this file's "
         "link test and every unattended sync rest on it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# THE OTHER HALF OF #560: the question has to be ASKABLE.
+#
+# Everything above is about what the endpoint does with an answer. These two are
+# about whether the surface that asks can find any options to offer, which is
+# the same defect one layer up — a control that asks perfectly, handed nothing
+# to ask about, asks nothing, and the tie-break above decides unasked with no
+# signal anywhere on screen.
+#
+# The rule the client matches with is `pipeline.matches_company_token`, held to
+# its web mirror by `tests/test_one_employer_rule.py`. What is asserted here is
+# the WIRE: that the token reaches the client at all, and on which rows.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_listing_names_the_employer_on_an_unlinked_relay_row(
+    client: AsyncClient,
+) -> None:
+    """``employer_token`` reaches the client on the rows the picker is for.
+
+    THE ROW THAT MATTERS IS THE UNLINKED ONE, and that is the whole point.
+    ``company`` beside it is the LINKED application's employer, so it is null
+    here — and a client choosing candidates from that field can only ever match
+    rows nobody is asked about, because a linked row is precisely the row whose
+    question is already answered. The first attempt at this shipped exactly
+    that: a parameter that was non-null if and only if the picker was never
+    shown. The two fields are asserted APART on ONE row, because reading them
+    together is how an inert parameter passes review.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    for position in ("Backend Engineer", "Platform Engineer"):
+        created = await client.post(
+            "/applications",
+            # LONGER than the token the mail resolves to, deliberately: that is
+            # the ordinary shape of a stored name, and the case the client's own
+            # matching used to miss entirely.
+            json={"company": "Northwind Traders", "position": position},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+
+    synced = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "rv-relay",
+                    "category": "needs_review",
+                    # The shape the picker exists for: the employer is in
+                    # neither the sender's domain nor the subject.
+                    "sender_email": "no-reply@greenhouse.io",
+                    "sender_name": "Northwind Hiring Team",
+                    "subject": "Update on your application",
+                    "confidence": 0.62,
+                    "received_at": "2026-05-25T09:00:00+00:00",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200, synced.text
+
+    listing = (await client.get("/applications/mail", headers=headers)).json()
+    row = next(m for m in listing["messages"] if m["message_id"] == "rv-relay")
+
+    assert row["application_id"] is None, "the fixture stopped being the unlinked case"
+    assert row["company"] is None, (
+        "`company` is the LINKED row's name and must stay that; if it is "
+        "populated here the two fields have been conflated again"
+    )
+    assert row["employer_token"] == "northwind", (
+        "the ledger cannot ask which application this is about without the "
+        "employer the filer would name — and neither the sender's domain nor "
+        "the subject carries it"
+    )
+
+    # And the token is the key the board rows are matched on. The stored names
+    # are longer than it, which is why a substring test found none of them.
+    board = (await client.get("/applications", headers=headers)).json()["applications"]
+    matched = [
+        app
+        for app in board
+        if pipeline.matches_company_token(app["company"], row["employer_token"])
+    ]
+    assert len(matched) == 2, (
+        "the employer's rows must be findable from the token the listing ships, "
+        "or the question has no options and rule 4 decides unasked"
+    )
+
+
+async def test_a_message_the_resolver_will_not_name_ships_no_employer(
+    client: AsyncClient,
+) -> None:
+    """The directional control, and it is not decoration.
+
+    Without it the test above passes on a build that stamps every row with some
+    token, which would offer an employer's rows as answers on mail the filing
+    path refuses to place — a question whose every answer is wrong. A refusal
+    has to travel as a refusal.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    synced = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "rv-blind",
+                    "category": "needs_review",
+                    # A relay that names nobody: the display name is the relay's
+                    # own brand and the subject holds no employer.
+                    "sender_email": "no-reply@greenhouse.io",
+                    "sender_name": "Greenhouse",
+                    "subject": "Update on your application",
+                    "confidence": 0.62,
+                    "received_at": "2026-05-25T09:00:00+00:00",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200, synced.text
+
+    listing = (await client.get("/applications/mail", headers=headers)).json()
+    row = next(m for m in listing["messages"] if m["message_id"] == "rv-blind")
+    assert row["employer_token"] is None, (
+        "a message the filing resolver refuses to name must not arrive carrying "
+        "an employer — the ledger would offer that employer's rows as answers "
+        "to a question the backend cannot act on"
     )

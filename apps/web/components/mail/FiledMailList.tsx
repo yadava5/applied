@@ -321,9 +321,14 @@ export function FiledMailList({
                     subject={subject}
                     company={m.company}
                     // The employer's rows, matched from this message's own
-                    // sender and subject — the same conservative client-side
-                    // pass the review queue uses, so the two surfaces offer the
-                    // same options for the same mail.
+                    // sender and subject AND from the employer token the
+                    // backend resolved for it (`m.employer_token`) — the same
+                    // conservative client-side pass the review queue uses, so
+                    // the two surfaces offer the same options for the same
+                    // mail. The token arm is what makes this fire on an ATS
+                    // relay and on a board row whose name is longer than the
+                    // one the mail uses; without it this list hands over an
+                    // empty set and the control asks nothing (#560).
                     candidates={reviewCandidates(m, board)}
                     // A filed row usually HAS a link, and that is why this is
                     // the quiet case: the link outranks the backend's tie-break,

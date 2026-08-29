@@ -312,6 +312,21 @@ export default async function InboxPage({
   // reader may never open must not add a second ~850 ms backend wait to the
   // page they did open. Issue #203 measured concurrency, not idleness, as what
   // triggers a cold start; this takes /inbox's fan-out from 1 to 2.
+  //
+  // THE CANDIDATE POOL IS ONE PAGE — `BOARD_PAGE_SIZE` (200) ROWS — AND THAT
+  // IS A STATED LIMIT, not an oversight. Past 200 applications the newest rows
+  // fall off this page, so an employer whose siblings sit beyond it can show
+  // fewer than two candidates here; the question is then not asked and the
+  // backend's tie-break files the correction on that employer's oldest live
+  // row — #560's behaviour, with no signal on screen.
+  //
+  // It is not fixed by raising the number, which only moves the cliff, and the
+  // honest fix is server-side: the endpoint knows the employer token already
+  // (`employer_token` below) and could return that employer's rows instead of
+  // a page of the board. That is a bigger change than this one and is not
+  // smuggled in here. The number is deliberately the SAME constant the
+  // dashboard reads, so the question can only ever offer rows the reader can
+  // also see on their board.
   const [result, boardResult] = await Promise.all([
     getMail(search),
     getBoardPage(BOARD_PAGE_SIZE),
