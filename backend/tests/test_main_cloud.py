@@ -29,17 +29,22 @@ def cloud_settings(monkeypatch: pytest.MonkeyPatch):
     session's settings singleton stable.
     """
 
-    monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
-    monkeypatch.setenv("JOBTRACKER_CORS_ALLOWED_HOSTS", "jobtracker.app")
-
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
+    import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
+    # Every settings instance the request path holds, de-duplicated by object
+    # identity -- not ``importlib.reload(jobtracker.config)``, which minted a
+    # new one and left the verifier holding the old (#582).
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "cors_allowed_hosts", ["jobtracker.app"])
 
     yield config_module.settings
-
-    monkeypatch.undo()
-    importlib.reload(config_module)
 
 
 @pytest.fixture
