@@ -37,6 +37,7 @@ import {
   asksWhichApplication,
   canSubmitReview,
   classifyDecisionBody,
+  reviewCandidates,
 } from "../../lib/dashboard/review.ts";
 import { importTsx, markup, readSource } from "./helpers/renderTsx.mjs";
 
@@ -177,6 +178,75 @@ test("the rest of the body still crosses the shared builder", () => {
   assert.equal(body.confirm_new_company, true);
   assert.equal(body.message.sender_email, "talent@northwind.com");
   assert.equal(body.application_id, 41);
+});
+
+// --- The question has to be REACHABLE on the mail it exists for --------------
+
+test("the ledger's resolved employer is what makes the question fire on ATS mail", () => {
+  // THE MAIL THIS DEFECT LIVES ON. A lifecycle message at an employer holding
+  // several rows is almost never sent from that employer's domain: it is an ATS
+  // relay whose employer appears in neither the sender nor the subject, and
+  // which the backend resolved from the body and stored on the row. Matching on
+  // sender and subject alone returns NOTHING for that shape, so a control that
+  // asks perfectly would have asked it on nothing.
+  const ats = {
+    sender_email: "no-reply@greenhouse.io",
+    sender_name: "Greenhouse",
+    subject: "Update on your application",
+    company: "Northwind",
+  };
+  assert.equal(reviewCandidates(ats, TWO).length, 2);
+  assert.equal(
+    asksWhichApplication({
+      category: "rejection",
+      candidates: reviewCandidates(ats, TWO),
+      linkedApplicationId: null,
+    }),
+    true,
+    "the ledger must ask about an ATS relay — that is the whole population",
+  );
+
+  // The control, and it is the pre-fix behaviour: drop the resolved employer
+  // and the same message matches nothing at all.
+  const withoutEmployer = { ...ats, company: null };
+  assert.equal(
+    reviewCandidates(withoutEmployer, TWO).length,
+    0,
+    "if this is not 0 the assertion above proves nothing about the employer token",
+  );
+
+  // A two-letter name is still not evidence found INSIDE a haystack — it has to
+  // be the whole of an exact signal, now either of the two.
+  const ge = [
+    { id: 7, company: "GE", position: "Analyst", status: "applied" },
+    { id: 8, company: "GE", position: "Engineer", status: "applied" },
+  ];
+  assert.equal(reviewCandidates({ ...ats, company: "GE" }, ge).length, 2);
+  assert.equal(
+    reviewCandidates({ ...ats, subject: "Your GE application", company: "Northwind" }, ge).length,
+    0,
+    "'GE' inside a subject would match half an inbox",
+  );
+});
+
+test("the review queue's own matching is unchanged", () => {
+  // A `ReviewItem` carries `suggested_employer` — a question the backend is
+  // ASKING — and no resolved `company`, so the queue passes nothing and this
+  // change cannot move what it offers. Its e2e gate stays meaningful.
+  const queueItem = {
+    sender_email: "no-reply@greenhouse.io",
+    sender_name: "Greenhouse",
+    subject: "Update on your application",
+  };
+  assert.equal(reviewCandidates(queueItem, TWO).length, 0);
+  assert.equal(
+    reviewCandidates(
+      { sender_email: "talent@northwind.com", sender_name: "Northwind", subject: "Update" },
+      TWO,
+    ).length,
+    2,
+    "the sender/subject path still matches exactly as it did",
+  );
 });
 
 // --- One question, one renderer ---------------------------------------------

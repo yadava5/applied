@@ -427,23 +427,46 @@ export interface CandidateApplication {
  * evening is the proven case), so a rejection from `amazon.jobs` is ambiguous
  * until the user says which role it answers. This is the conservative,
  * client-side half of that surface: an application is a candidate when its
- * company name appears in the message's sender or subject. Deliberately
- * strict — a false "which of these?" question is worse than no question —
- * and two-character names must match the sender's domain label exactly, or
- * "GE" would match half an inbox.
+ * company name appears in the message's sender, subject, or the employer the
+ * BACKEND resolved for it. Deliberately strict — a false "which of these?"
+ * question is worse than no question — and two-character names must match the
+ * sender's domain label or the resolved token exactly, or "GE" would match half
+ * an inbox.
+ *
+ * `company` IS THE ONE THAT MAKES THIS FIRE ON REAL MAIL, and it is optional
+ * because only one caller has it. The message this whole picker exists for is
+ * an ATS relay — `no-reply@greenhouse.io`, "Update on your application" — whose
+ * employer appears in NEITHER the sender nor the subject; the backend resolved
+ * it from the body and stored it on the row. Matching on sender and subject
+ * alone returns zero candidates for exactly that shape, so the ledger would
+ * have asked nothing on the mail it was fixed for, measured:
+ *
+ *     sender no-reply@greenhouse.io, subject "Update on your application",
+ *     board [Northwind, Northwind]  ->  candidates: 0
+ *
+ * The filed ledger has that token on every row and passes it. The needs-review
+ * queue does not carry one (`ReviewItem` has `suggested_employer`, which is a
+ * question the backend is asking, not an answer it reached) and passes nothing,
+ * so its behaviour is unchanged.
  *
  * The picker renders only when TWO OR MORE candidates match (one match is not
  * a question), and the chosen id rides the classify request as
  * `application_id` — accepted and validated by the backend since the
  * entity-model change landed. The truly robust version of this matching still
- * belongs server-side, where the message's resolved employer token exists;
- * this client-side pass is the conservative floor.
+ * belongs server-side; this client-side pass is the conservative floor.
  */
 export function reviewCandidates(
-  item: { sender_email?: string | null; sender_name?: string | null; subject?: string | null },
+  item: {
+    sender_email?: string | null;
+    sender_name?: string | null;
+    subject?: string | null;
+    /** The employer the backend resolved for this message, where the surface
+     *  has one. Never a guess made here. */
+    company?: string | null;
+  },
   applications: readonly CandidateApplication[],
 ): CandidateApplication[] {
-  const haystack = [item.sender_email, item.sender_name, item.subject]
+  const haystack = [item.sender_email, item.sender_name, item.subject, item.company]
     .filter((part): part is string => typeof part === "string")
     .join(" ")
     .toLowerCase();
@@ -455,11 +478,15 @@ export function reviewCandidates(
     if (at === -1) return "";
     return email.slice(at + 1).toLowerCase().split(".")[0] ?? "";
   })();
+  const resolvedEmployer =
+    typeof item.company === "string" ? item.company.trim().toLowerCase() : "";
 
   return applications.filter((app) => {
     const name = app.company.trim().toLowerCase();
     if (name.length < 2) return false;
-    if (name.length === 2) return senderDomainLabel === name;
+    // A two-letter name is too short to be evidence inside a haystack, so it
+    // has to be the WHOLE of one of the two exact signals.
+    if (name.length === 2) return senderDomainLabel === name || resolvedEmployer === name;
     return haystack.includes(name);
   });
 }
