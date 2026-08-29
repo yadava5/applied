@@ -31,6 +31,8 @@ import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 
+from jobtracker.cloud import pipeline
+
 JWT_SECRET = "gmail-c5-test-jwt-secret-at-least-32-bytes-long-hs256"
 ENC_KEY = Fernet.generate_key().decode()  # valid Fernet key; also signs state
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -164,6 +166,16 @@ async def test_status_configured_but_not_connected(client: AsyncClient) -> None:
         "has_cursor": False,
         "sync_status": None,
         "sync_error": None,
+        # The scan ledger (#422). Null, not zero: no sync has recorded one, and
+        # that is a different fact from "a sync ran and read nothing". The
+        # equality here is exhaustive on purpose — it is what makes a field
+        # added to this endpoint a decision rather than a drift.
+        "last_scanned": None,
+        "last_classified": None,
+        "last_filed": None,
+        "last_queued": None,
+        "last_dropped": None,
+        "last_reached_nothing": None,
     }
 
 
@@ -1668,6 +1680,21 @@ async def _two_northwind_rows_and_a_blind_review_item(
         assert created.status_code == 201, created.text
         ids.append(created.json()["id"])
 
+    await _relay_blind_northwind_message(client, headers, message_id)
+    return ids
+
+
+async def _relay_blind_northwind_message(
+    client: AsyncClient, headers: dict[str, str], message_id: str
+) -> None:
+    """One held Northwind message that names no role, filed against nothing.
+
+    Split out of the helper above so a test can put TWO of these on one board
+    and answer them differently — which is what it takes to show, on one
+    fixture, that the picker's answer and silence are two different requests
+    with two different landings.
+    """
+
     relayed = [
         {
             "message_id": message_id,
@@ -1683,7 +1710,6 @@ async def _two_northwind_rows_and_a_blind_review_item(
     ]
     synced = await client.post("/gmail/sync", json={"items": relayed}, headers=headers)
     assert synced.status_code == 200, synced.text
-    return ids
 
 
 async def _northwind_rows(client: AsyncClient, headers: dict[str, str]) -> list[dict]:
@@ -5084,6 +5110,16 @@ async def test_a_relayed_mine_says_the_server_did_not_scan_it(
 # `3401c20` (#546 / #548) BEFORE the issue was written. Reading a write without
 # reading its operand is how the report got made.
 #
+# WHAT WAS REAL, AND IT WAS NARROWER. `ReclassifyControl` had no picker: it put
+# a literal `null` in the `application_id` position, so an UNLINKED message at an
+# employer holding several rows had nothing to outrank rule 4 and a category
+# correction moved a live application on a tie-break nobody was consulted about.
+# That is #554's defect on a second surface, and it is fixed on the surface —
+# the control asks, through the same `ApplicationPicker` the queue uses. The
+# backend is unchanged by it. See
+# `test_an_unlinked_message_takes_the_tie_break_only_when_nobody_answered`, which
+# is the test that used to pin the unanswered landing alone.
+#
 # WHY THIS FILE NOW SAYS SO. Deleting that link-first branch and running the
 # whole suite reds exactly ONE test —
 # `test_a_review_answer_never_overwrites_an_identity_the_row_already_has` — and
@@ -5099,11 +5135,13 @@ async def test_a_relayed_mine_says_the_server_did_not_scan_it(
 async def test_a_reclassify_keeps_the_row_a_human_chose(client: AsyncClient) -> None:
     """A correction to a message's CATEGORY must not move it between rows.
 
-    `ReclassifyControl` hardcodes `null` in the `applicationId` position, so a
-    reclassify from the filed ledger or the inbox arrives with no choice in it.
-    For a message that names no role that reaches `_pick_application`'s rule 4,
-    the employer's oldest live row — a tie-break, not evidence. The message's
-    existing link outranks it, and this is the test that says so.
+    A reclassify of an ALREADY-FILED message arrives with no choice in it, and
+    still does after #560: the control asks which application a correction is
+    about only where the answer is missing, and a message with a link is not
+    missing one. So this request is the bare category, which for a message that
+    names no role reaches `_pick_application`'s rule 4 — the employer's oldest
+    live row, a tie-break, not evidence. The message's existing link outranks
+    it, and this is the test that says so.
 
     Delete the link-first branch of `_resolve_application_for_email` and the
     user's own answer to the review queue is silently undone by the next label
@@ -5170,39 +5208,218 @@ async def test_a_reclassify_keeps_the_row_a_human_chose(client: AsyncClient) -> 
     )
 
 
-async def test_an_unlinked_message_still_takes_the_tie_break(client: AsyncClient) -> None:
-    """The other half, and it is NOT a bug being asserted as correct.
+async def test_an_unlinked_message_takes_the_tie_break_only_when_nobody_answered(
+    client: AsyncClient,
+) -> None:
+    """WAS `test_an_unlinked_message_still_takes_the_tie_break`, and the rename
+    is the fix arriving.
 
-    An UNLINKED message at an employer holding several rows has no link to
-    outrank the tie-break, so rule 4 files it on the oldest. That is the
-    residual `_resolve_application_for_email`'s own docstring states, and it is
-    the least-bad answer on a path where nobody asked the user: minting instead
-    would answer "which of your three applications?" by inventing a fourth.
+    That test pinned one arm of this: an UNLINKED message at an employer holding
+    several rows lands on the oldest, because rule 4 is all the backend has when
+    nobody said which row it is about. Its docstring said in as many words that
+    it should be read as the thing being FIXED rather than a guarantee to
+    preserve — the review queue asks that question (#554) and
+    `ReclassifyControl` did not, so on the one other surface where it could be
+    put it was not put, and a category correction moved a live application to a
+    stage on the strength of a tie-break (#560):
 
-    It is pinned here for two reasons. It is the DIRECTIONAL CONTROL for the
-    test above — without it, that test passes on a build that has stopped
-    resolving anything at all, and says nothing about the link. And it is the
-    measurement behind the real defect in #560, which is not the write: the
-    review queue asks the user which application a blind message is about
-    (#554), and `ReclassifyControl` has no picker, so on the one other surface
-    where the question could be put it is not put. When that picker ships, this
-    test changes — and it should be read as the thing being fixed, not as a
-    guarantee to preserve.
+        rows                      -> [1, 2]
+        unlinked reclassify       -> filed on 1  (the oldest)
+        board -> [(2,'Northwind','applied'), (1,'Northwind','interviewing')]
+
+    The picker has now shipped on that surface, so the contract has two halves
+    and both are here, in this order:
+
+    1. ANSWERED. The reclassify control now sends `application_id`, and the
+       message lands on the row the human named — not the oldest, which is what
+       makes this arm say something.
+    2. SILENT. Silence still means the tie-break, and it must: every sync files
+       without a human in the loop, a single-candidate employer is asked
+       nothing, and minting instead would answer "which of your three?" by
+       inventing a fourth. THE FIX SEPARATES THE ANSWER FROM SILENCE; IT DOES
+       NOT CHANGE WHAT SILENCE MEANS.
+
+    Arm 2 is also still the DIRECTIONAL CONTROL for
+    `test_a_reclassify_keeps_the_row_a_human_chose` above: without it, that test
+    passes on a build that has stopped resolving anything at all and says
+    nothing about the link.
+
+    Arm 1 deliberately overlaps `test_the_chosen_application_reaches_the_backend_too`,
+    which drives the same endpoint with the same field for the queue's sake.
+    The overlap is the point and it is not redundancy to be cleaned up: the two
+    arms have to sit on ONE fixture and ONE screenful for the pair to read as a
+    contract rather than as two isolated facts, and it was reading them apart
+    that produced this issue's false headline in the first place.
     """
 
     await _connect_gmail(USER_A)
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     ids = await _two_northwind_rows_and_a_blind_review_item(client, headers, "rv-blind")
-    oldest = ids[0]
+    oldest, chosen = ids[0], ids[1]
+    await _relay_blind_northwind_message(client, headers, "rv-answered")
 
-    corrected = await client.post(
+    # --- 1. The picker's answer, which is what this surface now sends --------
+    answered = await client.post(
+        "/applications/review/rv-answered/classify",
+        json={"category": "interview", "application_id": chosen},
+        headers=headers,
+    )
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["application_id"] == chosen, (
+        "the reclassify control asked which application this was about and the "
+        "answer did not reach the filing — the picker is decoration"
+    )
+    by_id = {row["id"]: row for row in await _northwind_rows(client, headers)}
+    assert by_id[oldest]["status"] == "applied", (
+        f"application {oldest} was moved to {by_id[oldest]['status']} by a "
+        "message the user said was about another row — this is #560 verbatim"
+    )
+    assert len(by_id) == 2, "an answer that names a row resolves onto it; it opens nothing"
+
+    # --- 2. Silence, which still means the tie-break -------------------------
+    silent = await client.post(
         "/applications/review/rv-blind/classify",
         json={"category": "interview"},
         headers=headers,
     )
-    assert corrected.status_code == 200, corrected.text
-    assert corrected.json()["application_id"] == oldest, (
-        "an unlinked blind message must land on the employer's oldest live row "
-        "— if this moved, rule 4 changed and the test above no longer measures "
-        "the link"
+    assert silent.status_code == 200, silent.text
+    assert silent.json()["application_id"] == oldest, (
+        "an unlinked message nobody was asked about must land on the employer's "
+        "oldest live row — if this moved, rule 4 changed, and both this file's "
+        "link test and every unattended sync rest on it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# THE OTHER HALF OF #560: the question has to be ASKABLE.
+#
+# Everything above is about what the endpoint does with an answer. These two are
+# about whether the surface that asks can find any options to offer, which is
+# the same defect one layer up — a control that asks perfectly, handed nothing
+# to ask about, asks nothing, and the tie-break above decides unasked with no
+# signal anywhere on screen.
+#
+# The rule the client matches with is `pipeline.matches_company_token`, held to
+# its web mirror by `tests/test_one_employer_rule.py`. What is asserted here is
+# the WIRE: that the token reaches the client at all, and on which rows.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_listing_names_the_employer_on_an_unlinked_relay_row(
+    client: AsyncClient,
+) -> None:
+    """``employer_token`` reaches the client on the rows the picker is for.
+
+    THE ROW THAT MATTERS IS THE UNLINKED ONE, and that is the whole point.
+    ``company`` beside it is the LINKED application's employer, so it is null
+    here — and a client choosing candidates from that field can only ever match
+    rows nobody is asked about, because a linked row is precisely the row whose
+    question is already answered. The first attempt at this shipped exactly
+    that: a parameter that was non-null if and only if the picker was never
+    shown. The two fields are asserted APART on ONE row, because reading them
+    together is how an inert parameter passes review.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    for position in ("Backend Engineer", "Platform Engineer"):
+        created = await client.post(
+            "/applications",
+            # LONGER than the token the mail resolves to, deliberately: that is
+            # the ordinary shape of a stored name, and the case the client's own
+            # matching used to miss entirely.
+            json={"company": "Northwind Traders", "position": position},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+
+    synced = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "rv-relay",
+                    "category": "needs_review",
+                    # The shape the picker exists for: the employer is in
+                    # neither the sender's domain nor the subject.
+                    "sender_email": "no-reply@greenhouse.io",
+                    "sender_name": "Northwind Hiring Team",
+                    "subject": "Update on your application",
+                    "confidence": 0.62,
+                    "received_at": "2026-05-25T09:00:00+00:00",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200, synced.text
+
+    listing = (await client.get("/applications/mail", headers=headers)).json()
+    row = next(m for m in listing["messages"] if m["message_id"] == "rv-relay")
+
+    assert row["application_id"] is None, "the fixture stopped being the unlinked case"
+    assert row["company"] is None, (
+        "`company` is the LINKED row's name and must stay that; if it is "
+        "populated here the two fields have been conflated again"
+    )
+    assert row["employer_token"] == "northwind", (
+        "the ledger cannot ask which application this is about without the "
+        "employer the filer would name — and neither the sender's domain nor "
+        "the subject carries it"
+    )
+
+    # And the token is the key the board rows are matched on. The stored names
+    # are longer than it, which is why a substring test found none of them.
+    board = (await client.get("/applications", headers=headers)).json()["applications"]
+    matched = [
+        app
+        for app in board
+        if pipeline.matches_company_token(app["company"], row["employer_token"])
+    ]
+    assert len(matched) == 2, (
+        "the employer's rows must be findable from the token the listing ships, "
+        "or the question has no options and rule 4 decides unasked"
+    )
+
+
+async def test_a_message_the_resolver_will_not_name_ships_no_employer(
+    client: AsyncClient,
+) -> None:
+    """The directional control, and it is not decoration.
+
+    Without it the test above passes on a build that stamps every row with some
+    token, which would offer an employer's rows as answers on mail the filing
+    path refuses to place — a question whose every answer is wrong. A refusal
+    has to travel as a refusal.
+    """
+
+    await _connect_gmail(USER_A)
+    headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+    synced = await client.post(
+        "/gmail/sync",
+        json={
+            "items": [
+                {
+                    "message_id": "rv-blind",
+                    "category": "needs_review",
+                    # A relay that names nobody: the display name is the relay's
+                    # own brand and the subject holds no employer.
+                    "sender_email": "no-reply@greenhouse.io",
+                    "sender_name": "Greenhouse",
+                    "subject": "Update on your application",
+                    "confidence": 0.62,
+                    "received_at": "2026-05-25T09:00:00+00:00",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200, synced.text
+
+    listing = (await client.get("/applications/mail", headers=headers)).json()
+    row = next(m for m in listing["messages"] if m["message_id"] == "rv-blind")
+    assert row["employer_token"] is None, (
+        "a message the filing resolver refuses to name must not arrive carrying "
+        "an employer — the ledger would offer that employer's rows as answers "
+        "to a question the backend cannot act on"
     )

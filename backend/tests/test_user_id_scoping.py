@@ -272,8 +272,29 @@ async def test_summary_scoped_per_user(client: AsyncClient) -> None:
     assert resp_b.json()["status_counts"] == {"applied": 1}
 
 
-async def test_summary_empty_is_zeroed(client: AsyncClient) -> None:
-    """A user with no applications gets an honest all-zero summary."""
+async def test_summary_empty_is_zeroed(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user with no applications gets an honest all-zero summary.
+
+    WHOLE-BODY equality on purpose: this is the one assertion in the suite that
+    notices a field being ADDED to the response as well as one going wrong.
+    ``week_start`` (#518) is in it for that reason, and the clock is frozen so
+    the expected value is a literal rather than a second derivation of the very
+    function this endpoint uses — and so the test cannot flake by running
+    across a real UTC midnight.
+    """
+
+    import jobtracker.cloud.applications as applications_module
+
+    frozen = datetime(2026, 8, 31, 12, 0, 0)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def utcnow(cls) -> datetime:  # type: ignore[override]
+            return frozen
+
+    monkeypatch.setattr(applications_module, "datetime", _FrozenDatetime)
 
     headers = {"Authorization": f"Bearer {_token_for(USER_A)}"}
     resp = await client.get("/applications/summary", headers=headers)
@@ -281,6 +302,7 @@ async def test_summary_empty_is_zeroed(client: AsyncClient) -> None:
     assert resp.json() == {
         "total": 0,
         "this_week": 0,
+        "week_start": "2026-08-31",
         "status_counts": {},
         "needs_review": 0,
     }

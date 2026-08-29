@@ -24,11 +24,8 @@ import { BOARD_PAGE_SIZE } from "@/lib/dashboard/boardPage";
 // by `node --test`, so nothing about them was assertable while they sat in
 // this file (#216).
 import { GmailNotice } from "@/components/gmail/GmailNotice";
-import {
-  buildSubtitle,
-  emptySubtitle,
-  reviewSlotFor,
-} from "@/lib/dashboard/boardPrefs";
+import { BoardSubtitle } from "@/components/dashboard/BoardSubtitle";
+import { emptySubtitle, reviewSlotFor } from "@/lib/dashboard/boardPrefs";
 import { LAST_LOOK_KEY } from "@/lib/dashboard/lastLook";
 import { toChangeRow } from "@/lib/dashboard/lastLookStore";
 import {
@@ -98,6 +95,11 @@ type LoadState =
       applications: Application[];
       total: number;
       needsReview: number;
+      /** The Monday the endpoint counted `summary.thisWeek` from — its own UTC
+       *  one, since a server render carries no zone. Kept because the header's
+       *  post-hydration correction compares it with the reader's Monday and
+       *  only re-asks when the two differ (#518). */
+      weekStart: string;
     }
   /** The backend rejected the JWT (401/403) — expired session or JWKS misconfig. */
   | { kind: "auth"; message: string }
@@ -168,6 +170,7 @@ async function loadDashboard(): Promise<LoadState> {
       applications: listRes.data.applications,
       total: summaryRes.data.total,
       needsReview: summaryRes.data.needs_review ?? 0,
+      weekStart: summaryRes.data.week_start,
     };
   } catch (err) {
     return {
@@ -415,7 +418,20 @@ export default async function DashboardPage({
 
   // --- Populated dashboard ---------------------------------------------------
   const { summary } = state;
-  const subtitle = buildSubtitle(summary, notifPrefs.weekly);
+  // NOT a string here, unlike the two branches above. `+N this wk` is counted
+  // in a calendar week, and which week that is depends on the reader's own
+  // day — which this render cannot know. `BoardSubtitle` renders the server's
+  // UTC answer first (so the HTML hydrates byte-identically) and corrects it
+  // to the reader's week afterwards, on the few hours a week the two differ
+  // (#518). The empty and failed branches say nothing about a week, so they
+  // keep their plain strings.
+  const subtitle = (
+    <BoardSubtitle
+      summary={summary}
+      weekly={notifPrefs.weekly}
+      servedWeekStart={state.weekStart}
+    />
+  );
 
   // Only fetch the queue's rows when the summary says there is something to show.
   const reviewItems = state.needsReview > 0 ? await reviewQueue : [];

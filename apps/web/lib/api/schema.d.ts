@@ -223,13 +223,22 @@ export interface paths {
          *
          *     - ``GROUP BY status`` → per-status counts (≤7 rows regardless of how many
          *       applications the user has). ``total`` is their sum.
-         *     - a windowed ``COUNT(*)`` for applications the user APPLIED to since this
+         *     - a windowed ``COUNT(*)`` for applications the user APPLIED to since a
          *       calendar week's Monday (see :func:`_week_start`). Not "created", which is
          *       when our sync inserted the row, and not a trailing seven days.
          *
          *     Both are O(1) in transfer and index-assisted in the DB, so this endpoint
          *     stays flat as an account scales from 10 to 10,000 applications — the whole
          *     reason it exists instead of counting client-side over the full list.
+         *
+         *     WHOSE MONDAY (#518). Counts alone cannot carry a zone, so this used to be
+         *     the UTC Monday and nothing else, while the momentum caption on the same
+         *     screen counted the READER's — and for a reader west of UTC there was a
+         *     window each week, the size of their offset, in which the header had rolled
+         *     over and the caption had not. The reader's Monday is now an optional
+         *     parameter, validated by :func:`_reader_week_start`, and the Monday actually
+         *     counted comes back in the response so the client can tell whether it needs
+         *     to ask again. Absent the parameter the behaviour is exactly what it was.
          */
         get: operations["application_summary_cloud_applications_summary_get"];
         put?: never;
@@ -252,8 +261,10 @@ export interface paths {
          * @description The needs-classification queue: uncertain verdicts awaiting a decision.
          *
          *     These are the metadata-only Email rows the sync flagged ``needs_review``
-         *     (unlinked, un-reviewed) — the real target of the dashboard's "N need
-         *     classification" number, which is otherwise a dead count. Newest-first.
+         *     that no card the user can see already answers for
+         *     (:func:`_not_filed_on_a_live_application`) and that the user has not already
+         *     reviewed — the real target of the dashboard's "N need classification"
+         *     number, which is otherwise a dead count. Newest-first.
          *
          *     ONE ENTRY PER GMAIL THREAD. A conversation is one application, so being
          *     asked about it twice is being asked to do the same work twice: the owner's
@@ -361,17 +372,18 @@ export interface paths {
          *     WHY THIS EXISTS
          *     ---------------
          *     ``/review`` is the only other listing of classified mail, and it filters to
-         *     ``needs_review AND unlinked AND not-yet-reviewed``. That is the right set
-         *     for a work queue and the wrong set for a correction surface, because those
-         *     three predicates make a verdict unreachable the moment it is touched:
+         *     ``needs_review AND not-filed-on-a-live-card AND not-yet-reviewed``. That is
+         *     the right set for a work queue and the wrong set for a correction surface,
+         *     because those three predicates make a verdict unreachable the moment it is
+         *     touched:
          *
          *     * a message already reviewed once drops out for good — emails 58 and 59 of
          *       the owner's account sit at ``needs_review`` with ``is_reviewed = true``
          *       and no endpoint in the product could name them, so no screen could
          *       change them;
-         *     * a message linked to an application drops out too, so a ``rejection``
-         *       filed as ``applied`` is a wrong stored verdict a user can see on the
-         *       board and never correct at its source;
+         *     * a message filed on an application the user can see drops out too, so a
+         *       ``rejection`` filed as ``applied`` is a wrong stored verdict a user can
+         *       see on the board and never correct at its source;
          *     * and for an account whose mail all classified confidently, ``/review``
          *       returns zero rows and the review UI never renders at all.
          *
@@ -990,6 +1002,11 @@ export interface components {
             total: number;
             /** This Week */
             this_week: number;
+            /**
+             * Week Start
+             * Format: date
+             */
+            week_start: string;
             /** Status Counts */
             status_counts: {
                 [key: string]: number;
@@ -1027,6 +1044,20 @@ export interface components {
          *     ``Date.toISOString()`` produces) is accepted and truncated to its date;
          *     anything else is REJECTED with a 422 rather than silently dropped, which is
          *     the failure being fixed.
+         *
+         *     THE THREE FREE-TEXT FIELDS ARE BOUNDED HERE, ON THE REQUEST, and not on
+         *     :class:`~jobtracker.database.models.Application`. The table model is written
+         *     by the sync as well as by this endpoint, and the failure being fixed is that
+         *     an oversized ``company`` reached the INSERT and broke it on production
+         *     Postgres while answering 201 on SQLite (issue #406). A bound on the wire
+         *     refuses it with a 422 before anything is allocated or written, and says so
+         *     in the OpenAPI document the web app's bindings are generated from — the same
+         *     argument :class:`ApplicationRoleUpdate` makes for ``role``.
+         *
+         *     ``position`` takes ``_MAX_ROLE_LEN`` rather than a number of its own,
+         *     because ``ApplicationRoleUpdate.role`` writes THE SAME COLUMN: two different
+         *     ceilings on one field would mean a title this endpoint accepts that the
+         *     PUT then refuses.
          */
         CloudApplicationCreate: {
             /** Company */
@@ -1183,6 +1214,18 @@ export interface components {
             sync_status?: string | null;
             /** Sync Error */
             sync_error?: string | null;
+            /** Last Scanned */
+            last_scanned?: number | null;
+            /** Last Classified */
+            last_classified?: number | null;
+            /** Last Filed */
+            last_filed?: number | null;
+            /** Last Queued */
+            last_queued?: number | null;
+            /** Last Dropped */
+            last_dropped?: number | null;
+            /** Last Reached Nothing */
+            last_reached_nothing?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1385,6 +1428,8 @@ export interface components {
              * @default false
              */
             on_board: boolean;
+            /** Employer Token */
+            employer_token?: string | null;
             /** Gmail Link */
             gmail_link?: string | null;
         };
@@ -1414,7 +1459,26 @@ export interface components {
             /** Gmail Link */
             gmail_link?: string | null;
         };
-        /** PipelineAnalyzeRequest */
+        /**
+         * PipelineAnalyzeRequest
+         * @description What the client asks the pipeline analytics about.
+         *
+         *     BOUNDED, for the same reason every string on ``PipelineItemIn`` is, and with
+         *     the same number as its sibling :class:`SyncRequest`. Processing already
+         *     discards everything past ``gmail_fetch_hard_cap`` (2000) — but that slice
+         *     happens after Pydantic has already materialised the entire list, so it caps
+         *     the WORK and not the ALLOCATION.
+         *
+         *     Set above the hard cap rather than at it, so this rejects abuse without ever
+         *     turning a client that merely relayed a few too many items into a 422; that
+         *     client's surplus is still silently dropped exactly as before.
+         *
+         *     IT WAS THE ONE THAT WAS MISSED. ``SyncRequest.items`` carried this bound and
+         *     this reasoning; the twin next to it carried neither, and measured (issue
+         *     #406) that showed up as ``SYNC n=2501 -> 422`` beside
+         *     ``PIPELINE n=100000 -> 200``, roughly 19x heap amplification inside Vercel's
+         *     ~4.5 MB body cap, for a handler that consumes 2,000 of what it allocated.
+         */
         PipelineAnalyzeRequest: {
             /** Items */
             items: components["schemas"]["PipelineItemIn"][];
@@ -1801,6 +1865,26 @@ export interface components {
              * @default 0
              */
             dropped: number;
+            /**
+             * Classified
+             * @default 0
+             */
+            classified: number;
+            /**
+             * Filed
+             * @default 0
+             */
+            filed: number;
+            /**
+             * Queued
+             * @default 0
+             */
+            queued: number;
+            /**
+             * Reached Nothing
+             * @default 0
+             */
+            reached_nothing: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -2018,7 +2102,10 @@ export interface operations {
     };
     application_summary_cloud_applications_summary_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The READER's own week-start Monday, `YYYY-MM-DD`. Optional, and omitted on every server render — the server does not know the caller's zone at first paint, so the count is measured from its own UTC Monday and `week_start` in the response says so. The browser sends its Monday once it has hydrated. Must be a Monday within seven days of the server's; anything else is 422 rather than snapped (#518). */
+                week_start?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };

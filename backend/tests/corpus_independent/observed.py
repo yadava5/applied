@@ -4,25 +4,48 @@ WHY THIS FILE EXISTS, and it is the most important thing in the corpus.
 
 Every other family in ``generate.py`` was written by the same person who writes
 ``rules.py``. That is a closed loop, and it was measured on 2026-08-22 rather
-than suspected:
+than suspected. Re-measured 2026-08-29 by ``reach.py``, which is what turned it
+from a paragraph in this docstring into a gate:
 
-    lifecycle corpus messages containing >=1 engine pattern VERBATIM:
-        13,730 / 13,730  =  100.0%
-    engine patterns never exercised by the corpus at all:
-        123 / 160
+    invented lifecycle messages matching >=1 STRONG engine pattern:
+        13,760 / 13,760  =  100.0%   (27 families)
+    positive engine patterns never exercised by ANY of the 17,260:
+        111 / 159  =  69.8%
 
 Not one invented message was phrased in language the classifier had never been
 taught. A corpus like that cannot discover a gap; it can only confirm the
-pattern list against itself, and a headline accuracy computed over it describes
-the author's vocabulary rather than the product's reach.
+pattern list against itself — and #530's measurement is that it does not even
+manage that: it confirms 30% of the pattern list against itself. A headline
+accuracy computed over it describes the author's vocabulary rather than the
+product's reach.
 
 So these are transcribed from mail that arrived in the owner's inbox, from
 twenty-odd senders across Greenhouse, Lever, Ashby, iCIMS, SmartRecruiters,
 Rippling and seven in-house systems. They were written by recruiting teams with
-no knowledge of this repository, which is the whole point: **the acceptance test
-for this file is that its verbatim-pattern rate is near ZERO.** If a wording
-here happens to contain an engine pattern, that is a fact about the wording, not
-a target to aim at.
+no knowledge of this repository, which is the whole point.
+
+THE ACCEPTANCE TEST FOR THIS FILE IS NOT WHAT THIS DOCSTRING USED TO SAY. It
+said "the verbatim-pattern rate is near ZERO", nothing ever computed it, and
+#530 computed it for the first time on 2026-08-26 and showed the criterion is
+the wrong one. These transcriptions match a strong engine pattern at 93.3%
+(confirmations), 79.8% (rejections), 80.7% (assessments) and 68.3% (pending).
+Near-zero would not be a good result. It would mean these had drifted away from
+how ATS mail is actually written: real ATS mail says "thank you for applying",
+and the engine has that pattern BECAUSE real mail says it. **A verbatim match is
+agreement, not contamination.**
+
+What actually bounds what this file can find is the DISCOVERY RATE — the share
+of its messages matching no strong pattern at all, which is the only place a
+corpus can find something the engine does not already know. Every invented
+family is 0.0% by construction. The four families here that carry an UPDATE run
+19.3-52.5%; the acknowledgements are 6.7%, which is not a counter-example — an
+acknowledgement is the shape the engine knows best. (Both bands moved up with
+#451's demotion of the `applied` reference pattern out of `strong`; it was
+17.3-50.8% and 1.3%, and the four strong-match rates above were 98.7 · 82.7 ·
+82.0 · 70.4. Nothing here was edited — one rule changed tier.) 1,600 of the corpus's
+17,260 messages, and the whole of this product's non-circular evidence.
+``tests/test_corpus_reach.py`` pins them with the direction that matters: the
+count of messages reaching nothing may not FALL.
 
 WHAT IS AND IS NOT COPIED. Employer and role are PARAMETERS, filled from the
 corpus's invented pool. Two reasons, and the second is the load-bearing one:
@@ -44,6 +67,11 @@ deliberately absent and must stay absent.
 DO NOT EDIT A WORDING TO MAKE A TEST PASS. If the classifier misses one of
 these, the classifier is what is wrong; these are the ground truth. Editing them
 would rebuild the closed loop this file exists to break, one layer up.
+
+That prohibition is now ENFORCED rather than merely stated. Copy an engine
+pattern into one of these templates and the family's discovery rate collapses,
+which ``test_corpus_reach.py`` measures and reds on — proven by the mutation in
+``test_copying_an_engine_pattern_into_an_observed_wording_reds_this_gate``.
 """
 
 from __future__ import annotations

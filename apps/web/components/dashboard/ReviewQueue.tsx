@@ -4,15 +4,17 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { ApplicationPicker } from "@/components/review/ApplicationPicker";
 import { GateMeter } from "@/components/viz/GateMeter";
 import { shortDate } from "@/lib/dashboard/dates";
 import { AUTO_FILE_GATE } from "@/lib/dashboard/model";
 import {
   CLASSIFY_FAILED,
   REVIEW_QUEUE_LABEL,
+  asksWhichApplication,
   canNameCompany,
   canSubmitReview,
-  classifyRequestBody,
+  classifyDecisionBody,
   confirmCompanyPrompt,
   employerPromptFor,
   holdReasonSentence,
@@ -67,9 +69,6 @@ const CATEGORY_CHOICES: { value: string; label: string }[] = [
 
 const PLACEHOLDER = "";
 
-/** Categories that answer an EXISTING application rather than opening one. */
-const LIFECYCLE_ANSWERS = new Set(["interview", "assessment", "offer", "rejection"]);
-
 function truncate(value: string, max = 60): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
@@ -123,11 +122,16 @@ function ReviewRow({
    */
   const [assignment, setAssignment] = useState<ReviewAssignment>(null);
 
-  // The picker is a question, and one candidate is not a question: it renders
-  // only when the message matches SEVERAL applications and the chosen category
-  // answers an existing one (a rejection belongs to one of the four Amazon
-  // rows; "applied" opens a new row and "not job related" opens nothing).
-  const showPicker = candidates.length >= 2 && LIFECYCLE_ANSWERS.has(category);
+  // The picker is a question, and one candidate is not a question. WHEN it is
+  // put is `asksWhichApplication`'s call, shared with the mail ledger's control
+  // so the two surfaces cannot drift about when an answer is required. A queue
+  // row is unlinked by construction — the queue filters to `needs_review AND
+  // unlinked AND unreviewed` — so there is never a link here to outrank it.
+  const showPicker = asksWhichApplication({
+    category,
+    candidates,
+    linkedApplicationId: null,
+  });
 
   /**
    * Send the decision. A 2xx is NOT success on its own: `needs_employer: true`
@@ -157,13 +161,14 @@ function ReviewRow({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            classifyRequestBody(
+            classifyDecisionBody({
               category,
-              named,
-              showPicker ? assignment : null,
-              null,
-              answer?.confirmNewCompany,
-            ),
+              company: named,
+              candidates,
+              linkedApplicationId: null,
+              assignment,
+              confirmNewCompany: answer?.confirmNewCompany,
+            }),
           ),
         },
       );
@@ -305,55 +310,14 @@ function ReviewRow({
           One employer can hold several applications, so a rejection from that
           employer is ambiguous until the user says which role it answers. */}
       {showPicker ? (
-        <fieldset className="mt-2 rounded border border-line px-2.5 py-2">
-          <legend className="px-1 text-[11px] text-muted">
-            which application is this about?
-          </legend>
-          <div className="space-y-1">
-            {candidates.map((candidate) => (
-              <label
-                key={candidate.id}
-                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-muted hover:text-strong"
-              >
-                <input
-                  type="radio"
-                  name={`assign-${item.message_id}`}
-                  // The answer is readable from the DOM, which is what lets a
-                  // browser test assert that the id the user picked is the id
-                  // the request carried. Without it the radio's identity lives
-                  // only in a closure and the wire between the two is untestable
-                  // — the gap this control shipped through.
-                  value={candidate.id}
-                  checked={assignment === candidate.id}
-                  onChange={() => setAssignment(candidate.id)}
-                  disabled={busy}
-                  className="h-3 w-3 accent-[var(--text-strong)]"
-                />
-                <span className="min-w-0 truncate">
-                  {candidate.position.trim() || "role not captured"}
-                  <span className="text-dim"> · {candidate.status}</span>
-                </span>
-              </label>
-            ))}
-            <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-muted hover:text-strong">
-              <input
-                type="radio"
-                name={`assign-${item.message_id}`}
-                value="none"
-                checked={assignment === "none"}
-                onChange={() => setAssignment("none")}
-                disabled={busy}
-                className="h-3 w-3 accent-[var(--text-strong)]"
-              />
-              {/* The label says what the product will DO, because what it used
-                  to do was file against the oldest row at this employer — the
-                  opposite of what "not one of these" promises. Choosing it now
-                  opens a row, which is what a lifecycle message about an
-                  application the board does not hold actually means. */}
-              <span>none of these — track it as a new application</span>
-            </label>
-          </div>
-        </fieldset>
+        <ApplicationPicker
+          className="mt-2"
+          name={`assign-${item.message_id}`}
+          candidates={candidates}
+          assignment={assignment}
+          onChange={setAssignment}
+          disabled={busy}
+        />
       ) : null}
 
       {/* --- Did you mean the one already on your board? --------------------

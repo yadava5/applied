@@ -272,8 +272,17 @@ export function SyncBar({
   children,
   transport = liveSyncTransport,
 }: {
-  /** The page's one honest line of state — `214 filed · 32 open · 1 offer`. */
-  subtitle: string;
+  /** The page's one honest line of state — `214 filed · 32 open · 1 offer`.
+   *
+   *  A NODE, not a string, since #518. Three of the four callers still pass a
+   *  string built on the server. The populated dashboard passes
+   *  `BoardSubtitle`, because one number in that line — `+N this wk` — depends
+   *  on which calendar day the READER is in, and the server does not know that
+   *  until the page has hydrated. Widening the slot is what let that
+   *  correction live with the line it corrects instead of being threaded
+   *  through this component as three more props. Nothing here reads the value;
+   *  it is rendered into the `data-sync-subtitle` line as-is. */
+  subtitle: ReactNode;
   gmail: SyncGmailState | null;
   /** The change-ledger chip (`SinceLastLook`) — one line by that component's
    *  own contract, mounted as an overlay on the bar's centre at `lg`+ and as

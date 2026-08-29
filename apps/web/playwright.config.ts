@@ -26,15 +26,34 @@ const desktopChrome = {
 };
 
 /**
- * The specs whose assertions depend on WHICH CALENDAR DAY IT IS — the only
- * ones the offset projects below re-run. `demo.spec.ts` was the whole list
- * while it was the only file naming a deadline state (`overdue`, `due in Nd`,
- * the pulse cell's window claim), because /demo is the only surface CI can
- * reach without a Supabase session. `shell.spec.ts` joined it on 2026-08-13:
- * the deadline cell's caption and its detail panel are asserted there against
- * the same date-derived fixtures, so both are re-run at the two extreme
- * offsets. If a day-dependent assertion is ever added to another spec, add
- * that file here too.
+ * The specs re-run by the two offset projects below. `demo.spec.ts` was the
+ * whole list while it was the only file naming a deadline state (`overdue`,
+ * `due in Nd`, the pulse cell's window claim), because /demo is the only
+ * surface CI can reach without a Supabase session. `shell.spec.ts` joined it
+ * on 2026-08-13: the deadline cell's caption and its detail panel are asserted
+ * there against the same date-derived fixtures.
+ *
+ * THIS IS NOT "EVERY DAY-DEPENDENT ASSERTION IN THE SUITE", and the comment
+ * below used to say it was. Two things it does not cover, both stated so the
+ * exclusion is a decision:
+ *
+ *  - `settings.spec.ts` asserts `/\+\d+ this wk/` on the demo board after
+ *    flipping the weekly-summary pref. That IS day-dependent — its own
+ *    docstring records the Monday flake it had to be fixture-hardened against
+ *    (`filedDaysAgo: 0` in `demoData.ts`). It is excluded because its
+ *    assertion is on the FOLD, not on a number: re-running it at ±14 hours
+ *    exercises the same branch and would only buy two more chances for a
+ *    session-less run to flake.
+ *  - the SIGNED-IN header's reader-week correction (#518, `BoardSubtitle`) is
+ *    both day- and zone-dependent, and is the surface these projects were
+ *    built to interrogate — but it lives on `/dashboard`, which needs a
+ *    Supabase session, so on CI it skips at every offset. Its zone behaviour
+ *    is asserted in `tests/unit/reader-week-delivery.test.mjs` instead, by
+ *    executing the component against two literal day strings rather than by
+ *    driving a browser in a zone.
+ *
+ * If a day-dependent assertion is added to a spec CI can reach WITHOUT a
+ * session, add that file here.
  */
 const DAY_DEPENDENT_SPECS = /(demo|shell)\.spec\.ts/;
 
@@ -134,9 +153,10 @@ export default defineConfig({
    * a zone whose offset moves could stop discriminating without anyone noticing,
    * which is the failure this whole arrangement exists to prevent.
    *
-   * They run `demo.spec.ts` ONLY (see DAY_DEPENDENT_SPECS), not the whole
-   * suite: nothing else asserts anything that depends on the day, and re-running
-   * all 14 files twice would triple a serial CI run to catch nothing.
+   * They run the DAY_DEPENDENT_SPECS files only, not the whole suite —
+   * re-running all 21 files twice would triple a serial CI run. What that list
+   * does and does not cover, and why two other day-dependent assertions are
+   * deliberately outside it, is on the constant itself.
    *
    * `e2e-ci.yml` runs `playwright test` with NO `--project` filter precisely so
    * that this file is the single place projects are declared. If you re-add a
