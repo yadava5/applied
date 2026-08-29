@@ -4403,11 +4403,21 @@ def _filed_on_a_live_application(user_id: uuid.UUID):
     application of MINE behind this link?" — all three answer the same way, and
     the answer for a link we cannot resolve is "no", which surfaces the message
     rather than stranding it. That is the safe direction: a surfaced message
-    costs one question, a stranded one is unreachable forever. It is also why
-    #596 is wider than "dismissed" on the write path — a deleted or
-    cross-user link stops being settled too, and stops being LOST. The subquery
+    costs one question, a stranded one is unreachable forever. The subquery
     is scoped to ``user_id`` for the same reason the mail listing scopes its
     employer lookup (#489) — a stale link must not read across users.
+
+    THE THREE CASES ARE NOT EQUALLY REACHABLE, and saying so is the point.
+    Dismissed is the one #481 found in production. Cross-user is real, is what
+    the ``user_id`` clause defends, and is tested on both paths. **Deleted is
+    not a state this database can hold**: revision ``a9d3e5f2c841`` re-declared
+    ``emails_application_id_fkey`` as ON DELETE CASCADE, and both delete paths
+    (:func:`delete_application`, ``account.py``'s ``_DELETION_ORDER``) remove a
+    row's mail before the row anyway. So the ``EXISTS`` is right about a
+    dangling link by construction, not because one was ever observed. It is
+    written down because SQLModel declares no ``ondelete`` on the field, so a
+    SQLite test CAN construct a dangling link — and a test that greens against
+    a state production cannot reach proves nothing at all.
 
     NOT a widening of ``is_reviewed``. A message the user already answered
     stays out even when its card is later dismissed: ``is_reviewed`` records
@@ -4458,10 +4468,12 @@ def _not_filed_on_a_live_application(user_id: uuid.UUID):
     reasoning, the three-case rationale for the ``EXISTS`` and the measured
     index cost. Not a second spelling of it — #596 was two spellings drifting.
 
-    ONE predicate, read by ``GET /applications/review`` and by the
-    ``needs_review`` tile on ``GET /applications/summary``, because the tile is
-    a link to the queue and a tile counting a different set sends the user to a
-    screen that disagrees with the number they clicked. This repo has the scar
+    THREE callers, not the two this used to name: ``GET /applications/review``,
+    the ``needs_review`` tile on ``GET /applications/summary``, and
+    :func:`_settle_thread_siblings` — which is a WRITE, so "the read path" is a
+    convenient label rather than an accurate one. The tile is a link to the
+    queue and a tile counting a different set sends the user to a screen that
+    disagrees with the number they clicked. This repo has the scar
     twice over — the header said "+50 this wk" beside a momentum panel reading
     7 — so the two share the accessor rather than each spelling it out. Callers
     keep ``Email.is_reviewed == False`` alongside this one.
