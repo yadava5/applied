@@ -503,7 +503,9 @@ export function ReviewQueue({
   return (
     <section
       id="needs-classification"
-      aria-label={`${items.length} ${REVIEW_QUEUE_LABEL}`}
+      // The heading already carries the count; naming the region with it too
+      // makes a screen reader announce "3 to review" twice on entry.
+      aria-label={REVIEW_QUEUE_LABEL}
       className="scroll-mt-6 rounded-2xl border border-review/40 bg-surface p-4 sm:p-5"
     >
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
