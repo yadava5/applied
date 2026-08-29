@@ -2930,9 +2930,17 @@ async def _persist_review_items_additive(session, user_id: uuid.UUID, review) ->
                 ).where(
                     Email.user_id == user_id,
                     or_(*scoped),
+                    # SETTLED IS THE QUEUE'S OWN PREDICATE, INVERTED (#596), and
+                    # not ``application_id IS NOT NULL``. That spelling called a
+                    # row linked to a DISMISSED card settled — and a settled row
+                    # here does not merely skip itself, it suppresses every
+                    # ARRIVING message sharing its thread and identity. So the
+                    # queue showed the question while the sync used it to answer
+                    # for mail the user was never shown: never stored, never
+                    # queued, never counted.
                     or_(
-                        Email.application_id.is_not(None),
                         Email.is_reviewed == True,  # noqa: E712 — SQL boolean
+                        _filed_on_a_live_application(user_id),
                     ),
                 )
             )
@@ -4352,21 +4360,33 @@ async def list_applications_cloud(
     )
 
 
-def _not_filed_on_a_live_application(user_id: uuid.UUID):
-    """The review queue's settled-test: "no card the user can SEE answers this".
+def _filed_on_a_live_application(user_id: uuid.UUID):
+    """THE PRIMITIVE: "a card the user can SEE already answers this message".
 
-    ONE predicate, read by ``GET /applications/review`` and by the
-    ``needs_review`` tile on ``GET /applications/summary``, because the tile is
-    a link to the queue and a tile counting a different set sends the user to a
-    screen that disagrees with the number they clicked. This repo has the scar
-    twice over — the header said "+50 this wk" beside a momentum panel reading
-    7 — so the two share the accessor rather than each spelling it out.
+    ONE function names these columns, and both spellings of the settled idea are
+    built from it — :func:`_not_filed_on_a_live_application` for the readers,
+    this one for the sync's write path. They are the same question and they
+    drifted apart once already (#596): #587 moved the read path to this shape
+    while :func:`_persist_review_items_additive` kept ``application_id IS NOT
+    NULL``, so one row was "unsettled" to the queue and "settled" to the sync.
 
-    This used to be ``Email.application_id IS NULL``, which encodes "a linked
-    message is already filed, so there is nothing to ask". True of a message
-    linked to a card on the board, FALSE of one linked to a card that was
-    dismissed: dismissal takes the row off the board, out of the funnel and out
-    of every tile, so nothing about its mail is settled from the user's side.
+    THE WRITE PATH IS THE COMPLEMENT OF THE QUEUE'S PREDICATE MINUS
+    ``classified_as == NEEDS_REVIEW``, and the missing clause is deliberate.
+    Settlement suppresses regardless of the category the row is stored under: a
+    conversation answered as ``APPLIED`` months ago must keep its later siblings
+    out of the queue, and a stored category is not what makes a question
+    answered — a live card or a human ``is_reviewed`` is. Re-adding the
+    category clause here would un-settle every already-filed thread and re-ask
+    its question on the next delta, so do NOT "unify" the two predicates whole
+    the next time a "one predicate, two readers" sweep comes through. The
+    shared part is this function; the clauses around it belong to each caller.
+
+    The readers used to ask ``Email.application_id IS NULL``, which encodes "a
+    linked message is already filed, so there is nothing to ask". True of a
+    message linked to a card on the board, FALSE of one linked to a card that
+    was dismissed: dismissal takes the row off the board, out of the funnel and
+    out of every tile, so nothing about its mail is settled from the user's
+    side. Hence the join to ``Application`` rather than a NULL test.
 
     Issue #481 found the state on the owner's account. The 2026-08-22 05:02Z
     re-sync dismissed application 115 (``dismissed_reason = 'resync'``) and, in
@@ -4376,28 +4396,32 @@ def _not_filed_on_a_live_application(user_id: uuid.UUID):
     it. Two independently reasonable behaviours; the combination was a real
     Microsoft message on no board, in no queue, actionable from no screen.
 
-    WHY ``NOT EXISTS`` AND NOT ``IS NULL OR application_id IN (dismissed)``.
-    The positive form has to enumerate the ways a link can fail to name a
-    visible card, and it misses one: a link pointing at a row that no longer
-    exists, or (a stale link) at another user's. Asked the other way round —
-    "is there a LIVE application of MINE behind this link?" — all three answer
-    the same way, and the answer for a link we cannot resolve is "no", which
-    surfaces the message rather than stranding it. That is the safe direction:
-    a surfaced message costs one question, a stranded one is unreachable
-    forever. The subquery is scoped to ``user_id`` for the same reason the mail
-    listing scopes its employer lookup (#489) — a stale link must not read
-    across users.
+    WHY THIS SHAPE AND NOT ``IS NULL OR application_id IN (dismissed)``. That
+    form has to enumerate the ways a link can fail to name a visible card, and
+    it misses one: a link pointing at a row that no longer exists, or (a stale
+    link) at another user's. Asked as this ``EXISTS`` does — "is there a LIVE
+    application of MINE behind this link?" — all three answer the same way, and
+    the answer for a link we cannot resolve is "no", which surfaces the message
+    rather than stranding it. That is the safe direction: a surfaced message
+    costs one question, a stranded one is unreachable forever. It is also why
+    #596 is wider than "dismissed" on the write path — a deleted or
+    cross-user link stops being settled too, and stops being LOST. The subquery
+    is scoped to ``user_id`` for the same reason the mail listing scopes its
+    employer lookup (#489) — a stale link must not read across users.
 
     NOT a widening of ``is_reviewed``. A message the user already answered
     stays out even when its card is later dismissed: ``is_reviewed`` records
     that the question was asked and answered, and removing the row does not
-    un-answer it. Callers keep that clause alongside this one.
+    un-answer it. Every caller keeps that clause alongside this one — the
+    readers as ``is_reviewed == False``, the sync as the other arm of its
+    ``or_`` — and a rewrite that drops it is not a fix, it is a second bug.
 
-    THE INDEX COST, MEASURED. ``ix_emails_review_queue`` (revision
-    ``c8f3a1d64b27``) is PARTIAL on ``classified_as = 'NEEDS_REVIEW' AND
-    application_id IS NULL AND is_reviewed = false``, and a partial index is
-    usable only while its predicate is implied by the query's. This one no
-    longer implies ``application_id IS NULL``, so the queue stops using it.
+    THE INDEX COST, MEASURED — paid by the readers, i.e. by the NEGATION of
+    this ``EXISTS``. ``ix_emails_review_queue`` (revision ``c8f3a1d64b27``) is
+    PARTIAL on ``classified_as = 'NEEDS_REVIEW' AND application_id IS NULL AND
+    is_reviewed = false``, and a partial index is usable only while its
+    predicate is implied by the query's. The queue's no longer implies
+    ``application_id IS NULL``, so it stops using it.
     EXPLAIN (ANALYZE, BUFFERS) against that module's 20,000-row seeded corpus,
     both statements compiled from the ORM:
 
@@ -4418,13 +4442,32 @@ def _not_filed_on_a_live_application(user_id: uuid.UUID):
     the tile stopped issuing in #454.)
     """
 
-    return ~exists(
+    return exists(
         select(Application.id).where(
             Application.id == Email.application_id,
             Application.user_id == user_id,
             Application.dismissed_at.is_(None),
         )
     )
+
+
+def _not_filed_on_a_live_application(user_id: uuid.UUID):
+    """The review queue's settled-test: "no card the user can SEE answers this".
+
+    The negation of :func:`_filed_on_a_live_application`, which carries the
+    reasoning, the three-case rationale for the ``EXISTS`` and the measured
+    index cost. Not a second spelling of it — #596 was two spellings drifting.
+
+    ONE predicate, read by ``GET /applications/review`` and by the
+    ``needs_review`` tile on ``GET /applications/summary``, because the tile is
+    a link to the queue and a tile counting a different set sends the user to a
+    screen that disagrees with the number they clicked. This repo has the scar
+    twice over — the header said "+50 this wk" beside a momentum panel reading
+    7 — so the two share the accessor rather than each spelling it out. Callers
+    keep ``Email.is_reviewed == False`` alongside this one.
+    """
+
+    return ~_filed_on_a_live_application(user_id)
 
 
 @router.get("/summary", response_model=ApplicationSummaryResponse)
