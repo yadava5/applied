@@ -57,19 +57,49 @@ def _token_for(user_id: str) -> str:
 
 @pytest.fixture
 async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
-    """Cloud app on the in-memory DB — the reload sequence from C3's tests."""
+    """Cloud app on the in-memory DB.
+
+    THE SETTINGS ARE PATCHED, NOT RELOADED (#582). ``importlib.reload`` on
+    ``jobtracker.config`` rebuilds the ``Settings`` class and rebinds
+    ``config.settings`` to a NEW instance; every module that did
+    ``from jobtracker.config import settings`` at import time keeps the old one.
+    The process then holds two settings objects, the JWT verifier reads the one
+    this fixture never touched, and every request here comes back
+    ``401 Invalid signature`` — green when this module runs alone, red in a full
+    run behind whichever module reloaded config last.
+    ``tests/test_no_fixture_reloads_the_config_module.py`` forbids the
+    mechanism; this is the replacement it names.
+
+    Every settings holder the request path carries, de-duplicated BY OBJECT
+    IDENTITY: patching ``config_module.settings`` alone passes this module in
+    isolation and fails it in a full run. The env vars are still set because the
+    three modules reloaded below re-run their import-time wiring, and that
+    wiring reads the environment as well as ``settings``.
+
+    The reloads of ``auth``, ``cloud.applications`` and ``main_cloud`` STAY.
+    They are what rebuilds the router this test drives and none of them mints a
+    second ``Settings`` — the gate forbids reloading ``jobtracker.config``
+    specifically, not ``importlib.reload``.
+    """
 
     monkeypatch.setenv("JOBTRACKER_DEPLOYMENT", "cloud")
     monkeypatch.setenv("JOBTRACKER_ENVIRONMENT", "test")
     monkeypatch.setenv("JOBTRACKER_SUPABASE_JWT_SECRET", JWT_SECRET)
 
+    import jobtracker.auth.supabase_jwt as auth_module
     import jobtracker.config as config_module
     import jobtracker.database.connection as connection_module
 
-    importlib.reload(config_module)
-    connection_module._engine = None
+    holders = {
+        id(module.settings): module.settings
+        for module in (config_module, auth_module, connection_module)
+    }
+    for instance in holders.values():
+        monkeypatch.setattr(instance, "deployment", "cloud")
+        monkeypatch.setattr(instance, "environment", "test")
+        monkeypatch.setattr(instance, "supabase_jwt_secret", JWT_SECRET)
 
-    import jobtracker.auth.supabase_jwt as auth_module
+    connection_module._engine = None
 
     importlib.reload(auth_module)
 
@@ -91,8 +121,10 @@ async def cloud_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
         await connection_module._engine.dispose()
     connection_module._engine = None
 
-    monkeypatch.undo()
-    importlib.reload(config_module)
+    # No teardown reload. ``monkeypatch`` undoes each attribute write exactly,
+    # on the same objects it wrote them to, which the old
+    # ``undo() + reload(config)`` never did — that second reload minted a THIRD
+    # ``Settings`` rather than restoring the first.
 
 
 @pytest.fixture
