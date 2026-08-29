@@ -75,6 +75,37 @@ field. The window is the seconds until the workflow lands and it self-heals;
 that is the trade-off docs/MIGRATIONS.md already accepts for additive
 revisions. Named here rather than left to be discovered.
 
+WHAT A USER SEES IN THAT WINDOW, measured against an un-migrated database with
+the new code rather than reasoned from it, because "an UndefinedColumn error"
+does not say who pays for it:
+
+  * ``GET /auth/gmail/status`` selects the row unconditionally and has no
+    handler for the failure, so it is a **500 for every connected user** until
+    the workflow lands. The settings and inbox screens both fetch it.
+  * ``POST /gmail/sync`` splits on whether the caller already HAS a
+    ``sync_state`` row. A first-time syncer has none, so
+    ``acquire_gmail_sync_lease``'s conditional UPDATE matches nothing, it falls
+    through to ``load_gmail_sync_state``, and the request 500s before any mail
+    is touched. Harmless.
+  * A returning user's lease UPDATE matches — an UPDATE names no columns, so it
+    cannot trip this — and the run proceeds. ``sync_gmail_pipeline_additive``
+    COMMITS the filed mail, and only then does ``record_gmail_sync_success``
+    select the row and raise. So the mail **is filed**, the cursor is **not**
+    advanced, the user gets a 500, and ``InboxWorkbench`` renders "Couldn't file
+    these (500) — nothing was changed." That sentence is false, and it is the
+    one outcome here worth writing down.
+  * ``note_gmail_sync_failure`` reads the same row, so it cannot record the
+    failure either: ``sync_state.status`` keeps whatever it said before.
+
+None of this is corruption — the next sync re-files idempotently over
+``UNIQUE ix_emails_user_id_message_id`` — and none of it is new to this
+revision; any additive column on ``sync_state`` has the same shape. Catching
+``UndefinedColumn`` on the status read would trade a 500 for "ledger unknown"
+but would not touch the false message above, which is on the sync path and
+whose only real fix is returning 200 after a failed ledger write — the failure
+mode this revision deliberately keeps (a ledger that cannot be written must not
+advance ``last_sync_at``). Filed rather than built.
+
 ``batch_alter_table`` is for SQLite only; its default ``recreate="auto"`` leaves
 Postgres on a plain ``ALTER TABLE ADD COLUMN``, so the RLS policies and FORCE
 flag on ``sync_state`` (revision ``a8d4ec5fba26``) are untouched.

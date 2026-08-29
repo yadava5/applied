@@ -161,7 +161,14 @@ class GmailStatusResponse(BaseModel):
     # ``POST /gmail/sync`` returns, read back out of ``sync_state`` — because a
     # sync response is gone when the tab closes and the question it answers
     # ("did you see my mail?") is asked days later. One ``pipeline.ScanLedger``
-    # writes both, so this endpoint and that one cannot disagree.
+    # writes FIVE of these and the sync response's five, so this endpoint and
+    # that one cannot disagree about them.
+    #
+    # ``last_scanned`` is the sixth and it is NOT on the ledger — the pipeline
+    # cannot know how many messages the scan read, only how many became items.
+    # It still has one source: the handler's ``scanned`` local fills the sync
+    # response's ``scanned`` and the row this reads back, in the same call. One
+    # value, two surfaces; just not the same object as the other five.
     #
     # ``null`` and ``0`` are different answers and are kept different: null
     # means no sync has recorded a ledger yet (every row predating revision
@@ -2388,7 +2395,7 @@ async def gmail_sync(
 
     try:
         if payload.items is not None:
-            items = [
+            relayed = [
                 pipeline.PipelineItem(
                     message_id=item.message_id,
                     category=item.category,
@@ -2402,7 +2409,39 @@ async def gmail_sync(
                 )
                 for item in payload.items[: settings.gmail_fetch_hard_cap]
             ]
-            scanned = len(items)
+            # WHAT THE CLIENT SAID IT READ, counted BEFORE the dedup below, so a
+            # message relayed twice shows up as ``scanned > classified`` — the
+            # same shape a server scan's sent-mail skip produces, and the reason
+            # ``ScanLedger``'s partition closes over ``classified`` and not this.
+            scanned = len(relayed)
+            # ONE ITEM PER MESSAGE ID, FIRST OCCURRENCE WINS.
+            #
+            # ``SyncRequest.items`` has no uniqueness validator and the client
+            # mine is a page loop, so one id arriving twice is reachable input,
+            # not a hypothetical. Without this the SAME message could be routed
+            # by two different categories and land in two buckets at once —
+            # measured: a ``filed`` shape and a ``needs_review`` shape sharing
+            # one id gave ``classified=1, filed=1, queued=1``, which does not
+            # close, logged the overlap warning, and returned counts the
+            # migration's docstring promises cannot happen.
+            #
+            # It was only ever a COUNTING defect — ``emails`` carries
+            # ``UNIQUE ix_emails_user_id_message_id`` and ``_persist_message_refs``
+            # upserts, so the second copy wrote nothing either way. Deduping
+            # here rather than inside ``ledger_for_scan`` keeps the counters
+            # derived from the routing outputs instead of correcting them after.
+            #
+            # FIRST OCCURRENCE, deliberately, and it is a real choice: two
+            # copies under two categories would otherwise both be routed. Taking
+            # the higher-confidence or later-ranked one would put a routing
+            # PRECEDENCE rule in this handler, which is exactly the second
+            # reader of a shape this module refuses to grow. A client that
+            # relays one id under two categories has a bug; the sync answers it
+            # with the copy it sent first, and says so in ``scanned``.
+            by_message_id: dict[str, pipeline.PipelineItem] = {}
+            for relayed_item in relayed:
+                by_message_id.setdefault(relayed_item.message_id, relayed_item)
+            items = list(by_message_id.values())
             incremental = False
             # The server did not read this mail and cannot characterise the
             # scan behind it: how far the client got, and what it lost getting

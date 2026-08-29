@@ -2098,7 +2098,9 @@ class ScanLedger:
       ``scanned - classified`` is everything the run dropped BEFORE an item
       existed. Today that is the user's own sent mail, which
       ``_classify_messages`` skips structurally, plus — since this counts
-      DISTINCT ids — any message id a caller relayed twice. The partition
+      DISTINCT ids — any message id a caller relayed twice (``gmail_sync``
+      keeps one item per id, first occurrence, so a repeat widens this gap
+      instead of landing the same message in two buckets). The partition
       closes over this number and not over ``scanned``, because a message that
       never became an item was never routed anywhere.
     · ``filed`` — landed in a rolled-up application, so it becomes an
@@ -2156,13 +2158,6 @@ class ScanLedger:
         )
 
 
-#: A ledger over a scan that never happened — no items, so nothing to partition.
-#: Returned rather than ``None`` so a caller never has to branch on absence.
-EMPTY_LEDGER = ScanLedger(
-    classified=0, filed=0, queued=0, dropped=0, reached_nothing=0
-)
-
-
 def ledger_for_scan(
     items: Iterable[PipelineItem],
     rolled: Iterable[RolledApplication],
@@ -2185,7 +2180,14 @@ def ledger_for_scan(
     for every shape measured — including the 17,260-message adversarial corpus,
     where they partition it exactly — but a future routing change could make
     one message both filed and queued, and a 500 on the user's sync to defend a
-    counter would be a worse bug than the silence this replaces. The hard
+    counter would be a worse bug than the silence this replaces.
+
+    ONE SHAPE ALREADY REACHED IT, and it was fixed at the caller rather than
+    here: two relayed items sharing a ``message_id`` under two categories were
+    routed twice and landed in two buckets at once. That is a duplicate INPUT,
+    not overlapping routing, so ``gmail_sync`` now keeps one item per id and
+    this function is left deriving counts from the routing outputs rather than
+    correcting them. The hard
     assertion lives in the tests, where a violation is a red build rather than
     a failed sync.
     """

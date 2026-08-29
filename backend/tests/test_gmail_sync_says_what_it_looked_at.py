@@ -73,6 +73,7 @@ and fixing it is its own change — a reload cannot be undone by
 from __future__ import annotations
 
 import uuid as _uuid
+from dataclasses import replace as _replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -88,6 +89,7 @@ from jobtracker.cloud import pipeline as p
 from tests.test_gmail_oauth_cloud import (  # noqa: F401 — fixtures by name
     GMAIL_ADDRESS,
     USER_A,
+    USER_B,
     _applied_msg,
     _connect_gmail,
     _install_gmail_stubs,
@@ -99,6 +101,10 @@ from tests.test_gmail_oauth_cloud import (  # noqa: F401 — fixtures by name
 )
 
 HEADERS = {"Authorization": f"Bearer {_token_for(USER_A)}"}
+# A SECOND mailbox, for the one test that has to run the same two messages twice
+# in two orders: replaying them for USER_A would answer the second half against
+# a board the first half already built.
+HEADERS_B = {"Authorization": f"Bearer {_token_for(USER_B)}"}
 
 
 # =============================================================================
@@ -195,6 +201,17 @@ def _noise(n: int = 1) -> p.PipelineItem:
         0.0,
         snippet="This week in tech.",
     )
+
+
+def _same_message(shape: p.PipelineItem, other: p.PipelineItem) -> p.PipelineItem:
+    """``shape``, relabelled as the SAME Gmail message as ``other``.
+
+    A duplicate is one message id arriving twice, so it takes the id AND the
+    thread. Only the category (and what follows from it) differs, which is the
+    case that broke the partition.
+    """
+
+    return _replace(shape, message_id=other.message_id, thread_id=other.thread_id)
 
 
 def _ledger_over(items: list[p.PipelineItem]) -> p.ScanLedger:
@@ -356,7 +373,6 @@ async def test_reached_nothing_counts_ignored_mail_and_reads_zero_when_all_is_pl
 async def test_classified_counts_the_scan_and_reads_zero_on_an_empty_one() -> None:
     assert _ledger_over([_filed(), _noise()]).classified == 2
     assert _ledger_over([]).classified == 0
-    assert p.EMPTY_LEDGER.classified == 0 and p.EMPTY_LEDGER.closes
 
 
 # =============================================================================
@@ -418,6 +434,104 @@ async def test_a_message_cannot_be_counted_in_two_buckets() -> None:
     assert unplaceable.message_id in p.unplaceable_message_ids(items, known_multi)
     assert (ledger.classified, ledger.filed, ledger.queued) == (2, 1, 1)
     assert ledger.closes
+
+
+async def test_one_message_id_relayed_twice_still_closes(
+    client: AsyncClient,
+) -> None:
+    """THE INPUT THAT BROKE THE ADVERTISED INVARIANT, and it is user-reachable.
+
+    ``SyncRequest.items`` has no uniqueness validator and the client mine is a
+    page loop, so the same message id arriving twice is reachable input rather
+    than a hypothesis. Relayed under two different categories it used to be
+    routed twice — measured, before the fix, at ``classified=1, filed=1,
+    queued=1``: one message in two buckets, ``closes`` False, an overlap warning
+    in the log, and a response whose numbers contradicted the sentence
+    ``a3f7d21c60be``'s docstring and ``ScanLedger`` both publish.
+
+    The handler now keeps ONE item per message id, so the partition closes on
+    every shape a caller can send. ``scanned`` still says two, because two is
+    what the client read — a repeated id is the relay's version of the sent-mail
+    skip, and it is exactly what ``scanned`` sits outside the partition to hold.
+    """
+
+    await _connect_gmail(USER_A)
+    first = _filed(1)
+    body = (
+        await client.post(
+            "/gmail/sync",
+            json={
+                "items": [
+                    _as_dict(first),
+                    _as_dict(_same_message(_queued(1), first)),
+                ]
+            },
+            headers=HEADERS,
+        )
+    ).json()
+
+    assert body["scanned"] == 2, ("the client read two messages and said so", body)
+    assert (
+        body["classified"],
+        body["filed"],
+        body["queued"],
+        body["dropped"],
+        body["reached_nothing"],
+    ) == (1, 1, 0, 0, 0), body
+    assert (
+        body["filed"] + body["queued"] + body["dropped"] + body["reached_nothing"]
+        == body["classified"]
+    ), ("the partition must close on duplicate-id input too", body)
+
+    row = (await _sync_rows(USER_A))[0]
+    assert (row.last_scanned, row.last_classified, row.last_filed, row.last_queued,
+            row.last_dropped, row.last_reached_nothing) == (2, 1, 1, 0, 0, 0)
+
+
+async def test_the_first_copy_of_a_repeated_id_is_the_one_routed(
+    client: AsyncClient,
+) -> None:
+    """WHICH copy wins, pinned — because "one of them" is not a specification.
+
+    First occurrence, deliberately: taking the higher-confidence or
+    later-ranked copy would put a routing PRECEDENCE rule in the sync handler,
+    which is the second reader of a shape this codebase keeps growing and then
+    having to reconcile. So the rule is positional and this test is what stops
+    it drifting to last-wins by an edit that looks like a tidy-up.
+
+    Order is the ONLY difference between the two halves below, and they must
+    disagree — which is also what makes this a real check rather than a
+    restatement of the test above.
+    """
+
+    await _connect_gmail(USER_A)
+    filed_shape = _filed(1)
+    noise_shape = _same_message(_noise(1), filed_shape)
+
+    filed_first = (
+        await client.post(
+            "/gmail/sync",
+            json={"items": [_as_dict(filed_shape), _as_dict(noise_shape)]},
+            headers=HEADERS,
+        )
+    ).json()
+    assert (filed_first["filed"], filed_first["reached_nothing"]) == (1, 0), (
+        "the filed copy arrived first, so the message is filed", filed_first
+    )
+
+    await _connect_gmail(USER_B)
+    noise_first = (
+        await client.post(
+            "/gmail/sync",
+            json={"items": [_as_dict(noise_shape), _as_dict(filed_shape)]},
+            headers=HEADERS_B,
+        )
+    ).json()
+    assert (noise_first["filed"], noise_first["reached_nothing"]) == (0, 1), (
+        "the ignored copy arrived first, so that is the one the sync answers "
+        "with; last-wins would file it instead",
+        noise_first,
+    )
 
 
 async def test_the_partition_closes_over_the_adversarial_corpus() -> None:
@@ -560,6 +674,25 @@ async def test_a_server_scan_stores_the_scans_count_and_the_pipelines_apart(
         "the stored row must keep the two apart as well; collapsing them hides "
         "every message a scan read and never handed to the pipeline"
     )
+
+    # …AND THROUGH ``GET /auth/gmail/status``, which is a third reader of these
+    # two columns and was uncovered. Every other status assertion in this file
+    # runs on the relay path, where ``scanned`` and ``classified`` are equal by
+    # construction, so serving ``last_scanned`` from ``state.last_classified``
+    # (or the reverse) passed all 138 tests in the modules that exercise this
+    # endpoint. A server scan is the only shape where the swap is visible, and
+    # this is the only server scan that reaches the status endpoint.
+    status = (await client.get("/auth/gmail/status", headers=HEADERS)).json()
+    assert status["last_scanned"] == 2, (
+        "GET /auth/gmail/status must serve the SCAN's count; two messages were "
+        f"read from Gmail. Got {status['last_scanned']}"
+    )
+    assert status["last_classified"] == 1, (
+        "GET /auth/gmail/status must serve the PIPELINE's count; one of the two "
+        f"was the owner's own mail and never became an item. Got "
+        f"{status['last_classified']}"
+    )
+    assert status["last_scanned"] > status["last_classified"]
 
 
 # =============================================================================
@@ -722,21 +855,59 @@ async def test_status_says_null_before_a_sync_and_zero_after_a_quiet_one(
 async def test_status_reports_what_the_last_sync_looked_at(
     client: AsyncClient,
 ) -> None:
-    """The read-back that makes the state diagnosable without a psql session."""
+    """The read-back that makes the state diagnosable without a psql session.
+
+    FIVE MUTUALLY DISTINCT NUMBERS, and the distinctness is the whole assertion.
+    This test used to run three messages and read back ``filed == dropped ==
+    reached_nothing == 1``; every one of those equalities is satisfied by a
+    field assigned from its NEIGHBOUR, so ``last_filed=state.last_dropped`` in
+    the handler passed it — and passed all 138 tests in the four modules that
+    touch this endpoint. That is ``scanCompleted: scanFailed`` again, on the one
+    endpoint #422 exists to make diagnosable. Deleting a line proves a field is
+    PRESENT; only a same-typed swap between two DIFFERENT values proves it is
+    the right field, and one wired to its neighbour now reds here.
+
+    The scan is the one ``test_the_stored_row_and_the_response_cannot_disagree``
+    already uses, for the same reason it uses it.
+
+    ``last_scanned`` is the sixth number and cannot be told apart here: the
+    relay path makes it equal to ``last_classified`` by construction.
+    ``test_a_server_scan_stores_the_scans_count_and_the_pipelines_apart`` reads
+    this endpoint after a SERVER scan, where the two differ, and closes it.
+    """
 
     await _connect_gmail(USER_A)
     await client.post(
         "/gmail/sync",
-        json={"items": [_as_dict(i) for i in (_filed(), _dropped(), _noise())]},
+        json={
+            "items": [
+                _as_dict(i)
+                for i in (
+                    _filed(1),
+                    _queued(1), _queued(2),
+                    _dropped(1), _dropped(2), _dropped(3),
+                    _noise(1), _noise(2), _noise(3), _noise(4),
+                )
+            ]
+        },
         headers=HEADERS,
     )
 
     status = (await client.get("/auth/gmail/status", headers=HEADERS)).json()
-    assert status["last_classified"] == 3
-    assert status["last_filed"] == 1
-    assert status["last_dropped"] == 1
-    assert status["last_reached_nothing"] == 1
-    assert status["last_queued"] == 0
+    assert (
+        status["last_classified"],
+        status["last_filed"],
+        status["last_queued"],
+        status["last_dropped"],
+        status["last_reached_nothing"],
+    ) == (10, 1, 2, 3, 4), status
+    assert (
+        status["last_filed"]
+        + status["last_queued"]
+        + status["last_dropped"]
+        + status["last_reached_nothing"]
+        == status["last_classified"]
+    ), "the partition must still close on the surface a diagnosis is read from"
 
 
 async def test_the_ledger_is_counts_and_never_message_metadata() -> None:
