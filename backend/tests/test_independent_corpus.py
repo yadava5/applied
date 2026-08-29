@@ -173,10 +173,15 @@ RECORDED_ANSWERS = {
 #: they move the moment a resolution path starts disagreeing with the others,
 #: without waiting for the ten-minute replay to notice.
 #:
-#: 150 is not zero and is not a target. The remaining disagreements are other
-#: paths (an `at <Company>` anchor against a sender display name, mostly) and
-#: closing them is not this issue. Pinned so nobody has to guess whether a
-#: change made it better or worse.
+#: 150 is not zero and is not a defect. MEASURED, not guessed: all 150 are in
+#: the `employer-spelling` family and no other family contributes one. That
+#: family exists to send the same employer three ways — "ALDERBURYWATCH
+#: SYSTEMS", "Alderburywatch" and "Alderburywatch Systems" — so a token holding
+#: several spellings there is the family doing its job. Anything outside it is
+#: a resolution path disagreeing with the others, which is #532 returning.
+#:
+#: Both figures are deterministic: `generate()` is seeded and `resolve_employer`
+#: reads nothing date-derived, so this gate cannot red on a calendar.
 RECORDED_EMPLOYER_SPELLINGS = {
     "tokens": 8676,
     "distinct_displays": 8916,
