@@ -38,6 +38,14 @@ import { parseFrom, parseMailFile } from "../../lib/import/parseMail.ts";
 /** The shape that made it quadratic: `<` that never closes, then filler. */
 const hostileFrom = (n) => "<".repeat(n) + "a".repeat(n);
 
+/**
+ * The shape that reaches the OTHER quadratic — `parseFrom`'s bare-address
+ * fallback, `/[^\s<>@]+@[^\s<>@]+/`. No `<`, no `>`, and crucially no `@`, so
+ * `parseAngleAddress` returns null immediately and every microsecond measured
+ * below is spent in the fallback.
+ */
+const bareFrom = (n) => "a".repeat(n);
+
 test("a hostile From header cannot freeze the tab", () => {
   // 64000 is the size measured at 23.8 seconds before the cap.
   const started = performance.now();
@@ -96,5 +104,87 @@ test("ordinary From headers are untouched by the cap", () => {
   assert.deepEqual(parseFrom("=?utf-8?B?SsO2cmc=?= <jorg@acme.test>"), {
     name: "Jörg",
     email: "jorg@acme.test",
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// The quadratic that is still there
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THESE TWO ARE FOR, AND WHY THEY ARE NOT THE THREE ABOVE.
+ *
+ * `parseAngleAddress` is a linear scan since #406, and its own timing test
+ * proves that uncapped. It is easy to read that as "the quadratic is gone". It
+ * is not: `parseFrom` has a second branch, and when a value holds no angle
+ * address it falls through to `/[^\s<>@]+@[^\s<>@]+/`. A long run of
+ * address-legal characters with no `@` in it makes that pattern start at every
+ * position and backtrack over the remainder of the run — O(N²), measured here
+ * at 25 / 100 / 400 / 1,600 ms for N = 4,000 / 8,000 / 16,000 / 32,000, four
+ * times per doubling.
+ *
+ * AND IT IS WHAT #406'S OWN INPUT REACHES. `"<"×N + "a"×N` contains no `@`, so
+ * after `parseAngleAddress` declines it the fallback is what runs. The `<` run
+ * costs nothing (`<` is excluded from the character class, so those positions
+ * fail on the first character); the cost is entirely in the `a` run, which is
+ * why the fixture below drops the angle brackets. Same numbers, one less thing
+ * for the measurement to be about.
+ *
+ * SO MAX_FROM_CHARS IS STILL THE ONLY THING BETWEEN A VISITOR AND A FROZEN
+ * TAB, and these tests are what makes that a measurement rather than a
+ * sentence in a comment. Both red when the cap is raised: at 64,000 the second
+ * one grows sixteenfold and the first one takes about 1.6 seconds.
+ *
+ * The tests above use `hostileFrom`, which reaches this same branch and so
+ * covers it incidentally. That is exactly why these exist separately — an
+ * incidental cover is one refactor away from being no cover, and the comment
+ * on `MAX_FROM_CHARS` now makes a specific claim about a specific branch. This
+ * is the branch, named.
+ */
+test("the bare-address fallback is bounded by the cap, not by the clock", () => {
+  const time = (n) => {
+    const input = bareFrom(n);
+    const started = performance.now();
+    parseFrom(input);
+    return performance.now() - started;
+  };
+  // Uncapped this ratio is ~16 (four times per doubling, twice over). Capped,
+  // both calls do the same 1,024 characters of work and the ratio is noise.
+  const small = Math.max(time(16000), 0.05);
+  const large = time(64000);
+  assert.ok(
+    large / small < 4,
+    `a 4x longer bare From header cost ${(large / small).toFixed(1)}x more to parse ` +
+      `(${small.toFixed(2)}ms then ${large.toFixed(2)}ms). parseFrom's bare-address ` +
+      "fallback is quadratic and is reaching it unbounded: MAX_FROM_CHARS in " +
+      "lib/import/parseMail.ts is what holds it.",
+  );
+});
+
+test("a bare From header of the size that costs 1.6 seconds uncapped does not", () => {
+  const started = performance.now();
+  parseFrom(bareFrom(32000));
+  const elapsed = performance.now() - started;
+  assert.ok(
+    elapsed < 100,
+    `parseFrom took ${elapsed.toFixed(0)}ms on a 32,000-character bare From header. ` +
+      "Uncapped that shape costs about 1,600ms in the bare-address fallback, on the " +
+      "main thread of an unauthenticated page. The cap is MAX_FROM_CHARS.",
+  );
+});
+
+test("a bare address is still found, so the two tests above are not timing a no-op", () => {
+  // The positive control the clock needs: a `parseFrom` that returned a
+  // constant would satisfy every timing assertion in this file.
+  assert.deepEqual(parseFrom("Talent Team careers@cedar.example"), {
+    name: null,
+    email: "careers@cedar.example",
+  });
+  // And the fallback is genuinely what answers here — there is no angle
+  // address in it to take precedence.
+  assert.deepEqual(parseFrom(`${bareFrom(20)} careers@cedar.example`), {
+    name: null,
+    email: "careers@cedar.example",
   });
 });

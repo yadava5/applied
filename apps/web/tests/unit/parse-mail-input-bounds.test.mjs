@@ -117,6 +117,81 @@ test("a base64 body larger than the bound still decodes to text, not to base64",
   }
 });
 
+/**
+ * THE OTHER HALF OF THE MID-QUANTUM TRIM, AND THE REASON IT IS CONDITIONAL.
+ *
+ * `base64ToUtf8` drops the trailing partial quantum only `if (cut)`. The
+ * docstring says why the condition is there: an UNCUT stream whose length is
+ * not a multiple of four is unpadded base64, which `atob` accepts, and
+ * trimming it "would silently lose two real bytes off the end of every such
+ * body". Nothing measured that. `if (cut) clean = …` -> an unconditional trim
+ * was GREEN across all 633 tests, so the claim was load-bearing prose with no
+ * gate under it.
+ *
+ * UNPADDED BASE64 IS NOT EXOTIC. `=` padding is optional in several encoders
+ * and is stripped by anything that has to survive a URL, so a body arriving
+ * without it is a real shape, not a contrivance.
+ *
+ * BOTH REMAINDERS, BECAUSE THEY LOSE DIFFERENT AMOUNTS. A source length of
+ * 3k+2 bytes encodes to 4k+3 characters and an unconditional trim loses the
+ * last TWO bytes — the case the docstring names. A source of 3k+1 bytes
+ * encodes to 4k+2 characters and loses ONE. A source of 3k encodes to a
+ * multiple of four and loses nothing, which is exactly the vacuous fixture
+ * this repo has already been bitten by (the PR's own first base64 mutation
+ * test could not fail for the same reason), so each case below asserts its
+ * remainder before it asserts anything else.
+ *
+ * NOTHING HERE IS CUT: the encoded bodies are a few dozen characters against a
+ * MAX_RAW_BODY_CHARS of 256,000, so `cut` is false and the conditional is the
+ * only thing deciding whether the trim happens.
+ */
+test("an unpadded base64 body keeps its last bytes, because it was never cut", () => {
+  // 3k+2 bytes -> 4k+3 base64 characters -> an unconditional trim eats two.
+  const losesTwo = "Interview Thursday at ten, with Nadia and Ruth.";
+  // 3k+1 bytes -> 4k+2 base64 characters -> an unconditional trim eats one.
+  // The same sentence one byte shorter, so the two cases differ in exactly the
+  // thing being measured.
+  const losesOne = "Interview Thursday at ten, with Nadia and Ruth";
+
+  for (const [text, remainder, lost] of [
+    [losesTwo, 3, 2],
+    [losesOne, 2, 1],
+  ]) {
+    const bytes = new TextEncoder().encode(text).length;
+    const unpadded = b64(text).replace(/=+$/, "");
+
+    // The self-checks. A fixture whose encoded length is already a multiple of
+    // four cannot tell a conditional trim from an unconditional one.
+    assert.equal(
+      bytes % 3,
+      remainder - 1,
+      `a source of ${bytes} bytes does not encode to a remainder of ${remainder}`,
+    );
+    assert.equal(
+      unpadded.length % 4,
+      remainder,
+      `the fixture is not unpadded base64 with remainder ${remainder}, so it measures nothing`,
+    );
+    assert.ok(unpadded.length < 1000, "the fixture must sit far below MAX_RAW_BODY_CHARS");
+
+    const msg = parseRfc822(
+      eml(
+        "Subject: Interview\r\nFrom: talent@cedar.example\r\nContent-Transfer-Encoding: base64",
+        unpadded,
+      ),
+      "m0",
+    );
+
+    assert.equal(
+      msg.body,
+      text,
+      `an unpadded base64 body lost its tail. An unconditional mid-quantum trim ` +
+        `drops ${lost} byte(s) off every body whose encoded length leaves a remainder ` +
+        `of ${remainder}; the trim in base64ToUtf8 must stay conditional on \`cut\`.`,
+    );
+  }
+});
+
 test("the bound leaves an ordinary mail's body byte-identical", () => {
   /**
    * THE CONTROL, and the half that matters to a real import. Every assertion

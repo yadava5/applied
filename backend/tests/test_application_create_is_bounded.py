@@ -232,6 +232,52 @@ async def test_the_measured_payload_from_the_issue_is_refused(client: AsyncClien
     assert btree_fatal.status_code == 422, btree_fatal.text
 
 
+@pytest.mark.parametrize("field", ["company", "position", "notes"])
+async def test_the_issues_payload_is_refused_one_field_at_a_time(
+    client: AsyncClient, field: str
+) -> None:
+    """5,000,000 characters in ONE field, with the other two ordinary.
+
+    WHY THIS IS NOT THE TWO TESTS ABOVE, AND WHY IT IS THE ONE THAT BITES.
+
+    ``test_one_character_over_the_bound_is_refused`` derives its length from
+    the constant it is testing, so it moves with it: raise ``_MAX_NOTES_LEN``
+    to 10,000,000 and it posts 10,000,001 characters and still reads 422. It
+    can see an off-by-one in the schema. It cannot see the bound itself being
+    dismantled, which is the failure #406 is about.
+
+    ``test_the_measured_payload_from_the_issue_is_refused`` sends all three
+    fields oversized at once and asserts one status code, so ANY single field
+    refusing satisfies it — an early guard masking the later ones. With
+    ``_MAX_NOTES_LEN`` raised a thousandfold, ``company`` alone still produces
+    the 422 and the test stays green.
+
+    Between them, ``_MAX_NOTES_LEN = 10_000 -> 10_000_000`` was green across
+    the whole backend suite: ``company`` had the btree arithmetic and
+    ``position`` had ``test_user_supplied_role.py``, and ``notes`` had nothing.
+
+    So: a LITERAL length, taken from the issue's own measurement rather than
+    from the constant, one field at a time, and the refusal has to name the
+    field it is about — a 422 for some other reason is not this bound working.
+    """
+
+    resp = await client.post(
+        "/applications", headers=_headers(), json=_body(**{field: "x" * 5_000_000})
+    )
+
+    assert resp.status_code == 422, (
+        f"{field} accepted 5,000,000 characters. That is the payload issue #406 "
+        f"measured answering 201, and the bound on this field is gone or has been "
+        f"raised past any length a person types."
+    )
+    locations = [error.get("loc", []) for error in resp.json()["detail"]]
+    assert any(field in location for location in locations), (
+        f"the request was refused, but not because of {field} — the 422 names "
+        f"{locations}, so this test would pass with {field} unbounded as long as "
+        f"some other field happened to be invalid"
+    )
+
+
 # =============================================================================
 # Where the numbers come from
 # =============================================================================

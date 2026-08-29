@@ -139,13 +139,32 @@ export class MailTooLargeError extends Error {
 }
 
 /**
- * Upper bound on the `From:` header.
+ * Upper bound on the `From:` header. IT IS STILL LOAD-BEARING — this is the
+ * only thing standing between a visitor and a frozen tab, and raising it
+ * reintroduces the hang.
  *
- * This used to be "the ONLY thing standing between a visitor and a frozen
- * tab", because the address matcher underneath it was quadratic. It is not any
- * more — `parseAngleAddress` replaced the regex with a scan — so this is now a
- * bound on the header for its own sake: it limits what `decodeEncodedWords`
- * expands, and it limits the length of the name and address a row can carry.
+ * THE QUADRATIC DID NOT GO AWAY, IT MOVED. `parseAngleAddress` is a linear
+ * scan now (0.6 ms at N = 32,000, uncapped), so the ANGLE matcher is genuinely
+ * fixed. `parseFrom`'s other branch is not: when there is no angle address it
+ * falls through to `/[^\s<>@]+@[^\s<>@]+/`, and a run of address-legal
+ * characters containing no `@` makes that pattern restart at every position
+ * and backtrack over the rest of the run. Measured on this machine, the
+ * fallback alone, on the shape issue #406 filed (`"<"×N + "a"×N`, which has no
+ * `@` in it) — and identically on a bare `"a"×N`, because the `<` run costs
+ * nothing:
+ *
+ *   N =  4000     25 ms        N = 16000    400 ms
+ *   N =  8000    100 ms        N = 32000  1,600 ms      (4x per doubling)
+ *
+ * So the input the issue was filed about reaches the branch that is still
+ * quadratic, and 1024 characters of it costs microseconds only because this
+ * cap truncates first. `parse-mail-bounds.test.mjs` measures that through
+ * `parseFrom` on fallback-only input rather than asserting it; raising this
+ * constant reds it.
+ *
+ * The cap also does the two smaller jobs it would do anyway: it limits what
+ * `decodeEncodedWords` expands, and the length of the name and address a row
+ * can carry.
  *
  * 1024 is generous rather than tight. RFC 5322 caps a header line at 998
  * octets, and a real `From:` is a display name plus an address. The cap is
@@ -330,9 +349,11 @@ const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
  * Four times the cost per doubling, which is the quadratic in the open.
  *
  * A 1024-character cap on the caller (MAX_FROM_CHARS) already held `parseFrom`
- * itself to about 2 ms, and that cap is staying. It is not a fix, though: it
- * hides the quadratic behind one call site instead of removing it, so the next
- * caller — a `Reply-To`, a `Sender`, a future header — pays for it again with
+ * itself to about 2 ms, and that cap is staying — and it is still load-bearing
+ * for a DIFFERENT reason, which the constant's own doc comment now states:
+ * `parseFrom`'s bare-address fallback is quadratic too and was not touched
+ * here. What this scan fixes is that a caller of the ANGLE matcher — a
+ * `Reply-To`, a `Sender`, a future header — no longer pays O(N²) for it with
  * nothing in the code to say why it must not.
  *
  * THE SCAN IS THE REGEX'S SEMANTICS, NOT A SIMPLIFICATION OF THEM, and the
