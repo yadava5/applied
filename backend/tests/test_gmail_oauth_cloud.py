@@ -173,6 +173,16 @@ async def test_status_configured_but_not_connected(client: AsyncClient) -> None:
         "has_cursor": False,
         "sync_status": None,
         "sync_error": None,
+        # The scan ledger (#422). Null, not zero: no sync has recorded one, and
+        # that is a different fact from "a sync ran and read nothing". The
+        # equality here is exhaustive on purpose — it is what makes a field
+        # added to this endpoint a decision rather than a drift.
+        "last_scanned": None,
+        "last_classified": None,
+        "last_filed": None,
+        "last_queued": None,
+        "last_dropped": None,
+        "last_reached_nothing": None,
     }
 
 

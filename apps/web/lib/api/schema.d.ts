@@ -1183,6 +1183,18 @@ export interface components {
             sync_status?: string | null;
             /** Sync Error */
             sync_error?: string | null;
+            /** Last Scanned */
+            last_scanned?: number | null;
+            /** Last Classified */
+            last_classified?: number | null;
+            /** Last Filed */
+            last_filed?: number | null;
+            /** Last Queued */
+            last_queued?: number | null;
+            /** Last Dropped */
+            last_dropped?: number | null;
+            /** Last Reached Nothing */
+            last_reached_nothing?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1801,6 +1813,26 @@ export interface components {
              * @default 0
              */
             dropped: number;
+            /**
+             * Classified
+             * @default 0
+             */
+            classified: number;
+            /**
+             * Filed
+             * @default 0
+             */
+            filed: number;
+            /**
+             * Queued
+             * @default 0
+             */
+            queued: number;
+            /**
+             * Reached Nothing
+             * @default 0
+             */
+            reached_nothing: number;
         };
         /** ValidationError */
         ValidationError: {

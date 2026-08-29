@@ -890,6 +890,65 @@ class SyncState(SQLModel, table=True):
     status: str = Field(default="idle", description="Current sync status")
     error_message: Optional[str] = Field(default=None, description="Last error message")
 
+    # WHAT THE LAST SUCCESSFUL SYNC LOOKED AT — six counts, one partition.
+    #
+    # The most common question a user asks about this product is "did you see
+    # my mail?", and until these columns existed the database could not answer
+    # it. On 2026-08-21 four Microsoft confirmations were read by a sync and
+    # produced no application row, no review-queue entry and no ``emails`` row
+    # at all — ``_persist_message_refs`` writes one only for a message that
+    # clustered into an application or was flagged for review. So "we never
+    # fetched it", "it arrived after the cursor" and "we read it and threw it
+    # away" were the same state on disk: nothing.
+    #
+    # WHY DURABLE AND NOT JUST ON THE RESPONSE. ``POST /gmail/sync`` already
+    # returns these numbers, but a response is gone the moment the tab closes,
+    # and the user reporting the bug is not the person reading the response.
+    # Diagnosis happens against Postgres days later, which is exactly where the
+    # numbers were missing. The response and these columns are assigned from
+    # ONE ``pipeline.ScanLedger``, so they cannot disagree.
+    #
+    # LAST SYNC ONLY — overwritten on every success, never accumulated. A
+    # history table would answer more questions and is a bigger thing than
+    # #422 asks for; "what did the most recent run see" is the question that
+    # was unanswerable.
+    #
+    # COUNTS ONLY. Nothing here names a message, a sender or a subject. What
+    # was dropped is in the logs keyed by message id; storing it beside the
+    # counts would mean keeping mail metadata for messages the product decided
+    # NOT to file, which is the promise ``apps/web/app/(app)/privacy/page.tsx``
+    # makes about the ``emails`` table.
+    #
+    # NULL means "no sync has recorded a ledger yet" — every row that predates
+    # revision ``a3f7d21c60be``, and any account whose only syncs failed. It is
+    # a different fact from 0 ("a sync ran and read nothing"), and the two must
+    # not be collapsed: 0 is the answer that says the mailbox was quiet.
+    #
+    # ``last_scanned`` counts what the scan READ from Gmail; ``last_classified``
+    # counts what reached the pipeline. They differ by whatever left before an
+    # item existed — the user's own sent mail, which ``_classify_messages``
+    # skips, and a repeated message id, since the ledger counts distinct ones.
+    # The partition closes over the second, not the first — see
+    # ``pipeline.ScanLedger``.
+    last_scanned: Optional[int] = Field(
+        default=None, description="Messages the last successful sync read from Gmail"
+    )
+    last_classified: Optional[int] = Field(
+        default=None, description="Of those, how many entered the pipeline"
+    )
+    last_filed: Optional[int] = Field(
+        default=None, description="Classified messages that landed on an application"
+    )
+    last_queued: Optional[int] = Field(
+        default=None, description="Classified messages routed to the review queue"
+    )
+    last_dropped: Optional[int] = Field(
+        default=None, description="Lifecycle verdicts discarded under the review floor"
+    )
+    last_reached_nothing: Optional[int] = Field(
+        default=None, description="Classified messages that produced no row anywhere"
+    )
+
 
 class UserCredential(SQLModel, table=True):
     """

@@ -106,6 +106,8 @@ async def record_gmail_sync_success(
     *,
     account_email: str,
     history_id: str | None = None,
+    ledger: Any | None = None,
+    scanned: int | None = None,
 ) -> SyncState:
     """Stamp a successful sync and (optionally) advance the history cursor.
 
@@ -113,6 +115,26 @@ async def record_gmail_sync_success(
     clearing it: a sync whose ``getProfile`` failed, or one that merely
     persisted client-supplied items, still happened — it just cannot claim to
     have advanced the mailbox baseline.
+
+    ``ledger`` is a :class:`~jobtracker.cloud.pipeline.ScanLedger` — WHERE EVERY
+    MESSAGE THIS RUN LOOKED AT ENDED UP. It is what makes "did you see my mail?"
+    answerable from the database rather than only from a response that is gone
+    when the tab closes; #422's four Microsoft applications produced no row of
+    any kind, so nothing on disk distinguished a discarded message from one that
+    never arrived. ``scanned`` rides beside it because it is the one number the
+    pipeline cannot know: how many messages the SCAN read, before
+    ``_classify_messages`` skipped the user's own sent mail.
+
+    Both are optional and both are ALL-OR-NOTHING: a caller that passes neither
+    leaves the stored ledger exactly as it was, rather than half-overwriting it
+    with a fresh ``last_sync_at`` and stale counts beside it. There is no such
+    caller today — every success on this path has a ledger — and the default
+    exists so a future one cannot invent a wrong reading by omission.
+
+    Typed ``Any`` for the same reason nothing else in this module holds a
+    ``settings`` global: importing ``cloud.pipeline`` here would pull the whole
+    classifier chain into a module that deliberately owns nothing but models and
+    a session.
 
     Flushes but does not commit; the caller owns the transaction so the cursor
     lands in the same unit of work as the rest of its bookkeeping.
@@ -124,6 +146,13 @@ async def record_gmail_sync_success(
     state.error_message = None
     if history_id:
         state.gmail_history_id = str(history_id)
+    if ledger is not None:
+        state.last_scanned = scanned if scanned is not None else ledger.classified
+        state.last_classified = ledger.classified
+        state.last_filed = ledger.filed
+        state.last_queued = ledger.queued
+        state.last_dropped = ledger.dropped
+        state.last_reached_nothing = ledger.reached_nothing
     session.add(state)
     await session.flush()
     return state
