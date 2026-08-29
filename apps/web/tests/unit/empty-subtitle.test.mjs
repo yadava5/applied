@@ -134,6 +134,7 @@ import {
 } from "./helpers/subtitleWiring.mjs";
 
 import { emptySubtitle } from "../../lib/dashboard/boardPrefs.ts";
+import { REVIEW_QUEUE_LABEL } from "../../lib/dashboard/review.ts";
 
 const base = { gmailState: "disconnected", scanCompleted: false, needsReview: 0 };
 
@@ -167,9 +168,25 @@ test("a connected mailbox distinguishes 'not scanned' from 'scanned and empty'",
   assert.match(unscanned, /filed/);
 });
 
-test("held mail is counted, pluralised, and silent at zero", () => {
-  assert.match(emptySubtitle({ ...base, needsReview: 1 }), /1 needs review/);
-  assert.match(emptySubtitle({ ...base, needsReview: 4 }), /4 need review/);
+/**
+ * The plural branch is GONE, and that is the assertion (#445). This line used
+ * to say "1 needs review" / "4 need review", which is the Inbox chip's phrase
+ * wearing a verb — and the Inbox counts a different, larger set. It says
+ * `REVIEW_QUEUE_LABEL` now, one string at every count, imported here so
+ * unifying the two labels reds this file rather than passing forever against a
+ * literal that no longer appears on any screen.
+ */
+test("held mail is counted with the queue's own words, and is silent at zero", () => {
+  assert.equal(
+    emptySubtitle({ ...base, needsReview: 1 }).endsWith(` · 1 ${REVIEW_QUEUE_LABEL}`),
+    true,
+    emptySubtitle({ ...base, needsReview: 1 }),
+  );
+  assert.equal(
+    emptySubtitle({ ...base, needsReview: 4 }).endsWith(` · 4 ${REVIEW_QUEUE_LABEL}`),
+    true,
+    emptySubtitle({ ...base, needsReview: 4 }),
+  );
   assert.doesNotMatch(emptySubtitle({ ...base, needsReview: 0 }), /review/);
 });
 

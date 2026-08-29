@@ -15,6 +15,7 @@ import {
 } from "@/lib/dashboard/deadline";
 import type { PulseFilter } from "@/lib/dashboard/pulseFilter";
 import { ageTip, dayName, momentumTip, runwayTip, type PulseTip } from "@/lib/dashboard/pulseTip";
+import { REVIEW_QUEUE_LABEL } from "@/lib/dashboard/review";
 import { cn } from "@/lib/utils";
 
 /**
@@ -765,7 +766,10 @@ export function PulseDetail({
                   className="h-2 w-2 shrink-0 self-center rounded-full"
                   style={{ background: "var(--amber)" }}
                 />
-                <span className="min-w-0 truncate font-medium text-review">held for review</span>
+                {/* The queue's own words (#445) — this row links straight into
+                    it, and "held for review" now belongs to the Inbox's chip,
+                    which counts a larger, different set. */}
+                <span className="min-w-0 truncate font-medium text-review">{REVIEW_QUEUE_LABEL}</span>
                 <span className="tabular ml-auto shrink-0 text-strong">{needsReview} →</span>
               </Link>
             </li>
